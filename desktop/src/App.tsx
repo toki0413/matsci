@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 interface Message {
   role: "user" | "assistant" | "tool";
@@ -147,7 +148,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<string>("connecting…");
   const [activeTab, setActiveTab] = useState<
-    "chat" | "tools" | "memory" | "skills" | "settings" | "files"
+    "chat" | "tools" | "memory" | "skills" | "settings" | "files" | "terminal"
   >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -179,6 +180,10 @@ export default function App() {
   const [editorContent, setEditorContent] = useState<string>("");
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorMsg, setEditorMsg] = useState<string>("");
+
+  const [terminalOutput, setTerminalOutput] = useState<string>("");
+  const [terminalInput, setTerminalInput] = useState<string>("");
+  const terminalEndRef = useRef<HTMLDivElement>(null);
 
   const GUIDE_KEY = "matsci:guide:v1";
   const [showGuide, setShowGuide] = useState(false);
@@ -325,6 +330,24 @@ export default function App() {
       }
     })();
   }, [loadDir]);
+
+  // Listen to integrated terminal output
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    (async () => {
+      unlisten = await listen("terminal-output", (event) => {
+        const payload = event.payload as { source: string; text: string };
+        setTerminalOutput((prev) => prev + payload.text);
+      });
+    })();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    terminalEndRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [terminalOutput]);
 
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -515,6 +538,7 @@ export default function App() {
   const tabs: { id: typeof activeTab; label: string; icon: string }[] = [
     { id: "chat", label: "Chat", icon: "💬" },
     { id: "files", label: "Files", icon: "📁" },
+    { id: "terminal", label: "Terminal", icon: "🖥️" },
     { id: "tools", label: "Tools", icon: "🔧" },
     { id: "skills", label: "Skills", icon: "⚡" },
     { id: "memory", label: "Memory", icon: "🧠" },
@@ -804,6 +828,55 @@ export default function App() {
                     Select a file from the workspace to edit
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === "terminal" && (
+            <div className="flex h-full flex-col bg-black">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+                <span className="text-sm font-semibold">Integrated Terminal</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setTerminalOutput("")}
+                    className="btn-secondary px-3 py-1.5 text-xs"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => invoke("stop_terminal")}
+                    className="btn-secondary px-3 py-1.5 text-xs"
+                  >
+                    Stop
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
+                <pre className="whitespace-pre-wrap break-all text-text-primary">
+                  {terminalOutput}
+                </pre>
+                <div ref={terminalEndRef} />
+              </div>
+              <div className="flex items-center gap-2 border-t border-border bg-bg-secondary p-3">
+                <span className="font-mono text-sm text-accent">&gt;</span>
+                <input
+                  type="text"
+                  value={terminalInput}
+                  onChange={(e) => setTerminalInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && terminalInput.trim()) {
+                      const cmd = terminalInput + "\r\n";
+                      setTerminalOutput((prev) => prev + "> " + terminalInput + "\n");
+                      invoke("write_terminal", { text: cmd }).catch((err) =>
+                        setTerminalOutput((prev) => prev + "[error] " + err + "\n")
+                      );
+                      setTerminalInput("");
+                    }
+                  }}
+                  placeholder="Type a command and press Enter"
+                  className="input flex-1 bg-black font-mono text-sm"
+                  spellCheck={false}
+                />
               </div>
             </div>
           )}
