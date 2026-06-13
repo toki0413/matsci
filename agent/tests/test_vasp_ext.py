@@ -67,11 +67,13 @@ def test_python_outcar_parser_baseline(synthetic_outcar: Path) -> None:
     assert len(result["magnetic_moments"]) == 2
 
 
+@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
 def test_rust_extension_available() -> None:
     """The Rust extension should be importable in this environment."""
     assert _HAS_MATSCI_EXT is True
 
 
+@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
 def test_rust_outcar_parser_matches_python(synthetic_outcar: Path) -> None:
     """Rust OUTCAR parser output should match the Python parser output."""
     tool = VaspTool()

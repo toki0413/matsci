@@ -22,11 +22,13 @@ def test_python_parser_baseline():
     assert "rdf" in result
 
 
+@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
 def test_rust_extension_available():
     """The Rust extension should be importable in this environment."""
     assert _HAS_MATSCI_EXT is True
 
 
+@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
 def test_rust_parser_matches_python():
     """Rust parser output should match the Python parser output."""
     tool = LammpsTool()
@@ -56,6 +58,7 @@ def test_rust_parser_matches_python():
         assert r_g == pytest.approx(p_g, abs=1e-9)
 
 
+@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
 def test_rust_parser_raw_api():
     """Test the raw matsci_ext API directly."""
     import matsci_ext
@@ -73,6 +76,7 @@ def test_rust_parser_raw_api():
     assert "id" in result["frames"][0]["atoms"][0]
 
 
+@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
 def test_general_msd() -> None:
     """Test compute_msd on a NumPy array against a reference implementation."""
     import numpy as np
@@ -94,6 +98,7 @@ def test_general_msd() -> None:
         assert entry["msd"] == pytest.approx(expected, abs=1e-9)
 
 
+@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
 def test_general_rdf() -> None:
     """Test compute_rdf on a NumPy array against a reference implementation."""
     import numpy as np
