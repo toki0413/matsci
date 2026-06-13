@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: write
+
 jobs:
   build-desktop:
     runs-on: windows-latest
@@ -57,4 +60,16 @@ jobs:
           name: matsci-desktop-windows
           path: |
             desktop/src-tauri/target/release/bundle/
+            desktop/src-tauri/target/release/*.exe
+
+      - name: Create pre-release with desktop installer
+        if: success() && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-ci-${{ github.run_number }}
+          name: Desktop CI Build ${{ github.run_number }}
+          prerelease: true
+          files: |
+            desktop/src-tauri/target/release/bundle/**/*.exe
+            desktop/src-tauri/target/release/bundle/**/*.msi
             desktop/src-tauri/target/release/*.exe
