@@ -33,8 +33,20 @@ jobs:
         run: npm run build
 
       - name: Build Tauri desktop app
-        run: npm run tauri build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run tauri build 2>&1 | tee tauri-build.log
         timeout-minutes: 40
+
+      - name: Annotate Tauri build failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "::error::Tauri build failed. Last 80 lines of log:"
+          tail -80 desktop/tauri-build.log | while IFS= read -r line; do
+            echo "::error::$line"
+          done
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
