@@ -4,6 +4,8 @@
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+use tauri::Manager;
+
 struct AppState {
     backend: Mutex<Option<Child>>,
 }
