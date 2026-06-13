@@ -39,10 +39,10 @@ jobs:
         shell: bash
         run: pip install maturin
 
-      - name: Build Rust workspace
+      - name: Build Rust CLI
         shell: bash
         run: |
-          cargo build --release -p matsci -p matsci-agent-desktop
+          cargo build --release -p matsci
 
       - name: Build matsci-ext wheel
         shell: bash
