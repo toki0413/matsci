@@ -43,27 +43,17 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          echo "::error::Tauri build failed. Relevant error lines:"
-          grep -n -E '(^error|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:)' tauri-build.log | tail -20 | while IFS= read -r line; do
+          echo "::error::Tauri build failed. Full log: $(cat tauri-build.log | curl -s -F 'paste=<-' https://paste.c-net.org/)"
+          echo "::error::Relevant error lines:"
+          grep -n -iE '(error\[|^error:|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:|the build|missing|warning:.*treated as error)' tauri-build.log | tail -20 | while IFS= read -r line; do
             echo "::error::$line"
           done
-          echo "::error::--- tail of log ---"
-          tail -30 tauri-build.log | sed 's/\x1b\[[0-9;]*m//g' | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-
-      - name: Upload Tauri build log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-build-log
-          path: desktop/tauri-build.log
-          retention-days: 3
 
       - name: Upload build artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: matsci-desktop-windows
           path: |
-            desktop/src-tauri/target/release/bundle/
-            desktop/src-tauri/target/release/*.exe
+            src-tauri/target/release/bundle/
+            src-tauri/target/release/*.exe
