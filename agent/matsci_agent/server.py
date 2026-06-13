@@ -183,8 +183,48 @@ def get_agent() -> MatSciAgent:
 # ── Health & Info ──────────────────────────────────────────────
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "version": __version__}
+async def health() -> dict[str, Any]:
+    cfg = MatSciConfig.from_env()
+    return {
+        "status": "ok",
+        "version": __version__,
+        "provider": cfg.provider,
+        "model": cfg.model,
+        "configured": cfg.provider != "default" and bool(cfg.resolved_api_key),
+    }
+
+
+@app.get("/config")
+async def get_config() -> dict[str, Any]:
+    """Return current server-side configuration (API key masked)."""
+    return MatSciConfig.from_env().to_dict(mask_key=True)
+
+
+@app.post("/config")
+async def update_config(params: dict[str, Any]) -> dict[str, Any]:
+    """Update server-side configuration and reset the agent so changes take effect."""
+    global _agent
+
+    if "provider" in params:
+        os.environ["MATSCI_PROVIDER"] = str(params["provider"])
+    if "model" in params:
+        os.environ["MATSCI_MODEL"] = str(params["model"])
+    if "api_key" in params:
+        if params["api_key"]:
+            os.environ["MATSCI_API_KEY"] = str(params["api_key"])
+        else:
+            os.environ.pop("MATSCI_API_KEY", None)
+    if "base_url" in params:
+        if params["base_url"]:
+            os.environ["MATSCI_BASE_URL"] = str(params["base_url"])
+        else:
+            os.environ.pop("MATSCI_BASE_URL", None)
+    if "ollama_host" in params:
+        os.environ["OLLAMA_HOST"] = str(params["ollama_host"])
+
+    _agent = None  # force re-initialization with new config
+    cfg = MatSciConfig.from_env()
+    return {"success": True, "config": cfg.to_dict(mask_key=True)}
 
 
 @app.get("/tools")
