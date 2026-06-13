@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           echo "::error::Tauri build failed. Last 80 lines of log:"
-          tail -80 desktop/tauri-build.log | while IFS= read -r line; do
+          tail -80 tauri-build.log | while IFS= read -r line; do
             echo "::error::$line"
           done
 
