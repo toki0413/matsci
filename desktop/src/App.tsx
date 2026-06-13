@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 
 interface Message {
   role: "user" | "assistant" | "tool";
@@ -19,6 +24,8 @@ interface ToolInfo {
     description: string;
     parameters: Record<string, any>;
   };
+  destructive?: boolean;
+  read_only?: boolean;
 }
 
 interface SkillInfo {
@@ -35,6 +42,26 @@ interface SkillInfo {
   tags: string[];
 }
 
+interface ModelConfig {
+  alias: string;
+  provider: string;
+  model: string;
+  api_key: string;
+  base_url: string;
+  temperature: number;
+  enabled: boolean;
+}
+
+interface AgentProfile {
+  id: string;
+  name: string;
+  model_alias: string;
+  persona: string;
+  tools: string[];
+  enabled: boolean;
+  max_steps: number;
+}
+
 interface AppConfig {
   provider: string;
   model: string;
@@ -43,12 +70,22 @@ interface AppConfig {
   ollama_host: string;
   persona: string;
   rag_enabled: boolean;
+  models: ModelConfig[];
+  agents: AgentProfile[];
+  team_mode_enabled: boolean;
+  max_concurrent_subagents: number;
 }
 
 interface FileEntry {
   name: string;
   path: string;
   is_dir: boolean;
+}
+
+interface BackendLogEvent {
+  source: "stdout" | "stderr";
+  text: string;
+  time: string;
 }
 
 const API_BASE = "http://localhost:8000";
@@ -66,6 +103,10 @@ const DEFAULT_CONFIG: AppConfig = {
   ollama_host: "http://localhost:11434",
   persona: "default",
   rag_enabled: false,
+  models: [],
+  agents: [],
+  team_mode_enabled: false,
+  max_concurrent_subagents: 3,
 };
 
 const PERSONAS = [
@@ -331,6 +372,9 @@ export default function App() {
     },
   ]);
   const [input, setInput] = useState("");
+  const [mode, setMode] = useState<"chat" | "plan" | "build">("chat");
+  const [pendingPlan, setPendingPlan] = useState<string>("");
+  const [planLoading, setPlanLoading] = useState(false);
   const [status, setStatus] = useState<string>("connecting…");
   const [activeTab, setActiveTab] = useState<
     | "chat"
@@ -342,6 +386,10 @@ export default function App() {
     | "terminal"
     | "review"
     | "knowledge"
+    | "logs"
+    | "plugins"
+    | "threads"
+    | "project"
   >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -364,6 +412,47 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
+  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents">("general");
+
+  // Project context + codebase search state
+  const [projectContext, setProjectContext] = useState<string>("");
+  const [projectContextSource, setProjectContextSource] = useState<string>("none");
+  const [projectContextMsg, setProjectContextMsg] = useState<string>("");
+  const [codebaseStatus, setCodebaseStatus] = useState<any>(null);
+  const [codebaseQuery, setCodebaseQuery] = useState<string>("");
+  const [codebaseResults, setCodebaseResults] = useState<any[]>([]);
+  const [codebaseMsg, setCodebaseMsg] = useState<string>("");
+
+  // Memory panel state
+  interface MemoryEntry {
+    id: string;
+    category: string;
+    content: string;
+    tags: string;
+    source: string;
+    importance: number;
+    tier: string;
+    created_at: string;
+    last_accessed: string;
+    expires_at: string | null;
+    access_count: number;
+  }
+  interface MemoryStats {
+    longterm_entries: number;
+    tier_counts: { short: number; mid: number; long: number };
+  }
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
+  const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
+  const [memorySearch, setMemorySearch] = useState<string>("");
+  const [memoryFilter, setMemoryFilter] = useState<{ category: string; tier: string }>({ category: "", tier: "" });
+  const [memoryForm, setMemoryForm] = useState<{ content: string; category: string; tags: string; importance: number; tier: string }>({
+    content: "",
+    category: "fact",
+    tags: "",
+    importance: 0.5,
+    tier: "mid",
+  });
+  const [memoryMsg, setMemoryMsg] = useState<string>("");
 
   // Workspace / file explorer state
   const [cwd, setCwd] = useState<string>("");
@@ -377,6 +466,10 @@ export default function App() {
   const [terminalOutput, setTerminalOutput] = useState<string>("");
   const [terminalInput, setTerminalInput] = useState<string>("");
   const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  const [backendLogs, setBackendLogs] = useState<BackendLogEvent[]>([]);
+  const [logFilter, setLogFilter] = useState<"all" | "stdout" | "stderr">("all");
+  const backendLogEndRef = useRef<HTMLDivElement>(null);
 
   interface DiffEntry {
     path: string;
@@ -395,6 +488,8 @@ export default function App() {
   const [diffs, setDiffs] = useState<DiffEntry[]>([]);
   const [selectedDiff, setSelectedDiff] = useState<DiffEntry | null>(null);
 
+  const pendingResponseRef = useRef<string>("");
+
   const GUIDE_KEY = "matsci:guide:v1";
   const [showGuide, setShowGuide] = useState(false);
   useEffect(() => {
@@ -406,6 +501,31 @@ export default function App() {
     localStorage.setItem(GUIDE_KEY, "1");
     setShowGuide(false);
   };
+
+  // Request OS notification permission once
+  useEffect(() => {
+    (async () => {
+      try {
+        let permitted = await isPermissionGranted();
+        if (!permitted) {
+          const permission = await requestPermission();
+          permitted = permission === "granted";
+        }
+      } catch {
+        // notification plugin may not be available in web builds
+      }
+    })();
+  }, []);
+
+  const notify = useCallback((title: string, body: string) => {
+    try {
+      if (document.hidden) {
+        sendNotification({ title, body });
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const startBackend = useCallback(async () => {
     setStatus("starting backend…");
@@ -480,6 +600,96 @@ export default function App() {
     },
     [pushConfig]
   );
+
+  const ensureDefaultModel = () => {
+    if (config.models.length === 0) {
+      return {
+        ...config,
+        models: [
+          {
+            alias: "default",
+            provider: config.provider || "openai",
+            model: config.model || "",
+            api_key: config.api_key || "",
+            base_url: config.base_url || "",
+            temperature: 0.7,
+            enabled: true,
+          },
+        ],
+      };
+    }
+    return config;
+  };
+
+  const updateModel = (idx: number, patch: Partial<ModelConfig>) => {
+    const base = ensureDefaultModel();
+    const nextModels = base.models.map((m, i) => (i === idx ? { ...m, ...patch } : m));
+    const next = { ...base, models: nextModels };
+    setConfig(next);
+    setConfigDirty(true);
+  };
+
+  const addModel = () => {
+    const base = ensureDefaultModel();
+    const next: AppConfig = {
+      ...base,
+      models: [
+        ...base.models,
+        { alias: `model${base.models.length + 1}`, provider: "openai", model: "", api_key: "", base_url: "", temperature: 0.7, enabled: true },
+      ],
+    };
+    setConfig(next);
+    setConfigDirty(true);
+  };
+
+  const removeModel = (idx: number) => {
+    const next = { ...config, models: config.models.filter((_, i) => i !== idx) };
+    setConfig(next);
+    setConfigDirty(true);
+  };
+
+  const ensureDefaultAgents = () => {
+    if (config.agents.length === 0) {
+      const modelAlias = config.models[0]?.alias || "default";
+      return {
+        ...config,
+        agents: [
+          { id: "lead", name: "Lead", model_alias: modelAlias, persona: "default", tools: [], enabled: true, max_steps: 10 },
+          { id: "researcher", name: "Researcher", model_alias: modelAlias, persona: "tutor", tools: [], enabled: true, max_steps: 10 },
+          { id: "reviewer", name: "Reviewer", model_alias: modelAlias, persona: "reviewer", tools: [], enabled: true, max_steps: 10 },
+        ],
+      };
+    }
+    return config;
+  };
+
+  const updateAgent = (idx: number, patch: Partial<AgentProfile>) => {
+    const base = ensureDefaultAgents();
+    const nextAgents = base.agents.map((a, i) => (i === idx ? { ...a, ...patch } : a));
+    const next = { ...base, agents: nextAgents };
+    setConfig(next);
+    setConfigDirty(true);
+  };
+
+  const addAgent = () => {
+    const base = ensureDefaultAgents();
+    const modelAlias = config.models[0]?.alias || "default";
+    const next: AppConfig = {
+      ...base,
+      agents: [
+        ...base.agents,
+        { id: `agent${base.agents.length + 1}`, name: "", model_alias: modelAlias, persona: "default", tools: [], enabled: true, max_steps: 10 },
+      ],
+    };
+    setConfig(next);
+    setConfigDirty(true);
+  };
+
+  const removeAgent = (idx: number) => {
+    const next = { ...config, agents: config.agents.filter((_, i) => i !== idx) };
+    setConfig(next);
+    setConfigDirty(true);
+  };
 
   // Workspace file explorer helpers
   const loadDir = useCallback(async (path: string) => {
@@ -558,6 +768,28 @@ export default function App() {
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: "auto" });
   }, [terminalOutput]);
+
+  // Listen to backend stdout/stderr
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    (async () => {
+      unlisten = await listen("backend-log", (event) => {
+        const payload = event.payload as { source: string; text: string };
+        const source = payload.source === "stderr" ? "stderr" : "stdout";
+        setBackendLogs((prev) => [
+          ...prev,
+          { source, text: payload.text, time: formatTime() },
+        ]);
+      });
+    })();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    backendLogEndRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [backendLogs, logFilter]);
 
   const createCheckpoint = async () => {
     if (!cwd) return;
@@ -681,11 +913,358 @@ export default function App() {
     }
   };
 
+  // MCP / Plugin state
+  interface McpServer {
+    name: string;
+    connected: boolean;
+    tools: { name: string; description: string; input_schema?: any }[];
+  }
+  interface DiscoveredServer {
+    name: string;
+    path: string;
+    command: string;
+    args: string[];
+  }
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [discoveredServers, setDiscoveredServers] = useState<DiscoveredServer[]>([]);
+  const [mcpMsg, setMcpMsg] = useState<string>("");
+  const [newMcp, setNewMcp] = useState<{ name: string; command: string; args: string }>({
+    name: "",
+    command: "python",
+    args: "",
+  });
+
+  const loadMcp = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/mcp/servers`).then((r) => r.json());
+      setMcpServers(data.servers || []);
+    } catch (e: any) {
+      setMcpMsg(`Failed to load MCP servers: ${e.message}`);
+    }
+  };
+
+  const discoverMcp = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/mcp/servers/discover`).then((r) => r.json());
+      setDiscoveredServers(data.servers || []);
+    } catch (e: any) {
+      setMcpMsg(`Discovery failed: ${e.message}`);
+    }
+  };
+
+  const connectMcp = async (server: { name: string; command: string; args: string[] }) => {
+    setMcpMsg(`Connecting ${server.name}…`);
+    try {
+      const data = await fetch(`${API_BASE}/mcp/servers/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(server),
+      }).then((r) => r.json());
+      if (data.success) {
+        setMcpMsg(`Connected ${server.name} (${data.tools?.length || 0} tools)`);
+        loadMcp();
+      } else {
+        setMcpMsg(`Connect failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setMcpMsg(`Connect error: ${e.message}`);
+    }
+  };
+
+  const disconnectMcp = async (name: string) => {
+    setMcpMsg(`Disconnecting ${name}…`);
+    try {
+      const data = await fetch(`${API_BASE}/mcp/servers/${name}/disconnect`, {
+        method: "POST",
+      }).then((r) => r.json());
+      if (data.success) {
+        setMcpMsg(`Disconnected ${name}`);
+        loadMcp();
+      } else {
+        setMcpMsg(`Disconnect failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setMcpMsg(`Disconnect error: ${e.message}`);
+    }
+  };
+
+  // Thread state
+  interface Thread {
+    id: string;
+    label: string;
+    created_at: string;
+    last_active: string;
+  }
+  const [threads, setThreads] = useState<Thread[]>([
+    { id: "desktop", label: "Default", created_at: "", last_active: "" },
+  ]);
+  const [activeThread, setActiveThread] = useState<string>("desktop");
+
+  const loadThreads = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/threads`).then((r) => r.json());
+      setThreads(data.threads || []);
+    } catch (e: any) {
+      console.error("[threads] load failed:", e);
+    }
+  };
+
+  const createThread = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/threads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: "New thread" }),
+      }).then((r) => r.json());
+      setActiveThread(data.id);
+      setMessages([
+        {
+          role: "assistant",
+          content: `Started new thread **${data.label}**.`,
+          timestamp: formatTime(),
+        },
+      ]);
+      loadThreads();
+    } catch (e: any) {
+      console.error("[threads] create failed:", e);
+    }
+  };
+
+  const renameThread = async (id: string, label: string) => {
+    try {
+      await fetch(`${API_BASE}/threads/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      }).then((r) => r.json());
+      loadThreads();
+    } catch (e: any) {
+      console.error("[threads] rename failed:", e);
+    }
+  };
+
+  const deleteThread = async (id: string) => {
+    try {
+      await fetch(`${API_BASE}/threads/${id}`, { method: "DELETE" });
+      if (activeThread === id) {
+        setActiveThread("desktop");
+      }
+      loadThreads();
+    } catch (e: any) {
+      console.error("[threads] delete failed:", e);
+    }
+  };
+
+  const loadProjectContext = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/project-context`).then((r) => r.json());
+      setProjectContext(data.content || "");
+      setProjectContextSource(data.source || "none");
+      setProjectContextMsg("");
+    } catch (e: any) {
+      setProjectContextMsg(`Load failed: ${e.message}`);
+    }
+  };
+
+  const saveProjectContext = async () => {
+    setProjectContextMsg("Saving…");
+    try {
+      const data = await fetch(`${API_BASE}/project-context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: projectContext }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setProjectContextMsg("Saved. Agent will reload on next message.");
+      } else {
+        setProjectContextMsg(`Save failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setProjectContextMsg(`Save error: ${e.message}`);
+    }
+  };
+
+  const loadCodebaseStatus = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/codebase`).then((r) => r.json());
+      setCodebaseStatus(data);
+    } catch (e: any) {
+      setCodebaseMsg(`Status failed: ${e.message}`);
+    }
+  };
+
+  const indexCodebase = async () => {
+    setCodebaseMsg("Indexing workspace…");
+    try {
+      const data = await fetch(`${API_BASE}/codebase/index`, { method: "POST" }).then((r) =>
+        r.json()
+      );
+      if (data.success) {
+        setCodebaseMsg(`Indexed ${data.indexed_files} files, ${data.chunks} chunks`);
+        loadCodebaseStatus();
+      } else {
+        setCodebaseMsg(`Index failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setCodebaseMsg(`Index error: ${e.message}`);
+    }
+  };
+
+  const searchCodebase = async () => {
+    if (!codebaseQuery.trim()) return;
+    setCodebaseMsg("Searching…");
+    try {
+      const data = await fetch(`${API_BASE}/codebase/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: codebaseQuery, top_k: 8 }),
+      }).then((r) => r.json());
+      setCodebaseResults(data.results || []);
+      setCodebaseMsg(data.results?.length ? `Found ${data.results.length} results` : "No results");
+    } catch (e: any) {
+      setCodebaseMsg(`Search error: ${e.message}`);
+    }
+  };
+
+  const loadMemory = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (memoryFilter.category) params.set("category", memoryFilter.category);
+      if (memoryFilter.tier) params.set("tier", memoryFilter.tier);
+      params.set("limit", "200");
+      const data = await fetch(`${API_BASE}/memory?${params.toString()}`).then((r) => r.json());
+      setMemories(data.entries || []);
+    } catch (e: any) {
+      setMemoryMsg(`Load failed: ${e.message}`);
+    }
+  };
+
+  const loadMemoryStats = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/memory/stats`).then((r) => r.json());
+      setMemoryStats(data);
+    } catch {
+      setMemoryStats(null);
+    }
+  };
+
+  const searchMemory = async () => {
+    if (!memorySearch.trim()) {
+      loadMemory();
+      return;
+    }
+    setMemoryMsg("Searching…");
+    try {
+      const data = await fetch(`${API_BASE}/memory/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: memorySearch, top_k: 10 }),
+      }).then((r) => r.json());
+      setMemories(data.results || []);
+      setMemoryMsg(data.results?.length ? `Found ${data.results.length} results` : "No results");
+    } catch (e: any) {
+      setMemoryMsg(`Search error: ${e.message}`);
+    }
+  };
+
+  const createMemory = async () => {
+    setMemoryMsg("Saving…");
+    try {
+      const data = await fetch(`${API_BASE}/memory`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: memoryForm.content,
+          category: memoryForm.category,
+          tags: memoryForm.tags.split(",").map((t) => t.trim()).filter(Boolean),
+          importance: memoryForm.importance,
+          tier: memoryForm.tier,
+        }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setMemoryForm({ content: "", category: "fact", tags: "", importance: 0.5, tier: "mid" });
+        setMemoryMsg("Memory saved.");
+        loadMemory();
+        loadMemoryStats();
+      } else {
+        setMemoryMsg(`Save failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setMemoryMsg(`Save error: ${e.message}`);
+    }
+  };
+
+  const deleteMemory = async (id: string) => {
+    if (!confirm("Delete this memory?")) return;
+    try {
+      await fetch(`${API_BASE}/memory/${id}`, { method: "DELETE" });
+      loadMemory();
+      loadMemoryStats();
+    } catch (e: any) {
+      setMemoryMsg(`Delete error: ${e.message}`);
+    }
+  };
+
+  const promoteMemory = async (id: string) => {
+    try {
+      const data = await fetch(`${API_BASE}/memory/promote/${id}`, { method: "POST" }).then((r) => r.json());
+      if (data.success) {
+        loadMemory();
+        loadMemoryStats();
+      } else {
+        setMemoryMsg(`Promote failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setMemoryMsg(`Promote error: ${e.message}`);
+    }
+  };
+
+  const pruneMemory = async () => {
+    if (!confirm("Prune expired and low-importance memories?")) return;
+    try {
+      const data = await fetch(`${API_BASE}/memory/prune`, { method: "POST" }).then((r) => r.json());
+      setMemoryMsg(`Pruned ${data.expired ?? 0} expired, ${data.low_importance ?? 0} low-importance.`);
+      loadMemory();
+      loadMemoryStats();
+    } catch (e: any) {
+      setMemoryMsg(`Prune error: ${e.message}`);
+    }
+  };
+
+  const syncMemoryMd = async () => {
+    setMemoryMsg("Syncing MEMORY.md…");
+    try {
+      const data = await fetch(`${API_BASE}/memory/sync-md`, { method: "POST" }).then((r) => r.json());
+      if (data.path) {
+        setMemoryMsg(`Synced to ${data.path}`);
+      } else {
+        setMemoryMsg("Sync returned no path.");
+      }
+    } catch (e: any) {
+      setMemoryMsg(`Sync error: ${e.message}`);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "knowledge") {
       loadKnowledge();
     }
-  }, [activeTab]);
+    if (activeTab === "plugins") {
+      loadMcp();
+      discoverMcp();
+    }
+    if (activeTab === "threads") {
+      loadThreads();
+    }
+    if (activeTab === "project") {
+      loadProjectContext();
+      loadCodebaseStatus();
+    }
+    if (activeTab === "memory") {
+      loadMemory();
+      loadMemoryStats();
+    }
+  }, [activeTab, memoryFilter.category, memoryFilter.tier]);
 
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -761,6 +1340,7 @@ export default function App() {
           }
           return [...prev, { role: "assistant", content: data.text, timestamp: "streaming" }];
         });
+        pendingResponseRef.current += data.text;
         setIsStreaming(true);
         break;
       case "done":
@@ -773,6 +1353,10 @@ export default function App() {
           return updated;
         });
         setIsStreaming(false);
+        notify(
+          "MatSci-Agent",
+          pendingResponseRef.current.slice(0, 120) || "Agent finished"
+        );
         break;
       case "error":
         setMessages((prev) => [
@@ -780,6 +1364,7 @@ export default function App() {
           { role: "assistant", content: `❌ ${data.error}`, timestamp: formatTime() },
         ]);
         setIsStreaming(false);
+        notify("MatSci-Agent", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
         break;
       case "tool_call":
         setMessages((prev) => [
@@ -813,25 +1398,89 @@ export default function App() {
           return updated;
         });
         break;
+      case "auto_checkpoint":
+        setCheckpoints((prev) => [
+          { id: data.id, base: data.base, files: data.files },
+          ...prev,
+        ]);
+        setActiveCp(data.id);
+        break;
+      case "agent_status":
+        setMessages((prev) => {
+          const updated = [...prev];
+          const key = `agent:${data.task_id}`;
+          const idx = updated.findIndex((m) => m.role === "tool" && m.tool_call_id === key);
+          const text = data.output
+            ? `**${data.agent_id}** ${data.status}: ${data.output.slice(0, 200)}`
+            : `**${data.agent_id}** ${data.status}…`;
+          const entry: Message = {
+            role: "tool",
+            content: text,
+            timestamp: formatTime(),
+            tool_call_id: key,
+            tool_name: data.agent_id,
+            tool_status: data.status === "done" ? "done" : "running",
+          };
+          if (idx !== -1) {
+            updated[idx] = entry;
+          } else {
+            updated.push(entry);
+          }
+          return updated;
+        });
+        break;
       case "pong":
         break;
     }
   };
 
-  const sendMessage = () => {
-    if (!input.trim() || !wsRef.current || isStreaming) return;
+  const sendMessage = async () => {
+    if (!input.trim() || isStreaming) return;
 
-    const userMsg: Message = { role: "user", content: input.trim(), timestamp: formatTime() };
+    const content = input.trim();
+
+    if (mode === "plan") {
+      setPlanLoading(true);
+      setPendingPlan("");
+      try {
+        const data = await fetch(`${API_BASE}/plan`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, thread_id: activeThread }),
+        }).then((r) => r.json());
+        if (data.error) {
+          setPendingPlan(`❌ ${data.error}`);
+        } else {
+          setPendingPlan(data.plan || "No plan returned.");
+        }
+      } catch (e: any) {
+        setPendingPlan(`❌ Plan request failed: ${e.message}`);
+      } finally {
+        setPlanLoading(false);
+      }
+      return;
+    }
+
+    if (!wsRef.current) return;
+
+    const userMsg: Message = { role: "user", content, timestamp: formatTime() };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    pendingResponseRef.current = "";
 
     wsRef.current.send(
-      JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: "desktop" })
+      JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread })
     );
   };
 
   const runTool = async () => {
     if (!selectedTool) return;
+    if (selectedTool.destructive) {
+      const ok = window.confirm(
+        `⚠️ ${selectedTool.function.name} may overwrite files or run shell commands. Run it anyway?`
+      );
+      if (!ok) return;
+    }
     setToolLoading(true);
     setToolResult("");
     try {
@@ -879,7 +1528,11 @@ export default function App() {
     { id: "knowledge", label: "Knowledge", icon: "📚" },
     { id: "tools", label: "Tools", icon: "🔧" },
     { id: "skills", label: "Skills", icon: "⚡" },
+    { id: "project", label: "Project", icon: "🏗️" },
     { id: "memory", label: "Memory", icon: "🧠" },
+    { id: "plugins", label: "Plugins", icon: "🔌" },
+    { id: "threads", label: "Threads", icon: "🧵" },
+    { id: "logs", label: "Logs", icon: "📋" },
     { id: "settings", label: "Settings", icon: "⚙️" },
   ];
 
@@ -964,9 +1617,26 @@ export default function App() {
               {tabs.find((t) => t.id === activeTab)?.label}
             </span>
             {activeTab === "chat" && (
-              <span className="badge border border-border bg-bg-tertiary text-text-secondary">
-                {providerLabel} / {config.model || "default"}
-              </span>
+              <>
+                <span className="badge border border-border bg-bg-tertiary text-text-secondary">
+                  {config.models.length > 0
+                    ? `${config.models.filter((m) => m.enabled).length} models`
+                    : `${providerLabel} / ${config.model || "default"}`}
+                </span>
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={config.team_mode_enabled}
+                    onChange={(e) => {
+                      const next = { ...config, team_mode_enabled: e.target.checked };
+                      setConfig(next);
+                      setConfigDirty(true);
+                      saveConfig(next);
+                    }}
+                  />
+                  Team mode
+                </label>
+              </>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -1073,6 +1743,59 @@ export default function App() {
                     Backend is not connected. Start the server to send messages, or configure it in Settings.
                   </div>
                 )}
+
+                {pendingPlan && (
+                  <div className="mb-3 rounded-xl border border-border bg-bg-tertiary p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-accent">📋 Plan</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setPendingPlan("")}
+                          className="text-xs text-text-secondary hover:text-text-primary"
+                        >
+                          Dismiss
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMode("build");
+                            sendMessage();
+                          }}
+                          disabled={!input.trim() || planLoading}
+                          className="btn-primary px-3 py-1 text-xs"
+                        >
+                          Run plan
+                        </button>
+                      </div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs text-text-primary">
+                      <MessageContent content={pendingPlan} />
+                    </div>
+                  </div>
+                )}
+
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
+                    {(["chat", "plan", "build"] as const).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setMode(m)}
+                        className={`rounded px-3 py-1 capitalize ${
+                          mode === m
+                            ? "bg-accent text-white"
+                            : "text-text-secondary hover:text-text-primary"
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-text-muted">
+                    {mode === "plan" && "Generate a step-by-step plan without executing tools"}
+                    {mode === "build" && "Execute tools and edit files"}
+                    {mode === "chat" && "Normal assistant chat"}
+                  </span>
+                </div>
+
                 <div className="flex items-end gap-3">
                   <textarea
                     value={input}
@@ -1084,20 +1807,24 @@ export default function App() {
                       }
                     }}
                     placeholder={
-                      isConnected
+                      mode === "plan"
+                        ? "Describe what you want to do. I'll generate a plan first."
+                        : mode === "build"
+                        ? "Run the plan with tool execution enabled…"
+                        : isConnected
                         ? "Ask about materials science, DFT, MD, packing, UQ/GP…"
                         : "Backend offline — start server.py"
                     }
                     rows={2}
-                    disabled={!isConnected || isStreaming}
+                    disabled={!isConnected || isStreaming || planLoading}
                     className="input min-h-[56px] resize-none flex-1"
                   />
                   <button
                     onClick={sendMessage}
-                    disabled={!isConnected || isStreaming || !input.trim()}
+                    disabled={!isConnected || isStreaming || !input.trim() || planLoading}
                     className="btn-primary h-11 px-5"
                   >
-                    {isStreaming ? "…" : "Send"}
+                    {planLoading ? "Planning…" : isStreaming ? "…" : mode === "plan" ? "Plan" : "Send"}
                   </button>
                 </div>
               </div>
@@ -1444,6 +2171,63 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === "logs" && (
+            <div className="flex h-full flex-col bg-black">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+                <span className="text-sm font-semibold">Backend Logs</span>
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
+                    {(["all", "stdout", "stderr"] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setLogFilter(f)}
+                        className={`rounded px-2.5 py-1 capitalize ${
+                          logFilter === f
+                            ? "bg-accent text-white"
+                            : "text-text-secondary hover:text-text-primary"
+                        }`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() =>
+                      navigator.clipboard.writeText(
+                        backendLogs.map((l) => `[${l.time}][${l.source}] ${l.text}`).join("")
+                      )
+                    }
+                    className="btn-secondary px-3 py-1.5 text-xs"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    onClick={() => setBackendLogs([])}
+                    className="btn-secondary px-3 py-1.5 text-xs"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
+                {backendLogs
+                  .filter((l) => logFilter === "all" || l.source === logFilter)
+                  .map((l, i) => (
+                    <div
+                      key={i}
+                      className={`whitespace-pre-wrap break-all ${
+                        l.source === "stderr" ? "text-error" : "text-text-primary"
+                      }`}
+                    >
+                      <span className="text-text-muted">[{l.time}]</span>{" "}
+                      {l.text}
+                    </div>
+                  ))}
+                <div ref={backendLogEndRef} />
+              </div>
+            </div>
+          )}
+
           {activeTab === "tools" && (
             <div className="h-full overflow-y-auto p-6">
               <div className="mb-4 flex items-center justify-between">
@@ -1467,7 +2251,14 @@ export default function App() {
                       }}
                       className="card text-left transition-colors hover:border-accent"
                     >
-                      <div className="text-xs font-semibold uppercase text-accent">Tool</div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold uppercase text-accent">Tool</div>
+                        {tool.destructive && (
+                          <span className="rounded bg-error/10 px-1.5 py-0.5 text-[10px] text-error">
+                            destructive
+                          </span>
+                        )}
+                      </div>
                       <div className="mt-1 text-sm font-semibold">{tool.function.name}</div>
                       <div className="mt-1 text-xs text-text-secondary line-clamp-2">
                         {tool.function.description}
@@ -1478,7 +2269,14 @@ export default function App() {
               ) : (
                 <div className="max-w-3xl space-y-4">
                   <div className="card">
-                    <div className="text-xs uppercase text-accent font-semibold">Tool</div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs uppercase text-accent font-semibold">Tool</div>
+                      {selectedTool.destructive && (
+                        <span className="rounded bg-error/10 px-1.5 py-0.5 text-[10px] text-error">
+                          destructive
+                        </span>
+                      )}
+                    </div>
                     <h3 className="mt-1 text-base font-semibold">{selectedTool.function.name}</h3>
                     <p className="mt-1 text-sm text-text-secondary">
                       {selectedTool.function.description}
@@ -1503,7 +2301,11 @@ export default function App() {
                     />
                   </div>
                   <button onClick={runTool} disabled={toolLoading} className="btn-primary">
-                    {toolLoading ? "Running…" : "Run Tool"}
+                    {toolLoading
+                      ? "Running…"
+                      : selectedTool.destructive
+                      ? "⚠️ Run Tool"
+                      : "Run Tool"}
                   </button>
                   {toolResult && (
                     <div className="card border-accent/20 bg-bg-secondary">
@@ -1618,194 +2420,643 @@ export default function App() {
           )}
 
           {activeTab === "memory" && (
-            <div className="h-full overflow-y-auto p-6">
-              <h2 className="mb-4 text-lg font-semibold">Memory</h2>
-              <div className="grid max-w-3xl grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="card">
-                  <h3 className="text-sm font-semibold">Session Memory</h3>
-                  <p className="mt-1 text-xs text-text-secondary">
-                    Current conversation context and working memory.
-                  </p>
-                  <div className="mt-3 flex items-center justify-between text-sm">
-                    <span className="text-text-muted">Messages</span>
-                    <span className="font-medium">{messages.filter((m) => m.role !== "tool").length}</span>
-                  </div>
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+                <span className="text-sm font-semibold">Memory</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={syncMemoryMd} className="btn-secondary px-3 py-1.5 text-xs">Sync MEMORY.md</button>
+                  <button onClick={pruneMemory} className="btn-secondary px-3 py-1.5 text-xs">Prune</button>
+                  <button onClick={loadMemory} className="btn-secondary px-3 py-1.5 text-xs">Refresh</button>
                 </div>
-                <div className="card">
-                  <h3 className="text-sm font-semibold">Long-term Memory</h3>
-                  <p className="mt-1 text-xs text-text-secondary">
-                    Stored facts, calculations, and insights from past sessions.
-                  </p>
-                  <div className="mt-3 flex items-center justify-between text-sm">
-                    <span className="text-text-muted">Entries</span>
-                    <span className="font-medium">{isConnected ? "—" : "connect to backend"}</span>
+              </div>
+              <div className="flex flex-1 overflow-hidden">
+                <div className="w-80 overflow-y-auto border-r border-border bg-bg-secondary p-4">
+                  <div className="card mb-4">
+                    <h3 className="text-sm font-semibold">Stats</h3>
+                    <div className="mt-2 space-y-1 text-xs">
+                      <div className="flex justify-between"><span className="text-text-muted">Total</span><span>{memoryStats?.longterm_entries ?? "—"}</span></div>
+                      <div className="flex justify-between"><span className="text-text-muted">Short</span><span>{memoryStats?.tier_counts?.short ?? 0}</span></div>
+                      <div className="flex justify-between"><span className="text-text-muted">Mid</span><span>{memoryStats?.tier_counts?.mid ?? 0}</span></div>
+                      <div className="flex justify-between"><span className="text-text-muted">Long</span><span>{memoryStats?.tier_counts?.long ?? 0}</span></div>
+                    </div>
+                  </div>
+                  <div className="card mb-4">
+                    <h3 className="mb-2 text-sm font-semibold">Add Memory</h3>
+                    <textarea
+                      className="input-field mb-2 min-h-[80px] text-xs"
+                      placeholder="Content..."
+                      value={memoryForm.content}
+                      onChange={(e) => setMemoryForm({ ...memoryForm, content: e.target.value })}
+                    />
+                    <div className="mb-2 grid grid-cols-2 gap-2">
+                      <select className="input-field text-xs" value={memoryForm.category} onChange={(e) => setMemoryForm({ ...memoryForm, category: e.target.value })}>
+                        <option value="fact">fact</option>
+                        <option value="insight">insight</option>
+                        <option value="conversation">conversation</option>
+                        <option value="calculation">calculation</option>
+                        <option value="error">error</option>
+                        <option value="episode">episode</option>
+                      </select>
+                      <select className="input-field text-xs" value={memoryForm.tier} onChange={(e) => setMemoryForm({ ...memoryForm, tier: e.target.value })}>
+                        <option value="short">short (6h)</option>
+                        <option value="mid">mid (7d)</option>
+                        <option value="long">long (perm)</option>
+                      </select>
+                    </div>
+                    <input
+                      className="input-field mb-2 text-xs"
+                      placeholder="tags, comma separated"
+                      value={memoryForm.tags}
+                      onChange={(e) => setMemoryForm({ ...memoryForm, tags: e.target.value })}
+                    />
+                    <div className="mb-2 flex items-center gap-2 text-xs">
+                      <span className="text-text-muted">Importance</span>
+                      <input type="range" min={0} max={1} step={0.05} value={memoryForm.importance} onChange={(e) => setMemoryForm({ ...memoryForm, importance: parseFloat(e.target.value) })} />
+                      <span>{memoryForm.importance.toFixed(2)}</span>
+                    </div>
+                    <button onClick={createMemory} className="btn-primary w-full py-1.5 text-xs" disabled={!memoryForm.content.trim()}>
+                      Remember
+                    </button>
+                  </div>
+                  {memoryMsg && <p className="text-xs text-text-secondary">{memoryMsg}</p>}
+                </div>
+                <div className="flex flex-1 flex-col overflow-hidden bg-bg-primary p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <input
+                      className="input-field flex-1 text-xs"
+                      placeholder="Search memory..."
+                      value={memorySearch}
+                      onChange={(e) => setMemorySearch(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && searchMemory()}
+                    />
+                    <button onClick={searchMemory} className="btn-primary px-3 py-1.5 text-xs">Search</button>
+                    <select className="input-field text-xs" value={memoryFilter.category} onChange={(e) => setMemoryFilter({ ...memoryFilter, category: e.target.value })}>
+                      <option value="">all categories</option>
+                      <option value="fact">fact</option>
+                      <option value="insight">insight</option>
+                      <option value="conversation">conversation</option>
+                      <option value="calculation">calculation</option>
+                      <option value="error">error</option>
+                      <option value="episode">episode</option>
+                    </select>
+                    <select className="input-field text-xs" value={memoryFilter.tier} onChange={(e) => setMemoryFilter({ ...memoryFilter, tier: e.target.value })}>
+                      <option value="">all tiers</option>
+                      <option value="short">short</option>
+                      <option value="mid">mid</option>
+                      <option value="long">long</option>
+                    </select>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-2">
+                    {memories.length === 0 && <p className="text-sm text-text-muted">No memories found.</p>}
+                    {memories.map((m) => (
+                      <div key={m.id} className="card">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono">{m.tier}</span>
+                              <span className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono">{m.category}</span>
+                              <span className="text-text-muted">importance {m.importance}</span>
+                            </div>
+                            <p className="mt-1 whitespace-pre-wrap text-sm">{m.content}</p>
+                            <p className="mt-1 text-xs text-text-muted">tags: {m.tags || "—"} · source: {m.source || "—"}</p>
+                            <p className="text-xs text-text-muted">expires: {m.expires_at ? new Date(m.expires_at).toLocaleString() : "never"} · accessed {m.access_count ?? 0}</p>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            {m.tier !== "long" && (
+                              <button onClick={() => promoteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Promote to long">
+                                ⬆
+                              </button>
+                            )}
+                            <button onClick={() => deleteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Delete">
+                              🗑
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {activeTab === "settings" && (
-            <div className="h-full overflow-y-auto p-6">
-              <h2 className="mb-1 text-lg font-semibold">Settings</h2>
-              <p className="mb-6 text-sm text-text-secondary">
-                Configure your LLM provider. Settings are saved locally and pushed to the backend when it is online.
-              </p>
-
-              <div className="max-w-2xl space-y-5">
-                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Provider
-                    </label>
-                    <select
-                      value={config.provider}
-                      onChange={(e) => {
-                        const next = { ...config, provider: e.target.value };
-                        setConfig(next);
-                        setConfigDirty(true);
-                      }}
-                      className="input"
-                    >
-                      {PROVIDERS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Model
-                    </label>
-                    <input
-                      type="text"
-                      value={config.model}
-                      onChange={(e) => {
-                        setConfig({ ...config, model: e.target.value });
-                        setConfigDirty(true);
-                      }}
-                      placeholder="e.g. gpt-4o"
-                      className="input"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Persona
-                    </label>
-                    <select
-                      value={config.persona}
-                      onChange={(e) => {
-                        const next = { ...config, persona: e.target.value };
-                        setConfig(next);
-                        setConfigDirty(true);
-                      }}
-                      className="input"
-                    >
-                      {PERSONAS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-xs text-text-muted">
-                      Changes the system prompt role used by the agent.
-                    </p>
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="flex cursor-pointer items-center gap-2">
+          {activeTab === "plugins" && (
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+                <span className="text-sm font-semibold">Plugins / MCP Servers</span>
+                <button onClick={() => { loadMcp(); discoverMcp(); }} className="btn-secondary px-3 py-1.5 text-xs">
+                  Refresh
+                </button>
+              </div>
+              <div className="flex flex-1 overflow-hidden">
+                <aside className="flex w-80 flex-col border-r border-border bg-bg-secondary p-4">
+                  <h3 className="mb-3 text-sm font-semibold">Connect manually</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-text-secondary">Name</label>
                       <input
-                        type="checkbox"
-                        checked={config.rag_enabled}
-                        onChange={(e) => {
-                          const next = { ...config, rag_enabled: e.target.checked };
-                          setConfig(next);
-                          setConfigDirty(true);
-                        }}
-                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                        type="text"
+                        value={newMcp.name}
+                        onChange={(e) => setNewMcp({ ...newMcp, name: e.target.value })}
+                        placeholder="my-server"
+                        className="input text-sm"
                       />
-                      <span className="text-sm text-text-primary">Use knowledge base (RAG) in chat</span>
-                    </label>
-                    <p className="mt-1 text-xs text-text-muted">
-                      When enabled, the agent retrieves relevant chunks from uploaded documents before answering.
-                    </p>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-text-secondary">Command</label>
+                      <input
+                        type="text"
+                        value={newMcp.command}
+                        onChange={(e) => setNewMcp({ ...newMcp, command: e.target.value })}
+                        placeholder="python"
+                        className="input text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-text-secondary">Args (space separated)</label>
+                      <input
+                        type="text"
+                        value={newMcp.args}
+                        onChange={(e) => setNewMcp({ ...newMcp, args: e.target.value })}
+                        placeholder="server.py"
+                        className="input text-sm"
+                      />
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!newMcp.name.trim()) return;
+                        const args = newMcp.args
+                          .split(" ")
+                          .map((s) => s.trim())
+                          .filter(Boolean);
+                        connectMcp({ name: newMcp.name.trim(), command: newMcp.command.trim() || "python", args });
+                        setNewMcp({ name: "", command: "python", args: "" });
+                      }}
+                      className="btn-primary w-full text-xs"
+                    >
+                      Connect
+                    </button>
                   </div>
 
-                  <div className="md:col-span-2">
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      API Key
-                    </label>
-                    <input
-                      type="password"
-                      value={config.api_key}
-                      onChange={(e) => {
-                        setConfig({ ...config, api_key: e.target.value });
-                        setConfigDirty(true);
-                      }}
-                      placeholder={
-                        PROVIDERS.find((p) => p.id === config.provider)?.keyVar || "API key"
-                      }
-                      className="input"
-                    />
-                    <p className="mt-1 text-xs text-text-muted">
-                      Stored locally in the app. Sent to the backend when you save.
-                    </p>
-                  </div>
+                  {mcpMsg && (
+                    <div className="mt-4 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
+                      {mcpMsg}
+                    </div>
+                  )}
 
-                  <div className="md:col-span-2">
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Base URL (optional)
-                    </label>
-                    <input
-                      type="text"
-                      value={config.base_url}
-                      onChange={(e) => {
-                        setConfig({ ...config, base_url: e.target.value });
-                        setConfigDirty(true);
-                      }}
-                      placeholder="https://api.openai.com/v1"
-                      className="input"
-                    />
+                  <h3 className="mb-2 mt-6 text-sm font-semibold">Discovered local</h3>
+                  <div className="flex-1 overflow-y-auto space-y-2">
+                    {discoveredServers.length === 0 && (
+                      <div className="text-xs text-text-muted">No local servers found.</div>
+                    )}
+                    {discoveredServers.map((srv) => (
+                      <div
+                        key={srv.name}
+                        className="rounded-lg border border-border bg-bg-tertiary p-2"
+                      >
+                        <div className="text-xs font-medium text-text-primary">{srv.name}</div>
+                        <div className="mt-1 truncate text-[10px] text-text-muted">{srv.path}</div>
+                        <button
+                          onClick={() => connectMcp(srv)}
+                          className="mt-2 w-full rounded bg-accent px-2 py-1 text-xs text-white hover:bg-accent/90"
+                        >
+                          Connect
+                        </button>
+                      </div>
+                    ))}
                   </div>
+                </aside>
 
-                  <div className="md:col-span-2">
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Ollama Host (for Ollama provider)
-                    </label>
-                    <input
-                      type="text"
-                      value={config.ollama_host}
-                      onChange={(e) => {
-                        setConfig({ ...config, ollama_host: e.target.value });
-                        setConfigDirty(true);
-                      }}
-                      placeholder="http://localhost:11434"
-                      className="input"
-                    />
+                <div className="flex flex-1 flex-col bg-bg-primary p-4">
+                  <h3 className="mb-3 text-sm font-semibold">Connected servers</h3>
+                  <div className="flex-1 overflow-y-auto space-y-3">
+                    {mcpServers.length === 0 && (
+                      <div className="text-sm text-text-muted">No MCP servers connected.</div>
+                    )}
+                    {mcpServers.map((srv) => (
+                      <div key={srv.name} className="rounded-xl border border-border bg-bg-secondary p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold text-text-primary">{srv.name}</div>
+                          <button
+                            onClick={() => disconnectMcp(srv.name)}
+                            className="btn-secondary px-2 py-1 text-xs text-error hover:bg-error/10"
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                        <div className="mt-2 text-xs text-text-secondary">
+                          {srv.tools.length} tool{srv.tools.length === 1 ? "" : "s"}
+                        </div>
+                        <div className="mt-2 space-y-1">
+                          {srv.tools.map((t) => (
+                            <div
+                              key={t.name}
+                              className="rounded bg-bg-tertiary px-2 py-1 text-xs text-text-primary"
+                            >
+                              <span className="font-mono text-accent">{t.name}</span>
+                              <span className="ml-2 text-text-muted">{t.description}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
 
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    onClick={() => saveConfig(config)}
-                    disabled={!configDirty}
-                    className="btn-primary"
-                  >
+          {activeTab === "project" && (
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+                <span className="text-sm font-semibold">Project Context & Codebase</span>
+                <button onClick={loadProjectContext} className="btn-secondary px-3 py-1.5 text-xs">
+                  Refresh
+                </button>
+              </div>
+              <div className="flex flex-1 overflow-hidden">
+                {/* Project context editor */}
+                <aside className="flex w-1/2 flex-col border-r border-border bg-bg-secondary p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold">Project Instructions</h3>
+                      <p className="text-[10px] text-text-muted">
+                        Loaded from: <span className="text-text-secondary">{projectContextSource}</span>
+                      </p>
+                    </div>
+                    <button onClick={saveProjectContext} className="btn-primary px-3 py-1.5 text-xs">
+                      Save
+                    </button>
+                  </div>
+                  {projectContextMsg && (
+                    <div className="mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
+                      {projectContextMsg}
+                    </div>
+                  )}
+                  <textarea
+                    value={projectContext}
+                    onChange={(e) => setProjectContext(e.target.value)}
+                    placeholder="Write project-level instructions here (coding style, conventions, important formulas, DFT preferences...). Saved to .matsci.md in the workspace."
+                    className="input flex-1 resize-none font-mono text-sm"
+                    spellCheck={false}
+                  />
+                </aside>
+
+                {/* Codebase semantic search */}
+                <div className="flex w-1/2 flex-col bg-bg-primary p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold">Codebase Search</h3>
+                      <p className="text-[10px] text-text-muted">
+                        {codebaseStatus?.available
+                          ? `${codebaseStatus.indexed_files || 0} files indexed`
+                          : "Not indexed"}
+                      </p>
+                    </div>
+                    <button onClick={indexCodebase} className="btn-primary px-3 py-1.5 text-xs">
+                      Re-index
+                    </button>
+                  </div>
+                  <div className="mb-3 flex gap-2">
+                    <input
+                      type="text"
+                      value={codebaseQuery}
+                      onChange={(e) => setCodebaseQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && searchCodebase()}
+                      placeholder="Search the codebase semantically…"
+                      className="input flex-1 text-sm"
+                    />
+                    <button onClick={searchCodebase} className="btn-primary text-xs">
+                      Search
+                    </button>
+                  </div>
+                  {codebaseMsg && (
+                    <div className="mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
+                      {codebaseMsg}
+                    </div>
+                  )}
+                  <div className="flex-1 overflow-y-auto space-y-3">
+                    {codebaseResults.map((r, i) => (
+                      <div key={i} className="rounded-lg border border-border bg-bg-secondary p-3">
+                        <div className="mb-1 flex items-center justify-between text-xs text-text-muted">
+                          <span className="font-mono">{r.path}</span>
+                          <span>chunk {r.chunk}</span>
+                        </div>
+                        <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-bg-tertiary p-2 text-xs text-text-primary">
+                          {r.text}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "threads" && (
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+                <span className="text-sm font-semibold">Threads</span>
+                <button onClick={createThread} className="btn-primary px-3 py-1.5 text-xs">
+                  + New thread
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {threads.map((t) => (
+                    <div
+                      key={t.id}
+                      className={`rounded-xl border p-4 transition-colors ${
+                        activeThread === t.id
+                          ? "border-accent bg-accent/10"
+                          : "border-border bg-bg-secondary hover:bg-bg-tertiary"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <input
+                          value={t.label}
+                          onChange={(e) => {
+                            const next = threads.map((th) =>
+                              th.id === t.id ? { ...th, label: e.target.value } : th
+                            );
+                            setThreads(next);
+                          }}
+                          onBlur={(e) => renameThread(t.id, e.target.value)}
+                          className="w-full bg-transparent text-sm font-semibold text-text-primary focus:outline-none"
+                        />
+                        <button
+                          onClick={() => deleteThread(t.id)}
+                          className="text-xs text-error hover:underline"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      <div className="mt-2 text-[10px] text-text-muted">ID: {t.id}</div>
+                      <button
+                        onClick={() => {
+                          setActiveThread(t.id);
+                          setMessages([
+                            {
+                              role: "assistant",
+                              content: `Switched to thread **${t.label}**.`,
+                              timestamp: formatTime(),
+                            },
+                          ]);
+                        }}
+                        disabled={activeThread === t.id}
+                        className="mt-3 w-full rounded-lg border border-border bg-bg-tertiary py-1.5 text-xs text-text-secondary hover:text-text-primary disabled:opacity-50"
+                      >
+                        {activeThread === t.id ? "Active" : "Switch"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "settings" && (
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+                <span className="text-sm font-semibold">Settings</span>
+                <div className="flex items-center gap-2">
+                  {(["general", "models", "agents"] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setSettingsTab(t)}
+                      className={`rounded px-3 py-1 text-xs capitalize ${
+                        settingsTab === t
+                          ? "bg-accent text-white"
+                          : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                {settingsTab === "general" && (
+                  <div className="max-w-2xl space-y-5">
+                    <p className="text-sm text-text-secondary">
+                      Default single-model settings. For multi-LLM mode, switch to the Models tab.
+                    </p>
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Provider</label>
+                        <select
+                          value={config.provider}
+                          onChange={(e) => { const next = { ...config, provider: e.target.value }; setConfig(next); setConfigDirty(true); }}
+                          className="input"
+                        >
+                          {PROVIDERS.map((p) => (
+                            <option key={p.id} value={p.id}>{p.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Model</label>
+                        <input
+                          type="text"
+                          value={config.model}
+                          onChange={(e) => { setConfig({ ...config, model: e.target.value }); setConfigDirty(true); }}
+                          placeholder="e.g. gpt-4o"
+                          className="input"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Persona</label>
+                        <select
+                          value={config.persona}
+                          onChange={(e) => { const next = { ...config, persona: e.target.value }; setConfig(next); setConfigDirty(true); }}
+                          className="input"
+                        >
+                          {PERSONAS.map((p) => (
+                            <option key={p.id} value={p.id}>{p.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={config.rag_enabled}
+                            onChange={(e) => { const next = { ...config, rag_enabled: e.target.checked }; setConfig(next); setConfigDirty(true); }}
+                            className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                          />
+                          <span className="text-sm text-text-primary">Use knowledge base (RAG) in chat</span>
+                        </label>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">API Key</label>
+                        <input
+                          type="password"
+                          value={config.api_key}
+                          onChange={(e) => { setConfig({ ...config, api_key: e.target.value }); setConfigDirty(true); }}
+                          placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || "API key"}
+                          className="input"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Base URL (optional)</label>
+                        <input
+                          type="text"
+                          value={config.base_url}
+                          onChange={(e) => { setConfig({ ...config, base_url: e.target.value }); setConfigDirty(true); }}
+                          placeholder="https://api.openai.com/v1"
+                          className="input"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Ollama Host</label>
+                        <input
+                          type="text"
+                          value={config.ollama_host}
+                          onChange={(e) => { setConfig({ ...config, ollama_host: e.target.value }); setConfigDirty(true); }}
+                          placeholder="http://localhost:11434"
+                          className="input"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Max concurrent sub-agents</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={config.max_concurrent_subagents}
+                          onChange={(e) => { const next = { ...config, max_concurrent_subagents: parseInt(e.target.value || "1", 10) }; setConfig(next); setConfigDirty(true); }}
+                          className="input"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {settingsTab === "models" && (
+                  <div className="max-w-3xl space-y-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-text-secondary">Configure multiple provider/model entries.</p>
+                      <button onClick={addModel} className="btn-secondary px-3 py-1.5 text-xs">+ Add Model</button>
+                    </div>
+                    {config.models.length === 0 && (
+                      <p className="text-sm text-text-muted">No model pool yet. Add a model or use the General tab for a single provider.</p>
+                    )}
+                    {config.models.map((m, i) => (
+                      <div key={i} className="card">
+                        <div className="mb-2 flex items-center justify-between">
+                          <input
+                            className="input-field w-32 text-sm font-semibold"
+                            value={m.alias}
+                            onChange={(e) => updateModel(i, { alias: e.target.value })}
+                            placeholder="alias"
+                          />
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1 text-xs">
+                              <input type="checkbox" checked={m.enabled} onChange={(e) => updateModel(i, { enabled: e.target.checked })} />
+                              Enabled
+                            </label>
+                            <button onClick={() => removeModel(i)} className="btn-secondary px-2 py-1 text-xs">🗑</button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <select
+                            className="input-field text-xs"
+                            value={m.provider}
+                            onChange={(e) => updateModel(i, { provider: e.target.value })}
+                          >
+                            {PROVIDERS.map((p) => (
+                              <option key={p.id} value={p.id}>{p.label}</option>
+                            ))}
+                          </select>
+                          <input className="input-field text-xs" value={m.model} onChange={(e) => updateModel(i, { model: e.target.value })} placeholder="model name" />
+                          <input className="input-field text-xs" type="password" value={m.api_key} onChange={(e) => updateModel(i, { api_key: e.target.value })} placeholder="API key (optional)" />
+                          <input className="input-field text-xs" value={m.base_url} onChange={(e) => updateModel(i, { base_url: e.target.value })} placeholder="base URL (optional)" />
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-text-muted">Temp</span>
+                            <input type="range" min={0} max={2} step={0.05} value={m.temperature} onChange={(e) => updateModel(i, { temperature: parseFloat(e.target.value) })} />
+                            <span>{m.temperature.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {settingsTab === "agents" && (
+                  <div className="max-w-3xl space-y-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-text-secondary">Agent profiles used by Team mode and @ routing.</p>
+                      <button onClick={addAgent} className="btn-secondary px-3 py-1.5 text-xs">+ Add Agent</button>
+                    </div>
+                    {config.agents.length === 0 && (
+                      <p className="text-sm text-text-muted">No agent profiles yet. Add one or use the General tab for a single agent.</p>
+                    )}
+                    {config.agents.map((a, i) => (
+                      <div key={i} className="card">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <input
+                            className="input-field w-28 text-sm font-semibold"
+                            value={a.id}
+                            onChange={(e) => updateAgent(i, { id: e.target.value })}
+                            placeholder="id"
+                          />
+                          <input
+                            className="input-field flex-1 text-sm"
+                            value={a.name}
+                            onChange={(e) => updateAgent(i, { name: e.target.value })}
+                            placeholder="display name"
+                          />
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1 text-xs">
+                              <input type="checkbox" checked={a.enabled} onChange={(e) => updateAgent(i, { enabled: e.target.checked })} />
+                              Enabled
+                            </label>
+                            <button onClick={() => removeAgent(i)} className="btn-secondary px-2 py-1 text-xs">🗑</button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <select
+                            className="input-field text-xs"
+                            value={a.model_alias}
+                            onChange={(e) => updateAgent(i, { model_alias: e.target.value })}
+                          >
+                            <option value="">default model</option>
+                            {config.models.filter((m) => m.enabled).map((m) => (
+                              <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
+                            ))}
+                          </select>
+                          <select
+                            className="input-field text-xs"
+                            value={a.persona}
+                            onChange={(e) => updateAgent(i, { persona: e.target.value })}
+                          >
+                            {PERSONAS.map((p) => (
+                              <option key={p.id} value={p.id}>{p.label}</option>
+                            ))}
+                          </select>
+                          <input
+                            className="input-field text-xs md:col-span-2"
+                            value={(a.tools || []).join(", ")}
+                            onChange={(e) => updateAgent(i, { tools: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
+                            placeholder="tool allowlist, comma separated (empty = all)"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-6 flex items-center gap-3 pt-2">
+                  <button onClick={() => saveConfig(config)} disabled={!configDirty} className="btn-primary">
                     Save Settings
                   </button>
-                  {configSavedMsg && (
-                    <span className="text-sm text-success">{configSavedMsg}</span>
-                  )}
+                  {configSavedMsg && <span className="text-sm text-success">{configSavedMsg}</span>}
                 </div>
 
                 <div className="card mt-6 border-accent/20 bg-accent/5">
                   <h3 className="text-sm font-semibold text-accent">Backend</h3>
                   <p className="mt-1 text-xs text-text-secondary">
-                    The desktop app normally starts the Python backend automatically. If it didn't,
-                    you can start or stop it here.
+                    The desktop app normally starts the Python backend automatically. If it didn't, you can start it here.
                   </p>
                   <div className="mt-3 flex items-center gap-2">
                     <button onClick={startBackend} className="btn-primary text-xs">

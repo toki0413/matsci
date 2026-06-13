@@ -89,3 +89,7 @@ agent/lean/MatSciLean/
 *.pid
 *.seed
 *.bak
+
+# Local runtime data
+agent/.matsci_kb/
+agent/.matsci_memory/

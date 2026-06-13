@@ -6,8 +6,10 @@ promotion of important session data to long-term storage.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from matsci_agent.memory.session import SessionContext, ToolCallRecord
@@ -22,6 +24,7 @@ class MemoryConfig:
     promotion_importance_threshold: float = 0.6
     max_session_age_hours: float = 24.0
     enable_semantic_search: bool = True
+    memory_md_path: Path | None = None
 
 
 class MemoryManager:
@@ -82,6 +85,7 @@ class MemoryManager:
         category: str = "fact",
         tags: list[str] | None = None,
         importance: float = 0.5,
+        tier: str = "mid",
     ) -> str:
         """Explicitly store a fact in long-term memory."""
         return self.longterm.store(
@@ -90,18 +94,21 @@ class MemoryManager:
             tags=tags,
             source=f"session:{self.session.session_id}",
             importance=importance,
+            tier=tier,
         )
 
     def recall(
         self,
         query: str,
         category: str | None = None,
+        tier: str | None = None,
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
         """Search long-term memory."""
         return self.longterm.retrieve(
             query=query,
             category=category,
+            tier=tier,
             top_k=top_k,
             semantic=self.config.enable_semantic_search,
         )
@@ -113,7 +120,8 @@ class MemoryManager:
             return ""
         lines = ["## Relevant past knowledge:"]
         for r in results:
-            lines.append(f"- [{r.get('category', 'fact')}] {r.get('content', '')}")
+            provenance = f" ({r.get('source', '')})" if r.get("source") else ""
+            lines.append(f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}")
         return "\n".join(lines)
 
     # --- Session promotion ---
@@ -138,9 +146,10 @@ class MemoryManager:
             tags=[record.tool_name, "auto_promoted"],
             source=f"session:{self.session.session_id}/call:{record.call_id}",
             importance=self.config.promotion_importance_threshold,
+            tier="mid",
         )
 
-    def promote_session_summary(self) -> str:
+    def promote_session_summary(self, tier: str = "mid") -> str:
         """Summarize current session and store in long-term memory."""
         summary = (
             f"Session {self.session.session_id}: "
@@ -154,7 +163,89 @@ class MemoryManager:
             tags=["session_summary"],
             source=f"session:{self.session.session_id}",
             importance=0.5,
+            tier=tier,
         )
+
+    def log_episode(self, content: str, importance: float = 0.5) -> str:
+        """Log a concise daily episodic memory (session-level event)."""
+        return self.longterm.store(
+            content=content,
+            category="episode",
+            tags=["episodic", "daily_log"],
+            source=f"session:{self.session.session_id}",
+            importance=importance,
+            tier="short",
+        )
+
+    def add_curated_memory(
+        self,
+        content: str,
+        category: str = "insight",
+        tags: list[str] | None = None,
+        importance: float = 0.8,
+    ) -> str:
+        """Store a human- or agent-curated long-term memory to be synced to MEMORY.md."""
+        return self.longterm.store(
+            content=content,
+            category=category,
+            tags=tags or ["curated"],
+            source=f"session:{self.session.session_id}",
+            importance=importance,
+            tier="long",
+        )
+
+    def sync_memory_md(self) -> Path | None:
+        """Write curated long-tier memories to MEMORY.md in the project root."""
+        path = self.config.memory_md_path
+        if not path:
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        long_entries = self.longterm.list_all(limit=9999, alive_only=True)
+        long_entries = [e for e in long_entries if e.get("tier") == "long"]
+        long_entries.sort(key=lambda e: e.get("importance", 0.0), reverse=True)
+        lines = ["# MEMORY.md — Curated long-term memory", ""]
+        for e in long_entries:
+            tag_str = ", ".join(json.loads(e.get("tags", "[]")) or [])
+            lines.append(f"## [{e.get('category', 'insight')}] {tag_str}")
+            lines.append(f"- {e.get('content', '')}")
+            lines.append(f"- source: {e.get('source', '')}")
+            lines.append("")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return path
+
+    def load_memory_md(self) -> list[dict[str, Any]]:
+        """Load curated memories from MEMORY.md if present."""
+        path = self.config.memory_md_path
+        if not path or not path.exists():
+            return []
+        entries: list[dict[str, Any]] = []
+        text = path.read_text(encoding="utf-8")
+        current: dict[str, Any] | None = None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("## ["):
+                if current:
+                    entries.append(current)
+                parts = line[4:].split("]", 1)
+                category = parts[0] if parts else "insight"
+                tag_str = parts[1].strip() if len(parts) > 1 else ""
+                current = {
+                    "category": category,
+                    "tags": [t.strip() for t in tag_str.split(",") if t.strip()],
+                    "content": "",
+                    "source": "MEMORY.md",
+                }
+            elif current and line.startswith("- "):
+                body = line[2:]
+                if body.startswith("source: "):
+                    current["source"] = body[8:]
+                elif not current["content"]:
+                    current["content"] = body
+                else:
+                    current["content"] += "\n" + body
+        if current:
+            entries.append(current)
+        return entries
 
     def _extract_topics(self) -> str:
         """Simple topic extraction from messages."""
@@ -181,15 +272,19 @@ class MemoryManager:
             category="conversation",
             tags=["session_transition"],
             importance=0.3,
+            tier="short",
         )
 
     def stats(self) -> dict[str, Any]:
+        all_entries = self.longterm.list_all(limit=9999, alive_only=True)
         return {
             "session_id": self.session.session_id,
             "session_messages": len(self.session.messages),
             "session_tool_calls": len(self.session.tool_calls),
-            "longterm_entries": self.longterm.list_by_category("", limit=9999).__len__(),
+            "longterm_entries": len(all_entries),
+            "tier_counts": {
+                "short": sum(1 for e in all_entries if e.get("tier") == "short"),
+                "mid": sum(1 for e in all_entries if e.get("tier") == "mid"),
+                "long": sum(1 for e in all_entries if e.get("tier") == "long"),
+            },
         }
-
-
-import json

@@ -36,7 +36,11 @@ class ToolAdapter:
     """Adapts MatSciTool instances to LangChain StructuredTool."""
 
     @staticmethod
-    def adapt(tool: MatSciTool) -> StructuredTool:
+    def adapt(
+        tool: MatSciTool,
+        memory_manager: Any | None = None,
+        agent_factory: Any | None = None,
+    ) -> StructuredTool:
         """Convert a MatSciTool to LangChain StructuredTool.
 
         Example:
@@ -54,7 +58,12 @@ class ToolAdapter:
 
         def _build_inputs(**kwargs: Any) -> tuple[BaseModel | dict[str, Any], ToolContext]:
             input_data = tool.input_schema(**kwargs)
-            context = ToolContext(session_id="default", workspace=".")
+            context = ToolContext(
+                session_id="default",
+                workspace=".",
+                memory_manager=memory_manager,
+                agent_factory=agent_factory,
+            )
             payload = input_data.model_dump() if wants_dict else input_data
             return payload, context
 
@@ -96,11 +105,16 @@ class ToolAdapter:
         )
 
     @classmethod
-    def adapt_registry(cls, registry: Any) -> list[StructuredTool]:
+    def adapt_registry(
+        cls,
+        registry: Any,
+        memory_manager: Any | None = None,
+        agent_factory: Any | None = None,
+    ) -> list[StructuredTool]:
         """Adapt all tools from a ToolRegistry."""
         tools = []
         for name in registry.list_tools():
             tool = registry.get(name)
             if tool:
-                tools.append(cls.adapt(tool))
+                tools.append(cls.adapt(tool, memory_manager=memory_manager, agent_factory=agent_factory))
         return tools

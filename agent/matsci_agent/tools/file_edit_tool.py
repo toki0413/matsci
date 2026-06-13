@@ -27,10 +27,8 @@ class FileEditTool(MatSciTool):
 
     name = "file_edit_tool"
     description = "Replace a unique substring in a text file with new content."
+    destructive = True
     input_schema = FileEditToolInput
-
-    def is_destructive(self, args: FileEditToolInput) -> bool:
-        return True
 
     def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
         input_data = FileEditToolInput(**args)

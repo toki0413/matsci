@@ -5,18 +5,46 @@ Supports environment variables, .env files, and config files.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+
+@dataclass
+class ModelConfig:
+    """A single LLM provider/model entry in the model pool."""
+    alias: str  # e.g. "gpt4o", "claude-sonnet"
+    provider: Literal[
+        "anthropic", "openai", "ollama", "deepseek",
+        "google-genai", "openrouter", "nvidia", "vllm", "local", "default"
+    ]
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    temperature: float = 0.7
+    enabled: bool = True
+
+
+@dataclass
+class AgentProfileConfig:
+    """A reusable agent profile that maps to a model alias + persona + tools."""
+    id: str  # e.g. "lead", "coder", "reviewer"
+    name: str = ""
+    model_alias: str = ""
+    persona: str = "default"
+    tools: list[str] = field(default_factory=list)
+    enabled: bool = True
+    max_steps: int = 10
 
 
 @dataclass
 class MatSciConfig:
     """MatSci-Agent configuration."""
-    
-    # LLM settings
+
+    # Legacy single-model settings (kept for backward compatibility)
     provider: Literal[
         "anthropic", "openai", "ollama", "deepseek",
         "google-genai", "openrouter", "nvidia", "vllm", "local", "default"
@@ -24,32 +52,38 @@ class MatSciConfig:
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
-    
+
+    # Multi-LLM / multi-agent settings
+    models: list[ModelConfig] = field(default_factory=list)
+    agents: list[AgentProfileConfig] = field(default_factory=list)
+    team_mode_enabled: bool = False
+    max_concurrent_subagents: int = 3
+
     # Ollama specific
     ollama_host: str = "http://localhost:11434"
-    
+
     # Computational tools
     vasp_executable: str | None = None
     lammps_executable: str | None = None
-    
+
     # HPC settings
     hpc_scheduler: Literal["slurm", "pbs", "local"] = "local"
     hpc_host: str | None = None
     hpc_username: str | None = None
-    
+
     # MCP server paths
     abaqus_mcp_server: str | None = None
-    
+
     # Workspace
     workspace: str = "."
-    
+
     # Agent behavior
     auto_approve: bool = False
     enable_exploration: bool = True
     max_parallel_branches: int = 5
     persona: str = "default"
     rag_enabled: bool = False
-    
+
     # Encryption settings
     encryption_enabled: bool = False
     encryption_password: str | None = None
@@ -61,13 +95,13 @@ class MatSciConfig:
     @classmethod
     def from_env(cls) -> MatSciConfig:
         """Load configuration from environment variables.
-        
+
         API key resolution priority:
         1. MATSCI_API_KEY (generic)
         2. Provider-specific env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
         """
         provider = os.environ.get("MATSCI_PROVIDER", "default").lower().strip()
-        
+
         # Resolve API key with provider-specific fallback
         api_key = os.environ.get("MATSCI_API_KEY")
         if not api_key:
@@ -84,12 +118,39 @@ class MatSciConfig:
             env_key = provider_key_map.get(provider)
             if env_key:
                 api_key = os.environ.get(env_key)
-        
+
+        models = cls._parse_models_env()
+        agents = cls._parse_agents_env()
+
+        # If no model pool but legacy provider is set, synthesize a default model entry.
+        if not models and provider != "default":
+            models = [ModelConfig(
+                alias="default",
+                provider=provider,  # type: ignore[arg-type]
+                model=os.environ.get("MATSCI_MODEL"),
+                api_key=api_key,
+                base_url=os.environ.get("MATSCI_BASE_URL"),
+            )]
+
+        # If no agent profiles, synthesize a default lead agent pointing at the default/only model.
+        if not agents:
+            model_alias = models[0].alias if models else "default"
+            agents = [AgentProfileConfig(
+                id="lead",
+                name="Lead",
+                model_alias=model_alias,
+                persona=os.environ.get("MATSCI_PERSONA", "default").strip(),
+            )]
+
         return cls(
             provider=provider,
             model=os.environ.get("MATSCI_MODEL"),
             api_key=api_key,
             base_url=os.environ.get("MATSCI_BASE_URL"),
+            models=models,
+            agents=agents,
+            team_mode_enabled=os.environ.get("MATSCI_TEAM_MODE", "").lower() == "true",
+            max_concurrent_subagents=int(os.environ.get("MATSCI_MAX_CONCURRENT_SUBAGENTS", "3")),
             ollama_host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
             vasp_executable=os.environ.get("VASP_EXECUTABLE"),
             lammps_executable=os.environ.get("LAMMPS_EXECUTABLE"),
@@ -110,6 +171,32 @@ class MatSciConfig:
             persona=os.environ.get("MATSCI_PERSONA", "default").strip(),
             rag_enabled=os.environ.get("MATSCI_RAG_ENABLED", "").lower() == "true",
         )
+
+    @staticmethod
+    def _parse_models_env() -> list[ModelConfig]:
+        raw = os.environ.get("MATSCI_MODELS", "")
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [ModelConfig(**item) for item in data]
+        except Exception:
+            pass
+        return []
+
+    @staticmethod
+    def _parse_agents_env() -> list[AgentProfileConfig]:
+        raw = os.environ.get("MATSCI_AGENTS", "")
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [AgentProfileConfig(**item) for item in data]
+        except Exception:
+            pass
+        return []
     
 
     @staticmethod
@@ -144,12 +231,41 @@ class MatSciConfig:
         """Return the resolved API key (supports env:/keyring: prefixes)."""
         return self.resolve_key(self.api_key)
 
-    def to_dict(self, mask_key: bool = True) -> dict[str, str | bool | int | None]:
+    def to_dict(self, mask_key: bool = True) -> dict[str, Any]:
+        def mask(k: str | None) -> str | None:
+            return "***" if mask_key and k else k
+
         return {
             "provider": self.provider,
             "model": self.model,
-            "api_key": "***" if mask_key and self.api_key else self.api_key,
+            "api_key": mask(self.api_key),
             "base_url": self.base_url,
+            "models": [
+                {
+                    "alias": m.alias,
+                    "provider": m.provider,
+                    "model": m.model,
+                    "api_key": mask(m.api_key),
+                    "base_url": m.base_url,
+                    "temperature": m.temperature,
+                    "enabled": m.enabled,
+                }
+                for m in self.models
+            ],
+            "agents": [
+                {
+                    "id": a.id,
+                    "name": a.name or a.id,
+                    "model_alias": a.model_alias,
+                    "persona": a.persona,
+                    "tools": a.tools,
+                    "enabled": a.enabled,
+                    "max_steps": a.max_steps,
+                }
+                for a in self.agents
+            ],
+            "team_mode_enabled": self.team_mode_enabled,
+            "max_concurrent_subagents": self.max_concurrent_subagents,
             "ollama_host": self.ollama_host,
             "vasp_executable": self.vasp_executable,
             "lammps_executable": self.lammps_executable,
@@ -171,8 +287,17 @@ class MatSciConfig:
     @classmethod
     def from_dict(cls, data: dict) -> MatSciConfig:
         """Restore config from a plain dict."""
+        models_raw = data.get("models")
+        agents_raw = data.get("agents")
+        kwargs = {k: v for k, v in data.items() if k not in ("models", "agents")}
+
+        if models_raw is not None:
+            kwargs["models"] = [ModelConfig(**m) for m in models_raw if isinstance(m, dict)]
+        if agents_raw is not None:
+            kwargs["agents"] = [AgentProfileConfig(**a) for a in agents_raw if isinstance(a, dict)]
+
         known = {f.name for f in cls.__dataclass_fields__.values()}
-        filtered = {k: v for k, v in data.items() if k in known}
+        filtered = {k: v for k, v in kwargs.items() if k in known}
         return cls(**filtered)
 
     def save(self, path: str | pathlib.Path, format: Literal["toml", "json"] = "toml") -> None:

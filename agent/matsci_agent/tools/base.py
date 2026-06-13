@@ -28,7 +28,11 @@ class MatSciTool(ABC, Generic[InputT, OutputT]):
     
     name: str = ""
     description: str = ""
-    
+
+    # Static hints for UI / permission systems
+    destructive: bool = False
+    read_only: bool = False
+
     # Schema definitions (Pydantic v2, replacing Zod)
     input_schema: type[InputT] | None = None
     output_schema: type[OutputT] | None = None
@@ -62,13 +66,13 @@ class MatSciTool(ABC, Generic[InputT, OutputT]):
         """Return True if this tool call is read-only (no side effects).
         Read-only tools can be auto-executed without user confirmation.
         """
-        return False
-    
+        return self.read_only
+
     def is_destructive(self, args: InputT) -> bool:
         """Return True if this tool call is destructive (deletes/overwrites data).
         Destructive tools ALWAYS require explicit user confirmation.
         """
-        return False
+        return self.destructive
     
     def estimate_cost(self, args: InputT) -> dict[str, float] | None:
         """Estimate computational cost for this tool call.

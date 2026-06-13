@@ -26,10 +26,8 @@ class FileWriteTool(MatSciTool):
 
     name = "file_write_tool"
     description = "Create or overwrite a text file with the provided content."
+    destructive = True
     input_schema = FileWriteToolInput
-
-    def is_destructive(self, args: FileWriteToolInput) -> bool:
-        return True
 
     def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
         input_data = FileWriteToolInput(**args)

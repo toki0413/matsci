@@ -61,6 +61,8 @@ class ToolContext:
     workspace: str
     abort_controller: Any | None = None
     permissions: dict[str, PermissionMode] = field(default_factory=dict)
+    memory_manager: Any | None = None
+    agent_factory: Any | None = None
 
 
 @dataclass 

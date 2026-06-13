@@ -33,10 +33,8 @@ class BashTool(MatSciTool):
         "Run a shell command as a list of arguments inside the workspace. "
         "Use for tests, builds, git, and other command-line tasks."
     )
+    destructive = True
     input_schema = BashToolInput
-
-    def is_destructive(self, args: BashToolInput) -> bool:
-        return True
 
     def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
         input_data = BashToolInput(**args)

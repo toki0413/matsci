@@ -43,11 +43,18 @@ class ToolRegistry:
                     "name": name,
                     "description": tool.description,
                     "parameters": tool.input_json_schema or {"type": "object", "properties": {}}
-                }
+                },
+                "destructive": tool.destructive,
+                "read_only": tool.read_only,
             }
             schemas.append(schema)
         return schemas
     
+    @classmethod
+    def unregister(cls, name: str) -> bool:
+        """Remove a tool from the registry."""
+        return cls._tools.pop(name, None) is not None
+
     @classmethod
     def clear(cls) -> None:
         cls._tools.clear()

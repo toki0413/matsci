@@ -38,6 +38,7 @@ struct FileEntry {
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState::default())
         .setup(|app| {
             #[cfg(debug_assertions)]
@@ -102,7 +103,7 @@ fn get_agent_status() -> serde_json::Value {
 }
 
 #[tauri::command]
-fn start_backend(state: tauri::State<'_, AppState>) -> Result<String, String> {
+fn start_backend(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
     // If we already manage a backend process, assume it's started.
     {
         let lock = state.backend.lock().unwrap();
@@ -118,12 +119,20 @@ fn start_backend(state: tauri::State<'_, AppState>) -> Result<String, String> {
         }
     }
 
-    let child = Command::new("python")
+    let mut child = Command::new("python")
         .args(["-m", "matsci_agent.server"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to start backend: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+
+    let app_stdout = app.clone();
+    std::thread::spawn(move || read_stream(stdout, app_stdout, "stdout", "backend-log"));
+    let app_stderr = app.clone();
+    std::thread::spawn(move || read_stream(stderr, app_stderr, "stderr", "backend-log"));
 
     *state.backend.lock().unwrap() = Some(child);
     Ok("started".to_string())
@@ -199,14 +208,19 @@ fn spawn_terminal(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> R
     *state.terminal.lock().unwrap() = Some(TerminalSession { child, stdin });
 
     let app_stdout = app.clone();
-    std::thread::spawn(move || read_stream(stdout, app_stdout, "stdout"));
+    std::thread::spawn(move || read_stream(stdout, app_stdout, "stdout", "terminal-output"));
     let app_stderr = app.clone();
-    std::thread::spawn(move || read_stream(stderr, app_stderr, "stderr"));
+    std::thread::spawn(move || read_stream(stderr, app_stderr, "stderr", "terminal-output"));
 
     Ok(())
 }
 
-fn read_stream<R: Read + Send + 'static>(mut stream: R, app: tauri::AppHandle, source: &'static str) {
+fn read_stream<R: Read + Send + 'static>(
+    mut stream: R,
+    app: tauri::AppHandle,
+    source: &'static str,
+    event: &'static str,
+) {
     let mut buf = [0u8; 1024];
     loop {
         match stream.read(&mut buf) {
@@ -214,7 +228,7 @@ fn read_stream<R: Read + Send + 'static>(mut stream: R, app: tauri::AppHandle, s
             Ok(n) => {
                 let text = String::from_utf8_lossy(&buf[..n]).to_string();
                 let _ = app.emit(
-                    "terminal-output",
+                    event,
                     serde_json::json!({"source": source, "text": text}),
                 );
             }

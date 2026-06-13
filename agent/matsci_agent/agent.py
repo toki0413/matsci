@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from matsci_agent.prompts import MATSCI_SYSTEM_PROMPT, EXPLORATION_PROMPT
 from matsci_agent.tools.registry import ToolRegistry
 from matsci_agent.tools.adapter import ToolAdapter
+from matsci_agent.models.registry import create_langchain_model
 
 
 class MatSciAgent:
@@ -37,29 +38,37 @@ class MatSciAgent:
         skill_executor: Any | None = None,
         sandbox: Any | None = None,
         audit: Any | None = None,
+        profile_id: str = "default",
+        thread_id: str | None = None,
+        tool_filter: list[str] | None = None,
+        agent_factory: Any | None = None,
     ):
         self.model = model
         self.langchain_tools = tools or []
         self.system_prompt = system_prompt or MATSCI_SYSTEM_PROMPT
         self.enable_exploration = enable_exploration
+        self.profile_id = profile_id
+        self.thread_id = thread_id
+        self.tool_filter = set(tool_filter) if tool_filter else None
+        self.agent_factory = agent_factory
         self._agent_graph: Any | None = None
-        
+
         # Security layer
         self.sandbox = sandbox
         self.audit = audit
-        
+
         # Memory integration
         if memory_manager is None:
             from matsci_agent.memory.manager import MemoryManager
             memory_manager = MemoryManager()
         self.memory = memory_manager
-        
+
         # Skills integration
         if skill_executor is None:
             from matsci_agent.skills.base import DeclarativeSkillExecutor
             skill_executor = DeclarativeSkillExecutor(ToolRegistry)
         self.skills = skill_executor
-    
+
     @classmethod
     def from_provider(
         cls,
@@ -159,9 +168,21 @@ class MatSciAgent:
             self.langchain_tools.append(tool)
     
     def register_tools_from_registry(self) -> None:
-        """Register all tools from the global ToolRegistry."""
-        adapted = ToolAdapter.adapt_registry(ToolRegistry)
-        self.langchain_tools.extend(adapted)
+        """Register tools from the global ToolRegistry, optionally filtered by name."""
+        from matsci_agent.tools.base import MatSciTool
+
+        tools = []
+        for name in ToolRegistry.list_tools():
+            tool = ToolRegistry.get(name)
+            if tool is None:
+                continue
+            if self.tool_filter is not None and name not in self.tool_filter:
+                continue
+            if isinstance(tool, MatSciTool):
+                tools.append(ToolAdapter.adapt(tool, memory_manager=self.memory, agent_factory=self.agent_factory))
+            else:
+                tools.append(tool)
+        self.langchain_tools.extend(tools)
     
     def build_graph(self) -> Any:
         """Build the LangGraph agent graph."""
@@ -334,14 +355,6 @@ class MatSciAgent:
         return SkillRegistry.list_skills(category=category)
 
 
-def _is_local_url(url: str | None) -> bool:
-    """Check if a URL points to a local endpoint (localhost, 127.*, ::1, 0.0.0.0)."""
-    if not url:
-        return False
-    host = url.split("://")[-1].split(":")[0].lower()
-    return host in ("localhost", "0.0.0.0", "::1") or host.startswith("127.")
-
-
 def retry_llm_call(max_retries: int = 3, backoff: float = 1.0):
     """Decorator for retrying LLM calls with exponential backoff.
 
@@ -389,109 +402,11 @@ def _create_langchain_model(
     base_url: str | None = None,
     temperature: float = 0.7,
 ) -> Any:
-    """Create a LangChain chat model instance for the given provider."""
-    provider = provider.lower().strip()
-    
-    defaults = {
-        "anthropic": "claude-3-5-sonnet-20241022",
-        "openai": "gpt-4o",
-        "ollama": "qwen2.5:14b",
-        "deepseek": "deepseek-chat",
-        "google-genai": "gemini-2.5-pro",
-        "openrouter": "anthropic/claude-sonnet-4",
-        "nvidia": "meta/llama-3.1-405b-instruct",
-        "vllm": None,
-        "local": None,
-    }
-    model = model_name or defaults.get(provider)
-    if model is None:
-        raise ValueError(
-            f"Provider '{provider}' requires an explicit model name. "
-            "Use --model / MATSCI_MODEL to set it."
-        )
-    
-    if provider == "anthropic":
-        try:
-            from langchain_anthropic import ChatAnthropic
-        except ImportError:
-            raise ImportError("pip install langchain-anthropic")
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-        return ChatAnthropic(model=model, api_key=key, temperature=temperature)
-    
-    if provider in ("openai", "vllm", "local"):
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError("pip install langchain-openai")
-        key = api_key or os.environ.get("OPENAI_API_KEY")
-        # Local endpoints (vLLM, LM Studio, TGI, etc.) often accept dummy/empty keys
-        if not key and not _is_local_url(base_url):
-            raise ValueError("OPENAI_API_KEY not set (required for non-local endpoints)")
-        return ChatOpenAI(
-            model=model,
-            api_key=key or "not-needed",
-            temperature=temperature,
-            base_url=base_url,
-        )
-    
-    if provider == "ollama":
-        try:
-            from langchain_ollama import ChatOllama
-        except ImportError:
-            raise ImportError("pip install langchain-ollama")
-        return ChatOllama(model=model, base_url=base_url or "http://localhost:11434", temperature=temperature)
-    
-    if provider == "deepseek":
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError("pip install langchain-openai")
-        key = api_key or os.environ.get("DEEPSEEK_API_KEY")
-        if not key:
-            raise ValueError("DEEPSEEK_API_KEY not set")
-        return ChatOpenAI(
-            model=model,
-            api_key=key,
-            base_url=base_url or "https://api.deepseek.com",
-            temperature=temperature,
-        )
-    
-    if provider == "google-genai":
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError:
-            raise ImportError("pip install langchain-google-genai")
-        key = api_key or os.environ.get("GOOGLE_API_KEY")
-        if not key:
-            raise ValueError("GOOGLE_API_KEY not set")
-        return ChatGoogleGenerativeAI(model=model, api_key=key, temperature=temperature)
-    
-    if provider == "openrouter":
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError("pip install langchain-openai")
-        key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        if not key:
-            raise ValueError("OPENROUTER_API_KEY not set")
-        return ChatOpenAI(
-            model=model,
-            api_key=key,
-            base_url=base_url or "https://openrouter.ai/api/v1",
-            temperature=temperature,
-        )
-    
-    if provider == "nvidia":
-        try:
-            from langchain_nvidia_ai_endpoints import ChatNVIDIA
-        except ImportError:
-            raise ImportError("pip install langchain-nvidia-ai-endpoints")
-        key = api_key or os.environ.get("NVIDIA_API_KEY")
-        return ChatNVIDIA(model=model, api_key=key, temperature=temperature)
-    
-    raise ValueError(
-        f"Unsupported provider: {provider}. "
-        "Supported: anthropic, openai, ollama, deepseek, google-genai, openrouter, nvidia, vllm, local"
+    """Backwards-compatible wrapper around the model registry factory."""
+    return create_langchain_model(
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature,
     )
