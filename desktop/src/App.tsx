@@ -5,6 +5,11 @@ interface Message {
   role: "user" | "assistant" | "tool";
   content: string;
   timestamp: string;
+  tool_name?: string;
+  tool_args?: any;
+  tool_status?: "running" | "done" | "error";
+  tool_result?: string;
+  tool_call_id?: string;
 }
 
 interface ToolInfo {
@@ -326,6 +331,38 @@ export default function App() {
         ]);
         setIsStreaming(false);
         break;
+      case "tool_call":
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "tool",
+            content: `Using tool **${data.name}**…`,
+            timestamp: formatTime(),
+            tool_call_id: data.id,
+            tool_name: data.name,
+            tool_args: data.args,
+            tool_status: "running",
+          },
+        ]);
+        setIsStreaming(true);
+        break;
+      case "tool_result":
+        setMessages((prev) => {
+          const updated = [...prev];
+          const idx = updated.findIndex(
+            (m) => m.role === "tool" && m.tool_call_id === data.id && m.tool_status === "running"
+          );
+          if (idx !== -1) {
+            updated[idx] = {
+              ...updated[idx],
+              content: `Tool **${updated[idx].tool_name}** finished`,
+              tool_status: "done",
+              tool_result: data.content,
+            };
+          }
+          return updated;
+        });
+        break;
       case "pong":
         break;
     }
@@ -474,37 +511,73 @@ export default function App() {
           {activeTab === "chat" && (
             <div className="flex h-full flex-col">
               <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                {messages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
-                  >
-                    <div
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
-                        msg.role === "user" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-                      }`}
-                    >
-                      {msg.role === "user" ? "You" : "AI"}
-                    </div>
-                    <div
-                      className={`max-w-[75%] rounded-2xl px-5 py-3 ${
-                        msg.role === "user"
-                          ? "bg-accent text-white rounded-br-none"
-                          : "bg-bg-secondary border border-border rounded-bl-none"
-                      }`}
-                    >
-                      <div className="mb-1 flex items-center gap-2 text-xs opacity-70">
-                        <span>{msg.role === "user" ? "You" : "Assistant"}</span>
-                        <span>
-                          {msg.timestamp === "streaming" ? "typing…" : msg.timestamp}
-                        </span>
+                {messages.map((msg, i) => {
+                  if (msg.role === "tool") {
+                    return (
+                      <div key={i} className="flex justify-center">
+                        <div className="w-full max-w-2xl rounded-xl border border-border bg-bg-secondary p-4 shadow-sm">
+                          <div className="flex items-center gap-2 text-sm font-semibold text-accent">
+                            <span>🔧</span>
+                            <span>{msg.tool_name}</span>
+                            {msg.tool_status === "running" && (
+                              <span className="ml-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                            )}
+                            {msg.tool_status === "done" && (
+                              <span className="ml-2 text-xs text-success">done</span>
+                            )}
+                          </div>
+                          <div className="mt-2 text-xs text-text-secondary">
+                            Arguments
+                          </div>
+                          <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
+                            {JSON.stringify(msg.tool_args, null, 2)}
+                          </pre>
+                          {msg.tool_status === "done" && msg.tool_result !== undefined && (
+                            <>
+                              <div className="mt-3 text-xs text-text-secondary">
+                                Result
+                              </div>
+                              <pre className="mt-1 max-h-60 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
+                                {msg.tool_result}
+                              </pre>
+                            </>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-[15px] leading-relaxed">
-                        <MessageContent content={msg.content} />
+                    );
+                  }
+                  return (
+                    <div
+                      key={i}
+                      className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+                    >
+                      <div
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
+                          msg.role === "user" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+                        }`}
+                      >
+                        {msg.role === "user" ? "You" : "AI"}
+                      </div>
+                      <div
+                        className={`max-w-[75%] rounded-2xl px-5 py-3 ${
+                          msg.role === "user"
+                            ? "bg-accent text-white rounded-br-none"
+                            : "bg-bg-secondary border border-border rounded-bl-none"
+                        }`}
+                      >
+                        <div className="mb-1 flex items-center gap-2 text-xs opacity-70">
+                          <span>{msg.role === "user" ? "You" : "Assistant"}</span>
+                          <span>
+                            {msg.timestamp === "streaming" ? "typing…" : msg.timestamp}
+                          </span>
+                        </div>
+                        <div className="text-[15px] leading-relaxed">
+                          <MessageContent content={msg.content} />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div ref={messagesEndRef} />
               </div>
 

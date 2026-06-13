@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from langchain_core.messages import AIMessage, ToolMessage
 
 from matsci_agent import __version__
 from matsci_agent.agent import MatSciAgent
@@ -384,19 +385,48 @@ async def agent_websocket(websocket: WebSocket):
                 # Stream agent responses
                 try:
                     full_response = ""
+                    seen_tool_calls: set[str] = set()
+                    seen_tool_results: set[str] = set()
                     async for state in agent.chat(content, thread_id):
                         messages = state.get("messages", [])
-                        if messages:
-                            last_msg = messages[-1]
-                            if hasattr(last_msg, "content"):
-                                # Only send delta (new content)
-                                delta = last_msg.content[len(full_response):]
-                                if delta:
-                                    full_response = last_msg.content
+                        if not messages:
+                            continue
+                        last_msg = messages[-1]
+
+                        # Emit tool-call cards
+                        if isinstance(last_msg, AIMessage):
+                            for tc in getattr(last_msg, "tool_calls", []) or []:
+                                tid = tc.get("id")
+                                if tid and tid not in seen_tool_calls:
+                                    seen_tool_calls.add(tid)
                                     await websocket.send_json({
-                                        "type": "text_delta",
-                                        "text": delta,
+                                        "type": "tool_call",
+                                        "id": tid,
+                                        "name": tc.get("name", "unknown"),
+                                        "args": tc.get("args", {}),
                                     })
+
+                        # Emit tool results
+                        if isinstance(last_msg, ToolMessage):
+                            tid = getattr(last_msg, "tool_call_id", None)
+                            if tid and tid not in seen_tool_results:
+                                seen_tool_results.add(tid)
+                                await websocket.send_json({
+                                    "type": "tool_result",
+                                    "id": tid,
+                                    "content": str(getattr(last_msg, "content", "")),
+                                })
+
+                        # Only send text delta for assistant content
+                        if hasattr(last_msg, "content") and not isinstance(last_msg, ToolMessage):
+                            # Only send delta (new content)
+                            delta = last_msg.content[len(full_response):]
+                            if delta:
+                                full_response = last_msg.content
+                                await websocket.send_json({
+                                    "type": "text_delta",
+                                    "text": delta,
+                                })
                     
                     # Signal completion
                     await websocket.send_json({"type": "done"})
