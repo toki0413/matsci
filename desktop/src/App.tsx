@@ -136,6 +136,179 @@ function MessageContent({ content }: { content: string }) {
   );
 }
 
+function defaultForSchema(prop: any): any {
+  if (prop && "default" in prop) return prop.default;
+  const type = prop?.type;
+  if (type === "boolean") return false;
+  if (type === "integer" || type === "number") return 0;
+  if (type === "array") return [];
+  if (type === "object") return buildDefaultArgs(prop);
+  return "";
+}
+
+function buildDefaultArgs(schema: any): Record<string, any> {
+  if (!schema || schema.type !== "object") return {};
+  const out: Record<string, any> = {};
+  for (const [key, prop] of Object.entries(schema.properties || {})) {
+    out[key] = defaultForSchema(prop);
+  }
+  return out;
+}
+
+function JsonSchemaForm({
+  schema,
+  value,
+  onChange,
+}: {
+  schema: any;
+  value: Record<string, any>;
+  onChange: (v: Record<string, any>) => void;
+}) {
+  if (!schema || schema.type !== "object") return null;
+  const required = new Set(schema.required || []);
+  const update = (key: string, val: any) => {
+    onChange({ ...value, [key]: val });
+  };
+  return (
+    <div className="space-y-4">
+      {Object.entries(schema.properties || {}).map(([key, propRaw]) => {
+        const prop = propRaw as any;
+        const label = (
+          <span className="text-xs font-medium text-text-secondary">
+            {key}
+            {required.has(key) && <span className="ml-1 text-error">*</span>}
+          </span>
+        );
+        const desc = prop.description ? (
+          <p className="mt-1 text-xs text-text-muted">{prop.description}</p>
+        ) : null;
+        let input: React.ReactNode;
+        if (prop.type === "boolean") {
+          input = (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!value[key]}
+                onChange={(e) => update(key, e.target.checked)}
+                className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+              />
+              <span className="text-sm text-text-primary">{value[key] ? "true" : "false"}</span>
+            </label>
+          );
+        } else if (prop.type === "integer" || prop.type === "number") {
+          input = (
+            <input
+              type="number"
+              value={value[key] ?? ""}
+              onChange={(e) => update(key, e.target.value === "" ? "" : Number(e.target.value))}
+              className="input font-mono text-sm"
+            />
+          );
+        } else if (Array.isArray(prop.enum) && prop.enum.length > 0) {
+          input = (
+            <select
+              value={value[key] ?? ""}
+              onChange={(e) => update(key, e.target.value)}
+              className="input text-sm"
+            >
+              {prop.enum.map((opt: string) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          );
+        } else {
+          input = (
+            <input
+              type="text"
+              value={value[key] ?? ""}
+              onChange={(e) => update(key, e.target.value)}
+              className="input font-mono text-sm"
+            />
+          );
+        }
+        return (
+          <div key={key}>
+            {label}
+            <div className="mt-1.5">{input}</div>
+            {desc}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SkillForm({
+  params,
+  value,
+  onChange,
+}: {
+  params: SkillInfo["parameters"];
+  value: Record<string, any>;
+  onChange: (v: Record<string, any>) => void;
+}) {
+  const update = (key: string, val: any) => onChange({ ...value, [key]: val });
+  return (
+    <div className="space-y-4">
+      {params.map((p) => {
+        const label = (
+          <span className="text-xs font-medium text-text-secondary">
+            {p.name}
+            {p.required && <span className="ml-1 text-error">*</span>}
+            <span className="ml-2 font-mono text-[10px] text-text-muted">{p.type}</span>
+          </span>
+        );
+        const desc = p.description ? (
+          <p className="mt-1 text-xs text-text-muted">{p.description}</p>
+        ) : null;
+        let input: React.ReactNode;
+        if (p.type === "boolean") {
+          input = (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!value[p.name]}
+                onChange={(e) => update(p.name, e.target.checked)}
+                className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+              />
+              <span className="text-sm text-text-primary">{value[p.name] ? "true" : "false"}</span>
+            </label>
+          );
+        } else if (p.type === "integer" || p.type === "number") {
+          input = (
+            <input
+              type="number"
+              value={value[p.name] ?? ""}
+              onChange={(e) =>
+                update(p.name, e.target.value === "" ? "" : Number(e.target.value))
+              }
+              className="input font-mono text-sm"
+            />
+          );
+        } else {
+          input = (
+            <input
+              type="text"
+              value={value[p.name] ?? ""}
+              onChange={(e) => update(p.name, e.target.value)}
+              className="input font-mono text-sm"
+            />
+          );
+        }
+        return (
+          <div key={p.name}>
+            {label}
+            <div className="mt-1.5">{input}</div>
+            {desc}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -148,7 +321,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<string>("connecting…");
   const [activeTab, setActiveTab] = useState<
-    "chat" | "tools" | "memory" | "skills" | "settings" | "files" | "terminal"
+    "chat" | "tools" | "memory" | "skills" | "settings" | "files" | "terminal" | "review"
   >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -158,13 +331,13 @@ export default function App() {
 
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
-  const [toolArgs, setToolArgs] = useState("{}");
+  const [toolArgs, setToolArgs] = useState<Record<string, any>>({});
   const [toolResult, setToolResult] = useState<string>("");
   const [toolLoading, setToolLoading] = useState(false);
 
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
-  const [skillArgs, setSkillArgs] = useState("{}");
+  const [skillArgs, setSkillArgs] = useState<Record<string, any>>({});
   const [skillResult, setSkillResult] = useState<string>("");
   const [skillLoading, setSkillLoading] = useState(false);
 
@@ -184,6 +357,23 @@ export default function App() {
   const [terminalOutput, setTerminalOutput] = useState<string>("");
   const [terminalInput, setTerminalInput] = useState<string>("");
   const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  interface DiffEntry {
+    path: string;
+    status: string;
+    diff: string;
+    old: string;
+    new: string;
+  }
+  interface Checkpoint {
+    id: string;
+    base: string;
+    files: number;
+  }
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  const [activeCp, setActiveCp] = useState<string | null>(null);
+  const [diffs, setDiffs] = useState<DiffEntry[]>([]);
+  const [selectedDiff, setSelectedDiff] = useState<DiffEntry | null>(null);
 
   const GUIDE_KEY = "matsci:guide:v1";
   const [showGuide, setShowGuide] = useState(false);
@@ -349,6 +539,61 @@ export default function App() {
     terminalEndRef.current?.scrollIntoView({ behavior: "auto" });
   }, [terminalOutput]);
 
+  const createCheckpoint = async () => {
+    if (!cwd) return;
+    try {
+      const cp = (await fetch(`${API_BASE}/checkpoints`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: cwd }),
+      }).then((r) => r.json())) as Checkpoint;
+      setCheckpoints((prev) => [cp, ...prev]);
+      setActiveCp(cp.id);
+      loadDiffs(cp.id);
+    } catch (e: any) {
+      console.error("[review] create checkpoint failed:", e);
+    }
+  };
+
+  const loadDiffs = async (cpId: string) => {
+    try {
+      const data = await fetch(`${API_BASE}/checkpoints/${cpId}/diff`).then((r) => r.json());
+      setDiffs((data.diffs as DiffEntry[]) || []);
+      setSelectedDiff((data.diffs?.[0] as DiffEntry) || null);
+      setActiveCp(cpId);
+    } catch (e: any) {
+      console.error("[review] load diffs failed:", e);
+    }
+  };
+
+  const acceptCheckpoint = async (cpId: string) => {
+    try {
+      await fetch(`${API_BASE}/checkpoints/${cpId}/accept`, { method: "POST" });
+      setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
+      if (activeCp === cpId) {
+        setActiveCp(null);
+        setDiffs([]);
+        setSelectedDiff(null);
+      }
+    } catch (e: any) {
+      console.error("[review] accept failed:", e);
+    }
+  };
+
+  const rejectCheckpoint = async (cpId: string) => {
+    try {
+      await fetch(`${API_BASE}/checkpoints/${cpId}/reject`, { method: "POST" });
+      setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
+      if (activeCp === cpId) {
+        setActiveCp(null);
+        setDiffs([]);
+        setSelectedDiff(null);
+      }
+    } catch (e: any) {
+      console.error("[review] reject failed:", e);
+    }
+  };
+
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
@@ -498,11 +743,10 @@ export default function App() {
     setToolResult("");
     try {
       const name = selectedTool.function.name;
-      const args = JSON.parse(toolArgs);
       const resp = await fetch(`${API_BASE}/tools/${name}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(args),
+        body: JSON.stringify(toolArgs),
       });
       const data = await resp.json();
       setToolResult(JSON.stringify(data, null, 2));
@@ -518,11 +762,10 @@ export default function App() {
     setSkillLoading(true);
     setSkillResult("");
     try {
-      const args = JSON.parse(skillArgs);
       const resp = await fetch(`${API_BASE}/skills/execute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skill: selectedSkill.name, args }),
+        body: JSON.stringify({ skill: selectedSkill.name, args: skillArgs }),
       });
       const data = await resp.json();
       setSkillResult(JSON.stringify(data, null, 2));
@@ -539,6 +782,7 @@ export default function App() {
     { id: "chat", label: "Chat", icon: "💬" },
     { id: "files", label: "Files", icon: "📁" },
     { id: "terminal", label: "Terminal", icon: "🖥️" },
+    { id: "review", label: "Review", icon: "📝" },
     { id: "tools", label: "Tools", icon: "🔧" },
     { id: "skills", label: "Skills", icon: "⚡" },
     { id: "memory", label: "Memory", icon: "🧠" },
@@ -881,6 +1125,121 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === "review" && (
+            <div className="flex h-full">
+              {/* Checkpoint list */}
+              <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
+                <div className="flex h-12 items-center justify-between border-b border-border px-4">
+                  <span className="text-sm font-semibold">Checkpoints</span>
+                  <button
+                    onClick={createCheckpoint}
+                    disabled={!cwd}
+                    className="btn-primary px-3 py-1.5 text-xs"
+                  >
+                    + New
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {checkpoints.length === 0 && (
+                    <div className="text-xs text-text-muted">
+                      Create a checkpoint before asking the agent to edit files. After the agent
+                      runs, come back here to review changes.
+                    </div>
+                  )}
+                  {checkpoints.map((cp) => (
+                    <div
+                      key={cp.id}
+                      onClick={() => loadDiffs(cp.id)}
+                      className={`cursor-pointer rounded-lg border border-border p-3 transition-colors ${
+                        activeCp === cp.id
+                          ? "bg-accent/10 border-accent"
+                          : "bg-bg-tertiary hover:bg-bg-primary"
+                      }`}
+                    >
+                      <div className="text-xs font-semibold text-accent">{cp.id}</div>
+                      <div className="mt-1 truncate text-xs text-text-muted">{cp.base}</div>
+                      <div className="mt-1 text-xs text-text-secondary">{cp.files} files</div>
+                    </div>
+                  ))}
+                </div>
+              </aside>
+
+              {/* Diff viewer */}
+              <div className="flex flex-1 flex-col bg-bg-primary">
+                <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+                  <span className="text-sm font-semibold">
+                    {activeCp ? `Checkpoint ${activeCp}` : "Review"}
+                  </span>
+                  {activeCp && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => rejectCheckpoint(activeCp)}
+                        className="btn-secondary px-3 py-1.5 text-xs text-error hover:bg-error/10"
+                      >
+                        Reject all
+                      </button>
+                      <button
+                        onClick={() => acceptCheckpoint(activeCp)}
+                        className="btn-primary px-3 py-1.5 text-xs"
+                      >
+                        Accept all
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-1 overflow-hidden">
+                  {/* File list */}
+                  <div className="w-64 overflow-y-auto border-r border-border bg-bg-secondary p-2">
+                    {diffs.map((d) => (
+                      <button
+                        key={d.path}
+                        onClick={() => setSelectedDiff(d)}
+                        className={`mb-1 flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs ${
+                          selectedDiff?.path === d.path
+                            ? "bg-accent text-white"
+                            : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                        }`}
+                      >
+                        <span className="truncate">{d.path}</span>
+                        <span
+                          className={`ml-2 shrink-0 rounded px-1 text-[10px] ${
+                            d.status === "added"
+                              ? "bg-success/20 text-success"
+                              : d.status === "deleted"
+                              ? "bg-error/20 text-error"
+                              : "bg-warning/20 text-warning"
+                          }`}
+                        >
+                          {d.status}
+                        </span>
+                      </button>
+                    ))}
+                    {activeCp && diffs.length === 0 && (
+                      <div className="p-2 text-xs text-text-muted">No changes</div>
+                    )}
+                  </div>
+
+                  {/* Diff content */}
+                  <div className="flex-1 overflow-auto bg-bg-primary p-4">
+                    {selectedDiff ? (
+                      <div>
+                        <div className="mb-2 text-sm font-semibold">{selectedDiff.path}</div>
+                        <pre className="rounded-lg border border-border bg-bg-secondary p-3 font-mono text-xs whitespace-pre-wrap">
+                          {selectedDiff.diff || "(binary or no diff)"}
+                        </pre>
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-text-muted">
+                        Select a changed file to review
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === "tools" && (
             <div className="h-full overflow-y-auto p-6">
               <div className="mb-4 flex items-center justify-between">
@@ -899,7 +1258,7 @@ export default function App() {
                       key={tool.function.name}
                       onClick={() => {
                         setSelectedTool(tool);
-                        setToolArgs("{}");
+                        setToolArgs(buildDefaultArgs(tool.function.parameters));
                         setToolResult("");
                       }}
                       className="card text-left transition-colors hover:border-accent"
@@ -921,15 +1280,22 @@ export default function App() {
                       {selectedTool.function.description}
                     </p>
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Arguments (JSON)
-                    </label>
-                    <textarea
+                  <div className="card">
+                    <div className="mb-3 flex items-center justify-between">
+                      <label className="text-xs font-medium text-text-secondary">Arguments</label>
+                      <button
+                        onClick={() =>
+                          setToolArgs(buildDefaultArgs(selectedTool.function.parameters))
+                        }
+                        className="text-xs text-accent hover:underline"
+                      >
+                        Reset defaults
+                      </button>
+                    </div>
+                    <JsonSchemaForm
+                      schema={selectedTool.function.parameters}
                       value={toolArgs}
-                      onChange={(e) => setToolArgs(e.target.value)}
-                      rows={10}
-                      className="input font-mono text-sm"
+                      onChange={setToolArgs}
                     />
                   </div>
                   <button onClick={runTool} disabled={toolLoading} className="btn-primary">
@@ -937,7 +1303,10 @@ export default function App() {
                   </button>
                   {toolResult && (
                     <div className="card border-accent/20 bg-bg-secondary">
-                      <pre className="max-h-96 overflow-auto text-xs">{toolResult}</pre>
+                      <div className="mb-2 text-xs font-semibold text-accent">Result</div>
+                      <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">
+                        {toolResult}
+                      </pre>
                     </div>
                   )}
                 </div>
@@ -975,8 +1344,9 @@ export default function App() {
                           skill.parameters.forEach((p) => {
                             if (p.default !== undefined && p.default !== null)
                               defaults[p.name] = p.default;
+                            else defaults[p.name] = p.type === "boolean" ? false : p.type === "number" || p.type === "integer" ? 0 : "";
                           });
-                          setSkillArgs(JSON.stringify(defaults, null, 2));
+                          setSkillArgs(defaults);
                           setSkillResult("");
                         }}
                         className="btn-secondary mt-3 w-full text-xs"
@@ -994,16 +1364,37 @@ export default function App() {
                     <p className="mt-1 text-sm text-text-secondary">
                       {selectedSkill.description}
                     </p>
+                    <div className="mt-2 text-xs text-text-muted">
+                      Tags: {selectedSkill.tags.join(", ")}
+                    </div>
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Arguments (JSON)
-                    </label>
-                    <textarea
+                  <div className="card">
+                    <div className="mb-3 flex items-center justify-between">
+                      <label className="text-xs font-medium text-text-secondary">Arguments</label>
+                      <button
+                        onClick={() => {
+                          const defaults: Record<string, any> = {};
+                          selectedSkill.parameters.forEach((p) => {
+                            defaults[p.name] =
+                              p.default !== undefined && p.default !== null
+                                ? p.default
+                                : p.type === "boolean"
+                                ? false
+                                : p.type === "number" || p.type === "integer"
+                                ? 0
+                                : "";
+                          });
+                          setSkillArgs(defaults);
+                        }}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        Reset defaults
+                      </button>
+                    </div>
+                    <SkillForm
+                      params={selectedSkill.parameters}
                       value={skillArgs}
-                      onChange={(e) => setSkillArgs(e.target.value)}
-                      rows={12}
-                      className="input font-mono text-sm"
+                      onChange={setSkillArgs}
                     />
                   </div>
                   <button onClick={runSkill} disabled={skillLoading} className="btn-primary">
@@ -1011,7 +1402,10 @@ export default function App() {
                   </button>
                   {skillResult && (
                     <div className="card border-accent/20 bg-bg-secondary">
-                      <pre className="max-h-96 overflow-auto text-xs">{skillResult}</pre>
+                      <div className="mb-2 text-xs font-semibold text-accent">Result</div>
+                      <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">
+                        {skillResult}
+                      </pre>
                     </div>
                   )}
                 </div>
