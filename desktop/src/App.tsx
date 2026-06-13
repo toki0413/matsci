@@ -180,6 +180,18 @@ export default function App() {
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorMsg, setEditorMsg] = useState<string>("");
 
+  const GUIDE_KEY = "matsci:guide:v1";
+  const [showGuide, setShowGuide] = useState(false);
+  useEffect(() => {
+    if (!localStorage.getItem(GUIDE_KEY)) {
+      setShowGuide(true);
+    }
+  }, []);
+  const closeGuide = () => {
+    localStorage.setItem(GUIDE_KEY, "1");
+    setShowGuide(false);
+  };
+
   const startBackend = useCallback(async () => {
     setStatus("starting backend…");
     try {
@@ -572,6 +584,12 @@ export default function App() {
             <span>{isConnected ? "Backend online" : "Backend offline"}</span>
           </div>
           <div className="text-xs text-text-muted truncate">{status}</div>
+          <button
+            onClick={() => setShowGuide(true)}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
+          >
+            ❓ Help / Guide
+          </button>
         </div>
       </aside>
 
@@ -1095,6 +1113,60 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {showGuide && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl">
+            <h2 className="mb-2 text-xl font-bold">Welcome to MatSci-Agent</h2>
+            <p className="mb-5 text-sm text-text-secondary">
+              A few quick tips to get you started:
+            </p>
+            <ol className="mb-6 space-y-3 text-sm text-text-primary">
+              <li className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
+                  1
+                </span>
+                <span>
+                  Open <strong>Settings</strong> and enter your LLM provider / API key. The app
+                  saves it locally and pushes it to the backend automatically.
+                </span>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
+                  2
+                </span>
+                <span>
+                  The Python backend starts automatically. If it doesn't, use the{" "}
+                  <strong>▶ Start backend</strong> button in the header or Settings.
+                </span>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
+                  3
+                </span>
+                <span>
+                  Switch to <strong>Files</strong> to browse and edit scripts, or use{" "}
+                  <strong>Tools</strong> / <strong>Skills</strong> to run capabilities directly.
+                </span>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
+                  4
+                </span>
+                <span>
+                  In chat, tool calls appear as expandable cards so you can see exactly what
+                  the agent is doing.
+                </span>
+              </li>
+            </ol>
+            <div className="flex justify-end">
+              <button onClick={closeGuide} className="btn-primary px-5 py-2">
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
