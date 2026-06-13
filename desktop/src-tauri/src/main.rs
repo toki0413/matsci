@@ -39,11 +39,10 @@ fn main() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
-            if let Some(state) = app_handle.try_state::<AppState>() {
-                let mut child = state.backend.lock().unwrap();
-                if let Some(mut c) = child.take() {
-                    let _ = c.kill();
-                }
+            let state = app_handle.state::<AppState>();
+            let mut child = state.backend.lock().unwrap();
+            if let Some(mut c) = child.take() {
+                let _ = c.kill();
             }
         }
     });
