@@ -41,6 +41,7 @@ interface AppConfig {
   api_key: string;
   base_url: string;
   ollama_host: string;
+  persona: string;
 }
 
 interface FileEntry {
@@ -62,7 +63,16 @@ const DEFAULT_CONFIG: AppConfig = {
   api_key: "",
   base_url: "",
   ollama_host: "http://localhost:11434",
+  persona: "default",
 };
+
+const PERSONAS = [
+  { id: "default", label: "Default Materials Scientist" },
+  { id: "dft_expert", label: "DFT Expert" },
+  { id: "md_expert", label: "MD Expert" },
+  { id: "reviewer", label: "Critical Reviewer" },
+  { id: "tutor", label: "Patient Tutor" },
+];
 
 const PROVIDERS = [
   { id: "openai", label: "OpenAI", keyVar: "OPENAI_API_KEY" },
@@ -1485,6 +1495,30 @@ export default function App() {
                       placeholder="e.g. gpt-4o"
                       className="input"
                     />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
+                      Persona
+                    </label>
+                    <select
+                      value={config.persona}
+                      onChange={(e) => {
+                        const next = { ...config, persona: e.target.value };
+                        setConfig(next);
+                        setConfigDirty(true);
+                      }}
+                      className="input"
+                    >
+                      {PERSONAS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-text-muted">
+                      Changes the system prompt role used by the agent.
+                    </p>
                   </div>
 
                   <div className="md:col-span-2">

@@ -46,6 +46,7 @@ from matsci_agent.tools.gp_tool import GPTool
 from matsci_agent.rag.rag_tool import RAGTool
 from matsci_agent.evaluation.evaluation_tool import EvaluationTool
 from matsci_agent.config import MatSciConfig
+from matsci_agent.personas import PERSONAS
 from matsci_agent.types import ToolContext
 from matsci_agent.workflows.engine import WorkflowEngine
 from matsci_agent.workflows.templates import get_template
@@ -145,10 +146,11 @@ def get_agent() -> MatSciAgent:
         return _agent
     
     cfg = MatSciConfig.from_env()
+    system_prompt = PERSONAS.get(cfg.persona, PERSONAS["default"])
     
     # No provider configured → mock mode
     if cfg.provider == "default":
-        _agent = MatSciAgent(model=None)
+        _agent = MatSciAgent(model=None, system_prompt=system_prompt)
         _agent.register_tools_from_registry()
         return _agent
     
@@ -157,7 +159,7 @@ def get_agent() -> MatSciAgent:
         if not _check_ollama_available(cfg.ollama_host):
             print(f"Warning: Ollama not responding at {cfg.ollama_host}")
             print("Falling back to mock mode (no LLM)")
-            _agent = MatSciAgent(model=None)
+            _agent = MatSciAgent(model=None, system_prompt=system_prompt)
             _agent.register_tools_from_registry()
             return _agent
     
@@ -168,19 +170,20 @@ def get_agent() -> MatSciAgent:
             model=cfg.model,
             api_key=cfg.api_key,
             base_url=cfg.base_url,
+            system_prompt=system_prompt,
         )
     except ImportError as e:
         print(f"Warning: Missing dependency for {cfg.provider}: {e}")
         print("Falling back to mock mode (no LLM)")
-        _agent = MatSciAgent(model=None)
+        _agent = MatSciAgent(model=None, system_prompt=system_prompt)
     except ValueError as e:
         print(f"Warning: {e}")
         print("Falling back to mock mode (no LLM)")
-        _agent = MatSciAgent(model=None)
+        _agent = MatSciAgent(model=None, system_prompt=system_prompt)
     except Exception as e:
         print(f"Warning: Failed to initialize {cfg.provider} model: {e}")
         print("Falling back to mock mode (no LLM)")
-        _agent = MatSciAgent(model=None)
+        _agent = MatSciAgent(model=None, system_prompt=system_prompt)
     
     _agent.register_tools_from_registry()
     return _agent
@@ -227,6 +230,8 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
             os.environ.pop("MATSCI_BASE_URL", None)
     if "ollama_host" in params:
         os.environ["OLLAMA_HOST"] = str(params["ollama_host"])
+    if "persona" in params:
+        os.environ["MATSCI_PERSONA"] = str(params["persona"])
 
     _agent = None  # force re-initialization with new config
     cfg = MatSciConfig.from_env()

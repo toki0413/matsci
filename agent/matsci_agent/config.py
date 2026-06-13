@@ -47,6 +47,7 @@ class MatSciConfig:
     auto_approve: bool = False
     enable_exploration: bool = True
     max_parallel_branches: int = 5
+    persona: str = "default"
     
     # Encryption settings
     encryption_enabled: bool = False
@@ -105,6 +106,7 @@ class MatSciConfig:
             encrypt_rag_documents=os.environ.get("MATSCI_ENCRYPT_RAG_DOCS", "true").lower() == "true",
             encrypt_rag_metadata=os.environ.get("MATSCI_ENCRYPT_RAG_META", "true").lower() == "true",
             encrypt_config=os.environ.get("MATSCI_ENCRYPT_CONFIG", "").lower() == "true",
+            persona=os.environ.get("MATSCI_PERSONA", "default").strip(),
         )
     
 
@@ -160,6 +162,7 @@ class MatSciConfig:
             "encrypt_rag_documents": self.encrypt_rag_documents,
             "encrypt_rag_metadata": self.encrypt_rag_metadata,
             "encrypt_config": self.encrypt_config,
+            "persona": self.persona,
         }
 
     @classmethod
