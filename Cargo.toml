@@ -1,0 +1,9 @@
+[workspace]
+members = ["pyext", "cli", "desktop/src-tauri"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["toki"]
+license = "MIT"
+edition = "2021"

@@ -5,6 +5,25 @@
   "permissions": [
     "core:default",
     "shell:default",
-    "notification:default"
+    "notification:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "sidecars/matsci",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-kill",
+      "allow": [
+        {
+          "name": "sidecars/matsci",
+          "sidecar": true
+        }
+      ]
+    }
   ]
 }

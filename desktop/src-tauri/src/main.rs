@@ -8,9 +8,11 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{Emitter, Manager};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
 
 struct AppState {
-    backend: Mutex<Option<Child>>,
+    backend: Mutex<Option<CommandChild>>,
     terminal: Mutex<Option<TerminalSession>>,
 }
 
@@ -69,8 +71,8 @@ fn main() {
         if let tauri::RunEvent::ExitRequested { .. } = event {
             let state = app_handle.state::<AppState>();
             let mut backend = state.backend.lock().unwrap();
-            if let Some(mut c) = backend.take() {
-                let _ = c.kill();
+            if let Some(child) = backend.take() {
+                let _ = child.kill();
             }
             let mut terminal = state.terminal.lock().unwrap();
             if let Some(mut t) = terminal.take() {
@@ -103,7 +105,10 @@ fn get_agent_status() -> serde_json::Value {
 }
 
 #[tauri::command]
-fn start_backend(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+async fn start_backend(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
     // If we already manage a backend process, assume it's started.
     {
         let lock = state.backend.lock().unwrap();
@@ -119,29 +124,40 @@ fn start_backend(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Re
         }
     }
 
-    let mut child = Command::new("python")
-        .args(["-m", "matsci_agent.server"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to start backend: {}", e))?;
+    let sidecar = app
+        .shell()
+        .sidecar("matsci")
+        .map_err(|e| format!("failed to locate matsci sidecar: {}", e))?;
 
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let stderr = child.stderr.take().ok_or("no stderr")?;
+    let (mut rx, child) = sidecar
+        .args(["serve", "--port", "8000"])
+        .spawn()
+        .map_err(|e| format!("failed to spawn matsci sidecar: {}", e))?;
 
     let app_stdout = app.clone();
-    std::thread::spawn(move || read_stream(stdout, app_stdout, "stdout", "backend-log"));
-    let app_stderr = app.clone();
-    std::thread::spawn(move || read_stream(stderr, app_stderr, "stderr", "backend-log"));
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let (source, bytes) = match event {
+                CommandEvent::Stdout(b) => ("stdout", b),
+                CommandEvent::Stderr(b) => ("stderr", b),
+                _ => continue,
+            };
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            let _ = app_stdout.emit(
+                "backend-log",
+                serde_json::json!({"source": source, "text": text}),
+            );
+        }
+    });
 
     *state.backend.lock().unwrap() = Some(child);
     Ok("started".to_string())
 }
 
 #[tauri::command]
-fn stop_backend(state: tauri::State<'_, AppState>) -> Result<String, String> {
+async fn stop_backend(state: tauri::State<'_, AppState>) -> Result<String, String> {
     let mut lock = state.backend.lock().unwrap();
-    if let Some(mut child) = lock.take() {
+    if let Some(child) = lock.take() {
         child.kill().map_err(|e| e.to_string())?;
         Ok("stopped".to_string())
     } else {

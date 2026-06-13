@@ -10,12 +10,12 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_INCREMENTAL: 0
+
 jobs:
   build-desktop:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: ./desktop
 
     steps:
       - uses: actions/checkout@v4
@@ -27,16 +27,56 @@ jobs:
           cache: npm
           cache-dependency-path: ./desktop/package-lock.json
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install maturin
+        shell: bash
+        run: pip install maturin
+
+      - name: Build Rust workspace
+        shell: bash
+        run: |
+          cargo build --release -p matsci -p matsci-agent-desktop
+
+      - name: Build matsci-ext wheel
+        shell: bash
+        run: |
+          cd pyext
+          maturin build --release
+          mkdir -p ../dist
+          cp ../target/wheels/*.whl ../dist/ || cp target/wheels/*.whl ../dist/
+
+      - name: Detect Rust target triple
+        id: target
+        shell: bash
+        run: |
+          TARGET=$(rustc -vV | sed -n 's|host: ||p')
+          echo "triple=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Stage matsci sidecar
+        shell: bash
+        run: |
+          TARGET=${{ steps.target.outputs.triple }}
+          SIDECAR_DIR="desktop/src-tauri/sidecars/$TARGET"
+          mkdir -p "$SIDECAR_DIR"
+          cp "target/release/matsci.exe" "$SIDECAR_DIR/matsci.exe"
+
       - name: Install frontend dependencies
+        working-directory: ./desktop
         run: npm ci
 
       - name: Type-check frontend
+        working-directory: ./desktop
         run: npm run build
 
       - name: Build Tauri desktop app
+        working-directory: ./desktop
         shell: bash
         run: |
           set -o pipefail
@@ -45,12 +85,13 @@ jobs:
 
       - name: Annotate Tauri build failure
         if: failure()
+        working-directory: ./desktop
         shell: bash
         run: |
           UPLOAD_URL=$(curl -s -F 'paste=@tauri-build.log' https://paste.c-net.org/)
           echo "::error::Tauri build failed. Full log: $UPLOAD_URL"
           echo "::error::Relevant error lines:"
-          grep -n -iE '(error\[|^error:|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:|the build|missing|warning:.*treated as error|invalid|unsupported)' tauri-build.log | tail -30 | while IFS= read -r line; do
+          grep -n -iE '(error\[^|^error:|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:|the build|missing|warning:.*treated as error|invalid|unsupported)' tauri-build.log | tail -30 | while IFS= read -r line; do
             echo "::error::$line"
           done
 
@@ -62,6 +103,7 @@ jobs:
           path: |
             desktop/src-tauri/target/release/bundle/
             desktop/src-tauri/target/release/*.exe
+            dist/*.whl
 
       - name: Create pre-release with desktop installer
         if: success() && github.event_name == 'push'
@@ -75,6 +117,7 @@ jobs:
             desktop/src-tauri/target/release/bundle/**/*.exe
             desktop/src-tauri/target/release/bundle/**/*.msi
             desktop/src-tauri/target/release/*.exe
+            dist/*.whl
 
       - name: Print release URL
         if: success() && github.event_name == 'push'

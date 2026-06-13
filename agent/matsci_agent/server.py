@@ -271,6 +271,27 @@ async def health() -> dict[str, Any]:
     }
 
 
+@app.get("/health/rust")
+async def health_rust() -> dict[str, Any]:
+    """Report whether the Rust acceleration extension is available."""
+    try:
+        import matsci_ext
+
+        functions = [name for name in dir(matsci_ext) if not name.startswith("_")]
+        return {
+            "available": True,
+            "module": "matsci_ext",
+            "functions": functions,
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "module": "matsci_ext",
+            "error": str(e),
+            "functions": [],
+        }
+
+
 @app.get("/config")
 async def get_config() -> dict[str, Any]:
     """Return current server-side configuration (API key masked)."""

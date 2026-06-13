@@ -59,6 +59,7 @@ yarn-error.log*
 
 # Tauri build output
 desktop/src-tauri/target/
+desktop/src-tauri/sidecars/
 desktop/dist/
 
 # Downloaded release binaries
