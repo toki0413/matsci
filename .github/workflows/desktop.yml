@@ -1,0 +1,45 @@
+name: Desktop Build
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build-desktop:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ./desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ./desktop/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type-check frontend
+        run: npm run build
+
+      - name: Build Tauri desktop app
+        run: npm run tauri build
+        timeout-minutes: 40
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: matsci-desktop-windows
+          path: |
+            desktop/src-tauri/target/release/bundle/
+            desktop/src-tauri/target/release/*.exe
