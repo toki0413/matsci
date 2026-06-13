@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import os
 import asyncio
+import difflib
 import tempfile
 import traceback
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +61,9 @@ for T in [StructureTool, ExtractTool, JobTool, DatabaseTool, PotentialTool, Diff
 # Global agent and MCP manager
 _agent: MatSciAgent | None = None
 _mcp_manager = None
+
+# In-memory checkpoints for diff review (snapshot path -> content)
+_checkpoints: dict[str, tuple[Path, dict[str, str]]] = {}
 
 
 async def _init_mcp_tools():
@@ -704,6 +709,111 @@ async def hpc_status(params: dict[str, Any]) -> dict[str, Any]:
             }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# ── Checkpoint / Diff Review ───────────────────────────────────
+
+def _snapshot_directory(base: Path) -> dict[str, str]:
+    """Snapshot text files under base into a dict keyed by relative path."""
+    snapshot: dict[str, str] = {}
+    if not base.exists():
+        return snapshot
+    for path in base.rglob("*"):
+        if not path.is_file():
+            continue
+        # Skip obvious binary / large files
+        try:
+            if path.stat().st_size > 2 * 1024 * 1024:
+                continue
+            data = path.read_bytes()
+            if b"\x00" in data:
+                continue
+            snapshot[str(path.relative_to(base))] = data.decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+    return snapshot
+
+
+@app.post("/checkpoints")
+async def create_checkpoint(params: dict[str, Any]) -> dict[str, Any]:
+    """Create a checkpoint of the given directory for later diff review."""
+    base = Path(params.get("path", ".")).resolve()
+    snapshot = _snapshot_directory(base)
+    cp_id = uuid.uuid4().hex[:8]
+    _checkpoints[cp_id] = (base, snapshot)
+    return {"id": cp_id, "base": str(base), "files": len(snapshot)}
+
+
+@app.get("/checkpoints/{cp_id}")
+async def get_checkpoint(cp_id: str) -> dict[str, Any]:
+    if cp_id not in _checkpoints:
+        return {"error": "checkpoint not found"}
+    base, snapshot = _checkpoints[cp_id]
+    return {"id": cp_id, "base": str(base), "files": list(snapshot.keys())}
+
+
+@app.get("/checkpoints/{cp_id}/diff")
+async def checkpoint_diff(cp_id: str) -> dict[str, Any]:
+    if cp_id not in _checkpoints:
+        return {"error": "checkpoint not found"}
+    base, snapshot = _checkpoints[cp_id]
+    current = _snapshot_directory(base)
+    diffs = []
+    all_files = set(snapshot.keys()) | set(current.keys())
+    for rel in sorted(all_files):
+        old = snapshot.get(rel, "")
+        new = current.get(rel, "")
+        if old == new:
+            continue
+        status = "added" if rel not in snapshot else "deleted" if rel not in current else "modified"
+        diff_text = "\n".join(
+            difflib.unified_diff(
+                old.splitlines(),
+                new.splitlines(),
+                fromfile=f"a/{rel}",
+                tofile=f"b/{rel}",
+                lineterm="",
+            )
+        )
+        diffs.append({
+            "path": rel,
+            "status": status,
+            "diff": diff_text,
+            "old": old,
+            "new": new,
+        })
+    return {"id": cp_id, "base": str(base), "diffs": diffs}
+
+
+@app.post("/checkpoints/{cp_id}/accept")
+async def accept_checkpoint(cp_id: str) -> dict[str, Any]:
+    if cp_id not in _checkpoints:
+        return {"error": "checkpoint not found"}
+    del _checkpoints[cp_id]
+    return {"success": True}
+
+
+@app.post("/checkpoints/{cp_id}/reject")
+async def reject_checkpoint(cp_id: str) -> dict[str, Any]:
+    if cp_id not in _checkpoints:
+        return {"error": "checkpoint not found"}
+    base, snapshot = _checkpoints[cp_id]
+    current = _snapshot_directory(base)
+    for rel, content in snapshot.items():
+        if rel in current:
+            path = base / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+    # Remove files that were added after the checkpoint
+    for rel in current:
+        if rel not in snapshot:
+            path = base / rel
+            try:
+                path.unlink()
+            except Exception:
+                pass
+    del _checkpoints[cp_id]
+    return {"success": True}
 
 
 if __name__ == "__main__":
