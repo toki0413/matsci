@@ -61,6 +61,10 @@ yarn-error.log*
 desktop/src-tauri/target/
 desktop/dist/
 
+# Downloaded release binaries
+MatSci-Agent_*.exe
+matsci-agent-desktop.exe
+
 # Python build artifacts
 agent/dist/
 agent/build/

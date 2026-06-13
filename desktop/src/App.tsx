@@ -158,12 +158,51 @@ export default function App() {
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
 
-  // Native Tauri status check
-  useEffect(() => {
-    invoke("get_agent_status")
-      .then((s: any) => setStatus(`${s.status} • v${s.version || "0.1.0"}`))
-      .catch(() => setStatus("desktop ready"));
+  const startBackend = useCallback(async () => {
+    setStatus("starting backend…");
+    try {
+      const result = await invoke("start_backend");
+      setStatus(`${result} • waiting for health…`);
+    } catch (e: any) {
+      setStatus(`backend start failed: ${e}`);
+    }
   }, []);
+
+  // Native Tauri status check + auto-start backend if needed
+  useEffect(() => {
+    let alive = true;
+
+    const check = async () => {
+      try {
+        const s: any = await invoke("get_agent_status");
+        if (alive) {
+          setStatus(`${s.status} • v${s.version || "0.1.0"}`);
+          if (s.status === "ok") return true;
+        }
+      } catch {
+        if (alive) setStatus("desktop ready");
+      }
+      return false;
+    };
+
+    const run = async () => {
+      const online = await check();
+      if (online) return;
+      // Try to start the bundled backend once.
+      await startBackend();
+      // Poll health for up to ~30s.
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (await check()) return;
+      }
+      if (alive) setStatus("backend did not come online");
+    };
+
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [startBackend]);
 
   // Push config to backend whenever it changes or we come online
   const pushConfig = useCallback(async (cfg: AppConfig) => {
@@ -408,9 +447,17 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-3">
-            {!isConnected && (
-              <span className="badge bg-error/10 text-error border border-error/20">
-                Start backend: cd agent && matsci-agent server
+            {!isConnected && !status.includes("starting") && (
+              <button
+                onClick={startBackend}
+                className="badge bg-error/10 text-error border border-error/20 hover:bg-error/20"
+              >
+                ▶ Start backend
+              </button>
+            )}
+            {status.includes("starting") && (
+              <span className="badge bg-warning/10 text-warning border border-warning/20">
+                Starting backend…
               </span>
             )}
             <button
@@ -778,12 +825,25 @@ export default function App() {
                 </div>
 
                 <div className="card mt-6 border-accent/20 bg-accent/5">
-                  <h3 className="text-sm font-semibold text-accent">How to start the backend</h3>
+                  <h3 className="text-sm font-semibold text-accent">Backend</h3>
                   <p className="mt-1 text-xs text-text-secondary">
-                    The desktop UI talks to the Python server on port 8000. In a terminal run:
+                    The desktop app normally starts the Python backend automatically. If it didn't,
+                    you can start or stop it here.
                   </p>
-                  <pre className="mt-3 text-xs">cd agent
-matsci-agent server</pre>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button onClick={startBackend} className="btn-primary text-xs">
+                      ▶ Start backend
+                    </button>
+                    <button
+                      onClick={() => invoke("stop_backend")}
+                      className="btn-secondary text-xs"
+                    >
+                      ⏹ Stop backend
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-text-muted">
+                    Status: {status}
+                  </p>
                 </div>
               </div>
             </div>
