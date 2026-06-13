@@ -18,10 +18,17 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from langchain_core.messages import AIMessage, ToolMessage
+
+try:
+    from matsci_agent.knowledge import get_knowledge_base
+    _KB_AVAILABLE = True
+except Exception:
+    _KB_AVAILABLE = False
+    get_knowledge_base = None  # type: ignore
 
 from matsci_agent import __version__
 from matsci_agent.agent import MatSciAgent
@@ -62,6 +69,7 @@ for T in [StructureTool, ExtractTool, JobTool, DatabaseTool, PotentialTool, Diff
 # Global agent and MCP manager
 _agent: MatSciAgent | None = None
 _mcp_manager = None
+_kb: Any | None = None
 
 # In-memory checkpoints for diff review (snapshot path -> content)
 _checkpoints: dict[str, tuple[Path, dict[str, str]]] = {}
@@ -112,7 +120,14 @@ async def _shutdown_mcp():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _kb
     await _init_mcp_tools()
+    if _KB_AVAILABLE and _kb is None:
+        try:
+            cfg = MatSciConfig.from_env()
+            _kb = get_knowledge_base(cfg.workspace)
+        except Exception as e:
+            print(f"[KB] Warning: could not initialize knowledge base: {e}")
     yield
     await _shutdown_mcp()
 
@@ -232,10 +247,65 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
         os.environ["OLLAMA_HOST"] = str(params["ollama_host"])
     if "persona" in params:
         os.environ["MATSCI_PERSONA"] = str(params["persona"])
+    if "rag_enabled" in params:
+        os.environ["MATSCI_RAG_ENABLED"] = "true" if params["rag_enabled"] else "false"
 
     _agent = None  # force re-initialization with new config
     cfg = MatSciConfig.from_env()
     return {"success": True, "config": cfg.to_dict(mask_key=True)}
+
+
+# ── Knowledge Base / RAG ───────────────────────────────────────
+
+@app.post("/knowledge/upload")
+async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Upload a document to the private knowledge base."""
+    if _kb is None:
+        return {"error": "Knowledge base is not available"}
+    try:
+        content = await file.read()
+        result = _kb.add_document(file.filename or "unnamed", content)
+        return {"success": True, "document": result}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/knowledge")
+async def list_knowledge() -> dict[str, Any]:
+    """List documents in the knowledge base."""
+    if _kb is None:
+        return {"documents": [], "available": False}
+    try:
+        return {"documents": _kb.list_documents(), "count": _kb.count(), "available": True}
+    except Exception as e:
+        return {"documents": [], "error": str(e), "available": False}
+
+
+@app.delete("/knowledge/{doc_id}")
+async def delete_knowledge(doc_id: str) -> dict[str, Any]:
+    """Remove a document from the knowledge base."""
+    if _kb is None:
+        return {"success": False, "error": "Knowledge base is not available"}
+    try:
+        deleted = _kb.delete_document(doc_id)
+        return {"success": True, "deleted": deleted}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/knowledge/query")
+async def query_knowledge(params: dict[str, Any]) -> dict[str, Any]:
+    """Query the knowledge base and return relevant chunks."""
+    if _kb is None:
+        return {"chunks": [], "error": "Knowledge base is not available"}
+    try:
+        text = params.get("query", "")
+        top_k = int(params.get("top_k", 5))
+        chunks = _kb.query(text, top_k=top_k)
+        return {"chunks": chunks}
+    except Exception as e:
+        return {"chunks": [], "error": str(e)}
 
 
 @app.get("/tools")
@@ -391,6 +461,24 @@ async def agent_websocket(websocket: WebSocket):
                         "error": "No LLM configured. Set MATSCI_PROVIDER and API keys, or start Ollama."
                     })
                     continue
+                
+                # Augment with RAG context if enabled
+                cfg_chat = MatSciConfig.from_env()
+                if cfg_chat.rag_enabled and _kb is not None and _kb.count() > 0:
+                    try:
+                        chunks = _kb.query(content, top_k=5)
+                        if chunks:
+                            context = "\n\n".join(
+                                f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)
+                            )
+                            content = (
+                                "Use the following retrieved context to answer the question. "
+                                "Cite the source numbers when appropriate.\n\n"
+                                f"{context}\n\n"
+                                f"Question: {content}"
+                            )
+                    except Exception as e:
+                        print(f"[RAG] query failed: {e}")
                 
                 # Stream agent responses
                 try:

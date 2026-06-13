@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "./agent[dev]"
-          pip install chromadb scikit-learn scipy sympy matplotlib
+          pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
 
       - name: Run tests
         run: |

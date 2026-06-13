@@ -42,6 +42,7 @@ interface AppConfig {
   base_url: string;
   ollama_host: string;
   persona: string;
+  rag_enabled: boolean;
 }
 
 interface FileEntry {
@@ -64,6 +65,7 @@ const DEFAULT_CONFIG: AppConfig = {
   base_url: "",
   ollama_host: "http://localhost:11434",
   persona: "default",
+  rag_enabled: false,
 };
 
 const PERSONAS = [
@@ -331,7 +333,15 @@ export default function App() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<string>("connecting…");
   const [activeTab, setActiveTab] = useState<
-    "chat" | "tools" | "memory" | "skills" | "settings" | "files" | "terminal" | "review"
+    | "chat"
+    | "tools"
+    | "memory"
+    | "skills"
+    | "settings"
+    | "files"
+    | "terminal"
+    | "review"
+    | "knowledge"
   >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -604,6 +614,79 @@ export default function App() {
     }
   };
 
+  // Knowledge base state
+  interface KbDoc {
+    doc_id: string;
+    filename: string;
+  }
+  const [kbDocs, setKbDocs] = useState<KbDoc[]>([]);
+  const [kbAvailable, setKbAvailable] = useState(false);
+  const [kbMsg, setKbMsg] = useState<string>("");
+  const [kbQuery, setKbQuery] = useState<string>("");
+  const [kbChunks, setKbChunks] = useState<any[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadKnowledge = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/knowledge`).then((r) => r.json());
+      setKbDocs(data.documents || []);
+      setKbAvailable(data.available);
+    } catch (e: any) {
+      setKbMsg(`Failed to load knowledge base: ${e.message}`);
+    }
+  };
+
+  const uploadKnowledge = async (file: File) => {
+    setKbMsg("Uploading…");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const data = await fetch(`${API_BASE}/knowledge/upload`, {
+        method: "POST",
+        body: form,
+      }).then((r) => r.json());
+      if (data.success) {
+        setKbMsg(`Uploaded ${data.document.chunks} chunks from ${file.name}`);
+        loadKnowledge();
+      } else {
+        setKbMsg(`Upload failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setKbMsg(`Upload error: ${e.message}`);
+    }
+  };
+
+  const deleteKnowledge = async (docId: string) => {
+    try {
+      await fetch(`${API_BASE}/knowledge/${docId}`, { method: "DELETE" });
+      loadKnowledge();
+    } catch (e: any) {
+      setKbMsg(`Delete failed: ${e.message}`);
+    }
+  };
+
+  const queryKnowledge = async () => {
+    if (!kbQuery.trim()) return;
+    setKbMsg("Querying…");
+    try {
+      const data = await fetch(`${API_BASE}/knowledge/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: kbQuery, top_k: 5 }),
+      }).then((r) => r.json());
+      setKbChunks(data.chunks || []);
+      setKbMsg(data.chunks?.length ? `Found ${data.chunks.length} chunks` : "No results");
+    } catch (e: any) {
+      setKbMsg(`Query failed: ${e.message}`);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "knowledge") {
+      loadKnowledge();
+    }
+  }, [activeTab]);
+
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
@@ -793,6 +876,7 @@ export default function App() {
     { id: "files", label: "Files", icon: "📁" },
     { id: "terminal", label: "Terminal", icon: "🖥️" },
     { id: "review", label: "Review", icon: "📝" },
+    { id: "knowledge", label: "Knowledge", icon: "📚" },
     { id: "tools", label: "Tools", icon: "🔧" },
     { id: "skills", label: "Skills", icon: "⚡" },
     { id: "memory", label: "Memory", icon: "🧠" },
@@ -1250,6 +1334,116 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === "knowledge" && (
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+                <span className="text-sm font-semibold">Knowledge Base</span>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={config.rag_enabled}
+                    onChange={(e) => {
+                      const next = { ...config, rag_enabled: e.target.checked };
+                      setConfig(next);
+                      saveConfig(next);
+                    }}
+                    className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                  />
+                  <span className="text-xs text-text-secondary">Use RAG in chat</span>
+                </label>
+              </div>
+              <div className="flex flex-1 overflow-hidden">
+                {/* Upload / docs */}
+                <aside className="flex w-80 flex-col border-r border-border bg-bg-secondary p-4">
+                  <div className="mb-4 rounded-lg border border-dashed border-border bg-bg-tertiary p-4 text-center">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="hidden"
+                      accept=".txt,.md,.pdf,.py,.json,.yaml,.yml"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) uploadKnowledge(file);
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }}
+                    />
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="btn-primary w-full text-xs"
+                    >
+                      📤 Upload document
+                    </button>
+                    <p className="mt-2 text-xs text-text-muted">
+                      Supports TXT, MD, PDF, code files
+                    </p>
+                  </div>
+
+                  {kbMsg && (
+                    <div className="mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
+                      {kbMsg}
+                    </div>
+                  )}
+
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="mb-2 text-xs font-medium text-text-secondary">
+                      Documents ({kbDocs.length})
+                    </div>
+                    {!kbAvailable && (
+                      <div className="text-xs text-text-muted">
+                        Knowledge base backend is not available. Install chromadb and sentence-transformers.
+                      </div>
+                    )}
+                    {kbDocs.map((doc) => (
+                      <div
+                        key={doc.doc_id}
+                        className="mb-2 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2"
+                      >
+                        <span className="truncate text-xs text-text-primary">{doc.filename}</span>
+                        <button
+                          onClick={() => deleteKnowledge(doc.doc_id)}
+                          className="text-xs text-error hover:underline"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </aside>
+
+                {/* Query tester */}
+                <div className="flex flex-1 flex-col bg-bg-primary p-4">
+                  <h3 className="mb-3 text-sm font-semibold">Test retrieval</h3>
+                  <div className="mb-4 flex gap-2">
+                    <input
+                      type="text"
+                      value={kbQuery}
+                      onChange={(e) => setKbQuery(e.target.value)}
+                      placeholder="Ask a question against the knowledge base…"
+                      className="input flex-1"
+                      onKeyDown={(e) => e.key === "Enter" && queryKnowledge()}
+                    />
+                    <button onClick={queryKnowledge} className="btn-primary">
+                      Search
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-3">
+                    {kbChunks.map((chunk, i) => (
+                      <div key={i} className="rounded-lg border border-border bg-bg-secondary p-3">
+                        <div className="mb-1 flex items-center justify-between text-xs text-text-muted">
+                          <span>{chunk.metadata?.filename}</span>
+                          <span>distance: {chunk.distance?.toFixed(3)}</span>
+                        </div>
+                        <p className="text-xs text-text-primary whitespace-pre-wrap">
+                          {chunk.text}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === "tools" && (
             <div className="h-full overflow-y-auto p-6">
               <div className="mb-4 flex items-center justify-between">
@@ -1518,6 +1712,25 @@ export default function App() {
                     </select>
                     <p className="mt-1 text-xs text-text-muted">
                       Changes the system prompt role used by the agent.
+                    </p>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.rag_enabled}
+                        onChange={(e) => {
+                          const next = { ...config, rag_enabled: e.target.checked };
+                          setConfig(next);
+                          setConfigDirty(true);
+                        }}
+                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                      />
+                      <span className="text-sm text-text-primary">Use knowledge base (RAG) in chat</span>
+                    </label>
+                    <p className="mt-1 text-xs text-text-muted">
+                      When enabled, the agent retrieves relevant chunks from uploaded documents before answering.
                     </p>
                   </div>
 
