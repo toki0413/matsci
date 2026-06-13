@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use process_wrap::std::*;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -56,9 +57,23 @@ pub fn run_python_cli(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    let status = cmd
-        .status()
-        .with_context(|| format!("Failed to run Python CLI via {}", python.display()))?;
+    let mut wrap = CommandWrap::from(cmd);
+    #[cfg(windows)]
+    {
+        wrap.wrap(JobObject);
+    }
+    #[cfg(unix)]
+    {
+        wrap.wrap(ProcessGroup::leader());
+    }
+
+    let mut child = wrap
+        .spawn()
+        .with_context(|| format!("Failed to spawn Python CLI via {}", python.display()))?;
+
+    let status = child
+        .wait()
+        .with_context(|| format!("Failed to wait on Python CLI via {}", python.display()))?;
 
     Ok(status)
 }
