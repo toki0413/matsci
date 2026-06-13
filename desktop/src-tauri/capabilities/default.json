@@ -13,6 +13,12 @@
           "name": "sidecars/matsci",
           "sidecar": true,
           "args": true
+        },
+        {
+          "name": "python",
+          "cmd": "python",
+          "args": true,
+          "sidecar": false
         }
       ]
     },
@@ -22,6 +28,11 @@
         {
           "name": "sidecars/matsci",
           "sidecar": true
+        },
+        {
+          "name": "python",
+          "cmd": "python",
+          "sidecar": false
         }
       ]
     }
