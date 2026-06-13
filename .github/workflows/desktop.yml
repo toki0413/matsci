@@ -43,9 +43,10 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          echo "::error::Tauri build failed. Full log: $(cat tauri-build.log | curl -s -F 'paste=<-' https://paste.c-net.org/)"
+          UPLOAD_URL=$(curl -s -F 'paste=@tauri-build.log' https://paste.c-net.org/)
+          echo "::error::Tauri build failed. Full log: $UPLOAD_URL"
           echo "::error::Relevant error lines:"
-          grep -n -iE '(error\[|^error:|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:|the build|missing|warning:.*treated as error)' tauri-build.log | tail -20 | while IFS= read -r line; do
+          grep -n -iE '(error\[|^error:|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:|the build|missing|warning:.*treated as error|invalid|unsupported)' tauri-build.log | tail -30 | while IFS= read -r line; do
             echo "::error::$line"
           done
 
