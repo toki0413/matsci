@@ -56,5 +56,5 @@ jobs:
         with:
           name: matsci-desktop-windows
           path: |
-            src-tauri/target/release/bundle/
-            src-tauri/target/release/*.exe
+            desktop/src-tauri/target/release/bundle/
+            desktop/src-tauri/target/release/*.exe
