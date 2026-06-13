@@ -136,16 +136,29 @@ class LongTermMemory:
 
         # Keyword search via FTS
         with self._connect() as conn:
-            if category:
-                rows = conn.execute(
-                    "SELECT * FROM memories WHERE category = ? AND content LIKE ? ORDER BY importance DESC LIMIT ?",
-                    (category, f"%{query}%", top_k),
-                ).fetchall()
+            if query:
+                like = f"%{query}%"
+                if category:
+                    rows = conn.execute(
+                        "SELECT * FROM memories WHERE category = ? AND content LIKE ? ORDER BY importance DESC LIMIT ?",
+                        (category, like, top_k),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM memories WHERE content LIKE ? ORDER BY importance DESC LIMIT ?",
+                        (like, top_k),
+                    ).fetchall()
             else:
-                rows = conn.execute(
-                    "SELECT * FROM memories WHERE content LIKE ? ORDER BY importance DESC LIMIT ?",
-                    (f"%{query}%", top_k),
-                ).fetchall()
+                if category:
+                    rows = conn.execute(
+                        "SELECT * FROM memories WHERE category = ? ORDER BY importance DESC LIMIT ?",
+                        (category, top_k),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM memories ORDER BY importance DESC LIMIT ?",
+                        (top_k,),
+                    ).fetchall()
 
             for row in rows:
                 results.append(dict(row))
