@@ -1,0 +1,47 @@
+{
+  "workflow_name": "test_dft",
+  "started_at": "2026-06-09T02:31:22.235274",
+  "finished_at": "2026-06-09T02:31:22.235493",
+  "stage_results": [
+    {
+      "stage_id": "relax",
+      "stage_name": "relax",
+      "tool_name": "vasp_tool",
+      "success": true,
+      "output_data": {
+        "energy": -10.0,
+        "converged": true
+      },
+      "error_message": null,
+      "stdout": "",
+      "stderr": "",
+      "walltime_seconds": 1.430511474609375e-05,
+      "started_at": "2026-06-09T02:31:22.235390",
+      "finished_at": "2026-06-09T02:31:22.235408",
+      "retry_count": 0,
+      "auto_fixed": false,
+      "fix_applied": null
+    },
+    {
+      "stage_id": "band",
+      "stage_name": "band",
+      "tool_name": "band_tool",
+      "success": true,
+      "output_data": {
+        "band_gap": 1.2,
+        "converged": true
+      },
+      "error_message": null,
+      "stdout": "",
+      "stderr": "",
+      "walltime_seconds": 7.152557373046875e-06,
+      "started_at": "2026-06-09T02:31:22.235465",
+      "finished_at": "2026-06-09T02:31:22.235475",
+      "retry_count": 0,
+      "auto_fixed": false,
+      "fix_applied": null
+    }
+  ],
+  "overall_success": true,
+  "working_directory": "test_exec"
+}

@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Python testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+.tox/
+.nox/
+htmlcov/
+.cache
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Rust
+target/
+Cargo.lock
+
+# Node / Tauri
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.local
+
+# Tauri build output
+desktop/src-tauri/target/
+desktop/dist/
+
+# Python build artifacts
+agent/dist/
+agent/build/
+pyext/target/
+pyext/dist/
+cli/target/
+
+# Audit / runtime logs
+matsci_audit.jsonl
+*.log
+
+# Secrets
+*.key
+*.pem
+.env*
+!.env.example
+
+# Nested repositories
+agent/lean/MatSciLean/
+
+# Misc
+*.pid
+*.seed
+*.bak

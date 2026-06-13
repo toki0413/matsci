@@ -1,0 +1,71 @@
+LAMMPS (22 Jul 2025)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread.
+  using 1 OpenMP thread(s) per MPI task
+Loaded 1 plugins from C:\Users\wanzh\OneDrive\ドキュメント\LAMMPS 64-bit 22Jul2025 with GUI\plugins
+# LAMMPS test
+units metal
+atom_style atomic
+lattice fcc 3.615
+Lattice spacing in x,y,z = 3.615 3.615 3.615
+region box block 0 2 0 2 0 2
+create_box 1 box
+Created orthogonal box = (0 0 0) to (7.23 7.23 7.23)
+  1 by 1 by 1 MPI processor grid
+create_atoms 1 box
+Created 32 atoms
+  using lattice units in orthogonal box = (0 0 0) to (7.23 7.23 7.23)
+  create_atoms CPU = 0.001 seconds
+pair_style lj/cut 2.5
+pair_coeff 1 1 1.0 1.0
+mass 1 1.0
+velocity all create 300 12345
+timestep 0.001
+thermo 10
+run 20
+WARNING: No fixes with time integration, atoms won't move
+For more information see https://docs.lammps.org/err0028 (src/verlet.cpp:60)
+Generated 0 of 0 mixed pair_coeff terms from geometric mixing rule
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 4.5
+  ghost atom cutoff = 4.5
+  binsize = 2.25, bins = 4 4 4
+  1 neighbor lists, perpetual/occasional/extra = 1 0 0
+  (1) pair lj/cut, perpetual
+      attributes: half, newton on
+      pair build: half/bin/atomonly/newton
+      stencil: half/bin/3d
+      bin: standard
+Per MPI rank memory allocation (min/avg/max) = 3.062 | 3.062 | 3.062 Mbytes
+   Step          Temp          E_pair         E_mol          TotEng         Press     
+         0   300            0              0              1.2021193      3397.44      
+        10   300            0              0              1.2021193      3397.44      
+        20   300            0              0              1.2021193      3397.44      
+Loop time of 6.5e-05 on 1 procs for 20 steps with 32 atoms
+
+Performance: 26584.615 ns/day, 0.001 hours/ns, 307692.308 timesteps/s, 9.846 Matom-step/s
+0.0% CPU use with 1 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 2.9e-05    | 2.9e-05    | 2.9e-05    |   0.0 | 44.62
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 1.7e-05    | 1.7e-05    | 1.7e-05    |   0.0 | 26.15
+Output  | 7e-06      | 7e-06      | 7e-06      |   0.0 | 10.77
+Modify  | 3e-06      | 3e-06      | 3e-06      |   0.0 |  4.62
+Other   |            | 9e-06      |            |       | 13.85
+
+Nlocal:             32 ave          32 max          32 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:            333 ave         333 max         333 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:            672 ave         672 max         672 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 672
+Ave neighs/atom = 21
+Neighbor list builds = 0
+Dangerous builds = 0
+Total wall time: 0:00:00
