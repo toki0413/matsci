@@ -1,9 +1,11 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+use serde::Serialize;
 use tauri::Manager;
 
 struct AppState {
@@ -16,6 +18,13 @@ impl Default for AppState {
             backend: Mutex::new(None),
         }
     }
+}
+
+#[derive(Serialize)]
+struct FileEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
 }
 
 fn main() {
@@ -34,7 +43,11 @@ fn main() {
             greet,
             get_agent_status,
             start_backend,
-            stop_backend
+            stop_backend,
+            get_cwd,
+            read_dir,
+            read_file,
+            write_file
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -109,4 +122,40 @@ fn stop_backend(state: tauri::State<'_, AppState>) -> Result<String, String> {
     } else {
         Ok("not running".to_string())
     }
+}
+
+#[tauri::command]
+fn get_cwd() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_dir(path: &str) -> Result<Vec<FileEntry>, String> {
+    let base = PathBuf::from(path);
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&base).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path().to_string_lossy().to_string();
+        let is_dir = entry.file_type().map_err(|e| e.to_string())?.is_dir();
+        entries.push(FileEntry { name, path, is_dir });
+    }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    Ok(entries)
+}
+
+#[tauri::command]
+fn read_file(path: &str) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_file(path: &str, content: &str) -> Result<(), String> {
+    std::fs::write(path, content).map_err(|e| e.to_string())
 }

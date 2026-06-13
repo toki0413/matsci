@@ -42,6 +42,12 @@ interface AppConfig {
   ollama_host: string;
 }
 
+interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+}
+
 const API_BASE = "http://localhost:8000";
 const WS_URL =
   ((import.meta as any).env?.VITE_WS_URL as string | undefined) ||
@@ -140,7 +146,9 @@ export default function App() {
   ]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<string>("connecting…");
-  const [activeTab, setActiveTab] = useState<"chat" | "tools" | "memory" | "skills" | "settings">("chat");
+  const [activeTab, setActiveTab] = useState<
+    "chat" | "tools" | "memory" | "skills" | "settings" | "files"
+  >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -162,6 +170,15 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
+
+  // Workspace / file explorer state
+  const [cwd, setCwd] = useState<string>("");
+  const [dirCache, setDirCache] = useState<Record<string, FileEntry[]>>({});
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [editorContent, setEditorContent] = useState<string>("");
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [editorMsg, setEditorMsg] = useState<string>("");
 
   const startBackend = useCallback(async () => {
     setStatus("starting backend…");
@@ -236,6 +253,66 @@ export default function App() {
     },
     [pushConfig]
   );
+
+  // Workspace file explorer helpers
+  const loadDir = useCallback(async (path: string) => {
+    try {
+      const entries = (await invoke("read_dir", { path })) as FileEntry[];
+      setDirCache((prev) => ({ ...prev, [path]: entries }));
+    } catch (e: any) {
+      console.error("[files] read_dir failed:", e);
+    }
+  }, []);
+
+  const toggleDir = (path: string) => {
+    setExpandedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        loadDir(path);
+      }
+      return next;
+    });
+  };
+
+  const openFile = async (path: string) => {
+    try {
+      const content = (await invoke("read_file", { path })) as string;
+      setSelectedFile(path);
+      setEditorContent(content);
+      setEditorDirty(false);
+      setEditorMsg("");
+    } catch (e: any) {
+      setEditorMsg(`Failed to open file: ${e}`);
+    }
+  };
+
+  const saveFile = async () => {
+    if (!selectedFile) return;
+    try {
+      await invoke("write_file", { path: selectedFile, content: editorContent });
+      setEditorDirty(false);
+      setEditorMsg("Saved.");
+      setTimeout(() => setEditorMsg(""), 2000);
+    } catch (e: any) {
+      setEditorMsg(`Save failed: ${e}`);
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const path = (await invoke("get_cwd")) as string;
+        setCwd(path);
+        await loadDir(path);
+        setExpandedDirs((prev) => new Set(prev).add(path));
+      } catch (e) {
+        console.error("[files] get_cwd failed:", e);
+      }
+    })();
+  }, [loadDir]);
 
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -425,11 +502,40 @@ export default function App() {
 
   const tabs: { id: typeof activeTab; label: string; icon: string }[] = [
     { id: "chat", label: "Chat", icon: "💬" },
+    { id: "files", label: "Files", icon: "📁" },
     { id: "tools", label: "Tools", icon: "🔧" },
     { id: "skills", label: "Skills", icon: "⚡" },
     { id: "memory", label: "Memory", icon: "🧠" },
     { id: "settings", label: "Settings", icon: "⚙️" },
   ];
+
+  const renderTree = (path: string, depth = 0) => {
+    const entries = dirCache[path];
+    if (!entries) return null;
+    return (
+      <div>
+        {entries.map((entry) => (
+          <div key={entry.path}>
+            <button
+              onClick={() => (entry.is_dir ? toggleDir(entry.path) : openFile(entry.path))}
+              className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm ${
+                selectedFile === entry.path
+                  ? "bg-accent text-white"
+                  : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+              }`}
+              style={{ paddingLeft: depth * 12 + 8 }}
+            >
+              <span>{entry.is_dir ? (expandedDirs.has(entry.path) ? "📂" : "📁") : "📄"}</span>
+              <span className="truncate">{entry.name}</span>
+            </button>
+            {entry.is_dir &&
+              expandedDirs.has(entry.path) &&
+              renderTree(entry.path, depth + 1)}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
@@ -614,6 +720,72 @@ export default function App() {
                     {isStreaming ? "…" : "Send"}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "files" && (
+            <div className="flex h-full">
+              {/* File tree sidebar */}
+              <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
+                <div className="flex h-12 items-center justify-between border-b border-border px-4">
+                  <span className="text-sm font-semibold">Workspace</span>
+                  <button
+                    onClick={() => cwd && loadDir(cwd)}
+                    className="text-xs text-text-secondary hover:text-text-primary"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2">
+                  {cwd ? (
+                    renderTree(cwd)
+                  ) : (
+                    <div className="p-4 text-xs text-text-muted">Loading workspace…</div>
+                  )}
+                </div>
+                <div className="border-t border-border p-3 text-xs text-text-muted truncate">
+                  {cwd}
+                </div>
+              </aside>
+
+              {/* Editor */}
+              <div className="flex flex-1 flex-col bg-bg-primary">
+                <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+                  <span className="text-sm font-medium truncate">
+                    {selectedFile || "No file selected"}
+                  </span>
+                  <div className="flex items-center gap-3">
+                    {editorDirty && (
+                      <span className="text-xs text-warning">Unsaved changes</span>
+                    )}
+                    {editorMsg && (
+                      <span className="text-xs text-success">{editorMsg}</span>
+                    )}
+                    <button
+                      onClick={saveFile}
+                      disabled={!selectedFile || !editorDirty}
+                      className="btn-primary px-3 py-1.5 text-xs"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+                {selectedFile ? (
+                  <textarea
+                    value={editorContent}
+                    onChange={(e) => {
+                      setEditorContent(e.target.value);
+                      setEditorDirty(true);
+                    }}
+                    className="flex-1 resize-none bg-bg-primary p-4 font-mono text-sm text-text-primary focus:outline-none"
+                    spellCheck={false}
+                  />
+                ) : (
+                  <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
+                    Select a file from the workspace to edit
+                  </div>
+                )}
               </div>
             </div>
           )}
