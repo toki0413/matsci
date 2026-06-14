@@ -2,19 +2,22 @@
 
 HuginnSwarm coordinates specialized workers:
 
-- Planner: breaks a user task into steps
+- Planner: breaks a user task into a JSON plan
 - Scientist: chooses physical models and equations
 - Coder: writes code / tool calls
 - Critic: reviews outputs for correctness
 - Executor: runs external tools (often the main HuginnAgent)
 
-This is intentionally a scaffold: the routing is rule-based today but can
-be replaced with a learned supervisor later.
+The supervisor executes plan steps respecting dependencies; independent
+steps run in parallel.
 """
 
 from __future__ import annotations
 
+import asyncio
 import enum
+import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,6 +41,16 @@ class SwarmAgent:
 
 
 @dataclass
+class SwarmPlanStep:
+    """One step in a swarm execution plan."""
+
+    id: str
+    role: AgentRole
+    task: str
+    depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SwarmStep:
     """One step in a swarm execution trace."""
 
@@ -49,7 +62,16 @@ class SwarmStep:
 
 
 class HuginnSwarm:
-    """Rule-based multi-agent orchestrator."""
+    """Supervisor-based multi-agent orchestrator."""
+
+    # Default plan prompt if the user-supplied planner is unavailable.
+    _PLANNER_PROMPT = (
+        "You are a task planner. Break the user task into steps. "
+        "Respond with a JSON array only. Each item must have:\n"
+        '{"id": "step1", "role": "scientist", "task": "...", "depends_on": []}\n'
+        "Available roles: scientist, coder, executor, critic. "
+        "Use depends_on to declare steps that must finish before this one."
+    )
 
     def __init__(self, workers: list[SwarmAgent]) -> None:
         self.workers = {w.role: w for w in workers}
@@ -66,58 +88,152 @@ class HuginnSwarm:
         ctx["original_task"] = task
 
         # 1. Planning
-        plan = await self._delegate(AgentRole.PLANNER, task, ctx)
-        if not plan:
-            plan = "1. Analyze the task.\n2. Execute.\n3. Review."
-        ctx["plan"] = plan
+        plan_text = await self._delegate(AgentRole.PLANNER, task, ctx)
+        ctx["planner_output"] = plan_text
+        steps = self._parse_plan(plan_text)
+        if not steps:
+            steps = self._default_plan(task)
+        ctx["plan"] = self._plan_to_text(steps)
 
-        # 2. Scientific reasoning (if available)
-        if AgentRole.SCIENTIST in self.workers:
-            scientific_input = f"Task: {task}\nPlan: {plan}"
-            scientific_output = await self._delegate(AgentRole.SCIENTIST, scientific_input, ctx)
-        else:
-            scientific_output = ""
-        ctx["scientific_reasoning"] = scientific_output
+        # 2. Execute planned steps respecting dependencies.
+        step_outputs = await self._execute_plan(steps, ctx)
 
-        # 3. Coding / tool design
-        if AgentRole.CODER in self.workers:
-            coder_input = (
-                f"Task: {task}\n"
-                f"Plan: {plan}\n"
-                f"Scientific reasoning: {ctx.get('scientific_reasoning', 'N/A')}"
-            )
-            code_output = await self._delegate(AgentRole.CODER, coder_input, ctx)
-        else:
-            code_output = ""
-        ctx["code"] = code_output
+        # Map outputs to legacy context keys for convenience.
+        role_outputs: dict[AgentRole, str] = {}
+        for step, output in zip(steps, step_outputs):
+            role_outputs[step.role] = output
+        ctx["scientific_reasoning"] = role_outputs.get(AgentRole.SCIENTIST, "")
+        ctx["code"] = role_outputs.get(AgentRole.CODER, "")
+        ctx["execution_result"] = role_outputs.get(
+            AgentRole.EXECUTOR,
+            "No executor step completed."
+        )
 
-        # 4. Execution (fallback to running the original task if no executor)
-        executor = self.workers.get(AgentRole.EXECUTOR)
-        if executor:
-            exec_input = self._build_execution_prompt(task, ctx)
-            exec_output = await self._run_agent(executor, exec_input, ctx)
-        else:
-            exec_output = "No executor worker configured."
-        ctx["execution_result"] = exec_output
-
-        # 5. Critic review
-        if AgentRole.CRITIC in self.workers:
+        # 3. Critic review (only if the plan did not already include one).
+        critic_output = role_outputs.get(AgentRole.CRITIC, "")
+        if not critic_output and AgentRole.CRITIC in self.workers:
             critic_input = (
                 f"Task: {task}\n"
-                f"Plan: {plan}\n"
-                f"Execution result: {exec_output}"
+                f"Plan: {ctx['plan']}\n"
+                f"Execution result: {ctx['execution_result']}"
             )
             critic_output = await self._delegate(AgentRole.CRITIC, critic_input, ctx)
-        else:
-            critic_output = ""
         ctx["review"] = critic_output
 
         return {
             "task": task,
             "context": ctx,
             "trace": [self._step_to_dict(s) for s in self.trace],
-            "final_output": exec_output,
+            "final_output": ctx["execution_result"],
         }
+
+    def _parse_plan(self, text: str) -> list[SwarmPlanStep]:
+        """Parse planner output into steps."""
+        if not text:
+            return []
+        # Strip markdown fences.
+        if "```" in text:
+            parts = text.split("```")
+            if len(parts) >= 3:
+                text = parts[1].strip("json").strip()
+        try:
+            data = json.loads(text)
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+
+        steps: list[SwarmPlanStep] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                steps.append(
+                    SwarmPlanStep(
+                        id=str(item.get("id", f"step{len(steps) + 1}")),
+                        role=AgentRole(item.get("role", "executor")),
+                        task=str(item.get("task", "")),
+                        depends_on=[str(d) for d in item.get("depends_on", []) if d],
+                    )
+                )
+            except Exception:
+                continue
+        return steps
+
+    def _default_plan(self, task: str) -> list[SwarmPlanStep]:
+        """Fallback plan when planner output is unusable."""
+        steps: list[SwarmPlanStep] = []
+        order = [
+            AgentRole.SCIENTIST,
+            AgentRole.CODER,
+            AgentRole.EXECUTOR,
+            AgentRole.CRITIC,
+        ]
+        prev_id: str | None = None
+        for role in order:
+            if role not in self.workers:
+                continue
+            step_id = f"{role.value}_step"
+            depends = [prev_id] if prev_id else []
+            steps.append(
+                SwarmPlanStep(
+                    id=step_id,
+                    role=role,
+                    task=f"{role.value.replace('_', ' ').title()} for: {task}",
+                    depends_on=depends,
+                )
+            )
+            prev_id = step_id
+        return steps
+
+    @staticmethod
+    def _plan_to_text(steps: list[SwarmPlanStep]) -> str:
+        lines = []
+        for s in steps:
+            deps = f" (after {', '.join(s.depends_on)})" if s.depends_on else ""
+            lines.append(f"{s.id}: [{s.role.value}] {s.task}{deps}")
+        return "\n".join(lines)
+
+    async def _execute_plan(
+        self,
+        steps: list[SwarmPlanStep],
+        ctx: dict[str, Any],
+    ) -> list[str]:
+        """Execute steps respecting dependencies; independent steps run in parallel."""
+        results: dict[str, str] = {}
+        pending = {s.id: s for s in steps}
+
+        while pending:
+            ready = [
+                s for s in pending.values()
+                if all(dep in results for dep in s.depends_on)
+            ]
+            if not ready:
+                # Cyclic dependency fallback: run remaining sequentially.
+                ready = list(pending.values())
+
+            async def run_one(step: SwarmPlanStep) -> tuple[str, str]:
+                worker = self.workers.get(step.role)
+                if not worker:
+                    return step.id, ""
+                # Build input using outputs from dependencies.
+                dep_text = "\n".join(
+                    f"{dep}: {results[dep]}"
+                    for dep in step.depends_on
+                    if dep in results
+                )
+                task = step.task
+                if dep_text:
+                    task = f"{task}\n\nContext from previous steps:\n{dep_text}"
+                output = await self._run_agent(worker, task, ctx)
+                return step.id, output
+
+            batch_results = await asyncio.gather(*(run_one(s) for s in ready))
+            for step_id, output in batch_results:
+                results[step_id] = output
+                pending.pop(step_id)
+
+        return [results[s.id] for s in steps]
 
     async def _delegate(self, role: AgentRole, task: str, ctx: dict[str, Any]) -> str:
         worker = self.workers.get(role)
@@ -131,8 +247,6 @@ class HuginnSwarm:
         task: str,
         ctx: dict[str, Any],
     ) -> str:
-        import time
-
         start = time.time()
         full_prompt = f"{worker.instructions}\n\n{task}" if worker.instructions else task
         final_output = ""
@@ -152,17 +266,6 @@ class HuginnSwarm:
         )
         self.trace.append(step)
         return final_output
-
-    @staticmethod
-    def _build_execution_prompt(task: str, ctx: dict[str, Any]) -> str:
-        parts = [f"Execute the following task: {task}"]
-        if "plan" in ctx:
-            parts.append(f"Plan:\n{ctx['plan']}")
-        if "scientific_reasoning" in ctx:
-            parts.append(f"Scientific reasoning:\n{ctx['scientific_reasoning']}")
-        if "code" in ctx:
-            parts.append(f"Code / tool design:\n{ctx['code']}")
-        return "\n\n".join(parts)
 
     @staticmethod
     def _step_to_dict(step: SwarmStep) -> dict[str, Any]:
