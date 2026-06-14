@@ -463,7 +463,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
-  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "team" | "pet">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet">("general");
 
   // Multi-agent team state
   const [teamObjective, setTeamObjective] = useState("");

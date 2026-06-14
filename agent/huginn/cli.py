@@ -17,37 +17,8 @@ from rich.markdown import Markdown
 
 from huginn import __version__
 from huginn.agent import HuginnAgent
+from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
-from huginn.tools.structure_tool import StructureTool
-from huginn.tools.extract_tool import ExtractTool
-from huginn.tools.job_tool import JobTool
-from huginn.tools.database_tool import DatabaseTool
-from huginn.tools.potential_tool import PotentialTool
-from huginn.tools.diff_tool import DiffTool
-from huginn.tools.validate_tool import ValidateTool
-from huginn.tools.diagnose_tool import DiagnoseTool
-from huginn.tools.vasp_tool import VaspTool
-from huginn.tools.lammps_tool import LammpsTool
-from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
-from huginn.tools.report_tool import ReportTool
-from huginn.tools.lean_tool import LeanTool
-from huginn.tools.symbolic_math_tool import SymbolicMathTool
-from huginn.tools.autodiff_tool import AutoDiffTool
-from huginn.tools.comsol_tool import ComsolTool
-from huginn.tools.qe_tool import QuantumEspressoTool
-from huginn.tools.cp2k_tool import Cp2kTool
-from huginn.tools.openfoam_tool import OpenFoamTool
-from huginn.tools.packing_tool import PackingTool
-from huginn.tools.abaqus_tool import AbaqusTool
-from huginn.tools.code_tool import CodeTool
-from huginn.tools.file_read_tool import FileReadTool
-from huginn.tools.file_write_tool import FileWriteTool
-from huginn.tools.file_edit_tool import FileEditTool
-from huginn.tools.bash_tool import BashTool
-from huginn.tools.git_tool import GitTool
-from huginn.tools.uq_tool import UQTool
-from huginn.tools.gp_tool import GPTool
-from huginn.rag.rag_tool import RAGTool
 from huginn.coder import CoderRunner
 from huginn.permissions import PermissionConfig
 
@@ -71,40 +42,6 @@ def _resolve_abaqus_mcp_path(config_path: str | None = None) -> Path:
 
 
 _mcp_manager = None
-
-
-def _register_all_tools() -> None:
-    """Register all built-in tools to the global registry."""
-    ToolRegistry.register(StructureTool())
-    ToolRegistry.register(ExtractTool())
-    ToolRegistry.register(JobTool())
-    ToolRegistry.register(DatabaseTool())
-    ToolRegistry.register(PotentialTool())
-    ToolRegistry.register(DiffTool())
-    ToolRegistry.register(ValidateTool())
-    ToolRegistry.register(DiagnoseTool())
-    ToolRegistry.register(VaspTool())
-    ToolRegistry.register(LammpsTool())
-    ToolRegistry.register(SymbolicRegressionTool())
-    ToolRegistry.register(ReportTool())
-    ToolRegistry.register(LeanTool())
-    ToolRegistry.register(SymbolicMathTool())
-    ToolRegistry.register(AutoDiffTool())
-    ToolRegistry.register(ComsolTool())
-    ToolRegistry.register(QuantumEspressoTool())
-    ToolRegistry.register(Cp2kTool())
-    ToolRegistry.register(OpenFoamTool())
-    ToolRegistry.register(PackingTool())
-    ToolRegistry.register(AbaqusTool())
-    ToolRegistry.register(CodeTool())
-    ToolRegistry.register(FileReadTool())
-    ToolRegistry.register(FileWriteTool())
-    ToolRegistry.register(FileEditTool())
-    ToolRegistry.register(BashTool())
-    ToolRegistry.register(GitTool())
-    ToolRegistry.register(UQTool())
-    ToolRegistry.register(GPTool())
-    ToolRegistry.register(RAGTool())
 
 
 async def _init_mcp(abaqus_mcp_server: str | None = None) -> None:
@@ -188,7 +125,7 @@ def cli(ctx: click.Context, workspace: str, config: str | None,
     ctx.obj["ollama_url"] = ollama_url
     
     # Register all tools
-    _register_all_tools()
+    register_all_tools()
 
 
 @cli.command()
@@ -436,7 +373,7 @@ def coder(ctx: click.Context, task: str | None, auto_approve: bool, max_iteratio
 @click.pass_context
 def serve(ctx: click.Context, port: int, host: str) -> None:
     """Start the HTTP/WebSocket server for the desktop app."""
-    _register_all_tools()
+    register_all_tools()
     
     console.print(Panel(
         f"[bold blue]Huginn Server[/bold blue]\n"
@@ -458,7 +395,7 @@ def serve(ctx: click.Context, port: int, host: str) -> None:
 @cli.command()
 def tools() -> None:
     """List all available tools."""
-    _register_all_tools()
+    register_all_tools()
     
     console.print(Panel(
         f"[bold blue]Available Tools ({len(ToolRegistry.list_tools())})[/bold blue]",
