@@ -1262,7 +1262,7 @@ class SymbolicMathTool(HuginnTool):
           - derive: derive governing equations from a named model.
           - bridge: run a multiscale bridge (dft-to-md or cauchy-born).
         """
-        from huginn.unified import derive_equations, discretize
+        from huginn.unified import derive_equations, discretize, solve
         from huginn.unified.models import get_model, list_models
         from huginn.unified.bridge import (
             ConstitutiveModel,
@@ -1447,7 +1447,40 @@ class SymbolicMathTool(HuginnTool):
                 "mesh": disc["mesh"],
             }, success=True)
 
+        if target == "solve":
+            model_name = args.expression
+            if not model_name:
+                return ToolResult(
+                    data=None, success=False,
+                    error="expression must be a unified model name for target=solve",
+                )
+            factory = get_model(model_name)
+            if factory is None:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
+                )
+            problem = factory()
+            method = (args.variable or "fem").lower()
+            n = args.order if args.order >= 1 else 10
+            try:
+                sol = solve(problem, method=method, n=n)
+            except Exception as e:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Solve failed: {e}",
+                )
+            return ToolResult(data={
+                "model": model_name,
+                "method": sol["method"],
+                "n": n,
+                "n_dof": sol["n_dof"],
+                "mesh": sol["mesh"],
+                "solution": sol["solution"],
+                "residual": sol["residual"],
+            }, success=True)
+
         return ToolResult(
             data=None, success=False,
-            error=f"Unknown unified target: {target}. Supported: list, derive, bridge, discretize",
+            error=f"Unknown unified target: {target}. Supported: list, derive, bridge, discretize, solve",
         )
