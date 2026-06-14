@@ -7,6 +7,7 @@ failures in long-term memory so the agent can learn over time.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -30,12 +31,68 @@ def keyword_evaluator(response: str, case: BenchmarkCase) -> tuple[bool, float]:
     return success, round(score, 2)
 
 
+def numeric_evaluator(response: str, case: BenchmarkCase) -> tuple[bool, float]:
+    """Pass if a number near ``expected_value`` appears in the response.
+
+    Tolerance defaults to 1% relative or absolute, whichever is larger.
+    """
+    import re
+
+    expected = case.expected_value
+    if expected is None:
+        return keyword_evaluator(response, case)
+
+    numbers = [float(m) for m in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", response)]
+    if not numbers:
+        return False, 0.0
+
+    tolerance = case.tolerance or max(abs(expected) * 0.01, 0.01)
+    best = min(abs(n - expected) for n in numbers)
+    success = best <= tolerance
+    score = max(0.0, 1.0 - best / (tolerance * 2)) if tolerance > 0 else 0.0
+    return success, round(score, 2)
+
+
+def llm_judge_evaluator(
+    judge_model: Callable[[str], str],
+) -> EvaluatorT:
+    """Return an evaluator that asks a small LLM to score the answer 0-1.
+
+    The judge is given the task, rubric, and response, and must reply with a
+    single JSON object: {"score": float, "reason": str}.
+    """
+
+    def evaluate(response: str, case: BenchmarkCase) -> tuple[bool, float]:
+        prompt = (
+            "You are a strict but fair grader. Evaluate the answer below for the task.\n\n"
+            f"Task: {case.task}\n"
+            f"Rubric: {case.rubric or 'Answer should be correct and complete.'}\n\n"
+            f"Answer: {response[:2000]}\n\n"
+            "Respond ONLY with JSON: {\"score\": float between 0 and 1, \"reason\": string}"
+        )
+        try:
+            raw = judge_model(prompt)
+            # Extract JSON from possible markdown code block.
+            if "```" in raw:
+                raw = raw.split("```")[1].strip("json").strip()
+            data = json.loads(raw)
+            score = float(data.get("score", 0.0))
+            return score >= 0.8, round(score, 2)
+        except Exception:
+            return False, 0.0
+
+    return evaluate
+
+
 @dataclass
 class BenchmarkCase:
     """A single benchmark task."""
 
     task: str
     expected_keywords: list[str] = field(default_factory=list)
+    expected_value: float | None = None
+    tolerance: float | None = None
+    rubric: str | None = None
     evaluator: EvaluatorT = keyword_evaluator
     category: str = "general"
     tags: list[str] = field(default_factory=list)
@@ -79,7 +136,9 @@ class BenchmarkSuite:
         self.add(
             BenchmarkCase(
                 task="Calculate the band gap of silicon in eV.",
-                expected_keywords=["1.1"],
+                expected_value=1.1,
+                tolerance=0.05,
+                evaluator=numeric_evaluator,
                 category="materials",
                 tags=["electronic"],
             )
@@ -87,7 +146,9 @@ class BenchmarkSuite:
         self.add(
             BenchmarkCase(
                 task="Set up a harmonic oscillator model with mass 1 and k=4.",
-                expected_keywords=["omega", "2"],
+                expected_value=2.0,
+                tolerance=0.1,
+                evaluator=numeric_evaluator,
                 category="unified",
                 tags=["math"],
             )

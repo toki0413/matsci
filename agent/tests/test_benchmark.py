@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from huginn.agent import HuginnAgent
-from huginn.benchmark import BenchmarkCase, BenchmarkSuite, keyword_evaluator
-from huginn.benchmark.core import SelfImprovementLoop
+from huginn.benchmark import BenchmarkCase, BenchmarkSuite, keyword_evaluator, numeric_evaluator
+from huginn.benchmark.core import SelfImprovementLoop, llm_judge_evaluator
 from huginn.memory.manager import MemoryManager
 from huginn.memory.longterm import LongTermMemory
 
@@ -65,6 +65,37 @@ class TestBenchmarkSuite:
         results = await suite.run(agent)
         assert len(results) == 1
         assert results[0].success is True
+
+    def test_numeric_evaluator_pass(self):
+        case = BenchmarkCase(
+            task="band gap",
+            expected_value=1.1,
+            tolerance=0.05,
+            evaluator=numeric_evaluator,
+        )
+        success, score = numeric_evaluator("The band gap is 1.12 eV", case)
+        assert success is True
+        assert score > 0.75
+
+    def test_numeric_evaluator_fail(self):
+        case = BenchmarkCase(
+            task="band gap",
+            expected_value=1.1,
+            tolerance=0.05,
+            evaluator=numeric_evaluator,
+        )
+        success, score = numeric_evaluator("The band gap is 2.0 eV", case)
+        assert success is False
+
+    def test_llm_judge_evaluator(self):
+        def fake_judge(prompt: str) -> str:
+            return '{"score": 0.9, "reason": "correct"}'
+
+        case = BenchmarkCase(task="t", rubric="correct")
+        evaluator = llm_judge_evaluator(fake_judge)
+        success, score = evaluator("answer", case)
+        assert success is True
+        assert score == 0.9
 
 
 class TestSelfImprovementLoop:
