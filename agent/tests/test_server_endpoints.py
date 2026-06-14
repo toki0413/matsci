@@ -77,3 +77,31 @@ class TestUnifiedEndpoints:
             assert result["success"] is True
             assert result["plot_path"] == str(output_path)
             assert base64.b64decode(result["plot_base64"])[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+class TestNewAgentEndpoints:
+    def test_telemetry_summary_endpoint(self):
+        from huginn.server import telemetry_summary
+
+        result = asyncio.run(telemetry_summary())
+        assert "summary" in result
+        assert "total_spans" in result["summary"]
+
+    def test_telemetry_spans_endpoint(self):
+        from huginn.server import telemetry_spans
+
+        result = asyncio.run(telemetry_spans())
+        assert "spans" in result
+
+    def test_memory_maintenance_endpoint(self):
+        from huginn.server import memory_maintenance
+
+        result = asyncio.run(memory_maintenance({}))
+        assert result.get("success") is True
+        assert "summary" in result
+
+    def test_get_thread_endpoint(self):
+        from huginn.server import get_thread
+
+        result = asyncio.run(get_thread("unknown"))
+        assert result["exists"] is False

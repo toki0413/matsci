@@ -2209,6 +2209,78 @@ async def reject_checkpoint(cp_id: str) -> dict[str, Any]:
     return {"success": True}
 
 
+
+
+@app.get("/telemetry/summary")
+async def telemetry_summary() -> dict[str, Any]:
+    """Return coarse telemetry summary for the global agent."""
+    try:
+        agent = get_agent()
+        return {"summary": agent.telemetry_summary()}
+    except Exception as e:
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.get("/telemetry/spans")
+async def telemetry_spans() -> dict[str, Any]:
+    """Return all recorded telemetry spans for the global agent."""
+    try:
+        agent = get_agent()
+        return {"spans": agent.telemetry_spans()}
+    except Exception as e:
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.post("/memory/maintenance")
+async def memory_maintenance(params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run long-term memory decay, prune, and deduplication."""
+    try:
+        agent = get_agent()
+        p = params or {}
+        summary = agent.memory.maintenance(
+            prune_threshold=p.get("prune_threshold", 0.15),
+            deduplicate=p.get("deduplicate", True),
+        )
+        return {"success": True, "summary": summary}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/swarm/run")
+async def swarm_run(params: dict[str, Any]) -> dict[str, Any]:
+    """Run a task through the multi-agent swarm."""
+    from huginn.agents.swarm import AgentRole, HuginnSwarm, SwarmAgent
+
+    try:
+        agent = get_agent()
+        task = params.get("task", "")
+        if not task:
+            return {"error": "task is required"}
+
+        workers = [
+            SwarmAgent("planner", AgentRole.PLANNER, agent, "Break the task into steps."),
+            SwarmAgent("scientist", AgentRole.SCIENTIST, agent, "Choose physical models."),
+            SwarmAgent("coder", AgentRole.CODER, agent, "Write code or tool calls."),
+            SwarmAgent("executor", AgentRole.EXECUTOR, agent, "Run the solution."),
+            SwarmAgent("critic", AgentRole.CRITIC, agent, "Review correctness."),
+        ]
+        result = await HuginnSwarm(workers).run(task)
+        return {"success": True, **result}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/threads/{thread_id}")
+async def get_thread(thread_id: str) -> dict[str, Any]:
+    """Return metadata for a conversation thread."""
+    if thread_id in _threads:
+        return {"thread_id": thread_id, **dict(_threads[thread_id])}
+    return {"thread_id": thread_id, "exists": False}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
