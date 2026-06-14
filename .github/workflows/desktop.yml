@@ -110,8 +110,8 @@ jobs:
         with:
           name: matsci-desktop-windows
           path: |
-            desktop/src-tauri/target/release/bundle/
-            desktop/src-tauri/target/release/*.exe
+            target/release/bundle/
+            target/release/*.exe
             dist/*.whl
 
       - name: Create pre-release with desktop installer
@@ -123,9 +123,9 @@ jobs:
           name: Desktop CI Build ${{ github.run_number }}
           prerelease: true
           files: |
-            desktop/src-tauri/target/release/bundle/**/*.exe
-            desktop/src-tauri/target/release/bundle/**/*.msi
-            desktop/src-tauri/target/release/*.exe
+            target/release/bundle/**/*.exe
+            target/release/bundle/**/*.msi
+            target/release/*.exe
             dist/*.whl
 
       - name: Print release URL
