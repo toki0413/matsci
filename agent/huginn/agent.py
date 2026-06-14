@@ -50,10 +50,12 @@ class HuginnAgent:
         privacy_block_on_secrets: bool | None = None,
         max_tool_output_tokens: int | None = None,
         context_budget_tokens: int | None = None,
+        begin_dialogs: list[tuple[str, str]] | None = None,
     ):
         self.model = model
         self.langchain_tools = tools or []
         self.system_prompt = system_prompt or HUGINN_SYSTEM_PROMPT
+        self.begin_dialogs = begin_dialogs or []
         self.enable_exploration = enable_exploration
         self.profile_id = profile_id
         self.thread_id = thread_id
@@ -312,8 +314,16 @@ class HuginnAgent:
 
         graph = self.build_graph()
 
+        messages: list[Any] = []
+        for role, content in self.begin_dialogs:
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
+        messages.append(HumanMessage(content=message))
+
         inputs = {
-            "messages": [HumanMessage(content=message)]
+            "messages": messages
         }
 
         # Compact initial messages if a context budget is configured.

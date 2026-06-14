@@ -99,3 +99,6 @@ agent/.huginn_memory/
 unified_solution.png
 solve_and_plot.png
 *.unified.png
+
+# User-defined personas
+personas.json
