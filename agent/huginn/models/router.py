@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from huginn.config import ThinkingIntensity
 from huginn.models.registry import ProviderT, create_langchain_model
 
 
@@ -95,6 +96,8 @@ class ModelRouter:
         cost_output: float = 0.0,
         priority: int = 0,
         temperature: float = 0.7,
+        thinking: ThinkingIntensity | dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> RegisteredModel:
         """Register a model by provider descriptor."""
         model = create_langchain_model(
@@ -103,6 +106,8 @@ class ModelRouter:
             api_key=api_key,
             base_url=base_url,
             temperature=temperature,
+            thinking=thinking,
+            max_tokens=max_tokens,
         )
         return self.register(
             name=name,
