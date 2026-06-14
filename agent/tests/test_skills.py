@@ -4,9 +4,9 @@ import asyncio
 
 import pytest
 
-from matsci_agent.skills.base import SkillDefinition, SkillParameter, SkillStep, DeclarativeSkillExecutor
-from matsci_agent.skills.registry import SkillRegistry
-from matsci_agent.skills.presets import STANDARD_DFT, SYMBOLIC_REGRESSION, SYMBOLIC_VERIFY
+from huginn.skills.base import SkillDefinition, SkillParameter, SkillStep, DeclarativeSkillExecutor
+from huginn.skills.registry import SkillRegistry
+from huginn.skills.presets import STANDARD_DFT, SYMBOLIC_REGRESSION, SYMBOLIC_VERIFY
 
 
 class TestSkillRegistry:
@@ -47,7 +47,7 @@ class TestSkillDefinitions:
 
 class TestSymbolicVerifySkill:
     def test_skill_registered(self):
-        from matsci_agent.skills.registry import SkillRegistry
+        from huginn.skills.registry import SkillRegistry
         skill = SkillRegistry.get("symbolic_verify")
         assert skill is not None
         assert skill.category == "verification"
@@ -70,7 +70,7 @@ class TestSymbolicVerifySkill:
 
 class TestDeclarativeSkillExecutor:
     def test_missing_tool_returns_error(self):
-        from matsci_agent.tools.registry import ToolRegistry
+        from huginn.tools.registry import ToolRegistry
         executor = DeclarativeSkillExecutor(ToolRegistry)
 
         skill = SkillDefinition(
@@ -90,37 +90,37 @@ class TestDeclarativeSkillExecutor:
 class TestUQGPSkills:
     @staticmethod
     def _ensure_tools():
-        from matsci_agent.tools.registry import ToolRegistry
-        from matsci_agent.tools.uq_tool import UQTool
-        from matsci_agent.tools.gp_tool import GPTool
+        from huginn.tools.registry import ToolRegistry
+        from huginn.tools.uq_tool import UQTool
+        from huginn.tools.gp_tool import GPTool
         if "uq_tool" not in ToolRegistry.list_tools():
             ToolRegistry.register(UQTool())
         if "gp_tool" not in ToolRegistry.list_tools():
             ToolRegistry.register(GPTool())
 
     def test_uncertainty_propagation_skill_registered(self):
-        from matsci_agent.skills.registry import SkillRegistry
+        from huginn.skills.registry import SkillRegistry
         skill = SkillRegistry.get("uncertainty_propagation")
         assert skill is not None
         assert skill.category == "analysis"
         assert "uq_tool" in skill.required_tools
 
     def test_gp_prediction_skill_registered(self):
-        from matsci_agent.skills.registry import SkillRegistry
+        from huginn.skills.registry import SkillRegistry
         skill = SkillRegistry.get("gp_prediction")
         assert skill is not None
         assert "gp_tool" in skill.required_tools
 
     def test_bayesian_calibration_skill_registered(self):
-        from matsci_agent.skills.registry import SkillRegistry
+        from huginn.skills.registry import SkillRegistry
         skill = SkillRegistry.get("bayesian_calibration")
         assert skill is not None
         assert "gp_tool" in skill.required_tools
 
     def test_uncertainty_propagation_execution(self):
         self._ensure_tools()
-        from matsci_agent.tools.registry import ToolRegistry
-        from matsci_agent.skills.registry import SkillRegistry
+        from huginn.tools.registry import ToolRegistry
+        from huginn.skills.registry import SkillRegistry
 
         skill = SkillRegistry.get("uncertainty_propagation")
         executor = DeclarativeSkillExecutor(ToolRegistry)
@@ -142,8 +142,8 @@ class TestUQGPSkills:
 
     def test_gp_prediction_execution(self):
         self._ensure_tools()
-        from matsci_agent.tools.registry import ToolRegistry
-        from matsci_agent.skills.registry import SkillRegistry
+        from huginn.tools.registry import ToolRegistry
+        from huginn.skills.registry import SkillRegistry
 
         skill = SkillRegistry.get("gp_prediction")
         executor = DeclarativeSkillExecutor(ToolRegistry)
@@ -161,8 +161,8 @@ class TestUQGPSkills:
 
     def test_bayesian_calibration_execution(self):
         self._ensure_tools()
-        from matsci_agent.tools.registry import ToolRegistry
-        from matsci_agent.skills.registry import SkillRegistry
+        from huginn.tools.registry import ToolRegistry
+        from huginn.skills.registry import SkillRegistry
 
         skill = SkillRegistry.get("bayesian_calibration")
         executor = DeclarativeSkillExecutor(ToolRegistry)

@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.memory.session import SessionContext, ToolCallRecord
-from matsci_agent.memory.longterm import LongTermMemory
-from matsci_agent.memory.manager import MemoryManager, MemoryConfig
-from matsci_agent.types import AgentMessage, ToolResult
+from huginn.memory.session import SessionContext, ToolCallRecord
+from huginn.memory.longterm import LongTermMemory
+from huginn.memory.manager import MemoryManager, MemoryConfig
+from huginn.types import AgentMessage, ToolResult
 
 
 class TestSessionContext:

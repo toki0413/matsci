@@ -1,13 +1,13 @@
 [package]
-name = "matsci-sidecar"
+name = "huginn-sidecar"
 version = "0.1.0"
 edition = "2021"
-description = "Rust sidecar for MatSci-Agent: process manager + event bus"
+description = "Rust sidecar for Huginn: process manager + event bus"
 license = "MIT"
 authors = ["toki"]
 
 [[bin]]
-name = "matsci-sidecar"
+name = "huginn-sidecar"
 path = "src/main.rs"
 
 [dependencies]

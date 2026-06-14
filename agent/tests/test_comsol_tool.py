@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.tools.comsol_tool import ComsolTool, ComsolToolInput
+from huginn.tools.comsol_tool import ComsolTool, ComsolToolInput
 
 
 def test_comsol_tool_generates_script(tmp_path: Path) -> None:

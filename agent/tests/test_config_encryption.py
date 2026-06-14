@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from matsci_agent.config import MatSciConfig, ModelConfig
+from huginn.config import HuginnConfig, ModelConfig
 
 
 def test_encrypted_config_roundtrip(tmp_path):
     """Saving with encrypt_config should produce an unreadable but loadable file."""
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         provider="openai",
         api_key="sk-secret",
         encrypt_config=True,
@@ -24,13 +24,13 @@ def test_encrypted_config_roundtrip(tmp_path):
     assert b"sk-secret" not in raw
     assert b"sk-model-secret" not in raw
 
-    loaded = MatSciConfig.load(path, password="super-pass")
+    loaded = HuginnConfig.load(path, password="super-pass")
     assert loaded.api_key == "sk-secret"
     assert loaded.models[0].api_key == "sk-model-secret"
 
 
 def test_encrypted_config_wrong_password(tmp_path):
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         api_key="secret",
         encrypt_config=True,
         encryption_password="right",
@@ -39,20 +39,20 @@ def test_encrypted_config_wrong_password(tmp_path):
     cfg.save(path)
 
     with pytest.raises(Exception):
-        MatSciConfig.load(path, password="wrong")
+        HuginnConfig.load(path, password="wrong")
 
 
 def test_plain_config_save_load(tmp_path):
-    cfg = MatSciConfig(api_key="plain-secret")
+    cfg = HuginnConfig(api_key="plain-secret")
     path = tmp_path / "config.toml"
     cfg.save(path)
 
-    loaded = MatSciConfig.load(path)
+    loaded = HuginnConfig.load(path)
     assert loaded.api_key == "plain-secret"
 
 
 def test_to_dict_masks_password_and_api_key():
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         api_key="secret",
         encryption_password="pass",
     )

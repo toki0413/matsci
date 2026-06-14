@@ -21,7 +21,7 @@ def check_input_generator() -> bool:
     """Test input file generation."""
     print("\n[1] Checking InputFileGenerator...")
     try:
-        from matsci_agent.execution.input_generator import InputFileGenerator, GeneratedInput
+        from huginn.execution.input_generator import InputFileGenerator, GeneratedInput
         gen = InputFileGenerator()
 
         # Test VASP generation
@@ -75,7 +75,7 @@ def check_result_parser() -> bool:
     """Test result parsing with synthetic data."""
     print("\n[2] Checking ResultParser...")
     try:
-        from matsci_agent.execution.result_parser import ResultParser, ParsedResult
+        from huginn.execution.result_parser import ResultParser, ParsedResult
         import tempfile
 
         parser = ResultParser()
@@ -151,7 +151,7 @@ def check_autofix() -> bool:
     """Test automatic failure diagnosis and repair."""
     print("\n[3] Checking AutoFixLoop...")
     try:
-        from matsci_agent.execution.autofix import AutoFixLoop
+        from huginn.execution.autofix import AutoFixLoop
         fixer = AutoFixLoop()
 
         # Test VASP SCF fix
@@ -203,7 +203,7 @@ def check_orchestrator() -> bool:
     print("\n[4] Checking ExecutionOrchestrator...")
     try:
         import asyncio
-        from matsci_agent.execution.orchestrator import ExecutionOrchestrator, StageResult
+        from huginn.execution.orchestrator import ExecutionOrchestrator, StageResult
 
         orch = ExecutionOrchestrator(working_dir="./test_exec")
 

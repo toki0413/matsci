@@ -1,13 +1,13 @@
 [package]
-name = "matsci"
+name = "huginn"
 version = "0.1.0"
 edition = "2021"
-description = "Rust CLI frontend for MatSci-Agent"
+description = "Rust CLI frontend for Huginn"
 license = "MIT"
 authors = ["toki"]
 
 [[bin]]
-name = "matsci"
+name = "huginn"
 path = "src/main.rs"
 
 [dependencies]

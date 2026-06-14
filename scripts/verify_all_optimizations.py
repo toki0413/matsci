@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unified verification script for all MatSci-Agent + Sobko optimizations.
+Unified verification script for all Huginn + Sobko optimizations.
 
 Checks that every component is properly wired and accessible.
 
@@ -15,14 +15,14 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# Sobko may be sibling to matsci-agent or inside it
+# Sobko may be sibling to huginn-agent or inside it
 SOBKO_CANDIDATES = [
     REPO_ROOT.parent / "Sobko_MCP_project",
     REPO_ROOT / "Sobko_MCP_project",
     Path.home() / "Sobko_MCP_project",
 ]
 SOBKO_ROOT = next((p for p in SOBKO_CANDIDATES if p.exists()), SOBKO_CANDIDATES[0])
-AGENT_PKG = REPO_ROOT / "agent" / "matsci_agent"
+AGENT_PKG = REPO_ROOT / "agent" / "huginn"
 
 
 def check_file(path: Path, label: str) -> bool:
@@ -34,7 +34,7 @@ def check_file(path: Path, label: str) -> bool:
 
 def main():
     print("=" * 70)
-    print("MatSci-Agent + Sobko Optimization Verification")
+    print("Huginn + Sobko Optimization Verification")
     print("=" * 70)
 
     all_ok = True
@@ -77,9 +77,9 @@ def main():
     all_ok &= check_file(adv / "evaluation_report.json", "evaluation_report.json")
 
     # ------------------------------------------------------------------
-    # 3. MatSci-Agent Code Modifications
+    # 3. Huginn Code Modifications
     # ------------------------------------------------------------------
-    print("\n[3/7] MatSci-Agent Code Modifications")
+    print("\n[3/7] Huginn Code Modifications")
     all_ok &= check_file(AGENT_PKG / "prompts.py", "prompts.py (enhanced)")
     all_ok &= check_file(AGENT_PKG / "skills" / "wavefunction_analysis.md", "wavefunction_analysis.md skill")
     all_ok &= check_file(AGENT_PKG / "tools" / "diagnose_tool.py", "diagnose_tool.py")
@@ -102,7 +102,7 @@ def main():
     sys.path.insert(0, str(REPO_ROOT / "agent"))
 
     try:
-        from matsci_agent.workflows.templates import list_templates, get_template
+        from huginn.workflows.templates import list_templates, get_template
         templates = list_templates()
         qc_templates = ["wavefunction_analysis", "reactivity_prediction", "weak_interaction", "excited_state", "charge_analysis"]
         missing = [t for t in qc_templates if not get_template(t)]
@@ -116,21 +116,21 @@ def main():
         all_ok = False
 
     try:
-        from matsci_agent.tools.diagnose_tool import DiagnoseTool
+        from huginn.tools.diagnose_tool import DiagnoseTool
         print(f"  [OK] diagnose_tool importable")
     except Exception as e:
         print(f"  [FAIL] diagnose_tool import: {e}")
         all_ok = False
 
     try:
-        from matsci_agent.rag.router_retriever import HierarchicalRetriever
+        from huginn.rag.router_retriever import HierarchicalRetriever
         print(f"  [OK] router_retriever importable")
     except Exception as e:
         print(f"  [FAIL] router_retriever import: {e}")
         all_ok = False
 
     try:
-        from matsci_agent.workflows.engine import RetryPolicy
+        from huginn.workflows.engine import RetryPolicy
         rp = RetryPolicy(auto_diagnose=True, apply_auto_fix=True)
         print(f"  [OK] Self-healing RetryPolicy configurable")
     except Exception as e:

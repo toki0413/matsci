@@ -21,7 +21,7 @@ async def check_symbolic_math_tool() -> bool:
     """Test SymbolicMathTool with various operations."""
     print("\n[1] Checking SymbolicMathTool...")
     try:
-        from matsci_agent.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+        from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
 
         tool = SymbolicMathTool()
 
@@ -103,7 +103,7 @@ def check_dimensional_validator() -> bool:
     """Test DimensionalValidator."""
     print("\n[2] Checking DimensionalValidator...")
     try:
-        from matsci_agent.execution.dimensional_validator import DimensionalValidator
+        from huginn.execution.dimensional_validator import DimensionalValidator
 
         validator = DimensionalValidator()
 
@@ -148,7 +148,7 @@ async def check_autodiff_tool() -> bool:
     """Test AutoDiffTool."""
     print("\n[3] Checking AutoDiffTool...")
     try:
-        from matsci_agent.tools.autodiff_tool import AutoDiffTool, AutoDiffInput
+        from huginn.tools.autodiff_tool import AutoDiffTool, AutoDiffInput
 
         tool = AutoDiffTool()
 
@@ -199,7 +199,7 @@ def check_symbolic_templates() -> bool:
     """Check symbolic workflow templates are registered."""
     print("\n[4] Checking Symbolic Workflow Templates...")
     try:
-        from matsci_agent.workflows.templates import WORKFLOW_TEMPLATES as _TEMPLATES
+        from huginn.workflows.templates import WORKFLOW_TEMPLATES as _TEMPLATES
 
         expected = [
             "constitutive_derivation",

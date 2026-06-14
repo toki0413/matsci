@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LoRA Fine-tuning Script for MatSci-Agent.
+LoRA Fine-tuning Script for Huginn.
 
 Trains a lightweight adapter on top of a base LLM using the Sobko
 computational chemistry dataset. This improves the model's domain
@@ -71,7 +71,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("MatSci-Agent LoRA Fine-tuning")
+    print("Huginn LoRA Fine-tuning")
     print("=" * 60)
 
     # Lazy imports to avoid dependency errors if not installed
@@ -209,7 +209,7 @@ def main():
     print("Training complete!")
     print(f"Adapter saved to: {output_dir / 'final_adapter'}")
     print("=" * 60)
-    print("\nTo use the adapter in MatSci-Agent:")
+    print("\nTo use the adapter in Huginn:")
     print(f"  model = AutoModelForCausalLM.from_pretrained('{args.model_name}')")
     print(f"  model = PeftModel.from_pretrained(model, '{output_dir / 'final_adapter'}')")
 

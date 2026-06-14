@@ -4,18 +4,18 @@ import pytest
 import sympy as sp
 from pathlib import Path
 
-from matsci_agent.lean.interface import LeanInterface
-from matsci_agent.lean.sympy_to_lean import SymPyToLean
+from huginn.lean.interface import LeanInterface
+from huginn.lean.sympy_to_lean import SymPyToLean
 
 
-LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "MatSciLean"
+LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
 
 class TestLeanInterface:
     @pytest.fixture(scope="class")
     def lean(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return LeanInterface(LEAN_PROJECT)
 
     def test_build(self, lean):
@@ -90,9 +90,9 @@ class TestLeanToolAutoVerify:
     @pytest.fixture(scope="class")
     def lean_tool(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
-        from matsci_agent.tools.lean_tool import LeanTool, LeanToolInput
-        from matsci_agent.types import ToolContext
+            pytest.skip("HuginnLean project not found")
+        from huginn.tools.lean_tool import LeanTool, LeanToolInput
+        from huginn.types import ToolContext
         tool = LeanTool()
         return tool, LeanToolInput, ToolContext(session_id="test", workspace=".")
 

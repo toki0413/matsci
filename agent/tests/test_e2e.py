@@ -1,4 +1,4 @@
-"""End-to-end integration tests for MatSci-Agent.
+"""End-to-end integration tests for Huginn.
 
 These tests exercise multiple components together to verify
 system-level correctness.
@@ -17,16 +17,16 @@ import pytest
 # Ensure the agent package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from matsci_agent.crypto import CryptoVault
-from matsci_agent.memory.session import SessionContext
-from matsci_agent.memory.longterm import LongTermMemory
-from matsci_agent.memory.manager import MemoryManager
-from matsci_agent.skills.registry import SkillRegistry
-from matsci_agent.skills.base import DeclarativeSkillExecutor
-from matsci_agent.skills.presets import STANDARD_DFT, HT_SCREENING, SYMBOLIC_VERIFY
-from matsci_agent.tools.report_tool import ReportTool, ReportToolInput
-from matsci_agent.tools.symbolic_regression_tool import SymbolicRegressionTool, SymbolicRegressionInput
-from matsci_agent.types import ToolContext
+from huginn.crypto import CryptoVault
+from huginn.memory.session import SessionContext
+from huginn.memory.longterm import LongTermMemory
+from huginn.memory.manager import MemoryManager
+from huginn.skills.registry import SkillRegistry
+from huginn.skills.base import DeclarativeSkillExecutor
+from huginn.skills.presets import STANDARD_DFT, HT_SCREENING, SYMBOLIC_VERIFY
+from huginn.tools.report_tool import ReportTool, ReportToolInput
+from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool, SymbolicRegressionInput
+from huginn.types import ToolContext
 
 
 @pytest.fixture
@@ -280,20 +280,20 @@ class TestToolRegistryIntegration:
 
     def test_all_tools_importable(self):
         """All tool modules can be imported."""
-        from matsci_agent.tools.structure_tool import StructureTool
-        from matsci_agent.tools.extract_tool import ExtractTool
-        from matsci_agent.tools.job_tool import JobTool
-        from matsci_agent.tools.database_tool import DatabaseTool
-        from matsci_agent.tools.potential_tool import PotentialTool
-        from matsci_agent.tools.diff_tool import DiffTool
-        from matsci_agent.tools.validate_tool import ValidateTool
-        from matsci_agent.tools.diagnose_tool import DiagnoseTool
-        from matsci_agent.tools.vasp_tool import VaspTool
-        from matsci_agent.tools.lammps_tool import LammpsTool
-        from matsci_agent.tools.symbolic_regression_tool import SymbolicRegressionTool
-        from matsci_agent.tools.report_tool import ReportTool
-        from matsci_agent.rag.rag_tool import RAGTool
-        from matsci_agent.evaluation.evaluation_tool import EvaluationTool
+        from huginn.tools.structure_tool import StructureTool
+        from huginn.tools.extract_tool import ExtractTool
+        from huginn.tools.job_tool import JobTool
+        from huginn.tools.database_tool import DatabaseTool
+        from huginn.tools.potential_tool import PotentialTool
+        from huginn.tools.diff_tool import DiffTool
+        from huginn.tools.validate_tool import ValidateTool
+        from huginn.tools.diagnose_tool import DiagnoseTool
+        from huginn.tools.vasp_tool import VaspTool
+        from huginn.tools.lammps_tool import LammpsTool
+        from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
+        from huginn.tools.report_tool import ReportTool
+        from huginn.rag.rag_tool import RAGTool
+        from huginn.evaluation.evaluation_tool import EvaluationTool
 
         tools = [
             StructureTool, ExtractTool, JobTool, DatabaseTool,
@@ -316,7 +316,7 @@ class TestToolRegistryIntegration:
 
     def test_tool_result_schema(self):
         """ToolResult can hold success and failure states."""
-        from matsci_agent.types import ToolResult
+        from huginn.types import ToolResult
 
         success = ToolResult(data={"value": 42}, success=True)
         assert success.success

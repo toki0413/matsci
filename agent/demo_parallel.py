@@ -18,9 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from matsci_agent.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
-from matsci_agent.tools.lean_tool import LeanTool, LeanToolInput
-from matsci_agent.types import ToolContext
+from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:
@@ -62,7 +62,7 @@ def run_pipeline_sync(name: str, action: str, target: str, symbols: list[str],
 
 def main() -> int:
     print("=" * 60)
-    print("MatSci-Agent Parallel Pipeline Demo")
+    print("Huginn Parallel Pipeline Demo")
     print("=" * 60)
 
     tasks = [

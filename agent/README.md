@@ -1,4 +1,4 @@
-# MatSci-Agent
+# Huginn
 
 An intelligent, LLM-driven agent system for computational materials science. Automates DFT calculations, molecular dynamics simulations, symbolic regression discovery, document retrieval, and autonomous exploration of material design spaces.
 
@@ -33,10 +33,10 @@ pip install -e .
 
 ```bash
 # CLI mode
-python -m matsci_agent.cli "Calculate the band gap of Si"
+python -m huginn.cli "Calculate the band gap of Si"
 
 # API server
-python -m matsci_agent.server
+python -m huginn.server
 
 # MCP servers (in separate terminals)
 python servers/mat-db-mcp/server.py
@@ -56,13 +56,13 @@ execute shell commands, inspect git state, and run Python snippets:
 
 ```bash
 # One-shot task
-matsci coder "Add a docstring to matsci_agent/tools/code_tool.py"
+huginn coder "Add a docstring to huginn/tools/code_tool.py"
 
 # Interactive mode
-matsci coder
+huginn coder
 
 # Auto-approve destructive actions (use with caution)
-matsci coder "Refactor the CLI" --auto-approve
+huginn coder "Refactor the CLI" --auto-approve
 ```
 
 Coder tools: `file_read_tool`, `file_write_tool`, `file_edit_tool`,
@@ -80,7 +80,7 @@ See [docs/architecture.md](docs/architecture.md) for detailed system design.
        └───────────────────┼────────────────────┘
                            │
                     ┌──────▼──────┐
-                    │ MatSciAgent │
+                    │ HuginnAgent │
                     └──────┬──────┘
                            │
        ┌──────────┬────────┼────────┬──────────┐
@@ -118,7 +118,7 @@ See [docs/architecture.md](docs/architecture.md) for detailed system design.
 
 ## Skills
 
-12 preset skills in `matsci_agent/skills/presets.py`:
+12 preset skills in `huginn/skills/presets.py`:
 
 1. `standard_dft` — Standard DFT relaxation + static
 2. `aimd` — Ab initio molecular dynamics
@@ -154,7 +154,7 @@ The agent automatically remembers important computational results:
 
 ```
 agent/
-├── matsci_agent/           # Core package
+├── huginn/           # Core package
 │   ├── agent.py            # Main agent
 │   ├── crypto.py           # Encryption utilities
 │   ├── database.py         # Database layer
@@ -175,7 +175,7 @@ agent/
 
 ### Adding a New Tool
 
-1. Create a class inheriting from `MatSciTool` in `matsci_agent/tools/`
+1. Create a class inheriting from `HuginnTool` in `huginn/tools/`
 2. Define `name`, `description`, and `input_schema` (Pydantic model)
 3. Implement `call()` method returning `ToolResult`
 4. Register in `server.py` and `cli.py`
@@ -183,17 +183,17 @@ agent/
 
 ### Adding a New Skill
 
-1. Define a `SkillDefinition` in `matsci_agent/skills/presets.py`
+1. Define a `SkillDefinition` in `huginn/skills/presets.py`
 2. Add steps referencing tool names and parameters
 3. The skill is automatically available via `agent.list_skills()`
 
 ## Citation
 
-If you use MatSci-Agent in your research, please cite:
+If you use Huginn in your research, please cite:
 
 ```bibtex
-@software{matsci_agent,
-  title = {MatSci-Agent: An LLM-Driven Agent for Computational Materials Science},
+@software{huginn,
+  title = {Huginn: An LLM-Driven Agent for Computational Materials Science},
   year = {2025},
 }
 ```

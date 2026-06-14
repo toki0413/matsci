@@ -3,10 +3,10 @@
 import asyncio
 import pytest
 
-from matsci_agent.exploration.core import ExplorationSpace, Branch, Decision, BranchStatus
-from matsci_agent.exploration.strategies import ParetoPruningStrategy, BayesianExplorationStrategy, AdaptiveGridStrategy
-from matsci_agent.exploration.lifecycle import BranchLifecycleManager
-from matsci_agent.exploration.orchestrator import ExplorationOrchestrator, ExplorationResult
+from huginn.exploration.core import ExplorationSpace, Branch, Decision, BranchStatus
+from huginn.exploration.strategies import ParetoPruningStrategy, BayesianExplorationStrategy, AdaptiveGridStrategy
+from huginn.exploration.lifecycle import BranchLifecycleManager
+from huginn.exploration.orchestrator import ExplorationOrchestrator, ExplorationResult
 
 
 class TestExplorationSpace:

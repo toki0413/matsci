@@ -2,7 +2,7 @@
 
 import pytest
 
-from matsci_agent.tools.uq_tool import UQTool, UQToolInput
+from huginn.tools.uq_tool import UQTool, UQToolInput
 
 
 def test_uq_tool_monte_carlo() -> None:

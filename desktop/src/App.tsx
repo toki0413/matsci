@@ -102,7 +102,7 @@ const WS_URL =
   ((import.meta as any).env?.VITE_WS_URL as string | undefined) ||
   `${API_BASE.replace("http", "ws")}/ws/agent`;
 
-const CONFIG_KEY = "matsci:config:v1";
+const CONFIG_KEY = "huginn:config:v1";
 
 const DEFAULT_CONFIG: AppConfig = {
   provider: "openai",
@@ -121,7 +121,7 @@ const DEFAULT_CONFIG: AppConfig = {
   local_only_mode: false,
   max_tool_output_tokens: 25000,
   context_budget_tokens: 0,
-  pet_name: "Toki",
+  pet_name: "Muninn",
   pet_personality: "cheerful",
 };
 
@@ -417,7 +417,7 @@ export default function App() {
     {
       role: "assistant",
       content:
-        "Welcome to **MatSci-Agent**. I'm your materials-science research assistant.\n\nSet your LLM provider and API key in **Settings** on the left, then start a chat. I can help with DFT, molecular dynamics, packing, symbolic math, UQ/GP, and formal Lean verification.",
+        "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat. I can help with DFT, molecular dynamics, packing, symbolic math, UQ/GP, and formal Lean verification.",
       timestamp: formatTime(),
     },
   ]);
@@ -549,7 +549,7 @@ export default function App() {
 
   const pendingResponseRef = useRef<string>("");
 
-  const GUIDE_KEY = "matsci:guide:v1";
+  const GUIDE_KEY = "huginn:guide:v1";
   const [showGuide, setShowGuide] = useState(false);
   useEffect(() => {
     if (!localStorage.getItem(GUIDE_KEY)) {
@@ -1462,7 +1462,7 @@ export default function App() {
         });
         setIsStreaming(false);
         notify(
-          "MatSci-Agent",
+          "Huginn",
           pendingResponseRef.current.slice(0, 120) || "Agent finished"
         );
         break;
@@ -1472,7 +1472,7 @@ export default function App() {
           { role: "assistant", content: `❌ ${data.error}`, timestamp: formatTime() },
         ]);
         setIsStreaming(false);
-        notify("MatSci-Agent", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
+        notify("Huginn", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
         break;
       case "tool_call":
         setMessages((prev) => [
@@ -1680,7 +1680,7 @@ export default function App() {
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <span className="text-2xl">🔬</span>
           <div>
-            <div className="text-base font-bold tracking-tight">MatSci-Agent</div>
+            <div className="text-base font-bold tracking-tight">Huginn</div>
             <div className="text-xs text-text-muted">Research assistant</div>
           </div>
         </div>
@@ -2921,7 +2921,7 @@ export default function App() {
                   <textarea
                     value={projectContext}
                     onChange={(e) => setProjectContext(e.target.value)}
-                    placeholder="Write project-level instructions here (coding style, conventions, important formulas, DFT preferences...). Saved to .matsci.md in the workspace."
+                    placeholder="Write project-level instructions here (coding style, conventions, important formulas, DFT preferences...). Saved to .huginn.md in the workspace."
                     className="input flex-1 resize-none font-mono text-sm"
                     spellCheck={false}
                   />
@@ -3344,7 +3344,7 @@ export default function App() {
                           type="text"
                           value={config.pet_name}
                           onChange={(e) => { const next = { ...config, pet_name: e.target.value }; setConfig(next); setConfigDirty(true); }}
-                          placeholder="Toki"
+                          placeholder="Muninn"
                           className="input"
                         />
                       </div>
@@ -3404,7 +3404,10 @@ export default function App() {
       {showGuide && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl">
-            <h2 className="mb-2 text-xl font-bold">Welcome to MatSci-Agent</h2>
+            <h2 className="mb-1 text-xl font-bold">Welcome to Huginn</h2>
+            <p className="mb-5 text-sm italic text-text-secondary">
+              Magic springs from the wellspring of imagination.
+            </p>
             <p className="mb-5 text-sm text-text-secondary">
               A few quick tips to get you started:
             </p>

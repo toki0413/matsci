@@ -1,8 +1,8 @@
-# MatSci-Agent Architecture
+# Huginn Architecture
 
 ## Overview
 
-MatSci-Agent is a modular, LLM-driven agent system for computational materials science. It supports DFT calculations (VASP), molecular dynamics (LAMMPS), symbolic regression, RAG-based document retrieval, encrypted data management, and automated exploration workflows.
+Huginn is a modular, LLM-driven agent system for computational materials science. It supports DFT calculations (VASP), molecular dynamics (LAMMPS), symbolic regression, RAG-based document retrieval, encrypted data management, and automated exploration workflows.
 
 ## System Architecture
 
@@ -12,7 +12,7 @@ MatSci-Agent is a modular, LLM-driven agent system for computational materials s
 │  CLI (cli.py)  │  Desktop App (Tauri+React)  │  API Server  │
 ├──────────────────────────────────────────────────────────────┤
 │                     Agent Layer                               │
-│              MatSciAgent (LangGraph)                          │
+│              HuginnAgent (LangGraph)                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │   Memory     │  │    Skills    │  │ Exploration  │       │
 │  │  (3-tier)    │  │ (Declarative)│  │   Engine     │       │
@@ -38,16 +38,16 @@ MatSci-Agent is a modular, LLM-driven agent system for computational materials s
 
 ## Module Descriptions
 
-### 1. Agent Layer (`matsci_agent/agent.py`)
+### 1. Agent Layer (`huginn/agent.py`)
 
-The core `MatSciAgent` is built on LangGraph and manages the reasoning loop:
+The core `HuginnAgent` is built on LangGraph and manages the reasoning loop:
 
 - **State management**: Tracks messages, tool calls, and reasoning traces
 - **Memory integration**: Automatically promotes important tool results to long-term memory
 - **Skill execution**: Declarative workflow execution via `execute_skill()`
 - **Exploration**: Integrates with `ExplorationEngine` for autonomous discovery
 
-### 2. Memory System (`matsci_agent/memory/`)
+### 2. Memory System (`huginn/memory/`)
 
 Three-tier memory architecture:
 
@@ -63,7 +63,7 @@ Key features:
 - Vector semantic search (optional, via ChromaDB)
 - Category and tag-based filtering
 
-### 3. Skills System (`matsci_agent/skills/`)
+### 3. Skills System (`huginn/skills/`)
 
 Declarative workflow definition and execution:
 
@@ -80,7 +80,7 @@ skill = SkillDefinition(
 
 12 preset skills covering: DFT, AIMD, defects, surfaces, LAMMPS, ML potentials, phonons, elastic constants, convergence diagnosis, high-throughput screening, and symbolic regression.
 
-### 4. Tool Layer (`matsci_agent/tools/`)
+### 4. Tool Layer (`huginn/tools/`)
 
 | Tool | Purpose | Key Features |
 |------|---------|--------------|
@@ -90,14 +90,14 @@ skill = SkillDefinition(
 | `rag_manager` | Document retrieval | ChromaDB + keyword fallback, encrypted storage |
 | `report_tool` | Report generation | Markdown/LaTeX/HTML/JSON output |
 
-### 5. RAG System (`matsci_agent/rag/`)
+### 5. RAG System (`huginn/rag/`)
 
 - **VectorStore**: ChromaDB-based with `all-MiniLM-L6-v2` embeddings
 - **EncryptedVectorStore**: Document encryption at rest (AES-128-CBC + HMAC)
 - **File parsing**: PDF, CSV, JSON, TXT with smart chunking
 - **Keyword fallback**: BM25-style search when vector search fails
 
-### 6. Crypto Module (`matsci_agent/crypto.py`)
+### 6. Crypto Module (`huginn/crypto.py`)
 
 - **CryptoVault**: Fernet encryption (AES-128-CBC + HMAC-SHA256) with PBKDF2
 - **KeyManager**: Password-protected master key file
@@ -109,7 +109,7 @@ Security guarantees:
 - Keys never persisted to disk (only encrypted key blobs)
 - Memory-only key storage
 
-### 7. MCP Integration (`matsci_agent/mcp_integration/`)
+### 7. MCP Integration (`huginn/mcp_integration/`)
 
 Connects to external MCP servers:
 - **mat-db-mcp**: Materials Project, NIST interatomic potentials, property search
@@ -119,7 +119,7 @@ Architecture:
 - `MCPClientManager`: Async stdio-based server connections
 - `MCPAdapter`: Wraps MCP tools as LangChain `StructuredTool`
 
-### 8. Exploration Engine (`matsci_agent/exploration/`)
+### 8. Exploration Engine (`huginn/exploration/`)
 
 Autonomous discovery via LLM-driven branch generation:
 
@@ -134,12 +134,12 @@ Components:
 
 ### 9. Infrastructure
 
-**HPC Integration** (`matsci_agent/hpc.py`):
+**HPC Integration** (`huginn/hpc.py`):
 - Slurm job submission and monitoring
 - SSH-based remote execution
 - Job queue querying
 
-**Database** (`matsci_agent/database.py`):
+**Database** (`huginn/database.py`):
 - SQLite with FTS5 full-text search
 - Encrypted database wrapper
 
@@ -148,7 +148,7 @@ Components:
 ```
 User Query
     ↓
-MatSciAgent.chat()
+HuginnAgent.chat()
     ↓
 Build prompt with memory injection
     ↓

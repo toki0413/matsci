@@ -1,4 +1,4 @@
-# MatSci-Agent
+# Huginn
 
 An intelligent, LLM-driven agent system for computational materials science with **formally verified mathematics**. Automates DFT calculations, molecular dynamics, symbolic regression, and autonomous exploration — while using Lean 4 to formally verify tensor algebra, finite element methods, numerical linear algebra, DFT theory, thermodynamics, and probability.
 
@@ -10,11 +10,11 @@ An intelligent, LLM-driven agent system for computational materials science with
 - **Multi-Provider LLM Support**: OpenAI, Anthropic, DeepSeek, Google GenAI, OpenRouter, NVIDIA, Ollama, **vLLM**, **LM Studio**, and any OpenAI-compatible local endpoint
 - **Symbolic ↔ Formal Bridge**: SymPy expressions are automatically translated to Lean `Float` definitions and type-checked
 - **Config Persistence**: Save/load TOML or JSON config files; CLI flags override config files which override environment variables
-- **Rust Accelerators**: Optional `matsci-ext` PyO3 extension accelerates LAMMPS/VASP parsing and MSD/RDF analysis
+- **Rust Accelerators**: Optional `huginn-ext` PyO3 extension accelerates LAMMPS/VASP parsing and MSD/RDF analysis
 - **FEA/CFD Tools**: Native `comsol_tool`, `openfoam_tool`, `abaqus_tool` (script generator + MCP bridge), LAMMPS and VASP execution tools
 - **Packing/Visualization**: Native `packing_tool` for molecule/particle packing with 3D preview; feeds OpenFOAM, COMSOL, and Abaqus
 - **Generic Code Execution**: Native `code_tool` lets the LLM write and run Python for custom analysis, visualization, UQ, GP, Bayesian optimization, and post-processing
-- **Coder Mode**: `matsci coder` provides an autonomous Codex-like editing loop with read/write/edit, shell, git, and permission checks
+- **Coder Mode**: `huginn coder` provides an autonomous Codex-like editing loop with read/write/edit, shell, git, and permission checks
 - **UQ/GP Skills**: Declarative skills for Monte Carlo propagation, sensitivity/Sobol analysis, GP prediction, and Bayesian calibration
 - **Open-Source DFT**: Native `qe_tool` (Quantum ESPRESSO) and `cp2k_tool`
 - **Retry & Resilience**: Automatic exponential backoff on rate limits and transient API errors
@@ -48,20 +48,20 @@ $env:PATH = "C:\mingw64\mingw64\bin;$env:PATH"
 cargo build --release
 ```
 
-The resulting binary is at `cli/target/release/matsci` (or `matsci.exe` on Windows). Add it to your `PATH` or copy it to a directory already on `PATH`.
+The resulting binary is at `cli/target/release/huginn` (or `huginn.exe` on Windows). Add it to your `PATH` or copy it to a directory already on `PATH`.
 
 **Rust performance accelerators (optional)**
 
 ```bash
 cd matsci-agent/pyext
 maturin build --release
-pip install target/wheels/matsci_ext-*.whl
+pip install target/wheels/huginn_ext-*.whl
 ```
 
 Currently accelerates:
 - LAMMPS dump/trajectory parsing, MSD, and RDF computation (`LammpsTool`)
 - VASP OUTCAR streaming parse (`VaspTool`)
-- General NumPy-array MSD/RDF (`matsci_ext.compute_msd`, `matsci_ext.compute_rdf`)
+- General NumPy-array MSD/RDF (`huginn_ext.compute_msd`, `huginn_ext.compute_rdf`)
 
 `LammpsTool` and `VaspTool` automatically use the Rust backend when installed and fall back to pure Python otherwise.
 
@@ -69,14 +69,14 @@ On Windows with the GNU toolchain, ensure MinGW's `dlltool.exe` is on `PATH` (sa
 
 ### Optional: Abaqus Integration
 
-If you have the `.abaqus-mcp` server installed in your home directory, `matsci chat` will auto-discover and connect it:
+If you have the `.abaqus-mcp` server installed in your home directory, `huginn chat` will auto-discover and connect it:
 
 ```bash
 # Default location: ~/.abaqus-mcp/mcp_server.py
 # Override via environment variable:
 export ABAQUS_MCP_SERVER_PATH=/path/to/mcp_server.py
 
-# Or in matsci.toml:
+# Or in huginn.toml:
 abaqus_mcp_server = "/path/to/mcp_server.py"
 ```
 
@@ -84,13 +84,13 @@ Requires Abaqus/CAE to be running with the `.abaqus-mcp` plugin loaded and its l
 
 ### Optional: COMSOL Integration
 
-`matsci-agent` includes a `comsol_tool` that generates COMSOL Java scripts and runs them via the COMSOL CLI when available:
+`huginn-agent` includes a `comsol_tool` that generates COMSOL Java scripts and runs them via the COMSOL CLI when available:
 
 ```bash
 # Requires comsol or comsolmph on PATH, or set:
 export COMSOL_EXECUTABLE=/path/to/comsol
 
-# In matsci chat, the agent can generate + run models:
+# In huginn chat, the agent can generate + run models:
 # comsol_tool action=run physics=solid_mechanics ...
 ```
 
@@ -98,13 +98,13 @@ If COMSOL is not installed, the tool exports the generated script so you can run
 
 ### Optional: OpenFOAM Integration
 
-`matsci-agent` includes an `openfoam_tool` that generates complete OpenFOAM case directories and runs `blockMesh` + the chosen solver when OpenFOAM is installed:
+`huginn-agent` includes an `openfoam_tool` that generates complete OpenFOAM case directories and runs `blockMesh` + the chosen solver when OpenFOAM is installed:
 
 ```bash
 # Requires blockMesh and the solver (e.g. icoFoam, simpleFoam) on PATH, or set:
 export OPENFOAM_DIR=/path/to/openfoam/version
 
-# In matsci chat, the agent can generate + run cases:
+# In huginn chat, the agent can generate + run cases:
 # openfoam_tool action=run solver=icoFoam case_name=pipe_flow ...
 ```
 
@@ -112,7 +112,7 @@ If OpenFOAM is not installed, the tool exports the full case (`system/`, `consta
 
 ### Optional: Packing and Visualization
 
-`matsci-agent` includes a `packing_tool` for packmol-style molecular packing and particle-filled composite systems:
+`huginn-agent` includes a `packing_tool` for packmol-style molecular packing and particle-filled composite systems:
 
 ```bash
 # Pack 20 water molecules into a 20 Å box
@@ -140,7 +140,7 @@ The packing result can be consumed directly by downstream tools:
 
 ### Optional: Generic Code Execution
 
-`matsci-agent` includes a `code_tool` that lets the LLM generate and execute Python code inside a sandboxed subprocess. This is the preferred way to do ad-hoc analysis instead of adding a dedicated tool for every numeric task:
+`huginn-agent` includes a `code_tool` that lets the LLM generate and execute Python code inside a sandboxed subprocess. This is the preferred way to do ad-hoc analysis instead of adding a dedicated tool for every numeric task:
 
 ```bash
 # Run Python code and capture a result variable
@@ -156,11 +156,11 @@ Use cases:
 - Post-processing simulation outputs (parse logs, compute MSD/RDF, plot stress-strain).
 - Prototyping new analysis steps before deciding whether to promote them to core tools.
 
-The tool runs with a timeout, captures stdout/stderr, and collects saved PNG/CSV/JSON/XYZ/data files. Reusable UQ/GP/Bayesian-optimization logic is still available as library modules (`matsci_agent.tools.uq_tool`, `matsci_agent.tools.gp_tool`) for the LLM to import when needed.
+The tool runs with a timeout, captures stdout/stderr, and collects saved PNG/CSV/JSON/XYZ/data files. Reusable UQ/GP/Bayesian-optimization logic is still available as library modules (`huginn.tools.uq_tool`, `huginn.tools.gp_tool`) for the LLM to import when needed.
 
 ### Optional: Quantum ESPRESSO and CP2K
 
-`matsci-agent` includes native tools for open-source DFT codes:
+`huginn-agent` includes native tools for open-source DFT codes:
 
 ```bash
 # Quantum ESPRESSO
@@ -175,44 +175,44 @@ Both tools generate input files, run the code when available, and parse total en
 
 **Option A — Environment variables**
 ```bash
-export MATSCI_PROVIDER=openai
-export MATSCI_MODEL=gpt-4o
+export HUGINN_PROVIDER=openai
+export HUGINN_MODEL=gpt-4o
 export OPENAI_API_KEY=sk-...
 ```
 
 **Option B — Config file**
 ```bash
-matsci configure   # interactive wizard
+huginn configure   # interactive wizard
 # or write manually:
-cat > matsci.toml << 'EOF'
+cat > huginn.toml << 'EOF'
 provider = "openai"
 model = "gpt-4o"
 api_key = "sk-..."
 EOF
-matsci chat --config matsci.toml
+huginn chat --config huginn.toml
 ```
 
 **Option C — CLI flags**
 ```bash
-matsci chat --provider openai --model gpt-4o
-matsci chat --provider ollama --ollama-url http://localhost:11434
-matsci chat --provider vllm --base-url http://localhost:8000/v1 --model llama-3-8b
+huginn chat --provider openai --model gpt-4o
+huginn chat --provider ollama --ollama-url http://localhost:11434
+huginn chat --provider vllm --base-url http://localhost:8000/v1 --model llama-3-8b
 ```
 
 ### 3. Start Chatting
 
 ```bash
-matsci chat
+huginn chat
 ```
 
 ### 5. Autonomous Coder Mode
 
 ```bash
 # One-shot task with interactive approval for destructive actions
-matsci coder "Refactor the CLI argument parsing into a separate module"
+huginn coder "Refactor the CLI argument parsing into a separate module"
 
 # Auto-approve all destructive actions (use with caution)
-matsci coder "Update all docstrings in matsci_agent/tools" --auto-approve
+huginn coder "Update all docstrings in huginn/tools" --auto-approve
 ```
 
 ### 6. Run the Test Suite
@@ -220,13 +220,13 @@ matsci coder "Update all docstrings in matsci_agent/tools" --auto-approve
 ```bash
 cd agent
 pytest tests/ -x -q          # Python agent tests (192 tests)
-cd lean/MatSciLean
-lake build MatSciLean         # Lean formalization build
+cd lean/HuginnLean
+lake build HuginnLean         # Lean formalization build
 
 # Rust CLI smoke tests
 cd ../../cli
-./target/release/matsci --version
-./target/release/matsci tools
+./target/release/huginn --version
+./target/release/huginn tools
 ```
 
 ---
@@ -256,8 +256,8 @@ All symbolic math results can be formally verified in Lean 4.
 ### Build
 
 ```bash
-cd agent/lean/MatSciLean
-lake build MatSciLean
+cd agent/lean/HuginnLean
+lake build HuginnLean
 ```
 
 **Speeding up rebuilds:** After the first successful build, `.olean` cache files are generated. Use `lake build --no-build` to skip recompilation of unchanged modules, or share the `build/` directory across machines.
@@ -283,7 +283,7 @@ lake build MatSciLean
 
 ## Configuration File Format
 
-TOML (`matsci.toml`):
+TOML (`huginn.toml`):
 
 ```toml
 provider = "openai"
@@ -297,13 +297,13 @@ enable_exploration = true
 max_parallel_branches = 5
 ```
 
-JSON (`matsci.json`) is also accepted. Load with `matsci chat --config matsci.toml`.
+JSON (`huginn.json`) is also accepted. Load with `huginn chat --config huginn.toml`.
 
 Save a running config:
 ```python
-from matsci_agent.config import MatSciConfig
-cfg = MatSciConfig.from_env()
-cfg.save("matsci.toml")
+from huginn.config import HuginnConfig
+cfg = HuginnConfig.from_env()
+cfg.save("huginn.toml")
 ```
 
 ---
@@ -318,7 +318,7 @@ cfg.save("matsci.toml")
        └───────────────────┼────────────────────┘
                            │
                     ┌──────▼──────┐
-                    │ MatSciAgent │
+                    │ HuginnAgent │
                     └──────┬──────┘
                            │
        ┌──────────┬────────┼────────┬──────────┐
@@ -328,7 +328,7 @@ cfg.save("matsci.toml")
    └───────┘  └───────┘ └──────┘ └──────┘  └───┬───┘
                                                  │
                                           ┌──────▼──────┐
-                                          │ MatSciLean  │
+                                          │ HuginnLean  │
                                           │ (Lean 4)    │
                                           └─────────────┘
 ```
@@ -340,7 +340,7 @@ cfg.save("matsci.toml")
 ```
 matsci-agent/
 ├── agent/
-│   ├── matsci_agent/       # Core Python package
+│   ├── huginn/       # Core Python package
 │   │   ├── agent.py        # LLM provider factory + retry
 │   │   ├── config.py       # Config dataclass with save/load
 │   │   ├── cli.py          # CLI entry point
@@ -348,7 +348,7 @@ matsci-agent/
 │   │   ├── skills/         # 19 declarative workflows
 │   │   ├── memory/         # Session + long-term + FTS5
 │   │   └── rag/            # ChromaDB + encrypted storage
-│   ├── lean/MatSciLean/    # Lean 4 formalization library
+│   ├── lean/HuginnLean/    # Lean 4 formalization library
 │   ├── servers/            # MCP servers (mat-db, math-anything)
 │   ├── tests/              # 192 pytest tests
 │   └── docs/               # Architecture docs
@@ -362,7 +362,7 @@ matsci-agent/
 
 ### Adding a New Tool
 
-1. Create a class inheriting from `MatSciTool` in `matsci_agent/tools/`
+1. Create a class inheriting from `HuginnTool` in `huginn/tools/`
 2. Define `name`, `description`, and `input_schema` (Pydantic model)
 3. Implement `call()` returning `ToolResult`
 4. Register in `cli.py`
@@ -370,8 +370,8 @@ matsci-agent/
 
 ### Adding a New Lean Module
 
-1. Create `lean/MatSciLean/<Module>.lean`
-2. Add `import MatSciLean.<Module>` to `MatSciLean.lean`
+1. Create `lean/HuginnLean/<Module>.lean`
+2. Add `import HuginnLean.<Module>` to `HuginnLean.lean`
 3. Add `verify_<module>` to `auto_pipeline.py`
 4. Register the workflow template in `workflows/templates.py`
 5. Add a skill preset in `skills/presets.py`

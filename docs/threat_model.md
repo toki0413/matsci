@@ -1,4 +1,4 @@
-# MatSci-Agent Threat Model
+# Huginn Threat Model
 
 **Version**: 1.0  
 **Scope**: Core agent runtime, tool execution layer, Lean verification bridge, HPC integration, and sandbox endpoint.
@@ -32,7 +32,7 @@
 - **Mitigation**: Commit `lake-manifest.json`; verify upstream Git tags; review diffs on updates.
 - **Residual**: No cryptographic checksum verification of `.olean` files.
 
-- **Threat**: Audit log `matsci_audit.jsonl` is modified to hide malicious activity.
+- **Threat**: Audit log `huginn_audit.jsonl` is modified to hide malicious activity.
 - **Mitigation**: Hash chain (`prev_hash`) makes tamper-evident; append-only file mode.
 - **Residual**: Log file itself is not encrypted or signed.
 
@@ -76,7 +76,7 @@
                            │ Network / Subprocess
 ┌──────────────────────────▼──────────────────────────────────┐
 │  Agent Runtime (Semi-Trusted)                               │
-│  - MatSciAgent                                              │
+│  - HuginnAgent                                              │
 │  - ToolRegistry                                             │
 │  - Skills framework                                         │
 │  - Memory manager                                           │
@@ -101,8 +101,8 @@
 ## 4. Incident Response Playbook
 
 ### 4.1 Suspicious Tool Call Detected
-1. Enable `--dry-run` mode: `matsci chat --dry-run`
-2. Review `matsci_audit.jsonl` for the chain of events leading to the call.
+1. Enable `--dry-run` mode: `huginn chat --dry-run`
+2. Review `huginn_audit.jsonl` for the chain of events leading to the call.
 3. Check the hash chain integrity: `audit.verify_chain()`
 4. If the agent is running, disconnect from MCP servers and revoke API keys.
 

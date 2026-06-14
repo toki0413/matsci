@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.cli import _resolve_abaqus_mcp_path
+from huginn.cli import _resolve_abaqus_mcp_path
 
 
 @pytest.fixture

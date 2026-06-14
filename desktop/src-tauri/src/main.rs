@@ -84,7 +84,7 @@ fn main() {
 
 #[tauri::command]
 fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to MatSci-Agent.", name)
+    format!("Hello, {}! Welcome to Huginn.", name)
 }
 
 #[tauri::command]
@@ -124,12 +124,12 @@ async fn start_backend(
         }
     }
 
-    // Prefer the new Rust process-manager sidecar, then the legacy matsci CLI,
+    // Prefer the new Rust process-manager sidecar, then the legacy huginn CLI,
     // then a direct Python invocation during development.
-    if let Ok(sidecar) = app.shell().sidecar("matsci-sidecar") {
+    if let Ok(sidecar) = app.shell().sidecar("huginn-sidecar") {
         let (mut rx, child) = sidecar
             .spawn()
-            .map_err(|e| format!("failed to spawn matsci-sidecar: {}", e))?;
+            .map_err(|e| format!("failed to spawn huginn-sidecar: {}", e))?;
 
         let app_stdout = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -149,11 +149,11 @@ async fn start_backend(
 
         *state.backend.lock().unwrap() = Some(child);
         Ok("started".to_string())
-    } else if let Ok(sidecar) = app.shell().sidecar("matsci") {
+    } else if let Ok(sidecar) = app.shell().sidecar("huginn") {
         let (mut rx, child) = sidecar
             .args(["serve", "--port", "8000"])
             .spawn()
-            .map_err(|e| format!("failed to spawn matsci sidecar: {}", e))?;
+            .map_err(|e| format!("failed to spawn huginn sidecar: {}", e))?;
 
         let app_stdout = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -177,7 +177,7 @@ async fn start_backend(
         // Development fallback: use the system Python interpreter directly.
         let python = app.shell().command("python");
         let (mut rx, child) = python
-            .args(["-m", "matsci_agent.server"])
+            .args(["-m", "huginn.server"])
             .spawn()
             .map_err(|e| format!("failed to start backend via python: {}", e))?;
 

@@ -1,6 +1,6 @@
-# MatSci-Agent Desktop
+# Huginn Desktop
 
-Tauri v2 + React 18 + TypeScript desktop frontend for MatSci-Agent.
+Tauri v2 + React 18 + TypeScript desktop frontend for Huginn.
 
 ## Prerequisites
 
@@ -11,12 +11,12 @@ Tauri v2 + React 18 + TypeScript desktop frontend for MatSci-Agent.
   ```powershell
   $env:PATH += ";C:\mingw64\mingw64\bin"
   ```
-- A running MatSci-Agent backend:
+- A running Huginn backend:
   ```bash
   cd agent
-  matsci serve
+  huginn serve
   # or
-  python matsci_agent/server.py
+  python huginn/server.py
   ```
 
 ## Setup
@@ -75,5 +75,5 @@ desktop/
 ## Troubleshooting
 
 - `dlltool.exe not found` on Windows: ensure MinGW `bin` directory is on PATH.
-- `Backend offline` in the status bar: start `matsci serve` first.
+- `Backend offline` in the status bar: start `huginn serve` first.
 - `Cargo` build errors: run `cargo clean` in `src-tauri` and try again.

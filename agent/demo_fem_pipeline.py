@@ -19,9 +19,9 @@ from pathlib import Path
 # Ensure imports work when run from agent/ directory
 sys.path.insert(0, str(Path(__file__).parent))
 
-from matsci_agent.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
-from matsci_agent.tools.lean_tool import LeanTool, LeanToolInput
-from matsci_agent.types import ToolContext
+from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.types import ToolContext
 
 
 def _make_ctx() -> ToolContext:
@@ -31,7 +31,7 @@ def _make_ctx() -> ToolContext:
 
 async def main() -> int:
     print("=" * 60)
-    print("MatSci-Agent End-to-End Demo: FEM -> Lean Verification")
+    print("Huginn End-to-End Demo: FEM -> Lean Verification")
     print("=" * 60)
 
     # ------------------------------------------------------------------

@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "matsci-agent"
+name = "huginn-agent"
 version = "0.1.0"
 description = "Material Science specialized AI Agent Harness"
 readme = "README.md"
@@ -28,13 +28,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-github-actions-annotate-failures>=0.2", "black>=23.0", "mypy>=1.5"]
-accel = ["matsci-ext>=0.1.0"]
+accel = ["huginn-ext>=0.1.0"]
 all = ["pymatgen>=2024.0", "ase>=3.22", "paramiko>=3.0", "docker>=7.0", "chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23"]
 rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23"]
 
 [project.scripts]
-matsci-agent = "matsci_agent.cli:main"
+huginn-agent = "huginn.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["matsci_agent*"]
+include = ["huginn*"]

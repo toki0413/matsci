@@ -3,22 +3,22 @@
 import pytest
 from pathlib import Path
 
-from matsci_agent.lean.interface import LeanInterface
+from huginn.lean.interface import LeanInterface
 
 
-LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "MatSciLean"
+LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
 
 class TestNumericalAnalysis:
     @pytest.fixture(scope="class")
     def lean(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return LeanInterface(LEAN_PROJECT)
 
     def test_sym2x2_eigenvalues(self, lean):
         """Verify that the analytical 2x2 eigenvalues match expected values."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 def matA : Float := 3.0
 def matB : Float := 1.0
@@ -26,7 +26,7 @@ def matD : Float := 2.0
 #eval (sym2x2Eigenvalues matA matB matD).1
 #eval (sym2x2Eigenvalues matA matB matD).2
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 2
@@ -39,11 +39,11 @@ def matD : Float := 2.0
 
     def test_err_float_add(self, lean):
         """Check that exact inputs accumulate only round-off error."""
-        code = """open MatSciLean ErrFloat
+        code = """open HuginnLean ErrFloat
 
 #eval (ErrFloat.mk 1.0 0.0 + ErrFloat.mk 2.0 0.0).err
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
         assert result.success, result.stderr
         err = float(result.stdout.strip().splitlines()[-1].strip())
         # err = ε·|3| ≈ 6.66e-16; Lean #eval rounds to 0.000000 for display,
@@ -52,7 +52,7 @@ def matD : Float := 2.0
 
     def test_err_matrix_2x2(self, lean):
         """Verify ErrMatrix2x2 multiplication, trace, det and eigenvalues."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 def m1 : ErrMatrix2x2 :=
   ⟨ErrFloat.mk 1.0 0.0, ErrFloat.mk 0.5 0.0,
@@ -68,7 +68,7 @@ def prod : ErrMatrix2x2 := m1 * m2
 #eval (errMatEigenvalues prod).1.val
 #eval (errMatEigenvalues prod).2.val
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 4
@@ -84,7 +84,7 @@ def prod : ErrMatrix2x2 := m1 * m2
 
     def test_err_matrix_3x3_and_jacobi(self, lean):
         """Verify ErrMatrix3x3 trace, det and Jacobi rotation step."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 def m3 : ErrMatrix3x3 :=
   ⟨ErrFloat.mk 4.0 0.0, ErrFloat.mk 1.0 0.0, ErrFloat.mk 0.0 0.0,
@@ -100,7 +100,7 @@ def m3J : ErrMatrix3x3 := jacobiStep01 m3
 #eval m3J.a22.val
 #eval m3J.a33.val
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 6
@@ -125,7 +125,7 @@ def m3J : ErrMatrix3x3 := jacobiStep01 m3
 
     def test_jacobi_iterate_convergence(self, lean):
         """Verify that jacobiIterate converges to a diagonal matrix."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 def m3 : ErrMatrix3x3 :=
   ⟨ErrFloat.mk 4.0 0.0, ErrFloat.mk 1.0 0.0, ErrFloat.mk 0.0 0.0,
@@ -140,7 +140,7 @@ def m3_diag : ErrMatrix3x3 := jacobiIterate m3 10 1e-6
 #eval m3_diag.a13.val
 #eval m3_diag.a23.val
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 6

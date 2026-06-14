@@ -2,9 +2,9 @@
 
 import asyncio
 import pytest
-from matsci_agent.workflows.engine import WorkflowEngine, ComputationalStage, ValidationRule
-from matsci_agent.workflows.templates import symbolic_verify_workflow, get_template, list_templates
-from matsci_agent.types import ToolContext
+from huginn.workflows.engine import WorkflowEngine, ComputationalStage, ValidationRule
+from huginn.workflows.templates import symbolic_verify_workflow, get_template, list_templates
+from huginn.types import ToolContext
 
 
 class TestWorkflowEngine:

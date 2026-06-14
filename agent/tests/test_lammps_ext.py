@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.tools.lammps_tool import LammpsTool, _HAS_MATSCI_EXT
+from huginn.tools.lammps_tool import LammpsTool, _HAS_HUGINN_EXT
 
 
 TRJ_PATH = Path(__file__).parent.parent / "lammps_traj_test" / "traj.lammpstrj"
@@ -22,13 +22,13 @@ def test_python_parser_baseline():
     assert "rdf" in result
 
 
-@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
+@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
 def test_rust_extension_available():
     """The Rust extension should be importable in this environment."""
-    assert _HAS_MATSCI_EXT is True
+    assert _HAS_HUGINN_EXT is True
 
 
-@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
+@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
 def test_rust_parser_matches_python():
     """Rust parser output should match the Python parser output."""
     tool = LammpsTool()
@@ -58,12 +58,12 @@ def test_rust_parser_matches_python():
         assert r_g == pytest.approx(p_g, abs=1e-9)
 
 
-@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
+@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
 def test_rust_parser_raw_api():
-    """Test the raw matsci_ext API directly."""
-    import matsci_ext
+    """Test the raw huginn_ext API directly."""
+    import huginn_ext
 
-    result = matsci_ext.parse_lammps_dump(
+    result = huginn_ext.parse_lammps_dump(
         str(TRJ_PATH),
         compute_msd=True,
         compute_rdf=True,
@@ -76,17 +76,17 @@ def test_rust_parser_raw_api():
     assert "id" in result["frames"][0]["atoms"][0]
 
 
-@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
+@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
 def test_general_msd() -> None:
     """Test compute_msd on a NumPy array against a reference implementation."""
     import numpy as np
-    import matsci_ext
+    import huginn_ext
 
     np.random.seed(0)
     positions = np.random.rand(5, 8, 3).astype(np.float64)
     timesteps = [0, 10, 20, 30, 40]
 
-    result = matsci_ext.compute_msd(positions, timesteps=timesteps)
+    result = huginn_ext.compute_msd(positions, timesteps=timesteps)
     msd = result["msd"]
 
     ref = positions[0]
@@ -98,18 +98,18 @@ def test_general_msd() -> None:
         assert entry["msd"] == pytest.approx(expected, abs=1e-9)
 
 
-@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
+@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
 def test_general_rdf() -> None:
     """Test compute_rdf on a NumPy array against a reference implementation."""
     import numpy as np
-    import matsci_ext
+    import huginn_ext
 
     np.random.seed(1)
     positions = np.random.rand(20, 3).astype(np.float64)
     box = [1.0, 1.0, 1.0]
     bins = 20
 
-    result = matsci_ext.compute_rdf(positions, box_dims=box, bins=bins)
+    result = huginn_ext.compute_rdf(positions, box_dims=box, bins=bins)
     assert result["bins"] == bins
     assert len(result["r"]) == bins
     assert len(result["g"]) == bins

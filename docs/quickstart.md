@@ -1,6 +1,6 @@
-# MatSci-Agent Quick Start
+# Huginn Quick Start
 
-This guide walks you through running MatSci-Agent locally — from setup to your first formally verified FEM weak form derivation.
+This guide walks you through running Huginn locally — from setup to your first formally verified FEM weak form derivation.
 
 ---
 
@@ -26,7 +26,7 @@ lake --version
 
 ## 2. Configure Your LLM
 
-MatSci-Agent supports **9 providers** including local endpoints. For a fully offline setup:
+Huginn supports **9 providers** including local endpoints. For a fully offline setup:
 
 ### Option A: Ollama (recommended for beginners)
 
@@ -35,7 +35,7 @@ MatSci-Agent supports **9 providers** including local endpoints. For a fully off
 ollama pull qwen2.5:14b
 
 # Configure
-matsci configure
+huginn configure
 # Provider: ollama
 # Model: qwen2.5:14b
 # Ollama host: http://localhost:11434
@@ -44,7 +44,7 @@ matsci configure
 ### Option B: vLLM / LM Studio
 
 ```bash
-matsci chat --provider vllm \
+huginn chat --provider vllm \
   --base-url http://localhost:8000/v1 \
   --model llama-3.1-8b
 ```
@@ -66,7 +66,7 @@ Expected output:
 
 ```
 ============================================================
-MatSci-Agent Comprehensive Pipeline Demo
+Huginn Comprehensive Pipeline Demo
 ============================================================
 
 --- Phase 1: FEM Weak Forms ---
@@ -95,7 +95,7 @@ This demonstrates:
 ## 4. Interactive Chat
 
 ```bash
-matsci chat
+huginn chat
 ```
 
 Try asking:
@@ -147,7 +147,7 @@ User Input
 
 ## 7. Next Steps
 
-- **Explore workflows**: `matsci_agent/workflows/templates.py` contains 12 preset pipelines
-- **Add a Lean module**: See `agent/lean/MatSciLean/README.md`
+- **Explore workflows**: `huginn/workflows/templates.py` contains 12 preset pipelines
+- **Add a Lean module**: See `agent/lean/HuginnLean/README.md`
 - **Run the test suite**: `pytest tests/ -x -q`
 - **Read the threat model**: `docs/threat_model.md`

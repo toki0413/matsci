@@ -1,7 +1,7 @@
 """Comprehensive end-to-end demo across all 6 mathematical domains.
 
 Validates that the symbolic -> formal verification pipeline works correctly
-for every phase of MatSci-Lean.
+for every phase of huginn-Lean.
 
 Usage:
     cd agent
@@ -16,9 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from matsci_agent.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
-from matsci_agent.tools.lean_tool import LeanTool, LeanToolInput
-from matsci_agent.types import ToolContext
+from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:
@@ -68,7 +68,7 @@ async def run_symbolic_then_lean(
 
 async def main() -> int:
     print("=" * 60)
-    print("MatSci-Agent Comprehensive Pipeline Demo (6 Phases)")
+    print("Huginn Comprehensive Pipeline Demo (6 Phases)")
     print("=" * 60)
 
     results: dict[str, bool] = {}

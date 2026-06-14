@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.crypto import CryptoVault
-from matsci_agent.rag.vector_store import VectorStore, EncryptedVectorStore
-from matsci_agent.rag.encrypted_rag import EncryptedRAGManager
+from huginn.crypto import CryptoVault
+from huginn.rag.vector_store import VectorStore, EncryptedVectorStore
+from huginn.rag.encrypted_rag import EncryptedRAGManager
 
 
 class TestVectorStore:
     def test_ingest_and_search(self):
         # Use a persistent test dir to avoid Windows file lock issues with ChromaDB
-        tmp = Path(tempfile.gettempdir()) / "matsci_test_rag"
+        tmp = Path(tempfile.gettempdir()) / "huginn_test_rag"
         tmp.mkdir(exist_ok=True)
         store = VectorStore(persist_dir=str(tmp), collection_name="test")
         # Clear any previous data
@@ -33,7 +33,7 @@ class TestVectorStore:
         assert "silicon" in results[0]["document"].lower()
 
     def test_ingest_file_and_chunking(self):
-        tmp = Path(tempfile.gettempdir()) / "matsci_test_rag_file"
+        tmp = Path(tempfile.gettempdir()) / "huginn_test_rag_file"
         tmp.mkdir(exist_ok=True)
         txt = tmp / "doc.txt"
         txt.write_text("Chapter 1\n" + "x" * 1000 + "\nChapter 2\n" + "y" * 1000)
@@ -42,7 +42,7 @@ class TestVectorStore:
         assert len(ids) >= 2
 
     def test_get_update_delete_document(self):
-        tmp = Path(tempfile.gettempdir()) / "matsci_test_rag_crud"
+        tmp = Path(tempfile.gettempdir()) / "huginn_test_rag_crud"
         tmp.mkdir(exist_ok=True)
         store = VectorStore(persist_dir=str(tmp), collection_name="test_crud")
         ids = store.ingest(["original text"], metadatas=[{"tag": "v1"}])
@@ -63,7 +63,7 @@ class TestVectorStore:
 class TestEncryptedVectorStore:
     def test_encrypted_ingest_and_search(self):
         vault = CryptoVault("rag_password")
-        tmp = Path(tempfile.gettempdir()) / "matsci_test_enc_rag"
+        tmp = Path(tempfile.gettempdir()) / "huginn_test_enc_rag"
         tmp.mkdir(exist_ok=True)
         store = EncryptedVectorStore(
             vault=vault,
@@ -86,7 +86,7 @@ class TestEncryptedVectorStore:
 
     def test_encrypted_vs_plaintext_store(self):
         vault = CryptoVault("test")
-        tmp = Path(tempfile.gettempdir()) / "matsci_test_enc_plain"
+        tmp = Path(tempfile.gettempdir()) / "huginn_test_enc_plain"
         tmp.mkdir(exist_ok=True)
         enc_store = EncryptedVectorStore(vault=vault, persist_dir=str(tmp / "enc"))
         plain_store = VectorStore(persist_dir=str(tmp / "plain"))
@@ -101,7 +101,7 @@ class TestEncryptedVectorStore:
 
 class TestEncryptedRAGManager:
     def test_manager_unlock_lock(self):
-        tmp = Path(tempfile.gettempdir()) / "matsci_test_mgr"
+        tmp = Path(tempfile.gettempdir()) / "huginn_test_mgr"
         tmp.mkdir(exist_ok=True)
         mgr = EncryptedRAGManager(password="mgr_pass", persist_dir=str(tmp))
         assert mgr.is_unlocked
@@ -113,7 +113,7 @@ class TestEncryptedRAGManager:
 
     def test_backup_and_restore(self):
         vault = CryptoVault("backup_pass")
-        tmp = Path(tempfile.gettempdir()) / "matsci_test_backup"
+        tmp = Path(tempfile.gettempdir()) / "huginn_test_backup"
         tmp.mkdir(exist_ok=True)
         persist = tmp / "rag"
         backup_dir = tmp / "backups"

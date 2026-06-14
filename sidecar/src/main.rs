@@ -13,10 +13,10 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{broadcast, Mutex};
 
-/// MatSci-Agent sidecar: manages the Python backend and broadcasts events.
+/// Huginn sidecar: manages the Python backend and broadcasts events.
 #[derive(Parser, Debug)]
-#[command(name = "matsci-sidecar")]
-#[command(about = "Process manager and event bus for MatSci-Agent")]
+#[command(name = "huginn-sidecar")]
+#[command(about = "Process manager and event bus for Huginn")]
 struct Args {
     /// Port for the sidecar HTTP/WebSocket server
     #[arg(short, long, default_value = "8001")]
@@ -94,7 +94,7 @@ async fn main() {
 }
 
 async fn root() -> &'static str {
-    "MatSci-Agent sidecar"
+    "Huginn sidecar"
 }
 
 async fn health(State(state): State<Arc<SidecarState>>) -> impl IntoResponse {
@@ -182,7 +182,7 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new("python");
     cmd.args([
         "-m",
-        "matsci_agent.server",
+        "huginn.server",
         "--port",
         &state.backend_port.to_string(),
     ])
