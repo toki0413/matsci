@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -15,6 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from huginn.rag.vector_store import VectorStore
+
+# Imported lazily to avoid circular imports at module load time.
+_decay_module: Any | None = None
 
 
 TIER_TTL_HOURS = {
@@ -127,7 +131,7 @@ class LongTermMemory:
         """
         if tier not in TIER_TTL_HOURS:
             raise ValueError(f"Invalid tier {tier}; choose from {list(TIER_TTL_HOURS)}")
-        entry_id = f"mem_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(content) % 10000:04d}"
+        entry_id = f"mem_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         tags = tags or []
         now = datetime.now()
         expires = None
@@ -395,3 +399,46 @@ class LongTermMemory:
             except Exception:
                 continue
         return count
+
+    def apply_decay_policy(
+        self,
+        decay_per_day: float = 0.97,
+        prune_threshold: float = 0.15,
+        access_boost: float = 0.05,
+        max_age_days: int = 90,
+        min_age_days: int = 7,
+    ) -> dict[str, int]:
+        """Apply importance decay, access boost, and pruning."""
+        global _decay_module
+        if _decay_module is None:
+            from huginn.memory import decay as _decay_module
+        policy = _decay_module.MemoryDecayPolicy(
+            decay_per_day=decay_per_day,
+            prune_threshold=prune_threshold,
+            access_boost=access_boost,
+            max_age_days=max_age_days,
+            min_age_days=min_age_days,
+        )
+        return policy.apply(self)
+
+    def deduplicate(self, case_sensitive: bool = False) -> int:
+        """Remove exact-duplicate memories, keeping the most important one."""
+        global _decay_module
+        if _decay_module is None:
+            from huginn.memory import decay as _decay_module
+        dedup = _decay_module.MemoryDeduplicator(case_sensitive=case_sensitive)
+        return dedup.run(self)
+
+    def maintenance(
+        self,
+        decay_per_day: float = 0.97,
+        prune_threshold: float = 0.15,
+        deduplicate: bool = True,
+    ) -> dict[str, int]:
+        """Run a full maintenance pass: decay, prune, dedupe, expire."""
+        summary = self.apply_decay_policy(
+            decay_per_day=decay_per_day, prune_threshold=prune_threshold
+        )
+        if deduplicate:
+            summary["deduplicated"] = self.deduplicate()
+        return summary
