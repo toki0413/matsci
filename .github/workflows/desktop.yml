@@ -88,8 +88,12 @@ jobs:
         working-directory: ./desktop
         shell: bash
         run: |
-          echo "::error::Tauri build failed. Last 120 lines of build log:"
-          tail -n 120 tauri-build.log | while IFS= read -r line; do
+          echo "::error::Tauri build failed. Relevant error context:"
+          grep -n -E -B3 -A5 "error\[|failed to run custom build|failed to build app" tauri-build.log | tail -80 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          echo "::error::Tail of build log:"
+          tail -n 30 tauri-build.log | while IFS= read -r line; do
             echo "::error::$line"
           done
 
