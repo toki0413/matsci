@@ -202,3 +202,18 @@ class TestAutoLeanPipeline:
     def test_verify_matrix_eigenvalues_placeholder(self, pipe):
         """Matrix literals require a HuginnLean matrix type; skip for now."""
         pytest.skip("Lean 4 matrix literal syntax not yet available in HuginnLean")
+
+
+    def test_verify_unified_harmonic(self, pipe):
+        """Verify unified-framework derivation output auto-converts to Lean."""
+        symbolic_result = {
+            "model": "harmonic_oscillator_md",
+            "principle": "hamiltonian",
+            "energy_expression": "0.5*p**2 + 0.5*q**2",
+            "equations": {
+                "dq_dt": "1.0*p",
+                "dp_dt": "-1.0*q",
+            },
+        }
+        result = pipe.verify_unified(symbolic_result, symbols=["p", "q"])
+        assert result.success, result.stderr

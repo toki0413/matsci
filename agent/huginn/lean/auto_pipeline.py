@@ -776,6 +776,65 @@ def derivVal (x : Float) : Float := {lean_deriv}
             imports=["HuginnLean.Probability"], timeout=timeout,
         )
 
+    def verify_unified(
+        self,
+        symbolic_result: Dict[str, Any],
+        symbols: Optional[List[str]] = None,
+        timeout: int = 60,
+    ) -> LeanResult:
+        """Verify unified-framework derivation results in Lean 4.
+
+        Converts the energy expression and any algebraic equations into
+        Lean `Float` definitions.  Equations containing unevaluated
+        derivatives or functions are skipped because they need a prior
+        discretization step.
+        """
+        expressions: Dict[str, str] = {}
+
+        energy = symbolic_result.get("energy_expression")
+        if isinstance(energy, str) and energy.strip():
+            expressions["unifiedEnergy"] = energy
+
+        equations = symbolic_result.get("equations", {})
+
+        def _collect(obj: Any, prefix: str) -> None:
+            if isinstance(obj, dict):
+                # Eq represented as {"lhs": ..., "rhs": ...}
+                if "lhs" in obj and "rhs" in obj:
+                    residual = f"({obj['lhs']}) - ({obj['rhs']})"
+                    if "Derivative" not in residual:
+                        expressions[prefix] = residual
+                    else:
+                        # Still verify each side separately if it is algebraic
+                        for side, key in (("lhs", "Lhs"), ("rhs", "Rhs")):
+                            s = obj[side]
+                            if isinstance(s, str) and "Derivative" not in s:
+                                expressions[f"{prefix}{key}"] = s
+                else:
+                    for key, val in obj.items():
+                        safe = self._sanitize_lean_name(str(key))
+                        _collect(val, f"{prefix}_{safe}")
+            elif isinstance(obj, list):
+                for i, val in enumerate(obj):
+                    _collect(val, f"{prefix}_{i}")
+            elif isinstance(obj, str) and "Derivative" not in obj:
+                expressions[prefix] = obj
+
+        _collect(equations, "unifiedEq")
+
+        if not expressions:
+            return LeanResult(
+                success=False,
+                stdout="",
+                stderr="No verifiable unified expressions found (algebraic only)",
+                returncode=-1,
+                elapsed_seconds=0.0,
+            )
+
+        return self.verify_expression_dict(
+            expressions, symbols=symbols, timeout=timeout,
+        )
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
