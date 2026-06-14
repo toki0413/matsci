@@ -705,8 +705,8 @@ async def events_stream() -> StreamingResponse:
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
             except asyncio.TimeoutError:
-                # Keep connection alive with a heartbeat.
-                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                # Keep connection alive with the latest state.
+                yield f"data: {json.dumps({'type': 'heartbeat', 'state': bus.state.to_dict()})}\n\n"
 
     return StreamingResponse(
         generator(),
