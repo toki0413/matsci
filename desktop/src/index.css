@@ -79,4 +79,56 @@
   .badge {
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
   }
+
+  .pet-container {
+    @apply relative flex flex-col items-center justify-end h-full w-full select-none;
+    background: transparent;
+  }
+
+  .pet-avatar {
+    @apply w-28 h-28 object-contain drop-shadow-2xl cursor-grab active:cursor-grabbing;
+  }
+
+  .pet-bubble {
+    @apply absolute -top-2 left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-2xl
+           bg-white/90 dark:bg-black/80 text-text-primary text-xs font-medium
+           shadow-lg border border-border backdrop-blur-sm whitespace-nowrap
+           flex items-center gap-2;
+  }
+
+  .pet-bubble-emoji {
+    @apply text-base;
+  }
+
+  .pet-bubble-text {
+    @apply max-w-[160px] truncate;
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-breathe {
+    animation: breathe 4s ease-in-out infinite;
+  }
+
+  .animate-shake {
+    animation: shake 0.5s ease-in-out;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px) rotate(-3deg); }
+  75% { transform: translateX(4px) rotate(3deg); }
 }

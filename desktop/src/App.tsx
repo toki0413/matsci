@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   isPermissionGranted,
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
+import Pet from "./Pet";
 
 interface Message {
   role: "user" | "assistant" | "tool";
@@ -128,6 +130,36 @@ const PROVIDERS = [
   { id: "vllm", label: "vLLM / LM Studio", keyVar: "OPENAI_API_KEY" },
   { id: "local", label: "Local OpenAI-compatible", keyVar: "OPENAI_API_KEY" },
 ];
+
+const IS_PET_MODE = window.location.search.includes("pet=1");
+
+async function openPetWindow() {
+  try {
+    const existing = await WebviewWindow.getByLabel("pet");
+    if (existing) {
+      await existing.setFocus();
+      return;
+    }
+    const pet = new WebviewWindow("pet", {
+      url: "index.html?pet=1",
+      width: 180,
+      height: 220,
+      transparent: true,
+      decorations: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      center: false,
+      x: window.screen.width - 200,
+      y: window.screen.height - 260,
+    });
+    pet.once("tauri://error", (e) => {
+      console.error("[pet] failed to create window:", e);
+    });
+  } catch (err) {
+    console.error("[pet] open failed:", err);
+  }
+}
 
 function loadStoredConfig(): AppConfig {
   try {
@@ -363,6 +395,10 @@ function SkillForm({
 }
 
 export default function App() {
+  if (IS_PET_MODE) {
+    return <Pet />;
+  }
+
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
@@ -1604,6 +1640,12 @@ export default function App() {
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
           >
             ❓ Help / Guide
+          </button>
+          <button
+            onClick={openPetWindow}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
+          >
+            🦁 Summon Pet
           </button>
         </div>
       </aside>

@@ -25,6 +25,7 @@ from matsci_agent.types import (
     ToolResult,
 )
 from matsci_agent.permissions import PermissionConfig
+from matsci_agent.pet import get_pet_bus, PetMood
 
 
 ApprovalCallback = Callable[[str, str], bool]
@@ -166,6 +167,12 @@ class ToolAdapter:
                 # Audit failures must not break tool execution.
                 pass
 
+        def _publish(mood: PetMood, message: str, details: dict[str, Any] | None = None) -> None:
+            try:
+                get_pet_bus().publish(mood, message, details)
+            except Exception:
+                pass
+
         async def _arun(**kwargs: Any) -> dict[str, Any]:
             """Async execution wrapper."""
             payload, context = _build_inputs(**kwargs)
@@ -175,20 +182,27 @@ class ToolAdapter:
             if not approved:
                 output = {"error": reason or f"Tool '{tool.name}' was denied"}
                 _audit(input_data, output, approved=False, reason=reason)
+                _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
                 return output
 
             validation = await tool.validate_input(input_data, context)
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
+                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
                 return output
 
+            _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
             if is_async:
                 result = await tool.call(payload, context)
             else:
                 result = tool.call(payload, context)
             output = _serialize(result)
             _audit(input_data, output, approved=True, reason=None)
+            if result.success:
+                _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
+            else:
+                _publish(PetMood.ERROR, f"{tool.name} failed", {"tool": tool.name, "error": result.error})
             return output
 
         def _run(**kwargs: Any) -> dict[str, Any]:
@@ -200,6 +214,7 @@ class ToolAdapter:
             if not approved:
                 output = {"error": reason or f"Tool '{tool.name}' was denied"}
                 _audit(input_data, output, approved=False, reason=reason)
+                _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
                 return output
 
             validation_result = tool.validate_input(input_data, context)
@@ -217,8 +232,10 @@ class ToolAdapter:
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
+                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
                 return output
 
+            _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
             if is_async:
                 try:
                     loop = asyncio.get_running_loop()
@@ -230,6 +247,10 @@ class ToolAdapter:
                 result = tool.call(payload, context)
             output = _serialize(result)
             _audit(input_data, output, approved=True, reason=None)
+            if result.success:
+                _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
+            else:
+                _publish(PetMood.ERROR, f"{tool.name} failed", {"tool": tool.name, "error": result.error})
             return output
 
         return StructuredTool.from_function(

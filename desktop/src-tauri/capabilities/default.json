@@ -1,9 +1,12 @@
 {
   "identifier": "default",
   "description": "Default capabilities for the MatSci-Agent desktop app",
-  "windows": ["main"],
+  "windows": ["main", "pet"],
   "permissions": [
     "core:default",
+    "core:window:allow-create",
+    "core:window:allow-set-focus",
+    "core:window:allow-get",
     "shell:default",
     "notification:default",
     {
