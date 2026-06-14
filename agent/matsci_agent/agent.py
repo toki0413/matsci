@@ -20,6 +20,7 @@ from matsci_agent.tools.registry import ToolRegistry
 from matsci_agent.tools.adapter import ToolAdapter
 from matsci_agent.models.registry import create_langchain_model
 from matsci_agent.pet import get_pet_bus, PetMood
+from matsci_agent.privacy import redact_secrets, scan_for_secrets
 
 
 class MatSciAgent:
@@ -43,6 +44,8 @@ class MatSciAgent:
         thread_id: str | None = None,
         tool_filter: list[str] | None = None,
         agent_factory: Any | None = None,
+        privacy_redact_secrets: bool | None = None,
+        privacy_block_on_secrets: bool | None = None,
     ):
         self.model = model
         self.langchain_tools = tools or []
@@ -57,6 +60,14 @@ class MatSciAgent:
         # Security layer
         self.sandbox = sandbox
         self.audit = audit
+
+        # Privacy controls (default to env vars if not explicitly passed)
+        if privacy_redact_secrets is None:
+            privacy_redact_secrets = os.environ.get("MATSCI_PRIVACY_REDACT_SECRETS", "1") != "0"
+        if privacy_block_on_secrets is None:
+            privacy_block_on_secrets = os.environ.get("MATSCI_PRIVACY_BLOCK_ON_SECRETS", "0") == "1"
+        self.privacy_redact_secrets = privacy_redact_secrets
+        self.privacy_block_on_secrets = privacy_block_on_secrets
 
         # Memory integration
         if memory_manager is None:
@@ -256,6 +267,22 @@ class MatSciAgent:
         Stores messages in session memory and tracks tool calls for
         auto-promotion to long-term memory.
         """
+        # Privacy scan on the raw user message.
+        if self.privacy_block_on_secrets:
+            found = scan_for_secrets(message)
+            if found:
+                labels = ", ".join(m.label for m in found)
+                yield {
+                    "messages": [
+                        HumanMessage(content=message),
+                        AIMessage(content=f"I can't send this message because it may contain sensitive data: {labels}. Please remove the secrets and try again."),
+                    ]
+                }
+                return
+
+        if self.privacy_redact_secrets:
+            message = redact_secrets(message)
+
         # Store user message in memory
         self.memory.add_message("user", message)
 

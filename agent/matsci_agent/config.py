@@ -91,7 +91,11 @@ class MatSciConfig:
     encrypt_rag_documents: bool = True
     encrypt_rag_metadata: bool = True
     encrypt_config: bool = False
-    
+
+    # Privacy / data leakage controls
+    privacy_redact_secrets: bool = True
+    privacy_block_on_secrets: bool = False
+
     @classmethod
     def from_env(cls) -> MatSciConfig:
         """Load configuration from environment variables.
@@ -282,6 +286,8 @@ class MatSciConfig:
             "encrypt_config": self.encrypt_config,
             "persona": self.persona,
             "rag_enabled": self.rag_enabled,
+            "privacy_redact_secrets": self.privacy_redact_secrets,
+            "privacy_block_on_secrets": self.privacy_block_on_secrets,
         }
 
     @classmethod

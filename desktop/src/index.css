@@ -86,7 +86,7 @@
   }
 
   .pet-avatar {
-    @apply w-28 h-28 object-contain drop-shadow-2xl cursor-grab active:cursor-grabbing;
+    @apply w-28 h-28 drop-shadow-2xl cursor-grab active:cursor-grabbing;
   }
 
   .pet-bubble {

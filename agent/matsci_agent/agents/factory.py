@@ -77,6 +77,8 @@ class AgentFactory:
             thread_id=thread_id,
             tool_filter=profile.tools if profile.tools else None,
             agent_factory=self,
+            privacy_redact_secrets=self.config.privacy_redact_secrets,
+            privacy_block_on_secrets=self.config.privacy_block_on_secrets,
         )
         agent.register_tools_from_registry()
         return agent
