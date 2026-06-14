@@ -7,6 +7,7 @@ memory system, and skills framework.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import os
 import time
@@ -474,6 +475,36 @@ class HuginnAgent:
                 break
         return stats
     
+    def _process_stream_state(
+        self,
+        state: dict[str, Any],
+        turn_span: Any,
+        thread_id: str,
+        pet: Any,
+    ) -> None:
+        """Update memory, telemetry, and pet status from one graph state."""
+        msgs = state.get("messages", [])
+        for msg in msgs:
+            if isinstance(msg, AIMessage):
+                self.memory.add_message("assistant", msg.content)
+                # Track tool calls
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        self.memory.add_tool_call(
+                            tool_name=tc.get("name", "unknown"),
+                            input_args=tc.get("args", {}),
+                        )
+        # Extract provider cache-hit telemetry from the latest turn.
+        cache_stats = self._extract_cache_stats(msgs)
+        if cache_stats:
+            self._last_cache_stats = cache_stats
+            turn_span.metadata.update(cache_stats)
+            pet.publish(
+                PetMood.SUCCESS,
+                "Turn complete",
+                {"thread_id": thread_id, **cache_stats},
+            )
+
     async def chat(
         self,
         message: str,
@@ -549,31 +580,28 @@ class HuginnAgent:
                 "configurable": {"thread_id": thread_id},
             }
 
+            # The synchronous SqliteSaver does not implement async checkpoint
+            # methods, so we fall back to the synchronous graph.stream() path
+            # for that backend.
             try:
-                async for state in graph.astream(inputs, config, stream_mode="values"):
-                    # Track assistant/tool messages in memory
-                    msgs = state.get("messages", [])
-                    for msg in msgs:
-                        if isinstance(msg, AIMessage):
-                            self.memory.add_message("assistant", msg.content)
-                            # Track tool calls
-                            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                                for tc in msg.tool_calls:
-                                    self.memory.add_tool_call(
-                                        tool_name=tc.get("name", "unknown"),
-                                        input_args=tc.get("args", {}),
-                                    )
-                    # Extract provider cache-hit telemetry from the latest turn.
-                    cache_stats = self._extract_cache_stats(msgs)
-                    if cache_stats:
-                        self._last_cache_stats = cache_stats
-                        turn_span.metadata.update(cache_stats)
-                        pet.publish(
-                            PetMood.SUCCESS,
-                            "Turn complete",
-                            {"thread_id": thread_id, **cache_stats},
-                        )
-                    yield state
+                from langgraph.checkpoint.sqlite import SqliteSaver
+
+                use_sync_stream = isinstance(self.checkpointer, SqliteSaver)
+            except Exception:
+                use_sync_stream = False
+
+            try:
+                if use_sync_stream:
+                    states = await asyncio.to_thread(
+                        lambda: list(graph.stream(inputs, config, stream_mode="values"))
+                    )
+                    for state in states:
+                        self._process_stream_state(state, turn_span, thread_id, pet)
+                        yield state
+                else:
+                    async for state in graph.astream(inputs, config, stream_mode="values"):
+                        self._process_stream_state(state, turn_span, thread_id, pet)
+                        yield state
             except Exception as exc:
                 pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
                 raise
