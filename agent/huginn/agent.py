@@ -10,11 +10,12 @@ from __future__ import annotations
 import functools
 import os
 import time
+from contextlib import ExitStack
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from huginn.checkpointer import create_checkpointer, create_in_memory_checkpointer
+from huginn.checkpointer import create_in_memory_checkpointer, persistent_checkpointer
 from huginn.prompts import HUGINN_SYSTEM_PROMPT, EXPLORATION_PROMPT
 from huginn.tools.registry import ToolRegistry
 from huginn.tools.adapter import ToolAdapter
@@ -59,17 +60,28 @@ class HuginnAgent:
         model_router: ModelRouter | None = None,
         checkpointer: Any | None = None,
         checkpointer_path: str | None = None,
+        memory_decay_enabled: bool | None = None,
+        memory_decay_interval_turns: int | None = None,
+        memory_decay_prune_threshold: float | None = None,
     ):
         self.model = model
         self.model_router = model_router
         self.langchain_tools = tools or []
 
+        # Resource management for persistent checkpointers and similar objects.
+        self._exit_stack = ExitStack()
+
         if checkpointer is not None:
             self.checkpointer = checkpointer
         elif checkpointer_path or os.environ.get("HUGINN_CHECKPOINTER_PATH"):
-            self.checkpointer = create_checkpointer(checkpointer_path)
+            from huginn.checkpointer import persistent_checkpointer
+
+            self.checkpointer = self._exit_stack.enter_context(
+                persistent_checkpointer(checkpointer_path)
+            )
         else:
             self.checkpointer = create_in_memory_checkpointer()
+
         self.system_prompt = system_prompt or HUGINN_SYSTEM_PROMPT
         self.begin_dialogs = begin_dialogs or []
 
@@ -92,6 +104,27 @@ class HuginnAgent:
         self._agent_graph: Any | None = None
         self._tool_description_text: str | None = None
         self._last_cache_stats: dict[str, Any] = {}
+
+        # Telemetry is scoped to the agent instance so multi-tenant servers can
+        # keep traces separate.
+        self._telemetry_collector = TelemetryCollector()
+        self._turn_count = 0
+
+        if memory_decay_enabled is None:
+            memory_decay_enabled = (
+                os.environ.get("HUGINN_MEMORY_DECAY_ENABLED", "").lower() == "true"
+            )
+        if memory_decay_interval_turns is None:
+            memory_decay_interval_turns = int(
+                os.environ.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")
+            )
+        if memory_decay_prune_threshold is None:
+            memory_decay_prune_threshold = float(
+                os.environ.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")
+            )
+        self.memory_decay_enabled = memory_decay_enabled
+        self.memory_decay_interval_turns = memory_decay_interval_turns
+        self.memory_decay_prune_threshold = memory_decay_prune_threshold
 
         # Security layer
         self.sandbox = sandbox
@@ -221,6 +254,23 @@ class HuginnAgent:
     ) -> HuginnAgent:
         """Create a HuginnAgent backed by a multi-model router."""
         return cls(model_router=router, **kwargs)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Any,
+        profile_id: str = "lead",
+        **overrides: Any,
+    ) -> HuginnAgent:
+        """Build a HuginnAgent from a HuginnConfig.
+
+        This is the recommended construction path: it wires up the model router,
+        checkpointer, privacy settings, and tool filter from a single config
+        object instead of a long list of constructor arguments.
+        """
+        kwargs = config.build_agent_kwargs(profile_id=profile_id)
+        kwargs.update(overrides)
+        return cls(**kwargs)
     
     def register_tool(self, tool: Any) -> None:
         """Register a HuginnTool or LangChain tool."""
@@ -361,11 +411,21 @@ class HuginnAgent:
 
     def telemetry_summary(self) -> dict[str, Any]:
         """Return a coarse summary of agent telemetry spans."""
-        return get_telemetry_collector().summary()
+        return self._telemetry_collector.summary()
 
     def telemetry_spans(self) -> list[dict[str, Any]]:
         """Return all recorded telemetry spans as dicts."""
-        return get_telemetry_collector().to_dict()
+        return self._telemetry_collector.to_dict()
+
+    def close(self) -> None:
+        """Release resources held by the agent (checkpointer, etc.)."""
+        self._exit_stack.close()
+
+    def __enter__(self) -> "HuginnAgent":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
 
     async def run_benchmark(
         self,
@@ -446,8 +506,12 @@ class HuginnAgent:
         pet = get_pet_bus()
         pet.publish(PetMood.THINKING, "Thinking…", {"thread_id": thread_id})
 
-        telemetry = get_telemetry_collector()
-        with telemetry.span("agent_turn", thread_id=thread_id) as turn_span:
+        # Bind the per-agent telemetry collector for this turn so tool calls
+        # are recorded under the right agent instance.
+        from huginn.telemetry import set_telemetry_collector
+
+        set_telemetry_collector(self._telemetry_collector)
+        with self._telemetry_collector.span("agent_turn", thread_id=thread_id) as turn_span:
             graph = self.build_graph()
 
             # Build input stream: begin-dialogs (static), recalled memory
@@ -515,7 +579,25 @@ class HuginnAgent:
                 raise
             finally:
                 pet.publish(PetMood.IDLE, "Ready", {"thread_id": thread_id})
-    
+                self._turn_count += 1
+                if (
+                    self.memory_decay_enabled
+                    and self.memory_decay_interval_turns > 0
+                    and self._turn_count % self.memory_decay_interval_turns == 0
+                ):
+                    try:
+                        summary = self.memory.maintenance(
+                            prune_threshold=self.memory_decay_prune_threshold
+                        )
+                        pet.publish(
+                            PetMood.SUCCESS,
+                            "Memory maintenance",
+                            {"summary": summary},
+                        )
+                    except Exception:
+                        # Maintenance failures should not break the chat flow.
+                        pass
+
     async def explore(
         self,
         objective: str,

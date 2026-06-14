@@ -18,6 +18,7 @@ from rich.markdown import Markdown
 
 from huginn import __version__
 from huginn.agent import HuginnAgent
+from huginn.checkpointer import create_in_memory_checkpointer
 from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
 from huginn.coder import CoderRunner
@@ -129,27 +130,63 @@ def cli(ctx: click.Context, workspace: str, config: str | None,
     register_all_tools()
 
 
+def _load_config(ctx: click.Context) -> Any:
+    """Load HuginnConfig from --config or environment."""
+    from huginn.config import HuginnConfig
+    config_path = ctx.obj.get("config")
+    if config_path:
+        try:
+            return HuginnConfig.load(config_path)
+        except Exception as e:
+            console.print(f"[yellow]Config load warning: {e}[/yellow]")
+    return HuginnConfig.from_env()
+
+
+def _apply_cli_overrides(ctx: click.Context, cfg: Any) -> None:
+    """Let CLI flags override config/env values."""
+    if ctx.obj.get("provider"):
+        cfg.provider = ctx.obj["provider"]
+    if ctx.obj.get("model"):
+        cfg.model = ctx.obj["model"]
+    if ctx.obj.get("base_url"):
+        cfg.base_url = ctx.obj["base_url"]
+    if ctx.obj.get("ollama_url"):
+        cfg.ollama_host = ctx.obj["ollama_url"]
+
+
+def _build_agent_from_ctx(ctx: click.Context, profile_id: str = "lead") -> HuginnAgent | None:
+    """Build a HuginnAgent from the resolved configuration."""
+    from huginn.security import SandboxConfig, SandboxExecutor, AuditLogger
+
+    cfg = _load_config(ctx)
+    _apply_cli_overrides(ctx, cfg)
+
+    if cfg.provider == "default" and not cfg.models:
+        console.print("[yellow]No provider or model pool configured.[/yellow]")
+        console.print("[dim]Run `huginn configure` or set HUGINN_PROVIDER / HUGINN_MODELS.[/dim]")
+        return None
+
+    sandbox_cfg = SandboxConfig(dry_run=ctx.obj.get("dry_run", False))
+    sandbox = SandboxExecutor(sandbox_cfg)
+    audit = AuditLogger(ctx.obj["workspace"] / "huginn_audit.jsonl")
+
+    try:
+        return HuginnAgent.from_config(
+            cfg,
+            profile_id=profile_id,
+            sandbox=sandbox,
+            audit=audit,
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to build agent: {e}[/red]")
+        return None
+
+
 @cli.command()
 @click.pass_context
 def chat(ctx: click.Context) -> None:
     """Start interactive chat with the Agent."""
     workspace = ctx.obj["workspace"]
-    model_name = ctx.obj["model"]
-    provider = ctx.obj["provider"]
-    base_url = ctx.obj["base_url"]
-    ollama_url = ctx.obj["ollama_url"]
-    config_path = ctx.obj["config"]
-    dry_run = ctx.obj["dry_run"]
-
-    # Load config file if provided
-    cfg = None
-    if config_path:
-        try:
-            from huginn.config import HuginnConfig
-            cfg = HuginnConfig.load(config_path)
-            console.print(f"[green]✓[/green] Loaded config from {config_path}")
-        except Exception as e:
-            console.print(f"[yellow]Config load warning: {e}[/yellow]")
 
     console.print(Panel(
         f"[bold blue]Huginn[/bold blue] v{__version__}\n"
@@ -158,72 +195,23 @@ def chat(ctx: click.Context) -> None:
         title="Welcome",
         border_style="blue"
     ))
-    
-    # Initialize agent
-    try:
-        # Resolve settings: CLI flags > config file > env
-        from huginn.config import HuginnConfig
-        from huginn.security import SandboxConfig, SandboxExecutor, AuditLogger
-        env_cfg = HuginnConfig.from_env()
-        resolved_provider = provider or (cfg.provider if cfg else None) or env_cfg.provider
-        resolved_model = model_name or (cfg.model if cfg else None) or env_cfg.model
-        resolved_key = (cfg.api_key if cfg else None) or env_cfg.api_key
-        resolved_base = base_url or (cfg.base_url if cfg else None) or env_cfg.base_url
-        resolved_ollama = ollama_url or (cfg.ollama_host if cfg else None) or env_cfg.ollama_host
 
-        # Resolve API key with env:/keyring: prefix support
-        resolved_key = HuginnConfig.resolve_key(resolved_key)
+    agent = _build_agent_from_ctx(ctx)
+    if agent is None:
+        console.print("[yellow]No provider configured.[/yellow]")
+        console.print("[dim]Examples:[/dim]")
+        console.print("  huginn chat --provider openai --model gpt-4o")
+        console.print("  huginn chat --provider ollama --ollama-url http://localhost:11434")
+        console.print("  huginn chat --provider vllm --base-url http://localhost:8000/v1 --model llama-3-8b")
+        console.print("  huginn chat --config huginn.toml")
+    else:
+        agent.register_tools_from_registry()
+        console.print(f"[green]✓[/green] Agent initialized with {len(agent.langchain_tools)} tools")
 
-        # Security layer
-        sandbox_cfg = SandboxConfig(dry_run=dry_run)
-        sandbox = SandboxExecutor(sandbox_cfg)
-        audit = AuditLogger(workspace / "huginn_audit.jsonl")
-        audit.log("config_load", "user", "chat_init", details={
-            "provider": resolved_provider,
-            "dry_run": dry_run,
-        })
-
-        if dry_run:
-            console.print("[yellow]Dry-run mode: commands will be logged but not executed[/yellow]")
-
-        if resolved_provider == "ollama":
-            agent = HuginnAgent.from_ollama(
-                model=resolved_model or "qwen2.5:14b",
-                base_url=resolved_ollama,
-                sandbox=sandbox,
-                audit=audit,
-            )
-        elif resolved_provider and resolved_provider != "default":
-            agent = HuginnAgent.from_provider(
-                provider=resolved_provider,
-                model=resolved_model,
-                api_key=resolved_key,
-                base_url=resolved_base,
-                sandbox=sandbox,
-                audit=audit,
-            )
-        else:
-            console.print("[yellow]No provider configured.[/yellow]")
-            console.print("[dim]Examples:[/dim]")
-            console.print("  huginn chat --provider openai --model gpt-4o")
-            console.print("  huginn chat --provider ollama --ollama-url http://localhost:11434")
-            console.print("  huginn chat --provider vllm --base-url http://localhost:8000/v1 --model llama-3-8b")
-            console.print("  huginn chat --config huginn.toml")
-            agent = None
-        
-        if agent:
-            agent.register_tools_from_registry()
-            console.print(f"[green]✓[/green] Agent initialized with {len(agent.langchain_tools)} tools")
-        
-    except Exception as e:
-        console.print(f"[red]✗ Failed to initialize agent: {e}[/red]")
-        console.print("[yellow]Falling back to mock mode (no LLM)[/yellow]")
-        agent = None
-    
     # Initialize MCP servers
     try:
-        abaqus_mcp_path = cfg.abaqus_mcp_server if cfg else None
-        asyncio.run(_init_mcp(abaqus_mcp_path))
+        cfg = _load_config(ctx)
+        asyncio.run(_init_mcp(cfg.abaqus_mcp_server))
         if agent:
             agent.register_tools_from_registry()
             console.print(f"[green]✓[/green] Total tools: {len(agent.langchain_tools)}")
@@ -1085,6 +1073,106 @@ def persona_delete(name: str) -> None:
         console.print(f"[green]Deleted persona {name}[/green]")
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
+
+
+@cli.command("model-list")
+@click.pass_context
+def model_list(ctx: click.Context) -> None:
+    """List configured models and agent profiles."""
+    cfg = _load_config(ctx)
+    console.print(Panel("[bold blue]Configured Models[/bold blue]", border_style="blue"))
+    if cfg.models:
+        for m in cfg.models:
+            status = "[green]enabled[/green]" if m.enabled else "[red]disabled[/red]"
+            console.print(f"  [bold]{m.alias}[/bold] {m.provider}:{m.model or 'auto'} ({status})")
+    else:
+        console.print(f"  [dim]No model pool. Legacy provider: {cfg.provider} / {cfg.model or 'auto'}[/dim]")
+
+    console.print(Panel("[bold blue]Agent Profiles[/bold blue]", border_style="blue"))
+    if cfg.agents:
+        for a in cfg.agents:
+            status = "[green]enabled[/green]" if a.enabled else "[red]disabled[/red]"
+            console.print(f"  [bold]{a.id}[/bold] -> {a.model_alias} persona={a.persona} tools={len(a.tools)} ({status})")
+    else:
+        console.print("  [dim]No agent profiles configured.[/dim]")
+
+
+@cli.command("memory-maintenance")
+@click.option("--prune-threshold", type=float, default=None, help="Importance threshold for pruning")
+@click.pass_context
+def memory_maintenance(ctx: click.Context, prune_threshold: float | None) -> None:
+    """Run long-term memory decay, prune, and deduplication."""
+    cfg = _load_config(ctx)
+    threshold = prune_threshold if prune_threshold is not None else cfg.memory_decay_prune_threshold
+    agent = HuginnAgent(model=None, tools=[], checkpointer=create_in_memory_checkpointer())
+    try:
+        summary = agent.memory.maintenance(prune_threshold=threshold)
+        console.print(Panel(
+            f"[bold blue]Memory Maintenance[/bold blue]\n"
+            f"Decayed: {summary.get('decayed', 0)}\n"
+            f"Pruned: {summary.get('pruned', 0)}\n"
+            f"Expired: {summary.get('expired', 0)}\n"
+            f"Deduplicated: {summary.get('deduplicated', 0)}",
+            border_style="blue",
+        ))
+    finally:
+        agent.close()
+
+
+@cli.command("telemetry")
+@click.pass_context
+def telemetry(ctx: click.Context) -> None:
+    """Show telemetry summary for the default agent profile."""
+    cfg = _load_config(ctx)
+    _apply_cli_overrides(ctx, cfg)
+    agent = HuginnAgent.from_config(cfg)
+    try:
+        summary = agent.telemetry_summary()
+        console.print(Panel(
+            f"[bold blue]Telemetry Summary[/bold blue]\n"
+            f"Total spans: {summary.get('total_spans', 0)}",
+            border_style="blue",
+        ))
+        for name, info in summary.get("by_name", {}).items():
+            console.print(f"  {name}: count={info['count']} duration_ms={info['duration_ms']:.1f}")
+    finally:
+        agent.close()
+
+
+@cli.group()
+def swarm() -> None:
+    """Multi-agent swarm commands."""
+    pass
+
+
+@swarm.command("run")
+@click.argument("task")
+@click.option("--profile", "-p", default="lead", help="Agent profile to use as workers")
+@click.pass_context
+def swarm_run(ctx: click.Context, task: str, profile: str) -> None:
+    """Run a task through a multi-agent swarm."""
+    from huginn.agents.swarm import AgentRole, HuginnSwarm, SwarmAgent
+
+    agent = _build_agent_from_ctx(ctx, profile_id=profile)
+    if agent is None:
+        return
+    try:
+        workers = [
+            SwarmAgent("planner", AgentRole.PLANNER, agent, "Break the task into steps."),
+            SwarmAgent("scientist", AgentRole.SCIENTIST, agent, "Choose physical models."),
+            SwarmAgent("coder", AgentRole.CODER, agent, "Write code or tool calls."),
+            SwarmAgent("executor", AgentRole.EXECUTOR, agent, "Run the solution."),
+            SwarmAgent("critic", AgentRole.CRITIC, agent, "Review correctness."),
+        ]
+        result = asyncio.run(HuginnSwarm(workers).run(task))
+        console.print(Panel(
+            f"[bold blue]Swarm Result[/bold blue]\n{result['final_output']}",
+            border_style="blue",
+        ))
+        for step in result["trace"]:
+            console.print(f"  [{step['role']}] {step['agent_name']} ({step['duration_ms']:.0f}ms)")
+    finally:
+        agent.close()
 
 
 def main() -> None:
