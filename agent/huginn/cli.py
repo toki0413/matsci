@@ -108,7 +108,14 @@ async def _shutdown_mcp() -> None:
 @click.option("--workspace", "-w", default=".", help="Workspace directory")
 @click.option("--config", "-c", help="Config file path")
 @click.option("--model", "-m", help="Model name (e.g., claude-sonnet-4-6, gpt-5.4)")
-@click.option("--provider", "-p", help="Provider (anthropic, openai, ollama)")
+@click.option(
+    "--provider", "-p",
+    help=(
+        "Provider (anthropic, openai, ollama, deepseek, "
+        "siliconflow, moonshot, zhipu, baichuan, dashscope, "
+        "qianfan, doubao, hunyuan, openai-compatible)"
+    ),
+)
 @click.option("--dry-run", is_flag=True, help="Show what would be executed without running commands")
 @click.option("--base-url", "-u", help="Base URL for OpenAI-compatible endpoints (vLLM, LM Studio, etc.)")
 @click.option("--ollama-url", default="http://localhost:11434", help="Ollama base URL")
@@ -207,6 +214,8 @@ def chat(ctx: click.Context) -> None:
         console.print("  huginn chat --provider openai --model gpt-4o")
         console.print("  huginn chat --provider ollama --ollama-url http://localhost:11434")
         console.print("  huginn chat --provider vllm --base-url http://localhost:8000/v1 --model llama-3-8b")
+        console.print("  huginn chat --provider moonshot --model moonshot-v1-8k")
+        console.print("  huginn chat --provider dashscope --model qwen-max")
         console.print("  huginn chat --config huginn.toml")
     else:
         agent.register_tools_from_registry()

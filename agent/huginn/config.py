@@ -24,7 +24,10 @@ class ModelConfig:
     alias: str  # e.g. "gpt4o", "claude-sonnet"
     provider: Literal[
         "anthropic", "openai", "ollama", "deepseek",
-        "google-genai", "openrouter", "nvidia", "vllm", "local", "default"
+        "google-genai", "openrouter", "nvidia", "vllm", "local", "default",
+        "siliconflow", "moonshot", "zhipu", "baichuan",
+        "dashscope", "qianfan", "doubao", "hunyuan",
+        "openai-compatible",
     ]
     model: str | None = None
     api_key: str | None = None
@@ -58,7 +61,10 @@ class HuginnConfig:
     # Legacy single-model settings (kept for backward compatibility)
     provider: Literal[
         "anthropic", "openai", "ollama", "deepseek",
-        "google-genai", "openrouter", "nvidia", "vllm", "local", "default"
+        "google-genai", "openrouter", "nvidia", "vllm", "local", "default",
+        "siliconflow", "moonshot", "zhipu", "baichuan",
+        "dashscope", "qianfan", "doubao", "hunyuan",
+        "openai-compatible",
     ] = "default"
     model: str | None = None
     api_key: str | None = None
