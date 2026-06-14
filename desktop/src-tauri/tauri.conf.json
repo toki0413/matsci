@@ -27,7 +27,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "sidecars/matsci"
+      "sidecars/matsci",
+      "sidecars/matsci-sidecar"
     ],
     "icon": [
       "icons/32x32.png",

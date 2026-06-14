@@ -39,10 +39,10 @@ jobs:
         shell: bash
         run: pip install maturin
 
-      - name: Build Rust CLI
+      - name: Build Rust CLI + sidecar
         shell: bash
         run: |
-          cargo build --release -p matsci
+          cargo build --release -p matsci -p matsci-sidecar
 
       - name: Build matsci-ext wheel
         shell: bash
@@ -59,13 +59,14 @@ jobs:
           TARGET=$(rustc --print host-tuple)
           echo "triple=$TARGET" >> "$GITHUB_OUTPUT"
 
-      - name: Stage matsci sidecar
+      - name: Stage matsci sidecars
         shell: bash
         run: |
           TARGET=${{ steps.target.outputs.triple }}
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "$SIDECAR_DIR"
           cp "target/release/matsci.exe" "$SIDECAR_DIR/matsci-$TARGET.exe"
+          cp "target/release/matsci-sidecar.exe" "$SIDECAR_DIR/matsci-sidecar-$TARGET.exe"
 
       - name: Install frontend dependencies
         working-directory: ./desktop

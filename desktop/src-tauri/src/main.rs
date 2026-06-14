@@ -124,9 +124,32 @@ async fn start_backend(
         }
     }
 
-    // Prefer the bundled matsci sidecar; fall back to a system python invocation
-    // during development if the sidecar has not been staged.
-    if let Ok(sidecar) = app.shell().sidecar("matsci") {
+    // Prefer the new Rust process-manager sidecar, then the legacy matsci CLI,
+    // then a direct Python invocation during development.
+    if let Ok(sidecar) = app.shell().sidecar("matsci-sidecar") {
+        let (mut rx, child) = sidecar
+            .spawn()
+            .map_err(|e| format!("failed to spawn matsci-sidecar: {}", e))?;
+
+        let app_stdout = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let (source, bytes) = match event {
+                    CommandEvent::Stdout(b) => ("stdout", b),
+                    CommandEvent::Stderr(b) => ("stderr", b),
+                    _ => continue,
+                };
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                let _ = app_stdout.emit(
+                    "backend-log",
+                    serde_json::json!({"source": source, "text": text}),
+                );
+            }
+        });
+
+        *state.backend.lock().unwrap() = Some(child);
+        Ok("started".to_string())
+    } else if let Ok(sidecar) = app.shell().sidecar("matsci") {
         let (mut rx, child) = sidecar
             .args(["serve", "--port", "8000"])
             .spawn()
@@ -149,7 +172,7 @@ async fn start_backend(
         });
 
         *state.backend.lock().unwrap() = Some(child);
-        Ok("started".to_string())
+        Ok("started (legacy sidecar)".to_string())
     } else {
         // Development fallback: use the system Python interpreter directly.
         let python = app.shell().command("python");

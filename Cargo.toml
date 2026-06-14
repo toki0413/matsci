@@ -1,5 +1,5 @@
 [workspace]
-members = ["pyext", "cli", "desktop/src-tauri"]
+members = ["pyext", "cli", "desktop/src-tauri", "sidecar"]
 resolver = "2"
 
 [workspace.package]
