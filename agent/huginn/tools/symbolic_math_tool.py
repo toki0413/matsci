@@ -43,6 +43,7 @@ class SymbolicMathInput(BaseModel):
     tensor_type: str | None = Field(default=None, description="stress | strain | stiffness | compliance (for tensor_calculus)")
     voigt_vector: list[float] | None = Field(default=None, description="Voigt vector components [v11, v22, v33, v23, v13, v12] or 21-element stiffness")
     rotation_matrix: list[list[float]] | None = Field(default=None, description="3×3 rotation matrix for tensor rotation")
+    output_path: str | None = Field(default=None, description="Output path for visualize / plot actions")
 
 
 class SymbolicMathTool(HuginnTool):
@@ -1262,7 +1263,7 @@ class SymbolicMathTool(HuginnTool):
           - derive: derive governing equations from a named model.
           - bridge: run a multiscale bridge (dft-to-md or cauchy-born).
         """
-        from huginn.unified import derive_equations, discretize, solve
+        from huginn.unified import derive_equations, discretize, solve, solve_and_plot
         from huginn.unified.models import get_model, list_models
         from huginn.unified.bridge import (
             ConstitutiveModel,
@@ -1480,7 +1481,40 @@ class SymbolicMathTool(HuginnTool):
                 "residual": sol["residual"],
             }, success=True)
 
+        if target == "solve_and_plot":
+            model_name = args.expression
+            if not model_name:
+                return ToolResult(
+                    data=None, success=False,
+                    error="expression must be a unified model name for target=solve_and_plot",
+                )
+            factory = get_model(model_name)
+            if factory is None:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
+                )
+            problem = factory()
+            method = (args.variable or "fem").lower()
+            n = args.order if args.order >= 1 else 10
+            output_path = args.output_path or "unified_solution.png"
+            try:
+                sol = solve_and_plot(problem, method=method, n=n, output_path=output_path)
+            except Exception as e:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"solve_and_plot failed: {e}",
+                )
+            return ToolResult(data={
+                "model": model_name,
+                "method": sol["method"],
+                "n": n,
+                "plot_path": sol["plot_path"],
+                "n_dof": sol["n_dof"],
+                "residual": sol["residual"],
+            }, success=True)
+
         return ToolResult(
             data=None, success=False,
-            error=f"Unknown unified target: {target}. Supported: list, derive, bridge, discretize, solve",
+            error=f"Unknown unified target: {target}. Supported: list, derive, bridge, discretize, solve, solve_and_plot",
         )
