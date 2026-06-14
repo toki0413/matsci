@@ -839,6 +839,85 @@ def encrypt_config(ctx: click.Context, path: str, password: str) -> None:
     console.print(f"[green]✓[/green] Encrypted config saved to {out}")
 
 
+@cli.group(name="unified")
+@click.pass_context
+def unified(ctx: click.Context) -> None:
+    """Unified scientific computing framework."""
+
+
+@unified.command("list")
+def unified_list() -> None:
+    """List available unified models and bridges."""
+    from huginn.unified.models import list_models
+    from huginn.unified.bridge import list_bridges
+
+    console.print(Panel("[bold blue]Unified Models[/bold blue]", border_style="blue"))
+    for name in list_models():
+        console.print(f"  - {name}")
+    console.print(Panel("[bold blue]Multiscale Bridges[/bold blue]", border_style="blue"))
+    for name in list_bridges():
+        console.print(f"  - {name}")
+
+
+@unified.command("derive")
+@click.argument("model")
+@click.pass_context
+def unified_derive(ctx: click.Context, model: str) -> None:
+    """Derive governing equations for a unified model."""
+    from huginn.unified.models import get_model
+    from huginn.unified import derive_equations
+
+    factory = get_model(model)
+    if not factory:
+        console.print(f"[red]Model '{model}' not found[/red]")
+        return
+    problem = factory()
+    result = derive_equations(problem)
+    console.print(Panel(
+        f"[bold blue]{problem.name}[/bold blue]\n"
+        f"Principle: {result['principle']}\n"
+        f"Equations:",
+        title="Unified Derivation",
+        border_style="blue"
+    ))
+    for key, eq in result["equations"].items():
+        console.print(f"  [bold]{key}:[/bold] {eq}")
+
+
+@unified.command("bridge")
+@click.argument("name")
+@click.option("--model", help="Model name required by some bridges")
+@click.pass_context
+def unified_bridge(ctx: click.Context, name: str, model: str | None) -> None:
+    """Compute a multiscale bridge relation."""
+    from huginn.unified.bridge import get_bridge
+    from huginn.unified.models import get_model
+
+    bridge_fn = get_bridge(name)
+    if not bridge_fn:
+        console.print(f"[red]Bridge '{name}' not found[/red]")
+        return
+
+    kwargs: dict[str, Any] = {}
+    if model:
+        factory = get_model(model)
+        if not factory:
+            console.print(f"[red]Model '{model}' not found[/red]")
+            return
+        kwargs["dft_problem"] = factory()
+
+    result = bridge_fn(**kwargs)
+    console.print(Panel(
+        f"[bold blue]{name}[/bold blue]\n{result.get('interpretation', '')}",
+        title="Multiscale Bridge",
+        border_style="blue"
+    ))
+    for key, val in result.items():
+        if key == "interpretation":
+            continue
+        console.print(f"  [bold]{key}:[/bold] {val}")
+
+
 def main() -> None:
     """Entry point."""
     env_path = Path(".env")
