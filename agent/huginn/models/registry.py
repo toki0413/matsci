@@ -14,7 +14,11 @@ from huginn.config import HuginnConfig, ModelConfig, ThinkingIntensity
 
 ProviderT = Literal[
     "anthropic", "openai", "ollama", "deepseek",
-    "google-genai", "openrouter", "nvidia", "vllm", "local", "default"
+    "google-genai", "openrouter", "nvidia", "vllm", "local", "default",
+    # Domestic / OpenAI-compatible providers
+    "siliconflow", "moonshot", "zhipu", "baichuan",
+    "dashscope", "qianfan", "doubao", "hunyuan",
+    "openai-compatible",
 ]
 
 
@@ -75,7 +79,61 @@ def _apply_thinking_kwargs(
             kwargs["reasoning_effort"] = thinking
         return
 
-    # DeepSeek, Google, Ollama, NVIDIA: no standard mapping yet.
+    # DeepSeek, Google, Ollama, NVIDIA, domestic: no standard mapping yet.
+
+#: OpenAI-compatible domestic providers with default base URLs and env keys.
+_DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
+    "deepseek": {
+        "env": "DEEPSEEK_API_KEY",
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-chat",
+    },
+    "siliconflow": {
+        "env": "SILICONFLOW_API_KEY",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "default_model": "deepseek-ai/DeepSeek-V3",
+    },
+    "moonshot": {
+        "env": "MOONSHOT_API_KEY",
+        "base_url": "https://api.moonshot.cn/v1",
+        "default_model": "moonshot-v1-8k",
+    },
+    "zhipu": {
+        "env": "ZHIPU_API_KEY",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+        "default_model": "glm-4-flash",
+    },
+    "baichuan": {
+        "env": "BAICHUAN_API_KEY",
+        "base_url": "https://api.baichuan-ai.com/v1",
+        "default_model": "Baichuan4",
+    },
+    "dashscope": {
+        "env": "DASHSCOPE_API_KEY",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "default_model": "qwen-max",
+    },
+    "qianfan": {
+        "env": "QIANFAN_API_KEY",
+        "base_url": "https://qianfan.baidubce.com/v2",
+        "default_model": "ernie-4.0-turbo-8k",
+    },
+    "doubao": {
+        "env": "DOUBAO_API_KEY",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "default_model": "doubao-pro-32k",
+    },
+    "hunyuan": {
+        "env": "HUNYUAN_API_KEY",
+        "base_url": "https://api.hunyuan.tencentcloudapi.com/v1",
+        "default_model": "hunyuan-turbo",
+    },
+    "openai-compatible": {
+        "env": "OPENAI_API_KEY",
+        "base_url": None,
+        "default_model": None,
+    },
+}
 
 _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "anthropic": "claude-3-5-sonnet-20241022",
@@ -88,6 +146,15 @@ _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "vllm": None,
     "local": None,
     "default": None,
+    "siliconflow": "deepseek-ai/DeepSeek-V3",
+    "moonshot": "moonshot-v1-8k",
+    "zhipu": "glm-4-flash",
+    "baichuan": "Baichuan4",
+    "dashscope": "qwen-max",
+    "qianfan": "ernie-4.0-turbo-8k",
+    "doubao": "doubao-pro-32k",
+    "hunyuan": "hunyuan-turbo",
+    "openai-compatible": None,
 }
 
 _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
@@ -101,6 +168,15 @@ _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
     "local": "OPENAI_API_KEY",
     "ollama": "",
     "default": "",
+    "siliconflow": "SILICONFLOW_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
+    "zhipu": "ZHIPU_API_KEY",
+    "baichuan": "BAICHUAN_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+    "qianfan": "QIANFAN_API_KEY",
+    "doubao": "DOUBAO_API_KEY",
+    "hunyuan": "HUNYUAN_API_KEY",
+    "openai-compatible": "OPENAI_API_KEY",
 }
 
 
@@ -117,6 +193,14 @@ _CLOUD_PROVIDERS: set[str] = {
     "google-genai",
     "openrouter",
     "nvidia",
+    "siliconflow",
+    "moonshot",
+    "zhipu",
+    "baichuan",
+    "dashscope",
+    "qianfan",
+    "doubao",
+    "hunyuan",
 }
 
 
@@ -127,9 +211,53 @@ def is_local_provider(provider: str, base_url: str | None = None) -> bool:
         return True
     if provider in ("vllm", "local"):
         return _is_local_url(base_url) if base_url else True
+    if provider == "openai-compatible":
+        # Generic OpenAI-compatible endpoint is local only when it points to localhost.
+        return _is_local_url(base_url) if base_url else False
     if provider in _CLOUD_PROVIDERS:
         return _is_local_url(base_url)
     return False
+
+
+def _create_openai_compatible(
+    provider: str,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+) -> Any:
+    """Create a ChatOpenAI instance for an OpenAI-compatible provider."""
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError:
+        raise ImportError("pip install langchain-openai")
+
+    cfg = _DOMESTIC_OPENAI_COMPATIBLE.get(provider, {})
+    env_var = cfg.get("env") or "OPENAI_API_KEY"
+    default_base_url = cfg.get("base_url")
+    resolved_base_url = base_url or default_base_url
+    if provider == "openai-compatible" and not resolved_base_url:
+        raise ValueError(
+            "Provider 'openai-compatible' requires an explicit base_url. "
+            "Use --base-url / HUGINN_BASE_URL to set it."
+        )
+
+    key = api_key or os.environ.get(env_var)
+    if not key:
+        raise ValueError(f"{env_var} not set")
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": key,
+        "base_url": resolved_base_url,
+        "temperature": temperature,
+    }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    return ChatOpenAI(**kwargs)
 
 
 def create_langchain_model(
@@ -143,6 +271,24 @@ def create_langchain_model(
 ) -> Any:
     """Create a LangChain chat model instance for the given provider."""
     provider = provider.lower().strip()  # type: ignore[assignment]
+
+    # openai-compatible requires explicit model + base_url.
+    if provider == "openai-compatible":
+        if not model_name:
+            raise ValueError(
+                "Provider 'openai-compatible' requires an explicit model name. "
+                "Use --model / HUGINN_MODEL to set it."
+            )
+        return _create_openai_compatible(
+            provider=provider,
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=temperature,
+            thinking=thinking,
+            max_tokens=max_tokens,
+        )
+
     model = model_name or _PROVIDER_DEFAULTS.get(provider)
     if model is None:
         raise ValueError(
@@ -241,6 +387,17 @@ def create_langchain_model(
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
         return ChatOpenAI(**kwargs)
+
+    if provider in _DOMESTIC_OPENAI_COMPATIBLE:
+        return _create_openai_compatible(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=temperature,
+            thinking=thinking,
+            max_tokens=max_tokens,
+        )
 
     if provider == "nvidia":
         try:
