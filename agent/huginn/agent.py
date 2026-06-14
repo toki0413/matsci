@@ -23,6 +23,7 @@ from huginn.pet import get_pet_bus, PetMood
 from huginn.privacy import redact_secrets, scan_for_secrets
 from huginn.utils.context import compact_messages, estimate_message_tokens
 from huginn.utils.tokens import rough_token_count_for_text
+from huginn.utils.prompt_cache import PromptCacheBuilder
 
 
 class HuginnAgent:
@@ -51,11 +52,24 @@ class HuginnAgent:
         max_tool_output_tokens: int | None = None,
         context_budget_tokens: int | None = None,
         begin_dialogs: list[tuple[str, str]] | None = None,
+        prompt_cache_control: bool | None = None,
     ):
         self.model = model
         self.langchain_tools = tools or []
         self.system_prompt = system_prompt or HUGINN_SYSTEM_PROMPT
         self.begin_dialogs = begin_dialogs or []
+
+        if prompt_cache_control is None:
+            prompt_cache_control = (
+                os.environ.get("HUGINN_PROMPT_CACHE_CONTROL", "1") != "0"
+            )
+        self.prompt_cache_control = prompt_cache_control
+
+        self._cache_builder = PromptCacheBuilder(
+            system_prompt=self.system_prompt,
+            begin_dialogs=self.begin_dialogs,
+            cache_control=self.prompt_cache_control,
+        )
         self.enable_exploration = enable_exploration
         self.profile_id = profile_id
         self.thread_id = thread_id
@@ -227,19 +241,21 @@ class HuginnAgent:
         # Try deepagents first (for full middleware support)
         try:
             from deepagents import create_deep_agent
-            
-            # Inject memory context into system prompt if available
-            prompt = self._build_prompt_with_memory()
-            
+
+            # Use the *static* system prompt only. Dynamic memory is injected
+            # into the input message stream in chat() so the cached prefix
+            # stays stable across turns.
+            system_message = self._build_state_modifier()[0]
+
             self._agent_graph = create_deep_agent(
                 name="HuginnAgent",
                 model=self.model,
                 tools=self.langchain_tools,
-                system_prompt=prompt,
+                system_prompt=system_message,
             ).with_config({"recursion_limit": 100})
-            
+
             return self._agent_graph
-            
+
         except ImportError:
             return self._build_simple_graph()
     
@@ -247,38 +263,56 @@ class HuginnAgent:
         """Build a simple ReAct agent without deepagents."""
         try:
             from langgraph.prebuilt import create_react_agent
-            
-            prompt = self._build_prompt_with_memory()
-            messages = [SystemMessage(content=prompt)]
-            
+
+            # Keep the state modifier static (system prompt only). Dynamic
+            # memory and the current user message are supplied per-request in
+            # chat() so the cached prefix is not invalidated by new facts.
+            messages = self._build_state_modifier()
+
             agent = create_react_agent(
                 model=self.model,
                 tools=self.langchain_tools,
                 state_modifier=messages,
             )
-            
+
             self._agent_graph = agent
             return agent
-            
+
         except ImportError:
             raise ImportError(
                 "Neither deepagents nor langgraph prebuilt agents are available. "
                 "Install one of them to use HuginnAgent."
             )
     
-    def _build_prompt_with_memory(self) -> str:
-        """Build system prompt augmented with relevant long-term memory."""
-        prompt = self.system_prompt
-        
-        # Try to recall relevant facts (simple heuristic: use last 3 words)
+    def _build_memory_text(self) -> str:
+        """Recall relevant long-term memory formatted for the prompt tail.
+
+        Keeping this text out of the system prompt keeps the static prefix
+        stable and improves LLM prompt/KV-cache hit rates.
+        """
         try:
-            recall = self.memory.recall_for_prompt("materials science computation", max_entries=2)
-            if recall:
-                prompt += f"\n\n{recall}"
+            return self.memory.recall_for_prompt(
+                "materials science computation", max_entries=2
+            )
         except Exception:
-            pass
-        
-        return prompt
+            return ""
+
+    def _build_state_modifier(self) -> list[SystemMessage]:
+        """Static system message(s) used as the graph state modifier."""
+        return self._cache_builder.build_state_modifier()
+
+    def _build_input_messages(self, message: str) -> list[Any]:
+        """Dynamic input messages: begin-dialogs + memory + current user."""
+        memory_text = self._build_memory_text()
+        return self._cache_builder.build_input_messages(memory_text, message)
+
+    def _rebuild_cache_builder(self) -> None:
+        """Recreate the cache builder when the system prompt changes."""
+        self._cache_builder = PromptCacheBuilder(
+            system_prompt=self.system_prompt,
+            begin_dialogs=self.begin_dialogs,
+            cache_control=self.prompt_cache_control,
+        )
     
     async def chat(
         self,
@@ -314,13 +348,11 @@ class HuginnAgent:
 
         graph = self.build_graph()
 
-        messages: list[Any] = []
-        for role, content in self.begin_dialogs:
-            if role == "user":
-                messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                messages.append(AIMessage(content=content))
-        messages.append(HumanMessage(content=message))
+        # Build input stream: begin-dialogs (static), recalled memory
+        # (dynamic), then the current user message. The static system prompt
+        # lives in the graph state modifier so the provider can cache the
+        # prefix even when memory changes.
+        messages = self._build_input_messages(message)
 
         inputs = {
             "messages": messages
@@ -383,16 +415,18 @@ class HuginnAgent:
             raise RuntimeError("Exploration mode is disabled")
         
         exploration_prompt = self.system_prompt + "\n\n" + EXPLORATION_PROMPT
-        
+
         original_prompt = self.system_prompt
         self.system_prompt = exploration_prompt
+        self._rebuild_cache_builder()
         self._agent_graph = None
-        
+
         try:
             async for state in self.chat(objective, thread_id):
                 yield state
         finally:
             self.system_prompt = original_prompt
+            self._rebuild_cache_builder()
             self._agent_graph = None
     
     def invoke(self, message: str, thread_id: str = "default") -> dict[str, Any]:
