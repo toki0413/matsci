@@ -2129,7 +2129,7 @@ export default function App() {
                         <input
                           type="number"
                           min={1}
-                          max={100}
+                          max={200}
                           value={coderMaxIters}
                           onChange={(e) => setCoderMaxIters(e.target.value === "" ? "" : parseInt(e.target.value, 10))}
                           disabled={coderRunning}

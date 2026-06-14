@@ -422,14 +422,14 @@ class HuginnConfig:
 class CoderSettings:
     """Settings for autonomous coder mode."""
 
-    max_iterations: int = 20
+    max_iterations: int = 50
     done_marker: str = "[DONE]"
 
     @classmethod
     def from_env(cls) -> "CoderSettings":
         """Load coder settings from environment variables."""
         return cls(
-            max_iterations=int(os.environ.get("HUGINN_CODER_MAX_ITER", "20")),
+            max_iterations=int(os.environ.get("HUGINN_CODER_MAX_ITER", "50")),
             done_marker=os.environ.get("HUGINN_CODER_DONE_MARKER", "[DONE]"),
         )
 
