@@ -13,8 +13,8 @@ import time
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import InMemorySaver
 
+from huginn.checkpointer import create_checkpointer, create_in_memory_checkpointer
 from huginn.prompts import HUGINN_SYSTEM_PROMPT, EXPLORATION_PROMPT
 from huginn.tools.registry import ToolRegistry
 from huginn.tools.adapter import ToolAdapter
@@ -56,10 +56,19 @@ class HuginnAgent:
         begin_dialogs: list[tuple[str, str]] | None = None,
         prompt_cache_control: bool | None = None,
         model_router: ModelRouter | None = None,
+        checkpointer: Any | None = None,
+        checkpointer_path: str | None = None,
     ):
         self.model = model
         self.model_router = model_router
         self.langchain_tools = tools or []
+
+        if checkpointer is not None:
+            self.checkpointer = checkpointer
+        elif checkpointer_path or os.environ.get("HUGINN_CHECKPOINTER_PATH"):
+            self.checkpointer = create_checkpointer(checkpointer_path)
+        else:
+            self.checkpointer = create_in_memory_checkpointer()
         self.system_prompt = system_prompt or HUGINN_SYSTEM_PROMPT
         self.begin_dialogs = begin_dialogs or []
 
@@ -281,6 +290,7 @@ class HuginnAgent:
                 model=self.select_model("agent"),
                 tools=self.langchain_tools,
                 system_prompt=system_message,
+                checkpointer=self.checkpointer,
             ).with_config({"recursion_limit": 100})
 
             return self._agent_graph
@@ -302,6 +312,7 @@ class HuginnAgent:
                 model=self.select_model("agent"),
                 tools=self.langchain_tools,
                 state_modifier=messages,
+                checkpointer=self.checkpointer,
             )
 
             self._agent_graph = agent
