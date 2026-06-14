@@ -49,6 +49,61 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+enum HpcCommands {
+    /// Test SSH connection to an HPC cluster
+    Test {
+        #[arg(long)]
+        host: String,
+        #[arg(short, long)]
+        username: String,
+        #[arg(long, default_value = "slurm")]
+        scheduler: String,
+        #[arg(long)]
+        key_path: Option<String>,
+        #[arg(long, default_value = "22")]
+        port: i64,
+    },
+    /// Submit a job to an HPC cluster
+    Submit {
+        #[arg(long)]
+        host: String,
+        #[arg(short, long)]
+        username: String,
+        #[arg(long)]
+        command: String,
+        #[arg(long, default_value = "huginn_job")]
+        job_name: String,
+        #[arg(long, default_value = "01:00:00")]
+        walltime: String,
+        #[arg(long, default_value = "1")]
+        nodes: i64,
+        #[arg(long, default_value = "4")]
+        ntasks_per_node: i64,
+        #[arg(long)]
+        queue: Option<String>,
+        #[arg(long, default_value = "slurm")]
+        scheduler: String,
+        #[arg(long)]
+        key_path: Option<String>,
+        #[arg(long, default_value = "~/huginn_jobs")]
+        remote_work_dir: String,
+    },
+    /// Poll status of an HPC job
+    Status {
+        #[arg(long)]
+        host: String,
+        #[arg(short, long)]
+        username: String,
+        #[arg(long)]
+        job_id: String,
+        #[arg(long, default_value = "slurm")]
+        scheduler: String,
+        #[arg(long)]
+        key_path: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Start interactive chat with the Agent
     Chat,
@@ -65,6 +120,10 @@ enum Commands {
         /// Maximum parallel branches
         #[arg(short = 'b', long, default_value = "10")]
         max_branches: i64,
+
+        /// Maximum exploration iterations
+        #[arg(short = 'i', long, default_value = "20")]
+        max_iterations: i64,
     },
 
     /// Start an autonomous coding session (Codex-like)
@@ -104,6 +163,59 @@ enum Commands {
         #[arg(short, long, default_value = "huginn.toml")]
         path: PathBuf,
     },
+
+    /// Run the benchmark suite and optionally trigger self-evolution
+    Bench {
+        #[arg(long)]
+        evolve: bool,
+        #[arg(long, value_delimiter = ',')]
+        categories: Option<Vec<String>>,
+        #[arg(short, long, default_value = "bench_report.json")]
+        output: String,
+    },
+
+    /// Run a self-evolution cycle from execution logs
+    Evolve {
+        #[arg(long)]
+        logs_dir: Option<String>,
+    },
+
+    /// Execute workflow stages via the execution orchestrator
+    Execute {
+        stages: String,
+        #[arg(short, long, default_value = ".")]
+        working_dir: String,
+        #[arg(short, long, default_value = "execute")]
+        name: String,
+    },
+
+    /// Run a workflow template with KEY=VALUE arguments
+    Workflow {
+        template: String,
+        args: Vec<String>,
+    },
+
+    /// Diagnose a computational chemistry/MD error
+    Diagnose {
+        error_message: String,
+        #[arg(short, long)]
+        software: Option<String>,
+        #[arg(short = 't', long)]
+        calculation_type: Option<String>,
+        #[arg(short, long)]
+        context: Option<String>,
+    },
+
+    /// HPC cluster commands
+    Hpc {
+        #[command(subcommand)]
+        command: HpcCommands,
+    },
+
+    /// Encrypt a configuration file
+    EncryptConfig {
+        path: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -142,6 +254,7 @@ fn run() -> Result<()> {
             ref objective,
             ref strategy,
             max_branches,
+            max_iterations,
         } => {
             let globals = collect_global_args(&cli, &workspace);
             delegate_to_python(
@@ -154,6 +267,8 @@ fn run() -> Result<()> {
                     strategy.clone(),
                     "--max-branches".to_string(),
                     max_branches.to_string(),
+                    "--max-iterations".to_string(),
+                    max_iterations.to_string(),
                 ],
             )
         }
@@ -189,6 +304,183 @@ fn run() -> Result<()> {
                 extra.push(task.clone());
             }
             delegate_to_python(&workspace, "coder", &globals, &extra)
+        }
+        Commands::Bench {
+            evolve,
+            ref categories,
+            ref output,
+        } => {
+            let globals = collect_global_args(&cli, &workspace);
+            let mut extra: Vec<String> = Vec::new();
+            if evolve {
+                extra.push("--evolve".to_string());
+            }
+            if let Some(cats) = categories {
+                extra.push("--categories".to_string());
+                extra.push(cats.join(","));
+            }
+            extra.push("--output".to_string());
+            extra.push(output.clone());
+            delegate_to_python(&workspace, "bench", &globals, &extra)
+        }
+        Commands::Evolve { ref logs_dir } => {
+            let globals = collect_global_args(&cli, &workspace);
+            let mut extra: Vec<String> = Vec::new();
+            if let Some(dir) = logs_dir {
+                extra.push("--logs-dir".to_string());
+                extra.push(dir.clone());
+            }
+            delegate_to_python(&workspace, "evolve", &globals, &extra)
+        }
+        Commands::Execute {
+            ref stages,
+            ref working_dir,
+            ref name,
+        } => {
+            let globals = collect_global_args(&cli, &workspace);
+            delegate_to_python(
+                &workspace,
+                "execute",
+                &globals,
+                &[
+                    stages.clone(),
+                    "--working-dir".to_string(),
+                    working_dir.clone(),
+                    "--name".to_string(),
+                    name.clone(),
+                ],
+            )
+        }
+        Commands::Workflow { ref template, ref args } => {
+            let globals = collect_global_args(&cli, &workspace);
+            let mut extra = vec![template.clone()];
+            extra.extend(args.iter().cloned());
+            delegate_to_python(&workspace, "workflow", &globals, &extra)
+        }
+        Commands::Diagnose {
+            ref error_message,
+            ref software,
+            ref calculation_type,
+            ref context,
+        } => {
+            let globals = collect_global_args(&cli, &workspace);
+            let mut extra = vec![error_message.clone()];
+            if let Some(s) = software {
+                extra.push("--software".to_string());
+                extra.push(s.clone());
+            }
+            if let Some(t) = calculation_type {
+                extra.push("--calculation-type".to_string());
+                extra.push(t.clone());
+            }
+            if let Some(c) = context {
+                extra.push("--context".to_string());
+                extra.push(c.clone());
+            }
+            delegate_to_python(&workspace, "diagnose", &globals, &extra)
+        }
+        Commands::Hpc { ref command } => {
+            let globals = collect_global_args(&cli, &workspace);
+            let mut extra: Vec<String> = Vec::new();
+            match command {
+                HpcCommands::Test {
+                    ref host,
+                    ref username,
+                    ref scheduler,
+                    ref key_path,
+                    port,
+                } => {
+                    extra.extend([
+                        "test".to_string(),
+                        "--host".to_string(),
+                        host.clone(),
+                        "--username".to_string(),
+                        username.clone(),
+                        "--scheduler".to_string(),
+                        scheduler.clone(),
+                        "--port".to_string(),
+                        port.to_string(),
+                    ]);
+                    if let Some(kp) = key_path {
+                        extra.push("--key-path".to_string());
+                        extra.push(kp.clone());
+                    }
+                }
+                HpcCommands::Submit {
+                    ref host,
+                    ref username,
+                    ref command,
+                    ref job_name,
+                    ref walltime,
+                    nodes,
+                    ntasks_per_node,
+                    ref queue,
+                    ref scheduler,
+                    ref key_path,
+                    ref remote_work_dir,
+                } => {
+                    extra.extend([
+                        "submit".to_string(),
+                        "--host".to_string(),
+                        host.clone(),
+                        "--username".to_string(),
+                        username.clone(),
+                        "--command".to_string(),
+                        command.clone(),
+                        "--job-name".to_string(),
+                        job_name.clone(),
+                        "--walltime".to_string(),
+                        walltime.clone(),
+                        "--nodes".to_string(),
+                        nodes.to_string(),
+                        "--ntasks-per-node".to_string(),
+                        ntasks_per_node.to_string(),
+                        "--scheduler".to_string(),
+                        scheduler.clone(),
+                        "--remote-work-dir".to_string(),
+                        remote_work_dir.clone(),
+                    ]);
+                    if let Some(q) = queue {
+                        extra.push("--queue".to_string());
+                        extra.push(q.clone());
+                    }
+                    if let Some(kp) = key_path {
+                        extra.push("--key-path".to_string());
+                        extra.push(kp.clone());
+                    }
+                }
+                HpcCommands::Status {
+                    ref host,
+                    ref username,
+                    ref job_id,
+                    ref scheduler,
+                    ref key_path,
+                } => {
+                    extra.extend([
+                        "status".to_string(),
+                        "--host".to_string(),
+                        host.clone(),
+                        "--username".to_string(),
+                        username.clone(),
+                        "--job-id".to_string(),
+                        job_id.clone(),
+                        "--scheduler".to_string(),
+                        scheduler.clone(),
+                    ]);
+                    if let Some(kp) = key_path {
+                        extra.push("--key-path".to_string());
+                        extra.push(kp.clone());
+                    }
+                }
+            }
+            delegate_to_python(&workspace, "hpc", &globals, &extra)
+        }
+        Commands::EncryptConfig { ref path } => {
+            let globals = collect_global_args(&cli, &workspace);
+            let extra = vec![path
+                .clone()
+                .unwrap_or_else(|| "huginn.toml".to_string())];
+            delegate_to_python(&workspace, "encrypt-config", &globals, &extra)
         }
     }
 }

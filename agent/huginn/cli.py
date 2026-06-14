@@ -9,6 +9,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -278,20 +279,42 @@ def chat(ctx: click.Context) -> None:
 @click.argument("objective")
 @click.option("--strategy", "-s", default="pareto", type=click.Choice(["pareto", "bayesian", "grid"]))
 @click.option("--max-branches", "-b", default=10, help="Maximum parallel branches")
+@click.option("--max-iterations", "-i", default=20, help="Maximum exploration iterations")
 @click.pass_context
-def explore(ctx: click.Context, objective: str, strategy: str, max_branches: int) -> None:
+def explore(ctx: click.Context, objective: str, strategy: str, max_branches: int, max_iterations: int) -> None:
     """Enter exploration mode to systematically search a design space."""
+    from huginn.exploration.orchestrator import ExplorationOrchestrator
+    from huginn.exploration.strategies import ParetoPruningStrategy
+
     console.print(Panel(
         f"[bold green]Exploration Mode[/bold green]\n"
         f"Objective: {objective}\n"
         f"Strategy: {strategy}\n"
-        f"Max branches: {max_branches}",
+        f"Max branches: {max_branches}\n"
+        f"Max iterations: {max_iterations}",
         title="Exploration",
         border_style="green"
     ))
-    
-    console.print("[yellow]Exploration engine initialization pending...[/yellow]")
-    console.print("[dim]This will activate the multi-branch async exploration system.[/dim]")
+
+    try:
+        orch = ExplorationOrchestrator(
+            strategy=ParetoPruningStrategy(max_active=max_branches),
+            max_parallel=min(5, max_branches),
+        )
+        result = asyncio.run(orch.explore(
+            objective=objective,
+            initial_branches=[{"name": "baseline", "hypothesis": f"Baseline for: {objective}"}],
+            objectives_config={"score": "maximize"},
+            max_iterations=max_iterations,
+        ))
+        console.print(f"[green]✓[/green] Exploration complete: {result.convergence_reason}")
+        console.print(f"  Branches explored: {result.n_branches_explored}")
+        console.print(f"  Branches pruned: {result.n_branches_pruned}")
+        console.print(f"  Pareto front size: {len(result.pareto_front)}")
+        if result.best_branch:
+            console.print(f"  Best branch: {result.best_branch['name']}")
+    except Exception as e:
+        console.print(f"[red]Exploration failed: {e}[/red]")
 
 
 @cli.command()
@@ -495,6 +518,326 @@ def configure(ctx: click.Context, path: str) -> None:
     new_cfg.save(path, format=fmt)
     console.print(f"[green]✓[/green] Config saved to [bold]{path}[/bold]")
     console.print("[dim]Run: huginn chat --config " + path + "[/dim]")
+
+
+@cli.command()
+@click.option("--evolve", is_flag=True, help="Run evolution cycle after benchmarking")
+@click.option("--categories", "-c", help="Comma-separated categories to run")
+@click.option("--output", "-o", default="bench_report.json", help="Report output path")
+@click.pass_context
+def bench(ctx: click.Context, evolve: bool, categories: str | None, output: str) -> None:
+    """Run the benchmark suite and optionally trigger self-evolution."""
+    from huginn.bench.runner import BenchmarkRunner
+    from huginn.config import HuginnConfig
+
+    config_path = ctx.obj["config"]
+    cfg = HuginnConfig.load(config_path) if config_path else HuginnConfig.from_env()
+    runner = BenchmarkRunner(config=cfg)
+    cats = [c.strip() for c in categories.split(",") if c.strip()] if categories else None
+
+    report = runner.run(evolve=evolve, categories=cats)
+    report_path = ctx.obj["workspace"] / output
+    runner.save_report(report, report_path)
+
+    console.print(Panel(
+        f"[bold blue]Benchmark Report[/bold blue]\n"
+        f"Run ID: {report.run_id}\n"
+        f"Total: {report.total}  Passed: {report.passed}  Failed: {report.failed}  Skipped: {report.skipped}\n"
+        f"Pass rate: {report.metrics.get('pass_rate', 0):.0%}\n"
+        f"Avg task time: {report.metrics.get('avg_task_time_seconds', 0):.2f}s\n"
+        f"Report saved to: {report_path}",
+        title="Bench",
+        border_style="blue"
+    ))
+
+    for r in report.results:
+        icon = "[green]✓[/green]" if r.passed else "[red]✗[/red]"
+        console.print(f"{icon} {r.task_id}: {r.reason}")
+
+
+@cli.command()
+@click.option("--logs-dir", help="Execution log directory to evolve from")
+@click.pass_context
+def evolve(ctx: click.Context, logs_dir: str | None) -> None:
+    """Run a self-evolution cycle from execution logs."""
+    from huginn.evolution.engine import EvolutionEngine
+    from huginn.evolution.logger import ExecutionLogger
+
+    logger = ExecutionLogger(persist_dir=logs_dir) if logs_dir else ExecutionLogger()
+    engine = EvolutionEngine(logger=logger)
+    report = engine.run_full_evolution_cycle()
+
+    console.print(Panel(
+        f"[bold blue]Evolution Report[/bold blue]\n"
+        f"Failure rules learned: {len(report['failure_rules'])}\n"
+        f"Success skills extracted: {len(report['success_skills'])}\n"
+        f"Prompt patches: {len(report['prompt_patches'])}\n"
+        f"Total rules/skills: {report['total_rules_after']}/{report['total_skills_after']}",
+        title="Evolve",
+        border_style="blue"
+    ))
+
+
+@cli.command()
+@click.argument("stages")
+@click.option("--working-dir", "-w", default=".", help="Working directory")
+@click.option("--name", "-n", default="execute", help="Workflow name")
+@click.pass_context
+def execute(ctx: click.Context, stages: str, working_dir: str, name: str) -> None:
+    """Run a list of workflow stages via the execution orchestrator.
+
+    STAGES can be a JSON file path or an inline JSON array of stage dicts.
+    """
+    from huginn.execution.orchestrator import ExecutionOrchestrator
+    from huginn.security.audit import AuditLogger
+    from huginn.tools.registry import ToolRegistry
+    from huginn.types import ToolContext
+
+    stage_path = Path(stages)
+    raw = stage_path.read_text(encoding="utf-8") if stage_path.exists() else stages
+    stage_list = json.loads(raw)
+
+    def _wrap_tool(tool):
+        async def _run(action: str = "", **params):
+            if tool.input_schema:
+                input_data = tool.input_schema(action=action, **params)
+            else:
+                input_data = {"action": action, **params}
+            context = ToolContext(
+                session_id="execute",
+                workspace=working_dir,
+                audit_logger=AuditLogger(Path(working_dir) / "huginn_audit.jsonl"),
+            )
+            result = await tool.call(input_data, context)
+            if not result.success:
+                raise RuntimeError(result.error or f"{tool.name} failed")
+            return result.data
+        return _run
+
+    orch = ExecutionOrchestrator(working_dir=working_dir)
+    for tool_name in ToolRegistry.list_tools():
+        tool = ToolRegistry.get(tool_name)
+        if tool:
+            orch.register_tool(tool_name, _wrap_tool(tool))
+
+    record = asyncio.run(orch.run(stage_list, workflow_name=name))
+    console.print(json.dumps({
+        "workflow_name": record.workflow_name,
+        "overall_success": record.overall_success,
+        "stages": [r.to_dict() for r in record.stage_results],
+    }, indent=2, ensure_ascii=False, default=str))
+
+
+@cli.command("workflow")
+@click.argument("template")
+@click.argument("args", nargs=-1)
+@click.pass_context
+def workflow(ctx: click.Context, template: str, args: tuple[str, ...]) -> None:
+    """Run a workflow template with KEY=VALUE arguments."""
+    from huginn.types import ToolContext
+    from huginn.workflows.engine import WorkflowEngine
+    from huginn.workflows.templates import get_template
+
+    template_fn = get_template(template)
+    if not template_fn:
+        console.print(f"[red]Template '{template}' not found[/red]")
+        return
+
+    kwargs: dict[str, Any] = {}
+    for a in args:
+        if "=" not in a:
+            console.print(f"[yellow]Ignoring malformed arg: {a}[/yellow]")
+            continue
+        key, value = a.split("=", 1)
+        try:
+            value = json.loads(value)
+        except Exception:
+            pass
+        kwargs[key] = value
+
+    try:
+        stages = template_fn(**kwargs)
+    except Exception as e:
+        console.print(f"[red]Failed to build workflow: {e}[/red]")
+        return
+
+    engine = WorkflowEngine(ToolRegistry)
+    context = ToolContext(session_id="workflow", workspace=str(ctx.obj["workspace"]))
+    result = asyncio.run(engine.execute(stages, context))
+
+    console.print(json.dumps({
+        "success": result.success,
+        "total_walltime": result.total_walltime,
+        "stages": {
+            sid: {
+                "name": s.name,
+                "status": s.status,
+                "attempts": s.attempts,
+                "error": s.result.error if s.result else None,
+            }
+            for sid, s in result.stages.items()
+        },
+        "outputs": result.outputs,
+        "error": result.error,
+    }, indent=2, ensure_ascii=False, default=str))
+
+
+@cli.command()
+@click.argument("error_message")
+@click.option("--software", "-s", help="Software (e.g., VASP, LAMMPS, Gaussian)")
+@click.option("--calculation-type", "-t", help="Calculation type (e.g., DFT, MD)")
+@click.option("--context", "-c", help="Additional context")
+@click.pass_context
+def diagnose(ctx: click.Context, error_message: str, software: str | None, calculation_type: str | None, context: str | None) -> None:
+    """Diagnose a computational chemistry/MD error."""
+    from huginn.tools.diagnose_tool import DiagnoseInput, DiagnoseTool
+    from huginn.types import ToolContext
+
+    tool = DiagnoseTool()
+    input_data = DiagnoseInput(
+        error_message=error_message,
+        software=software,
+        calculation_type=calculation_type,
+        context=context,
+    )
+    result = asyncio.run(tool.call(input_data, ToolContext(
+        session_id="diagnose",
+        workspace=str(ctx.obj["workspace"]),
+    )))
+    console.print(json.dumps(result.data, indent=2, ensure_ascii=False, default=str))
+
+
+@cli.group(name="hpc")
+@click.pass_context
+def hpc(ctx: click.Context) -> None:
+    """HPC cluster job submission commands."""
+
+
+@hpc.command("test")
+@click.option("--host", required=True, help="HPC host")
+@click.option("--username", "-u", required=True, help="SSH username")
+@click.option("--scheduler", default="slurm", type=click.Choice(["slurm", "pbs"]))
+@click.option("--key-path", help="SSH private key path")
+@click.option("--port", default=22, type=int)
+@click.pass_context
+def hpc_test(ctx: click.Context, host: str, username: str, scheduler: str, key_path: str | None, port: int) -> None:
+    """Test SSH connection to an HPC cluster."""
+    from huginn.hpc.client import HPCClient, HPCConfig
+
+    cfg = HPCConfig(host=host, username=username, scheduler=scheduler, key_path=key_path, port=port)
+    try:
+        with HPCClient(cfg) as client:
+            stdout, stderr, rc = client._exec("hostname")
+            if rc == 0:
+                console.print(f"[green]✓[/green] Connected to {host}: {stdout}")
+            else:
+                console.print(f"[red]✗[/red] {stderr or 'Connection failed'}")
+    except Exception as e:
+        console.print(f"[red]✗[/red] {e}")
+
+
+@hpc.command("submit")
+@click.option("--host", required=True)
+@click.option("--username", "-u", required=True)
+@click.option("--command", required=True, help="Command to run on the cluster")
+@click.option("--job-name", default="huginn_job")
+@click.option("--walltime", default="01:00:00")
+@click.option("--nodes", default=1, type=int)
+@click.option("--ntasks-per-node", default=4, type=int)
+@click.option("--queue", help="Queue/partition")
+@click.option("--scheduler", default="slurm", type=click.Choice(["slurm", "pbs"]))
+@click.option("--key-path")
+@click.option("--remote-work-dir", default="~/huginn_jobs")
+@click.pass_context
+def hpc_submit(
+    ctx: click.Context,
+    host: str,
+    username: str,
+    command: str,
+    job_name: str,
+    walltime: str,
+    nodes: int,
+    ntasks_per_node: int,
+    queue: str | None,
+    scheduler: str,
+    key_path: str | None,
+    remote_work_dir: str,
+) -> None:
+    """Submit a job to a remote HPC cluster."""
+    from huginn.hpc.client import HPCClient, HPCConfig
+
+    cfg = HPCConfig(
+        host=host,
+        username=username,
+        scheduler=scheduler,
+        key_path=key_path,
+        remote_work_dir=remote_work_dir,
+    )
+    try:
+        with HPCClient(cfg) as client:
+            script = client.generate_job_script(
+                command=command,
+                job_name=job_name,
+                walltime=walltime,
+                nodes=nodes,
+                ntasks_per_node=ntasks_per_node,
+                queue=queue,
+            )
+            job_id = client.submit_job(script, job_name=job_name)
+            console.print(f"[green]✓[/green] Submitted {job_name}: {job_id}")
+    except Exception as e:
+        console.print(f"[red]✗[/red] {e}")
+
+
+@hpc.command("status")
+@click.option("--host", required=True)
+@click.option("--username", "-u", required=True)
+@click.option("--job-id", required=True)
+@click.option("--scheduler", default="slurm", type=click.Choice(["slurm", "pbs"]))
+@click.option("--key-path")
+@click.pass_context
+def hpc_status(
+    ctx: click.Context,
+    host: str,
+    username: str,
+    job_id: str,
+    scheduler: str,
+    key_path: str | None,
+) -> None:
+    """Poll status of a remote HPC job."""
+    from huginn.hpc.client import HPCClient, HPCConfig
+
+    cfg = HPCConfig(host=host, username=username, scheduler=scheduler, key_path=key_path)
+    try:
+        with HPCClient(cfg) as client:
+            status = client.poll_status(job_id)
+            console.print(json.dumps({
+                "job_id": status.job_id,
+                "state": status.state,
+                "exit_code": status.exit_code,
+                "runtime": status.runtime,
+                "message": status.message,
+            }, indent=2, default=str))
+    except Exception as e:
+        console.print(f"[red]✗[/red] {e}")
+
+
+@cli.command("encrypt-config")
+@click.argument("path", default="huginn.toml")
+@click.option("--password", prompt=True, hide_input=True, help="Encryption password")
+@click.pass_context
+def encrypt_config(ctx: click.Context, path: str, password: str) -> None:
+    """Encrypt a configuration file."""
+    from huginn.config import HuginnConfig
+
+    target = Path(path)
+    cfg = HuginnConfig.load(path) if target.exists() else HuginnConfig.from_env()
+    cfg.encrypt_config = True
+    cfg.encryption_password = password
+    out = target if str(target).endswith(".enc") else target.with_suffix(target.suffix + ".enc")
+    cfg.save(out, format="json")
+    console.print(f"[green]✓[/green] Encrypted config saved to {out}")
+
 
 def main() -> None:
     """Entry point."""

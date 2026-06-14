@@ -362,6 +362,20 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
         os.environ["HUGINN_PET_NAME"] = str(params["pet_name"])
     if "pet_personality" in params:
         os.environ["HUGINN_PET_PERSONALITY"] = str(params["pet_personality"])
+    if "encrypt_config" in params:
+        os.environ["HUGINN_ENCRYPT_CONFIG"] = "true" if params["encrypt_config"] else "false"
+    if "encryption_password" in params:
+        pw = params["encryption_password"]
+        if pw:
+            os.environ["HUGINN_ENCRYPTION_PASSWORD"] = str(pw)
+        else:
+            os.environ.pop("HUGINN_ENCRYPTION_PASSWORD", None)
+    if "encryption_key_file" in params:
+        kf = params["encryption_key_file"]
+        if kf:
+            os.environ["HUGINN_ENCRYPTION_KEY_FILE"] = str(kf)
+        else:
+            os.environ.pop("HUGINN_ENCRYPTION_KEY_FILE", None)
 
     _agent = None
     _agent_factory = None
@@ -909,6 +923,193 @@ async def orchestrate(params: dict[str, Any]) -> dict[str, Any]:
             "summary": result.summary,
             "error": result.error,
         }
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+# ── Benchmark & Evolution ─────────────────────────────────────
+
+@app.post("/bench/run")
+async def bench_run(params: dict[str, Any]) -> dict[str, Any]:
+    """Run the benchmark suite and optionally trigger a self-evolution cycle."""
+    from huginn.bench.runner import BenchmarkRunner
+    from huginn.evolution.logger import ExecutionLogger
+
+    try:
+        categories = params.get("categories")
+        evolve = bool(params.get("evolve", False))
+        runner = BenchmarkRunner(logger=ExecutionLogger())
+        report = runner.run(evolve=evolve, categories=categories)
+        return {
+            "success": True,
+            "report": {
+                "run_id": report.run_id,
+                "total": report.total,
+                "passed": report.passed,
+                "failed": report.failed,
+                "skipped": report.skipped,
+                "metrics": report.metrics,
+                "results": [
+                    {
+                        "task_id": r.task_id,
+                        "category": r.category,
+                        "passed": r.passed,
+                        "reason": r.reason,
+                        "exec_time_seconds": r.exec_time_seconds,
+                    }
+                    for r in report.results
+                ],
+                "evolution_report": report.evolution_report,
+            },
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/evolve/run")
+async def evolve_run(params: dict[str, Any]) -> dict[str, Any]:
+    """Run a self-evolution cycle from recent execution logs."""
+    from huginn.evolution.engine import EvolutionEngine
+    from huginn.evolution.logger import ExecutionLogger
+
+    try:
+        logger = ExecutionLogger(persist_dir=params.get("logs_dir"))
+        engine = EvolutionEngine(logger=logger)
+        report = engine.run_full_evolution_cycle()
+        return {"success": True, "report": report}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/execute")
+async def execute_stages(params: dict[str, Any]) -> dict[str, Any]:
+    """Execute a list of workflow stages via the execution orchestrator."""
+    from huginn.execution.orchestrator import ExecutionOrchestrator
+
+    stages = params.get("stages", [])
+    working_dir = params.get("working_dir", ".")
+    name = params.get("name", "execute")
+
+    def _wrap_tool(tool):
+        async def _run(action: str = "", **tool_params):
+            if tool.input_schema:
+                input_data = tool.input_schema(action=action, **tool_params)
+            else:
+                input_data = {"action": action, **tool_params}
+            context = ToolContext(
+                session_id="http",
+                workspace=working_dir,
+                memory_manager=get_memory_manager(),
+                agent_factory=get_agent_factory(),
+                audit_logger=_audit_logger,
+            )
+            result = await tool.call(input_data, context)
+            if not result.success:
+                raise RuntimeError(result.error or f"{tool.name} failed")
+            return result.data
+        return _run
+
+    orch = ExecutionOrchestrator(working_dir=working_dir)
+    for tool_name in ToolRegistry.list_tools():
+        tool = ToolRegistry.get(tool_name)
+        if tool:
+            orch.register_tool(tool_name, _wrap_tool(tool))
+
+    try:
+        record = await orch.run(stages, workflow_name=name)
+        return {
+            "success": record.overall_success,
+            "stages": [r.to_dict() for r in record.stage_results],
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/explore")
+async def explore_http(params: dict[str, Any]) -> dict[str, Any]:
+    """Run a design-space exploration via HTTP."""
+    from huginn.exploration.orchestrator import ExplorationOrchestrator
+    from huginn.exploration.strategies import ParetoPruningStrategy
+
+    objective = params.get("objective", "")
+    max_iterations = int(params.get("max_iterations", 20))
+    max_branches = int(params.get("max_branches", 10))
+    initial_branches = params.get("initial_branches", [
+        {"name": "baseline", "hypothesis": f"Baseline for: {objective}"}
+    ])
+    objectives_config = params.get("objectives_config", {"score": "maximize"})
+
+    try:
+        orch = ExplorationOrchestrator(
+            strategy=ParetoPruningStrategy(max_active=max_branches),
+            max_parallel=min(5, max_branches),
+        )
+        result = await orch.explore(
+            objective=objective,
+            initial_branches=initial_branches,
+            objectives_config=objectives_config,
+            max_iterations=max_iterations,
+        )
+        return {
+            "success": True,
+            "n_branches_explored": result.n_branches_explored,
+            "n_branches_pruned": result.n_branches_pruned,
+            "pareto_front": result.pareto_front,
+            "best_branch": result.best_branch,
+            "convergence_reason": result.convergence_reason,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/diagnose")
+async def diagnose_error(params: dict[str, Any]) -> dict[str, Any]:
+    """Diagnose a computational chemistry/MD error."""
+    from huginn.tools.diagnose_tool import DiagnoseTool, DiagnoseInput
+
+    try:
+        tool = DiagnoseTool()
+        input_data = DiagnoseInput(
+            error_message=params.get("error_message", ""),
+            software=params.get("software"),
+            calculation_type=params.get("calculation_type"),
+            context=params.get("context"),
+        )
+        context = ToolContext(
+            session_id="http",
+            workspace=".",
+            memory_manager=get_memory_manager(),
+            agent_factory=get_agent_factory(),
+            audit_logger=_audit_logger,
+        )
+        result = await tool.call(input_data, context)
+        return {"success": result.success, "data": result.data}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/config/encrypt")
+async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
+    """Encrypt the current or provided configuration file."""
+    path = params.get("path", "huginn.toml")
+    password = params.get("password")
+    if not password:
+        return {"success": False, "error": "password is required"}
+
+    try:
+        target = Path(path)
+        cfg = HuginnConfig.load(path) if target.exists() else HuginnConfig.from_env()
+        cfg.encrypt_config = True
+        cfg.encryption_password = password
+        out = target if str(target).endswith(".enc") else target.with_suffix(target.suffix + ".enc")
+        cfg.save(out, format="json")
+        return {"success": True, "path": str(out)}
     except Exception as e:
         traceback.print_exc()
         return {"success": False, "error": str(e)}
