@@ -70,6 +70,8 @@ from matsci_agent.project_context import (
     project_context_path,
 )
 from matsci_agent.types import ToolContext
+from matsci_agent.permissions import PermissionConfig, PermissionMode
+from matsci_agent.security.audit import AuditLogger
 from matsci_agent.memory.manager import MemoryManager, MemoryConfig
 from matsci_agent.models.registry import ModelRegistry
 from matsci_agent.agents.factory import AgentFactory
@@ -92,6 +94,10 @@ _kb: Any | None = None
 _codebase: Any | None = None
 _memory_manager: Any | None = None
 _agent_factory: AgentFactory | None = None
+
+# Server-wide security policy
+_permission_config = PermissionConfig()
+_audit_logger = AuditLogger(Path.home() / ".matsci" / "audit.jsonl")
 
 # In-memory checkpoints for diff review (snapshot path -> content)
 _checkpoints: dict[str, tuple[Path, dict[str, str]]] = {}
@@ -558,25 +564,79 @@ async def list_tools() -> list[dict[str, Any]]:
     return ToolRegistry.get_all_schemas()
 
 
+def _server_allows_tool(tool_name: str, input_data: Any) -> tuple[bool, str | None]:
+    """Check server-side permission policy for a tool call."""
+    mode = _permission_config.get_mode(tool_name)
+
+    if _permission_config.auto_approve_all or mode == PermissionMode.AUTO:
+        return True, None
+
+    if mode == PermissionMode.DENY:
+        return False, f"Tool '{tool_name}' is blocked by permission policy"
+
+    reasons: list[str] = []
+    try:
+        if tool_name in _EDIT_TOOLS or getattr(input_data, "destructive", False):
+            reasons.append("this operation is destructive")
+    except Exception:
+        pass
+
+    reason = f"Tool '{tool_name}' requires approval"
+    if reasons:
+        reason += f" ({', '.join(reasons)})"
+
+    # Server is non-interactive: allow ASK only when MATSCI_AUTO_APPROVE is set.
+    if os.environ.get("MATSCI_AUTO_APPROVE") == "1":
+        return True, None
+
+    return False, reason
+
+
 @app.post("/tools/{tool_name}")
 async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Call a tool directly via HTTP."""
     from matsci_agent.types import ToolContext
-    
+
     tool = ToolRegistry.get(tool_name)
     if not tool:
         return {"error": f"Tool '{tool_name}' not found"}
-    
+
     if not tool.input_schema:
         return {"error": f"Tool '{tool_name}' has no input schema"}
-    
+
     try:
         input_data = tool.input_schema(**args)
     except Exception as e:
         return {"error": f"Invalid input: {e}"}
-    
-    context = ToolContext(session_id="http", workspace=".", memory_manager=get_memory_manager(), agent_factory=get_agent_factory())
+
+    allowed, reason = _server_allows_tool(tool_name, input_data)
+    if not allowed:
+        _audit_logger.log(
+            event_type="tool_call",
+            actor="http",
+            action=tool_name,
+            details={"approved": False, "reason": reason},
+            input_data=json.dumps(args, sort_keys=True, default=str),
+        )
+        return {"error": reason}
+
+    context = ToolContext(
+        session_id="http",
+        workspace=".",
+        memory_manager=get_memory_manager(),
+        agent_factory=get_agent_factory(),
+        audit_logger=_audit_logger,
+    )
     result = await tool.call(input_data, context)
+
+    _audit_logger.log(
+        event_type="tool_call",
+        actor="http",
+        action=tool_name,
+        details={"approved": True, "success": result.success},
+        input_data=json.dumps(args, sort_keys=True, default=str),
+        output_data=json.dumps(result.data, sort_keys=True, default=str) if result.data else None,
+    )
 
     return {
         "success": result.success,

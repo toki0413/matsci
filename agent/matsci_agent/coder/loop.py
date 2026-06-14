@@ -15,12 +15,9 @@ from langchain_core.tools import BaseTool
 
 from matsci_agent.config import CoderSettings, get_settings
 from matsci_agent.llm import get_model
-from matsci_agent.permissions import PermissionConfig, PermissionMode
+from matsci_agent.permissions import PermissionConfig
 from matsci_agent.prompts import CODER_SYSTEM_PROMPT
-from matsci_agent.tools.adapter import ToolAdapter
-
-ApprovalCallback = Callable[[str, str], bool]
-"""Callback signature: (tool_name, reason) -> approved."""
+from matsci_agent.tools.adapter import ApprovalCallback, ToolAdapter
 
 
 def _clean_args(raw: dict[str, Any]) -> dict[str, Any]:
@@ -56,17 +53,17 @@ class CoderRunner:
         self.settings = settings or get_settings()
         self.permission_config = permission_config or PermissionConfig()
         self.approval_callback = approval_callback
-        self.tools, self._underlying_tool_map = self._build_tools(tools)
+        self.tools = self._build_tools(tools)
         self.tool_map = {tool.name: tool for tool in self.tools}
         self.model = get_model(self.settings)
 
     def _build_tools(
         self,
         tools: list[BaseTool] | None,
-    ) -> tuple[list[BaseTool], dict[str, Any]]:
-        """Return adapted LangChain tools and a name -> MatSciTool mapping."""
+    ) -> list[BaseTool]:
+        """Return adapted LangChain tools."""
         if tools is not None:
-            return tools, {}
+            return tools
 
         from matsci_agent.tools.file_read_tool import FileReadTool
         from matsci_agent.tools.file_write_tool import FileWriteTool
@@ -83,53 +80,14 @@ class CoderRunner:
             GitTool(),
             CodeTool(),
         ]
-        adapted = [ToolAdapter.adapt(tool) for tool in originals]
-        underlying_map = {tool.name: tool for tool in originals}
-        return adapted, underlying_map
-
-    def _check_permission(
-        self,
-        underlying: Any,
-        input_data: Any,
-    ) -> tuple[bool, str | None]:
-        """Return (approved, error_reason)."""
-        config = self.permission_config
-        name = underlying.name
-        mode = config.get_mode(name)
-
-        if config.auto_approve_all or mode == PermissionMode.AUTO:
-            return True, None
-
-        if mode == PermissionMode.DENY:
-            return False, f"Tool '{name}' is blocked by permission policy"
-
-        reasons: list[str] = []
-        try:
-            if underlying.is_destructive(input_data):
-                reasons.append("this operation is destructive")
-        except Exception:
-            pass
-
-        try:
-            cost = underlying.estimate_cost(input_data)
-            if cost:
-                cpu = cost.get("cpu_hours", 0)
-                if cpu > 1:
-                    reasons.append(f"estimated cost: {cpu:.1f} CPU hours")
-        except Exception:
-            pass
-
-        reason = f"Tool '{name}' requires approval"
-        if reasons:
-            reason += f" ({', '.join(reasons)})"
-
-        if self.approval_callback is None:
-            return False, reason
-
-        approved = self.approval_callback(name, reason)
-        if approved:
-            return True, None
-        return False, f"User denied: {reason}"
+        return [
+            ToolAdapter.adapt(
+                tool,
+                permission_config=self.permission_config,
+                approval_callback=self.approval_callback,
+            )
+            for tool in originals
+        ]
 
     def _execute_tool_call(self, call: dict[str, Any]) -> dict[str, Any]:
         name = call.get("name")
@@ -144,27 +102,6 @@ class CoderRunner:
             }
         tool = self.tool_map[name]
         cleaned = _clean_args(args)
-
-        # Permission check using the underlying MatSciTool.
-        underlying = self._underlying_tool_map.get(name)
-        if underlying is not None and underlying.input_schema is not None:
-            try:
-                input_data = underlying.input_schema(**cleaned)
-            except Exception as exc:
-                return {
-                    "tool_call_id": call_id,
-                    "role": "tool",
-                    "name": name,
-                    "content": json.dumps({"error": f"Invalid arguments: {exc}"}),
-                }
-            approved, reason = self._check_permission(underlying, input_data)
-            if not approved:
-                return {
-                    "tool_call_id": call_id,
-                    "role": "tool",
-                    "name": name,
-                    "content": json.dumps({"error": reason}),
-                }
 
         try:
             result = tool.invoke(cleaned)

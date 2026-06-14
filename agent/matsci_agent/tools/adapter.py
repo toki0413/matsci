@@ -9,14 +9,26 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import os
 import typing
-from typing import Any, get_origin
+from typing import Any, Callable, get_origin
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
+from matsci_agent.security.audit import AuditLogger
 from matsci_agent.tools.base import MatSciTool
-from matsci_agent.types import ToolContext, ToolResult
+from matsci_agent.types import (
+    PermissionMode,
+    ToolContext,
+    ToolResult,
+)
+from matsci_agent.permissions import PermissionConfig
+
+
+ApprovalCallback = Callable[[str, str], bool]
+"""Callback signature: (tool_name, reason) -> approved."""
 
 
 def _wants_dict(tool: MatSciTool) -> bool:
@@ -32,6 +44,15 @@ def _wants_dict(tool: MatSciTool) -> bool:
     return origin is dict or ann is dict
 
 
+def _default_audit_logger() -> AuditLogger:
+    """Return a default audit logger for tool invocations."""
+    from pathlib import Path
+
+    log_path = Path.home() / ".matsci" / "audit.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    return AuditLogger(log_path)
+
+
 class ToolAdapter:
     """Adapts MatSciTool instances to LangChain StructuredTool."""
 
@@ -40,6 +61,9 @@ class ToolAdapter:
         tool: MatSciTool,
         memory_manager: Any | None = None,
         agent_factory: Any | None = None,
+        permission_config: PermissionConfig | None = None,
+        approval_callback: ApprovalCallback | None = None,
+        audit_logger: AuditLogger | None = None,
     ) -> StructuredTool:
         """Convert a MatSciTool to LangChain StructuredTool.
 
@@ -55,6 +79,50 @@ class ToolAdapter:
 
         wants_dict = _wants_dict(tool)
         is_async = inspect.iscoroutinefunction(tool.call)
+        permission_config = permission_config or PermissionConfig()
+        audit_logger = audit_logger or _default_audit_logger()
+
+        def _check_permission(input_data: BaseModel) -> tuple[bool, str | None]:
+            """Return (approved, reason_or_none)."""
+            name = tool.name
+            mode = permission_config.get_mode(name)
+
+            if permission_config.auto_approve_all or mode == PermissionMode.AUTO:
+                return True, None
+
+            if mode == PermissionMode.DENY:
+                return False, f"Tool '{name}' is blocked by permission policy"
+
+            reasons: list[str] = []
+            try:
+                if tool.is_destructive(input_data):
+                    reasons.append("this operation is destructive")
+            except Exception:
+                pass
+
+            try:
+                cost = tool.estimate_cost(input_data)
+                if cost:
+                    cpu = cost.get("cpu_hours", 0)
+                    if cpu > 1:
+                        reasons.append(f"estimated cost: {cpu:.1f} CPU hours")
+            except Exception:
+                pass
+
+            reason = f"Tool '{name}' requires approval"
+            if reasons:
+                reason += f" ({', '.join(reasons)})"
+
+            if approval_callback is not None:
+                if approval_callback(name, reason):
+                    return True, None
+                return False, f"User denied: {reason}"
+
+            # Non-interactive fallback: allow if MATSCI_AUTO_APPROVE is set.
+            if os.environ.get("MATSCI_AUTO_APPROVE") == "1":
+                return True, None
+
+            return False, reason
 
         def _build_inputs(**kwargs: Any) -> tuple[BaseModel | dict[str, Any], ToolContext]:
             input_data = tool.input_schema(**kwargs)
@@ -63,6 +131,7 @@ class ToolAdapter:
                 workspace=".",
                 memory_manager=memory_manager,
                 agent_factory=agent_factory,
+                audit_logger=audit_logger,
             )
             payload = input_data.model_dump() if wants_dict else input_data
             return payload, context
@@ -72,18 +141,84 @@ class ToolAdapter:
                 return {"result": result.data}
             return {"error": result.error or "Unknown error"}
 
+        def _audit(
+            input_data: BaseModel,
+            output: dict[str, Any],
+            approved: bool,
+            reason: str | None,
+        ) -> None:
+            try:
+                details: dict[str, Any] = {
+                    "tool": tool.name,
+                    "approved": approved,
+                }
+                if reason:
+                    details["reason"] = reason
+                audit_logger.log(
+                    event_type="tool_call",
+                    actor="agent",
+                    action=tool.name,
+                    details=details,
+                    input_data=json.dumps(input_data.model_dump(), default=str, sort_keys=True),
+                    output_data=json.dumps(output, default=str, sort_keys=True),
+                )
+            except Exception:
+                # Audit failures must not break tool execution.
+                pass
+
         async def _arun(**kwargs: Any) -> dict[str, Any]:
             """Async execution wrapper."""
             payload, context = _build_inputs(**kwargs)
+            input_data = tool.input_schema(**kwargs)
+
+            approved, reason = _check_permission(input_data)
+            if not approved:
+                output = {"error": reason or f"Tool '{tool.name}' was denied"}
+                _audit(input_data, output, approved=False, reason=reason)
+                return output
+
+            validation = await tool.validate_input(input_data, context)
+            if not validation.result:
+                output = {"error": f"Input validation failed: {validation.message}"}
+                _audit(input_data, output, approved=True, reason=validation.message)
+                return output
+
             if is_async:
                 result = await tool.call(payload, context)
             else:
                 result = tool.call(payload, context)
-            return _serialize(result)
+            output = _serialize(result)
+            _audit(input_data, output, approved=True, reason=None)
+            return output
 
         def _run(**kwargs: Any) -> dict[str, Any]:
             """Sync execution wrapper."""
             payload, context = _build_inputs(**kwargs)
+            input_data = tool.input_schema(**kwargs)
+
+            approved, reason = _check_permission(input_data)
+            if not approved:
+                output = {"error": reason or f"Tool '{tool.name}' was denied"}
+                _audit(input_data, output, approved=False, reason=reason)
+                return output
+
+            validation_result = tool.validate_input(input_data, context)
+            if asyncio.iscoroutine(validation_result):
+                try:
+                    validation = asyncio.run(validation_result)
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    try:
+                        validation = loop.run_until_complete(validation_result)
+                    finally:
+                        loop.close()
+            else:
+                validation = validation_result
+            if not validation.result:
+                output = {"error": f"Input validation failed: {validation.message}"}
+                _audit(input_data, output, approved=True, reason=validation.message)
+                return output
+
             if is_async:
                 try:
                     loop = asyncio.get_running_loop()
@@ -93,7 +228,9 @@ class ToolAdapter:
                     result = loop.run_until_complete(tool.call(payload, context))
             else:
                 result = tool.call(payload, context)
-            return _serialize(result)
+            output = _serialize(result)
+            _audit(input_data, output, approved=True, reason=None)
+            return output
 
         return StructuredTool.from_function(
             name=tool.name,
@@ -110,11 +247,23 @@ class ToolAdapter:
         registry: Any,
         memory_manager: Any | None = None,
         agent_factory: Any | None = None,
+        permission_config: PermissionConfig | None = None,
+        approval_callback: ApprovalCallback | None = None,
+        audit_logger: AuditLogger | None = None,
     ) -> list[StructuredTool]:
         """Adapt all tools from a ToolRegistry."""
         tools = []
         for name in registry.list_tools():
             tool = registry.get(name)
             if tool:
-                tools.append(cls.adapt(tool, memory_manager=memory_manager, agent_factory=agent_factory))
+                tools.append(
+                    cls.adapt(
+                        tool,
+                        memory_manager=memory_manager,
+                        agent_factory=agent_factory,
+                        permission_config=permission_config,
+                        approval_callback=approval_callback,
+                        audit_logger=audit_logger,
+                    )
+                )
         return tools

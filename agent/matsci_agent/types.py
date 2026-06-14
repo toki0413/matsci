@@ -63,6 +63,7 @@ class ToolContext:
     permissions: dict[str, PermissionMode] = field(default_factory=dict)
     memory_manager: Any | None = None
     agent_factory: Any | None = None
+    audit_logger: Any | None = None
 
 
 @dataclass 
