@@ -945,14 +945,14 @@ def unified_bridge(
         console.print(f"  [bold]{key}:[/bold] {val}")
 
 
-@unified.command("discretize")
+@unified.command("solve")
 @click.argument("model")
 @click.option("--method", default="fem", help="fem | fd")
 @click.option("--n", default=10, help="Number of elements/points")
 @click.pass_context
-def unified_discretize(ctx: click.Context, model: str, method: str, n: int) -> None:
-    """Discretize a unified model into a linear algebraic system."""
-    from huginn.unified import discretize
+def unified_solve(ctx: click.Context, model: str, method: str, n: int) -> None:
+    """Discretize and solve a unified model."""
+    from huginn.unified import solve
     from huginn.unified.models import get_model
 
     factory = get_model(model)
@@ -961,17 +961,18 @@ def unified_discretize(ctx: click.Context, model: str, method: str, n: int) -> N
         return
     problem = factory()
     try:
-        result = discretize(problem, method=method, n=n)
+        result = solve(problem, method=method, n=n)
     except Exception as e:
-        console.print(f"[red]Discretization failed: {e}[/red]")
+        console.print(f"[red]Solve failed: {e}[/red]")
         return
 
-    info = f"Method: {result['method']}, DOFs: {result['n_dof']}"
-    console.print(Panel(f"[bold blue]{model}[/bold blue]", title="Discretization", subtitle=info, border_style="blue"))
-    console.print("[bold]Stiffness matrix:[/bold]")
-    for row in result["stiffness_matrix"]:
-        console.print(f"  {row}")
-    console.print(f"[bold]Load vector:[/bold] {result['load_vector']}")
+    info = f"Method: {result['method']}, DOFs: {result['n_dof']}, Residual: {result['residual']:.3e}"
+    console.print(Panel(f"[bold blue]{model}[/bold blue]", title="Unified Solve", subtitle=info, border_style="blue"))
+    console.print(f"[bold]Mesh:[/bold] {result['mesh']}")
+    console.print(f"[bold]Solution:[/bold] {result['solution']}")
+
+
+@unified.command("discretize")
 
 
 def main() -> None:

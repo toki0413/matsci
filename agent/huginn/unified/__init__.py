@@ -15,6 +15,7 @@ from huginn.unified.core import (
 )
 from huginn.unified.derive import derive_equations
 from huginn.unified.discretize import discretize
+from huginn.unified.solve import solve
 from huginn.unified.models import (
     harmonic_oscillator_md,
     heat_equation_fem,
@@ -32,6 +33,7 @@ __all__ = [
     "VariationalPrinciple",
     "derive_equations",
     "discretize",
+    "solve",
     "harmonic_oscillator_md",
     "heat_equation_fem",
     "linear_elasticity_fem",
