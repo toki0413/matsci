@@ -19,6 +19,7 @@ from huginn.unified.solve import solve
 from huginn.unified.visualize import plot_solution, solve_and_plot
 from huginn.unified.models import (
     harmonic_oscillator_md,
+    heat_equation_2d,
     heat_equation_fem,
     linear_elasticity_fem,
     one_d_kohn_sham_dft,
@@ -38,6 +39,7 @@ __all__ = [
     "plot_solution",
     "solve_and_plot",
     "harmonic_oscillator_md",
+    "heat_equation_2d",
     "heat_equation_fem",
     "linear_elasticity_fem",
     "one_d_kohn_sham_dft",

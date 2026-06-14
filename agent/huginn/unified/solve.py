@@ -21,12 +21,12 @@ def solve(
     method: str = "fem",
     n: int = 10,
 ) -> dict[str, Any]:
-    """Discretize and solve a 1D variational unified problem.
+    """Discretize and solve a variational unified problem.
 
     Args:
         problem: UnifiedProblem with a variational / minimum principle.
         method: "fem" or "fd".
-        n: Number of elements (FEM) or points (FD).
+        n: Number of elements (FEM 1D) or points (FD 1D/2D).
 
     Returns:
         dict with mesh, solution, residual norm, and discretization metadata.
@@ -38,9 +38,11 @@ def solve(
     if K.shape[0] == 0:
         raise ValueError("Empty stiffness matrix")
 
-    # For FEM without Dirichlet constraints the matrix is singular.
+    method_used = disc.get("method", method)
+
+    # For 1D FEM without Dirichlet constraints the matrix is singular.
     # Apply a simple Dirichlet fix: u = 0 at both ends.
-    if method == "fem":
+    if method_used == "fem":
         for idx in (0, -1):
             K[idx, :] = 0.0
             K[:, idx] = 0.0
@@ -53,8 +55,8 @@ def solve(
         raise ValueError(f"Linear solve failed: {e}")
 
     residual = np.linalg.norm(K @ u - F)
-    return {
-        "method": method,
+    result = {
+        "method": method_used,
         "n": n,
         "mesh": disc["mesh"],
         "solution": u.tolist(),
@@ -63,3 +65,6 @@ def solve(
         "stiffness_matrix": disc["stiffness_matrix"],
         "load_vector": disc["load_vector"],
     }
+    if "shape" in disc:
+        result["shape"] = disc["shape"]
+    return result

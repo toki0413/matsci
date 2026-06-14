@@ -12,15 +12,23 @@ from __future__ import annotations
 
 from typing import Any
 
-import sympy as sp
+import numpy as np
 
 from huginn.unified.core import UnifiedProblem, VariationalPrinciple
 
 
-def _bounds(problem: UnifiedProblem) -> tuple[float, float]:
+def _bounds_1d(problem: UnifiedProblem) -> tuple[float, float]:
     if problem.domain and problem.domain.bounds:
         return next(iter(problem.domain.bounds.values()))
     return (0.0, 1.0)
+
+
+def _bounds_2d(problem: UnifiedProblem) -> tuple[tuple[float, float], tuple[float, float]]:
+    if problem.domain and problem.domain.bounds:
+        bounds = list(problem.domain.bounds.values())
+        if len(bounds) >= 2:
+            return bounds[0], bounds[1]
+    return (0.0, 1.0), (0.0, 1.0)
 
 
 def _material_coefficient(problem: UnifiedProblem) -> float:
@@ -40,7 +48,7 @@ def _source_term(problem: UnifiedProblem) -> float:
 
 def _discretize_fem_1d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     """1D linear FEM discretization for energy-minimization problems."""
-    a, b = _bounds(problem)
+    a, b = _bounds_1d(problem)
     h = (b - a) / n
     coeff = _material_coefficient(problem)
     f = _source_term(problem)
@@ -49,7 +57,7 @@ def _discretize_fem_1d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     K = [[0.0] * n_dof for _ in range(n_dof)]
     F = [0.0] * n_dof
 
-    k_local = (coeff / h) * 1.0
+    k_local = coeff / h
     f_local = (f * h) / 2.0
 
     for e in range(n):
@@ -77,7 +85,7 @@ def _discretize_fem_1d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
 
 def _discretize_fd_1d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     """1D finite-difference discretization for -coeff u'' = f."""
-    a, b = _bounds(problem)
+    a, b = _bounds_1d(problem)
     if n < 3:
         raise ValueError("FD discretization needs at least 3 points")
     h = (b - a) / (n - 1)
@@ -110,6 +118,55 @@ def _discretize_fd_1d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     }
 
 
+def _discretize_fd_2d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
+    """2D finite-difference discretization for -coeff Δu = f on a rectangle.
+
+    Uses the classic 5-point stencil with n points per dimension.
+    """
+    (x0, x1), (y0, y1) = _bounds_2d(problem)
+    if n < 3:
+        raise ValueError("2D FD discretization needs at least 3 points per dimension")
+    hx = (x1 - x0) / (n - 1)
+    hy = (y1 - y0) / (n - 1)
+    coeff = _material_coefficient(problem)
+    f = _source_term(problem)
+
+    N = n * n
+    A = np.zeros((N, N), dtype=float)
+    rhs = np.full(N, f, dtype=float)
+
+    cx = coeff / (hx * hx)
+    cy = coeff / (hy * hy)
+
+    def idx(i: int, j: int) -> int:
+        return i * n + j
+
+    for i in range(n):
+        for j in range(n):
+            k = idx(i, j)
+            # Boundary nodes: Dirichlet u = 0
+            if i == 0 or i == n - 1 or j == 0 or j == n - 1:
+                A[k, k] = 1.0
+                rhs[k] = 0.0
+                continue
+            A[k, k] = 2.0 * (cx + cy)
+            A[k, idx(i - 1, j)] = -cx
+            A[k, idx(i + 1, j)] = -cx
+            A[k, idx(i, j - 1)] = -cy
+            A[k, idx(i, j + 1)] = -cy
+
+    mesh = [[x0 + i * hx, y0 + j * hy] for i in range(n) for j in range(n)]
+    return {
+        "method": "fd_2d",
+        "n_points_per_dim": n,
+        "n_dof": N,
+        "stiffness_matrix": A.tolist(),
+        "load_vector": rhs.tolist(),
+        "mesh": mesh,
+        "shape": [n, n],
+    }
+
+
 def discretize(
     problem: UnifiedProblem,
     method: str = "fem",
@@ -120,7 +177,7 @@ def discretize(
     Args:
         problem: UnifiedProblem with a variational / minimum principle.
         method: "fem" or "fd".
-        n: Number of elements (FEM) or points (FD).
+        n: Number of elements (FEM 1D) or points (FD 1D/2D).
 
     Returns:
         dict with stiffness_matrix, load_vector, mesh, etc.
@@ -135,12 +192,21 @@ def discretize(
             f"Discretization currently supports variational principles, got {problem.principle}"
         )
 
-    if problem.domain is None or len(problem.domain.coordinates) != 1:
-        raise ValueError("Only 1D problems are supported for now")
+    if problem.domain is None:
+        raise ValueError("Problem must have a domain")
 
-    if method == "fem":
-        return _discretize_fem_1d(problem, n)
-    if method == "fd":
-        return _discretize_fd_1d(problem, n)
+    dim = len(problem.domain.coordinates)
 
-    raise ValueError(f"Unknown discretization method: {method}")
+    if dim == 1:
+        if method == "fem":
+            return _discretize_fem_1d(problem, n)
+        if method == "fd":
+            return _discretize_fd_1d(problem, n)
+        raise ValueError(f"Unknown discretization method for 1D: {method}")
+
+    if dim == 2:
+        if method == "fd":
+            return _discretize_fd_2d(problem, n)
+        raise ValueError("2D FEM not yet implemented; use method='fd'")
+
+    raise ValueError(f"Unsupported domain dimension: {dim}")
