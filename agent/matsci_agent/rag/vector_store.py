@@ -163,6 +163,29 @@ class VectorStore:
         collection.add(**kwargs)
         return ids
 
+    def _rust_top_k(
+        self,
+        query_embedding: list[float],
+        embeddings: list[list[float]],
+        top_k: int,
+    ) -> list[tuple[int, float]] | None:
+        try:
+            from matsci_ext import top_k  # type: ignore[import-not-found]
+        except Exception:
+            return None
+        if not embeddings:
+            return None
+        try:
+            return top_k(query_embedding, embeddings, top_k)
+        except Exception:
+            return None
+
+    def _matches_filter(self, metadata: dict[str, Any], filter_dict: dict[str, Any]) -> bool:
+        for key, value in filter_dict.items():
+            if metadata.get(key) != value:
+                return False
+        return True
+
     def search(
         self,
         query: str,
@@ -173,6 +196,36 @@ class VectorStore:
         query_embedding = self._compute_embeddings([query])
 
         if query_embedding:
+            # Try Rust-accelerated exact top-k over stored embeddings.
+            try:
+                all_data = collection.get(include=["documents", "metadatas", "embeddings"])
+                docs = all_data.get("documents") or []
+                metas = all_data.get("metadatas") or [{}] * len(docs)
+                embs = all_data.get("embeddings") or []
+
+                indices = list(range(len(docs)))
+                if filter_dict:
+                    indices = [i for i in indices if self._matches_filter(metas[i], filter_dict)]
+                    docs = [docs[i] for i in indices]
+                    metas = [metas[i] for i in indices]
+                    embs = [embs[i] for i in indices]
+
+                if embs:
+                    ranked = self._rust_top_k(query_embedding[0], embs, top_k)
+                    if ranked is not None:
+                        output = []
+                        for idx, score in ranked:
+                            output.append({
+                                "id": all_data["ids"][indices[idx]],
+                                "document": docs[idx],
+                                "metadata": metas[idx],
+                                "distance": 1.0 - score,
+                            })
+                        return output
+            except Exception:
+                pass
+
+            # Fallback to ChromaDB's native ANN query.
             results = collection.query(
                 query_embeddings=query_embedding,
                 n_results=top_k,

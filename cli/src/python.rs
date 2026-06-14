@@ -24,9 +24,7 @@ pub fn find_python() -> Result<PathBuf> {
         }
     }
 
-    anyhow::bail!(
-        "No Python interpreter found on PATH. Set MATSCI_PYTHON or install Python."
-    )
+    anyhow::bail!("No Python interpreter found on PATH. Set MATSCI_PYTHON or install Python.")
 }
 
 /// Run a Python CLI subcommand, inheriting stdin/stdout/stderr.
@@ -128,8 +126,8 @@ except Exception as e:
         anyhow::bail!("Python backend failed to list tools: {err}");
     }
 
-    let tools: Vec<serde_json::Value> = serde_json::from_value(parsed)
-        .context("Tool list JSON is not an array")?;
+    let tools: Vec<serde_json::Value> =
+        serde_json::from_value(parsed).context("Tool list JSON is not an array")?;
 
     let mut result = Vec::new();
     for tool in tools {

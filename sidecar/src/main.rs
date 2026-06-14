@@ -71,11 +71,9 @@ async fn main() {
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             if let Err(e) = start_backend_inner(&state_clone).await {
-                let _ = state_clone
-                    .events
-                    .send(Event::Status {
-                        message: format!("autostart failed: {}", e),
-                    });
+                let _ = state_clone.events.send(Event::Status {
+                    message: format!("autostart failed: {}", e),
+                });
             }
         });
     }
@@ -149,7 +147,11 @@ async fn handle_socket(socket: axum::extract::ws::WebSocket, state: Arc<SidecarS
     let send_task = tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
             let text = serde_json::to_string(&event).unwrap_or_default();
-            if sender.send(axum::extract::ws::Message::Text(text)).await.is_err() {
+            if sender
+                .send(axum::extract::ws::Message::Text(text))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -201,14 +203,8 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("failed to spawn backend: {}", e))?;
 
-    let stdout = child
-        .stdout()
-        .take()
-        .ok_or("backend has no stdout")?;
-    let stderr = child
-        .stderr()
-        .take()
-        .ok_or("backend has no stderr")?;
+    let stdout = child.stdout().take().ok_or("backend has no stdout")?;
+    let stderr = child.stderr().take().ok_or("backend has no stderr")?;
 
     let events = state.events.clone();
     tokio::spawn(async move {

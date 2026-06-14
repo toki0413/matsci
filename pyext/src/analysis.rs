@@ -98,12 +98,18 @@ pub fn rdf_from_slice(
 }
 
 /// Build the Python MSD result dict from raw (timestep, msd) pairs.
-pub fn build_msd_dict<'py>(py: Python<'py>, msd: &[(i64, f64)], timesteps: Option<&[i64]>) -> PyResult<Bound<'py, PyDict>> {
+pub fn build_msd_dict<'py>(
+    py: Python<'py>,
+    msd: &[(i64, f64)],
+    timesteps: Option<&[i64]>,
+) -> PyResult<Bound<'py, PyDict>> {
     let result = PyDict::new(py);
     let py_msd = PyList::empty(py);
 
     for (frame_idx, value) in msd.iter() {
-        let ts = timesteps.map(|t| t[*frame_idx as usize]).unwrap_or(*frame_idx);
+        let ts = timesteps
+            .map(|t| t[*frame_idx as usize])
+            .unwrap_or(*frame_idx);
         let item = PyDict::new(py);
         item.set_item("timestep", ts)?;
         item.set_item("msd", *value)?;

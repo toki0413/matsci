@@ -90,9 +90,9 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn get_agent_status() -> serde_json::Value {
     match reqwest::blocking::get("http://localhost:8000/health") {
-        Ok(resp) if resp.status().is_success() => {
-            resp.json().unwrap_or_else(|_| serde_json::json!({"status": "ok"}))
-        }
+        Ok(resp) if resp.status().is_success() => resp
+            .json()
+            .unwrap_or_else(|_| serde_json::json!({"status": "ok"})),
         Ok(resp) => serde_json::json!({
             "status": "error",
             "error": format!("HTTP {}", resp.status()),
@@ -291,10 +291,7 @@ fn read_stream<R: Read + Send + 'static>(
             Ok(0) => break,
             Ok(n) => {
                 let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                let _ = app.emit(
-                    event,
-                    serde_json::json!({"source": source, "text": text}),
-                );
+                let _ = app.emit(event, serde_json::json!({"source": source, "text": text}));
             }
             Err(_) => break,
         }

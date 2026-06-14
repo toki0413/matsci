@@ -18,8 +18,9 @@ from matsci_agent.types import ToolResult, ToolContext
 class FileReadToolInput(BaseModel):
     action: Literal["read"] = Field(default="read")
     file_path: str = Field(..., description="Path to file")
-    line_offset: int = Field(default=1, ge=1, description="1-based start line")
+    line_offset: int | None = Field(default=1, ge=1, description="1-based start line")
     n_lines: int | None = Field(default=None, description="Number of lines to read")
+    tail_lines: int | None = Field(default=None, description="Read the last N lines instead of from line_offset")
     working_dir: str | None = Field(default=None)
 
 
@@ -46,11 +47,17 @@ class FileReadTool(MatSciTool):
             return ToolResult(data=None, success=False, error=f"Not a file: {path}")
 
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            total = len(lines)
-            start = input_data.line_offset
-            end = total + 1 if input_data.n_lines is None else start + input_data.n_lines
-            selected = lines[start - 1 : end - 1]
+            if input_data.tail_lines is not None and input_data.tail_lines > 0:
+                selected, start = self._tail_lines(path, input_data.tail_lines)
+                total = input_data.tail_lines
+                end = start + len(selected)
+            else:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                total = len(lines)
+                start = input_data.line_offset or 1
+                end = total + 1 if input_data.n_lines is None else start + input_data.n_lines
+                selected = lines[start - 1 : end - 1]
+
             numbered = "\n".join(f"{i + start:4d}  {line}" for i, line in enumerate(selected))
 
             return ToolResult(
@@ -59,9 +66,21 @@ class FileReadTool(MatSciTool):
                     "total_lines": total,
                     "start_line": start,
                     "content": numbered,
-                    "message": f"Read lines {start}-{min(end - 1, total)} of {total}.",
+                    "message": f"Read lines {start}-{start + len(selected) - 1} of {total}.",
                 },
                 success=True,
             )
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Failed to read file: {e}")
+
+    def _tail_lines(self, path: Path, n: int) -> tuple[list[str], int]:
+        """Return the last n lines and the 1-based start line."""
+        try:
+            from matsci_ext import tail_lines  # type: ignore[import-not-found]
+            lines = tail_lines(str(path), n)
+            return lines, max(1, len(lines) - n + 1)
+        except Exception:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.read().splitlines()
+            start = max(1, len(all_lines) - n + 1)
+            return all_lines[-n:], start

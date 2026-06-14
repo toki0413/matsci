@@ -111,7 +111,10 @@ fn run() -> Result<()> {
     }
 
     let cli = Cli::parse();
-    let workspace = cli.workspace.canonicalize().unwrap_or_else(|_| cli.workspace.clone());
+    let workspace = cli
+        .workspace
+        .canonicalize()
+        .unwrap_or_else(|_| cli.workspace.clone());
 
     match cli.command {
         Commands::Version => cmd_version(),
@@ -146,7 +149,12 @@ fn run() -> Result<()> {
                 &workspace,
                 "serve",
                 &globals,
-                &["--port".to_string(), port.to_string(), "--host".to_string(), host.clone()],
+                &[
+                    "--port".to_string(),
+                    port.to_string(),
+                    "--host".to_string(),
+                    host.clone(),
+                ],
             )
         }
     }
@@ -154,7 +162,11 @@ fn run() -> Result<()> {
 
 /// Print version information, optionally querying Python for backend versions.
 fn cmd_version() -> Result<()> {
-    println!("{} {}", "MatSci-Agent".bold().blue(), env!("CARGO_PKG_VERSION").bold());
+    println!(
+        "{} {}",
+        "MatSci-Agent".bold().blue(),
+        env!("CARGO_PKG_VERSION").bold()
+    );
 
     match python::run_python_expression(
         "import importlib, sys; \
@@ -204,8 +216,8 @@ fn cmd_tools() -> Result<()> {
 fn cmd_configure(path: &Path) -> Result<()> {
     println!(
         "{}",
-        " MatSci-Agent Configuration Wizard ".
-            on_blue()
+        " MatSci-Agent Configuration Wizard "
+            .on_blue()
             .white()
             .bold()
     );
@@ -253,8 +265,16 @@ fn cmd_configure(path: &Path) -> Result<()> {
     let new_cfg = MatSciConfig {
         provider,
         model: if model == "auto" { None } else { Some(model) },
-        api_key: if api_key.is_empty() { None } else { Some(api_key) },
-        base_url: if base_url.is_empty() { None } else { Some(base_url) },
+        api_key: if api_key.is_empty() {
+            None
+        } else {
+            Some(api_key)
+        },
+        base_url: if base_url.is_empty() {
+            None
+        } else {
+            Some(base_url)
+        },
         ollama_host,
         workspace,
         ..existing

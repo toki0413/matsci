@@ -160,9 +160,21 @@ fn frame_positions_to_vec(frames: &[Frame]) -> (Vec<f64>, Vec<i64>, Vec<[f64; 3]
         box_dims.push([lx, ly, lz]);
 
         for atom in &frame.atoms {
-            let x = atom.fields.get("x").and_then(|v| v.as_number()).unwrap_or(0.0);
-            let y = atom.fields.get("y").and_then(|v| v.as_number()).unwrap_or(0.0);
-            let z = atom.fields.get("z").and_then(|v| v.as_number()).unwrap_or(0.0);
+            let x = atom
+                .fields
+                .get("x")
+                .and_then(|v| v.as_number())
+                .unwrap_or(0.0);
+            let y = atom
+                .fields
+                .get("y")
+                .and_then(|v| v.as_number())
+                .unwrap_or(0.0);
+            let z = atom
+                .fields
+                .get("z")
+                .and_then(|v| v.as_number())
+                .unwrap_or(0.0);
             positions.push(x);
             positions.push(y);
             positions.push(z);
@@ -271,9 +283,21 @@ fn build_result_dict<'py>(
             let n_atoms = frame.atoms.len();
             let mut positions = Vec::with_capacity(n_atoms * 3);
             for atom in &frame.atoms {
-                let x = atom.fields.get("x").and_then(|v| v.as_number()).unwrap_or(0.0);
-                let y = atom.fields.get("y").and_then(|v| v.as_number()).unwrap_or(0.0);
-                let z = atom.fields.get("z").and_then(|v| v.as_number()).unwrap_or(0.0);
+                let x = atom
+                    .fields
+                    .get("x")
+                    .and_then(|v| v.as_number())
+                    .unwrap_or(0.0);
+                let y = atom
+                    .fields
+                    .get("y")
+                    .and_then(|v| v.as_number())
+                    .unwrap_or(0.0);
+                let z = atom
+                    .fields
+                    .get("z")
+                    .and_then(|v| v.as_number())
+                    .unwrap_or(0.0);
                 positions.push(x);
                 positions.push(y);
                 positions.push(z);
@@ -281,7 +305,9 @@ fn build_result_dict<'py>(
             let lx = frame.box_bounds[0][1] - frame.box_bounds[0][0];
             let ly = frame.box_bounds[1][1] - frame.box_bounds[1][0];
             let lz = frame.box_bounds[2][1] - frame.box_bounds[2][0];
-            if let Some((r_values, g, r_max)) = rdf_from_slice(&positions, n_atoms, [lx, ly, lz], rdf_bins, rdf_r_max) {
+            if let Some((r_values, g, r_max)) =
+                rdf_from_slice(&positions, n_atoms, [lx, ly, lz], rdf_bins, rdf_r_max)
+            {
                 let rdf_dict = build_rdf_dict(py, &r_values, &g, rdf_bins, r_max)?;
                 result.set_item("rdf", rdf_dict)?;
             }

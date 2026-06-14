@@ -43,6 +43,38 @@ class BashTool(MatSciTool):
         if not input_data.command:
             return ToolResult(data=None, success=False, error="Empty command.")
 
+        # Use the Rust sandbox runner when the compiled extension is available.
+        try:
+            from matsci_ext.sandbox import run_sandboxed  # type: ignore[import-not-found]
+
+            allowed_base_dirs = [str(work_dir.resolve()), str(Path.cwd().resolve())]
+            result = run_sandboxed(
+                command=input_data.command[0],
+                args=input_data.command[1:],
+                cwd=str(work_dir),
+                timeout=input_data.timeout,
+                allowed_base_dirs=allowed_base_dirs,
+            )
+            if not result["success"]:
+                error = result.get("stderr") or result.get("message") or "Sandboxed command failed."
+            else:
+                error = None
+            return ToolResult(
+                data={
+                    "command": input_data.command,
+                    "returncode": result["returncode"],
+                    "stdout": result["stdout"],
+                    "stderr": result["stderr"],
+                    "message": result["message"],
+                    "timed_out": result["timed_out"],
+                },
+                success=result["success"],
+                error=error,
+            )
+        except Exception:
+            # Fallback to standard subprocess if the Rust extension is unavailable.
+            pass
+
         exe = shutil.which(input_data.command[0])
         if exe is None:
             return ToolResult(

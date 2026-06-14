@@ -1,6 +1,9 @@
 mod analysis;
+mod files;
 mod lammps;
+mod sandbox;
 mod vasp;
+mod vectors;
 
 use numpy::{PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;
@@ -79,8 +82,9 @@ fn compute_rdf(
     let n_atoms = shape[0];
 
     let positions_vec: Vec<f64> = arr.iter().copied().collect();
-    let (r_values, g, r_max) = analysis::rdf_from_slice(&positions_vec, n_atoms, box_dims, bins, r_max)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to compute RDF"))?;
+    let (r_values, g, r_max) =
+        analysis::rdf_from_slice(&positions_vec, n_atoms, box_dims, bins, r_max)
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to compute RDF"))?;
 
     let result = analysis::build_rdf_dict(py, &r_values, &g, bins, r_max)?;
     Ok(result.into())
@@ -89,7 +93,10 @@ fn compute_rdf(
 /// Rust performance extensions for MatSci-Agent.
 #[pymodule]
 fn matsci_ext(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    files::register_module(m)?;
     lammps::register_module(m)?;
+    sandbox::register_module(m)?;
+    vectors::register_module(m)?;
 
     m.add_function(wrap_pyfunction!(parse_outcar, m)?)?;
     m.add_function(wrap_pyfunction!(compute_msd, m)?)?;

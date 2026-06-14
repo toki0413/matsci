@@ -124,14 +124,14 @@ impl MatSciConfig {
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create config directory: {}", parent.display())
+            })?;
         }
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let text = if ext == "json" {
-            serde_json::to_string_pretty(self)
-                .context("Failed to serialize config to JSON")?
+            serde_json::to_string_pretty(self).context("Failed to serialize config to JSON")?
         } else {
             toml::to_string_pretty(self).context("Failed to serialize config to TOML")?
         };
@@ -152,7 +152,9 @@ impl MatSciConfig {
             let var_name = &raw[4..];
             Ok(env::var(var_name).ok())
         } else if raw.starts_with("keyring:") {
-            anyhow::bail!("keyring: prefix is not supported in the Rust CLI; use env:VAR_NAME or plain text")
+            anyhow::bail!(
+                "keyring: prefix is not supported in the Rust CLI; use env:VAR_NAME or plain text"
+            )
         } else {
             Ok(Some(raw.to_string()))
         }

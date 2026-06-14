@@ -158,7 +158,11 @@ pub fn build_outcar_dict<'py>(py: Python<'py>, state: OutcarState) -> PyResult<B
     result.set_item("ispin", state.ispin)?;
     result.set_item("nelm", state.nelm)?;
     result.set_item("nelmin", state.nelmin)?;
-    let kpoints: Option<&str> = if state.kpoints_found { Some("found") } else { None };
+    let kpoints: Option<&str> = if state.kpoints_found {
+        Some("found")
+    } else {
+        None
+    };
     result.set_item("kpoints", kpoints)?;
     result.set_item("volume", state.volume)?;
     result.set_item("band_gap", state.band_gap_note)?;
@@ -177,7 +181,10 @@ pub fn build_outcar_dict<'py>(py: Python<'py>, state: OutcarState) -> PyResult<B
     let forces = PyList::empty(py);
     for f in &state.forces {
         let entry = PyDict::new(py);
-        entry.set_item("position", vec![f.position[0], f.position[1], f.position[2]])?;
+        entry.set_item(
+            "position",
+            vec![f.position[0], f.position[1], f.position[2]],
+        )?;
         entry.set_item("force", vec![f.force[0], f.force[1], f.force[2]])?;
         forces.append(entry)?;
     }
@@ -189,7 +196,13 @@ pub fn build_outcar_dict<'py>(py: Python<'py>, state: OutcarState) -> PyResult<B
 }
 
 fn parse_trailing_float(line: &str, delimiter: &str) -> Option<f64> {
-    line.rsplit(delimiter).next()?.trim().split_whitespace().next()?.parse().ok()
+    line.rsplit(delimiter)
+        .next()?
+        .trim()
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 fn parse_value_after_keyword(line: &str, keyword: &str) -> Option<f64> {
@@ -214,5 +227,3 @@ fn parse_int_after_keyword(line: &str, keyword: &str) -> Option<i64> {
     }
     None
 }
-
-

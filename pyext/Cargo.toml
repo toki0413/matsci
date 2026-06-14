@@ -13,3 +13,6 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.23", features = ["extension-module"] }
 numpy = "0.23"
+rayon = "1.10"
+wait-timeout = "0.2"
+which = "7.0"
