@@ -217,3 +217,16 @@ class TestAutoLeanPipeline:
         }
         result = pipe.verify_unified(symbolic_result, symbols=["p", "q"])
         assert result.success, result.stderr
+
+
+    def test_verify_discretization(self, pipe):
+        """Verify unified discretization/solve output auto-converts to Lean."""
+        symbolic_result = {
+            "method": "fem",
+            "n_dof": 3,
+            "stiffness_matrix": [[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]],
+            "load_vector": [0.0, 1.0, 0.0],
+            "solution": [0.0, 0.5, 0.0],
+        }
+        result = pipe.verify_discretization(symbolic_result)
+        assert result.success, result.stderr

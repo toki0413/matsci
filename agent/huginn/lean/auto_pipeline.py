@@ -835,6 +835,51 @@ def derivVal (x : Float) : Float := {lean_deriv}
             expressions, symbols=symbols, timeout=timeout,
         )
 
+    def verify_discretization(
+        self,
+        symbolic_result: Dict[str, Any],
+        symbols: Optional[List[str]] = None,
+        timeout: int = 60,
+    ) -> LeanResult:
+        """Verify a discretized/solved unified problem in Lean 4.
+
+        Converts stiffness matrix entries and load vector entries into
+        Lean `Float` definitions.  If a solution vector is present, it is
+        also compiled so downstream checks (e.g. residual) can be added.
+        """
+        expressions: Dict[str, str] = {}
+
+        K = symbolic_result.get("stiffness_matrix")
+        if isinstance(K, list):
+            for i, row in enumerate(K):
+                for j, entry in enumerate(row):
+                    expressions[f"discK{i}{j}"] = str(entry)
+            expressions["discN"] = str(len(K))
+
+        F = symbolic_result.get("load_vector")
+        if isinstance(F, list):
+            for i, entry in enumerate(F):
+                expressions[f"discF{i}"] = str(entry)
+
+        u = symbolic_result.get("solution")
+        if isinstance(u, list):
+            for i, entry in enumerate(u):
+                expressions[f"discU{i}"] = str(entry)
+
+        if not expressions:
+            return LeanResult(
+                success=False,
+                stdout="",
+                stderr="No discretization data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
+            )
+
+        return self.verify_expression_dict(
+            expressions, symbols=symbols,
+            imports=["HuginnLean.NumericalLinearAlgebra"], timeout=timeout,
+        )
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
