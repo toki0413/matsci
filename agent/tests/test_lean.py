@@ -156,3 +156,23 @@ class TestLeanToolAutoVerify:
             ctx,
         )
         assert result.success, result.error
+
+
+    @pytest.mark.asyncio
+    async def test_auto_verify_discretization(self, lean_tool):
+        tool, Input, ctx = lean_tool
+        result = await tool.call(
+            Input(
+                action="auto_verify",
+                auto_verify_action="discretization",
+                symbolic_result={
+                    "method": "fem",
+                    "n_dof": 3,
+                    "stiffness_matrix": [[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]],
+                    "load_vector": [0.0, 1.0, 0.0],
+                    "solution": [0.0, 0.5, 0.0],
+                },
+            ),
+            ctx,
+        )
+        assert result.success, result.error
