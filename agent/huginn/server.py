@@ -1115,6 +1115,38 @@ async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+@app.get("/unified/models")
+async def unified_models() -> dict[str, Any]:
+    """List unified models and multiscale bridges."""
+    from huginn.unified.models import list_models
+    from huginn.unified.bridge import list_bridges
+    return {"models": list_models(), "bridges": list_bridges()}
+
+
+@app.post("/unified/derive")
+async def unified_derive(params: dict[str, Any]) -> dict[str, Any]:
+    """Derive governing equations for a unified model."""
+    from huginn.unified import derive_equations
+    from huginn.unified.models import get_model
+
+    model_name = params.get("model")
+    factory = get_model(model_name)
+    if not factory:
+        return {"success": False, "error": f"Model '{model_name}' not found"}
+    try:
+        problem = factory()
+        result = derive_equations(problem)
+        return {
+            "success": True,
+            "problem": problem.to_dict(),
+            "principle": result["principle"],
+            "equations": {k: str(v) for k, v in result["equations"].items()},
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/workflows")
 async def list_workflows() -> list[str]:
     from huginn.workflows.templates import list_templates
