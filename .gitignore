@@ -94,3 +94,8 @@ agent/lean/HuginnLean/
 # Local runtime data
 agent/.huginn_kb/
 agent/.huginn_memory/
+
+# Unified framework test plots
+unified_solution.png
+solve_and_plot.png
+*.unified.png

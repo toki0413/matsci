@@ -949,10 +949,11 @@ def unified_bridge(
 @click.argument("model")
 @click.option("--method", default="fem", help="fem | fd")
 @click.option("--n", default=10, help="Number of elements/points")
+@click.option("--plot", "plot_path", default=None, help="Path to save solution plot")
 @click.pass_context
-def unified_solve(ctx: click.Context, model: str, method: str, n: int) -> None:
+def unified_solve(ctx: click.Context, model: str, method: str, n: int, plot_path: str | None) -> None:
     """Discretize and solve a unified model."""
-    from huginn.unified import solve
+    from huginn.unified import solve, solve_and_plot
     from huginn.unified.models import get_model
 
     factory = get_model(model)
@@ -961,7 +962,10 @@ def unified_solve(ctx: click.Context, model: str, method: str, n: int) -> None:
         return
     problem = factory()
     try:
-        result = solve(problem, method=method, n=n)
+        if plot_path:
+            result = solve_and_plot(problem, method=method, n=n, output_path=plot_path)
+        else:
+            result = solve(problem, method=method, n=n)
     except Exception as e:
         console.print(f"[red]Solve failed: {e}[/red]")
         return
@@ -970,9 +974,37 @@ def unified_solve(ctx: click.Context, model: str, method: str, n: int) -> None:
     console.print(Panel(f"[bold blue]{model}[/bold blue]", title="Unified Solve", subtitle=info, border_style="blue"))
     console.print(f"[bold]Mesh:[/bold] {result['mesh']}")
     console.print(f"[bold]Solution:[/bold] {result['solution']}")
+    if plot_path:
+        console.print(f"[green]Plot saved to {result['plot_path']}[/green]")
 
 
 @unified.command("discretize")
+@click.argument("model")
+@click.option("--method", default="fem", help="fem | fd")
+@click.option("--n", default=10, help="Number of elements/points")
+@click.pass_context
+def unified_discretize(ctx: click.Context, model: str, method: str, n: int) -> None:
+    """Discretize a unified model into a linear algebraic system."""
+    from huginn.unified import discretize
+    from huginn.unified.models import get_model
+
+    factory = get_model(model)
+    if not factory:
+        console.print(f"[red]Model '{model}' not found[/red]")
+        return
+    problem = factory()
+    try:
+        result = discretize(problem, method=method, n=n)
+    except Exception as e:
+        console.print(f"[red]Discretization failed: {e}[/red]")
+        return
+
+    info = f"Method: {result['method']}, DOFs: {result['n_dof']}"
+    console.print(Panel(f"[bold blue]{model}[/bold blue]", title="Discretization", subtitle=info, border_style="blue"))
+    console.print("[bold]Stiffness matrix:[/bold]")
+    for row in result["stiffness_matrix"]:
+        console.print(f"  {row}")
+    console.print(f"[bold]Load vector:[/bold] {result['load_vector']}")
 
 
 def main() -> None:
