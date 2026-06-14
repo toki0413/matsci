@@ -63,8 +63,8 @@ desktop/src-tauri/sidecars/
 desktop/dist/
 
 # Downloaded release binaries
-MatSci-Agent_*.exe
-matsci-agent-desktop.exe
+Huginn_*.exe
+huginn-agent-desktop.exe
 
 # Python build artifacts
 agent/dist/
@@ -74,7 +74,7 @@ pyext/dist/
 cli/target/
 
 # Audit / runtime logs
-matsci_audit.jsonl
+huginn_audit.jsonl
 *.log
 
 # Secrets
@@ -84,7 +84,7 @@ matsci_audit.jsonl
 !.env.example
 
 # Nested repositories
-agent/lean/MatSciLean/
+agent/lean/HuginnLean/
 
 # Misc
 *.pid
@@ -92,5 +92,5 @@ agent/lean/MatSciLean/
 *.bak
 
 # Local runtime data
-agent/.matsci_kb/
-agent/.matsci_memory/
+agent/.huginn_kb/
+agent/.huginn_memory/

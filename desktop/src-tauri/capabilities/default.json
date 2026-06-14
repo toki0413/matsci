@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for the MatSci-Agent desktop app",
+  "description": "Default capabilities for the Huginn desktop app",
   "windows": ["main", "pet"],
   "permissions": [
     "core:default",
@@ -14,12 +14,12 @@
       "identifier": "shell:allow-spawn",
       "allow": [
         {
-          "name": "sidecars/matsci",
+          "name": "sidecars/huginn",
           "sidecar": true,
           "args": true
         },
         {
-          "name": "sidecars/matsci-sidecar",
+          "name": "sidecars/huginn-sidecar",
           "sidecar": true,
           "args": true
         },
@@ -35,11 +35,11 @@
       "identifier": "shell:allow-kill",
       "allow": [
         {
-          "name": "sidecars/matsci",
+          "name": "sidecars/huginn",
           "sidecar": true
         },
         {
-          "name": "sidecars/matsci-sidecar",
+          "name": "sidecars/huginn-sidecar",
           "sidecar": true
         },
         {

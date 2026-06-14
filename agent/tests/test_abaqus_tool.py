@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from matsci_agent.tools.abaqus_tool import AbaqusTool, AbaqusToolInput
+from huginn.tools.abaqus_tool import AbaqusTool, AbaqusToolInput
 
 
 def test_abaqus_tool_import_packing_reference_points(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.tools.qe_tool import QuantumEspressoTool, QuantumEspressoToolInput
+from huginn.tools.qe_tool import QuantumEspressoTool, QuantumEspressoToolInput
 
 
 def test_qe_tool_generates_input(tmp_path: Path) -> None:

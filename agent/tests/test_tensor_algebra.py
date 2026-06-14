@@ -4,9 +4,9 @@ import asyncio
 import pytest
 import math
 
-from matsci_agent.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
-from matsci_agent.tools.lean_tool import LeanTool, LeanToolInput
-from matsci_agent.types import ToolContext
+from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.types import ToolContext
 
 
 CTX = ToolContext(session_id="tensor_test", workspace=".")
@@ -180,15 +180,15 @@ class TestTensorAlgebraLean:
     @pytest.fixture(scope="class")
     def lean(self):
         from pathlib import Path
-        from matsci_agent.lean.interface import LeanInterface
-        project = Path(__file__).parent.parent / "lean" / "MatSciLean"
+        from huginn.lean.interface import LeanInterface
+        project = Path(__file__).parent.parent / "lean" / "HuginnLean"
         if not (project / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return LeanInterface(project)
 
     def test_isotropic_stiffness_applied(self, lean):
         """Apply isotropic stiffness to pure shear strain."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 -- λ = 50 GPa, μ = 30 GPa => C11 = 110, C12 = 50, C44 = 30
 def C : FourthOrderTensor := isotropicElasticity 50.0 30.0
@@ -201,7 +201,7 @@ def sigma : SecondOrderTensor3 := applyStiffness C eps
 #eval sigma.s12
 #eval sigma.s11
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.TensorAlgebra"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.TensorAlgebra"], timeout=60)
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 2
@@ -212,7 +212,7 @@ def sigma : SecondOrderTensor3 := applyStiffness C eps
 
     def test_cubic_invariants(self, lean):
         """Compute invariants of a stress tensor."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 def sigma : SecondOrderTensor3 := ⟨100.0, 50.0, 30.0, 10.0, 5.0, 2.0⟩
 
@@ -220,7 +220,7 @@ def sigma : SecondOrderTensor3 := ⟨100.0, 50.0, 30.0, 10.0, 5.0, 2.0⟩
 #eval (invariantsSOT sigma).2.1
 #eval (invariantsSOT sigma).2.2
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.TensorAlgebra"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.TensorAlgebra"], timeout=60)
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 3
@@ -233,25 +233,25 @@ def sigma : SecondOrderTensor3 := ⟨100.0, 50.0, 30.0, 10.0, 5.0, 2.0⟩
 
     def test_von_mises_hydrostatic(self, lean):
         """Hydrostatic stress should give zero von Mises."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 def sigma : SecondOrderTensor3 := ⟨30.0, 30.0, 30.0, 0.0, 0.0, 0.0⟩
 #eval vonMisesStress sigma
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.TensorAlgebra"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.TensorAlgebra"], timeout=60)
         assert result.success, result.stderr
         vm = float(result.stdout.strip().splitlines()[-1].strip())
         assert abs(vm) < 1e-5
 
     def test_deviatoric_trace_zero(self, lean):
         """Deviatoric tensor should have zero trace."""
-        code = """open MatSciLean
+        code = """open HuginnLean
 
 def sigma : SecondOrderTensor3 := ⟨100.0, 50.0, 30.0, 10.0, 5.0, 2.0⟩
 def s : SecondOrderTensor3 := deviatoricSOT sigma
 #eval traceSOT s
 """
-        result = lean.eval_lean_code(code, imports=["MatSciLean.TensorAlgebra"], timeout=60)
+        result = lean.eval_lean_code(code, imports=["HuginnLean.TensorAlgebra"], timeout=60)
         assert result.success, result.stderr
         tr = float(result.stdout.strip().splitlines()[-1].strip())
         assert abs(tr) < 1e-5
@@ -267,9 +267,9 @@ class TestTensorCalculusCrossGoal:
     @pytest.fixture
     def lean_tool(self):
         from pathlib import Path
-        project = Path(__file__).parent.parent / "lean" / "MatSciLean"
+        project = Path(__file__).parent.parent / "lean" / "HuginnLean"
         if not (project / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return LeanTool()
 
     def test_invariants_auto_verify(self, sym_tool, lean_tool):

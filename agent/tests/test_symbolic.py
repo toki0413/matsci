@@ -4,9 +4,9 @@ import asyncio
 import pytest
 import numpy as np
 
-from matsci_agent.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
-from matsci_agent.tools.autodiff_tool import AutoDiffTool, AutoDiffInput
-from matsci_agent.types import ToolContext
+from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.autodiff_tool import AutoDiffTool, AutoDiffInput
+from huginn.types import ToolContext
 
 
 CTX = ToolContext(session_id="test", workspace=".")

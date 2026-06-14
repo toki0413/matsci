@@ -7,11 +7,11 @@ use std::process::{Command, Stdio};
 /// Find a usable Python interpreter.
 ///
 /// Priority:
-/// 1. `MATSCI_PYTHON` environment variable
+/// 1. `HUGINN_PYTHON` environment variable
 /// 2. `python` on PATH
 /// 3. `python3` on PATH
 pub fn find_python() -> Result<PathBuf> {
-    if let Ok(py) = env::var("MATSCI_PYTHON") {
+    if let Ok(py) = env::var("HUGINN_PYTHON") {
         let py = PathBuf::from(py);
         if py.exists() {
             return Ok(py);
@@ -24,13 +24,13 @@ pub fn find_python() -> Result<PathBuf> {
         }
     }
 
-    anyhow::bail!("No Python interpreter found on PATH. Set MATSCI_PYTHON or install Python.")
+    anyhow::bail!("No Python interpreter found on PATH. Set HUGINN_PYTHON or install Python.")
 }
 
 /// Run a Python CLI subcommand, inheriting stdin/stdout/stderr.
 ///
 /// This delegates to:
-///   `python -m matsci_agent.cli [global_args...] <subcommand> [subcommand_args...]`
+///   `python -m huginn.cli [global_args...] <subcommand> [subcommand_args...]`
 ///
 /// Global options must come before the subcommand because Click only accepts
 /// them on the group, not on individual subcommands.
@@ -46,7 +46,7 @@ pub fn run_python_cli(
 
     let mut cmd = Command::new(&python);
     cmd.arg("-m")
-        .arg("matsci_agent.cli")
+        .arg("huginn.cli")
         .args(global_args)
         .arg(subcommand)
         .args(subcommand_args)
@@ -98,8 +98,8 @@ pub fn list_tools() -> Result<Vec<(String, String, bool)>> {
     let expr = r#"
 import json
 try:
-    from matsci_agent.cli import _register_all_tools
-    from matsci_agent.tools.registry import ToolRegistry
+    from huginn.cli import _register_all_tools
+    from huginn.tools.registry import ToolRegistry
     _register_all_tools()
     tools = []
     for name in ToolRegistry.list_tools():

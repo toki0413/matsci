@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from matsci_agent.config import MatSciConfig, ModelConfig, AgentProfileConfig
-from matsci_agent.models.registry import ModelRegistry
-from matsci_agent.agents.factory import AgentFactory
-from matsci_agent.agents.orchestrator import Orchestrator, SubTask, TaskPlan
-from matsci_agent.tools.registry import ToolRegistry
-from matsci_agent.tools.memory_tool import RememberTool, RecallTool
-from matsci_agent.tools.orchestrate_tool import OrchestrateTool
+from huginn.config import HuginnConfig, ModelConfig, AgentProfileConfig
+from huginn.models.registry import ModelRegistry
+from huginn.agents.factory import AgentFactory
+from huginn.agents.orchestrator import Orchestrator, SubTask, TaskPlan
+from huginn.tools.registry import ToolRegistry
+from huginn.tools.memory_tool import RememberTool, RecallTool
+from huginn.tools.orchestrate_tool import OrchestrateTool
 
 
 ToolRegistry.register(RememberTool())
@@ -21,7 +21,7 @@ ToolRegistry.register(OrchestrateTool())
 
 
 def test_model_registry_list_and_default():
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         models=[
             ModelConfig(alias="cheap", provider="openai", model="gpt-4o-mini", api_key="x"),
             ModelConfig(alias="smart", provider="anthropic", model="claude-opus", api_key="x"),
@@ -54,10 +54,10 @@ def test_config_migration_to_model_pool():
     import os
     env = os.environ.copy()
     try:
-        os.environ["MATSCI_PROVIDER"] = "openai"
-        os.environ["MATSCI_MODEL"] = "gpt-4o"
-        os.environ["MATSCI_API_KEY"] = "test-key"
-        cfg = MatSciConfig.from_env()
+        os.environ["HUGINN_PROVIDER"] = "openai"
+        os.environ["HUGINN_MODEL"] = "gpt-4o"
+        os.environ["HUGINN_API_KEY"] = "test-key"
+        cfg = HuginnConfig.from_env()
         assert len(cfg.models) == 1
         assert cfg.models[0].alias == "default"
         assert cfg.agents[0].id == "lead"
@@ -67,7 +67,7 @@ def test_config_migration_to_model_pool():
 
 
 def test_agent_factory_lists_profiles():
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         models=[ModelConfig(alias="m", provider="openai", model="gpt-4o", api_key="x")],
         agents=[
             AgentProfileConfig(id="lead", model_alias="m"),
@@ -81,7 +81,7 @@ def test_agent_factory_lists_profiles():
 
 
 def test_agent_factory_respects_tool_filter():
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         models=[ModelConfig(alias="m", provider="openai", model="gpt-4o", api_key="x")],
         agents=[AgentProfileConfig(id="limited", model_alias="m", tools=["remember", "recall"])],
     )
@@ -98,7 +98,7 @@ def test_agent_factory_respects_tool_filter():
 @pytest.mark.asyncio
 async def test_orchestrator_dependency_order():
     """Tasks with dependencies must run after their prerequisites."""
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         models=[ModelConfig(alias="m", provider="openai", model="gpt-4o", api_key="x")],
         agents=[
             AgentProfileConfig(id="lead", model_alias="m"),
@@ -140,7 +140,7 @@ async def test_orchestrator_dependency_order():
 
 @pytest.mark.asyncio
 async def test_orchestrator_single_task_synthesizes_directly():
-    cfg = MatSciConfig(
+    cfg = HuginnConfig(
         models=[ModelConfig(alias="m", provider="openai", model="gpt-4o", api_key="x")],
         agents=[AgentProfileConfig(id="lead", model_alias="m")],
     )

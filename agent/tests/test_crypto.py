@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.crypto import CryptoVault, KeyManager, EncryptedDatabase, EncryptedConfig
+from huginn.crypto import CryptoVault, KeyManager, EncryptedDatabase, EncryptedConfig
 
 
 class TestCryptoVault:
     def test_encrypt_decrypt_roundtrip(self):
         vault = CryptoVault("test_password")
-        plaintext = "Hello, MatSci-Agent!"
+        plaintext = "Hello, Huginn!"
         ciphertext = vault.encrypt(plaintext)
         assert ciphertext != plaintext.encode()
         decrypted = vault.decrypt(ciphertext)

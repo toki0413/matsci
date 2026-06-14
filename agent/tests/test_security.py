@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.security import (
+from huginn.security import (
     SandboxConfig,
     SandboxError,
     SandboxExecutor,
@@ -17,7 +17,7 @@ from matsci_agent.security import (
     safe_eval,
     SafeEvalError,
 )
-from matsci_agent.config import MatSciConfig
+from huginn.config import HuginnConfig
 
 
 # ---------------------------------------------------------------------------
@@ -167,43 +167,43 @@ class TestSafeEval:
 
 class TestConfigKeyResolution:
     def test_plain_key(self):
-        assert MatSciConfig.resolve_key("secret123") == "secret123"
+        assert HuginnConfig.resolve_key("secret123") == "secret123"
 
     def test_none_key(self):
-        assert MatSciConfig.resolve_key(None) is None
+        assert HuginnConfig.resolve_key(None) is None
 
     def test_env_prefix(self, monkeypatch):
-        monkeypatch.setenv("MATSCI_TEST_KEY", "resolved_value")
-        assert MatSciConfig.resolve_key("env:MATSCI_TEST_KEY") == "resolved_value"
+        monkeypatch.setenv("HUGINN_TEST_KEY", "resolved_value")
+        assert HuginnConfig.resolve_key("env:HUGINN_TEST_KEY") == "resolved_value"
 
     def test_env_prefix_missing(self):
-        assert MatSciConfig.resolve_key("env:NONEXISTENT_VAR_XYZ") is None
+        assert HuginnConfig.resolve_key("env:NONEXISTENT_VAR_XYZ") is None
 
     def test_resolved_api_key_property(self):
-        cfg = MatSciConfig(api_key="env:TEST_KEY")
+        cfg = HuginnConfig(api_key="env:TEST_KEY")
         os.environ["TEST_KEY"] = "hidden"
         assert cfg.resolved_api_key == "hidden"
         del os.environ["TEST_KEY"]
 
     def test_to_dict_mask_key(self):
-        cfg = MatSciConfig(api_key="secret")
+        cfg = HuginnConfig(api_key="secret")
         d = cfg.to_dict(mask_key=True)
         assert d["api_key"] == "***"
         d2 = cfg.to_dict(mask_key=False)
         assert d2["api_key"] == "secret"
 
     def test_save_load_json(self, tmp_path: Path):
-        cfg = MatSciConfig(provider="openai", model="gpt-4o", api_key="sk-test")
+        cfg = HuginnConfig(provider="openai", model="gpt-4o", api_key="sk-test")
         path = tmp_path / "cfg.json"
         cfg.save(str(path), format="json")
-        loaded = MatSciConfig.load(str(path), format="json")
+        loaded = HuginnConfig.load(str(path), format="json")
         assert loaded.provider == "openai"
         assert loaded.model == "gpt-4o"
         assert loaded.api_key == "sk-test"
 
     def test_from_dict_ignores_unknown(self):
         d = {"provider": "ollama", "unknown_field": 123}
-        cfg = MatSciConfig.from_dict(d)
+        cfg = HuginnConfig.from_dict(d)
         assert cfg.provider == "ollama"
 
 
@@ -213,23 +213,23 @@ class TestConfigKeyResolution:
 
 class TestHPCSanitization:
     def test_sanitize_job_name_removes_special_chars(self):
-        from matsci_agent.hpc.client import _sanitize_job_name
+        from huginn.hpc.client import _sanitize_job_name
         assert _sanitize_job_name("my-job_1") == "my-job_1"
         assert _sanitize_job_name("job; rm -rf /") == "job__rm_-rf__"
         assert _sanitize_job_name("job|cat /etc/passwd") == "job_cat__etc_passwd"
 
     def test_sanitize_job_name_truncation(self):
-        from matsci_agent.hpc.client import _sanitize_job_name
+        from huginn.hpc.client import _sanitize_job_name
         long_name = "a" * 100
         assert len(_sanitize_job_name(long_name)) == 64
 
     def test_sanitize_job_name_invalid(self):
-        from matsci_agent.hpc.client import _sanitize_job_name
+        from huginn.hpc.client import _sanitize_job_name
         with pytest.raises(ValueError):
             _sanitize_job_name("|")  # becomes "_" which is rejected
 
     def test_validate_path_component_blocks_metacharacters(self):
-        from matsci_agent.hpc.client import _validate_path_component
+        from huginn.hpc.client import _validate_path_component
         _validate_path_component("/home/user/work")  # OK
         with pytest.raises(ValueError, match="forbidden characters"):
             _validate_path_component("/home/user; rm -rf /")
@@ -257,37 +257,37 @@ class TestHPCSanitization:
 
 class TestRestrictedPython:
     def test_valid_code_passes(self):
-        from matsci_agent.security import validate_code
+        from huginn.security import validate_code
         validate_code("x = 2 + 3\nprint(x)")
         validate_code("import math\nprint(math.sin(0))")
 
     def test_forbidden_import_os(self):
-        from matsci_agent.security import validate_code, RestrictedPythonError
+        from huginn.security import validate_code, RestrictedPythonError
         with pytest.raises(RestrictedPythonError, match="Forbidden import: os"):
             validate_code("import os\nos.system('ls')")
 
     def test_forbidden_import_subprocess(self):
-        from matsci_agent.security import validate_code, RestrictedPythonError
+        from huginn.security import validate_code, RestrictedPythonError
         with pytest.raises(RestrictedPythonError, match="Forbidden import: subprocess"):
             validate_code("from subprocess import run\nrun([''])")
 
     def test_forbidden_builtin_eval(self):
-        from matsci_agent.security import validate_code, RestrictedPythonError
+        from huginn.security import validate_code, RestrictedPythonError
         with pytest.raises(RestrictedPythonError, match="Forbidden builtin call: eval"):
             validate_code("eval('1+1')")
 
     def test_forbidden_builtin_exec(self):
-        from matsci_agent.security import validate_code, RestrictedPythonError
+        from huginn.security import validate_code, RestrictedPythonError
         with pytest.raises(RestrictedPythonError, match="Forbidden builtin call: exec"):
             validate_code("exec('print(1)')")
 
     def test_forbidden_attribute_subclasses(self):
-        from matsci_agent.security import validate_code, RestrictedPythonError
+        from huginn.security import validate_code, RestrictedPythonError
         with pytest.raises(RestrictedPythonError, match="Forbidden attribute access"):
             validate_code("(1).__class__.__subclasses__()")
 
     def test_empty_code_rejected(self):
-        from matsci_agent.security import validate_code, RestrictedPythonError
+        from huginn.security import validate_code, RestrictedPythonError
         with pytest.raises(RestrictedPythonError, match="Empty code"):
             validate_code("")
         with pytest.raises(RestrictedPythonError, match="Empty code"):

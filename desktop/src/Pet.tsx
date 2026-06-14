@@ -170,7 +170,7 @@ export default function Pet() {
   const [tipIndex, setTipIndex] = useState(0);
   const [persistent, setPersistent] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [petName, setPetName] = useState("Toki");
+  const [petName, setPetName] = useState("Muninn");
   const [personality, setPersonality] = useState<PetPersonality>("cheerful");
   const [clickIndex, setClickIndex] = useState(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

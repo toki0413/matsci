@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from matsci_agent.hpc.client import HPCClient, HPCConfig
+from huginn.hpc.client import HPCClient, HPCConfig
 
 paramiko = pytest.importorskip("paramiko")
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.tools.cp2k_tool import Cp2kTool, Cp2kToolInput
+from huginn.tools.cp2k_tool import Cp2kTool, Cp2kToolInput
 
 
 def test_cp2k_tool_generates_input(tmp_path: Path) -> None:

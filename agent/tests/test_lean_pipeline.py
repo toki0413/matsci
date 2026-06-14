@@ -3,17 +3,17 @@
 import pytest
 from pathlib import Path
 
-from matsci_agent.lean.pipeline import StabilityPipeline
+from huginn.lean.pipeline import StabilityPipeline
 
 
-LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "MatSciLean"
+LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
 
 class TestStabilityPipeline:
     @pytest.fixture(scope="class")
     def pipe(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return StabilityPipeline(LEAN_PROJECT)
 
     def test_cubic_iron(self, pipe):

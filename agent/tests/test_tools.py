@@ -1,16 +1,16 @@
-"""Unit tests for MatSci-Agent tools."""
+"""Unit tests for Huginn tools."""
 
 import asyncio
 import pytest
 import tempfile
 import os
 
-from matsci_agent.tools.registry import ToolRegistry
-from matsci_agent.tools.structure_tool import StructureTool
-from matsci_agent.tools.validate_tool import ValidateTool
-from matsci_agent.tools.diagnose_tool import DiagnoseTool
-from matsci_agent.tools.adapter import ToolAdapter
-from matsci_agent.types import ToolContext
+from huginn.tools.registry import ToolRegistry
+from huginn.tools.structure_tool import StructureTool
+from huginn.tools.validate_tool import ValidateTool
+from huginn.tools.diagnose_tool import DiagnoseTool
+from huginn.tools.adapter import ToolAdapter
+from huginn.types import ToolContext
 
 
 class TestToolRegistry:

@@ -4,15 +4,15 @@ mod python;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use config::MatSciConfig;
+use config::HuginnConfig;
 use dialoguer::{theme::ColorfulTheme, Input};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// MatSci-Agent: Material Science specialized AI Agent Harness.
+/// Huginn: Material Science specialized AI Agent Harness.
 #[derive(Parser, Debug)]
-#[command(name = "matsci")]
+#[command(name = "huginn")]
 #[command(about = "Material Science specialized AI Agent Harness")]
 #[command(version)]
 struct Cli {
@@ -87,7 +87,7 @@ enum Commands {
     /// Interactive first-run configuration wizard
     Configure {
         /// Config file path to write
-        #[arg(short, long, default_value = "matsci.toml")]
+        #[arg(short, long, default_value = "huginn.toml")]
         path: PathBuf,
     },
 }
@@ -164,7 +164,7 @@ fn run() -> Result<()> {
 fn cmd_version() -> Result<()> {
     println!(
         "{} {}",
-        "MatSci-Agent".bold().blue(),
+        "Huginn".bold().blue(),
         env!("CARGO_PKG_VERSION").bold()
     );
 
@@ -216,13 +216,13 @@ fn cmd_tools() -> Result<()> {
 fn cmd_configure(path: &Path) -> Result<()> {
     println!(
         "{}",
-        " MatSci-Agent Configuration Wizard "
+        " Huginn Configuration Wizard "
             .on_blue()
             .white()
             .bold()
     );
 
-    let existing = MatSciConfig::load(path).unwrap_or_default();
+    let existing = HuginnConfig::load(path).unwrap_or_default();
 
     let provider: String = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("Provider")
@@ -262,7 +262,7 @@ fn cmd_configure(path: &Path) -> Result<()> {
         .interact_text()
         .context("Failed to read workspace")?;
 
-    let new_cfg = MatSciConfig {
+    let new_cfg = HuginnConfig {
         provider,
         model: if model == "auto" { None } else { Some(model) },
         api_key: if api_key.is_empty() {
@@ -287,7 +287,7 @@ fn cmd_configure(path: &Path) -> Result<()> {
         path.display().to_string().bold()
     );
     println!(
-        "{} Run: matsci chat --config {}",
+        "{} Run: huginn chat --config {}",
         "→".dimmed(),
         path.display()
     );
@@ -308,7 +308,7 @@ fn collect_global_args(cli: &Cli, workspace: &Path) -> Vec<String> {
     if let Some(config) = &cli.config {
         args.push("--config".to_string());
         args.push(config.display().to_string());
-    } else if let Ok(cfg) = env::current_dir().map(|d| d.join("matsci.toml")) {
+    } else if let Ok(cfg) = env::current_dir().map(|d| d.join("huginn.toml")) {
         // Pass default config if it exists so Python picks it up explicitly.
         if cfg.exists() {
             args.push("--config".to_string());
@@ -354,7 +354,7 @@ fn delegate_to_python(
     extra: &[String],
 ) -> Result<()> {
     let status = python::run_python_cli(workspace, subcommand, globals, extra)
-        .with_context(|| format!("Failed to run `matsci {subcommand}`"))?;
+        .with_context(|| format!("Failed to run `huginn {subcommand}`"))?;
 
     if !status.success() {
         anyhow::bail!("Python backend exited with status: {status}");

@@ -1,13 +1,13 @@
 [package]
-name = "matsci-ext"
+name = "huginn-ext"
 version = "0.1.0"
 edition = "2021"
-description = "Rust performance extensions for MatSci-Agent"
+description = "Rust performance extensions for Huginn"
 license = "MIT"
 authors = ["toki"]
 
 [lib]
-name = "matsci_ext"
+name = "huginn_ext"
 crate-type = ["cdylib"]
 
 [dependencies]

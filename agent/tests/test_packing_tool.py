@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.tools.packing_tool import PackingTool, PackingToolInput
+from huginn.tools.packing_tool import PackingTool, PackingToolInput
 
 
 def test_packing_tool_molecules(tmp_path: Path) -> None:

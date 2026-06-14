@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 
-/// MatSci-Agent configuration, matching the Python `MatSciConfig` schema.
+/// Huginn configuration, matching the Python `HuginnConfig` schema.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
-pub struct MatSciConfig {
+pub struct HuginnConfig {
     pub provider: String,
     pub model: Option<String>,
     pub api_key: Option<String>,
@@ -31,7 +31,7 @@ pub struct MatSciConfig {
 }
 
 #[allow(dead_code)]
-impl MatSciConfig {
+impl HuginnConfig {
     /// Default configuration.
     pub fn new() -> Self {
         Self {
@@ -49,13 +49,13 @@ impl MatSciConfig {
 
     /// Load configuration from environment variables.
     pub fn from_env() -> Self {
-        let provider = env::var("MATSCI_PROVIDER")
+        let provider = env::var("HUGINN_PROVIDER")
             .unwrap_or_else(|_| "default".to_string())
             .to_lowercase()
             .trim()
             .to_string();
 
-        let mut api_key = env::var("MATSCI_API_KEY").ok();
+        let mut api_key = env::var("HUGINN_API_KEY").ok();
         if api_key.is_none() {
             let key_var = provider_key_map().get(provider.as_str()).copied();
             if let Some(var) = key_var {
@@ -65,9 +65,9 @@ impl MatSciConfig {
 
         Self {
             provider,
-            model: env::var("MATSCI_MODEL").ok(),
+            model: env::var("HUGINN_MODEL").ok(),
             api_key,
-            base_url: env::var("MATSCI_BASE_URL").ok(),
+            base_url: env::var("HUGINN_BASE_URL").ok(),
             ollama_host: env::var("OLLAMA_HOST")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
             vasp_executable: env::var("VASP_EXECUTABLE").ok(),
@@ -75,29 +75,29 @@ impl MatSciConfig {
             hpc_scheduler: env::var("HPC_SCHEDULER").unwrap_or_else(|_| "local".to_string()),
             hpc_host: env::var("HPC_HOST").ok(),
             hpc_username: env::var("HPC_USERNAME").ok(),
-            workspace: env::var("MATSCI_WORKSPACE").unwrap_or_else(|_| ".".to_string()),
-            auto_approve: env::var("MATSCI_AUTO_APPROVE")
+            workspace: env::var("HUGINN_WORKSPACE").unwrap_or_else(|_| ".".to_string()),
+            auto_approve: env::var("HUGINN_AUTO_APPROVE")
                 .map(|v| v.to_lowercase() == "true")
                 .unwrap_or(false),
-            enable_exploration: env::var("MATSCI_ENABLE_EXPLORATION")
+            enable_exploration: env::var("HUGINN_ENABLE_EXPLORATION")
                 .map(|v| v.to_lowercase() == "true")
                 .unwrap_or(true),
-            max_parallel_branches: env::var("MATSCI_MAX_BRANCHES")
+            max_parallel_branches: env::var("HUGINN_MAX_BRANCHES")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5),
-            encryption_enabled: env::var("MATSCI_ENCRYPTION_ENABLED")
+            encryption_enabled: env::var("HUGINN_ENCRYPTION_ENABLED")
                 .map(|v| v.to_lowercase() == "true")
                 .unwrap_or(false),
-            encryption_password: env::var("MATSCI_ENCRYPTION_PASSWORD").ok(),
-            encryption_key_file: env::var("MATSCI_ENCRYPTION_KEY_FILE").ok(),
-            encrypt_rag_documents: env::var("MATSCI_ENCRYPT_RAG_DOCS")
+            encryption_password: env::var("HUGINN_ENCRYPTION_PASSWORD").ok(),
+            encryption_key_file: env::var("HUGINN_ENCRYPTION_KEY_FILE").ok(),
+            encrypt_rag_documents: env::var("HUGINN_ENCRYPT_RAG_DOCS")
                 .map(|v| v.to_lowercase() == "true")
                 .unwrap_or(true),
-            encrypt_rag_metadata: env::var("MATSCI_ENCRYPT_RAG_META")
+            encrypt_rag_metadata: env::var("HUGINN_ENCRYPT_RAG_META")
                 .map(|v| v.to_lowercase() == "true")
                 .unwrap_or(true),
-            encrypt_config: env::var("MATSCI_ENCRYPT_CONFIG")
+            encrypt_config: env::var("HUGINN_ENCRYPT_CONFIG")
                 .map(|v| v.to_lowercase() == "true")
                 .unwrap_or(false),
         }
@@ -110,7 +110,7 @@ impl MatSciConfig {
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let cfg: MatSciConfig = if ext == "json" {
+        let cfg: HuginnConfig = if ext == "json" {
             serde_json::from_str(&text)
                 .with_context(|| format!("Failed to parse JSON config: {}", path.display()))?
         } else {

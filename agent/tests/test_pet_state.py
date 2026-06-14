@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from matsci_agent.pet import PetEventBus, PetMood
+from huginn.pet import PetEventBus, PetMood
 
 
 def test_active_task_tracking():

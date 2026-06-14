@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.tools.openfoam_tool import OpenFoamTool, OpenFoamToolInput
+from huginn.tools.openfoam_tool import OpenFoamTool, OpenFoamToolInput
 
 
 def test_openfoam_tool_generates_case(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_openfoam_tool_input_schema() -> None:
 
 def test_openfoam_tool_set_fields_from_packing(tmp_path: Path) -> None:
     """OpenFoamTool set_fields action should consume packing_tool output."""
-    from matsci_agent.tools.packing_tool import PackingTool
+    from huginn.tools.packing_tool import PackingTool
 
     packer = PackingTool()
     pack_result = packer.call(

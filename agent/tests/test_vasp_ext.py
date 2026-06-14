@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matsci_agent.tools.vasp_tool import VaspTool, _HAS_MATSCI_EXT
+from huginn.tools.vasp_tool import VaspTool, _HAS_HUGINN_EXT
 
 
 def _write_synthetic_outcar(path: Path) -> None:
@@ -67,13 +67,13 @@ def test_python_outcar_parser_baseline(synthetic_outcar: Path) -> None:
     assert len(result["magnetic_moments"]) == 2
 
 
-@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
+@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
 def test_rust_extension_available() -> None:
     """The Rust extension should be importable in this environment."""
-    assert _HAS_MATSCI_EXT is True
+    assert _HAS_HUGINN_EXT is True
 
 
-@pytest.mark.skipif(not _HAS_MATSCI_EXT, reason="matsci_ext Rust extension not installed")
+@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
 def test_rust_outcar_parser_matches_python(synthetic_outcar: Path) -> None:
     """Rust OUTCAR parser output should match the Python parser output."""
     tool = VaspTool()

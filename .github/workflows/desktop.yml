@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo build --release -p matsci -p matsci-sidecar 2>&1 | tee rust-build.log
+          cargo build --release -p huginn -p huginn-sidecar 2>&1 | tee rust-build.log
 
       - name: Detect Rust target triple
         id: target
@@ -48,14 +48,14 @@ jobs:
           TARGET=$(rustc --print host-tuple)
           echo "triple=$TARGET" >> "$GITHUB_OUTPUT"
 
-      - name: Stage matsci sidecars
+      - name: Stage huginn sidecars
         shell: bash
         run: |
           TARGET=${{ steps.target.outputs.triple }}
           SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "$SIDECAR_DIR"
-          cp "target/release/matsci.exe" "$SIDECAR_DIR/matsci-$TARGET.exe"
-          cp "target/release/matsci-sidecar.exe" "$SIDECAR_DIR/matsci-sidecar-$TARGET.exe"
+          cp "target/release/huginn.exe" "$SIDECAR_DIR/huginn-$TARGET.exe"
+          cp "target/release/huginn-sidecar.exe" "$SIDECAR_DIR/huginn-sidecar-$TARGET.exe"
 
       - name: Install frontend dependencies
         working-directory: ./desktop
@@ -100,7 +100,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: matsci-desktop-windows
+          name: huginn-desktop-windows
           path: |
             target/release/bundle/
             target/release/*.exe
@@ -127,7 +127,7 @@ jobs:
         shell: bash
         run: pip install maturin
 
-      - name: Build matsci-ext wheel (cp${{ matrix.python-version }})
+      - name: Build huginn-ext wheel (cp${{ matrix.python-version }})
         shell: bash
         run: |
           cd pyext
@@ -136,7 +136,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: matsci-wheels
+          name: huginn-wheels
           path: target/wheels/*.whl
           if-no-files-found: error
 
@@ -149,13 +149,13 @@ jobs:
       - name: Download desktop artifacts
         uses: actions/download-artifact@v4
         with:
-          name: matsci-desktop-windows
+          name: huginn-desktop-windows
           path: ./assets
 
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          name: matsci-wheels
+          name: huginn-wheels
           path: ./assets/wheels
 
       - name: Create pre-release with all assets

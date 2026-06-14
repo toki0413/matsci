@@ -1,5 +1,5 @@
 """
-Verification script for FEA/CFD integration into MatSci-Agent.
+Verification script for FEA/CFD integration into Huginn.
 
 Checks:
   1. Prompts contain FEA/CFD knowledge
@@ -27,7 +27,7 @@ SOBKO_ROOT = Path("C:/Users/wanzh/Sobko_MCP_project")
 def check_prompts() -> bool:
     """Check that prompts.py contains FEA/CFD knowledge."""
     print("\n[1] Checking prompts.py for FEA/CFD knowledge...")
-    prompts_path = REPO_ROOT / "agent" / "matsci_agent" / "prompts.py"
+    prompts_path = REPO_ROOT / "agent" / "huginn" / "prompts.py"
     with open(prompts_path, "r", encoding="utf-8") as f:
         content = f.read()
 
@@ -51,8 +51,8 @@ def check_workflow_templates() -> bool:
 
     # Import templates module (which auto-registers)
     try:
-        from matsci_agent.workflows import templates
-        from matsci_agent.workflows.templates import WORKFLOW_TEMPLATES as _TEMPLATES
+        from huginn.workflows import templates
+        from huginn.workflows.templates import WORKFLOW_TEMPLATES as _TEMPLATES
     except Exception as e:
         print(f"  [WARN] Could not import templates: {e}")
         return False
@@ -77,7 +77,7 @@ def check_workflow_templates() -> bool:
 def check_diagnose_tool() -> bool:
     """Check diagnose tool covers FEA/CFD software."""
     print("\n[3] Checking diagnose_tool for FEA/CFD coverage...")
-    tool_path = REPO_ROOT / "agent" / "matsci_agent" / "tools" / "diagnose_tool.py"
+    tool_path = REPO_ROOT / "agent" / "huginn" / "tools" / "diagnose_tool.py"
     with open(tool_path, "r", encoding="utf-8") as f:
         content = f.read()
 
@@ -108,7 +108,7 @@ def check_diagnose_tool() -> bool:
 def check_router_retriever() -> bool:
     """Check router retriever routes FEA/CFD queries."""
     print("\n[4] Checking router_retriever for FEA/CFD routing...")
-    retriever_path = REPO_ROOT / "agent" / "matsci_agent" / "rag" / "router_retriever.py"
+    retriever_path = REPO_ROOT / "agent" / "huginn" / "rag" / "router_retriever.py"
     with open(retriever_path, "r", encoding="utf-8") as f:
         content = f.read()
 

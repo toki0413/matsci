@@ -90,9 +90,9 @@ fn compute_rdf(
     Ok(result.into())
 }
 
-/// Rust performance extensions for MatSci-Agent.
+/// Rust performance extensions for Huginn.
 #[pymodule]
-fn matsci_ext(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn huginn_ext(m: &Bound<'_, PyModule>) -> PyResult<()> {
     files::register_module(m)?;
     lammps::register_module(m)?;
     sandbox::register_module(m)?;

@@ -7,9 +7,9 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage
 
-from matsci_agent.coder.loop import CoderRunner
-from matsci_agent.config import CoderSettings, MatSciConfig, Settings
-from matsci_agent.permissions import PermissionConfig
+from huginn.coder.loop import CoderRunner
+from huginn.config import CoderSettings, HuginnConfig, Settings
+from huginn.permissions import PermissionConfig
 
 
 class FakeBoundModel:
@@ -34,7 +34,7 @@ class FakeModel:
 
 def _make_settings() -> Settings:
     return Settings(
-        config=MatSciConfig(provider="openai", model="gpt-4o", api_key="test-key"),
+        config=HuginnConfig(provider="openai", model="gpt-4o", api_key="test-key"),
         coder=CoderSettings(max_iterations=5, done_marker="[DONE]"),
     )
 
@@ -47,7 +47,7 @@ def _fake_get_model_factory(responses: list[AIMessage]):
 
 def test_default_tools_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "matsci_agent.coder.loop.get_model",
+        "huginn.coder.loop.get_model",
         _fake_get_model_factory([]),
     )
     runner = CoderRunner(settings=_make_settings())
@@ -58,7 +58,7 @@ def test_default_tools_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_run_returns_final_answer(monkeypatch: pytest.MonkeyPatch) -> None:
     final = AIMessage(content="All done. [DONE]")
     monkeypatch.setattr(
-        "matsci_agent.coder.loop.get_model",
+        "huginn.coder.loop.get_model",
         _fake_get_model_factory([final]),
     )
     runner = CoderRunner(settings=_make_settings())
@@ -86,7 +86,7 @@ def test_run_executes_tool_call(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) 
     final = AIMessage(content="File written. [DONE]")
 
     monkeypatch.setattr(
-        "matsci_agent.coder.loop.get_model",
+        "huginn.coder.loop.get_model",
         _fake_get_model_factory([tool_call, final]),
     )
     # Auto-approve so the test can focus on tool invocation, not permission prompts.
@@ -113,7 +113,7 @@ def test_read_only_tool_auto_approved(monkeypatch: pytest.MonkeyPatch) -> None:
     final = AIMessage(content="Done. [DONE]")
 
     monkeypatch.setattr(
-        "matsci_agent.coder.loop.get_model",
+        "huginn.coder.loop.get_model",
         _fake_get_model_factory([tool_call, final]),
     )
     runner = CoderRunner(settings=_make_settings())
@@ -139,7 +139,7 @@ def test_destructive_tool_denied_without_callback(monkeypatch: pytest.MonkeyPatc
     final = AIMessage(content="Finished. [DONE]")
 
     monkeypatch.setattr(
-        "matsci_agent.coder.loop.get_model",
+        "huginn.coder.loop.get_model",
         _fake_get_model_factory([tool_call, final]),
     )
     runner = CoderRunner(settings=_make_settings())  # no callback
@@ -166,7 +166,7 @@ def test_destructive_tool_approved_by_callback(monkeypatch: pytest.MonkeyPatch, 
     final = AIMessage(content="Finished. [DONE]")
 
     monkeypatch.setattr(
-        "matsci_agent.coder.loop.get_model",
+        "huginn.coder.loop.get_model",
         _fake_get_model_factory([tool_call, final]),
     )
     runner = CoderRunner(
@@ -193,7 +193,7 @@ def test_run_respects_max_iterations(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     monkeypatch.setattr(
-        "matsci_agent.coder.loop.get_model",
+        "huginn.coder.loop.get_model",
         _fake_get_model_factory([tool_call] * 5),
     )
     settings = _make_settings()

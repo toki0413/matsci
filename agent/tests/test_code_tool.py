@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from matsci_agent.tools.code_tool import CodeTool, CodeToolInput
+from huginn.tools.code_tool import CodeTool, CodeToolInput
 
 
 def test_code_tool_execute_python(tmp_path: Path) -> None:

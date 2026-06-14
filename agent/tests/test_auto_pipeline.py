@@ -3,10 +3,10 @@
 import pytest
 from pathlib import Path
 
-from matsci_agent.lean.auto_pipeline import AutoLeanPipeline, FloatSymPyToLean
+from huginn.lean.auto_pipeline import AutoLeanPipeline, FloatSymPyToLean
 
 
-LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "MatSciLean"
+LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
 
 class TestFloatSymPyToLean:
@@ -31,7 +31,7 @@ class TestAutoLeanPipeline:
     @pytest.fixture(scope="class")
     def pipe(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return AutoLeanPipeline(LEAN_PROJECT)
 
     def test_verify_simple_expression(self, pipe):
@@ -200,5 +200,5 @@ class TestAutoLeanPipeline:
         assert result.success, result.stderr
 
     def test_verify_matrix_eigenvalues_placeholder(self, pipe):
-        """Matrix literals require a MatSciLean matrix type; skip for now."""
-        pytest.skip("Lean 4 matrix literal syntax not yet available in MatSciLean")
+        """Matrix literals require a HuginnLean matrix type; skip for now."""
+        pytest.skip("Lean 4 matrix literal syntax not yet available in HuginnLean")

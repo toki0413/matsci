@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from matsci_agent.tools.gp_tool import GPTool, GPToolInput
+from huginn.tools.gp_tool import GPTool, GPToolInput
 
 
 def test_gp_tool_fit_and_predict() -> None:

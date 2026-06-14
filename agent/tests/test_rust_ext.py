@@ -8,21 +8,21 @@ from pathlib import Path
 
 import pytest
 
-matsci_ext = pytest.importorskip("matsci_ext")
+huginn_ext = pytest.importorskip("huginn_ext")
 
 
 pytestmark = [
     pytest.mark.skipif(
-        not hasattr(matsci_ext, "tail_lines"),
-        reason="matsci_ext compiled without tail_lines support",
+        not hasattr(huginn_ext, "tail_lines"),
+        reason="huginn_ext compiled without tail_lines support",
     ),
     pytest.mark.skipif(
-        not hasattr(matsci_ext, "top_k"),
-        reason="matsci_ext compiled without top_k support",
+        not hasattr(huginn_ext, "top_k"),
+        reason="huginn_ext compiled without top_k support",
     ),
     pytest.mark.skipif(
-        not hasattr(matsci_ext, "sandbox"),
-        reason="matsci_ext compiled without sandbox support",
+        not hasattr(huginn_ext, "sandbox"),
+        reason="huginn_ext compiled without sandbox support",
     ),
 ]
 
@@ -34,7 +34,7 @@ def test_tail_lines_basic() -> None:
         path = f.name
 
     try:
-        lines = matsci_ext.tail_lines(path, 5)
+        lines = huginn_ext.tail_lines(path, 5)
         assert len(lines) == 5
         assert lines[0] == "line 16"
         assert lines[-1] == "line 20"
@@ -54,13 +54,13 @@ def test_top_k_basic() -> None:
         ],
         dtype=np.float32,
     )
-    result = matsci_ext.top_k(query, matrix, k=2)
+    result = huginn_ext.top_k(query, matrix, k=2)
     assert result["indices"][0] == 0
     assert len(result["indices"]) == 2
 
 
 def test_run_sandboxed_echo() -> None:
-    result = matsci_ext.sandbox.run_sandboxed(
+    result = huginn_ext.sandbox.run_sandboxed(
         "echo",
         args=["hello", "sandbox"],
         timeout=5.0,
@@ -71,7 +71,7 @@ def test_run_sandboxed_echo() -> None:
 
 def test_run_sandboxed_rejects_shell_meta() -> None:
     with pytest.raises(ValueError):
-        matsci_ext.sandbox.run_sandboxed(
+        huginn_ext.sandbox.run_sandboxed(
             "echo",
             args=["foo; bar"],
             timeout=5.0,

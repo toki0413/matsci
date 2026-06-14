@@ -8,13 +8,13 @@ import asyncio
 import pytest
 from pathlib import Path
 
-from matsci_agent.lean.interface import LeanInterface
-from matsci_agent.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
-from matsci_agent.tools.lean_tool import LeanTool, LeanToolInput
-from matsci_agent.types import ToolContext
+from huginn.lean.interface import LeanInterface
+from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.types import ToolContext
 
 
-LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "MatSciLean"
+LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 CTX = ToolContext(session_id="e2e", workspace=".")
 
 
@@ -25,7 +25,7 @@ checked by compiling corresponding Lean 4 code."""
     @pytest.fixture(scope="class")
     def lean(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return LeanInterface(LEAN_PROJECT)
 
     def test_born_stability_computation_verification(self, lean):
@@ -34,12 +34,12 @@ checked by compiling corresponding Lean 4 code."""
         python_stable = C11 > abs(C12) and C11 + 2 * C12 > 0 and C44 > 0
         assert python_stable is True
 
-        lean_code = f"""open MatSciLean
+        lean_code = f"""open HuginnLean
 
 def testMaterial : CubicElastic := ⟨{C11}, {C12}, {C44}⟩
 #eval cubicBornStable testMaterial
 """
-        result = lean.eval_lean_code(lean_code, imports=["MatSciLean.Elasticity"])
+        result = lean.eval_lean_code(lean_code, imports=["HuginnLean.Elasticity"])
         assert result.success, f"Lean verification failed: {result.stderr}"
         assert "true" in result.stdout, f"Expected 'true' in stdout, got: {result.stdout}"
 
@@ -47,12 +47,12 @@ def testMaterial : CubicElastic := ⟨{C11}, {C12}, {C44}⟩
         """Verify Hill bounds hold for a known stable material."""
         C11, C12, C44 = 230.0, 135.0, 117.0
 
-        lean_code = f"""open MatSciLean
+        lean_code = f"""open HuginnLean
 
 def testMaterial : CubicElastic := ⟨{C11}, {C12}, {C44}⟩
 #eval cubicHillBoundsHold testMaterial
 """
-        result = lean.eval_lean_code(lean_code, imports=["MatSciLean.Elasticity"])
+        result = lean.eval_lean_code(lean_code, imports=["HuginnLean.Elasticity"])
         assert result.success, f"Lean verification failed: {result.stderr}"
         assert "true" in result.stdout
 
@@ -60,12 +60,12 @@ def testMaterial : CubicElastic := ⟨{C11}, {C12}, {C44}⟩
         """An unstable material should fail the Born check in Lean."""
         C11, C12, C44 = 100.0, 150.0, 50.0
 
-        lean_code = f"""open MatSciLean
+        lean_code = f"""open HuginnLean
 
 def badMaterial : CubicElastic := ⟨{C11}, {C12}, {C44}⟩
 #eval cubicBornStable badMaterial
 """
-        result = lean.eval_lean_code(lean_code, imports=["MatSciLean.Elasticity"])
+        result = lean.eval_lean_code(lean_code, imports=["HuginnLean.Elasticity"])
         assert result.success, f"Lean verification failed: {result.stderr}"
         assert "false" in result.stdout
 
@@ -74,12 +74,12 @@ def badMaterial : CubicElastic := ⟨{C11}, {C12}, {C44}⟩
         C11, C12, C44 = 230.0, 135.0, 117.0
         python_Kv = (C11 + 2 * C12) / 3.0
 
-        lean_code = f"""open MatSciLean
+        lean_code = f"""open HuginnLean
 
 def iron : CubicElastic := ⟨{C11}, {C12}, {C44}⟩
 #eval cubicBulkModulusVoigt iron
 """
-        result = lean.eval_lean_code(lean_code, imports=["MatSciLean.Elasticity"])
+        result = lean.eval_lean_code(lean_code, imports=["HuginnLean.Elasticity"])
         assert result.success
         lean_value = float(result.stdout.strip().split()[-1])
         assert abs(lean_value - python_Kv) < 1e-5
@@ -95,7 +95,7 @@ class TestCrossGoalSymbolicToLean:
     @pytest.fixture
     def lean_tool(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("MatSciLean project not found")
+            pytest.skip("HuginnLean project not found")
         return LeanTool()
 
     def test_derivative_auto_verify_via_symbolic_result(self, sym_tool, lean_tool):

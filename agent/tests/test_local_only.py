@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from matsci_agent.config import MatSciConfig, ModelConfig
-from matsci_agent.models.registry import ModelRegistry, is_local_provider
+from huginn.config import HuginnConfig, ModelConfig
+from huginn.models.registry import ModelRegistry, is_local_provider
 
 
 def test_is_local_provider() -> None:
@@ -18,7 +18,7 @@ def test_is_local_provider() -> None:
 
 
 def test_local_only_blocks_cloud_provider() -> None:
-    config = MatSciConfig(
+    config = HuginnConfig(
         local_only_mode=True,
         models=[ModelConfig(alias="claude", provider="anthropic", model="claude-3")],
     )
@@ -28,7 +28,7 @@ def test_local_only_blocks_cloud_provider() -> None:
 
 
 def test_local_only_allows_ollama() -> None:
-    config = MatSciConfig(
+    config = HuginnConfig(
         local_only_mode=True,
         models=[ModelConfig(alias="local", provider="ollama", model="qwen2.5:14b")],
     )

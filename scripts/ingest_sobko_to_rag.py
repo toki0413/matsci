@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Ingest Sobko cleaned database into MatSci-Agent's RAG system.
+Ingest Sobko cleaned database into Huginn's RAG system.
 
 This script reads the cleaned Sobko_MCP_project database and imports
-chunks into the MatSci-Agent vector store for local knowledge retrieval.
+chunks into the Huginn vector store for local knowledge retrieval.
 
 Usage:
     cd agent && python ../scripts/ingest_sobko_to_rag.py --sobko-path ../../Sobko_MCP_project --persist-dir ./sobko_rag_db
 
 Requirements:
-    - MatSci-Agent package installed (pip install -e ./agent)
-    - chromadb or the vector store backend configured in matsci_agent.rag
+    - Huginn package installed (pip install -e ./agent)
+    - chromadb or the vector store backend configured in huginn.rag
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingest Sobko database into MatSci-Agent RAG")
+    parser = argparse.ArgumentParser(description="Ingest Sobko database into Huginn RAG")
     parser.add_argument(
         "--sobko-path",
         type=Path,
@@ -124,12 +124,12 @@ def main():
 
     print(f"Prepared {len(documents)} documents for ingestion")
 
-    # Import matsci_agent RAG
+    # Import huginn RAG
     try:
-        from matsci_agent.rag.vector_store import VectorStore
+        from huginn.rag.vector_store import VectorStore
     except ImportError as e:
-        print(f"ERROR: Cannot import MatSci-Agent RAG: {e}")
-        print("Make sure matsci_agent is installed: pip install -e ./agent")
+        print(f"ERROR: Cannot import Huginn RAG: {e}")
+        print("Make sure huginn is installed: pip install -e ./agent")
         sys.exit(1)
 
     # Ingest
