@@ -194,6 +194,19 @@ class MemoryManager:
             tier="long",
         )
 
+    def maintenance(
+        self,
+        decay_per_day: float = 0.97,
+        prune_threshold: float = 0.15,
+        deduplicate: bool = True,
+    ) -> dict[str, int]:
+        """Run long-term memory maintenance (decay, prune, dedupe, expire)."""
+        return self.longterm.maintenance(
+            decay_per_day=decay_per_day,
+            prune_threshold=prune_threshold,
+            deduplicate=deduplicate,
+        )
+
     def sync_memory_md(self) -> Path | None:
         """Write curated long-tier memories to MEMORY.md in the project root."""
         path = self.config.memory_md_path
