@@ -19,6 +19,7 @@ from huginn.prompts import HUGINN_SYSTEM_PROMPT, EXPLORATION_PROMPT
 from huginn.tools.registry import ToolRegistry
 from huginn.tools.adapter import ToolAdapter
 from huginn.models.registry import create_langchain_model
+from huginn.models.router import ModelRouter
 from huginn.pet import get_pet_bus, PetMood
 from huginn.privacy import redact_secrets, scan_for_secrets
 from huginn.utils.context import compact_messages, estimate_message_tokens
@@ -53,8 +54,10 @@ class HuginnAgent:
         context_budget_tokens: int | None = None,
         begin_dialogs: list[tuple[str, str]] | None = None,
         prompt_cache_control: bool | None = None,
+        model_router: ModelRouter | None = None,
     ):
         self.model = model
+        self.model_router = model_router
         self.langchain_tools = tools or []
         self.system_prompt = system_prompt or HUGINN_SYSTEM_PROMPT
         self.begin_dialogs = begin_dialogs or []
@@ -198,6 +201,15 @@ class HuginnAgent:
         except ImportError:
             raise ImportError("EvoScientist not installed.")
         return cls(model=model, **kwargs)
+
+    @classmethod
+    def from_model_router(
+        cls,
+        router: ModelRouter,
+        **kwargs: Any,
+    ) -> HuginnAgent:
+        """Create a HuginnAgent backed by a multi-model router."""
+        return cls(model_router=router, **kwargs)
     
     def register_tool(self, tool: Any) -> None:
         """Register a HuginnTool or LangChain tool."""
@@ -236,7 +248,19 @@ class HuginnAgent:
                 tools.append(tool)
         self.langchain_tools.extend(tools)
         self._invalidate_tool_description_cache()
-    
+
+    def select_model(self, task: str = "agent") -> Any:
+        """Select the active model for a task.
+
+        Uses the model router when available; otherwise falls back to the
+        single model configured at construction time.
+        """
+        if self.model_router is not None:
+            return self.model_router.select(task)
+        if self.model is None:
+            raise RuntimeError("HuginnAgent has no model or model_router configured")
+        return self.model
+
     def build_graph(self) -> Any:
         """Build the LangGraph agent graph."""
         if self._agent_graph is not None:
@@ -253,7 +277,7 @@ class HuginnAgent:
 
             self._agent_graph = create_deep_agent(
                 name="HuginnAgent",
-                model=self.model,
+                model=self.select_model("agent"),
                 tools=self.langchain_tools,
                 system_prompt=system_message,
             ).with_config({"recursion_limit": 100})
@@ -274,7 +298,7 @@ class HuginnAgent:
             messages = self._build_state_modifier()
 
             agent = create_react_agent(
-                model=self.model,
+                model=self.select_model("agent"),
                 tools=self.langchain_tools,
                 state_modifier=messages,
             )
