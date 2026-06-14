@@ -830,3 +830,32 @@ class TestUnifiedSymbolicMath:
         ))
         assert not result.success
         assert "Unknown unified model" in result.error
+
+
+    def test_unified_bridge_md_to_stress(self, tool):
+        result = asyncio.run(tool.call(
+            SymbolicMathInput(
+                action="unified",
+                target="bridge",
+                expression="md-to-stress",
+            ),
+            CTX,
+        ))
+        assert result.success
+        assert result.data["bridge"] == "md_to_stress"
+        assert "cauchy_stress" in result.data["result"]
+
+    def test_unified_bridge_md_to_elasticity(self, tool):
+        result = asyncio.run(tool.call(
+            SymbolicMathInput(
+                action="unified",
+                target="bridge",
+                expression="md-to-elasticity",
+                free_energy="0.5*k*(r-r0)**2",
+                symbols=["k", "r", "r0"],
+            ),
+            CTX,
+        ))
+        assert result.success
+        assert result.data["bridge"] == "md_to_elasticity"
+        assert "elastic_modulus" in result.data["result"]
