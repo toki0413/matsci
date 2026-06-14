@@ -1262,7 +1262,7 @@ class SymbolicMathTool(HuginnTool):
           - derive: derive governing equations from a named model.
           - bridge: run a multiscale bridge (dft-to-md or cauchy-born).
         """
-        from huginn.unified import derive_equations
+        from huginn.unified import derive_equations, discretize
         from huginn.unified.models import get_model, list_models
         from huginn.unified.bridge import (
             ConstitutiveModel,
@@ -1414,7 +1414,40 @@ class SymbolicMathTool(HuginnTool):
                 error=f"Unknown bridge: {bridge_name}. Supported: dft_to_md, md_to_stress, md_to_elasticity",
             )
 
+        if target == "discretize":
+            model_name = args.expression
+            if not model_name:
+                return ToolResult(
+                    data=None, success=False,
+                    error="expression must be a unified model name for target=discretize",
+                )
+            factory = get_model(model_name)
+            if factory is None:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
+                )
+            problem = factory()
+            method = (args.variable or "fem").lower()
+            n = args.order if args.order >= 1 else 10
+            try:
+                disc = discretize(problem, method=method, n=n)
+            except Exception as e:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Discretization failed: {e}",
+                )
+            return ToolResult(data={
+                "model": model_name,
+                "method": disc["method"],
+                "n": n,
+                "n_dof": disc["n_dof"],
+                "stiffness_matrix": disc["stiffness_matrix"],
+                "load_vector": disc["load_vector"],
+                "mesh": disc["mesh"],
+            }, success=True)
+
         return ToolResult(
             data=None, success=False,
-            error=f"Unknown unified target: {target}. Supported: list, derive, bridge",
+            error=f"Unknown unified target: {target}. Supported: list, derive, bridge, discretize",
         )

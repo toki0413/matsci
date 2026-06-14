@@ -945,6 +945,35 @@ def unified_bridge(
         console.print(f"  [bold]{key}:[/bold] {val}")
 
 
+@unified.command("discretize")
+@click.argument("model")
+@click.option("--method", default="fem", help="fem | fd")
+@click.option("--n", default=10, help="Number of elements/points")
+@click.pass_context
+def unified_discretize(ctx: click.Context, model: str, method: str, n: int) -> None:
+    """Discretize a unified model into a linear algebraic system."""
+    from huginn.unified import discretize
+    from huginn.unified.models import get_model
+
+    factory = get_model(model)
+    if not factory:
+        console.print(f"[red]Model '{model}' not found[/red]")
+        return
+    problem = factory()
+    try:
+        result = discretize(problem, method=method, n=n)
+    except Exception as e:
+        console.print(f"[red]Discretization failed: {e}[/red]")
+        return
+
+    info = f"Method: {result['method']}, DOFs: {result['n_dof']}"
+    console.print(Panel(f"[bold blue]{model}[/bold blue]", title="Discretization", subtitle=info, border_style="blue"))
+    console.print("[bold]Stiffness matrix:[/bold]")
+    for row in result["stiffness_matrix"]:
+        console.print(f"  {row}")
+    console.print(f"[bold]Load vector:[/bold] {result['load_vector']}")
+
+
 def main() -> None:
     """Entry point."""
     env_path = Path(".env")
