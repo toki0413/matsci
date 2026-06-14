@@ -105,9 +105,97 @@ class HuginnConfig:
     max_tool_output_tokens: int = 25000
     context_budget_tokens: int = 0
 
+    # Prompt caching
+    prompt_cache_control: bool = True
+
+    # Checkpointer / persistence
+    checkpointer_path: str | None = None
+
+    # Telemetry
+    telemetry_enabled: bool = True
+
+    # Memory maintenance
+    memory_decay_enabled: bool = False
+    memory_decay_interval_turns: int = 0
+    memory_decay_prune_threshold: float = 0.15
+
+    # Tool output compression
+    tool_compression_max_tokens: int = 8000
+
     # Pet customization
     pet_name: str = "Muninn"
     pet_personality: Literal["cheerful", "nerdy", "calm", "sassy"] = "cheerful"
+
+    def build_agent_kwargs(self, profile_id: str = "lead") -> dict[str, Any]:
+        """Build keyword arguments for constructing a HuginnAgent.
+
+        Resolves the requested agent profile, builds the model router when a
+        model pool is configured, and applies all agent-scoped settings.
+        """
+        from huginn.checkpointer import create_checkpointer, create_in_memory_checkpointer
+        from huginn.models.router import ModelRouter
+
+        profile = self.get_profile(profile_id)
+
+        # Build model/router
+        model = None
+        model_router = None
+        if self.models:
+            model_router = ModelRouter()
+            for m in self.models:
+                if not m.enabled:
+                    continue
+                try:
+                    model_router.register_provider(
+                        name=m.alias,
+                        provider=m.provider,
+                        model_name=m.model,
+                        api_key=self.resolve_key(m.api_key),
+                        base_url=m.base_url,
+                        tags={m.alias, profile_id},
+                        temperature=m.temperature,
+                    )
+                except Exception:
+                    # Skip models that cannot be initialized (missing keys, etc.)
+                    continue
+        else:
+            # Legacy single-model path
+            from huginn.models.registry import create_langchain_model
+            provider = self.provider
+            if provider and provider != "default":
+                model = create_langchain_model(
+                    provider=provider,
+                    model_name=self.model or None,
+                    api_key=self.resolved_api_key,
+                    base_url=self.base_url,
+                )
+
+        # Checkpointer
+        if self.checkpointer_path:
+            checkpointer = create_checkpointer(self.checkpointer_path)
+        else:
+            checkpointer = create_in_memory_checkpointer()
+
+        return {
+            "model": model,
+            "model_router": model_router,
+            "checkpointer": checkpointer,
+            "system_prompt": None,  # Loaded from persona by caller if desired
+            "enable_exploration": self.enable_exploration,
+            "privacy_redact_secrets": self.privacy_redact_secrets,
+            "privacy_block_on_secrets": self.privacy_block_on_secrets,
+            "max_tool_output_tokens": self.max_tool_output_tokens,
+            "context_budget_tokens": self.context_budget_tokens,
+            "prompt_cache_control": self.prompt_cache_control,
+            "tool_filter": profile.tools if profile else None,
+        }
+
+    def get_profile(self, profile_id: str) -> AgentProfileConfig | None:
+        """Return the agent profile with the given id, or None."""
+        for a in self.agents:
+            if a.id == profile_id and a.enabled:
+                return a
+        return None
 
     @classmethod
     def from_env(cls) -> HuginnConfig:
@@ -192,6 +280,13 @@ class HuginnConfig:
             privacy_block_on_secrets=os.environ.get("HUGINN_PRIVACY_BLOCK_ON_SECRETS", "").lower() == "true",
             max_tool_output_tokens=int(os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")),
             context_budget_tokens=int(os.environ.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0")),
+            prompt_cache_control=os.environ.get("HUGINN_PROMPT_CACHE_CONTROL", "true").lower() != "false",
+            checkpointer_path=os.environ.get("HUGINN_CHECKPOINTER_PATH") or None,
+            telemetry_enabled=os.environ.get("HUGINN_TELEMETRY_ENABLED", "true").lower() != "false",
+            memory_decay_enabled=os.environ.get("HUGINN_MEMORY_DECAY_ENABLED", "").lower() == "true",
+            memory_decay_interval_turns=int(os.environ.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")),
+            memory_decay_prune_threshold=float(os.environ.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")),
+            tool_compression_max_tokens=int(os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")),
             pet_name=os.environ.get("HUGINN_PET_NAME", "Muninn").strip() or "Muninn",
             pet_personality=os.environ.get("HUGINN_PET_PERSONALITY", "cheerful").strip().lower() or "cheerful",  # type: ignore[arg-type]
         )
@@ -311,6 +406,13 @@ class HuginnConfig:
             "local_only_mode": self.local_only_mode,
             "max_tool_output_tokens": self.max_tool_output_tokens,
             "context_budget_tokens": self.context_budget_tokens,
+            "prompt_cache_control": self.prompt_cache_control,
+            "checkpointer_path": self.checkpointer_path,
+            "telemetry_enabled": self.telemetry_enabled,
+            "memory_decay_enabled": self.memory_decay_enabled,
+            "memory_decay_interval_turns": self.memory_decay_interval_turns,
+            "memory_decay_prune_threshold": self.memory_decay_prune_threshold,
+            "tool_compression_max_tokens": self.tool_compression_max_tokens,
             "pet_name": self.pet_name,
             "pet_personality": self.pet_personality,
         }

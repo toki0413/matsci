@@ -1,0 +1,77 @@
+# Example Huginn configuration.
+# Copy to huginn.toml, fill in your API keys, and run:
+#   huginn chat --config huginn.toml
+#   huginn model-list --config huginn.toml
+#   huginn memory-maintenance --config huginn.toml
+
+provider = "openai"
+model = "gpt-4o"
+api_key = "sk-..."                # or use HUGINN_API_KEY env var
+base_url = null                   # for vLLM / LM Studio set the URL
+
+# Multi-LLM router pool. When configured, overrides the legacy provider/model above.
+# Each alias can be routed to by agent profiles.
+[[models]]
+alias = "strong"
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+# api_key = "..."                 # omit to use ANTHROPIC_API_KEY env var
+
+[[models]]
+alias = "cheap"
+provider = "openai"
+model = "gpt-4o-mini"
+
+[[models]]
+alias = "local"
+provider = "ollama"
+model = "qwen2.5:14b"
+base_url = "http://localhost:11434"
+
+# Agent profiles map tasks/tools to a model alias.
+[[agents]]
+id = "lead"
+name = "Lead Scientist"
+model_alias = "strong"
+persona = "default"
+tools = []
+
+[[agents]]
+id = "coder"
+name = "Code Assistant"
+model_alias = "cheap"
+persona = "default"
+tools = ["python_tool", "file_tool"]
+
+# Behavior
+workspace = "."
+auto_approve = false
+enable_exploration = true
+max_parallel_branches = 5
+
+# Context / compression
+max_tool_output_tokens = 25000
+context_budget_tokens = 0
+tool_compression_max_tokens = 8000
+
+# Prompt caching (provider-dependent; disable if your endpoint rejects it)
+prompt_cache_control = true
+
+# Persistent conversation state
+checkpointer_path = "~/.huginn/checkpoints.sqlite"
+
+# Telemetry
+telemetry_enabled = true
+
+# Memory maintenance
+memory_decay_enabled = false
+memory_decay_interval_turns = 0
+memory_decay_prune_threshold = 0.15
+
+# Privacy
+privacy_redact_secrets = true
+privacy_block_on_secrets = false
+
+# Pet
+pet_name = "Muninn"
+pet_personality = "cheerful"
