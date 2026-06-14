@@ -239,9 +239,9 @@ async fn stop_backend_inner(state: &SidecarState) -> Result<(), String> {
     let mut lock = state.child.lock().await;
     if let Some(mut child) = lock.take() {
         child
-            .kill()
-            .await
-            .map_err(|e| format!("failed to kill backend: {}", e))?;
+            .start_kill()
+            .map_err(|e| format!("failed to start killing backend: {}", e))?;
+        let _ = child.wait().await;
         let _ = state.events.send(Event::Status {
             message: "backend stopped".to_string(),
         });
