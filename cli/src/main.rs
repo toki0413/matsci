@@ -67,6 +67,20 @@ enum Commands {
         max_branches: i64,
     },
 
+    /// Start an autonomous coding session (Codex-like)
+    Coder {
+        /// Coding task or objective
+        task: Option<String>,
+
+        /// Auto-approve destructive coder actions
+        #[arg(long)]
+        auto_approve: bool,
+
+        /// Maximum coder iterations
+        #[arg(short = 'i', long)]
+        max_iterations: Option<i64>,
+    },
+
     /// Start the HTTP/WebSocket server for the desktop app
     Serve {
         /// Server port
@@ -156,6 +170,25 @@ fn run() -> Result<()> {
                     host.clone(),
                 ],
             )
+        }
+        Commands::Coder {
+            ref task,
+            auto_approve,
+            max_iterations,
+        } => {
+            let globals = collect_global_args(&cli, &workspace);
+            let mut extra: Vec<String> = Vec::new();
+            if auto_approve {
+                extra.push("--auto-approve".to_string());
+            }
+            if let Some(iters) = max_iterations {
+                extra.push("--max-iterations".to_string());
+                extra.push(iters.to_string());
+            }
+            if let Some(task) = task {
+                extra.push(task.clone());
+            }
+            delegate_to_python(&workspace, "coder", &globals, &extra)
         }
     }
 }
