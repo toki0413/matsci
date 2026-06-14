@@ -73,6 +73,23 @@ class Domain:
         return cls(name="continuum_1d", kind=DomainType.CONTINUUM, dimension=1, bounds={str(x): bounds}, coordinates=[x])
 
     @classmethod
+    def continuum_2d(
+        cls,
+        x: sp.Symbol | None = None,
+        y: sp.Symbol | None = None,
+        bounds: tuple[tuple[float, float], tuple[float, float]] = ((0.0, 1.0), (0.0, 1.0)),
+    ) -> Domain:
+        x = x or sp.Symbol("x")
+        y = y or sp.Symbol("y")
+        return cls(
+            name="continuum_2d",
+            kind=DomainType.CONTINUUM,
+            dimension=2,
+            bounds={str(x): bounds[0], str(y): bounds[1]},
+            coordinates=[x, y],
+        )
+
+    @classmethod
     def particles(cls, n: int, dim: int = 3) -> Domain:
         return cls(name=f"particles_{n}_{dim}d", kind=DomainType.PARTICLES, dimension=n * dim)
 

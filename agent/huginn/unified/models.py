@@ -130,6 +130,48 @@ def linear_elasticity_fem(
     )
 
 
+def heat_equation_2d(
+    k: float = 1.0,
+    f: float = 0.0,
+) -> UnifiedProblem:
+    """2D steady-state heat/Poisson equation as a minimum energy problem.
+
+    Maps to FEM/FD on the unit square.
+    """
+    x, y = sp.symbols("x y")
+    T = sp.Function("T")
+    T_sym = T(x, y)
+    domain = Domain.continuum_2d(x, y, bounds=((0.0, 1.0), (0.0, 1.0)))
+    energy_density = (
+        sp.Rational(1, 2) * k * (sp.diff(T_sym, x) ** 2 + sp.diff(T_sym, y) ** 2)
+        - f * T_sym
+    )
+    energy = EnergyFunctional(
+        name="thermal_energy_2d",
+        expression=energy_density,
+        variables=[T_sym],
+        parameters={"k": k, "f": f},
+        description="Π(T) = ∫ (½ k |∇T|² - f T) dΩ",
+    )
+    return UnifiedProblem(
+        name="heat_equation_2d",
+        description="2D steady heat conduction derived from a minimum principle.",
+        fields={
+            "temperature": Field(
+                name="temperature",
+                kind=FieldKind.SCALAR,
+                symbols=[T_sym],
+                domain=domain,
+                units="K",
+                description="Temperature field T(x, y)",
+            )
+        },
+        principle=VariationalPrinciple.MINIMUM,
+        energy=energy,
+        domain=domain,
+    )
+
+
 def one_d_kohn_sham_dft() -> UnifiedProblem:
     """1D Kohn-Sham DFT as a self-consistent energy problem.
 
@@ -185,6 +227,7 @@ MODEL_REGISTRY = {
     "harmonic_oscillator_md": harmonic_oscillator_md,
     "heat_equation_fem": heat_equation_fem,
     "linear_elasticity_fem": linear_elasticity_fem,
+    "heat_equation_2d": heat_equation_2d,
     "one_d_kohn_sham_dft": one_d_kohn_sham_dft,
 }
 
