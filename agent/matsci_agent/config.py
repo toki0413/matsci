@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from matsci_agent.crypto import CryptoVault, EncryptedConfig, KeyManager
+
 
 @dataclass
 class ModelConfig:
@@ -291,7 +293,7 @@ class MatSciConfig:
             "enable_exploration": self.enable_exploration,
             "max_parallel_branches": self.max_parallel_branches,
             "encryption_enabled": self.encryption_enabled,
-            "encryption_password": self.encryption_password,
+            "encryption_password": mask(self.encryption_password),
             "encryption_key_file": self.encryption_key_file,
             "encrypt_rag_documents": self.encrypt_rag_documents,
             "encrypt_rag_metadata": self.encrypt_rag_metadata,
@@ -324,11 +326,21 @@ class MatSciConfig:
     def save(self, path: str | pathlib.Path, format: Literal["toml", "json"] = "toml") -> None:
         """Persist configuration to a file.
 
-        API keys are written in plain text; ensure the file has restricted permissions.
+        When ``encrypt_config`` is enabled (or the path ends in ``.enc``),
+        the file is encrypted with the configured password/key file.
+        Otherwise API keys are written in plain text; ensure the file has
+        restricted permissions.
         """
         target = pathlib.Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         data = self.to_dict(mask_key=False)
+
+        if self.encrypt_config or str(target).endswith(".enc"):
+            vault = self._get_vault()
+            ec = EncryptedConfig(config_path=target, vault=vault)
+            ec.save(data)
+            return
+
         if format == "toml":
             try:
                 import toml
@@ -339,12 +351,51 @@ class MatSciConfig:
             import json
             target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
+    def _get_vault(self) -> CryptoVault:
+        """Return an unlocked CryptoVault for config encryption."""
+        password = self.encryption_password or os.environ.get("MATSCI_ENCRYPTION_PASSWORD")
+        if not password:
+            raise RuntimeError(
+                "Config encryption requires encryption_password or MATSCI_ENCRYPTION_PASSWORD."
+            )
+
+        if self.encryption_key_file:
+            km = KeyManager(self.encryption_key_file)
+            path = pathlib.Path(self.encryption_key_file)
+            if not path.exists():
+                km.create_key_file(password)
+            else:
+                km.load_key_file(password)
+            return km.get_vault()
+
+        return CryptoVault(master_password=password)
+
     @classmethod
-    def load(cls, path: str | pathlib.Path, format: Literal["toml", "json"] | None = None) -> MatSciConfig:
-        """Load configuration from a file."""
+    def load(
+        cls,
+        path: str | pathlib.Path,
+        format: Literal["toml", "json"] | None = None,
+        password: str | None = None,
+    ) -> MatSciConfig:
+        """Load configuration from a file.
+
+        If the path ends in ``.enc`` it is decrypted using ``password`` or
+        ``MATSCI_ENCRYPTION_PASSWORD``.
+        """
         target = pathlib.Path(path)
         if not target.exists():
             raise FileNotFoundError(f"Config file not found: {target}")
+
+        if str(target).endswith(".enc"):
+            vault_password = password or os.environ.get("MATSCI_ENCRYPTION_PASSWORD")
+            if not vault_password:
+                raise RuntimeError(
+                    "Encrypted config requires password or MATSCI_ENCRYPTION_PASSWORD."
+                )
+            vault = CryptoVault(master_password=vault_password)
+            data = EncryptedConfig(config_path=target, vault=vault).load()
+            return cls.from_dict(data)
+
         fmt = format or ("toml" if target.suffix in (".toml", ".tml") else "json")
         text = target.read_text(encoding="utf-8")
         if fmt == "toml":

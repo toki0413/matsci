@@ -77,6 +77,7 @@ from matsci_agent.pet import get_pet_bus, PetMood
 from matsci_agent.memory.manager import MemoryManager, MemoryConfig
 from matsci_agent.models.registry import ModelRegistry
 from matsci_agent.agents.factory import AgentFactory
+from matsci_agent.agents.orchestrator import Orchestrator, SubTask
 from matsci_agent.workflows.engine import WorkflowEngine
 from matsci_agent.workflows.templates import get_template
 from matsci_agent.hpc.client import HPCClient, HPCConfig
@@ -96,6 +97,7 @@ _kb: Any | None = None
 _codebase: Any | None = None
 _memory_manager: Any | None = None
 _agent_factory: AgentFactory | None = None
+_orchestrator: Orchestrator | None = None
 
 # Server-wide security policy
 _permission_config = PermissionConfig()
@@ -174,13 +176,32 @@ async def lifespan(app: FastAPI):
     await _shutdown_mcp()
 
 
+def _get_cors_origins() -> list[str]:
+    """Return allowed CORS origins.
+
+    Defaults to local development / Tauri origins. Set ``MATSCI_CORS_ORIGINS``
+    to a comma-separated list to override. Use ``*`` only if you understand the
+    credential implications.
+    """
+    raw = os.environ.get("MATSCI_CORS_ORIGINS", "")
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
+        "http://localhost:3000",
+        "http://localhost:1420",
+        "http://localhost:8000",
+        "tauri://localhost",
+    ]
+
+
 app = FastAPI(title="MatSci-Agent Server", version=__version__, lifespan=lifespan)
 
+_cors_origins = _get_cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -265,6 +286,20 @@ def get_agent_factory() -> AgentFactory:
     return _agent_factory
 
 
+def get_orchestrator() -> Orchestrator:
+    """Get or create the global multi-agent Orchestrator."""
+    global _orchestrator
+    if _orchestrator is not None:
+        return _orchestrator
+    cfg = MatSciConfig.from_env()
+    _orchestrator = Orchestrator(
+        factory=get_agent_factory(),
+        memory_manager=get_memory_manager(),
+        max_concurrent=cfg.max_concurrent_subagents,
+    )
+    return _orchestrator
+
+
 # ── Health & Info ──────────────────────────────────────────────
 
 @app.get("/health")
@@ -343,6 +378,8 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
     _agent = None
     _agent_factory = None
     _planner_agent = None
+    global _orchestrator
+    _orchestrator = None
     cfg = MatSciConfig.from_env()
     return {"success": True, "config": cfg.to_dict(mask_key=True)}
 
@@ -1577,6 +1614,90 @@ async def hpc_status(params: dict[str, Any]) -> dict[str, Any]:
                 "runtime": status.runtime,
                 "message": status.message,
             }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ── Multi-Agent Team ───────────────────────────────────────────
+
+@app.get("/team/profiles")
+async def team_profiles() -> dict[str, Any]:
+    """List enabled agent profiles available for team tasks."""
+    try:
+        factory = get_agent_factory()
+        profiles = [
+            {
+                "id": p.id,
+                "name": p.name or p.id,
+                "model_alias": p.model_alias,
+                "persona": p.persona,
+                "tools": p.tools,
+                "enabled": p.enabled,
+            }
+            for p in factory.list_profiles()
+        ]
+        return {"profiles": profiles}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/team/plan")
+async def team_plan(params: dict[str, Any]) -> dict[str, Any]:
+    """Ask the lead agent to break an objective into subtasks."""
+    objective = params.get("objective", "")
+    if not objective:
+        return {"success": False, "error": "objective is required"}
+    try:
+        orchestrator = get_orchestrator()
+        plan = await orchestrator.plan(objective)
+        return {
+            "success": True,
+            "objective": plan.objective,
+            "tasks": [
+                {
+                    "task_id": t.task_id,
+                    "agent_id": t.agent_id,
+                    "prompt": t.prompt,
+                    "depends_on": t.depends_on,
+                }
+                for t in plan.tasks
+            ],
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/team/run")
+async def team_run(params: dict[str, Any]) -> dict[str, Any]:
+    """Run a multi-agent plan and return the synthesized result."""
+    objective = params.get("objective", "")
+    if not objective:
+        return {"success": False, "error": "objective is required"}
+
+    async def on_status(task: SubTask) -> None:
+        mood = (
+            PetMood.WORKING
+            if task.status == "running"
+            else PetMood.SUCCESS
+            if task.status == "done"
+            else PetMood.ERROR
+        )
+        get_pet_bus().publish(
+            mood=mood,
+            message=f"{task.task_id} ({task.agent_id}): {task.status}",
+            details={"task_id": task.task_id, "agent_id": task.agent_id, "status": task.status},
+        )
+
+    try:
+        orchestrator = get_orchestrator()
+        result = await orchestrator.run(objective, on_status=on_status)
+        return {
+            "success": result.success,
+            "objective": result.objective,
+            "summary": result.summary,
+            "outputs": result.outputs,
+            "error": result.error,
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
