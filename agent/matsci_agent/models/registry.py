@@ -46,7 +46,29 @@ _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
 def _is_local_url(url: str | None) -> bool:
     if not url:
         return False
-    return any(h in url for h in ("localhost", "127.0.0.1", "0.0.0.0", ":11434"))
+    return any(h in url for h in ("localhost", "127.0.0.1", "::1", "0.0.0.0", ":11434"))
+
+
+_CLOUD_PROVIDERS: set[str] = {
+    "anthropic",
+    "openai",
+    "deepseek",
+    "google-genai",
+    "openrouter",
+    "nvidia",
+}
+
+
+def is_local_provider(provider: str, base_url: str | None = None) -> bool:
+    """Return True if the provider/base_url combination is local-only."""
+    provider = provider.lower().strip()
+    if provider == "ollama":
+        return True
+    if provider in ("vllm", "local"):
+        return _is_local_url(base_url) if base_url else True
+    if provider in _CLOUD_PROVIDERS:
+        return _is_local_url(base_url)
+    return False
 
 
 def create_langchain_model(
@@ -174,9 +196,14 @@ class ModelRegistry:
     Supports alias lookup and `provider/model` string resolution.
     """
 
-    def __init__(self, models: list[ModelConfig] | None = None):
+    def __init__(
+        self,
+        models: list[ModelConfig] | None = None,
+        local_only_mode: bool = False,
+    ):
         self._models: dict[str, ModelConfig] = {}
         self._cache: dict[str, Any] = {}
+        self._local_only_mode = local_only_mode
         if models:
             for m in models:
                 self.register(m)
@@ -193,6 +220,13 @@ class ModelRegistry:
             for m in self._models.values()
         ]
 
+    def _check_local_only(self, provider: str, base_url: str | None = None) -> None:
+        if self._local_only_mode and not is_local_provider(provider, base_url):
+            raise ValueError(
+                f"Local-only mode is enabled, but '{provider}' is not a local provider. "
+                "Allowed: ollama, vllm/local with loopback URL."
+            )
+
     def get(self, alias: str) -> Any:
         """Return cached LangChain model instance by alias."""
         if alias in self._cache:
@@ -200,6 +234,7 @@ class ModelRegistry:
         cfg = self._models.get(alias)
         if not cfg or not cfg.enabled:
             raise ValueError(f"Model alias '{alias}' not found or disabled")
+        self._check_local_only(cfg.provider, cfg.base_url)
         instance = create_langchain_model(
             provider=cfg.provider,  # type: ignore[arg-type]
             model_name=cfg.model,
@@ -216,8 +251,10 @@ class ModelRegistry:
             return self.get(ref)
         if "/" in ref:
             provider, model = ref.split("/", 1)
+            provider = provider.strip()
+            self._check_local_only(provider)
             return create_langchain_model(
-                provider=provider.strip(),  # type: ignore[arg-type]
+                provider=provider,  # type: ignore[arg-type]
                 model_name=model.strip(),
             )
         raise ValueError(f"Cannot resolve model reference: {ref}")
@@ -234,4 +271,7 @@ class ModelRegistry:
 
     @classmethod
     def from_config(cls, config: MatSciConfig) -> "ModelRegistry":
-        return cls(models=config.models)
+        local_only = config.local_only_mode
+        if local_only is None:
+            local_only = os.environ.get("MATSCI_LOCAL_ONLY", "0") == "1"
+        return cls(models=config.models, local_only_mode=local_only)

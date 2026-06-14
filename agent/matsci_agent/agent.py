@@ -21,6 +21,8 @@ from matsci_agent.tools.adapter import ToolAdapter
 from matsci_agent.models.registry import create_langchain_model
 from matsci_agent.pet import get_pet_bus, PetMood
 from matsci_agent.privacy import redact_secrets, scan_for_secrets
+from matsci_agent.utils.context import compact_messages, estimate_message_tokens
+from matsci_agent.utils.tokens import rough_token_count_for_text
 
 
 class MatSciAgent:
@@ -46,6 +48,8 @@ class MatSciAgent:
         agent_factory: Any | None = None,
         privacy_redact_secrets: bool | None = None,
         privacy_block_on_secrets: bool | None = None,
+        max_tool_output_tokens: int | None = None,
+        context_budget_tokens: int | None = None,
     ):
         self.model = model
         self.langchain_tools = tools or []
@@ -68,6 +72,14 @@ class MatSciAgent:
             privacy_block_on_secrets = os.environ.get("MATSCI_PRIVACY_BLOCK_ON_SECRETS", "0") == "1"
         self.privacy_redact_secrets = privacy_redact_secrets
         self.privacy_block_on_secrets = privacy_block_on_secrets
+
+        # Context/output budgets
+        if max_tool_output_tokens is None:
+            max_tool_output_tokens = int(os.environ.get("MATSCI_MAX_TOOL_OUTPUT_TOKENS", "25000"))
+        if context_budget_tokens is None:
+            context_budget_tokens = int(os.environ.get("MATSCI_CONTEXT_BUDGET_TOKENS", "0"))
+        self.max_tool_output_tokens = max_tool_output_tokens
+        self.context_budget_tokens = context_budget_tokens
 
         # Memory integration
         if memory_manager is None:
@@ -174,7 +186,9 @@ class MatSciAgent:
         from matsci_agent.tools.base import MatSciTool
         
         if isinstance(tool, MatSciTool):
-            self.langchain_tools.append(ToolAdapter.adapt(tool))
+            self.langchain_tools.append(
+                ToolAdapter.adapt(tool, max_tool_output_tokens=self.max_tool_output_tokens)
+            )
         else:
             # Assume it's already a LangChain tool
             self.langchain_tools.append(tool)
@@ -191,7 +205,14 @@ class MatSciAgent:
             if self.tool_filter is not None and name not in self.tool_filter:
                 continue
             if isinstance(tool, MatSciTool):
-                tools.append(ToolAdapter.adapt(tool, memory_manager=self.memory, agent_factory=self.agent_factory))
+                tools.append(
+                    ToolAdapter.adapt(
+                        tool,
+                        memory_manager=self.memory,
+                        agent_factory=self.agent_factory,
+                        max_tool_output_tokens=self.max_tool_output_tokens,
+                    )
+                )
             else:
                 tools.append(tool)
         self.langchain_tools.extend(tools)
@@ -294,6 +315,27 @@ class MatSciAgent:
         inputs = {
             "messages": [HumanMessage(content=message)]
         }
+
+        # Compact initial messages if a context budget is configured.
+        if self.context_budget_tokens > 0:
+            inputs["messages"] = compact_messages(
+                inputs["messages"],
+                self.context_budget_tokens,
+                keep_last_n=1,
+            )
+            # Pre-flight estimate including system prompt and tool schemas.
+            tool_desc = " ".join(getattr(t, "description", "") for t in self.langchain_tools)
+            estimated = (
+                rough_token_count_for_text(self.system_prompt)
+                + estimate_message_tokens(inputs["messages"])
+                + rough_token_count_for_text(tool_desc)
+            )
+            if estimated > self.context_budget_tokens:
+                get_pet_bus().publish(
+                    PetMood.ERROR,
+                    f"Context budget warning: ~{estimated} tokens",
+                    {"budget": self.context_budget_tokens},
+                )
 
         config = {
             "configurable": {"thread_id": thread_id},

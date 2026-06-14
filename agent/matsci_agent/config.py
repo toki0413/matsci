@@ -96,6 +96,13 @@ class MatSciConfig:
     privacy_redact_secrets: bool = True
     privacy_block_on_secrets: bool = False
 
+    # Local-only / no-cloud mode
+    local_only_mode: bool = False
+
+    # Context/output budgets
+    max_tool_output_tokens: int = 25000
+    context_budget_tokens: int = 0
+
     @classmethod
     def from_env(cls) -> MatSciConfig:
         """Load configuration from environment variables.
@@ -174,6 +181,11 @@ class MatSciConfig:
             encrypt_config=os.environ.get("MATSCI_ENCRYPT_CONFIG", "").lower() == "true",
             persona=os.environ.get("MATSCI_PERSONA", "default").strip(),
             rag_enabled=os.environ.get("MATSCI_RAG_ENABLED", "").lower() == "true",
+            local_only_mode=os.environ.get("MATSCI_LOCAL_ONLY", "").lower() == "true",
+            privacy_redact_secrets=os.environ.get("MATSCI_PRIVACY_REDACT_SECRETS", "true").lower() != "false",
+            privacy_block_on_secrets=os.environ.get("MATSCI_PRIVACY_BLOCK_ON_SECRETS", "").lower() == "true",
+            max_tool_output_tokens=int(os.environ.get("MATSCI_MAX_TOOL_OUTPUT_TOKENS", "25000")),
+            context_budget_tokens=int(os.environ.get("MATSCI_CONTEXT_BUDGET_TOKENS", "0")),
         )
 
     @staticmethod
@@ -288,6 +300,9 @@ class MatSciConfig:
             "rag_enabled": self.rag_enabled,
             "privacy_redact_secrets": self.privacy_redact_secrets,
             "privacy_block_on_secrets": self.privacy_block_on_secrets,
+            "local_only_mode": self.local_only_mode,
+            "max_tool_output_tokens": self.max_tool_output_tokens,
+            "context_budget_tokens": self.context_budget_tokens,
         }
 
     @classmethod

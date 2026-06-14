@@ -76,6 +76,11 @@ interface AppConfig {
   agents: AgentProfile[];
   team_mode_enabled: boolean;
   max_concurrent_subagents: number;
+  privacy_redact_secrets: boolean;
+  privacy_block_on_secrets: boolean;
+  local_only_mode: boolean;
+  max_tool_output_tokens: number;
+  context_budget_tokens: number;
 }
 
 interface FileEntry {
@@ -109,6 +114,11 @@ const DEFAULT_CONFIG: AppConfig = {
   agents: [],
   team_mode_enabled: false,
   max_concurrent_subagents: 3,
+  privacy_redact_secrets: true,
+  privacy_block_on_secrets: false,
+  local_only_mode: false,
+  max_tool_output_tokens: 25000,
+  context_budget_tokens: 0,
 };
 
 const PERSONAS = [
@@ -448,7 +458,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
-  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy">("general");
 
   // Project context + codebase search state
   const [projectContext, setProjectContext] = useState<string>("");
@@ -2862,7 +2872,7 @@ export default function App() {
               <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
                 <span className="text-sm font-semibold">Settings</span>
                 <div className="flex items-center gap-2">
-                  {(["general", "models", "agents"] as const).map((t) => (
+                  {(["general", "models", "agents", "privacy"] as const).map((t) => (
                     <button
                       key={t}
                       onClick={() => setSettingsTab(t)}
@@ -3085,6 +3095,67 @@ export default function App() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {settingsTab === "privacy" && (
+                  <div className="max-w-2xl space-y-5">
+                    <p className="text-sm text-text-secondary">
+                      Controls what local data can leave your machine when using a cloud LLM provider.
+                    </p>
+                    <div className="space-y-4">
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={config.local_only_mode}
+                          onChange={(e) => { const next = { ...config, local_only_mode: e.target.checked }; setConfig(next); setConfigDirty(true); }}
+                          className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                        />
+                        <span className="text-sm text-text-primary">Local-only / no-cloud mode (allow only Ollama, vLLM, local loopback endpoints)</span>
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={config.privacy_redact_secrets}
+                          onChange={(e) => { const next = { ...config, privacy_redact_secrets: e.target.checked }; setConfig(next); setConfigDirty(true); }}
+                          className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                        />
+                        <span className="text-sm text-text-primary">Redact secrets (API keys, private keys, tokens) before sending to LLM</span>
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={config.privacy_block_on_secrets}
+                          onChange={(e) => { const next = { ...config, privacy_block_on_secrets: e.target.checked }; setConfig(next); setConfigDirty(true); }}
+                          className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                        />
+                        <span className="text-sm text-text-primary">Block messages that contain detected secrets</span>
+                      </label>
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Max tool output tokens</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={config.max_tool_output_tokens}
+                          onChange={(e) => { const next = { ...config, max_tool_output_tokens: parseInt(e.target.value || "0", 10) }; setConfig(next); setConfigDirty(true); }}
+                          placeholder="0 = unlimited"
+                          className="input"
+                        />
+                        <p className="mt-1 text-xs text-text-muted">Tool results longer than this are truncated before being sent to the LLM.</p>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Context budget tokens</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={config.context_budget_tokens}
+                          onChange={(e) => { const next = { ...config, context_budget_tokens: parseInt(e.target.value || "0", 10) }; setConfig(next); setConfigDirty(true); }}
+                          placeholder="0 = unlimited"
+                          className="input"
+                        />
+                        <p className="mt-1 text-xs text-text-muted">Warn when the estimated prompt tokens exceed this budget.</p>
+                      </div>
+                    </div>
                   </div>
                 )}
 

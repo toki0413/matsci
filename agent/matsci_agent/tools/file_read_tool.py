@@ -6,6 +6,7 @@ Safe to auto-execute.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,6 +14,11 @@ from pydantic import BaseModel, Field
 
 from matsci_agent.tools.base import MatSciTool
 from matsci_agent.types import ToolResult, ToolContext
+from matsci_agent.utils.tokens import rough_token_count_for_text
+
+
+DEFAULT_MAX_SIZE_BYTES = 256 * 1024
+DEFAULT_MAX_OUTPUT_TOKENS = 25000
 
 
 class FileReadToolInput(BaseModel):
@@ -21,6 +27,8 @@ class FileReadToolInput(BaseModel):
     line_offset: int | None = Field(default=1, ge=1, description="1-based start line")
     n_lines: int | None = Field(default=None, description="Number of lines to read")
     tail_lines: int | None = Field(default=None, description="Read the last N lines instead of from line_offset")
+    max_size_bytes: int | None = Field(default=None, ge=1, description="Max file size in bytes")
+    max_output_tokens: int | None = Field(default=None, ge=1, description="Max output tokens")
     working_dir: str | None = Field(default=None)
 
 
@@ -46,7 +54,25 @@ class FileReadTool(MatSciTool):
         if not path.is_file():
             return ToolResult(data=None, success=False, error=f"Not a file: {path}")
 
+        max_size = input_data.max_size_bytes or int(
+            os.environ.get("MATSCI_FILE_READ_MAX_SIZE_BYTES", str(DEFAULT_MAX_SIZE_BYTES))
+        )
+        max_tokens = input_data.max_output_tokens or int(
+            os.environ.get("MATSCI_FILE_READ_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS))
+        )
+
         try:
+            size = path.stat().st_size
+            if size > max_size:
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=(
+                        f"File too large: {size} bytes (limit {max_size} bytes). "
+                        "Use tail_lines or a smaller range."
+                    ),
+                )
+
             if input_data.tail_lines is not None and input_data.tail_lines > 0:
                 selected, start = self._tail_lines(path, input_data.tail_lines)
                 total = input_data.tail_lines
@@ -58,7 +84,12 @@ class FileReadTool(MatSciTool):
                 end = total + 1 if input_data.n_lines is None else start + input_data.n_lines
                 selected = lines[start - 1 : end - 1]
 
+            selected, was_truncated = self._apply_token_cap(selected, start, max_tokens, path.suffix)
             numbered = "\n".join(f"{i + start:4d}  {line}" for i, line in enumerate(selected))
+
+            msg = f"Read lines {start}-{start + len(selected) - 1} of {total}."
+            if was_truncated:
+                msg += f" Truncated to stay under {max_tokens} tokens."
 
             return ToolResult(
                 data={
@@ -66,12 +97,31 @@ class FileReadTool(MatSciTool):
                     "total_lines": total,
                     "start_line": start,
                     "content": numbered,
-                    "message": f"Read lines {start}-{start + len(selected) - 1} of {total}.",
+                    "message": msg,
                 },
                 success=True,
             )
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Failed to read file: {e}")
+
+    def _apply_token_cap(
+        self,
+        lines: list[str],
+        start_line: int,
+        max_tokens: int,
+        suffix: str,
+    ) -> tuple[list[str], bool]:
+        """Truncate lines from the end until the output fits the token budget."""
+        ext = suffix.lstrip(".").lower() or None
+        selected = lines
+        was_truncated = False
+        while selected:
+            text = "\n".join(f"{i + start_line:4d}  {line}" for i, line in enumerate(selected))
+            if rough_token_count_for_text(text, ext) <= max_tokens:
+                break
+            selected = selected[:-1]
+            was_truncated = True
+        return selected, was_truncated
 
     def _tail_lines(self, path: Path, n: int) -> tuple[list[str], int]:
         """Return the last n lines and the 1-based start line."""
