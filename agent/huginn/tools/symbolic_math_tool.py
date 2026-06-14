@@ -1268,6 +1268,7 @@ class SymbolicMathTool(HuginnTool):
             ConstitutiveModel,
             cauchy_born_elasticity,
             dft_potential_to_md,
+            md_stress_to_continuum,
         )
 
         target = (args.target or "derive").lower()
@@ -1336,11 +1337,12 @@ class SymbolicMathTool(HuginnTool):
                 }, success=True)
 
             if bridge_name == "cauchy_born":
-                # Expect expression like "0.5*k*(r-r0)^2" and symbols ["k","r","r0"]
-                if not args.expression:
+                # Potential expression is supplied via free_energy.
+                potential_expr = args.free_energy or args.expression
+                if not potential_expr:
                     return ToolResult(
                         data=None, success=False,
-                        error="For cauchy-born bridge, expression must be the potential expression",
+                        error="For cauchy-born bridge, free_energy must be the potential expression",
                     )
                 sym_dict = {s: sp.Symbol(s) for s in args.symbols}
                 sym_dict.update({
@@ -1349,7 +1351,7 @@ class SymbolicMathTool(HuginnTool):
                     "pi": sp.pi,
                 })
                 try:
-                    expr = sp.sympify(args.expression, locals=sym_dict)
+                    expr = sp.sympify(potential_expr, locals=sym_dict)
                 except Exception as e:
                     return ToolResult(
                         data=None, success=False,
@@ -1367,9 +1369,49 @@ class SymbolicMathTool(HuginnTool):
                     "result": {k: str(v) for k, v in bridge_result.items()},
                 }, success=True)
 
+            if bridge_name == "md_to_stress":
+                bridge_result = md_stress_to_continuum()
+                return ToolResult(data={
+                    "bridge": "md_to_stress",
+                    "result": {k: str(v) for k, v in bridge_result.items()},
+                }, success=True)
+
+            if bridge_name == "md_to_elasticity":
+                # Alias for cauchy_born using an atomistic pair potential.
+                potential_expr = args.free_energy or args.expression
+                if not args.symbols or "r" not in args.symbols or not potential_expr:
+                    return ToolResult(
+                        data=None, success=False,
+                        error="md_to_elasticity requires symbols including 'r' and free_energy containing the potential expression",
+                    )
+                sym_dict = {s: sp.Symbol(s) for s in args.symbols}
+                sym_dict.update({
+                    "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+                    "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
+                    "pi": sp.pi,
+                })
+                try:
+                    expr = sp.sympify(potential_expr, locals=sym_dict)
+                except Exception as e:
+                    return ToolResult(
+                        data=None, success=False,
+                        error=f"Failed to parse potential expression: {e}",
+                    )
+                r = sym_dict.get("r", sp.Symbol("r"))
+                potential = ConstitutiveModel(
+                    name="user_pair_potential",
+                    expression=expr,
+                    parameters={s: str(sym_dict[s]) for s in args.symbols if s in sym_dict},
+                )
+                bridge_result = cauchy_born_elasticity(potential)
+                return ToolResult(data={
+                    "bridge": "md_to_elasticity",
+                    "result": {k: str(v) for k, v in bridge_result.items()},
+                }, success=True)
+
             return ToolResult(
                 data=None, success=False,
-                error=f"Unknown bridge: {bridge_name}. Supported: dft_to_md, cauchy_born",
+                error=f"Unknown bridge: {bridge_name}. Supported: dft_to_md, md_to_stress, md_to_elasticity",
             )
 
         return ToolResult(
