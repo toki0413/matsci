@@ -55,3 +55,35 @@ def test_plot_solution_2d_directly() -> None:
         path = Path(tmpdir) / "direct2d.png"
         result = plot_solution(mesh, solution, path, shape=(n, n))
         assert result.exists()
+
+
+def test_2d_fem_discretize_shape() -> None:
+    problem = heat_equation_2d(k=1.0, f=1.0)
+    result = discretize(problem, method="fem", n=3)
+    assert result["method"] == "fem_2d"
+    assert result["n_dof"] == 16
+    assert result["shape"] == [4, 4]
+
+
+def test_2d_fem_solve_residual() -> None:
+    problem = heat_equation_2d(k=1.0, f=1.0)
+    result = solve(problem, method="fem", n=4)
+    assert result["method"] == "fem_2d"
+    assert result["n_dof"] == 25
+    assert result["residual"] < 1e-10
+    u = np.array(result["solution"]).reshape(5, 5)
+    # Dirichlet boundary values are zero
+    assert np.allclose(u[0, :], 0.0)
+    assert np.allclose(u[-1, :], 0.0)
+    assert np.allclose(u[:, 0], 0.0)
+    assert np.allclose(u[:, -1], 0.0)
+    # Interior values are positive for positive source
+    assert np.all(u[1:-1, 1:-1] > 0)
+
+
+def test_2d_fem_plot() -> None:
+    problem = heat_equation_2d(k=1.0, f=1.0)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "fem2d.png"
+        result = solve_and_plot(problem, method="fem", n=4, output_path=path)
+        assert Path(result["plot_path"]).exists()

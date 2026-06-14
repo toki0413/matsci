@@ -42,7 +42,9 @@ def solve(
 
     # For 1D FEM without Dirichlet constraints the matrix is singular.
     # Apply a simple Dirichlet fix: u = 0 at both ends.
-    if method_used == "fem":
+    # 1D FEM lacks built-in boundary conditions; fix u=0 at ends.
+    # 2D FEM already applies Dirichlet in the discretizer.
+    if method_used == "fem" and "shape" not in disc:
         for idx in (0, -1):
             K[idx, :] = 0.0
             K[:, idx] = 0.0
