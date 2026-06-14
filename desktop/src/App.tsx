@@ -1645,7 +1645,7 @@ export default function App() {
             onClick={openPetWindow}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
           >
-            🦁 Summon Pet
+            🐦 Summon Pet
           </button>
         </div>
       </aside>

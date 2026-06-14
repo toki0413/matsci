@@ -36,6 +36,38 @@ function moodClass(mood: PetMood): string {
   }
 }
 
+function BirdAvatar({ mood }: { mood: PetMood }) {
+  const eye = mood === "sleeping" ? (
+    <path d="M38 38 Q42 42 46 38" stroke="#1f2937" strokeWidth="2" fill="none" />
+  ) : (
+    <circle cx="42" cy="40" r="3" fill="#1f2937" />
+  );
+
+  return (
+    <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-xl">
+      {/* Body */}
+      <ellipse cx="50" cy="60" rx="28" ry="24" fill="#60a5fa" />
+      {/* Belly */}
+      <ellipse cx="50" cy="68" rx="18" ry="12" fill="#dbeafe" />
+      {/* Head */}
+      <circle cx="50" cy="38" r="20" fill="#60a5fa" />
+      {/* Beak */}
+      <path d="M66 36 L80 42 L66 48 Z" fill="#f59e0b" />
+      {/* Eye */}
+      {eye}
+      {/* Wing */}
+      <path
+        d="M34 58 Q48 70 62 58 Q58 74 34 58"
+        fill="#3b82f6"
+      />
+      {/* Feet */}
+      <path d="M42 82 L42 92 M58 82 L58 92" stroke="#f59e0b" strokeWidth="3" strokeLinecap="round" />
+      {/* Hair tuft */}
+      <path d="M46 20 Q50 10 54 20" stroke="#2563eb" strokeWidth="3" fill="none" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function Pet() {
   const [mood, setMood] = useState<PetMood>("idle");
   const [message, setMessage] = useState<string>("Hi!");
@@ -85,12 +117,9 @@ export default function Pet() {
           <span className="pet-bubble-text">{message}</span>
         </div>
       )}
-      <img
-        src="/pet.png"
-        alt="MatSci pet"
-        className={`pet-avatar ${moodClass(mood)}`}
-        draggable={false}
-      />
+      <div className={`pet-avatar ${moodClass(mood)}`}>
+        <BirdAvatar mood={mood} />
+      </div>
     </div>
   );
 }

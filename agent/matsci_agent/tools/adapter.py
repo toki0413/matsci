@@ -26,6 +26,7 @@ from matsci_agent.types import (
 )
 from matsci_agent.permissions import PermissionConfig
 from matsci_agent.pet import get_pet_bus, PetMood
+from matsci_agent.privacy import redact_secrets
 
 
 ApprovalCallback = Callable[[str, str], bool]
@@ -138,9 +139,24 @@ class ToolAdapter:
             return payload, context
 
         def _serialize(result: ToolResult) -> dict[str, Any]:
+            data: dict[str, Any]
             if result.success:
-                return {"result": result.data}
-            return {"error": result.error or "Unknown error"}
+                data = {"result": result.data}
+            else:
+                data = {"error": result.error or "Unknown error"}
+
+            if os.environ.get("MATSCI_PRIVACY_REDACT_SECRETS", "1") != "0":
+                data = _redact_values(data)
+            return data
+
+        def _redact_values(obj: Any) -> Any:
+            if isinstance(obj, str):
+                return redact_secrets(obj)
+            if isinstance(obj, dict):
+                return {k: _redact_values(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_redact_values(v) for v in obj]
+            return obj
 
         def _audit(
             input_data: BaseModel,
