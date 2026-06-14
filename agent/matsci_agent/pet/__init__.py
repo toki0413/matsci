@@ -35,23 +35,65 @@ class PetEvent:
 
 
 class PetState:
-    """Reactive pet state."""
+    """Reactive pet state with active-task tracking."""
+
+    MAX_RECENT = 8
 
     def __init__(self) -> None:
         self.mood = PetMood.IDLE
         self.last_event: PetEvent | None = None
         self.idle_since = time.time()
+        self.active_tasks = 0
+        self.recent_events: list[dict[str, Any]] = []
 
     def update(self, event: PetEvent) -> None:
         self.mood = event.mood
         self.last_event = event
         self.idle_since = time.time()
+        self._update_active_tasks(event)
+        self._record_recent(event)
+
+    def _update_active_tasks(self, event: PetEvent) -> None:
+        """Heuristically track how many tasks are currently running."""
+        mood = event.mood
+        details = event.details
+
+        # Team task lifecycle
+        status = details.get("status")
+        if status == "running":
+            self.active_tasks += 1
+            return
+        if status in ("done", "error") and self.active_tasks > 0:
+            self.active_tasks -= 1
+            return
+
+        # Tool / general work lifecycle
+        if mood == PetMood.WORKING:
+            self.active_tasks += 1
+        elif mood in (PetMood.SUCCESS, PetMood.ERROR) and self.active_tasks > 0:
+            self.active_tasks -= 1
+
+        # Thinking is not counted as an independent task
+
+    def _record_recent(self, event: PetEvent) -> None:
+        self.recent_events.append(
+            {
+                "timestamp": event.timestamp,
+                "mood": event.mood.value,
+                "message": event.message,
+                "details": event.details,
+            }
+        )
+        if len(self.recent_events) > self.MAX_RECENT:
+            self.recent_events.pop(0)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "mood": self.mood.value,
             "message": self.last_event.message if self.last_event else "Hi!",
             "idle_seconds": time.time() - self.idle_since,
+            "active_tasks": self.active_tasks,
+            "recent_events": self.recent_events,
         }
 
 

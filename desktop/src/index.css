@@ -96,6 +96,10 @@
            flex items-center gap-2;
   }
 
+  .pet-bubble-persistent {
+    @apply border-error/40 bg-error/10 text-error;
+  }
+
   .pet-bubble-emoji {
     @apply text-base;
   }
@@ -112,6 +116,11 @@
   .pet-menu-item {
     @apply text-left text-xs text-text-primary px-3 py-1.5 rounded-lg
            hover:bg-accent/20 transition-colors whitespace-nowrap;
+  }
+
+  .pet-status {
+    @apply flex items-center gap-2 px-3 py-1 text-[10px] text-text-secondary
+           border-b border-border/50 last:border-0;
   }
 
   .animate-float {
