@@ -13,6 +13,7 @@ import os
 import asyncio
 import difflib
 import tempfile
+import base64
 import traceback
 import uuid
 from pathlib import Path
@@ -901,6 +902,92 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
         return {"error": str(e)}
 
 
+@app.get("/personas")
+async def list_personas() -> dict[str, Any]:
+    """List available personas and the current default."""
+    from huginn.personas import PersonaManager
+    try:
+        mgr = PersonaManager()
+        return {
+            "default": mgr.get_default_name(),
+            "personas": [
+                {
+                    "name": name,
+                    "system_prompt": mgr.get(name).system_prompt[:200],
+                    "begin_dialogs": mgr.get(name).begin_dialogs,
+                    "avatar": mgr.get(name).avatar,
+                }
+                for name in mgr.list()
+            ],
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/personas/{name}")
+async def get_persona(name: str) -> dict[str, Any]:
+    """Get a single persona."""
+    from huginn.personas import PersonaManager
+    try:
+        mgr = PersonaManager()
+        p = mgr.get(name)
+        return {
+            "success": True,
+            "name": p.name,
+            "system_prompt": p.system_prompt,
+            "begin_dialogs": p.begin_dialogs,
+            "mood_dialogs": p.mood_dialogs,
+            "variables": p.variables,
+            "avatar": p.avatar,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/personas")
+async def create_persona(params: dict[str, Any]) -> dict[str, Any]:
+    """Create a new persona."""
+    from huginn.personas import PersonaManager
+    try:
+        mgr = PersonaManager()
+        p = mgr.create(
+            name=params["name"],
+            system_prompt=params.get("system_prompt", ""),
+            begin_dialogs=params.get("begin_dialogs", []),
+            mood_dialogs=params.get("mood_dialogs", []),
+            variables=params.get("variables", {}),
+            avatar=params.get("avatar"),
+        )
+        return {"success": True, "persona": p.to_dict()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.patch("/personas/{name}/default")
+async def set_default_persona(name: str) -> dict[str, Any]:
+    """Set the default persona."""
+    from huginn.personas import PersonaManager
+    try:
+        mgr = PersonaManager()
+        mgr.set_default(name)
+        return {"success": True, "default": mgr.get_default_name()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/personas/{name}")
+async def delete_persona(name: str) -> dict[str, Any]:
+    """Delete a user-defined persona."""
+    from huginn.personas import PersonaManager
+    try:
+        mgr = PersonaManager()
+        mgr.delete(name)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/orchestrate")
 async def orchestrate(params: dict[str, Any]) -> dict[str, Any]:
     """Run the multi-agent orchestrator on an objective."""
@@ -1142,6 +1229,56 @@ async def unified_derive(params: dict[str, Any]) -> dict[str, Any]:
             "problem": problem.to_dict(),
             "principle": result["principle"],
             "equations": {k: str(v) for k, v in result["equations"].items()},
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/unified/solve")
+async def unified_solve_endpoint(params: dict[str, Any]) -> dict[str, Any]:
+    """Discretize and solve a unified model."""
+    from huginn.unified import solve
+    from huginn.unified.models import get_model
+    model_name = params.get("model")
+    factory = get_model(model_name)
+    if not factory:
+        return {"success": False, "error": f"Model '{model_name}' not found"}
+    try:
+        problem = factory()
+        result = solve(problem, method=params.get("method", "fem"), n=params.get("n", 10))
+        return {"success": True, **result}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/unified/plot")
+async def unified_plot_endpoint(params: dict[str, Any]) -> dict[str, Any]:
+    """Solve a unified model and return a plot."""
+    from huginn.unified import solve_and_plot
+    from huginn.unified.models import get_model
+    model_name = params.get("model")
+    factory = get_model(model_name)
+    if not factory:
+        return {"success": False, "error": f"Model '{model_name}' not found"}
+    try:
+        problem = factory()
+        output_path = params.get("output_path", "unified_solution.png")
+        result = solve_and_plot(
+            problem,
+            method=params.get("method", "fem"),
+            n=params.get("n", 10),
+            output_path=output_path,
+        )
+        with open(result["plot_path"], "rb") as fimg:
+            img_bytes = fimg.read()
+        return {
+            "success": True,
+            "plot_path": result["plot_path"],
+            "plot_base64": base64.b64encode(img_bytes).decode("utf-8"),
+            "residual": result["residual"],
+            "n_dof": result["n_dof"],
         }
     except Exception as e:
         traceback.print_exc()
