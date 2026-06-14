@@ -35,23 +35,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install maturin
-        shell: bash
-        run: pip install maturin
-
       - name: Build Rust CLI + sidecar
         shell: bash
         run: |
           set -o pipefail
           cargo build --release -p matsci -p matsci-sidecar 2>&1 | tee rust-build.log
-
-      - name: Build matsci-ext wheel
-        shell: bash
-        run: |
-          cd pyext
-          maturin build --release
-          mkdir -p ../dist
-          cp ../target/wheels/*.whl ../dist/ || cp target/wheels/*.whl ../dist/
 
       - name: Detect Rust target triple
         id: target
@@ -108,7 +96,7 @@ jobs:
             rust-build.log
             desktop/tauri-build.log
 
-      - name: Upload build artifact
+      - name: Upload desktop artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -116,10 +104,61 @@ jobs:
           path: |
             target/release/bundle/
             target/release/*.exe
-            dist/*.whl
 
-      - name: Create pre-release with desktop installer
-        if: success() && github.event_name == 'push'
+  build-wheels:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        shell: bash
+        run: pip install maturin
+
+      - name: Build matsci-ext wheel (cp${{ matrix.python-version }})
+        shell: bash
+        run: |
+          cd pyext
+          maturin build --release --interpreter python
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: matsci-wheels
+          path: target/wheels/*.whl
+          if-no-files-found: error
+
+  release:
+    runs-on: windows-latest
+    needs: [build-desktop, build-wheels]
+    if: success() && github.event_name == 'push'
+
+    steps:
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: matsci-desktop-windows
+          path: ./assets
+
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: matsci-wheels
+          path: ./assets/wheels
+
+      - name: Create pre-release with all assets
         id: release
         uses: softprops/action-gh-release@v2
         with:
@@ -127,13 +166,11 @@ jobs:
           name: Desktop CI Build ${{ github.run_number }}
           prerelease: true
           files: |
-            target/release/bundle/**/*.exe
-            target/release/bundle/**/*.msi
-            target/release/*.exe
-            dist/*.whl
+            assets/**/*.exe
+            assets/**/*.msi
+            assets/**/*.whl
 
       - name: Print release URL
-        if: success() && github.event_name == 'push'
         run: |
           echo "::notice::Release URL: ${{ steps.release.outputs.url }}"
           echo "::notice::Release assets: ${{ steps.release.outputs.assets }}"
