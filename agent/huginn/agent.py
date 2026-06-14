@@ -23,6 +23,7 @@ from huginn.models.router import ModelRouter
 from huginn.pet import get_pet_bus, PetMood
 from huginn.privacy import redact_secrets, scan_for_secrets
 from huginn.telemetry import get_telemetry_collector, TelemetryCollector
+from huginn.benchmark import BenchmarkSuite
 from huginn.utils.context import compact_messages, estimate_message_tokens
 from huginn.utils.tokens import rough_token_count_for_text
 from huginn.utils.prompt_cache import PromptCacheBuilder
@@ -365,6 +366,18 @@ class HuginnAgent:
     def telemetry_spans(self) -> list[dict[str, Any]]:
         """Return all recorded telemetry spans as dicts."""
         return get_telemetry_collector().to_dict()
+
+    async def run_benchmark(
+        self,
+        suite: BenchmarkSuite | None = None,
+        store_failures: bool = True,
+    ) -> dict[str, Any]:
+        """Run a benchmark suite and optionally memorize failures."""
+        from huginn.benchmark import SelfImprovementLoop
+
+        suite = suite or BenchmarkSuite().add_defaults()
+        loop = SelfImprovementLoop(suite=suite, memory_manager=self.memory)
+        return await loop.evaluate(self, store_failures=store_failures)
 
     def _get_tool_description_text(self) -> str:
         """Cached concatenation of tool descriptions for token estimation."""

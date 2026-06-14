@@ -1,0 +1,201 @@
+"""Lightweight benchmark framework for HuginnAgent.
+
+A benchmark case is a task plus an evaluator. The suite runs each case
+against an agent, scores the result, and the self-improvement loop stores
+failures in long-term memory so the agent can learn over time.
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+from huginn.memory.manager import MemoryManager
+
+
+EvaluatorT = Callable[[str, "BenchmarkCase"], tuple[bool, float]]
+"""Evaluator(response, case) -> (success, score)."""
+
+
+def keyword_evaluator(response: str, case: BenchmarkCase) -> tuple[bool, float]:
+    """Pass if all expected keywords are present (case-insensitive)."""
+    text = response.lower()
+    matches = sum(1 for kw in case.expected_keywords if kw.lower() in text)
+    if not case.expected_keywords:
+        return True, 1.0
+    success = matches == len(case.expected_keywords)
+    score = matches / len(case.expected_keywords)
+    return success, round(score, 2)
+
+
+@dataclass
+class BenchmarkCase:
+    """A single benchmark task."""
+
+    task: str
+    expected_keywords: list[str] = field(default_factory=list)
+    evaluator: EvaluatorT = keyword_evaluator
+    category: str = "general"
+    tags: list[str] = field(default_factory=list)
+    case_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+
+@dataclass
+class BenchmarkResult:
+    """Result of running one benchmark case."""
+
+    case_id: str
+    task: str
+    success: bool
+    score: float
+    response: str
+    duration_ms: float
+    error: str | None = None
+
+
+class BenchmarkSuite:
+    """Collection of benchmark cases with execution and scoring."""
+
+    def __init__(self, name: str = "default") -> None:
+        self.name = name
+        self.cases: list[BenchmarkCase] = []
+
+    def add(self, case: BenchmarkCase) -> "BenchmarkSuite":
+        self.cases.append(case)
+        return self
+
+    def add_defaults(self) -> "BenchmarkSuite":
+        """Register a small set of materials-science sanity checks."""
+        self.add(
+            BenchmarkCase(
+                task="What is the crystal structure of silicon at room temperature?",
+                expected_keywords=["diamond", "cubic"],
+                category="materials",
+                tags=["structure"],
+            )
+        )
+        self.add(
+            BenchmarkCase(
+                task="Calculate the band gap of silicon in eV.",
+                expected_keywords=["1.1"],
+                category="materials",
+                tags=["electronic"],
+            )
+        )
+        self.add(
+            BenchmarkCase(
+                task="Set up a harmonic oscillator model with mass 1 and k=4.",
+                expected_keywords=["omega", "2"],
+                category="unified",
+                tags=["math"],
+            )
+        )
+        return self
+
+    async def run(
+        self,
+        agent: Any,
+        thread_id: str = "benchmark",
+    ) -> list[BenchmarkResult]:
+        """Run all cases against ``agent`` and return scored results."""
+        results: list[BenchmarkResult] = []
+        for case in self.cases:
+            start = time.time()
+            response = ""
+            error: str | None = None
+            try:
+                response = await self._invoke_agent(agent, case.task, thread_id)
+            except Exception as exc:
+                error = str(exc)
+            duration_ms = round((time.time() - start) * 1000, 2)
+
+            if error:
+                results.append(
+                    BenchmarkResult(
+                        case_id=case.case_id,
+                        task=case.task,
+                        success=False,
+                        score=0.0,
+                        response=response,
+                        duration_ms=duration_ms,
+                        error=error,
+                    )
+                )
+                continue
+
+            success, score = case.evaluator(response, case)
+            results.append(
+                BenchmarkResult(
+                    case_id=case.case_id,
+                    task=case.task,
+                    success=success,
+                    score=score,
+                    response=response,
+                    duration_ms=duration_ms,
+                )
+            )
+        return results
+
+    @staticmethod
+    async def _invoke_agent(agent: Any, task: str, thread_id: str) -> str:
+        """Collect the final response from an async agent."""
+        final_response = ""
+        async for state in agent.chat(task, thread_id=thread_id):
+            messages = state.get("messages", [])
+            for msg in messages:
+                content = getattr(msg, "content", None)
+                if content:
+                    final_response = str(content)
+        return final_response
+
+    def summary(self, results: list[BenchmarkResult]) -> dict[str, Any]:
+        """Return aggregate statistics for a result set."""
+        if not results:
+            return {"total": 0, "passed": 0, "failed": 0, "avg_score": 0.0}
+        passed = sum(1 for r in results if r.success)
+        return {
+            "total": len(results),
+            "passed": passed,
+            "failed": len(results) - passed,
+            "avg_score": round(sum(r.score for r in results) / len(results), 3),
+            "avg_duration_ms": round(sum(r.duration_ms for r in results) / len(results), 2),
+        }
+
+
+class SelfImprovementLoop:
+    """Run benchmarks and feed failures back into long-term memory."""
+
+    def __init__(
+        self,
+        suite: BenchmarkSuite,
+        memory_manager: MemoryManager,
+    ) -> None:
+        self.suite = suite
+        self.memory = memory_manager
+
+    async def evaluate(
+        self,
+        agent: Any,
+        store_failures: bool = True,
+    ) -> dict[str, Any]:
+        """Run the suite and optionally memorize failures for future learning."""
+        results = await self.suite.run(agent)
+        summary = self.suite.summary(results)
+
+        if store_failures:
+            for r in results:
+                if not r.success:
+                    self.memory.remember(
+                        content=(
+                            f"Benchmark failure [{r.case_id}]: task='{r.task}' "
+                            f"score={r.score} response='{r.response[:500]}'"
+                        ),
+                        category="benchmark_failure",
+                        tags=["benchmark", r.task[:20]],
+                        importance=0.7,
+                        tier="mid",
+                    )
+
+        return {"summary": summary, "results": results}
