@@ -16,10 +16,11 @@ import tempfile
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -72,6 +73,7 @@ from matsci_agent.project_context import (
 from matsci_agent.types import ToolContext
 from matsci_agent.permissions import PermissionConfig, PermissionMode
 from matsci_agent.security.audit import AuditLogger
+from matsci_agent.pet import get_pet_bus, PetMood
 from matsci_agent.memory.manager import MemoryManager, MemoryConfig
 from matsci_agent.models.registry import ModelRegistry
 from matsci_agent.agents.factory import AgentFactory
@@ -643,6 +645,41 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         "data": result.data,
         "error": result.error,
     }
+
+
+@app.get("/events")
+async def events_stream() -> StreamingResponse:
+    """Server-sent events stream for the desktop pet and activity indicators."""
+    bus = get_pet_bus()
+    queue = await bus.queue()
+
+    async def generator() -> AsyncIterator[str]:
+        # Send current state immediately.
+        yield f"data: {json.dumps({'type': 'state', 'state': bus.state.to_dict()})}\n\n"
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                payload = {
+                    "type": "event",
+                    "mood": event.mood.value,
+                    "message": event.message,
+                    "details": event.details,
+                    "timestamp": event.timestamp,
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+            except asyncio.TimeoutError:
+                # Keep connection alive with a heartbeat.
+                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Memory Management ────────────────────────────────────────────

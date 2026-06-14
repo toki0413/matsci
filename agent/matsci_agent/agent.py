@@ -19,6 +19,7 @@ from matsci_agent.prompts import MATSCI_SYSTEM_PROMPT, EXPLORATION_PROMPT
 from matsci_agent.tools.registry import ToolRegistry
 from matsci_agent.tools.adapter import ToolAdapter
 from matsci_agent.models.registry import create_langchain_model
+from matsci_agent.pet import get_pet_bus, PetMood
 
 
 class MatSciAgent:
@@ -251,38 +252,47 @@ class MatSciAgent:
         thread_id: str = "default",
     ) -> AsyncIterator[dict[str, Any]]:
         """Send a message to the Agent and stream responses.
-        
+
         Stores messages in session memory and tracks tool calls for
         auto-promotion to long-term memory.
         """
         # Store user message in memory
         self.memory.add_message("user", message)
-        
+
+        pet = get_pet_bus()
+        pet.publish(PetMood.THINKING, "Thinking…", {"thread_id": thread_id})
+
         graph = self.build_graph()
-        
+
         inputs = {
             "messages": [HumanMessage(content=message)]
         }
-        
+
         config = {
             "configurable": {"thread_id": thread_id},
         }
-        
-        async for state in graph.astream(inputs, config, stream_mode="values"):
-            # Track assistant/tool messages in memory
-            msgs = state.get("messages", [])
-            for msg in msgs:
-                if isinstance(msg, AIMessage):
-                    self.memory.add_message("assistant", msg.content)
-                    # Track tool calls
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            self.memory.add_tool_call(
-                                tool_name=tc.get("name", "unknown"),
-                                input_args=tc.get("args", {}),
-                            )
-                # Note: ToolMessage handling depends on langchain version
-            yield state
+
+        try:
+            async for state in graph.astream(inputs, config, stream_mode="values"):
+                # Track assistant/tool messages in memory
+                msgs = state.get("messages", [])
+                for msg in msgs:
+                    if isinstance(msg, AIMessage):
+                        self.memory.add_message("assistant", msg.content)
+                        # Track tool calls
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                self.memory.add_tool_call(
+                                    tool_name=tc.get("name", "unknown"),
+                                    input_args=tc.get("args", {}),
+                                )
+                    # Note: ToolMessage handling depends on langchain version
+                yield state
+        except Exception as exc:
+            pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
+            raise
+        finally:
+            pet.publish(PetMood.IDLE, "Ready", {"thread_id": thread_id})
     
     async def explore(
         self,
