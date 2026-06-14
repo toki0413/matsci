@@ -73,7 +73,7 @@ from matsci_agent.project_context import (
 from matsci_agent.types import ToolContext
 from matsci_agent.permissions import PermissionConfig, PermissionMode
 from matsci_agent.security.audit import AuditLogger
-from matsci_agent.pet import get_pet_bus, PetMood
+from matsci_agent.pet import get_pet_bus, PetMood, configure_pet
 from matsci_agent.memory.manager import MemoryManager, MemoryConfig
 from matsci_agent.models.registry import ModelRegistry
 from matsci_agent.agents.factory import AgentFactory
@@ -172,6 +172,11 @@ async def lifespan(app: FastAPI):
             _codebase = get_codebase_index(cfg.workspace)
         except Exception as e:
             print(f"[Codebase] Warning: could not initialize codebase index: {e}")
+    try:
+        cfg = MatSciConfig.from_env()
+        configure_pet(cfg.pet_name, cfg.pet_personality)
+    except Exception as e:
+        print(f"[Pet] Warning: could not configure pet: {e}")
     yield
     await _shutdown_mcp()
 
@@ -374,6 +379,10 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
         os.environ["MATSCI_MODELS"] = json.dumps(params["models"])
     if "agents" in params:
         os.environ["MATSCI_AGENTS"] = json.dumps(params["agents"])
+    if "pet_name" in params:
+        os.environ["MATSCI_PET_NAME"] = str(params["pet_name"])
+    if "pet_personality" in params:
+        os.environ["MATSCI_PET_PERSONALITY"] = str(params["pet_personality"])
 
     _agent = None
     _agent_factory = None
@@ -381,6 +390,7 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
     global _orchestrator
     _orchestrator = None
     cfg = MatSciConfig.from_env()
+    configure_pet(cfg.pet_name, cfg.pet_personality)
     return {"success": True, "config": cfg.to_dict(mask_key=True)}
 
 

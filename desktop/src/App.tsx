@@ -81,6 +81,8 @@ interface AppConfig {
   local_only_mode: boolean;
   max_tool_output_tokens: number;
   context_budget_tokens: number;
+  pet_name: string;
+  pet_personality: "cheerful" | "nerdy" | "calm" | "sassy";
 }
 
 interface FileEntry {
@@ -119,6 +121,8 @@ const DEFAULT_CONFIG: AppConfig = {
   local_only_mode: false,
   max_tool_output_tokens: 25000,
   context_budget_tokens: 0,
+  pet_name: "Toki",
+  pet_personality: "cheerful",
 };
 
 const PERSONAS = [
@@ -459,7 +463,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
-  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "team">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "team" | "pet">("general");
 
   // Multi-agent team state
   const [teamObjective, setTeamObjective] = useState("");
@@ -3041,7 +3045,7 @@ export default function App() {
               <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
                 <span className="text-sm font-semibold">Settings</span>
                 <div className="flex items-center gap-2">
-                  {(["general", "models", "agents", "privacy"] as const).map((t) => (
+                  {(["general", "models", "agents", "privacy", "pet"] as const).map((t) => (
                     <button
                       key={t}
                       onClick={() => setSettingsTab(t)}
@@ -3325,6 +3329,42 @@ export default function App() {
                         <p className="mt-1 text-xs text-text-muted">Warn when the estimated prompt tokens exceed this budget.</p>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {settingsTab === "pet" && (
+                  <div className="max-w-2xl space-y-5">
+                    <p className="text-sm text-text-secondary">
+                      Customize your desktop companion.
+                    </p>
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Pet name</label>
+                        <input
+                          type="text"
+                          value={config.pet_name}
+                          onChange={(e) => { const next = { ...config, pet_name: e.target.value }; setConfig(next); setConfigDirty(true); }}
+                          placeholder="Toki"
+                          className="input"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Personality</label>
+                        <select
+                          value={config.pet_personality}
+                          onChange={(e) => { const next = { ...config, pet_personality: e.target.value as any }; setConfig(next); setConfigDirty(true); }}
+                          className="input"
+                        >
+                          <option value="cheerful">Cheerful 🌟</option>
+                          <option value="nerdy">Nerdy 🤓</option>
+                          <option value="calm">Calm 🍃</option>
+                          <option value="sassy">Sassy 😏</option>
+                        </select>
+                      </div>
+                    </div>
+                    <p className="text-xs text-text-muted">
+                      The pet's greeting, idle tips, and click responses will match the chosen personality.
+                    </p>
                   </div>
                 )}
 
