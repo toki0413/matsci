@@ -83,6 +83,9 @@ interface AppConfig {
   context_budget_tokens: number;
   pet_name: string;
   pet_personality: "cheerful" | "nerdy" | "calm" | "sassy";
+  encrypt_config: boolean;
+  encryption_password: string;
+  encryption_key_file: string;
 }
 
 interface FileEntry {
@@ -123,6 +126,9 @@ const DEFAULT_CONFIG: AppConfig = {
   context_budget_tokens: 0,
   pet_name: "Muninn",
   pet_personality: "cheerful",
+  encrypt_config: false,
+  encryption_password: "",
+  encryption_key_file: "",
 };
 
 const PERSONAS = [
@@ -442,6 +448,7 @@ export default function App() {
     | "project"
     | "team"
     | "coder"
+    | "workbench"
   >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -464,7 +471,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
-  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet" | "security">("general");
 
   // Multi-agent team state
   const [teamObjective, setTeamObjective] = useState("");
@@ -481,6 +488,64 @@ export default function App() {
   const [coderResult, setCoderResult] = useState<string>("");
   const [coderError, setCoderError] = useState("");
 
+  // Workbench state
+  const [workbenchTab, setWorkbenchTab] = useState<
+    "benchmark" | "evolution" | "execute" | "workflows" | "explore" | "diagnose" | "hpc"
+  >("benchmark");
+
+  const [benchEvolve, setBenchEvolve] = useState(false);
+  const [benchCategories, setBenchCategories] = useState("");
+  const [benchRunning, setBenchRunning] = useState(false);
+  const [benchResult, setBenchResult] = useState<any>(null);
+  const [benchError, setBenchError] = useState("");
+
+  const [evolveRunning, setEvolveRunning] = useState(false);
+  const [evolveResult, setEvolveResult] = useState<any>(null);
+  const [evolveError, setEvolveError] = useState("");
+
+  const [executeStages, setExecuteStages] = useState("");
+  const [executeWorkingDir, setExecuteWorkingDir] = useState(".");
+  const [executeName, setExecuteName] = useState("execute");
+  const [executeRunning, setExecuteRunning] = useState(false);
+  const [executeResult, setExecuteResult] = useState<any>(null);
+  const [executeError, setExecuteError] = useState("");
+
+  const [workflowTemplates, setWorkflowTemplates] = useState<string[]>([]);
+  const [workflowTemplate, setWorkflowTemplate] = useState("");
+  const [workflowArgs, setWorkflowArgs] = useState("");
+  const [workflowRunning, setWorkflowRunning] = useState(false);
+  const [workflowResult, setWorkflowResult] = useState<any>(null);
+  const [workflowError, setWorkflowError] = useState("");
+
+  const [exploreObjective, setExploreObjective] = useState("");
+  const [exploreMaxIters, setExploreMaxIters] = useState(20);
+  const [exploreMaxBranches, setExploreMaxBranches] = useState(10);
+  const [exploreRunning, setExploreRunning] = useState(false);
+  const [exploreResult, setExploreResult] = useState<any>(null);
+  const [exploreError, setExploreError] = useState("");
+
+  const [diagnoseError, setDiagnoseError] = useState("");
+  const [diagnoseSoftware, setDiagnoseSoftware] = useState("");
+  const [diagnoseCalcType, setDiagnoseCalcType] = useState("");
+  const [diagnoseContext, setDiagnoseContext] = useState("");
+  const [diagnoseRunning, setDiagnoseRunning] = useState(false);
+  const [diagnoseResult, setDiagnoseResult] = useState<any>(null);
+  const [diagnoseErrorMsg, setDiagnoseErrorMsg] = useState("");
+
+  const [hpcHost, setHpcHost] = useState("");
+  const [hpcUsername, setHpcUsername] = useState("");
+  const [hpcScheduler, setHpcScheduler] = useState<"slurm" | "pbs">("slurm");
+  const [hpcKeyPath, setHpcKeyPath] = useState("");
+  const [hpcCommand, setHpcCommand] = useState("");
+  const [hpcJobName, setHpcJobName] = useState("huginn_job");
+  const [hpcWalltime, setHpcWalltime] = useState("01:00:00");
+  const [hpcNodes, setHpcNodes] = useState(1);
+  const [hpcNtasks, setHpcNtasks] = useState(4);
+  const [hpcQueue, setHpcQueue] = useState("");
+  const [hpcJobId, setHpcJobId] = useState("");
+  const [hpcRunning, setHpcRunning] = useState(false);
+  const [hpcResult, setHpcResult] = useState<any>(null);
+  const [hpcError, setHpcError] = useState("");
 
   // Project context + codebase search state
   const [projectContext, setProjectContext] = useState<string>("");
@@ -741,6 +806,265 @@ export default function App() {
       setCoderError(e.message || "Network error");
     } finally {
       setCoderRunning(false);
+    }
+  };
+
+  const handleBenchRun = async () => {
+    setBenchRunning(true);
+    setBenchError("");
+    setBenchResult(null);
+    try {
+      const body: any = { evolve: benchEvolve };
+      if (benchCategories.trim()) body.categories = benchCategories.split(",").map((s) => s.trim()).filter(Boolean);
+      const data = await fetch(`${API_BASE}/bench/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+      if (data.success) {
+        setBenchResult(data.report);
+      } else {
+        setBenchError(data.error || "Benchmark failed.");
+      }
+    } catch (e: any) {
+      setBenchError(e.message || "Network error");
+    } finally {
+      setBenchRunning(false);
+    }
+  };
+
+  const handleEvolveRun = async () => {
+    setEvolveRunning(true);
+    setEvolveError("");
+    setEvolveResult(null);
+    try {
+      const data = await fetch(`${API_BASE}/evolve/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }).then((r) => r.json());
+      if (data.success) {
+        setEvolveResult(data.report);
+      } else {
+        setEvolveError(data.error || "Evolution failed.");
+      }
+    } catch (e: any) {
+      setEvolveError(e.message || "Network error");
+    } finally {
+      setEvolveRunning(false);
+    }
+  };
+
+  const handleExecuteRun = async () => {
+    if (!executeStages.trim()) return;
+    setExecuteRunning(true);
+    setExecuteError("");
+    setExecuteResult(null);
+    try {
+      let stages: any;
+      try {
+        stages = JSON.parse(executeStages);
+      } catch {
+        setExecuteError("Stages must be valid JSON.");
+        setExecuteRunning(false);
+        return;
+      }
+      const data = await fetch(`${API_BASE}/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stages, working_dir: executeWorkingDir, name: executeName }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setExecuteResult(data);
+      } else {
+        setExecuteError(data.error || "Execution failed.");
+      }
+    } catch (e: any) {
+      setExecuteError(e.message || "Network error");
+    } finally {
+      setExecuteRunning(false);
+    }
+  };
+
+  const loadWorkflowTemplates = async () => {
+    try {
+      const data = await fetch(`${API_BASE}/workflows`).then((r) => r.json());
+      setWorkflowTemplates(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      console.error("[workflows] load failed:", e);
+    }
+  };
+
+  const handleWorkflowRun = async () => {
+    if (!workflowTemplate) return;
+    setWorkflowRunning(true);
+    setWorkflowError("");
+    setWorkflowResult(null);
+    try {
+      const args: any = {};
+      workflowArgs.split(" ").forEach((a) => {
+        if (!a.includes("=")) return;
+        const [k, v] = a.split("=");
+        try {
+          args[k] = JSON.parse(v);
+        } catch {
+          args[k] = v;
+        }
+      });
+      const data = await fetch(`${API_BASE}/workflows/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template: workflowTemplate, args }),
+      }).then((r) => r.json());
+      if (data.error) {
+        setWorkflowError(data.error);
+      } else {
+        setWorkflowResult(data);
+      }
+    } catch (e: any) {
+      setWorkflowError(e.message || "Network error");
+    } finally {
+      setWorkflowRunning(false);
+    }
+  };
+
+  const handleExploreRun = async () => {
+    if (!exploreObjective.trim()) return;
+    setExploreRunning(true);
+    setExploreError("");
+    setExploreResult(null);
+    try {
+      const data = await fetch(`${API_BASE}/explore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objective: exploreObjective,
+          max_iterations: exploreMaxIters,
+          max_branches: exploreMaxBranches,
+        }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setExploreResult(data);
+      } else {
+        setExploreError(data.error || "Exploration failed.");
+      }
+    } catch (e: any) {
+      setExploreError(e.message || "Network error");
+    } finally {
+      setExploreRunning(false);
+    }
+  };
+
+  const handleDiagnoseRun = async () => {
+    if (!diagnoseError.trim()) return;
+    setDiagnoseRunning(true);
+    setDiagnoseErrorMsg("");
+    setDiagnoseResult(null);
+    try {
+      const data = await fetch(`${API_BASE}/diagnose`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          error_message: diagnoseError,
+          software: diagnoseSoftware || undefined,
+          calculation_type: diagnoseCalcType || undefined,
+          context: diagnoseContext || undefined,
+        }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setDiagnoseResult(data.data);
+      } else {
+        setDiagnoseErrorMsg(data.error || "Diagnosis failed.");
+      }
+    } catch (e: any) {
+      setDiagnoseErrorMsg(e.message || "Network error");
+    } finally {
+      setDiagnoseRunning(false);
+    }
+  };
+
+  const handleHpcTest = async () => {
+    setHpcRunning(true);
+    setHpcError("");
+    setHpcResult(null);
+    try {
+      const data = await fetch(`${API_BASE}/hpc/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host: hpcHost, username: hpcUsername, scheduler: hpcScheduler, key_path: hpcKeyPath || undefined }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setHpcResult(data);
+      } else {
+        setHpcError(data.error || "HPC test failed.");
+      }
+    } catch (e: any) {
+      setHpcError(e.message || "Network error");
+    } finally {
+      setHpcRunning(false);
+    }
+  };
+
+  const handleHpcSubmit = async () => {
+    if (!hpcCommand.trim()) return;
+    setHpcRunning(true);
+    setHpcError("");
+    setHpcResult(null);
+    try {
+      const data = await fetch(`${API_BASE}/hpc/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          host: hpcHost,
+          username: hpcUsername,
+          scheduler: hpcScheduler,
+          key_path: hpcKeyPath || undefined,
+          command: hpcCommand,
+          job_name: hpcJobName,
+          walltime: hpcWalltime,
+          nodes: hpcNodes,
+          ntasks_per_node: hpcNtasks,
+          queue: hpcQueue || undefined,
+        }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setHpcJobId(data.job_id);
+        setHpcResult(data);
+      } else {
+        setHpcError(data.error || "HPC submit failed.");
+      }
+    } catch (e: any) {
+      setHpcError(e.message || "Network error");
+    } finally {
+      setHpcRunning(false);
+    }
+  };
+
+  const handleHpcStatus = async () => {
+    if (!hpcJobId.trim()) return;
+    setHpcRunning(true);
+    setHpcError("");
+    try {
+      const data = await fetch(`${API_BASE}/hpc/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          host: hpcHost,
+          username: hpcUsername,
+          scheduler: hpcScheduler,
+          key_path: hpcKeyPath || undefined,
+          job_id: hpcJobId,
+        }),
+      }).then((r) => r.json());
+      if (data.success) {
+        setHpcResult(data);
+      } else {
+        setHpcError(data.error || "HPC status failed.");
+      }
+    } catch (e: any) {
+      setHpcError(e.message || "Network error");
+    } finally {
+      setHpcRunning(false);
     }
   };
 
@@ -1407,7 +1731,10 @@ export default function App() {
       loadMemory();
       loadMemoryStats();
     }
-  }, [activeTab, memoryFilter.category, memoryFilter.tier]);
+    if (activeTab === "workbench" && workbenchTab === "workflows" && workflowTemplates.length === 0) {
+      loadWorkflowTemplates();
+    }
+  }, [activeTab, workbenchTab, memoryFilter.category, memoryFilter.tier]);
 
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -1667,6 +1994,7 @@ export default function App() {
     { id: "chat", label: "Chat", icon: "💬" },
     { id: "team", label: "Team", icon: "👥" },
     { id: "coder", label: "Coder", icon: "💻" },
+    { id: "workbench", label: "Workbench", icon: "🧰" },
     { id: "files", label: "Files", icon: "📁" },
     { id: "terminal", label: "Terminal", icon: "🖥️" },
     { id: "review", label: "Review", icon: "📝" },
@@ -3160,7 +3488,7 @@ export default function App() {
               <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
                 <span className="text-sm font-semibold">Settings</span>
                 <div className="flex items-center gap-2">
-                  {(["general", "models", "agents", "privacy", "pet"] as const).map((t) => (
+                  {(["general", "models", "agents", "privacy", "pet", "security"] as const).map((t) => (
                     <button
                       key={t}
                       onClick={() => setSettingsTab(t)}
@@ -3483,6 +3811,66 @@ export default function App() {
                   </div>
                 )}
 
+                {settingsTab === "security" && (
+                  <div className="max-w-2xl space-y-5">
+                    <p className="text-sm text-text-secondary">
+                      Encrypt sensitive configuration files and key material at rest.
+                    </p>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.encrypt_config}
+                        onChange={(e) => { const next = { ...config, encrypt_config: e.target.checked }; setConfig(next); setConfigDirty(true); }}
+                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                      />
+                      <span className="text-sm text-text-primary">Encrypt config files</span>
+                    </label>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">Encryption password</label>
+                      <input
+                        type="password"
+                        value={config.encryption_password}
+                        onChange={(e) => { const next = { ...config, encryption_password: e.target.value }; setConfig(next); setConfigDirty(true); }}
+                        placeholder="Leave empty to keep unchanged"
+                        className="input"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">Key file path (optional)</label>
+                      <input
+                        type="text"
+                        value={config.encryption_key_file}
+                        onChange={(e) => { const next = { ...config, encryption_key_file: e.target.value }; setConfig(next); setConfigDirty(true); }}
+                        placeholder="Path to encrypted key file"
+                        className="input"
+                      />
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const data = await fetch(`${API_BASE}/config/encrypt`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ path: "huginn.toml", password: config.encryption_password }),
+                          }).then((r) => r.json());
+                          if (data.success) {
+                            setConfigSavedMsg(`Encrypted config saved to ${data.path}`);
+                            setTimeout(() => setConfigSavedMsg(""), 4000);
+                          } else {
+                            setConfigSavedMsg(`Encrypt failed: ${data.error}`);
+                          }
+                        } catch (e: any) {
+                          setConfigSavedMsg(`Encrypt error: ${e.message}`);
+                        }
+                      }}
+                      disabled={!config.encryption_password}
+                      className="btn-secondary text-xs"
+                    >
+                      Encrypt huginn.toml now
+                    </button>
+                  </div>
+                )}
+
                 <div className="mt-6 flex items-center gap-3 pt-2">
                   <button onClick={() => saveConfig(config)} disabled={!configDirty} className="btn-primary">
                     Save Settings
@@ -3510,6 +3898,264 @@ export default function App() {
                     Status: {status}
                   </p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "workbench" && (
+            <div className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+                <span className="text-sm font-semibold">Workbench</span>
+                <div className="flex items-center gap-2">
+                  {(["benchmark", "evolution", "execute", "workflows", "explore", "diagnose", "hpc"] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setWorkbenchTab(t)}
+                      className={`rounded px-3 py-1 text-xs capitalize ${
+                        workbenchTab === t
+                          ? "bg-accent text-white"
+                          : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                {workbenchTab === "benchmark" && (
+                  <div className="mx-auto max-w-3xl space-y-5">
+                    <div className="card">
+                      <h2 className="mb-2 text-base font-semibold">Benchmark</h2>
+                      <p className="text-sm text-text-secondary">Run standardized tasks and measure pass rate.</p>
+                    </div>
+                    <div className="card space-y-3">
+                      <label className="flex cursor-pointer items-center gap-2 text-sm">
+                        <input type="checkbox" checked={benchEvolve} onChange={(e) => setBenchEvolve(e.target.checked)} className="h-4 w-4 rounded border-border" />
+                        Run evolution cycle afterward
+                      </label>
+                      <input
+                        type="text"
+                        value={benchCategories}
+                        onChange={(e) => setBenchCategories(e.target.value)}
+                        placeholder="Categories, comma separated (empty = all)"
+                        className="input text-sm"
+                      />
+                      <button onClick={handleBenchRun} disabled={benchRunning || !isConnected} className="btn-primary text-xs">
+                        {benchRunning ? "Running…" : "▶ Run benchmark"}
+                      </button>
+                      {benchError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{benchError}</div>}
+                    </div>
+                    {benchResult && (
+                      <div className="card space-y-3">
+                        <h3 className="text-sm font-semibold">Report</h3>
+                        <div className="text-xs text-text-secondary">
+                          Pass rate: {(benchResult.metrics?.pass_rate * 100).toFixed(0)}% · Total: {benchResult.total} · Passed: {benchResult.passed} · Failed: {benchResult.failed} · Skipped: {benchResult.skipped}
+                        </div>
+                        <div className="space-y-2">
+                          {(benchResult.results || []).map((r: any) => (
+                            <div key={r.task_id} className="rounded-lg border border-border bg-bg-tertiary p-3 text-xs">
+                              <span className={`font-semibold ${r.passed ? "text-success" : "text-error"}`}>{r.passed ? "✓" : "✗"}</span>{" "}
+                              <span className="font-mono">{r.task_id}</span> — {r.reason}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {workbenchTab === "evolution" && (
+                  <div className="mx-auto max-w-3xl space-y-5">
+                    <div className="card">
+                      <h2 className="mb-2 text-base font-semibold">Evolution</h2>
+                      <p className="text-sm text-text-secondary">Run a self-evolution cycle over recent execution logs to learn rules and skills.</p>
+                    </div>
+                    <div className="card space-y-3">
+                      <button onClick={handleEvolveRun} disabled={evolveRunning || !isConnected} className="btn-primary text-xs">
+                        {evolveRunning ? "Evolving…" : "▶ Run evolution cycle"}
+                      </button>
+                      {evolveError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{evolveError}</div>}
+                    </div>
+                    {evolveResult && (
+                      <div className="card space-y-3">
+                        <h3 className="text-sm font-semibold">Report</h3>
+                        <div className="text-xs text-text-secondary">
+                          Failure rules: {evolveResult.failure_rules?.length} · Success skills: {evolveResult.success_skills?.length} · Prompt patches: {evolveResult.prompt_patches?.length}
+                        </div>
+                        <div className="text-xs text-text-secondary">Total rules: {evolveResult.total_rules_after} · Total skills: {evolveResult.total_skills_after}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {workbenchTab === "execute" && (
+                  <div className="mx-auto max-w-3xl space-y-5">
+                    <div className="card">
+                      <h2 className="mb-2 text-base font-semibold">Execute</h2>
+                      <p className="text-sm text-text-secondary">Run raw workflow stages through the execution orchestrator.</p>
+                    </div>
+                    <div className="card space-y-3">
+                      <textarea
+                        value={executeStages}
+                        onChange={(e) => setExecuteStages(e.target.value)}
+                        placeholder={`[{"id":"stage1","tool":"diagnose_tool","action":"...","params":{}}]`}
+                        rows={8}
+                        className="input font-mono text-xs resize-none"
+                      />
+                      <div className="grid grid-cols-2 gap-3">
+                        <input type="text" value={executeWorkingDir} onChange={(e) => setExecuteWorkingDir(e.target.value)} placeholder="Working dir" className="input text-xs" />
+                        <input type="text" value={executeName} onChange={(e) => setExecuteName(e.target.value)} placeholder="Workflow name" className="input text-xs" />
+                      </div>
+                      <button onClick={handleExecuteRun} disabled={executeRunning || !isConnected} className="btn-primary text-xs">
+                        {executeRunning ? "Executing…" : "▶ Execute stages"}
+                      </button>
+                      {executeError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{executeError}</div>}
+                    </div>
+                    {executeResult && (
+                      <div className="card">
+                        <h3 className="text-sm font-semibold mb-2">Result</h3>
+                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(executeResult, null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {workbenchTab === "workflows" && (
+                  <div className="mx-auto max-w-3xl space-y-5">
+                    <div className="card">
+                      <h2 className="mb-2 text-base font-semibold">Workflows</h2>
+                      <p className="text-sm text-text-secondary">Run a workflow template with KEY=VALUE arguments.</p>
+                    </div>
+                    <div className="card space-y-3">
+                      <select value={workflowTemplate} onChange={(e) => setWorkflowTemplate(e.target.value)} className="input text-sm">
+                        <option value="">Select a template</option>
+                        {workflowTemplates.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={workflowArgs}
+                        onChange={(e) => setWorkflowArgs(e.target.value)}
+                        placeholder="key1=value1 key2=value2 ..."
+                        className="input text-sm"
+                      />
+                      <button onClick={handleWorkflowRun} disabled={workflowRunning || !isConnected || !workflowTemplate} className="btn-primary text-xs">
+                        {workflowRunning ? "Running…" : "▶ Run workflow"}
+                      </button>
+                      {workflowError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{workflowError}</div>}
+                    </div>
+                    {workflowResult && (
+                      <div className="card">
+                        <h3 className="text-sm font-semibold mb-2">Result</h3>
+                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(workflowResult, null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {workbenchTab === "explore" && (
+                  <div className="mx-auto max-w-3xl space-y-5">
+                    <div className="card">
+                      <h2 className="mb-2 text-base font-semibold">Explore</h2>
+                      <p className="text-sm text-text-secondary">Systematically search a design space.</p>
+                    </div>
+                    <div className="card space-y-3">
+                      <input type="text" value={exploreObjective} onChange={(e) => setExploreObjective(e.target.value)} placeholder="Objective, e.g. find highest energy density cathode" className="input text-sm" />
+                      <div className="grid grid-cols-2 gap-3">
+                        <input type="number" min={1} value={exploreMaxIters} onChange={(e) => setExploreMaxIters(parseInt(e.target.value || "1", 10))} placeholder="Max iterations" className="input text-xs" />
+                        <input type="number" min={1} value={exploreMaxBranches} onChange={(e) => setExploreMaxBranches(parseInt(e.target.value || "1", 10))} placeholder="Max branches" className="input text-xs" />
+                      </div>
+                      <button onClick={handleExploreRun} disabled={exploreRunning || !isConnected || !exploreObjective.trim()} className="btn-primary text-xs">
+                        {exploreRunning ? "Exploring…" : "▶ Explore"}
+                      </button>
+                      {exploreError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{exploreError}</div>}
+                    </div>
+                    {exploreResult && (
+                      <div className="card space-y-3">
+                        <h3 className="text-sm font-semibold">Result</h3>
+                        <div className="text-xs text-text-secondary">Explored: {exploreResult.n_branches_explored} · Pruned: {exploreResult.n_branches_pruned} · Convergence: {exploreResult.convergence_reason}</div>
+                        {exploreResult.best_branch && <div className="text-xs text-text-secondary">Best branch: {exploreResult.best_branch.name}</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {workbenchTab === "diagnose" && (
+                  <div className="mx-auto max-w-3xl space-y-5">
+                    <div className="card">
+                      <h2 className="mb-2 text-base font-semibold">Diagnose</h2>
+                      <p className="text-sm text-text-secondary">Diagnose computational chemistry / MD errors.</p>
+                    </div>
+                    <div className="card space-y-3">
+                      <textarea value={diagnoseError} onChange={(e) => setDiagnoseError(e.target.value)} placeholder="Paste error message…" rows={4} className="input resize-none text-sm" />
+                      <div className="grid grid-cols-3 gap-3">
+                        <input type="text" value={diagnoseSoftware} onChange={(e) => setDiagnoseSoftware(e.target.value)} placeholder="Software" className="input text-xs" />
+                        <input type="text" value={diagnoseCalcType} onChange={(e) => setDiagnoseCalcType(e.target.value)} placeholder="Calc type" className="input text-xs" />
+                        <input type="text" value={diagnoseContext} onChange={(e) => setDiagnoseContext(e.target.value)} placeholder="Context" className="input text-xs" />
+                      </div>
+                      <button onClick={handleDiagnoseRun} disabled={diagnoseRunning || !isConnected || !diagnoseError.trim()} className="btn-primary text-xs">
+                        {diagnoseRunning ? "Diagnosing…" : "▶ Diagnose"}
+                      </button>
+                      {diagnoseErrorMsg && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{diagnoseErrorMsg}</div>}
+                    </div>
+                    {diagnoseResult && (
+                      <div className="card">
+                        <h3 className="text-sm font-semibold mb-2">Findings</h3>
+                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(diagnoseResult, null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {workbenchTab === "hpc" && (
+                  <div className="mx-auto max-w-3xl space-y-5">
+                    <div className="card">
+                      <h2 className="mb-2 text-base font-semibold">HPC</h2>
+                      <p className="text-sm text-text-secondary">Submit and monitor jobs on a remote cluster.</p>
+                    </div>
+                    <div className="card space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <input type="text" value={hpcHost} onChange={(e) => setHpcHost(e.target.value)} placeholder="Host" className="input text-xs" />
+                        <input type="text" value={hpcUsername} onChange={(e) => setHpcUsername(e.target.value)} placeholder="Username" className="input text-xs" />
+                        <select value={hpcScheduler} onChange={(e) => setHpcScheduler(e.target.value as any)} className="input text-xs">
+                          <option value="slurm">SLURM</option>
+                          <option value="pbs">PBS</option>
+                        </select>
+                        <input type="text" value={hpcKeyPath} onChange={(e) => setHpcKeyPath(e.target.value)} placeholder="SSH key path (optional)" className="input text-xs" />
+                      </div>
+                      <button onClick={handleHpcTest} disabled={hpcRunning || !isConnected || !hpcHost || !hpcUsername} className="btn-secondary text-xs">
+                        Test connection
+                      </button>
+                      <hr className="border-border" />
+                      <input type="text" value={hpcCommand} onChange={(e) => setHpcCommand(e.target.value)} placeholder="Command to run" className="input text-sm" />
+                      <div className="grid grid-cols-3 gap-3">
+                        <input type="text" value={hpcJobName} onChange={(e) => setHpcJobName(e.target.value)} placeholder="Job name" className="input text-xs" />
+                        <input type="text" value={hpcWalltime} onChange={(e) => setHpcWalltime(e.target.value)} placeholder="Walltime" className="input text-xs" />
+                        <input type="text" value={hpcQueue} onChange={(e) => setHpcQueue(e.target.value)} placeholder="Queue" className="input text-xs" />
+                        <input type="number" min={1} value={hpcNodes} onChange={(e) => setHpcNodes(parseInt(e.target.value || "1", 10))} placeholder="Nodes" className="input text-xs" />
+                        <input type="number" min={1} value={hpcNtasks} onChange={(e) => setHpcNtasks(parseInt(e.target.value || "1", 10))} placeholder="Tasks/node" className="input text-xs" />
+                        <input type="text" value={hpcJobId} onChange={(e) => setHpcJobId(e.target.value)} placeholder="Job ID" className="input text-xs" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={handleHpcSubmit} disabled={hpcRunning || !isConnected || !hpcCommand.trim()} className="btn-primary text-xs">
+                          Submit
+                        </button>
+                        <button onClick={handleHpcStatus} disabled={hpcRunning || !isConnected || !hpcJobId.trim()} className="btn-secondary text-xs">
+                          Status
+                        </button>
+                      </div>
+                      {hpcError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{hpcError}</div>}
+                    </div>
+                    {hpcResult && (
+                      <div className="card">
+                        <h3 className="text-sm font-semibold mb-2">Result</h3>
+                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(hpcResult, null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
