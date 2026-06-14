@@ -1,5 +1,7 @@
-"""Agent factory and orchestration."""
+"""Multi-agent orchestration for Huginn."""
 
-from huginn.agents.factory import AgentFactory
+from __future__ import annotations
 
-__all__ = ["AgentFactory"]
+from huginn.agents.swarm import AgentRole, SwarmAgent, HuginnSwarm
+
+__all__ = ["AgentRole", "SwarmAgent", "HuginnSwarm"]
