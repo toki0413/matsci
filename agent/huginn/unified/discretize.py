@@ -118,6 +118,93 @@ def _discretize_fd_1d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     }
 
 
+def _discretize_fem_2d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
+    """2D linear triangular FEM discretization for -coeff Δu = f.
+
+    Each axis-aligned cell is split into two triangles. Linear shape
+    functions give a constant gradient per element, so the element
+    stiffness is K_e = area * B^T B.
+    """
+    (x0, x1), (y0, y1) = _bounds_2d(problem)
+    if n < 1:
+        raise ValueError("FEM discretization needs at least 1 element per dimension")
+    hx = (x1 - x0) / n
+    hy = (y1 - y0) / n
+    coeff = _material_coefficient(problem)
+    f = _source_term(problem)
+
+    nx = n + 1
+    ny = n + 1
+    N = nx * ny
+
+    def node_idx(i: int, j: int) -> int:
+        return i * ny + j
+
+    def node_coord(i: int, j: int) -> tuple[float, float]:
+        return (x0 + i * hx, y0 + j * hy)
+
+    K = np.zeros((N, N), dtype=float)
+    F = np.zeros(N, dtype=float)
+
+    def element_stiffness(tri: list[tuple[float, float]]) -> np.ndarray:
+        (x_a, y_a), (x_b, y_b), (x_c, y_c) = tri
+        area = 0.5 * abs((x_b - x_a) * (y_c - y_a) - (x_c - x_a) * (y_b - y_a))
+        if area == 0.0:
+            return np.zeros((3, 3))
+        # Shape function gradients (constant over element)
+        dndx = np.array([y_b - y_c, y_c - y_a, y_a - y_b]) / (2.0 * area)
+        dndy = np.array([x_c - x_b, x_a - x_c, x_b - x_a]) / (2.0 * area)
+        bmat = np.vstack([dndx, dndy])
+        return coeff * area * (bmat.T @ bmat)
+
+    def element_load(area: float) -> np.ndarray:
+        # Consistent load: f * area / 3 for each node of a linear triangle
+        return (f * area / 3.0) * np.ones(3)
+
+    for i in range(n):
+        for j in range(n):
+            p00 = node_coord(i, j)
+            p10 = node_coord(i + 1, j)
+            p01 = node_coord(i, j + 1)
+            p11 = node_coord(i + 1, j + 1)
+
+            triangles = [
+                ([p00, p10, p01], [node_idx(i, j), node_idx(i + 1, j), node_idx(i, j + 1)]),
+                ([p10, p11, p01], [node_idx(i + 1, j), node_idx(i + 1, j + 1), node_idx(i, j + 1)]),
+            ]
+
+            for tri, nodes in triangles:
+                ke = element_stiffness(tri)
+                area = 0.5 * abs((tri[1][0] - tri[0][0]) * (tri[2][1] - tri[0][1])
+                                 - (tri[2][0] - tri[0][0]) * (tri[1][1] - tri[0][1]))
+                fe = element_load(area)
+                for a in range(3):
+                    F[nodes[a]] += fe[a]
+                    for b in range(3):
+                        K[nodes[a], nodes[b]] += ke[a, b]
+
+    # Dirichlet boundary: u = 0 on rectangle edges
+    for i in range(nx):
+        for j in range(ny):
+            if i == 0 or i == n or j == 0 or j == n:
+                k = node_idx(i, j)
+                K[k, :] = 0.0
+                K[:, k] = 0.0
+                K[k, k] = 1.0
+                F[k] = 0.0
+
+    mesh = [list(node_coord(i, j)) for i in range(nx) for j in range(ny)]
+    return {
+        "method": "fem_2d",
+        "n_elements_per_dim": n,
+        "n_dof": N,
+        "stiffness_matrix": K.tolist(),
+        "load_vector": F.tolist(),
+        "mesh": mesh,
+        "shape": [nx, ny],
+    }
+
+
 def _discretize_fd_2d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
     """2D finite-difference discretization for -coeff Δu = f on a rectangle.
 
@@ -205,8 +292,10 @@ def discretize(
         raise ValueError(f"Unknown discretization method for 1D: {method}")
 
     if dim == 2:
+        if method == "fem":
+            return _discretize_fem_2d(problem, n)
         if method == "fd":
             return _discretize_fd_2d(problem, n)
-        raise ValueError("2D FEM not yet implemented; use method='fd'")
+        raise ValueError(f"Unknown discretization method for 2D: {method}")
 
     raise ValueError(f"Unsupported domain dimension: {dim}")
