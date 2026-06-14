@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from huginn.agent import HuginnAgent
-from huginn.config import HuginnConfig, AgentProfileConfig
+from huginn.config import HuginnConfig, AgentProfileConfig, ThinkingIntensity
 from huginn.models.registry import ModelRegistry
 from huginn.personas import PersonaManager
 from huginn.project_context import load_project_context
@@ -45,8 +45,14 @@ class AgentFactory:
         thread_id: str | None = None,
         system_prompt_override: str | None = None,
         memory_manager: Any | None = None,
+        thinking: ThinkingIntensity | dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> HuginnAgent:
-        """Create a HuginnAgent for the given profile."""
+        """Create a HuginnAgent for the given profile.
+
+        ``thinking`` and ``max_tokens`` override the configured model/agent
+        defaults for this request.
+        """
         profile = self._profiles.get(profile_id)
         if profile is None:
             raise ValueError(f"Agent profile '{profile_id}' not found or disabled")
@@ -55,7 +61,12 @@ class AgentFactory:
         if not model_alias:
             raise ValueError(f"Profile '{profile_id}' has no model_alias and no default model is configured")
 
-        model = self.model_registry.resolve(model_alias)
+        effective_thinking = thinking if thinking is not None else profile.thinking
+        model = self.model_registry.resolve(
+            model_alias,
+            thinking=effective_thinking,
+            max_tokens=max_tokens,
+        )
 
         begin_dialogs: list[tuple[str, str]] = []
         if system_prompt_override:
@@ -92,12 +103,22 @@ class AgentFactory:
         agent.register_tools_from_registry()
         return agent
 
-    def create_lead(self, thread_id: str | None = None) -> HuginnAgent:
+    def create_lead(
+        self,
+        thread_id: str | None = None,
+        thinking: ThinkingIntensity | dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+    ) -> HuginnAgent:
         """Convenience: create the lead/default agent."""
+        kwargs: dict[str, Any] = {}
+        if thinking is not None:
+            kwargs["thinking"] = thinking
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
         for preferred in ("lead", "default"):
             if preferred in self._profiles:
-                return self.create(preferred, thread_id=thread_id)
+                return self.create(preferred, thread_id=thread_id, **kwargs)
         # Fall back to first configured profile
         if self._profiles:
-            return self.create(next(iter(self._profiles)), thread_id=thread_id)
+            return self.create(next(iter(self._profiles)), thread_id=thread_id, **kwargs)
         raise ValueError("No enabled agent profiles found")

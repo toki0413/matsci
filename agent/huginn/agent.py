@@ -745,6 +745,7 @@ def _create_langchain_model(
     api_key: str | None = None,
     base_url: str | None = None,
     temperature: float = 0.7,
+    **kwargs: Any,
 ) -> Any:
     """Backwards-compatible wrapper around the model registry factory."""
     return create_langchain_model(
@@ -753,4 +754,6 @@ def _create_langchain_model(
         api_key=api_key,
         base_url=base_url,
         temperature=temperature,
+        thinking=kwargs.get("thinking"),
+        max_tokens=kwargs.get("max_tokens"),
     )

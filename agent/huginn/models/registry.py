@@ -5,16 +5,77 @@ Inspired by OpenClaw's `provider/model` refs and Hermes' multi-model profiles.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from huginn.config import HuginnConfig, ModelConfig
+from huginn.config import HuginnConfig, ModelConfig, ThinkingIntensity
 
 ProviderT = Literal[
     "anthropic", "openai", "ollama", "deepseek",
     "google-genai", "openrouter", "nvidia", "vllm", "local", "default"
 ]
+
+
+_INTENSITY_TO_ANTHROPIC_BUDGET: dict[ThinkingIntensity, int] = {
+    "low": 4096,
+    "medium": 16000,
+    "high": 32000,
+}
+
+
+def _anthropic_thinking(thinking: ThinkingIntensity | dict[str, Any] | None) -> dict[str, Any] | None:
+    """Map a thinking intensity to Anthropic's thinking dict."""
+    if thinking is None:
+        return None
+    if isinstance(thinking, dict):
+        return thinking
+    budget = _INTENSITY_TO_ANTHROPIC_BUDGET.get(thinking)
+    if budget is None:
+        return None
+    return {"type": "enabled", "budget_tokens": budget}
+
+
+def _is_openai_reasoning_model(model_name: str | None) -> bool:
+    """Return True if the model name looks like an OpenAI reasoning model."""
+    if not model_name:
+        return False
+    name = model_name.lower()
+    for prefix in ("o1", "o3"):
+        if name.startswith(prefix) or f"/{prefix}" in name:
+            return True
+    return False
+
+
+def _apply_thinking_kwargs(
+    provider: str,
+    model_name: str | None,
+    kwargs: dict[str, Any],
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+    max_tokens: int | None,
+) -> None:
+    """Mutate ``kwargs`` to include provider-specific reasoning parameters."""
+    if thinking is None:
+        return
+
+    if provider == "anthropic":
+        anthropic_thinking = _anthropic_thinking(thinking)
+        if anthropic_thinking:
+            kwargs["thinking"] = anthropic_thinking
+            budget = anthropic_thinking["budget_tokens"]
+            if max_tokens is None or max_tokens <= budget:
+                kwargs["max_tokens"] = budget + 4096
+            else:
+                kwargs["max_tokens"] = max_tokens
+        return
+
+    if provider in ("openai", "vllm", "local", "openrouter"):
+        if _is_openai_reasoning_model(model_name) and isinstance(thinking, str):
+            kwargs["reasoning_effort"] = thinking
+        return
+
+    # DeepSeek, Google, Ollama, NVIDIA: no standard mapping yet.
 
 _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "anthropic": "claude-3-5-sonnet-20241022",
@@ -77,6 +138,8 @@ def create_langchain_model(
     api_key: str | None = None,
     base_url: str | None = None,
     temperature: float = 0.7,
+    thinking: ThinkingIntensity | dict[str, Any] | None = None,
+    max_tokens: int | None = None,
 ) -> Any:
     """Create a LangChain chat model instance for the given provider."""
     provider = provider.lower().strip()  # type: ignore[assignment]
@@ -95,7 +158,11 @@ def create_langchain_model(
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             raise ValueError("ANTHROPIC_API_KEY not set")
-        return ChatAnthropic(model=model, api_key=key, temperature=temperature)
+        kwargs: dict[str, Any] = {"model": model, "api_key": key, "temperature": temperature}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        return ChatAnthropic(**kwargs)
 
     if provider in ("openai", "vllm", "local"):
         try:
@@ -105,12 +172,16 @@ def create_langchain_model(
         key = api_key or os.environ.get("OPENAI_API_KEY")
         if not key and not _is_local_url(base_url):
             raise ValueError("OPENAI_API_KEY not set (required for non-local endpoints)")
-        return ChatOpenAI(
-            model=model,
-            api_key=key or "not-needed",
-            temperature=temperature,
-            base_url=base_url,
-        )
+        kwargs = {
+            "model": model,
+            "api_key": key or "not-needed",
+            "temperature": temperature,
+            "base_url": base_url,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        return ChatOpenAI(**kwargs)
 
     if provider == "ollama":
         try:
@@ -127,12 +198,16 @@ def create_langchain_model(
         key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         if not key:
             raise ValueError("DEEPSEEK_API_KEY not set")
-        return ChatOpenAI(
-            model=model,
-            api_key=key,
-            base_url=base_url or "https://api.deepseek.com",
-            temperature=temperature,
-        )
+        kwargs = {
+            "model": model,
+            "api_key": key,
+            "base_url": base_url or "https://api.deepseek.com",
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        return ChatOpenAI(**kwargs)
 
     if provider == "google-genai":
         try:
@@ -142,7 +217,11 @@ def create_langchain_model(
         key = api_key or os.environ.get("GOOGLE_API_KEY")
         if not key:
             raise ValueError("GOOGLE_API_KEY not set")
-        return ChatGoogleGenerativeAI(model=model, api_key=key, temperature=temperature)
+        kwargs = {"model": model, "api_key": key, "temperature": temperature}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        return ChatGoogleGenerativeAI(**kwargs)
 
     if provider == "openrouter":
         try:
@@ -152,12 +231,16 @@ def create_langchain_model(
         key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not key:
             raise ValueError("OPENROUTER_API_KEY not set")
-        return ChatOpenAI(
-            model=model,
-            api_key=key,
-            base_url=base_url or "https://openrouter.ai/api/v1",
-            temperature=temperature,
-        )
+        kwargs = {
+            "model": model,
+            "api_key": key,
+            "base_url": base_url or "https://openrouter.ai/api/v1",
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        return ChatOpenAI(**kwargs)
 
     if provider == "nvidia":
         try:
@@ -165,7 +248,11 @@ def create_langchain_model(
         except ImportError:
             raise ImportError("pip install langchain-nvidia-ai-endpoints")
         key = api_key or os.environ.get("NVIDIA_API_KEY")
-        return ChatNVIDIA(model=model, api_key=key, temperature=temperature)
+        kwargs = {"model": model, "api_key": key, "temperature": temperature}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        return ChatNVIDIA(**kwargs)
 
     raise ValueError(
         f"Unsupported provider: {provider}. "
@@ -188,6 +275,8 @@ class ModelRef:
     provider: str
     model: str | None
     enabled: bool
+    thinking: ThinkingIntensity | dict[str, Any] | None = None
+    max_tokens: int | None = None
 
 
 class ModelRegistry:
@@ -216,7 +305,14 @@ class ModelRegistry:
 
     def list(self) -> list[ModelRef]:
         return [
-            ModelRef(alias=m.alias, provider=m.provider, model=m.model, enabled=m.enabled)
+            ModelRef(
+                alias=m.alias,
+                provider=m.provider,
+                model=m.model,
+                enabled=m.enabled,
+                thinking=m.thinking,
+                max_tokens=m.max_tokens,
+            )
             for m in self._models.values()
         ]
 
@@ -227,28 +323,60 @@ class ModelRegistry:
                 "Allowed: ollama, vllm/local with loopback URL."
             )
 
-    def get(self, alias: str) -> Any:
-        """Return cached LangChain model instance by alias."""
-        if alias in self._cache:
-            return self._cache[alias]
+    @staticmethod
+    def _cache_key(
+        alias: str,
+        thinking: ThinkingIntensity | dict[str, Any] | None,
+        max_tokens: int | None,
+    ) -> str:
+        """Include thinking/max_tokens in the cache key to avoid sharing instances."""
+        parts = [alias]
+        if thinking is not None:
+            parts.append(str(thinking) if isinstance(thinking, str) else json.dumps(thinking, sort_keys=True))
+        if max_tokens is not None:
+            parts.append(f"max_tokens={max_tokens}")
+        return "|".join(parts)
+
+    def get(
+        self,
+        alias: str,
+        thinking: ThinkingIntensity | dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+    ) -> Any:
+        """Return cached LangChain model instance by alias.
+
+        ``thinking`` and ``max_tokens`` override the configured model values.
+        """
+        cache_key = self._cache_key(alias, thinking, max_tokens)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
         cfg = self._models.get(alias)
         if not cfg or not cfg.enabled:
             raise ValueError(f"Model alias '{alias}' not found or disabled")
         self._check_local_only(cfg.provider, cfg.base_url)
+        effective_thinking = thinking if thinking is not None else cfg.thinking
+        effective_max_tokens = max_tokens if max_tokens is not None else cfg.max_tokens
         instance = create_langchain_model(
             provider=cfg.provider,  # type: ignore[arg-type]
             model_name=cfg.model,
             api_key=resolve_provider_key(cfg.provider, cfg.api_key),  # type: ignore[arg-type]
             base_url=cfg.base_url,
             temperature=cfg.temperature,
+            thinking=effective_thinking,
+            max_tokens=effective_max_tokens,
         )
-        self._cache[alias] = instance
+        self._cache[cache_key] = instance
         return instance
 
-    def resolve(self, ref: str) -> Any:
+    def resolve(
+        self,
+        ref: str,
+        thinking: ThinkingIntensity | dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+    ) -> Any:
         """Resolve either an alias or a `provider/model` string to a LangChain model."""
         if ref in self._models:
-            return self.get(ref)
+            return self.get(ref, thinking=thinking, max_tokens=max_tokens)
         if "/" in ref:
             provider, model = ref.split("/", 1)
             provider = provider.strip()
@@ -256,6 +384,8 @@ class ModelRegistry:
             return create_langchain_model(
                 provider=provider,  # type: ignore[arg-type]
                 model_name=model.strip(),
+                thinking=thinking,
+                max_tokens=max_tokens,
             )
         raise ValueError(f"Cannot resolve model reference: {ref}")
 

@@ -112,10 +112,11 @@ async def _shutdown_mcp() -> None:
 @click.option("--dry-run", is_flag=True, help="Show what would be executed without running commands")
 @click.option("--base-url", "-u", help="Base URL for OpenAI-compatible endpoints (vLLM, LM Studio, etc.)")
 @click.option("--ollama-url", default="http://localhost:11434", help="Ollama base URL")
+@click.option("--thinking", type=click.Choice(["low", "medium", "high"]), help="Reasoning intensity (Anthropic extended thinking / OpenAI reasoning effort)")
 @click.pass_context
 def cli(ctx: click.Context, workspace: str, config: str | None,
         model: str | None, provider: str | None, base_url: str | None,
-        dry_run: bool, ollama_url: str) -> None:
+        dry_run: bool, ollama_url: str, thinking: str | None) -> None:
     """Huginn: Material Science specialized AI Agent Harness."""
     ctx.ensure_object(dict)
     ctx.obj["workspace"] = Path(workspace).resolve()
@@ -125,7 +126,8 @@ def cli(ctx: click.Context, workspace: str, config: str | None,
     ctx.obj["base_url"] = base_url
     ctx.obj["dry_run"] = dry_run
     ctx.obj["ollama_url"] = ollama_url
-    
+    ctx.obj["thinking"] = thinking
+
     # Register all tools
     register_all_tools()
 
@@ -152,6 +154,8 @@ def _apply_cli_overrides(ctx: click.Context, cfg: Any) -> None:
         cfg.base_url = ctx.obj["base_url"]
     if ctx.obj.get("ollama_url"):
         cfg.ollama_host = ctx.obj["ollama_url"]
+    if ctx.obj.get("thinking"):
+        cfg.thinking = ctx.obj["thinking"]
 
 
 def _build_agent_from_ctx(ctx: click.Context, profile_id: str = "lead") -> HuginnAgent | None:
@@ -333,6 +337,8 @@ def coder(ctx: click.Context, task: str | None, auto_approve: bool, max_iteratio
         settings.config.base_url = ctx.obj["base_url"]
     if ctx.obj["ollama_url"]:
         settings.config.ollama_host = ctx.obj["ollama_url"]
+    if ctx.obj.get("thinking"):
+        settings.config.thinking = ctx.obj["thinking"]
     if max_iterations is not None:
         settings.coder.max_iterations = max_iterations
 
@@ -492,7 +498,12 @@ def configure(ctx: click.Context, path: str) -> None:
     workspace = console.input(
         f"Workspace [cyan]{cfg.workspace}[/cyan]: "
     ).strip() or cfg.workspace
-    
+
+    thinking_raw = console.input(
+        f"Thinking intensity [cyan]{cfg.thinking or 'none'}[/cyan] (low/medium/high or none): "
+    ).strip() or (cfg.thinking if cfg.thinking else "")
+    thinking: str | None = thinking_raw if thinking_raw in ("low", "medium", "high") else None
+
     new_cfg = HuginnConfig(
         provider=provider,
         model=model,
@@ -500,6 +511,7 @@ def configure(ctx: click.Context, path: str) -> None:
         base_url=base_url or None,
         ollama_host=ollama_host,
         workspace=workspace,
+        thinking=thinking,  # type: ignore[arg-type]
     )
     
     fmt = "toml" if path.endswith(".toml") else "json"

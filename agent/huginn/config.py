@@ -15,6 +15,9 @@ from typing import Any, Literal
 from huginn.crypto import CryptoVault, EncryptedConfig, KeyManager
 
 
+ThinkingIntensity = Literal["low", "medium", "high"]
+
+
 @dataclass
 class ModelConfig:
     """A single LLM provider/model entry in the model pool."""
@@ -28,6 +31,10 @@ class ModelConfig:
     base_url: str | None = None
     temperature: float = 0.7
     enabled: bool = True
+    # Reasoning / extended-thinking intensity. Provider-specific mapping happens
+    # in the model registry. ``dict`` values are passed through verbatim.
+    thinking: ThinkingIntensity | dict[str, Any] | None = None
+    max_tokens: int | None = None  # must be > thinking budget for Anthropic
 
 
 @dataclass
@@ -40,6 +47,8 @@ class AgentProfileConfig:
     tools: list[str] = field(default_factory=list)
     enabled: bool = True
     max_steps: int = 10
+    # Optional per-agent thinking override. Falls back to the model's setting.
+    thinking: ThinkingIntensity | dict[str, Any] | None = None
 
 
 @dataclass
@@ -122,6 +131,10 @@ class HuginnConfig:
     # Tool output compression
     tool_compression_max_tokens: int = 8000
 
+    # Default reasoning intensity for all models (can be overridden per model/agent).
+    thinking: ThinkingIntensity | dict[str, Any] | None = None
+    max_tokens: int | None = None
+
     # Pet customization
     pet_name: str = "Muninn"
     pet_personality: Literal["cheerful", "nerdy", "calm", "sassy"] = "cheerful"
@@ -137,6 +150,11 @@ class HuginnConfig:
 
         profile = self.get_profile(profile_id)
 
+        # Effective thinking for this profile: profile > model > global.
+        effective_thinking = None
+        if profile and profile.thinking is not None:
+            effective_thinking = profile.thinking
+
         # Build model/router
         model = None
         model_router = None
@@ -145,6 +163,7 @@ class HuginnConfig:
             for m in self.models:
                 if not m.enabled:
                     continue
+                thinking = m.thinking if m.thinking is not None else effective_thinking if effective_thinking is not None else self.thinking
                 try:
                     model_router.register_provider(
                         name=m.alias,
@@ -154,6 +173,8 @@ class HuginnConfig:
                         base_url=m.base_url,
                         tags={m.alias, profile_id},
                         temperature=m.temperature,
+                        thinking=thinking,
+                        max_tokens=m.max_tokens if m.max_tokens is not None else self.max_tokens,
                     )
                 except Exception:
                     # Skip models that cannot be initialized (missing keys, etc.)
@@ -163,11 +184,14 @@ class HuginnConfig:
             from huginn.models.registry import create_langchain_model
             provider = self.provider
             if provider and provider != "default":
+                thinking = effective_thinking if effective_thinking is not None else self.thinking
                 model = create_langchain_model(
                     provider=provider,
                     model_name=self.model or None,
                     api_key=self.resolved_api_key,
                     base_url=self.base_url,
+                    thinking=thinking,
+                    max_tokens=self.max_tokens,
                 )
 
         # Checkpointer
@@ -226,6 +250,8 @@ class HuginnConfig:
 
         models = cls._parse_models_env()
         agents = cls._parse_agents_env()
+        thinking = cls._parse_thinking_env()
+        max_tokens = cls._parse_max_tokens_env()
 
         # If no model pool but legacy provider is set, synthesize a default model entry.
         if not models and provider != "default":
@@ -235,6 +261,8 @@ class HuginnConfig:
                 model=os.environ.get("HUGINN_MODEL"),
                 api_key=api_key,
                 base_url=os.environ.get("HUGINN_BASE_URL"),
+                thinking=thinking,
+                max_tokens=max_tokens,
             )]
 
         # If no agent profiles, synthesize a default lead agent pointing at the default/only model.
@@ -245,6 +273,7 @@ class HuginnConfig:
                 name="Lead",
                 model_alias=model_alias,
                 persona=os.environ.get("HUGINN_PERSONA", "default").strip(),
+                thinking=thinking,
             )]
 
         return cls(
@@ -287,9 +316,37 @@ class HuginnConfig:
             memory_decay_interval_turns=int(os.environ.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")),
             memory_decay_prune_threshold=float(os.environ.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")),
             tool_compression_max_tokens=int(os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")),
+            thinking=thinking,
+            max_tokens=max_tokens,
             pet_name=os.environ.get("HUGINN_PET_NAME", "Muninn").strip() or "Muninn",
             pet_personality=os.environ.get("HUGINN_PET_PERSONALITY", "cheerful").strip().lower() or "cheerful",  # type: ignore[arg-type]
         )
+
+    @staticmethod
+    def _parse_thinking_env() -> ThinkingIntensity | dict[str, Any] | None:
+        """Parse HUGINN_THINKING: a JSON object or one of low/medium/high."""
+        raw = os.environ.get("HUGINN_THINKING", "").strip()
+        if not raw:
+            return None
+        if raw in ("low", "medium", "high"):
+            return raw  # type: ignore[return-value]
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _parse_max_tokens_env() -> int | None:
+        raw = os.environ.get("HUGINN_MAX_TOKENS", "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
 
     @staticmethod
     def _parse_models_env() -> list[ModelConfig]:
@@ -368,6 +425,8 @@ class HuginnConfig:
                     "base_url": m.base_url,
                     "temperature": m.temperature,
                     "enabled": m.enabled,
+                    "thinking": m.thinking,
+                    "max_tokens": m.max_tokens,
                 }
                 for m in self.models
             ],
@@ -380,6 +439,7 @@ class HuginnConfig:
                     "tools": a.tools,
                     "enabled": a.enabled,
                     "max_steps": a.max_steps,
+                    "thinking": a.thinking,
                 }
                 for a in self.agents
             ],
@@ -413,6 +473,8 @@ class HuginnConfig:
             "memory_decay_interval_turns": self.memory_decay_interval_turns,
             "memory_decay_prune_threshold": self.memory_decay_prune_threshold,
             "tool_compression_max_tokens": self.tool_compression_max_tokens,
+            "thinking": self.thinking,
+            "max_tokens": self.max_tokens,
             "pet_name": self.pet_name,
             "pet_personality": self.pet_personality,
         }

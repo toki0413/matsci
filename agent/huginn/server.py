@@ -891,7 +891,12 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
     """Send a single-turn message to a specific agent profile."""
     try:
         factory = get_agent_factory()
-        agent = factory.create(agent_id, thread_id=params.get("thread_id", "default"))
+        agent = factory.create(
+            agent_id,
+            thread_id=params.get("thread_id", "default"),
+            thinking=params.get("thinking"),
+            max_tokens=params.get("max_tokens"),
+        )
         state = agent.invoke(params.get("message", ""))
         messages = state.get("messages", [])
         content = ""
@@ -1541,7 +1546,23 @@ async def agent_websocket(websocket: WebSocket):
             if msg_type == "user_input":
                 cfg_chat = HuginnConfig.from_env()
                 factory = get_agent_factory()
-                agent = get_agent()
+                thinking = data.get("thinking")
+                max_tokens = data.get("max_tokens")
+
+                # Request-level thinking/max_tokens override requires a fresh agent
+                # because the cached global agent is built from the default config.
+                if thinking is not None or max_tokens is not None:
+                    try:
+                        agent = factory.create_lead(
+                            thread_id=thread_id,
+                            thinking=thinking,
+                            max_tokens=max_tokens,
+                        )
+                    except Exception as e:
+                        await websocket.send_json({"type": "error", "error": f"Cannot create agent: {e}"})
+                        continue
+                else:
+                    agent = get_agent()
                 team_mode = cfg_chat.team_mode_enabled
 
                 # Track this thread
@@ -1563,7 +1584,12 @@ async def agent_websocket(websocket: WebSocket):
                         routed_agent_id = maybe_id
                         content = parts[1] if len(parts) > 1 else ""
                         try:
-                            agent = factory.create(routed_agent_id, thread_id=thread_id)
+                            agent = factory.create(
+                                routed_agent_id,
+                                thread_id=thread_id,
+                                thinking=thinking,
+                                max_tokens=max_tokens,
+                            )
                         except Exception as e:
                             await websocket.send_json({"type": "error", "error": f"Cannot spawn agent @{maybe_id}: {e}"})
                             continue
