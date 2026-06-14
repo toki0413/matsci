@@ -27,6 +27,7 @@ from huginn.types import (
 from huginn.permissions import PermissionConfig
 from huginn.pet import get_pet_bus, PetMood
 from huginn.privacy import redact_secrets
+from huginn.telemetry import get_telemetry_collector
 from huginn.tools.compress import compress_tool_output
 from huginn.utils.tokens import rough_token_count_for_text
 
@@ -220,11 +221,15 @@ class ToolAdapter:
                 return output
 
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
-            if is_async:
-                result = await tool.call(payload, context)
-            else:
-                result = tool.call(payload, context)
-            output = _serialize(result)
+            with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
+                if is_async:
+                    result = await tool.call(payload, context)
+                else:
+                    result = tool.call(payload, context)
+                output = _serialize(result)
+                span.metadata["success"] = result.success
+                if result.error:
+                    span.metadata["error"] = result.error
             _audit(input_data, output, approved=True, reason=None)
             if result.success:
                 _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
@@ -263,16 +268,20 @@ class ToolAdapter:
                 return output
 
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
-            if is_async:
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    result = asyncio.run(tool.call(payload, context))
+            with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
+                if is_async:
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        result = asyncio.run(tool.call(payload, context))
+                    else:
+                        result = loop.run_until_complete(tool.call(payload, context))
                 else:
-                    result = loop.run_until_complete(tool.call(payload, context))
-            else:
-                result = tool.call(payload, context)
-            output = _serialize(result)
+                    result = tool.call(payload, context)
+                output = _serialize(result)
+                span.metadata["success"] = result.success
+                if result.error:
+                    span.metadata["error"] = result.error
             _audit(input_data, output, approved=True, reason=None)
             if result.success:
                 _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})

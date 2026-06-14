@@ -22,6 +22,7 @@ from huginn.models.registry import create_langchain_model
 from huginn.models.router import ModelRouter
 from huginn.pet import get_pet_bus, PetMood
 from huginn.privacy import redact_secrets, scan_for_secrets
+from huginn.telemetry import get_telemetry_collector, TelemetryCollector
 from huginn.utils.context import compact_messages, estimate_message_tokens
 from huginn.utils.tokens import rough_token_count_for_text
 from huginn.utils.prompt_cache import PromptCacheBuilder
@@ -346,6 +347,14 @@ class HuginnAgent:
             cache_control=self.prompt_cache_control,
         )
 
+    def telemetry_summary(self) -> dict[str, Any]:
+        """Return a coarse summary of agent telemetry spans."""
+        return get_telemetry_collector().summary()
+
+    def telemetry_spans(self) -> list[dict[str, Any]]:
+        """Return all recorded telemetry spans as dicts."""
+        return get_telemetry_collector().to_dict()
+
     def _get_tool_description_text(self) -> str:
         """Cached concatenation of tool descriptions for token estimation."""
         if self._tool_description_text is None:
@@ -413,72 +422,75 @@ class HuginnAgent:
         pet = get_pet_bus()
         pet.publish(PetMood.THINKING, "Thinking…", {"thread_id": thread_id})
 
-        graph = self.build_graph()
+        telemetry = get_telemetry_collector()
+        with telemetry.span("agent_turn", thread_id=thread_id) as turn_span:
+            graph = self.build_graph()
 
-        # Build input stream: begin-dialogs (static), recalled memory
-        # (dynamic), then the current user message. The static system prompt
-        # lives in the graph state modifier so the provider can cache the
-        # prefix even when memory changes.
-        memory_text = self._build_memory_text(query=message)
-        messages = self._build_input_messages(message, memory_text=memory_text)
+            # Build input stream: begin-dialogs (static), recalled memory
+            # (dynamic), then the current user message. The static system prompt
+            # lives in the graph state modifier so the provider can cache the
+            # prefix even when memory changes.
+            memory_text = self._build_memory_text(query=message)
+            messages = self._build_input_messages(message, memory_text=memory_text)
 
-        inputs = {
-            "messages": messages
-        }
+            inputs = {
+                "messages": messages
+            }
 
-        # Compact initial messages if a context budget is configured.
-        if self.context_budget_tokens > 0:
-            inputs["messages"] = compact_messages(
-                inputs["messages"],
-                self.context_budget_tokens,
-                keep_last_n=1,
-            )
-            # Pre-flight estimate including system prompt and tool schemas.
-            estimated = (
-                rough_token_count_for_text(self.system_prompt)
-                + estimate_message_tokens(inputs["messages"])
-                + rough_token_count_for_text(self._get_tool_description_text())
-            )
-            if estimated > self.context_budget_tokens:
-                get_pet_bus().publish(
-                    PetMood.ERROR,
-                    f"Context budget warning: ~{estimated} tokens",
-                    {"budget": self.context_budget_tokens},
+            # Compact initial messages if a context budget is configured.
+            if self.context_budget_tokens > 0:
+                inputs["messages"] = compact_messages(
+                    inputs["messages"],
+                    self.context_budget_tokens,
+                    keep_last_n=1,
                 )
-
-        config = {
-            "configurable": {"thread_id": thread_id},
-        }
-
-        try:
-            async for state in graph.astream(inputs, config, stream_mode="values"):
-                # Track assistant/tool messages in memory
-                msgs = state.get("messages", [])
-                for msg in msgs:
-                    if isinstance(msg, AIMessage):
-                        self.memory.add_message("assistant", msg.content)
-                        # Track tool calls
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                self.memory.add_tool_call(
-                                    tool_name=tc.get("name", "unknown"),
-                                    input_args=tc.get("args", {}),
-                                )
-                # Extract provider cache-hit telemetry from the latest turn.
-                cache_stats = self._extract_cache_stats(msgs)
-                if cache_stats:
-                    self._last_cache_stats = cache_stats
-                    pet.publish(
-                        PetMood.SUCCESS,
-                        "Turn complete",
-                        {"thread_id": thread_id, **cache_stats},
+                # Pre-flight estimate including system prompt and tool schemas.
+                estimated = (
+                    rough_token_count_for_text(self.system_prompt)
+                    + estimate_message_tokens(inputs["messages"])
+                    + rough_token_count_for_text(self._get_tool_description_text())
+                )
+                if estimated > self.context_budget_tokens:
+                    get_pet_bus().publish(
+                        PetMood.ERROR,
+                        f"Context budget warning: ~{estimated} tokens",
+                        {"budget": self.context_budget_tokens},
                     )
-                yield state
-        except Exception as exc:
-            pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
-            raise
-        finally:
-            pet.publish(PetMood.IDLE, "Ready", {"thread_id": thread_id})
+
+            config = {
+                "configurable": {"thread_id": thread_id},
+            }
+
+            try:
+                async for state in graph.astream(inputs, config, stream_mode="values"):
+                    # Track assistant/tool messages in memory
+                    msgs = state.get("messages", [])
+                    for msg in msgs:
+                        if isinstance(msg, AIMessage):
+                            self.memory.add_message("assistant", msg.content)
+                            # Track tool calls
+                            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                                for tc in msg.tool_calls:
+                                    self.memory.add_tool_call(
+                                        tool_name=tc.get("name", "unknown"),
+                                        input_args=tc.get("args", {}),
+                                    )
+                    # Extract provider cache-hit telemetry from the latest turn.
+                    cache_stats = self._extract_cache_stats(msgs)
+                    if cache_stats:
+                        self._last_cache_stats = cache_stats
+                        turn_span.metadata.update(cache_stats)
+                        pet.publish(
+                            PetMood.SUCCESS,
+                            "Turn complete",
+                            {"thread_id": thread_id, **cache_stats},
+                        )
+                    yield state
+            except Exception as exc:
+                pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
+                raise
+            finally:
+                pet.publish(PetMood.IDLE, "Ready", {"thread_id": thread_id})
     
     async def explore(
         self,
