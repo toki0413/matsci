@@ -22,12 +22,12 @@ class PromptCacheBuilder:
 
     The builder splits each LLM request into:
 
-    * ``state_modifier`` - the static system prompt (used as a LangGraph
-      ``state_modifier`` or as the ``system_prompt`` for DeepAgents).
-    * ``input_messages`` - begin-dialogs + optional memory context + the
-      current user message. Begin-dialogs are static, but they live in the
-      input stream so that a changing memory/user tail does not invalidate
-      the cached prefix that precedes it.
+    * ``state_modifier`` - the static system prompt only. This becomes the
+      LangGraph ``state_modifier`` or the ``system_prompt`` for DeepAgents.
+    * ``input_messages`` - persona begin-dialogs + optional memory context +
+      the current user message. Begin-dialogs are static, but they live in the
+      input stream so that a changing memory/user tail does not invalidate the
+      cached prefix that precedes it.
     """
 
     def __init__(
@@ -62,10 +62,10 @@ class PromptCacheBuilder:
         return messages
 
     def build_state_modifier(self) -> list[SystemMessage]:
-        """Messages that should live in the graph's state modifier.
+        """Static system message used as the graph state modifier.
 
-        This is just the static system prompt. Begin-dialogs are kept in the
-        input stream so that the same message-order logic works for both
+        This is intentionally only the system prompt. Begin-dialogs are kept
+        in the input stream so the same message-order logic works for both
         ``create_react_agent`` and DeepAgents.
         """
         prefix = self._static_prefix()

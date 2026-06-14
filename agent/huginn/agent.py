@@ -76,6 +76,8 @@ class HuginnAgent:
         self.tool_filter = set(tool_filter) if tool_filter else None
         self.agent_factory = agent_factory
         self._agent_graph: Any | None = None
+        self._tool_description_text: str | None = None
+        self._last_cache_stats: dict[str, Any] = {}
 
         # Security layer
         self.sandbox = sandbox
@@ -200,7 +202,7 @@ class HuginnAgent:
     def register_tool(self, tool: Any) -> None:
         """Register a HuginnTool or LangChain tool."""
         from huginn.tools.base import HuginnTool
-        
+
         if isinstance(tool, HuginnTool):
             self.langchain_tools.append(
                 ToolAdapter.adapt(tool, max_tool_output_tokens=self.max_tool_output_tokens)
@@ -208,7 +210,8 @@ class HuginnAgent:
         else:
             # Assume it's already a LangChain tool
             self.langchain_tools.append(tool)
-    
+        self._invalidate_tool_description_cache()
+
     def register_tools_from_registry(self) -> None:
         """Register tools from the global ToolRegistry, optionally filtered by name."""
         from huginn.tools.base import HuginnTool
@@ -232,6 +235,7 @@ class HuginnAgent:
             else:
                 tools.append(tool)
         self.langchain_tools.extend(tools)
+        self._invalidate_tool_description_cache()
     
     def build_graph(self) -> Any:
         """Build the LangGraph agent graph."""
@@ -242,9 +246,9 @@ class HuginnAgent:
         try:
             from deepagents import create_deep_agent
 
-            # Use the *static* system prompt only. Dynamic memory is injected
-            # into the input message stream in chat() so the cached prefix
-            # stays stable across turns.
+            # Use the static system prompt as the system message. Dynamic
+            # memory and the current user message are injected in chat() so
+            # the cached prefix stays stable across turns.
             system_message = self._build_state_modifier()[0]
 
             self._agent_graph = create_deep_agent(
@@ -284,26 +288,30 @@ class HuginnAgent:
                 "Install one of them to use HuginnAgent."
             )
     
-    def _build_memory_text(self) -> str:
+    def _build_memory_text(self, query: str | None = None) -> str:
         """Recall relevant long-term memory formatted for the prompt tail.
 
-        Keeping this text out of the system prompt keeps the static prefix
-        stable and improves LLM prompt/KV-cache hit rates.
+        The query defaults to the current user message so recalled facts are
+        actually relevant. Keeping this text out of the system prompt keeps
+        the static prefix stable and improves LLM prompt/KV-cache hit rates.
         """
+        if not query:
+            query = "materials science computation"
         try:
-            return self.memory.recall_for_prompt(
-                "materials science computation", max_entries=2
-            )
+            return self.memory.recall_for_prompt(query, max_entries=3)
         except Exception:
             return ""
 
     def _build_state_modifier(self) -> list[SystemMessage]:
-        """Static system message(s) used as the graph state modifier."""
+        """Static system message used as the graph state modifier."""
         return self._cache_builder.build_state_modifier()
 
-    def _build_input_messages(self, message: str) -> list[Any]:
-        """Dynamic input messages: begin-dialogs + memory + current user."""
-        memory_text = self._build_memory_text()
+    def _build_input_messages(
+        self, message: str, memory_text: str | None = None
+    ) -> list[Any]:
+        """Dynamic input messages: memory context + current user."""
+        if memory_text is None:
+            memory_text = self._build_memory_text(query=message)
         return self._cache_builder.build_input_messages(memory_text, message)
 
     def _rebuild_cache_builder(self) -> None:
@@ -313,6 +321,41 @@ class HuginnAgent:
             begin_dialogs=self.begin_dialogs,
             cache_control=self.prompt_cache_control,
         )
+
+    def _get_tool_description_text(self) -> str:
+        """Cached concatenation of tool descriptions for token estimation."""
+        if self._tool_description_text is None:
+            self._tool_description_text = " ".join(
+                getattr(t, "description", "") for t in self.langchain_tools
+            )
+        return self._tool_description_text
+
+    def _invalidate_tool_description_cache(self) -> None:
+        """Invalidate cached tool descriptions when tools change."""
+        self._tool_description_text = None
+
+    def _extract_cache_stats(self, messages: list[Any]) -> dict[str, Any]:
+        """Extract provider cache-hit telemetry from the latest assistant turn."""
+        stats: dict[str, Any] = {}
+        for msg in reversed(messages):
+            if not isinstance(msg, AIMessage):
+                continue
+            meta = getattr(msg, "response_metadata", None) or {}
+            for key in (
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+                "input_tokens",
+                "output_tokens",
+            ):
+                if key in meta:
+                    stats[key] = meta[key]
+            usage = meta.get("usage")
+            if isinstance(usage, dict):
+                for k, v in usage.items():
+                    stats[f"usage_{k}"] = v
+            if stats:
+                break
+        return stats
     
     async def chat(
         self,
@@ -352,7 +395,8 @@ class HuginnAgent:
         # (dynamic), then the current user message. The static system prompt
         # lives in the graph state modifier so the provider can cache the
         # prefix even when memory changes.
-        messages = self._build_input_messages(message)
+        memory_text = self._build_memory_text(query=message)
+        messages = self._build_input_messages(message, memory_text=memory_text)
 
         inputs = {
             "messages": messages
@@ -366,11 +410,10 @@ class HuginnAgent:
                 keep_last_n=1,
             )
             # Pre-flight estimate including system prompt and tool schemas.
-            tool_desc = " ".join(getattr(t, "description", "") for t in self.langchain_tools)
             estimated = (
                 rough_token_count_for_text(self.system_prompt)
                 + estimate_message_tokens(inputs["messages"])
-                + rough_token_count_for_text(tool_desc)
+                + rough_token_count_for_text(self._get_tool_description_text())
             )
             if estimated > self.context_budget_tokens:
                 get_pet_bus().publish(
@@ -397,7 +440,15 @@ class HuginnAgent:
                                     tool_name=tc.get("name", "unknown"),
                                     input_args=tc.get("args", {}),
                                 )
-                    # Note: ToolMessage handling depends on langchain version
+                # Extract provider cache-hit telemetry from the latest turn.
+                cache_stats = self._extract_cache_stats(msgs)
+                if cache_stats:
+                    self._last_cache_stats = cache_stats
+                    pet.publish(
+                        PetMood.SUCCESS,
+                        "Turn complete",
+                        {"thread_id": thread_id, **cache_stats},
+                    )
                 yield state
         except Exception as exc:
             pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})

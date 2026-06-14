@@ -120,8 +120,11 @@ class TestHuginnAgentPromptCache:
         with tempfile.TemporaryDirectory() as tmp:
             longterm = LongTermMemory(db_path=Path(tmp) / "memory.db")
             memory = MemoryManager(longterm=longterm)
+            # The memory content should share keywords with the user query so
+            # dynamic semantic recall picks it up.
             memory.remember(
-                "materials science computation: Ti is hcp", category="fact"
+                "compute stress for Ti: Ti has an hcp structure under pressure",
+                category="fact",
             )
 
             agent = _make_agent(
@@ -132,7 +135,7 @@ class TestHuginnAgentPromptCache:
             graph = _CaptureGraph()
             agent._agent_graph = graph
 
-            asyncio.run(_consume_chat(agent, "compute stress"))
+            asyncio.run(_consume_chat(agent, "compute stress for Ti"))
 
             assert graph.captured_inputs is not None
             msgs = graph.captured_inputs["messages"]
@@ -141,9 +144,23 @@ class TestHuginnAgentPromptCache:
             assert isinstance(msgs[1], AIMessage)
             assert msgs[1].content == "hi there"
             assert isinstance(msgs[2], SystemMessage)
-            assert "Ti is hcp" in msgs[2].content
+            assert "hcp structure" in msgs[2].content
             assert isinstance(msgs[3], HumanMessage)
-            assert msgs[3].content == "compute stress"
+            assert msgs[3].content == "compute stress for Ti"
+
+    def test_memory_recall_uses_current_query(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            longterm = LongTermMemory(db_path=Path(tmp) / "memory.db")
+            memory = MemoryManager(longterm=longterm)
+            memory.remember("band gap of Si is 1.1 eV", category="fact")
+
+            agent = _make_agent(memory_manager=memory)
+            text = agent._build_memory_text(query="band gap of Si")
+            assert "1.1 eV" in text
+
+            # Different query should not recall the Si fact.
+            text = agent._build_memory_text(query="lattice parameter of Ti")
+            assert "1.1 eV" not in text
 
     def test_no_memory_message_when_recall_empty(self):
         agent = _make_agent(begin_dialogs=[("assistant", "hi")])
@@ -158,6 +175,47 @@ class TestHuginnAgentPromptCache:
         assert agent.prompt_cache_control is False
         prefix = agent._build_state_modifier()
         assert "cache_control" not in prefix[0].additional_kwargs
+
+    def test_tool_description_cache(self):
+        class _FakeTool:
+            description = "fake tool"
+
+        agent = _make_agent()
+        assert agent._get_tool_description_text() == ""
+        agent.register_tool(_FakeTool())
+        assert agent._get_tool_description_text() == "fake tool"
+        # Re-registering should invalidate and rebuild correctly.
+        agent.register_tool(_FakeTool())
+        assert agent._get_tool_description_text() == "fake tool fake tool"
+
+    def test_extract_cache_stats_from_response_metadata(self):
+        agent = _make_agent()
+        msgs = [
+            AIMessage(
+                content="ok",
+                response_metadata={
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 500,
+                    "output_tokens": 42,
+                },
+            )
+        ]
+        stats = agent._extract_cache_stats(msgs)
+        assert stats["cache_creation_input_tokens"] == 100
+        assert stats["cache_read_input_tokens"] == 500
+        assert stats["output_tokens"] == 42
+
+    def test_extract_cache_stats_from_usage_dict(self):
+        agent = _make_agent()
+        msgs = [
+            AIMessage(
+                content="ok",
+                response_metadata={"usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+            )
+        ]
+        stats = agent._extract_cache_stats(msgs)
+        assert stats["usage_prompt_tokens"] == 10
+        assert stats["usage_completion_tokens"] == 5
 
 
 async def _consume_chat(agent: HuginnAgent, message: str) -> None:
