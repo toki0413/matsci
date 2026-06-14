@@ -1007,6 +1007,86 @@ def unified_discretize(ctx: click.Context, model: str, method: str, n: int) -> N
     console.print(f"[bold]Load vector:[/bold] {result['load_vector']}")
 
 
+@cli.group(name="persona")
+@click.pass_context
+def persona(ctx: click.Context) -> None:
+    """Manage Huginn personas."""
+
+
+@persona.command("list")
+def persona_list() -> None:
+    """List available personas."""
+    from huginn.personas import PersonaManager
+    mgr = PersonaManager()
+    console.print(Panel("[bold blue]Personas[/bold blue]", border_style="blue"))
+    for name in mgr.list():
+        marker = " (default)" if name == mgr.get_default_name() else ""
+        console.print(f"  - {name}{marker}")
+
+
+@persona.command("show")
+@click.argument("name")
+def persona_show(name: str) -> None:
+    """Show a persona details."""
+    from huginn.personas import PersonaManager
+    mgr = PersonaManager()
+    p = mgr.get(name)
+    console.print(Panel(f"[bold blue]{p.name}[/bold blue]", title="Persona", border_style="blue"))
+    console.print(p.system_prompt)
+    if p.begin_dialogs:
+        console.print("[bold]Begin dialogs:[/bold]")
+        for d in p.begin_dialogs:
+            console.print(f"  {d['role']}: {d['content']}")
+
+
+@persona.command("set-default")
+@click.argument("name")
+def persona_set_default(name: str) -> None:
+    """Set the default persona."""
+    from huginn.personas import PersonaManager
+    mgr = PersonaManager()
+    try:
+        mgr.set_default(name)
+        console.print(f"[green]Default persona set to {name}[/green]")
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+
+
+@persona.command("create")
+@click.argument("name")
+@click.option("--prompt", required=True, help="System prompt text")
+@click.option("--begin-dialog", "begin_dialogs", multiple=True, help="Begin dialog as role:content")
+def persona_create(name: str, prompt: str, begin_dialogs: tuple[str, ...]) -> None:
+    """Create a new persona."""
+    from huginn.personas import PersonaManager
+    mgr = PersonaManager()
+    parsed = []
+    for d in begin_dialogs:
+        if ":" not in d:
+            console.print(f"[red]Invalid begin dialog (use role:content): {d}[/red]")
+            return
+        role, content = d.split(":", 1)
+        parsed.append({"role": role.strip(), "content": content.strip()})
+    try:
+        mgr.create(name, system_prompt=prompt, begin_dialogs=parsed)
+        console.print(f"[green]Created persona {name}[/green]")
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+
+
+@persona.command("delete")
+@click.argument("name")
+def persona_delete(name: str) -> None:
+    """Delete a user-defined persona."""
+    from huginn.personas import PersonaManager
+    mgr = PersonaManager()
+    try:
+        mgr.delete(name)
+        console.print(f"[green]Deleted persona {name}[/green]")
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+
+
 def main() -> None:
     """Entry point."""
     env_path = Path(".env")

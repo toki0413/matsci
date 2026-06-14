@@ -43,7 +43,7 @@ from huginn.agent import HuginnAgent
 from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
 from huginn.config import HuginnConfig
-from huginn.personas import PERSONAS
+from huginn.personas import PersonaManager
 from huginn.project_context import (
     load_project_context,
     save_project_context,
@@ -437,7 +437,8 @@ def get_planner_agent() -> HuginnAgent:
         return _planner_agent
 
     cfg = HuginnConfig.from_env()
-    base_prompt = PERSONAS.get(cfg.persona, PERSONAS["default"])
+    persona_manager = PersonaManager()
+    base_prompt = persona_manager.get(cfg.persona).system_prompt
 
     try:
         project_ctx = load_project_context(cfg.workspace)

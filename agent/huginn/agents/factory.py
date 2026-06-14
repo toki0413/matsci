@@ -12,7 +12,7 @@ from typing import Any
 from huginn.agent import HuginnAgent
 from huginn.config import HuginnConfig, AgentProfileConfig
 from huginn.models.registry import ModelRegistry
-from huginn.personas import PERSONAS
+from huginn.personas import PersonaManager
 from huginn.project_context import load_project_context
 
 
@@ -28,6 +28,7 @@ class AgentFactory:
         self.config = config
         self.model_registry = model_registry or ModelRegistry.from_config(config)
         self.memory_manager = memory_manager
+        self.persona_manager = PersonaManager()
         self._profiles: dict[str, AgentProfileConfig] = {
             a.id: a for a in config.agents if a.enabled
         }
@@ -56,11 +57,16 @@ class AgentFactory:
 
         model = self.model_registry.resolve(model_alias)
 
+        begin_dialogs: list[tuple[str, str]] = []
         if system_prompt_override:
             prompt = system_prompt_override
         else:
-            persona = PERSONAS.get(profile.persona, PERSONAS.get("default", ""))
-            prompt = persona
+            persona = self.persona_manager.get(profile.persona)
+            prompt = persona.system_prompt
+            begin_dialogs = [
+                (d.get("role", "user"), d.get("content", ""))
+                for d in persona.begin_dialogs
+            ]
             # Inject project context if available
             try:
                 ctx = load_project_context(self.config.workspace)
@@ -72,6 +78,7 @@ class AgentFactory:
         agent = HuginnAgent(
             model=model,
             system_prompt=prompt,
+            begin_dialogs=begin_dialogs,
             memory_manager=memory_manager if memory_manager is not None else self.memory_manager,
             profile_id=profile_id,
             thread_id=thread_id,
