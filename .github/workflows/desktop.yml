@@ -56,16 +56,16 @@ jobs:
         id: target
         shell: bash
         run: |
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
+          TARGET=$(rustc --print host-tuple)
           echo "triple=$TARGET" >> "$GITHUB_OUTPUT"
 
       - name: Stage matsci sidecar
         shell: bash
         run: |
           TARGET=${{ steps.target.outputs.triple }}
-          SIDECAR_DIR="desktop/src-tauri/sidecars/$TARGET"
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
           mkdir -p "$SIDECAR_DIR"
-          cp "target/release/matsci.exe" "$SIDECAR_DIR/matsci.exe"
+          cp "target/release/matsci.exe" "$SIDECAR_DIR/matsci-$TARGET.exe"
 
       - name: Install frontend dependencies
         working-directory: ./desktop
@@ -88,12 +88,18 @@ jobs:
         working-directory: ./desktop
         shell: bash
         run: |
-          UPLOAD_URL=$(curl -s -F 'paste=@tauri-build.log' https://paste.c-net.org/)
-          echo "::error::Tauri build failed. Full log: $UPLOAD_URL"
+          echo "::error::Tauri build failed. See uploaded build log for details."
           echo "::error::Relevant error lines:"
-          grep -n -iE '(error\[^|^error:|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:|the build|missing|warning:.*treated as error|invalid|unsupported)' tauri-build.log | tail -30 | while IFS= read -r line; do
+          grep -n -iE '(error\[^|^error:|FAILED|panicked|cannot find|Build failed|linking with|unresolved|ld:|the build|missing|warning:.*treated as error|invalid|unsupported)' tauri-build.log | tail -40 | while IFS= read -r line; do
             echo "::error::$line"
           done
+
+      - name: Upload Tauri build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-build-log
+          path: desktop/tauri-build.log
 
       - name: Upload build artifact
         if: success()
