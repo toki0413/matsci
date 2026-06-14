@@ -53,7 +53,6 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             get_agent_status,
             start_backend,
             stop_backend,
@@ -80,11 +79,6 @@ fn main() {
             }
         }
     });
-}
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to Huginn.", name)
 }
 
 #[tauri::command]

@@ -40,28 +40,8 @@ except Exception:
 
 from huginn import __version__
 from huginn.agent import HuginnAgent
+from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
-from huginn.tools.structure_tool import StructureTool
-from huginn.tools.extract_tool import ExtractTool
-from huginn.tools.job_tool import JobTool
-from huginn.tools.database_tool import DatabaseTool
-from huginn.tools.potential_tool import PotentialTool
-from huginn.tools.diff_tool import DiffTool
-from huginn.tools.validate_tool import ValidateTool
-from huginn.tools.diagnose_tool import DiagnoseTool
-from huginn.tools.vasp_tool import VaspTool
-from huginn.tools.lammps_tool import LammpsTool
-from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
-from huginn.tools.report_tool import ReportTool
-from huginn.tools.comsol_tool import ComsolTool
-from huginn.tools.qe_tool import QuantumEspressoTool
-from huginn.tools.cp2k_tool import Cp2kTool
-from huginn.tools.uq_tool import UQTool
-from huginn.tools.gp_tool import GPTool
-from huginn.tools.memory_tool import RememberTool, RecallTool
-from huginn.tools.orchestrate_tool import OrchestrateTool
-from huginn.rag.rag_tool import RAGTool
-from huginn.evaluation.evaluation_tool import EvaluationTool
 from huginn.config import HuginnConfig
 from huginn.personas import PERSONAS
 from huginn.project_context import (
@@ -86,8 +66,7 @@ from huginn.skills.registry import SkillRegistry
 
 
 # Register all tools
-for T in [StructureTool, ExtractTool, JobTool, DatabaseTool, PotentialTool, DiffTool, ValidateTool, DiagnoseTool, VaspTool, LammpsTool, ComsolTool, QuantumEspressoTool, Cp2kTool, UQTool, GPTool, RAGTool, EvaluationTool, SymbolicRegressionTool, ReportTool, RememberTool, RecallTool, OrchestrateTool]:
-    ToolRegistry.register(T())
+register_all_tools()
 
 # Global agent and MCP manager
 _agent: HuginnAgent | None = None
