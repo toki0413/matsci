@@ -27,6 +27,7 @@ from huginn.types import (
 from huginn.permissions import PermissionConfig
 from huginn.pet import get_pet_bus, PetMood
 from huginn.privacy import redact_secrets
+from huginn.tools.compress import compress_tool_output
 from huginn.utils.tokens import rough_token_count_for_text
 
 
@@ -87,7 +88,6 @@ class ToolAdapter:
         audit_logger = audit_logger or _default_audit_logger()
         if max_tool_output_tokens is None:
             max_tool_output_tokens = int(os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000"))
-        max_chars_per_string = max(1, max_tool_output_tokens * 4)
 
         def _check_permission(input_data: BaseModel) -> tuple[bool, str | None]:
             """Return (approved, reason_or_none)."""
@@ -150,22 +150,24 @@ class ToolAdapter:
             else:
                 data = {"error": result.error or "Unknown error"}
 
-            data = _sanitize_values(data)
+            data = _sanitize_and_compress(data)
             return data
 
-        def _sanitize_values(obj: Any) -> Any:
+        def _sanitize_and_compress(obj: Any) -> Any:
+            # Strings: privacy redaction first, then token-aware truncation.
             if isinstance(obj, str):
                 s = obj
                 if os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0":
                     s = redact_secrets(s)
-                if len(s) > max_chars_per_string:
-                    s = s[:max_chars_per_string] + "\n...[truncated]"
-                return s
-            if isinstance(obj, dict):
-                return {k: _sanitize_values(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [_sanitize_values(v) for v in obj]
-            return obj
+                return compress_tool_output(
+                    s, max_output_tokens=max_tool_output_tokens
+                )
+
+            # Everything else: apply structured compression (numeric summaries,
+            # list head/tail, long-text truncation).
+            return compress_tool_output(
+                obj, max_output_tokens=max_tool_output_tokens
+            )
 
         def _audit(
             input_data: BaseModel,
