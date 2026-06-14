@@ -152,10 +152,7 @@ async fn start_backend(
         Ok("started".to_string())
     } else {
         // Development fallback: use the system Python interpreter directly.
-        let python = app
-            .shell()
-            .command("python")
-            .map_err(|e| format!("failed to locate python command: {}", e))?;
+        let python = app.shell().command("python");
         let (mut rx, child) = python
             .args(["-m", "matsci_agent.server"])
             .spawn()
