@@ -79,6 +79,8 @@ class AgentFactory:
             agent_factory=self,
             privacy_redact_secrets=self.config.privacy_redact_secrets,
             privacy_block_on_secrets=self.config.privacy_block_on_secrets,
+            max_tool_output_tokens=self.config.max_tool_output_tokens,
+            context_budget_tokens=self.config.context_budget_tokens,
         )
         agent.register_tools_from_registry()
         return agent
