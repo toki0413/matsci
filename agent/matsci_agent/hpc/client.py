@@ -46,6 +46,8 @@ class HPCConfig:
     default_walltime: str = "24:00:00"
     default_nodes: int = 1
     default_ntasks_per_node: int = 4
+    strict_host_key_checking: bool = True
+    known_hosts_path: str | None = None
 
 
 @dataclass
@@ -68,12 +70,21 @@ class HPCClient:
         self._sftp = None
     
     def connect(self, timeout: int = 10) -> None:
-        """Establish SSH connection to the HPC host."""
+        """Establish SSH connection to the HPC host.
+
+        When ``strict_host_key_checking`` is enabled (default), the host key
+        must be present in the known_hosts file; unknown hosts are rejected.
+        """
         import paramiko
-        
+
         self._ssh = paramiko.SSHClient()
-        self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
+
+        if self.config.strict_host_key_checking:
+            self._ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+            self._load_known_hosts()
+        else:
+            self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
         connect_kwargs = {
             "hostname": self.config.host,
             "username": self.config.username,
@@ -81,14 +92,32 @@ class HPCClient:
             "timeout": timeout,
             "look_for_keys": True,
         }
-        
+
         if self.config.key_path:
             connect_kwargs["key_filename"] = self.config.key_path
         elif self.config.password:
             connect_kwargs["password"] = self.config.password
-        
+
         self._ssh.connect(**connect_kwargs)
         self._sftp = self._ssh.open_sftp()
+
+    def _load_known_hosts(self) -> None:
+        """Load host keys from configured or default known_hosts file."""
+        import paramiko
+
+        known_hosts = self.config.known_hosts_path
+        if known_hosts:
+            self._ssh.load_host_keys(known_hosts)
+        else:
+            try:
+                self._ssh.load_system_host_keys()
+            except OSError:
+                pass
+
+        if not self._ssh.get_host_keys().keys():
+            raise paramiko.SSHException(
+                "Strict host key checking is enabled but no known_hosts entries were loaded."
+            )
     
     def disconnect(self) -> None:
         """Close SSH connection."""

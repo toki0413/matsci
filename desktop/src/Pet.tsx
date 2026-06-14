@@ -1,8 +1,9 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const API_BASE = "http://localhost:8000";
 
-type PetMood = "idle" | "thinking" | "working" | "success" | "error" | "sleeping";
+type PetMood = "idle" | "thinking" | "working" | "success" | "error" | "sleeping" | "happy";
 
 interface PetState {
   mood: PetMood;
@@ -17,15 +18,18 @@ const MOOD_EMOJI: Record<PetMood, string> = {
   success: "🎉",
   error: "💥",
   sleeping: "💤",
+  happy: "🐦",
 };
 
-function moodClass(mood: PetMood): string {
+function moodClass(mood: PetMood, hopping: boolean): string {
+  if (hopping) return "animate-hop";
   switch (mood) {
     case "thinking":
       return "animate-bounce";
     case "working":
       return "animate-pulse";
     case "success":
+    case "happy":
       return "animate-bounce";
     case "error":
       return "animate-shake";
@@ -72,7 +76,33 @@ export default function Pet() {
   const [mood, setMood] = useState<PetMood>("idle");
   const [message, setMessage] = useState<string>("Hi!");
   const [showBubble, setShowBubble] = useState(true);
+  const [hopping, setHopping] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appWindow = useRef<ReturnType<typeof getCurrentWindow> | null>(null);
+
+  useEffect(() => {
+    appWindow.current = getCurrentWindow();
+  }, []);
+
+  const clearMessage = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setShowBubble(false), 4000);
+  }, []);
+
+  const speak = useCallback((text: string, nextMood: PetMood = "happy") => {
+    setMood(nextMood);
+    setMessage(text);
+    setShowBubble(true);
+    clearMessage();
+  }, [clearMessage]);
+
+  const hop = useCallback(() => {
+    setHopping(true);
+    if (hopTimer.current) clearTimeout(hopTimer.current);
+    hopTimer.current = setTimeout(() => setHopping(false), 500);
+  }, []);
 
   useEffect(() => {
     document.body.style.background = "transparent";
@@ -86,6 +116,8 @@ export default function Pet() {
           const s = data.state as PetState;
           setMood(s.mood);
           setMessage(s.message);
+          setShowBubble(true);
+          clearMessage();
         } else if (data.type === "event") {
           setMood(data.mood);
           setMessage(data.message);
@@ -104,22 +136,75 @@ export default function Pet() {
     return () => {
       es.close();
       if (hideTimer.current) clearTimeout(hideTimer.current);
+      if (hopTimer.current) clearTimeout(hopTimer.current);
       document.body.style.background = "";
       document.documentElement.style.background = "";
     };
-  }, []);
+  }, [clearMessage]);
+
+  const handlePointerDown = () => {
+    appWindow.current?.startDragging();
+  };
+
+  const handleClick = () => {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    hop();
+    if (mood === "sleeping") {
+      speak("Good morning!", "idle");
+    } else {
+      speak("Chirp!", "happy");
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setMenuOpen((open) => !open);
+  };
+
+  const actions = [
+    { label: "Feed 🌾", onClick: () => { hop(); speak("Yum!", "happy"); setMenuOpen(false); } },
+    { label: mood === "sleeping" ? "Wake ☀️" : "Sleep 🌙", onClick: () => {
+      if (mood === "sleeping") {
+        speak("I'm awake!", "idle");
+      } else {
+        speak("Good night…", "sleeping");
+      }
+      setMenuOpen(false);
+    }},
+    { label: showBubble ? "Hide bubble 🤐" : "Show bubble 💬", onClick: () => {
+      setShowBubble((s) => !s);
+      setMenuOpen(false);
+    }},
+  ];
 
   return (
-    <div className="pet-container">
+    <div
+      className="pet-container"
+      onPointerDown={handlePointerDown}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
+    >
       {showBubble && (
         <div className="pet-bubble">
           <span className="pet-bubble-emoji">{MOOD_EMOJI[mood]}</span>
           <span className="pet-bubble-text">{message}</span>
         </div>
       )}
-      <div className={`pet-avatar ${moodClass(mood)}`}>
+      <div className={`pet-avatar ${moodClass(mood, hopping)}`}>
         <BirdAvatar mood={mood} />
       </div>
+      {menuOpen && (
+        <div className="pet-menu">
+          {actions.map((a) => (
+            <button key={a.label} className="pet-menu-item" onClick={(e) => { e.stopPropagation(); a.onClick(); }}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
