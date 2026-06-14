@@ -45,6 +45,14 @@ class PetState:
         self.idle_since = time.time()
         self.active_tasks = 0
         self.recent_events: list[dict[str, Any]] = []
+        self.name = "Toki"
+        self.personality = "cheerful"
+
+    def configure(self, name: str | None = None, personality: str | None = None) -> None:
+        if name:
+            self.name = name
+        if personality:
+            self.personality = personality
 
     def update(self, event: PetEvent) -> None:
         self.mood = event.mood
@@ -94,6 +102,8 @@ class PetState:
             "idle_seconds": time.time() - self.idle_since,
             "active_tasks": self.active_tasks,
             "recent_events": self.recent_events,
+            "name": self.name,
+            "personality": self.personality,
         }
 
 
@@ -142,6 +152,9 @@ class PetEventBus:
             except asyncio.QueueFull:
                 pass
 
+    def configure(self, name: str | None = None, personality: str | None = None) -> None:
+        self._state.configure(name, personality)
+
     @property
     def state(self) -> PetState:
         return self._state
@@ -157,3 +170,8 @@ def get_pet_bus() -> PetEventBus:
     if _global_bus is None:
         _global_bus = PetEventBus()
     return _global_bus
+
+
+def configure_pet(name: str | None = None, personality: str | None = None) -> None:
+    """Configure the global pet name and personality."""
+    get_pet_bus().configure(name, personality)

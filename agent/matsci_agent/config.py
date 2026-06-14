@@ -105,6 +105,10 @@ class MatSciConfig:
     max_tool_output_tokens: int = 25000
     context_budget_tokens: int = 0
 
+    # Pet customization
+    pet_name: str = "Toki"
+    pet_personality: Literal["cheerful", "nerdy", "calm", "sassy"] = "cheerful"
+
     @classmethod
     def from_env(cls) -> MatSciConfig:
         """Load configuration from environment variables.
@@ -188,6 +192,8 @@ class MatSciConfig:
             privacy_block_on_secrets=os.environ.get("MATSCI_PRIVACY_BLOCK_ON_SECRETS", "").lower() == "true",
             max_tool_output_tokens=int(os.environ.get("MATSCI_MAX_TOOL_OUTPUT_TOKENS", "25000")),
             context_budget_tokens=int(os.environ.get("MATSCI_CONTEXT_BUDGET_TOKENS", "0")),
+            pet_name=os.environ.get("MATSCI_PET_NAME", "Toki").strip() or "Toki",
+            pet_personality=os.environ.get("MATSCI_PET_PERSONALITY", "cheerful").strip().lower() or "cheerful",  # type: ignore[arg-type]
         )
 
     @staticmethod
@@ -305,6 +311,8 @@ class MatSciConfig:
             "local_only_mode": self.local_only_mode,
             "max_tool_output_tokens": self.max_tool_output_tokens,
             "context_budget_tokens": self.context_budget_tokens,
+            "pet_name": self.pet_name,
+            "pet_personality": self.pet_personality,
         }
 
     @classmethod
