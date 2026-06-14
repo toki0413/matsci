@@ -756,3 +756,77 @@ class TestAutoDiffTool:
         ))
         assert not result.success
         assert "Unknown action" in result.error
+
+
+
+class TestUnifiedSymbolicMath:
+    """Tests for symbolic_math_tool unified-framework bridge."""
+
+    @pytest.fixture
+    def tool(self):
+        return SymbolicMathTool()
+
+    def test_unified_list(self, tool):
+        result = asyncio.run(tool.call(
+            SymbolicMathInput(action="unified", target="list"),
+            CTX,
+        ))
+        assert result.success
+        assert "models" in result.data
+        assert "harmonic_oscillator_md" in result.data["models"]
+
+    def test_unified_derive_harmonic(self, tool):
+        result = asyncio.run(tool.call(
+            SymbolicMathInput(
+                action="unified",
+                target="derive",
+                expression="harmonic_oscillator_md",
+            ),
+            CTX,
+        ))
+        assert result.success
+        assert result.data["model"] == "harmonic_oscillator_md"
+        assert result.data["principle"] == "hamiltonian"
+        assert "energy_expression" in result.data
+        assert "equations" in result.data
+        eqs = result.data["equations"]
+        assert "dq_dt" in eqs
+        assert "dp_dt" in eqs
+
+    def test_unified_derive_fem(self, tool):
+        result = asyncio.run(tool.call(
+            SymbolicMathInput(
+                action="unified",
+                target="derive",
+                expression="linear_elasticity_fem",
+            ),
+            CTX,
+        ))
+        assert result.success
+        assert result.data["principle"] == "minimum"
+        assert "displacement" in result.data["equations"]
+
+    def test_unified_bridge_dft_to_md(self, tool):
+        result = asyncio.run(tool.call(
+            SymbolicMathInput(
+                action="unified",
+                target="bridge",
+                expression="dft-to-md",
+            ),
+            CTX,
+        ))
+        assert result.success
+        assert result.data["bridge"] == "dft_to_md"
+        assert result.data["potential_name"]
+
+    def test_unified_unknown_model(self, tool):
+        result = asyncio.run(tool.call(
+            SymbolicMathInput(
+                action="unified",
+                target="derive",
+                expression="nonexistent_model",
+            ),
+            CTX,
+        ))
+        assert not result.success
+        assert "Unknown unified model" in result.error

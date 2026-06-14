@@ -246,6 +246,10 @@ class LeanTool(HuginnTool):
             if not args.symbolic_result:
                 return ToolResult(data=None, success=False, error="symbolic_result required for auto_verify probability")
             result = pipe.verify_probability(args.symbolic_result, symbols=sym)
+        elif sub == "unified":
+            if not args.symbolic_result:
+                return ToolResult(data=None, success=False, error="symbolic_result required for auto_verify unified")
+            result = pipe.verify_unified(args.symbolic_result, symbols=sym)
         else:
             return ToolResult(data=None, success=False, error=f"Unknown auto_verify_action: {args.auto_verify_action}")
 

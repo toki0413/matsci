@@ -133,3 +133,26 @@ class TestLeanToolAutoVerify:
             ctx,
         )
         assert result.success, result.error
+
+
+    @pytest.mark.asyncio
+    async def test_auto_verify_unified(self, lean_tool):
+        tool, Input, ctx = lean_tool
+        result = await tool.call(
+            Input(
+                action="auto_verify",
+                auto_verify_action="unified",
+                symbolic_result={
+                    "model": "harmonic_oscillator_md",
+                    "principle": "hamiltonian",
+                    "energy_expression": "0.5*p**2 + 0.5*q**2",
+                    "equations": {
+                        "dq_dt": "1.0*p",
+                        "dp_dt": "-1.0*q",
+                    },
+                },
+                symbols=["p", "q"],
+            ),
+            ctx,
+        )
+        assert result.success, result.error

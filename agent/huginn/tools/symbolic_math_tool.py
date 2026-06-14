@@ -27,7 +27,8 @@ from huginn.types import ToolResult, ToolContext
 class SymbolicMathInput(BaseModel):
     action: str = Field(..., description=
         "derive | solve | integrate | differentiate | taylor | eigenvalue | "
-        "constitutive | weak_form | simplify | series | tensor_ops | tensor_calculus | dimensional_analysis | linear_algebra | dft | thermodynamics | probability | thermodynamics"
+        "constitutive | weak_form | simplify | series | tensor_ops | tensor_calculus | "
+        "dimensional_analysis | linear_algebra | dft | thermodynamics | probability | unified"
     )
     expression: str | None = Field(default=None, description="Mathematical expression as string")
     symbols: list[str] = Field(default_factory=list, description="List of symbol names")
@@ -94,6 +95,8 @@ class SymbolicMathTool(HuginnTool):
                 return self._do_thermodynamics(args)
             if action == "probability":
                 return self._do_probability(args)
+            if action == "unified":
+                return self._do_unified(args)
 
             return ToolResult(
                 data=None,
@@ -1245,3 +1248,131 @@ class SymbolicMathTool(HuginnTool):
             }, success=True)
 
         return ToolResult(data=None, success=False, error=f"Unknown probability target: {target}")
+
+
+    # ------------------------------------------------------------------
+    # Unified scientific computing framework bridge
+    # ------------------------------------------------------------------
+
+    def _do_unified(self, args: SymbolicMathInput) -> ToolResult:
+        """Bridge to huginn.unified: derive equations and multiscale bridges.
+
+        Targets:
+          - list: return available unified models.
+          - derive: derive governing equations from a named model.
+          - bridge: run a multiscale bridge (dft-to-md or cauchy-born).
+        """
+        from huginn.unified import derive_equations
+        from huginn.unified.models import get_model, list_models
+        from huginn.unified.bridge import (
+            ConstitutiveModel,
+            cauchy_born_elasticity,
+            dft_potential_to_md,
+        )
+
+        target = (args.target or "derive").lower()
+
+        if target == "list":
+            return ToolResult(data={"models": list_models()}, success=True)
+
+        if target == "derive":
+            model_name = args.expression
+            if not model_name:
+                return ToolResult(
+                    data=None, success=False,
+                    error="expression must be a unified model name for target=derive",
+                )
+            factory = get_model(model_name)
+            if factory is None:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Unknown unified model: {model_name}. Available: {', '.join(list_models())}",
+                )
+            problem = factory()
+            result = derive_equations(problem)
+
+            def _serialize(obj: Any) -> Any:
+                if isinstance(obj, dict):
+                    return {k: _serialize(v) for k, v in obj.items()}
+                if isinstance(obj, list):
+                    return [_serialize(v) for v in obj]
+                if hasattr(obj, "lhs") and hasattr(obj, "rhs"):  # Eq
+                    return {"lhs": str(obj.lhs), "rhs": str(obj.rhs)}
+                return str(obj)
+
+            equations = _serialize(result.get("equations", {}))
+            energy_expr = None
+            energy_latex = None
+            if problem.energy is not None:
+                energy_expr = str(problem.energy.expression)
+                energy_latex = sp.latex(problem.energy.expression)
+
+            return ToolResult(data={
+                "model": model_name,
+                "principle": result.get("principle"),
+                "energy_expression": energy_expr,
+                "energy_latex": energy_latex,
+                "equations": equations,
+            }, success=True)
+
+        if target == "bridge":
+            bridge_name = args.expression
+            if not bridge_name:
+                return ToolResult(
+                    data=None, success=False,
+                    error="expression must be a bridge name for target=bridge",
+                )
+            bridge_name = bridge_name.lower().replace("-", "_")
+
+            if bridge_name == "dft_to_md":
+                from huginn.unified.models import one_d_kohn_sham_dft
+                dft_problem = one_d_kohn_sham_dft()
+                bridge_result = dft_potential_to_md(dft_problem)
+                potential = bridge_result.get("potential")
+                return ToolResult(data={
+                    "bridge": "dft_to_md",
+                    "potential_name": potential.name if potential else None,
+                    "parameters": potential.parameters if potential else {},
+                }, success=True)
+
+            if bridge_name == "cauchy_born":
+                # Expect expression like "0.5*k*(r-r0)^2" and symbols ["k","r","r0"]
+                if not args.expression:
+                    return ToolResult(
+                        data=None, success=False,
+                        error="For cauchy-born bridge, expression must be the potential expression",
+                    )
+                sym_dict = {s: sp.Symbol(s) for s in args.symbols}
+                sym_dict.update({
+                    "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+                    "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
+                    "pi": sp.pi,
+                })
+                try:
+                    expr = sp.sympify(args.expression, locals=sym_dict)
+                except Exception as e:
+                    return ToolResult(
+                        data=None, success=False,
+                        error=f"Failed to parse potential expression: {e}",
+                    )
+                r = sym_dict.get("r", sp.Symbol("r"))
+                potential = ConstitutiveModel(
+                    name="user_potential",
+                    expression=expr,
+                    parameters={s: str(sym_dict[s]) for s in args.symbols if s in sym_dict},
+                )
+                bridge_result = cauchy_born_elasticity(potential)
+                return ToolResult(data={
+                    "bridge": "cauchy_born",
+                    "result": {k: str(v) for k, v in bridge_result.items()},
+                }, success=True)
+
+            return ToolResult(
+                data=None, success=False,
+                error=f"Unknown bridge: {bridge_name}. Supported: dft_to_md, cauchy_born",
+            )
+
+        return ToolResult(
+            data=None, success=False,
+            error=f"Unknown unified target: {target}. Supported: list, derive, bridge",
+        )
