@@ -8,6 +8,14 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import Pet from "./Pet";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import {
+  MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
+  Users, Code2, FlaskConical, Brain, BookOpen, GitBranch,
+  MessageCircle, Puzzle, FileText, Bird, Briefcase, HelpCircle
+} from 'lucide-react';
 
 interface Message {
   role: "user" | "assistant" | "tool";
@@ -83,6 +91,7 @@ interface AppConfig {
   context_budget_tokens: number;
   pet_name: string;
   pet_personality: "cheerful" | "nerdy" | "calm" | "sassy";
+  pet_accessories: string[];
   encrypt_config: boolean;
   encryption_password: string;
   encryption_key_file: string;
@@ -126,6 +135,7 @@ const DEFAULT_CONFIG: AppConfig = {
   context_budget_tokens: 0,
   pet_name: "Muninn",
   pet_personality: "cheerful",
+  pet_accessories: [],
   encrypt_config: false,
   encryption_password: "",
   encryption_key_file: "",
@@ -202,42 +212,39 @@ function formatTime() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function CodeBlock({ code, language = "" }: { code: string; language?: string }) {
-  return (
-    <div className="my-3 rounded-xl border border-border bg-bg-secondary overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bg-tertiary">
-        <span className="text-xs text-text-muted font-mono uppercase">{language || "code"}</span>
-        <button
-          className="text-xs text-text-secondary hover:text-text-primary transition-colors"
-          onClick={() => navigator.clipboard.writeText(code)}
-        >
-          Copy
-        </button>
-      </div>
-      <pre className="p-3 m-0 bg-transparent border-0">
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
-}
-
 function MessageContent({ content }: { content: string }) {
-  // Very simple markdown-like splitter: code blocks vs plain text
-  const parts = content.split(/(```[\s\S]*?```)/g);
   return (
-    <>
-      {parts.map((part, i) => {
-        const match = part.match(/^```(\w*)\n([\s\S]*?)```$/);
-        if (match) {
-          return <CodeBlock key={i} language={match[1]} code={match[2].trim()} />;
-        }
-        return (
-          <div key={i} className="whitespace-pre-wrap leading-relaxed">
-            {part}
-          </div>
-        );
-      })}
-    </>
+    <div className="chat-prose">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{
+          code({ className, children, ...props }) {
+            const match = /language-(\w+)/.exec(className || '');
+            const isInline = !match && !className;
+            if (isInline) {
+              return <code {...props}>{children}</code>;
+            }
+            return (
+              <div className="code-block-wrapper">
+                {match && <span className="code-block-lang">{match[1]}</span>}
+                <button
+                  className="code-block-copy"
+                  onClick={() => navigator.clipboard.writeText(String(children).replace(/\n$/, ''))}
+                  title="Copy"
+                >📋</button>
+                <code className={className} {...props}>{children}</code>
+              </div>
+            );
+          },
+          pre({ children }) {
+            return <pre>{children}</pre>;
+          }
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -1990,23 +1997,24 @@ export default function App() {
 
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
 
-  const tabs: { id: typeof activeTab; label: string; icon: string }[] = [
-    { id: "chat", label: "Chat", icon: "💬" },
-    { id: "team", label: "Team", icon: "👥" },
-    { id: "coder", label: "Coder", icon: "💻" },
-    { id: "workbench", label: "Workbench", icon: "🧰" },
-    { id: "files", label: "Files", icon: "📁" },
-    { id: "terminal", label: "Terminal", icon: "🖥️" },
-    { id: "review", label: "Review", icon: "📝" },
-    { id: "knowledge", label: "Knowledge", icon: "📚" },
-    { id: "tools", label: "Tools", icon: "🔧" },
-    { id: "skills", label: "Skills", icon: "⚡" },
-    { id: "project", label: "Project", icon: "🏗️" },
-    { id: "memory", label: "Memory", icon: "🧠" },
-    { id: "plugins", label: "Plugins", icon: "🔌" },
-    { id: "threads", label: "Threads", icon: "🧵" },
-    { id: "logs", label: "Logs", icon: "📋" },
-    { id: "settings", label: "Settings", icon: "⚙️" },
+  const iconSize = 18;
+  const tabs: { id: typeof activeTab; label: string; icon: React.ReactNode }[] = [
+    { id: "chat", label: "Chat", icon: <MessageSquare size={iconSize} /> },
+    { id: "team", label: "Team", icon: <Users size={iconSize} /> },
+    { id: "coder", label: "Coder", icon: <Code2 size={iconSize} /> },
+    { id: "workbench", label: "Workbench", icon: <FlaskConical size={iconSize} /> },
+    { id: "files", label: "Files", icon: <FolderTree size={iconSize} /> },
+    { id: "terminal", label: "Terminal", icon: <Terminal size={iconSize} /> },
+    { id: "review", label: "Review", icon: <GitBranch size={iconSize} /> },
+    { id: "knowledge", label: "Knowledge", icon: <BookOpen size={iconSize} /> },
+    { id: "tools", label: "Tools", icon: <Wrench size={iconSize} /> },
+    { id: "skills", label: "Skills", icon: <Zap size={iconSize} /> },
+    { id: "project", label: "Project", icon: <Briefcase size={iconSize} /> },
+    { id: "memory", label: "Memory", icon: <Brain size={iconSize} /> },
+    { id: "plugins", label: "Plugins", icon: <Puzzle size={iconSize} /> },
+    { id: "threads", label: "Threads", icon: <MessageCircle size={iconSize} /> },
+    { id: "logs", label: "Logs", icon: <FileText size={iconSize} /> },
+    { id: "settings", label: "Settings", icon: <Settings size={iconSize} /> },
   ];
 
   const renderTree = (path: string, depth = 0) => {
@@ -2060,7 +2068,7 @@ export default function App() {
                   : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
               }`}
             >
-              <span>{tab.icon}</span>
+              <span className="flex-shrink-0">{tab.icon}</span>
               <span>{tab.label}</span>
             </button>
           ))}
@@ -2076,13 +2084,13 @@ export default function App() {
             onClick={() => setShowGuide(true)}
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
           >
-            ❓ Help / Guide
+            <HelpCircle size={14} /> Help / Guide
           </button>
           <button
             onClick={openPetWindow}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
           >
-            🐦 Summon Pet
+            <Bird size={14} /> Summon Pet
           </button>
         </div>
       </aside>
@@ -3798,13 +3806,82 @@ export default function App() {
                           onChange={(e) => { const next = { ...config, pet_personality: e.target.value as any }; setConfig(next); setConfigDirty(true); }}
                           className="input"
                         >
-                          <option value="cheerful">Cheerful 🌟</option>
-                          <option value="nerdy">Nerdy 🤓</option>
-                          <option value="calm">Calm 🍃</option>
-                          <option value="sassy">Sassy 😏</option>
+                          <option value="cheerful">Cheerful</option>
+                          <option value="nerdy">Nerdy</option>
+                          <option value="calm">Calm</option>
+                          <option value="sassy">Sassy</option>
                         </select>
                       </div>
                     </div>
+
+                    {/* Accessories */}
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">Accessories</label>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { id: "crown", label: "Crown", minLevel: 5 },
+                          { id: "glasses", label: "Glasses", minLevel: 3 },
+                          { id: "scarf", label: "Scarf", minLevel: 7 },
+                        ] as const).map((acc) => {
+                          const active = config.pet_accessories.includes(acc.id);
+                          return (
+                            <button
+                              key={acc.id}
+                              onClick={() => {
+                                const next = {
+                                  ...config,
+                                  pet_accessories: active
+                                    ? config.pet_accessories.filter(a => a !== acc.id)
+                                    : [...config.pet_accessories, acc.id],
+                                };
+                                setConfig(next);
+                                setConfigDirty(true);
+                              }}
+                              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                                active
+                                  ? "border-accent/40 bg-accent/10 text-text-primary"
+                                  : "border-border bg-bg-tertiary text-text-secondary hover:text-text-primary"
+                              }`}
+                            >
+                              {acc.label}
+                              <span className="text-text-muted text-[10px]">(Lv.{acc.minLevel}+)</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-1 text-[10px] text-text-muted">
+                        Accessories unlock as your pet levels up through completed tasks.
+                      </p>
+                    </div>
+
+                    {/* Status overview (read-only from backend) */}
+                    <div className="rounded-xl border border-border bg-bg-tertiary p-4">
+                      <p className="mb-2 text-xs font-medium text-text-secondary">Pet vitals are managed by the backend.</p>
+                      <p className="text-[11px] text-text-muted leading-relaxed">
+                        Your raven gains XP when agent tasks succeed. Hunger and mood decay slowly over time.
+                        Feed and pet your companion via the right-click menu on the pet window.
+                      </p>
+                    </div>
+
+                    {/* Reset */}
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={async () => {
+                          try {
+                            await fetch(`${API_BASE}/pet/reset`, { method: "POST" });
+                          } catch {
+                            // backend may not have this endpoint yet
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-error/30 bg-error/5 px-3 py-1.5 text-xs font-medium text-error/80 transition-colors hover:bg-error/10 hover:text-error"
+                      >
+                        Reset pet progress
+                      </button>
+                      <span className="text-[10px] text-text-muted">
+                        Resets level, XP, hunger, mood, and accessories.
+                      </span>
+                    </div>
+
                     <p className="text-xs text-text-muted">
                       The pet's greeting, idle tips, and click responses will match the chosen personality.
                     </p>
