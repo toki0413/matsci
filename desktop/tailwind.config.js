@@ -5,24 +5,24 @@ export default {
     extend: {
       colors: {
         bg: {
-          primary: "#0b0f19",
-          secondary: "#151b2b",
-          tertiary: "#1e2538",
-          hover: "#252d44",
+          primary: "#181614",
+          secondary: "#1e1b18",
+          tertiary: "#282521",
+          hover: "#352f29",
         },
         accent: {
-          DEFAULT: "#3b82f6",
-          hover: "#2563eb",
-          glow: "rgba(59, 130, 246, 0.25)",
+          DEFAULT: "#d4884a",
+          hover: "#dd9a62",
+          glow: "rgba(212, 136, 74, 0.22)",
         },
-        success: "#22c55e",
-        warning: "#f59e0b",
-        error: "#ef4444",
-        border: "#2a324a",
+        success: "#6b9e8a",
+        warning: "#e0a84e",
+        error: "#d4645a",
+        border: "#262320",
         text: {
-          primary: "#f8fafc",
-          secondary: "#94a3b8",
-          muted: "#64748b",
+          primary: "#faf6f1",
+          secondary: "#a19b94",
+          muted: "#706b64",
         },
       },
       fontFamily: {
@@ -30,7 +30,7 @@ export default {
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 20px rgba(59, 130, 246, 0.15)",
+        glow: "0 0 20px rgba(212, 136, 74, 0.15)",
       },
     },
   },

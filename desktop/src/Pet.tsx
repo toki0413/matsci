@@ -1,5 +1,9 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  playPetChirp, playHappyCoo, playFeedTick, playLevelUp,
+  startAmbient, stopAmbient, setMuted as setSoundMuted,
+} from "./sounds";
 
 const API_BASE = "http://localhost:8000";
 
@@ -174,199 +178,12 @@ function moodClass(mood: PetMood, hopping: boolean): string {
 }
 
 /* ── Accessory SVG fragments ── */
-function AccessorySvg({ id }: { id: AccessoryId }) {
-  if (id === "none") return null;
-  if (id === "crown") {
-    return (
-      <g className="pet-accessory">
-        <path d="M40 14 L42 8 L45 12 L48 6 L51 12 L54 8 L56 14" stroke="#fbbf24" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        <rect x="40" y="14" width="16" height="3" rx="1" fill="#fbbf24" opacity="0.8" />
-      </g>
-    );
-  }
-  if (id === "glasses") {
-    return (
-      <g className="pet-accessory">
-        <circle cx="38" cy="32" r="6" stroke="#94a3b8" strokeWidth="1.2" fill="none" />
-        <circle cx="52" cy="32" r="6" stroke="#94a3b8" strokeWidth="1.2" fill="none" />
-        <line x1="44" y1="32" x2="46" y2="32" stroke="#94a3b8" strokeWidth="1.2" />
-        <line x1="32" y1="32" x2="28" y2="30" stroke="#94a3b8" strokeWidth="1" />
-        <rect x="35" y="29" width="6" height="6" rx="3" fill="rgba(148,163,184,0.15)" />
-        <rect x="49" y="29" width="6" height="6" rx="3" fill="rgba(148,163,184,0.15)" />
-      </g>
-    );
-  }
-  if (id === "scarf") {
-    return (
-      <g className="pet-accessory">
-        <path d="M32 44 Q40 50 48 48 Q56 46 64 50" stroke="#ef4444" strokeWidth="3" fill="none" strokeLinecap="round" />
-        <path d="M34 46 Q42 52 48 50 Q54 48 62 52" stroke="#dc2626" strokeWidth="2" fill="none" strokeLinecap="round" opacity="0.6" />
-        <path d="M58 48 L62 56 L58 54 L56 58" stroke="#ef4444" strokeWidth="2" fill="none" strokeLinecap="round" />
-      </g>
-    );
-  }
-  return null;
-}
-
-/* ── Raven SVG ── */
-function RavenAvatar({ mood: _mood, accessory, svgRef }: { mood: PetMood; accessory: AccessoryId; svgRef?: React.Ref<SVGSVGElement> }) {
+/* ── Raven Image Avatar (watercolor logo) ── */
+function RavenAvatar({ mood: _mood, accessory: _accessory, imgRef }: { mood: PetMood; accessory: AccessoryId; imgRef?: React.Ref<HTMLDivElement> }) {
   return (
-    <svg ref={svgRef} viewBox="0 0 100 105" className="w-full h-full raven-svg" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <radialGradient id="bodyGrad" cx="0.45" cy="0.3" r="0.65">
-          <stop offset="0%" stopColor="#4a4a52" />
-          <stop offset="50%" stopColor="#2d2d35" />
-          <stop offset="100%" stopColor="#1a1a22" />
-        </radialGradient>
-        <radialGradient id="bellyGrad" cx="0.5" cy="0.35" r="0.55">
-          <stop offset="0%" stopColor="#3d3d48" />
-          <stop offset="100%" stopColor="#2a2a34" />
-        </radialGradient>
-        <radialGradient id="eyeGrad" cx="0.4" cy="0.35" r="0.55">
-          <stop offset="0%" stopColor="#3a2a1a" />
-          <stop offset="100%" stopColor="#0a0604" />
-        </radialGradient>
-        <radialGradient id="wingGrad" cx="0.35" cy="0.25" r="0.7">
-          <stop offset="0%" stopColor="#3a3a4a" />
-          <stop offset="40%" stopColor="#252530" />
-          <stop offset="100%" stopColor="#15151e" />
-        </radialGradient>
-        <linearGradient id="beakGrad" x1="0" y1="0" x2="0.3" y2="1">
-          <stop offset="0%" stopColor="#4a4a4a" />
-          <stop offset="100%" stopColor="#1a1a1a" />
-        </linearGradient>
-        <linearGradient id="sheenGrad" x1="0.2" y1="0" x2="0.8" y2="1">
-          <stop offset="0%" stopColor="#6a4a9a" stopOpacity={0.22} />
-          <stop offset="40%" stopColor="#3a6a7a" stopOpacity={0.16} />
-          <stop offset="100%" stopColor="#1a1a22" stopOpacity={0} />
-        </linearGradient>
-        <linearGradient id="rimLight" x1="0" y1="0" x2="1" y2="0.5">
-          <stop offset="0%" stopColor="#6a6a7a" stopOpacity={0.2} />
-          <stop offset="50%" stopColor="#4a4a5a" stopOpacity={0.08} />
-          <stop offset="100%" stopColor="#1a1a22" stopOpacity={0} />
-        </linearGradient>
-        <linearGradient id="crestGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#3a3a45" />
-          <stop offset="100%" stopColor="#1a1a22" />
-        </linearGradient>
-        <filter id="ravenShadow" x="-10%" y="-5%" width="120%" height="130%">
-          <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000" floodOpacity="0.3" />
-        </filter>
-        <filter id="eyeGlow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-
-      {/* Ground shadow */}
-      <ellipse cx="50" cy="100" rx="22" ry="3" fill="rgba(0,0,0,0.22)" />
-
-      {/* Tail feathers (5 curved, raven-like) */}
-      <path d="M 36 82 Q 30 90 28 96 Q 32 93 36 88 Z" fill="#1a1a22" />
-      <path d="M 44 85 Q 40 94 38 99 Q 43 95 46 89 Z" fill="#1e1e28" />
-      <path d="M 50 86 Q 50 96 50 100 Q 54 95 53 89 Z" fill="#1a1a22" />
-      <path d="M 56 85 Q 60 94 62 99 Q 57 95 54 89 Z" fill="#1e1e28" />
-      <path d="M 64 82 Q 70 90 72 96 Q 68 93 64 88 Z" fill="#1a1a22" />
-
-      {/* Feet (dark raven claws) */}
-      <g fill="#2a2a2a" stroke="#1a1a1a" strokeWidth="0.3">
-        <path d="M 37 88 Q 34 91 30 95 L 33 93 Q 31 96 32 98 L 35 94 Q 37 96 38 98 L 37 93 Z" />
-        <path d="M 63 88 Q 66 91 70 95 L 67 93 Q 69 96 68 98 L 65 94 Q 63 96 62 98 L 63 93 Z" />
-      </g>
-
-      {/* Body */}
-      <ellipse cx="50" cy="52" rx="33" ry="38" fill="url(#bodyGrad)" filter="url(#ravenShadow)" />
-      {/* Rim light on body edge */}
-      <ellipse cx="38" cy="42" rx="30" ry="34" fill="url(#rimLight)" />
-      {/* Iridescent sheen overlay (blue-purple raven shimmer) */}
-      <ellipse cx="40" cy="38" rx="26" ry="30" fill="url(#sheenGrad)" />
-      {/* Belly (subtle lighter area) */}
-      <ellipse cx="50" cy="62" rx="18" ry="18" fill="url(#bellyGrad)" opacity={0.6} />
-
-      {/* Throat hackles (distinctive raven feature) */}
-      <g stroke="#1a1a22" fill="none" strokeWidth="1.4" strokeLinecap="round" opacity={0.45}>
-        <path d="M 37 52 Q 34 58 37 64" />
-        <path d="M 43 54 Q 40 60 42 66" />
-        <path d="M 50 55 Q 50 62 50 68" />
-        <path d="M 57 54 Q 60 60 58 66" />
-        <path d="M 63 52 Q 66 58 63 64" />
-      </g>
-
-      {/* Feather texture on body (6 lines, 3 per side) */}
-      <g stroke="#4a4a5a" fill="none" strokeWidth="0.5" opacity={0.18}>
-        <path d="M 28 42 Q 34 40 40 42" />
-        <path d="M 60 42 Q 66 40 72 42" />
-        <path d="M 30 52 Q 36 50 42 52" />
-        <path d="M 58 52 Q 64 50 70 52" />
-        <path d="M 33 62 Q 38 60 43 62" />
-        <path d="M 57 62 Q 62 60 67 62" />
-      </g>
-
-      {/* Left wing */}
-      <g id="ravenWingL" className="raven-wing-left">
-        <path d="M 18 44 Q 5 38 7 56 Q 9 72 18 80 Q 22 68 20 55 Q 19 48 18 44 Z" fill="url(#wingGrad)" />
-        <path d="M 11 48 Q 9 56 11 64" fill="none" stroke="#4a4a5a" strokeWidth="0.5" opacity={0.2} />
-        <path d="M 14 50 Q 12 58 14 66" fill="none" stroke="#4a4a5a" strokeWidth="0.4" opacity={0.18} />
-        <path d="M 17 52 Q 16 60 17 68" fill="none" stroke="#4a4a5a" strokeWidth="0.4" opacity={0.15} />
-        {/* Wing edge highlight (iridescent) */}
-        <path d="M 18 44 Q 5 38 7 56" fill="none" stroke="#5a4a7a" strokeWidth="0.6" opacity={0.15} />
-      </g>
-
-      {/* Right wing */}
-      <g id="ravenWingR" className="raven-wing-right">
-        <path d="M 82 44 Q 95 38 93 56 Q 91 72 82 80 Q 78 68 80 55 Q 81 48 82 44 Z" fill="url(#wingGrad)" />
-        <path d="M 89 48 Q 91 56 89 64" fill="none" stroke="#4a4a5a" strokeWidth="0.5" opacity={0.2} />
-        <path d="M 86 50 Q 88 58 86 66" fill="none" stroke="#4a4a5a" strokeWidth="0.4" opacity={0.18} />
-        <path d="M 83 52 Q 84 60 83 68" fill="none" stroke="#4a4a5a" strokeWidth="0.4" opacity={0.15} />
-        <path d="M 82 44 Q 95 38 93 56" fill="none" stroke="#5a4a7a" strokeWidth="0.6" opacity={0.15} />
-      </g>
-
-      {/* Eyes group */}
-      <g id="ravenEyes" className="raven-head">
-        {/* Left eye */}
-        <ellipse cx="36" cy="36" rx="10.5" ry="11" fill="#0a0604" opacity={0.35} />
-        <circle cx="36" cy="36" r="10" fill="url(#eyeGrad)" />
-        <circle cx="36" cy="37" r="7.5" fill="#12080a" />
-        <circle cx="36" cy="36" r="4" fill="#8b5e14" opacity={0.2} />
-        <circle cx="32" cy="32.5" r="3.5" fill="rgba(255,255,255,0.92)" />
-        <circle cx="33.5" cy="34.5" r="1.8" fill="rgba(255,255,255,0.45)" />
-        <circle cx="39.5" cy="39.5" r="1.3" fill="rgba(255,255,255,0.5)" />
-        <circle cx="36" cy="36" r="1.5" fill="#fbbf24" opacity={0.25} />
-        {/* Right eye */}
-        <ellipse cx="64" cy="36" rx="10.5" ry="11" fill="#0a0604" opacity={0.35} />
-        <circle cx="64" cy="36" r="10" fill="url(#eyeGrad)" />
-        <circle cx="64" cy="37" r="7.5" fill="#12080a" />
-        <circle cx="64" cy="36" r="4" fill="#8b5e14" opacity={0.2} />
-        <circle cx="60" cy="32.5" r="3.5" fill="rgba(255,255,255,0.92)" />
-        <circle cx="61.5" cy="34.5" r="1.8" fill="rgba(255,255,255,0.45)" />
-        <circle cx="67.5" cy="39.5" r="1.3" fill="rgba(255,255,255,0.5)" />
-        <circle cx="64" cy="36" r="1.5" fill="#fbbf24" opacity={0.25} />
-      </g>
-
-      {/* Beak group — raven-style: clean pointed */}
-      <g id="ravenBeak">
-        <path d="M 43 44 Q 50 42 57 44 Q 54 52 50 56 Q 46 52 43 44 Z" fill="url(#beakGrad)" />
-        <path d="M 44 46.5 Q 50 48.5 56 46.5" fill="none" stroke="#555" strokeWidth="0.5" opacity={0.35} />
-      </g>
-
-      {/* Nostril dots */}
-      <circle cx="48" cy="44" r="0.7" fill="#111" opacity={0.25} />
-      <circle cx="52" cy="44" r="0.7" fill="#111" opacity={0.25} />
-
-      {/* Subtle cheek glow */}
-      <circle cx="24" cy="44" r="5" fill="#6a4a8a" opacity={0.12} />
-      <circle cx="76" cy="44" r="5" fill="#6a4a8a" opacity={0.12} />
-
-      {/* Head crest feathers (shaggy raven crown — 5 feathers) */}
-      <path d="M 40 16 Q 36 2 42 9" fill="none" stroke="url(#crestGrad)" strokeWidth="3.5" strokeLinecap="round" />
-      <path d="M 46 14 Q 44 0 48 7" fill="none" stroke="#2a2a35" strokeWidth="3" strokeLinecap="round" />
-      <path d="M 50 13 Q 50 -1 54 7" fill="none" stroke="url(#crestGrad)" strokeWidth="4" strokeLinecap="round" />
-      <path d="M 54 14 Q 56 0 52 7" fill="none" stroke="#2a2a35" strokeWidth="3" strokeLinecap="round" />
-      <path d="M 60 16 Q 64 2 58 9" fill="none" stroke="url(#crestGrad)" strokeWidth="3.5" strokeLinecap="round" />
-
-      {/* Accessory slot */}
-      <AccessorySvg id={accessory} />
-    </svg>
+    <div ref={imgRef} className="raven-img-wrapper">
+      <img src="/raven-logo.png" alt="Huginn" className="raven-img" draggable={false} />
+    </div>
   );
 }
 
@@ -456,10 +273,52 @@ export default function Pet() {
   const decayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const appWindow = useRef<ReturnType<typeof getCurrentWindow> | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
-  const ravenSvgRef = useRef<SVGSVGElement>(null);
+  const ravenSvgRef = useRef<HTMLDivElement>(null);
   const particleContainerRef = useRef<HTMLDivElement>(null);
   const pack = PERSONALITIES[personality] || PERSONALITIES.cheerful;
   const xpMax = useMemo(() => xpForLevel(level), [level]);
+
+  // Day/night cycle based on local time
+  const [timeOfDay, setTimeOfDay] = useState<'dawn' | 'day' | 'dusk' | 'night'>(() => {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 7) return 'dawn';
+    if (h >= 7 && h < 17) return 'day';
+    if (h >= 17 && h < 19) return 'dusk';
+    return 'night';
+  });
+  useEffect(() => {
+    const update = () => {
+      const h = new Date().getHours();
+      if (h >= 5 && h < 7) setTimeOfDay('dawn');
+      else if (h >= 7 && h < 17) setTimeOfDay('day');
+      else if (h >= 17 && h < 19) setTimeOfDay('dusk');
+      else setTimeOfDay('night');
+    };
+    const id = setInterval(update, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Sync ambient sound with time-of-day
+  useEffect(() => {
+    if (!muted) {
+      startAmbient(timeOfDay);
+    }
+    return () => stopAmbient();
+  }, [timeOfDay, muted]);
+
+  // Sync mute state with sound engine
+  useEffect(() => {
+    setSoundMuted(muted);
+  }, [muted]);
+
+  // Play level-up sound when level increases
+  const prevLevelRef = useRef(level);
+  useEffect(() => {
+    if (level > prevLevelRef.current) {
+      playLevelUp();
+    }
+    prevLevelRef.current = level;
+  }, [level]);
 
   useEffect(() => {
     appWindow.current = getCurrentWindow();
@@ -471,25 +330,16 @@ export default function Pet() {
     }
   }, [pack, petName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Blink cycle
+  // Blink cycle (subtle opacity dip for image-based avatar)
   useEffect(() => {
     if (mood === 'sleeping') return;
     let timeout: ReturnType<typeof setTimeout>;
     function scheduleNext() {
-      const delay = 2500 + Math.random() * 3500;
+      const delay = 3000 + Math.random() * 4000;
       timeout = setTimeout(() => {
         if (ravenSvgRef.current) {
           ravenSvgRef.current.classList.add('raven-blink');
-          setTimeout(() => ravenSvgRef.current?.classList.remove('raven-blink'), 200);
-        }
-        // 25% chance double blinking
-        if (Math.random() < 0.25) {
-          setTimeout(() => {
-            if (ravenSvgRef.current) {
-              ravenSvgRef.current.classList.add('raven-blink');
-              setTimeout(() => ravenSvgRef.current?.classList.remove('raven-blink'), 200);
-            }
-          }, 400);
+          setTimeout(() => ravenSvgRef.current?.classList.remove('raven-blink'), 250);
         }
         scheduleNext();
       }, delay);
@@ -691,6 +541,7 @@ export default function Pet() {
     }
     hop();
     spawnHearts();
+    playPetChirp();
     if (!backendOnline) {
       speak(formatMsg(pack.reconnect, petName), "thinking");
       return;
@@ -724,6 +575,7 @@ export default function Pet() {
   const doFeed = () => {
     hop();
     setMood("eating");
+    playFeedTick();
     setMessage(formatMsg(pack.feed, petName));
     setShowBubble(true);
     setHunger(prev => Math.min(100, prev + 25));
@@ -735,6 +587,8 @@ export default function Pet() {
   const doPet = () => {
     hop();
     spawnHearts();
+    playPetChirp();
+    playHappyCoo();
     speak(formatMsg(pack.pet, petName), "happy");
     setHappiness(prev => Math.min(100, prev + 15));
     setMenuOpen(false);
@@ -788,6 +642,21 @@ export default function Pet() {
 
       {/* Raven avatar with particles & progress ring */}
       <div className="pet-avatar-wrapper">
+        {/* Day/night scene background */}
+        <div className={`pet-scene pet-scene-${timeOfDay}`} />
+        {/* Ambient particles based on time of day */}
+        {(timeOfDay === 'day' || timeOfDay === 'dawn') && Array.from({ length: 3 }, (_, i) => (
+          <div key={`dust-${i}`} className="pet-ambient-particle ambient-dust"
+            style={{ left: `${20 + i * 25}%`, top: `${15 + i * 10}%`, animationDelay: `${i * 2}s` }} />
+        ))}
+        {timeOfDay === 'night' && Array.from({ length: 4 }, (_, i) => (
+          <div key={`fly-${i}`} className="pet-ambient-particle ambient-firefly"
+            style={{ left: `${10 + i * 22}%`, top: `${10 + i * 15}%`, animationDelay: `${i * 1.3}s` }} />
+        ))}
+        {timeOfDay === 'dusk' && Array.from({ length: 2 }, (_, i) => (
+          <div key={`speck-${i}`} className="pet-ambient-particle ambient-speck"
+            style={{ left: `${30 + i * 30}%`, top: `${20 + i * 12}%`, animationDelay: `${i * 3}s` }} />
+        ))}
         <ProgressRing progress={progressValue} visible={progressVisible} />
         <div className="pet-particle-layer" ref={particleContainerRef}>
           {particles.map(p => (
@@ -807,7 +676,7 @@ export default function Pet() {
           ))}
         </div>
         <div className={`pet-avatar ${moodClass(mood, hopping)}`}>
-          <RavenAvatar mood={mood} accessory={accessory} svgRef={ravenSvgRef} />
+          <RavenAvatar mood={mood} accessory={accessory} imgRef={ravenSvgRef} />
         </div>
       </div>
 
