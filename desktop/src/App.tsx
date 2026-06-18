@@ -8,13 +8,16 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import Pet from "./Pet";
+import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import {
   MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
   Users, Code2, FlaskConical, Brain, BookOpen, GitBranch,
-  MessageCircle, Puzzle, FileText, Bird, Briefcase, HelpCircle
+  MessageCircle, Puzzle, FileText, Bird, Briefcase, HelpCircle,
+  Dna, Play, Compass, Stethoscope, Monitor, ChevronDown, Sparkles,
+  Search, X,
 } from 'lucide-react';
 
 interface Message {
@@ -455,10 +458,26 @@ export default function App() {
     | "project"
     | "team"
     | "coder"
-    | "workbench"
+    | "benchmark"
+    | "evolution"
+    | "execute"
+    | "workflows"
+    | "explore"
+    | "diagnose"
+    | "hpc"
   >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+
+  // Sidebar group collapse state (progressive disclosure)
+  const [sidebarGroups, setSidebarGroups] = useState<Record<string, boolean>>({
+    core: true,
+    research: true,
+    workspace: false,
+    system: false,
+  });
+  const toggleSidebarGroup = (group: string) =>
+    setSidebarGroups((prev) => ({ ...prev, [group]: !prev[group] }));
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
@@ -495,10 +514,28 @@ export default function App() {
   const [coderResult, setCoderResult] = useState<string>("");
   const [coderError, setCoderError] = useState("");
 
-  // Workbench state
-  const [workbenchTab, setWorkbenchTab] = useState<
-    "benchmark" | "evolution" | "execute" | "workflows" | "explore" | "diagnose" | "hpc"
-  >("benchmark");
+  // Workbench features are now independent sidebar tabs (no more workbenchTab state)
+
+  // Collapsible cards in Settings (models/agents)
+  const [expandedModels, setExpandedModels] = useState<Set<number>>(new Set());
+  const [expandedAgents, setExpandedAgents] = useState<Set<number>>(new Set());
+  const toggleModelExpanded = (i: number) => setExpandedModels((prev) => {
+    const next = new Set(prev);
+    next.has(i) ? next.delete(i) : next.add(i);
+    return next;
+  });
+  const toggleAgentExpanded = (i: number) => setExpandedAgents((prev) => {
+    const next = new Set(prev);
+    next.has(i) ? next.delete(i) : next.add(i);
+    return next;
+  });
+
+  // Memory panel view toggle
+  const [memoryView, setMemoryView] = useState<"browse" | "add">("browse");
+
+  // Chat message search
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
 
   const [benchEvolve, setBenchEvolve] = useState(false);
   const [benchCategories, setBenchCategories] = useState("");
@@ -1719,6 +1756,17 @@ export default function App() {
     }
   };
 
+  // Auto-expand sidebar group when activeTab changes (e.g. from deep links)
+  useEffect(() => {
+    const group = sidebarGroupsData.find((g) => g.tabs.some((t) => t.id === activeTab));
+    if (group) {
+      setSidebarGroups((prev) => {
+        if (prev[group.key]) return prev;
+        return { ...prev, [group.key]: true };
+      });
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (activeTab === "knowledge") {
       loadKnowledge();
@@ -1738,10 +1786,10 @@ export default function App() {
       loadMemory();
       loadMemoryStats();
     }
-    if (activeTab === "workbench" && workbenchTab === "workflows" && workflowTemplates.length === 0) {
+    if (activeTab === "workflows" && workflowTemplates.length === 0) {
       loadWorkflowTemplates();
     }
-  }, [activeTab, workbenchTab, memoryFilter.category, memoryFilter.tier]);
+  }, [activeTab, memoryFilter.category, memoryFilter.tier]);
 
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -1830,12 +1878,14 @@ export default function App() {
           return updated;
         });
         setIsStreaming(false);
+        playTaskComplete();
         notify(
           "Huginn",
           pendingResponseRef.current.slice(0, 120) || "Agent finished"
         );
         break;
       case "error":
+        playErrorSound();
         setMessages((prev) => [
           ...prev,
           { role: "assistant", content: `❌ ${data.error}`, timestamp: formatTime() },
@@ -1997,25 +2047,80 @@ export default function App() {
 
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
 
-  const iconSize = 18;
-  const tabs: { id: typeof activeTab; label: string; icon: React.ReactNode }[] = [
-    { id: "chat", label: "Chat", icon: <MessageSquare size={iconSize} /> },
-    { id: "team", label: "Team", icon: <Users size={iconSize} /> },
-    { id: "coder", label: "Coder", icon: <Code2 size={iconSize} /> },
-    { id: "workbench", label: "Workbench", icon: <FlaskConical size={iconSize} /> },
-    { id: "files", label: "Files", icon: <FolderTree size={iconSize} /> },
-    { id: "terminal", label: "Terminal", icon: <Terminal size={iconSize} /> },
-    { id: "review", label: "Review", icon: <GitBranch size={iconSize} /> },
-    { id: "knowledge", label: "Knowledge", icon: <BookOpen size={iconSize} /> },
-    { id: "tools", label: "Tools", icon: <Wrench size={iconSize} /> },
-    { id: "skills", label: "Skills", icon: <Zap size={iconSize} /> },
-    { id: "project", label: "Project", icon: <Briefcase size={iconSize} /> },
-    { id: "memory", label: "Memory", icon: <Brain size={iconSize} /> },
-    { id: "plugins", label: "Plugins", icon: <Puzzle size={iconSize} /> },
-    { id: "threads", label: "Threads", icon: <MessageCircle size={iconSize} /> },
-    { id: "logs", label: "Logs", icon: <FileText size={iconSize} /> },
-    { id: "settings", label: "Settings", icon: <Settings size={iconSize} /> },
+  const iconSize = 16;
+
+  interface SidebarTab {
+    id: typeof activeTab;
+    label: string;
+    icon: React.ReactNode;
+    indented?: boolean;
+  }
+
+  interface SidebarGroup {
+    key: string;
+    label: string;
+    tabs: SidebarTab[];
+  }
+
+  const sidebarGroupsData: SidebarGroup[] = [
+    {
+      key: "core",
+      label: "CORE",
+      tabs: [
+        { id: "chat", label: "Chat", icon: <MessageSquare size={iconSize} /> },
+        { id: "team", label: "Team", icon: <Users size={iconSize} /> },
+        { id: "coder", label: "Coder", icon: <Code2 size={iconSize} /> },
+      ],
+    },
+    {
+      key: "research",
+      label: "RESEARCH",
+      tabs: [
+        { id: "knowledge", label: "Knowledge", icon: <BookOpen size={iconSize} /> },
+        { id: "project", label: "Project", icon: <Briefcase size={iconSize} /> },
+        { id: "benchmark", label: "Benchmark", icon: <FlaskConical size={iconSize} />, indented: true },
+        { id: "evolution", label: "Evolution", icon: <Dna size={iconSize} />, indented: true },
+        { id: "execute", label: "Execute", icon: <Play size={iconSize} />, indented: true },
+        { id: "workflows", label: "Workflows", icon: <Zap size={iconSize} />, indented: true },
+        { id: "explore", label: "Explore", icon: <Compass size={iconSize} />, indented: true },
+        { id: "diagnose", label: "Diagnose", icon: <Stethoscope size={iconSize} />, indented: true },
+        { id: "hpc", label: "HPC", icon: <Monitor size={iconSize} />, indented: true },
+      ],
+    },
+    {
+      key: "workspace",
+      label: "WORKSPACE",
+      tabs: [
+        { id: "files", label: "Files", icon: <FolderTree size={iconSize} /> },
+        { id: "terminal", label: "Terminal", icon: <Terminal size={iconSize} /> },
+        { id: "review", label: "Review", icon: <GitBranch size={iconSize} /> },
+        { id: "tools", label: "Tools", icon: <Wrench size={iconSize} /> },
+        { id: "skills", label: "Skills", icon: <Sparkles size={iconSize} /> },
+      ],
+    },
+    {
+      key: "system",
+      label: "SYSTEM",
+      tabs: [
+        { id: "memory", label: "Memory", icon: <Brain size={iconSize} /> },
+        { id: "plugins", label: "Plugins", icon: <Puzzle size={iconSize} /> },
+        { id: "threads", label: "Threads", icon: <MessageCircle size={iconSize} /> },
+        { id: "logs", label: "Logs", icon: <FileText size={iconSize} /> },
+        { id: "settings", label: "Settings", icon: <Settings size={iconSize} /> },
+      ],
+    },
   ];
+
+  const allTabs = sidebarGroupsData.flatMap((g) => g.tabs);
+
+  const sectionAccent: Record<string, string> = {
+    core: "var(--seed-primary)",
+    research: "var(--seed-accent)",
+    workspace: "#b8956a",
+    system: "#8a8680",
+  };
+  const activeGroupKey = sidebarGroupsData.find((g) => g.tabs.some((t) => t.id === activeTab))?.key ?? "core";
+  const activeAccent = sectionAccent[activeGroupKey] ?? sectionAccent.core;
 
   const renderTree = (path: string, depth = 0) => {
     const entries = dirCache[path];
@@ -2057,20 +2162,49 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? "bg-accent text-white shadow-glow"
-                  : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-              }`}
-            >
-              <span className="flex-shrink-0">{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
+        <nav className="flex-1 overflow-y-auto px-3 py-2">
+          {sidebarGroupsData.map((group, gi) => (
+            <div key={group.key} className={gi > 0 ? "mt-1" : ""}>
+              {/* Group header - clickable, collapsible */}
+              <button
+                onClick={() => toggleSidebarGroup(group.key)}
+                className="sidebar-group-header flex w-full items-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted hover:text-text-secondary transition-colors"
+              >
+                <ChevronDown
+                  size={12}
+                  className={`transition-transform duration-200 ${
+                    sidebarGroups[group.key] ? "rotate-0" : "-rotate-90"
+                  }`}
+                />
+                {group.label}
+              </button>
+
+              {/* Collapsible items container */}
+              <div
+                className="sidebar-group-content overflow-hidden transition-all duration-200 ease-in-out"
+                style={{
+                  maxHeight: sidebarGroups[group.key] ? `${group.tabs.length * 36 + 4}px` : "0px",
+                  opacity: sidebarGroups[group.key] ? 1 : 0,
+                }}
+              >
+                {group.tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                      tab.indented ? "pl-6" : ""
+                    } ${
+                      activeTab === tab.id
+                        ? "bg-accent text-white shadow-glow"
+                        : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                    }`}
+                  >
+                    <span className="flex-shrink-0">{tab.icon}</span>
+                    <span>{tab.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
@@ -2098,10 +2232,13 @@ export default function App() {
       {/* Main */}
       <main className="flex flex-1 flex-col min-w-0 bg-bg-primary">
         {/* Header */}
-        <header className="flex h-14 items-center justify-between border-b border-border bg-bg-secondary px-6">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium">
-              {tabs.find((t) => t.id === activeTab)?.label}
+        <header className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+          <div className="flex items-center gap-2.5">
+            <span style={{ color: activeAccent }}>
+              {allTabs.find((t) => t.id === activeTab)?.icon}
+            </span>
+            <span className="text-sm font-semibold">
+              {allTabs.find((t) => t.id === activeTab)?.label}
             </span>
             {activeTab === "chat" && (
               <>
@@ -2127,6 +2264,15 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-3">
+            {activeTab === "chat" && (
+              <button
+                onClick={() => { setChatSearchOpen((p) => !p); if (chatSearchOpen) setChatSearchQuery(""); }}
+                className={`rounded-lg p-1.5 transition-colors ${chatSearchOpen ? "bg-bg-tertiary text-accent" : "text-text-muted hover:text-text-secondary"}`}
+                title="Search messages"
+              >
+                <Search size={16} />
+              </button>
+            )}
             {!isConnected && !status.includes("starting") && (
               <button
                 onClick={startBackend}
@@ -2140,21 +2286,39 @@ export default function App() {
                 Starting backend…
               </span>
             )}
-            <button
-              onClick={() => setActiveTab("settings")}
-              className="btn-secondary px-3 py-1.5 text-xs"
-            >
-              ⚙️ Settings
-            </button>
           </div>
         </header>
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden border-l-[3px]" style={{ borderLeftColor: activeAccent, transition: "border-left-color 0.3s ease" }}>
           {activeTab === "chat" && (
             <div className="flex h-full flex-col">
+              {chatSearchOpen && (
+                <div className="flex items-center gap-2 border-b border-border bg-bg-secondary/50 px-6 py-2">
+                  <Search size={14} className="shrink-0 text-text-muted" />
+                  <input
+                    type="text"
+                    autoFocus
+                    value={chatSearchQuery}
+                    onChange={(e) => setChatSearchQuery(e.target.value)}
+                    placeholder="Search messages…"
+                    className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+                  />
+                  {chatSearchQuery && (
+                    <span className="shrink-0 text-[11px] text-text-muted">
+                      {messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase())).length} matches
+                    </span>
+                  )}
+                  <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary">
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
               <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                {messages.map((msg, i) => {
+                {(chatSearchQuery.trim()
+                  ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
+                  : messages
+                ).map((msg, i) => {
                   if (msg.role === "tool") {
                     return (
                       <div key={i} className="flex justify-center">
@@ -2916,6 +3080,22 @@ export default function App() {
               </div>
 
               {!selectedTool ? (
+                tools.length === 0 ? (
+                  !isConnected ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <Wrench size={40} className="text-text-muted opacity-40" />
+                      <p className="mt-4 text-sm font-medium text-text-secondary">Backend not connected</p>
+                      <p className="mt-1 max-w-xs text-xs text-text-muted">
+                        Tools are loaded from the AI backend. Make sure the server is running and reconnect to see available tools.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                      <p className="mt-4 text-sm text-text-muted">Loading tools…</p>
+                    </div>
+                  )
+                ) : (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {tools.map((tool) => (
                     <button
@@ -2942,6 +3122,7 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+                )
               ) : (
                 <div className="max-w-3xl space-y-4">
                   <div className="card">
@@ -3008,6 +3189,22 @@ export default function App() {
               </div>
 
               {!selectedSkill ? (
+                skills.length === 0 ? (
+                  !isConnected ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <Sparkles size={40} className="text-text-muted opacity-40" />
+                      <p className="mt-4 text-sm font-medium text-text-secondary">Backend not connected</p>
+                      <p className="mt-1 max-w-xs text-xs text-text-muted">
+                        Skills are loaded from the AI backend. Make sure the server is running and reconnect to see available skills.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                      <p className="mt-4 text-sm text-text-muted">Loading skills…</p>
+                    </div>
+                  )
+                ) : (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {skills.map((skill) => (
                     <div key={skill.name} className="card flex flex-col">
@@ -3038,6 +3235,7 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                )
               ) : (
                 <div className="max-w-3xl space-y-4">
                   <div className="card">
@@ -3117,42 +3315,54 @@ export default function App() {
                     </div>
                   </div>
                   <div className="card mb-4">
-                    <h3 className="mb-2 text-sm font-semibold">Add Memory</h3>
-                    <textarea
-                      className="input-field mb-2 min-h-[80px] text-xs"
-                      placeholder="Content..."
-                      value={memoryForm.content}
-                      onChange={(e) => setMemoryForm({ ...memoryForm, content: e.target.value })}
-                    />
-                    <div className="mb-2 grid grid-cols-2 gap-2">
-                      <select className="input-field text-xs" value={memoryForm.category} onChange={(e) => setMemoryForm({ ...memoryForm, category: e.target.value })}>
-                        <option value="fact">fact</option>
-                        <option value="insight">insight</option>
-                        <option value="conversation">conversation</option>
-                        <option value="calculation">calculation</option>
-                        <option value="error">error</option>
-                        <option value="episode">episode</option>
-                      </select>
-                      <select className="input-field text-xs" value={memoryForm.tier} onChange={(e) => setMemoryForm({ ...memoryForm, tier: e.target.value })}>
-                        <option value="short">short (6h)</option>
-                        <option value="mid">mid (7d)</option>
-                        <option value="long">long (perm)</option>
-                      </select>
-                    </div>
-                    <input
-                      className="input-field mb-2 text-xs"
-                      placeholder="tags, comma separated"
-                      value={memoryForm.tags}
-                      onChange={(e) => setMemoryForm({ ...memoryForm, tags: e.target.value })}
-                    />
-                    <div className="mb-2 flex items-center gap-2 text-xs">
-                      <span className="text-text-muted">Importance</span>
-                      <input type="range" min={0} max={1} step={0.05} value={memoryForm.importance} onChange={(e) => setMemoryForm({ ...memoryForm, importance: parseFloat(e.target.value) })} />
-                      <span>{memoryForm.importance.toFixed(2)}</span>
-                    </div>
-                    <button onClick={createMemory} className="btn-primary w-full py-1.5 text-xs" disabled={!memoryForm.content.trim()}>
-                      Remember
+                    <button
+                      onClick={() => setMemoryView(memoryView === "add" ? "browse" : "add")}
+                      className="flex w-full items-center justify-between text-left"
+                    >
+                      <h3 className="text-sm font-semibold">
+                        {memoryView === "add" ? "Add Memory" : "+ Add memory"}
+                      </h3>
+                      <ChevronDown size={14} className={`text-text-muted transition-transform duration-150 ${memoryView === "add" ? "rotate-0" : "-rotate-90"}`} />
                     </button>
+                    {memoryView === "add" && (
+                      <div className="mt-3">
+                        <textarea
+                          className="input-field mb-2 min-h-[80px] text-xs"
+                          placeholder="Content..."
+                          value={memoryForm.content}
+                          onChange={(e) => setMemoryForm({ ...memoryForm, content: e.target.value })}
+                        />
+                        <div className="mb-2 grid grid-cols-2 gap-2">
+                          <select className="input-field text-xs" value={memoryForm.category} onChange={(e) => setMemoryForm({ ...memoryForm, category: e.target.value })}>
+                            <option value="fact">fact</option>
+                            <option value="insight">insight</option>
+                            <option value="conversation">conversation</option>
+                            <option value="calculation">calculation</option>
+                            <option value="error">error</option>
+                            <option value="episode">episode</option>
+                          </select>
+                          <select className="input-field text-xs" value={memoryForm.tier} onChange={(e) => setMemoryForm({ ...memoryForm, tier: e.target.value })}>
+                            <option value="short">short (6h)</option>
+                            <option value="mid">mid (7d)</option>
+                            <option value="long">long (perm)</option>
+                          </select>
+                        </div>
+                        <input
+                          className="input-field mb-2 text-xs"
+                          placeholder="tags, comma separated"
+                          value={memoryForm.tags}
+                          onChange={(e) => setMemoryForm({ ...memoryForm, tags: e.target.value })}
+                        />
+                        <div className="mb-2 flex items-center gap-2 text-xs">
+                          <span className="text-text-muted">Importance</span>
+                          <input type="range" min={0} max={1} step={0.05} value={memoryForm.importance} onChange={(e) => setMemoryForm({ ...memoryForm, importance: parseFloat(e.target.value) })} />
+                          <span>{memoryForm.importance.toFixed(2)}</span>
+                        </div>
+                        <button onClick={createMemory} className="btn-primary w-full py-1.5 text-xs" disabled={!memoryForm.content.trim()}>
+                          Remember
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {memoryMsg && <p className="text-xs text-text-secondary">{memoryMsg}</p>}
                 </div>
@@ -3183,7 +3393,26 @@ export default function App() {
                     </select>
                   </div>
                   <div className="flex-1 overflow-y-auto space-y-2">
-                    {memories.length === 0 && <p className="text-sm text-text-muted">No memories found.</p>}
+                    {memories.length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <Brain size={36} className="text-text-muted opacity-40" />
+                        {memorySearch.trim() ? (
+                          <>
+                            <p className="mt-3 text-sm font-medium text-text-secondary">No matching memories</p>
+                            <p className="mt-1 max-w-xs text-xs text-text-muted">
+                              No memories match your search. Try different keywords or clear the filter.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="mt-3 text-sm font-medium text-text-secondary">No memories yet</p>
+                            <p className="mt-1 max-w-xs text-xs text-text-muted">
+                              Memories help Huginn remember context across conversations. Add your first memory using the panel on the left.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {memories.map((m) => (
                       <div key={m.id} className="card">
                         <div className="flex items-start justify-between gap-2">
@@ -3283,7 +3512,12 @@ export default function App() {
                   <h3 className="mb-2 mt-6 text-sm font-semibold">Discovered local</h3>
                   <div className="flex-1 overflow-y-auto space-y-2">
                     {discoveredServers.length === 0 && (
-                      <div className="text-xs text-text-muted">No local servers found.</div>
+                      <div className="flex flex-col items-start rounded-lg border border-dashed border-border p-3">
+                        <p className="text-xs font-medium text-text-secondary">No local servers found</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+                          Start an MCP server on your network, or use the form above to connect manually by name and command.
+                        </p>
+                      </div>
                     )}
                     {discoveredServers.map((srv) => (
                       <div
@@ -3307,7 +3541,13 @@ export default function App() {
                   <h3 className="mb-3 text-sm font-semibold">Connected servers</h3>
                   <div className="flex-1 overflow-y-auto space-y-3">
                     {mcpServers.length === 0 && (
-                      <div className="text-sm text-text-muted">No MCP servers connected.</div>
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <Puzzle size={36} className="text-text-muted opacity-40" />
+                        <p className="mt-3 text-sm font-medium text-text-secondary">No plugins connected</p>
+                        <p className="mt-1 max-w-xs text-xs text-text-muted">
+                          Connect an MCP server from the sidebar to extend Huginn with additional tools and capabilities.
+                        </p>
+                      </div>
                     )}
                     {mcpServers.map((srv) => (
                       <div key={srv.name} className="rounded-xl border border-border bg-bg-secondary p-4">
@@ -3619,13 +3859,23 @@ export default function App() {
                     )}
                     {config.models.map((m, i) => (
                       <div key={i} className="card">
-                        <div className="mb-2 flex items-center justify-between">
-                          <input
-                            className="input-field w-32 text-sm font-semibold"
-                            value={m.alias}
-                            onChange={(e) => updateModel(i, { alias: e.target.value })}
-                            placeholder="alias"
-                          />
+                        <div className="flex items-center justify-between">
+                          <button
+                            onClick={() => toggleModelExpanded(i)}
+                            className="flex flex-1 items-center gap-2 text-left min-w-0"
+                          >
+                            <ChevronDown size={14} className={`flex-shrink-0 text-text-muted transition-transform duration-150 ${expandedModels.has(i) ? "rotate-0" : "-rotate-90"}`} />
+                            <input
+                              className="input-field w-32 text-sm font-semibold"
+                              value={m.alias}
+                              onChange={(e) => updateModel(i, { alias: e.target.value })}
+                              placeholder="alias"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            {!expandedModels.has(i) && (
+                              <span className="text-xs text-text-muted truncate">{m.provider} / {m.model || "—"}</span>
+                            )}
+                          </button>
                           <div className="flex items-center gap-2">
                             <label className="flex items-center gap-1 text-xs">
                               <input type="checkbox" checked={m.enabled} onChange={(e) => updateModel(i, { enabled: e.target.checked })} />
@@ -3634,25 +3884,27 @@ export default function App() {
                             <button onClick={() => removeModel(i)} className="btn-secondary px-2 py-1 text-xs">🗑</button>
                           </div>
                         </div>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <select
-                            className="input-field text-xs"
-                            value={m.provider}
-                            onChange={(e) => updateModel(i, { provider: e.target.value })}
-                          >
-                            {PROVIDERS.map((p) => (
-                              <option key={p.id} value={p.id}>{p.label}</option>
-                            ))}
-                          </select>
-                          <input className="input-field text-xs" value={m.model} onChange={(e) => updateModel(i, { model: e.target.value })} placeholder="model name" />
-                          <input className="input-field text-xs" type="password" value={m.api_key} onChange={(e) => updateModel(i, { api_key: e.target.value })} placeholder="API key (optional)" />
-                          <input className="input-field text-xs" value={m.base_url} onChange={(e) => updateModel(i, { base_url: e.target.value })} placeholder="base URL (optional)" />
-                          <div className="flex items-center gap-2 text-xs">
-                            <span className="text-text-muted">Temp</span>
-                            <input type="range" min={0} max={2} step={0.05} value={m.temperature} onChange={(e) => updateModel(i, { temperature: parseFloat(e.target.value) })} />
-                            <span>{m.temperature.toFixed(2)}</span>
+                        {expandedModels.has(i) && (
+                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <select
+                              className="input-field text-xs"
+                              value={m.provider}
+                              onChange={(e) => updateModel(i, { provider: e.target.value })}
+                            >
+                              {PROVIDERS.map((p) => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                              ))}
+                            </select>
+                            <input className="input-field text-xs" value={m.model} onChange={(e) => updateModel(i, { model: e.target.value })} placeholder="model name" />
+                            <input className="input-field text-xs" type="password" value={m.api_key} onChange={(e) => updateModel(i, { api_key: e.target.value })} placeholder="API key (optional)" />
+                            <input className="input-field text-xs" value={m.base_url} onChange={(e) => updateModel(i, { base_url: e.target.value })} placeholder="base URL (optional)" />
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-text-muted">Temp</span>
+                              <input type="range" min={0} max={2} step={0.05} value={m.temperature} onChange={(e) => updateModel(i, { temperature: parseFloat(e.target.value) })} />
+                              <span>{m.temperature.toFixed(2)}</span>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -3669,19 +3921,30 @@ export default function App() {
                     )}
                     {config.agents.map((a, i) => (
                       <div key={i} className="card">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <input
-                            className="input-field w-28 text-sm font-semibold"
-                            value={a.id}
-                            onChange={(e) => updateAgent(i, { id: e.target.value })}
-                            placeholder="id"
-                          />
-                          <input
-                            className="input-field flex-1 text-sm"
-                            value={a.name}
-                            onChange={(e) => updateAgent(i, { name: e.target.value })}
-                            placeholder="display name"
-                          />
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => toggleAgentExpanded(i)}
+                            className="flex flex-1 items-center gap-2 text-left min-w-0"
+                          >
+                            <ChevronDown size={14} className={`flex-shrink-0 text-text-muted transition-transform duration-150 ${expandedAgents.has(i) ? "rotate-0" : "-rotate-90"}`} />
+                            <input
+                              className="input-field w-28 text-sm font-semibold"
+                              value={a.id}
+                              onChange={(e) => updateAgent(i, { id: e.target.value })}
+                              placeholder="id"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <input
+                              className="input-field flex-1 text-sm"
+                              value={a.name}
+                              onChange={(e) => updateAgent(i, { name: e.target.value })}
+                              placeholder="display name"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            {!expandedAgents.has(i) && (
+                              <span className="text-xs text-text-muted truncate">{a.model_alias || "default"} · {a.persona || "—"}</span>
+                            )}
+                          </button>
                           <div className="flex items-center gap-2">
                             <label className="flex items-center gap-1 text-xs">
                               <input type="checkbox" checked={a.enabled} onChange={(e) => updateAgent(i, { enabled: e.target.checked })} />
@@ -3690,33 +3953,35 @@ export default function App() {
                             <button onClick={() => removeAgent(i)} className="btn-secondary px-2 py-1 text-xs">🗑</button>
                           </div>
                         </div>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <select
-                            className="input-field text-xs"
-                            value={a.model_alias}
-                            onChange={(e) => updateAgent(i, { model_alias: e.target.value })}
-                          >
-                            <option value="">default model</option>
-                            {config.models.filter((m) => m.enabled).map((m) => (
-                              <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
-                            ))}
-                          </select>
-                          <select
-                            className="input-field text-xs"
-                            value={a.persona}
-                            onChange={(e) => updateAgent(i, { persona: e.target.value })}
-                          >
-                            {PERSONAS.map((p) => (
-                              <option key={p.id} value={p.id}>{p.label}</option>
-                            ))}
-                          </select>
-                          <input
-                            className="input-field text-xs md:col-span-2"
-                            value={(a.tools || []).join(", ")}
-                            onChange={(e) => updateAgent(i, { tools: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
-                            placeholder="tool allowlist, comma separated (empty = all)"
-                          />
-                        </div>
+                        {expandedAgents.has(i) && (
+                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <select
+                              className="input-field text-xs"
+                              value={a.model_alias}
+                              onChange={(e) => updateAgent(i, { model_alias: e.target.value })}
+                            >
+                              <option value="">default model</option>
+                              {config.models.filter((m) => m.enabled).map((m) => (
+                                <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
+                              ))}
+                            </select>
+                            <select
+                              className="input-field text-xs"
+                              value={a.persona}
+                              onChange={(e) => updateAgent(i, { persona: e.target.value })}
+                            >
+                              {PERSONAS.map((p) => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                              ))}
+                            </select>
+                            <input
+                              className="input-field text-xs md:col-span-2"
+                              value={(a.tools || []).join(", ")}
+                              onChange={(e) => updateAgent(i, { tools: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
+                              placeholder="tool allowlist, comma separated (empty = all)"
+                            />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -3979,258 +4244,248 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === "workbench" && (
-            <div className="flex h-full flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-                <span className="text-sm font-semibold">Workbench</span>
-                <div className="flex items-center gap-2">
-                  {(["benchmark", "evolution", "execute", "workflows", "explore", "diagnose", "hpc"] as const).map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setWorkbenchTab(t)}
-                      className={`rounded px-3 py-1 text-xs capitalize ${
-                        workbenchTab === t
-                          ? "bg-accent text-white"
-                          : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+          {activeTab === "benchmark" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">Benchmark</h2>
+                  <p className="text-sm text-text-secondary">Run standardized tasks and measure pass rate.</p>
                 </div>
+                <div className="card space-y-3">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input type="checkbox" checked={benchEvolve} onChange={(e) => setBenchEvolve(e.target.checked)} className="h-4 w-4 rounded border-border" />
+                    Run evolution cycle afterward
+                  </label>
+                  <input
+                    type="text"
+                    value={benchCategories}
+                    onChange={(e) => setBenchCategories(e.target.value)}
+                    placeholder="Categories, comma separated (empty = all)"
+                    className="input text-sm"
+                  />
+                  <button onClick={handleBenchRun} disabled={benchRunning || !isConnected} className="btn-primary text-xs">
+                    {benchRunning ? "Running…" : "▶ Run benchmark"}
+                  </button>
+                  {benchError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{benchError}</div>}
+                </div>
+                {benchResult && (
+                  <div className="card space-y-3">
+                    <h3 className="text-sm font-semibold">Report</h3>
+                    <div className="text-xs text-text-secondary">
+                      Pass rate: {(benchResult.metrics?.pass_rate * 100).toFixed(0)}% · Total: {benchResult.total} · Passed: {benchResult.passed} · Failed: {benchResult.failed} · Skipped: {benchResult.skipped}
+                    </div>
+                    <div className="space-y-2">
+                      {(benchResult.results || []).map((r: any) => (
+                        <div key={r.task_id} className="rounded-lg border border-border bg-bg-tertiary p-3 text-xs">
+                          <span className={`font-semibold ${r.passed ? "text-success" : "text-error"}`}>{r.passed ? "✓" : "✗"}</span>{" "}
+                          <span className="font-mono">{r.task_id}</span> — {r.reason}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex-1 overflow-y-auto p-6">
-                {workbenchTab === "benchmark" && (
-                  <div className="mx-auto max-w-3xl space-y-5">
-                    <div className="card">
-                      <h2 className="mb-2 text-base font-semibold">Benchmark</h2>
-                      <p className="text-sm text-text-secondary">Run standardized tasks and measure pass rate.</p>
+            </div>
+          )}
+
+          {activeTab === "evolution" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">Evolution</h2>
+                  <p className="text-sm text-text-secondary">Run a self-evolution cycle over recent execution logs to learn rules and skills.</p>
+                </div>
+                <div className="card space-y-3">
+                  <button onClick={handleEvolveRun} disabled={evolveRunning || !isConnected} className="btn-primary text-xs">
+                    {evolveRunning ? "Evolving…" : "▶ Run evolution cycle"}
+                  </button>
+                  {evolveError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{evolveError}</div>}
+                </div>
+                {evolveResult && (
+                  <div className="card space-y-3">
+                    <h3 className="text-sm font-semibold">Report</h3>
+                    <div className="text-xs text-text-secondary">
+                      Failure rules: {evolveResult.failure_rules?.length} · Success skills: {evolveResult.success_skills?.length} · Prompt patches: {evolveResult.prompt_patches?.length}
                     </div>
-                    <div className="card space-y-3">
-                      <label className="flex cursor-pointer items-center gap-2 text-sm">
-                        <input type="checkbox" checked={benchEvolve} onChange={(e) => setBenchEvolve(e.target.checked)} className="h-4 w-4 rounded border-border" />
-                        Run evolution cycle afterward
-                      </label>
-                      <input
-                        type="text"
-                        value={benchCategories}
-                        onChange={(e) => setBenchCategories(e.target.value)}
-                        placeholder="Categories, comma separated (empty = all)"
-                        className="input text-sm"
-                      />
-                      <button onClick={handleBenchRun} disabled={benchRunning || !isConnected} className="btn-primary text-xs">
-                        {benchRunning ? "Running…" : "▶ Run benchmark"}
-                      </button>
-                      {benchError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{benchError}</div>}
-                    </div>
-                    {benchResult && (
-                      <div className="card space-y-3">
-                        <h3 className="text-sm font-semibold">Report</h3>
-                        <div className="text-xs text-text-secondary">
-                          Pass rate: {(benchResult.metrics?.pass_rate * 100).toFixed(0)}% · Total: {benchResult.total} · Passed: {benchResult.passed} · Failed: {benchResult.failed} · Skipped: {benchResult.skipped}
-                        </div>
-                        <div className="space-y-2">
-                          {(benchResult.results || []).map((r: any) => (
-                            <div key={r.task_id} className="rounded-lg border border-border bg-bg-tertiary p-3 text-xs">
-                              <span className={`font-semibold ${r.passed ? "text-success" : "text-error"}`}>{r.passed ? "✓" : "✗"}</span>{" "}
-                              <span className="font-mono">{r.task_id}</span> — {r.reason}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    <div className="text-xs text-text-secondary">Total rules: {evolveResult.total_rules_after} · Total skills: {evolveResult.total_skills_after}</div>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
 
-                {workbenchTab === "evolution" && (
-                  <div className="mx-auto max-w-3xl space-y-5">
-                    <div className="card">
-                      <h2 className="mb-2 text-base font-semibold">Evolution</h2>
-                      <p className="text-sm text-text-secondary">Run a self-evolution cycle over recent execution logs to learn rules and skills.</p>
-                    </div>
-                    <div className="card space-y-3">
-                      <button onClick={handleEvolveRun} disabled={evolveRunning || !isConnected} className="btn-primary text-xs">
-                        {evolveRunning ? "Evolving…" : "▶ Run evolution cycle"}
-                      </button>
-                      {evolveError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{evolveError}</div>}
-                    </div>
-                    {evolveResult && (
-                      <div className="card space-y-3">
-                        <h3 className="text-sm font-semibold">Report</h3>
-                        <div className="text-xs text-text-secondary">
-                          Failure rules: {evolveResult.failure_rules?.length} · Success skills: {evolveResult.success_skills?.length} · Prompt patches: {evolveResult.prompt_patches?.length}
-                        </div>
-                        <div className="text-xs text-text-secondary">Total rules: {evolveResult.total_rules_after} · Total skills: {evolveResult.total_skills_after}</div>
-                      </div>
-                    )}
+          {activeTab === "execute" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">Execute</h2>
+                  <p className="text-sm text-text-secondary">Run raw workflow stages through the execution orchestrator.</p>
+                </div>
+                <div className="card space-y-3">
+                  <textarea
+                    value={executeStages}
+                    onChange={(e) => setExecuteStages(e.target.value)}
+                    placeholder={`[{"id":"stage1","tool":"diagnose_tool","action":"...","params":{}}]`}
+                    rows={8}
+                    className="input font-mono text-xs resize-none"
+                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <input type="text" value={executeWorkingDir} onChange={(e) => setExecuteWorkingDir(e.target.value)} placeholder="Working dir" className="input text-xs" />
+                    <input type="text" value={executeName} onChange={(e) => setExecuteName(e.target.value)} placeholder="Workflow name" className="input text-xs" />
+                  </div>
+                  <button onClick={handleExecuteRun} disabled={executeRunning || !isConnected} className="btn-primary text-xs">
+                    {executeRunning ? "Executing…" : "▶ Execute stages"}
+                  </button>
+                  {executeError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{executeError}</div>}
+                </div>
+                {executeResult && (
+                  <div className="card">
+                    <h3 className="text-sm font-semibold mb-2">Result</h3>
+                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(executeResult, null, 2)}</pre>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
 
-                {workbenchTab === "execute" && (
-                  <div className="mx-auto max-w-3xl space-y-5">
-                    <div className="card">
-                      <h2 className="mb-2 text-base font-semibold">Execute</h2>
-                      <p className="text-sm text-text-secondary">Run raw workflow stages through the execution orchestrator.</p>
-                    </div>
-                    <div className="card space-y-3">
-                      <textarea
-                        value={executeStages}
-                        onChange={(e) => setExecuteStages(e.target.value)}
-                        placeholder={`[{"id":"stage1","tool":"diagnose_tool","action":"...","params":{}}]`}
-                        rows={8}
-                        className="input font-mono text-xs resize-none"
-                      />
-                      <div className="grid grid-cols-2 gap-3">
-                        <input type="text" value={executeWorkingDir} onChange={(e) => setExecuteWorkingDir(e.target.value)} placeholder="Working dir" className="input text-xs" />
-                        <input type="text" value={executeName} onChange={(e) => setExecuteName(e.target.value)} placeholder="Workflow name" className="input text-xs" />
-                      </div>
-                      <button onClick={handleExecuteRun} disabled={executeRunning || !isConnected} className="btn-primary text-xs">
-                        {executeRunning ? "Executing…" : "▶ Execute stages"}
-                      </button>
-                      {executeError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{executeError}</div>}
-                    </div>
-                    {executeResult && (
-                      <div className="card">
-                        <h3 className="text-sm font-semibold mb-2">Result</h3>
-                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(executeResult, null, 2)}</pre>
-                      </div>
-                    )}
+          {activeTab === "workflows" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">Workflows</h2>
+                  <p className="text-sm text-text-secondary">Run a workflow template with KEY=VALUE arguments.</p>
+                </div>
+                <div className="card space-y-3">
+                  <select value={workflowTemplate} onChange={(e) => setWorkflowTemplate(e.target.value)} className="input text-sm">
+                    <option value="">Select a template</option>
+                    {workflowTemplates.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={workflowArgs}
+                    onChange={(e) => setWorkflowArgs(e.target.value)}
+                    placeholder="key1=value1 key2=value2 ..."
+                    className="input text-sm"
+                  />
+                  <button onClick={handleWorkflowRun} disabled={workflowRunning || !isConnected || !workflowTemplate} className="btn-primary text-xs">
+                    {workflowRunning ? "Running…" : "▶ Run workflow"}
+                  </button>
+                  {workflowError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{workflowError}</div>}
+                </div>
+                {workflowResult && (
+                  <div className="card">
+                    <h3 className="text-sm font-semibold mb-2">Result</h3>
+                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(workflowResult, null, 2)}</pre>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
 
-                {workbenchTab === "workflows" && (
-                  <div className="mx-auto max-w-3xl space-y-5">
-                    <div className="card">
-                      <h2 className="mb-2 text-base font-semibold">Workflows</h2>
-                      <p className="text-sm text-text-secondary">Run a workflow template with KEY=VALUE arguments.</p>
-                    </div>
-                    <div className="card space-y-3">
-                      <select value={workflowTemplate} onChange={(e) => setWorkflowTemplate(e.target.value)} className="input text-sm">
-                        <option value="">Select a template</option>
-                        {workflowTemplates.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="text"
-                        value={workflowArgs}
-                        onChange={(e) => setWorkflowArgs(e.target.value)}
-                        placeholder="key1=value1 key2=value2 ..."
-                        className="input text-sm"
-                      />
-                      <button onClick={handleWorkflowRun} disabled={workflowRunning || !isConnected || !workflowTemplate} className="btn-primary text-xs">
-                        {workflowRunning ? "Running…" : "▶ Run workflow"}
-                      </button>
-                      {workflowError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{workflowError}</div>}
-                    </div>
-                    {workflowResult && (
-                      <div className="card">
-                        <h3 className="text-sm font-semibold mb-2">Result</h3>
-                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(workflowResult, null, 2)}</pre>
-                      </div>
-                    )}
+          {activeTab === "explore" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">Explore</h2>
+                  <p className="text-sm text-text-secondary">Systematically search a design space.</p>
+                </div>
+                <div className="card space-y-3">
+                  <input type="text" value={exploreObjective} onChange={(e) => setExploreObjective(e.target.value)} placeholder="Objective, e.g. find highest energy density cathode" className="input text-sm" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <input type="number" min={1} value={exploreMaxIters} onChange={(e) => setExploreMaxIters(parseInt(e.target.value || "1", 10))} placeholder="Max iterations" className="input text-xs" />
+                    <input type="number" min={1} value={exploreMaxBranches} onChange={(e) => setExploreMaxBranches(parseInt(e.target.value || "1", 10))} placeholder="Max branches" className="input text-xs" />
+                  </div>
+                  <button onClick={handleExploreRun} disabled={exploreRunning || !isConnected || !exploreObjective.trim()} className="btn-primary text-xs">
+                    {exploreRunning ? "Exploring…" : "▶ Explore"}
+                  </button>
+                  {exploreError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{exploreError}</div>}
+                </div>
+                {exploreResult && (
+                  <div className="card space-y-3">
+                    <h3 className="text-sm font-semibold">Result</h3>
+                    <div className="text-xs text-text-secondary">Explored: {exploreResult.n_branches_explored} · Pruned: {exploreResult.n_branches_pruned} · Convergence: {exploreResult.convergence_reason}</div>
+                    {exploreResult.best_branch && <div className="text-xs text-text-secondary">Best branch: {exploreResult.best_branch.name}</div>}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
 
-                {workbenchTab === "explore" && (
-                  <div className="mx-auto max-w-3xl space-y-5">
-                    <div className="card">
-                      <h2 className="mb-2 text-base font-semibold">Explore</h2>
-                      <p className="text-sm text-text-secondary">Systematically search a design space.</p>
-                    </div>
-                    <div className="card space-y-3">
-                      <input type="text" value={exploreObjective} onChange={(e) => setExploreObjective(e.target.value)} placeholder="Objective, e.g. find highest energy density cathode" className="input text-sm" />
-                      <div className="grid grid-cols-2 gap-3">
-                        <input type="number" min={1} value={exploreMaxIters} onChange={(e) => setExploreMaxIters(parseInt(e.target.value || "1", 10))} placeholder="Max iterations" className="input text-xs" />
-                        <input type="number" min={1} value={exploreMaxBranches} onChange={(e) => setExploreMaxBranches(parseInt(e.target.value || "1", 10))} placeholder="Max branches" className="input text-xs" />
-                      </div>
-                      <button onClick={handleExploreRun} disabled={exploreRunning || !isConnected || !exploreObjective.trim()} className="btn-primary text-xs">
-                        {exploreRunning ? "Exploring…" : "▶ Explore"}
-                      </button>
-                      {exploreError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{exploreError}</div>}
-                    </div>
-                    {exploreResult && (
-                      <div className="card space-y-3">
-                        <h3 className="text-sm font-semibold">Result</h3>
-                        <div className="text-xs text-text-secondary">Explored: {exploreResult.n_branches_explored} · Pruned: {exploreResult.n_branches_pruned} · Convergence: {exploreResult.convergence_reason}</div>
-                        {exploreResult.best_branch && <div className="text-xs text-text-secondary">Best branch: {exploreResult.best_branch.name}</div>}
-                      </div>
-                    )}
+          {activeTab === "diagnose" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">Diagnose</h2>
+                  <p className="text-sm text-text-secondary">Diagnose computational chemistry / MD errors.</p>
+                </div>
+                <div className="card space-y-3">
+                  <textarea value={diagnoseError} onChange={(e) => setDiagnoseError(e.target.value)} placeholder="Paste error message…" rows={4} className="input resize-none text-sm" />
+                  <div className="grid grid-cols-3 gap-3">
+                    <input type="text" value={diagnoseSoftware} onChange={(e) => setDiagnoseSoftware(e.target.value)} placeholder="Software" className="input text-xs" />
+                    <input type="text" value={diagnoseCalcType} onChange={(e) => setDiagnoseCalcType(e.target.value)} placeholder="Calc type" className="input text-xs" />
+                    <input type="text" value={diagnoseContext} onChange={(e) => setDiagnoseContext(e.target.value)} placeholder="Context" className="input text-xs" />
+                  </div>
+                  <button onClick={handleDiagnoseRun} disabled={diagnoseRunning || !isConnected || !diagnoseError.trim()} className="btn-primary text-xs">
+                    {diagnoseRunning ? "Diagnosing…" : "▶ Diagnose"}
+                  </button>
+                  {diagnoseErrorMsg && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{diagnoseErrorMsg}</div>}
+                </div>
+                {diagnoseResult && (
+                  <div className="card">
+                    <h3 className="text-sm font-semibold mb-2">Findings</h3>
+                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(diagnoseResult, null, 2)}</pre>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
 
-                {workbenchTab === "diagnose" && (
-                  <div className="mx-auto max-w-3xl space-y-5">
-                    <div className="card">
-                      <h2 className="mb-2 text-base font-semibold">Diagnose</h2>
-                      <p className="text-sm text-text-secondary">Diagnose computational chemistry / MD errors.</p>
-                    </div>
-                    <div className="card space-y-3">
-                      <textarea value={diagnoseError} onChange={(e) => setDiagnoseError(e.target.value)} placeholder="Paste error message…" rows={4} className="input resize-none text-sm" />
-                      <div className="grid grid-cols-3 gap-3">
-                        <input type="text" value={diagnoseSoftware} onChange={(e) => setDiagnoseSoftware(e.target.value)} placeholder="Software" className="input text-xs" />
-                        <input type="text" value={diagnoseCalcType} onChange={(e) => setDiagnoseCalcType(e.target.value)} placeholder="Calc type" className="input text-xs" />
-                        <input type="text" value={diagnoseContext} onChange={(e) => setDiagnoseContext(e.target.value)} placeholder="Context" className="input text-xs" />
-                      </div>
-                      <button onClick={handleDiagnoseRun} disabled={diagnoseRunning || !isConnected || !diagnoseError.trim()} className="btn-primary text-xs">
-                        {diagnoseRunning ? "Diagnosing…" : "▶ Diagnose"}
-                      </button>
-                      {diagnoseErrorMsg && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{diagnoseErrorMsg}</div>}
-                    </div>
-                    {diagnoseResult && (
-                      <div className="card">
-                        <h3 className="text-sm font-semibold mb-2">Findings</h3>
-                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(diagnoseResult, null, 2)}</pre>
-                      </div>
-                    )}
+          {activeTab === "hpc" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">HPC</h2>
+                  <p className="text-sm text-text-secondary">Submit and monitor jobs on a remote cluster.</p>
+                </div>
+                <div className="card space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <input type="text" value={hpcHost} onChange={(e) => setHpcHost(e.target.value)} placeholder="Host" className="input text-xs" />
+                    <input type="text" value={hpcUsername} onChange={(e) => setHpcUsername(e.target.value)} placeholder="Username" className="input text-xs" />
+                    <select value={hpcScheduler} onChange={(e) => setHpcScheduler(e.target.value as any)} className="input text-xs">
+                      <option value="slurm">SLURM</option>
+                      <option value="pbs">PBS</option>
+                    </select>
+                    <input type="text" value={hpcKeyPath} onChange={(e) => setHpcKeyPath(e.target.value)} placeholder="SSH key path (optional)" className="input text-xs" />
                   </div>
-                )}
-
-                {workbenchTab === "hpc" && (
-                  <div className="mx-auto max-w-3xl space-y-5">
-                    <div className="card">
-                      <h2 className="mb-2 text-base font-semibold">HPC</h2>
-                      <p className="text-sm text-text-secondary">Submit and monitor jobs on a remote cluster.</p>
-                    </div>
-                    <div className="card space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <input type="text" value={hpcHost} onChange={(e) => setHpcHost(e.target.value)} placeholder="Host" className="input text-xs" />
-                        <input type="text" value={hpcUsername} onChange={(e) => setHpcUsername(e.target.value)} placeholder="Username" className="input text-xs" />
-                        <select value={hpcScheduler} onChange={(e) => setHpcScheduler(e.target.value as any)} className="input text-xs">
-                          <option value="slurm">SLURM</option>
-                          <option value="pbs">PBS</option>
-                        </select>
-                        <input type="text" value={hpcKeyPath} onChange={(e) => setHpcKeyPath(e.target.value)} placeholder="SSH key path (optional)" className="input text-xs" />
-                      </div>
-                      <button onClick={handleHpcTest} disabled={hpcRunning || !isConnected || !hpcHost || !hpcUsername} className="btn-secondary text-xs">
-                        Test connection
-                      </button>
-                      <hr className="border-border" />
-                      <input type="text" value={hpcCommand} onChange={(e) => setHpcCommand(e.target.value)} placeholder="Command to run" className="input text-sm" />
-                      <div className="grid grid-cols-3 gap-3">
-                        <input type="text" value={hpcJobName} onChange={(e) => setHpcJobName(e.target.value)} placeholder="Job name" className="input text-xs" />
-                        <input type="text" value={hpcWalltime} onChange={(e) => setHpcWalltime(e.target.value)} placeholder="Walltime" className="input text-xs" />
-                        <input type="text" value={hpcQueue} onChange={(e) => setHpcQueue(e.target.value)} placeholder="Queue" className="input text-xs" />
-                        <input type="number" min={1} value={hpcNodes} onChange={(e) => setHpcNodes(parseInt(e.target.value || "1", 10))} placeholder="Nodes" className="input text-xs" />
-                        <input type="number" min={1} value={hpcNtasks} onChange={(e) => setHpcNtasks(parseInt(e.target.value || "1", 10))} placeholder="Tasks/node" className="input text-xs" />
-                        <input type="text" value={hpcJobId} onChange={(e) => setHpcJobId(e.target.value)} placeholder="Job ID" className="input text-xs" />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={handleHpcSubmit} disabled={hpcRunning || !isConnected || !hpcCommand.trim()} className="btn-primary text-xs">
-                          Submit
-                        </button>
-                        <button onClick={handleHpcStatus} disabled={hpcRunning || !isConnected || !hpcJobId.trim()} className="btn-secondary text-xs">
-                          Status
-                        </button>
-                      </div>
-                      {hpcError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{hpcError}</div>}
-                    </div>
-                    {hpcResult && (
-                      <div className="card">
-                        <h3 className="text-sm font-semibold mb-2">Result</h3>
-                        <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(hpcResult, null, 2)}</pre>
-                      </div>
-                    )}
+                  <button onClick={handleHpcTest} disabled={hpcRunning || !isConnected || !hpcHost || !hpcUsername} className="btn-secondary text-xs">
+                    Test connection
+                  </button>
+                  <hr className="border-border" />
+                  <input type="text" value={hpcCommand} onChange={(e) => setHpcCommand(e.target.value)} placeholder="Command to run" className="input text-sm" />
+                  <div className="grid grid-cols-3 gap-3">
+                    <input type="text" value={hpcJobName} onChange={(e) => setHpcJobName(e.target.value)} placeholder="Job name" className="input text-xs" />
+                    <input type="text" value={hpcWalltime} onChange={(e) => setHpcWalltime(e.target.value)} placeholder="Walltime" className="input text-xs" />
+                    <input type="text" value={hpcQueue} onChange={(e) => setHpcQueue(e.target.value)} placeholder="Queue" className="input text-xs" />
+                    <input type="number" min={1} value={hpcNodes} onChange={(e) => setHpcNodes(parseInt(e.target.value || "1", 10))} placeholder="Nodes" className="input text-xs" />
+                    <input type="number" min={1} value={hpcNtasks} onChange={(e) => setHpcNtasks(parseInt(e.target.value || "1", 10))} placeholder="Tasks/node" className="input text-xs" />
+                    <input type="text" value={hpcJobId} onChange={(e) => setHpcJobId(e.target.value)} placeholder="Job ID" className="input text-xs" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleHpcSubmit} disabled={hpcRunning || !isConnected || !hpcCommand.trim()} className="btn-primary text-xs">
+                      Submit
+                    </button>
+                    <button onClick={handleHpcStatus} disabled={hpcRunning || !isConnected || !hpcJobId.trim()} className="btn-secondary text-xs">
+                      Status
+                    </button>
+                  </div>
+                  {hpcError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{hpcError}</div>}
+                </div>
+                {hpcResult && (
+                  <div className="card">
+                    <h3 className="text-sm font-semibold mb-2">Result</h3>
+                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(hpcResult, null, 2)}</pre>
                   </div>
                 )}
               </div>
