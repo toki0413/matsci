@@ -8,8 +8,21 @@ version = "0.1.0"
 description = "Material Science specialized AI Agent Harness"
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "toki"}]
-requires-python = ">=3.10"
+authors = [{name = "Huginn contributors"}]
+requires-python = ">=3.11,<4.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+keywords = ["llm", "agent", "materials-science", "dft", "molecular-dynamics", "fea", "cfd"]
 dependencies = [
     "pydantic>=2.0",
     "langchain>=0.3.0",
@@ -27,14 +40,138 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-github-actions-annotate-failures>=0.2", "black>=23.0", "mypy>=1.5"]
-accel = ["huginn-ext>=0.1.0"]
-all = ["pymatgen>=2024.0", "ase>=3.22", "paramiko>=3.0", "docker>=7.0", "chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23"]
-rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "black>=23.0", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7"]
+all = ["pymatgen>=2024.0", "ase>=3.22", "dscribe>=2.0", "paramiko>=3.0", "chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3"]
+rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3"]
 
 [project.scripts]
 huginn-agent = "huginn.cli:main"
 
+[project.urls]
+Repository = "https://github.com/huginn-agent/huginn"
+Documentation = "https://github.com/huginn-agent/huginn/blob/main/docs/architecture.md"
+Issues = "https://github.com/huginn-agent/huginn/issues"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["huginn*"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=huginn --cov-report=term-missing --cov-fail-under=25"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # function-call-in-default-argument (common in dataclasses)
+    "SIM108", # use ternary operator (style preference)
+    "N803",  # scientific/math naming uses uppercase (X, E, T)
+    "N806",  # same for local variables
+    "B905",  # zip() strict= is too noisy across the legacy codebase
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E741", "F841", "N806", "B905"]
+"huginn/evaluation/core.py" = ["N803", "N806"]
+"huginn/unified/*.py" = ["N806"]
+"huginn/tensor_algebra.py" = ["N806"]
+"huginn/visualize.py" = ["N806"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+incremental = true
+cache_dir = ".mypy_cache"
+exclude = [
+    '^tests/',
+    '^build/',
+    '^dist/',
+    '^\.git/',
+    '^\.tox/',
+]
+
+
+[[tool.mypy.overrides]]
+module = [
+    "pymatgen.*",
+    "langchain.*",
+    "langchain_core.*",
+    "langgraph.*",
+    "numpy.*",
+    "sklearn.*",
+    "chromadb.*",
+    "sentence_transformers.*",
+    "matplotlib.*",
+    "PIL.*",
+    "ase.*",
+    "dscribe.*",
+    "docker.*",
+    "paramiko.*",
+    "aiohttp.*",
+    "cryptography.*",
+]
+follow_imports = "skip"
+[tool.coverage.run]
+source = ["huginn"]
+omit = [
+    "*/tests/*",
+    "huginn/_version.py",
+    "huginn/tools/vasp_tool.py",
+    "huginn/tools/qe_tool.py",
+    "huginn/tools/cp2k_tool.py",
+    "huginn/tools/comsol_tool.py",
+    "huginn/tools/abaqus_tool.py",
+    "huginn/tools/openfoam_tool.py",
+    "huginn/tools/lammps_tool.py",
+    "huginn/tools/lean_tool.py",
+    "huginn/tools/materials_database_tool.py",
+    "huginn/tools/ml_potential_tool.py",
+    "huginn/tools/packing_tool.py",
+    "huginn/tools/symbolic_math_tool.py",
+    "huginn/tools/symbolic_regression_tool.py",
+    "huginn/tools/visualize_tool.py",
+    "huginn/visualize.py",
+    "huginn/lean/*.py",
+    "huginn/hpc/*.py",
+]
+
+[tool.coverage.report]
+fail_under = 25
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
