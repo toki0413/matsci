@@ -1,5 +1,6 @@
 """Unit tests for Lean 4 integration."""
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -10,12 +11,14 @@ from huginn.lean.sympy_to_lean import SymPyToLean
 
 LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
+def _lake_available():
+    return shutil.which("lake") is not None and (LEAN_PROJECT / "lakefile.toml").exists()
 
 class TestLeanInterface:
     @pytest.fixture(scope="class")
     def lean(self):
-        if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("HuginnLean project not found")
+        if not _lake_available():
+            pytest.skip("lake executable or HuginnLean project not found")
         return LeanInterface(LEAN_PROJECT)
 
     def test_build(self, lean):
@@ -25,6 +28,16 @@ class TestLeanInterface:
     def test_verify_existing_theorem(self, lean):
         result = lean.verify_theorem("cauchy_stress_symmetry_iff_angular_momentum")
         assert result.success
+
+    def test_run_lean_code_snippet(self, lean):
+        code = "theorem foo : 1 + 1 = 2 := by rfl"
+        result = lean.run_lean_code(code)
+        assert result.success, f"Code snippet failed: {result.stderr}"
+
+    def test_run_lean_code_fail(self, lean):
+        code = "theorem bar : 1 + 1 = 3 := by rfl"
+        result = lean.run_lean_code(code)
+        assert not result.success
 
     def test_run_lean_code_snippet(self, lean):
         code = "theorem foo : 1 + 1 = 2 := by rfl"
@@ -89,8 +102,8 @@ class TestSymPyToLean:
 class TestLeanToolAutoVerify:
     @pytest.fixture(scope="class")
     def lean_tool(self):
-        if not (LEAN_PROJECT / "lakefile.toml").exists():
-            pytest.skip("HuginnLean project not found")
+        if not _lake_available():
+            pytest.skip("lake executable or HuginnLean project not found")
         from huginn.tools.lean_tool import LeanTool, LeanToolInput
         from huginn.types import ToolContext
 
