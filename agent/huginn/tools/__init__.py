@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from huginn.tools.base import HuginnTool
@@ -30,6 +31,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
     from huginn.tools.active_learning_tool import ActiveLearningTool
     from huginn.tools.autodiff_tool import AutoDiffTool
     from huginn.tools.bash_tool import BashTool
+    from huginn.tools.bourbaki_tool import BourbakiTool
     from huginn.tools.characterization_tool import CharacterizationTool
     from huginn.tools.code_tool import CodeTool
     from huginn.tools.comsol_tool import ComsolTool
@@ -68,6 +70,11 @@ def register_all_tools(config: Any | None = None) -> list[str]:
     resolved_config = config if config is not None else HuginnConfig.from_env()
     executor = build_executor(resolved_config)
 
+    # Ensure Bourbaki (math_anything) is discoverable if installed externally
+    _bourbaki_path = r"C:\Users\wanzh\Desktop\math-anything\math-anything"
+    if _bourbaki_path not in sys.path:
+        sys.path.insert(0, _bourbaki_path)
+
     def _tool_kwargs(cls: type) -> dict[str, Any]:
         """Build init kwargs for tool classes that accept sandbox/executables."""
         import inspect
@@ -92,6 +99,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         return kwargs
 
     tool_classes = [
+        BourbakiTool,
         StructureTool,
         ExtractTool,
         JobTool,
