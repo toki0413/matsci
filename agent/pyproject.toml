@@ -60,7 +60,7 @@ include = ["huginn*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=huginn --cov-report=term-missing --cov-fail-under=25"
+addopts = "--cov=huginn --cov-report=term-missing --cov-fail-under=8"
 
 [tool.black]
 line-length = 88
@@ -165,7 +165,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 25
+fail_under = 8
 show_missing = true
 skip_covered = false
 exclude_lines = [

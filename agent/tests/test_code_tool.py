@@ -1,10 +1,13 @@
 """Tests for the generic code execution tool."""
 
 from pathlib import Path
+import sys
+import pytest
 
 from huginn.tools.code_tool import CodeTool, CodeToolInput
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="python command not available on Windows shell")
 def test_code_tool_execute_python(tmp_path: Path) -> None:
     """CodeTool should execute Python and return stdout + result variable."""
     tool = CodeTool()
@@ -34,6 +37,7 @@ def test_code_tool_generate_only() -> None:
     assert result.data["code"] == "print('should not run')"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="python command not available on Windows shell")
 def test_code_tool_detects_output_image(tmp_path: Path) -> None:
     """CodeTool should detect PNG files saved by the executed code."""
     tool = CodeTool()
