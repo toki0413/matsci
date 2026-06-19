@@ -40,6 +40,10 @@
 
     /* ── Radius ── */
     --radius: var(--seed-radius);
+
+    /* ── Section accents ── */
+    --workspace-accent: #b8956a;
+    --system-accent: #8a8680;
   }
 
   * {
@@ -111,6 +115,10 @@
   }
 
   .input {
+    @apply w-full rounded-lg border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent transition-colors;
+  }
+
+  .input-field {
     @apply w-full rounded-lg border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent transition-colors;
   }
 
@@ -410,7 +418,7 @@
     top: 0;
     width: 6px;
     height: 100%;
-    background: color-mix(in srgb, var(--seed-fg) 40%, transparent);
+    background: color-mix(in srgb, white 60%, transparent);
     border-radius: 0 2px 2px 0;
     filter: blur(2px);
   }

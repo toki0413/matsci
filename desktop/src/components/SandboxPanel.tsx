@@ -287,7 +287,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
   const renderOutput = () => {
     if (!output) {
       return (
-        <div className="flex h-full items-center justify-center text-[var(--text-muted,#706b64)]">
+        <div className="flex h-full items-center justify-center text-[var(--text-muted,#9a9590)]">
           <p className="text-sm">Run your code to see output here</p>
         </div>
       );
@@ -301,7 +301,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
       <div className="space-y-3 font-mono text-sm leading-relaxed">
         {/* stdout */}
         {stdoutCleaned && (
-          <pre className="whitespace-pre-wrap break-words text-[var(--text-secondary,#a19b94)]">
+          <pre className="whitespace-pre-wrap break-words text-[var(--text-secondary,#6b665f)]">
             {stdoutCleaned}
           </pre>
         )}
@@ -312,14 +312,14 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
             key={i}
             src={src}
             alt={`Output plot ${i + 1}`}
-            className="max-w-full rounded border border-[var(--border,#262320)]"
+            className="max-w-full rounded border border-[var(--border,#d5cfc6)]"
           />
         ))}
 
         {/* return_value */}
         {output.return_value !== null && output.return_value !== undefined && (
-          <div className="rounded border border-[var(--border,#262320)] bg-[var(--bg-tertiary,#282521)] p-3">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--text-muted,#706b64)]">
+          <div className="rounded border border-[var(--border,#d5cfc6)] bg-[var(--bg-tertiary,#e8e2d9)] p-3">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--text-muted,#9a9590)]">
               Return value
             </span>
             <pre className="whitespace-pre-wrap break-words text-[var(--success,#6b9e8a)]">
@@ -339,7 +339,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
 
         {/* Execution time */}
         {output.execution_time > 0 && (
-          <p className="text-xs text-[var(--text-muted,#706b64)]">
+          <p className="text-xs text-[var(--text-muted,#9a9590)]">
             Executed in {output.execution_time.toFixed(3)}s
           </p>
         )}
@@ -351,10 +351,10 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
   // JSX
   // -----------------------------------------------------------------------
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-primary,#181614)] text-[var(--text-primary,#faf6f1)]">
+    <div className="flex h-full flex-col bg-[var(--bg-primary,#f8f4ef)] text-[var(--text-primary,#2a2520)]">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 border-b border-[var(--border,#262320)] px-4 py-2">
-        <h2 className="text-sm font-semibold tracking-wide text-[var(--text-secondary,#a19b94)]">
+      <div className="flex items-center gap-3 border-b border-[var(--border,#d5cfc6)] px-4 py-2">
+        <h2 className="text-sm font-semibold tracking-wide text-[var(--text-secondary,#6b665f)]">
           Python Sandbox
         </h2>
 
@@ -363,7 +363,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
           <button
             type="button"
             onClick={() => setTemplateMenuOpen((v) => !v)}
-            className="flex items-center gap-1.5 rounded border border-[var(--border,#262320)] bg-[var(--bg-tertiary,#282521)] px-3 py-1 text-xs text-[var(--text-secondary,#a19b94)] transition hover:bg-[var(--bg-secondary,#1e1b18)] hover:text-[var(--text-primary,#faf6f1)]"
+            className="flex items-center gap-1.5 rounded border border-[var(--border,#d5cfc6)] bg-[var(--bg-tertiary,#e8e2d9)] px-3 py-1 text-xs text-[var(--text-secondary,#6b665f)] transition hover:bg-[var(--bg-secondary,#f0ebe4)] hover:text-[var(--text-primary,#2a2520)]"
           >
             {TEMPLATES[selectedTemplate].label}
             <svg
@@ -378,16 +378,16 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
           </button>
 
           {templateMenuOpen && (
-            <div className="absolute left-0 top-full z-50 mt-1 w-60 overflow-hidden rounded border border-[var(--border,#262320)] bg-[var(--bg-secondary,#1e1b18)] shadow-lg">
+            <div className="absolute left-0 top-full z-50 mt-1 w-60 overflow-hidden rounded border border-[var(--border,#d5cfc6)] bg-[var(--bg-secondary,#f0ebe4)] shadow-lg">
               {TEMPLATES.map((t, idx) => (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => selectTemplate(idx)}
-                  className={`block w-full px-3 py-2 text-left text-xs transition hover:bg-[var(--bg-tertiary,#282521)] ${
+                  className={`block w-full px-3 py-2 text-left text-xs transition hover:bg-[var(--bg-tertiary,#e8e2d9)] ${
                     idx === selectedTemplate
                       ? 'text-[var(--accent,#d4884a)]'
-                      : 'text-[var(--text-secondary,#a19b94)]'
+                      : 'text-[var(--text-secondary,#6b665f)]'
                   }`}
                 >
                   {t.label}
@@ -402,7 +402,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
           type="button"
           onClick={runCode}
           disabled={running || !code.trim()}
-          className="ml-auto flex items-center gap-2 rounded bg-[var(--accent,#d4884a)] px-4 py-1.5 text-xs font-semibold text-[var(--bg-primary,#181614)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          className="ml-auto flex items-center gap-2 rounded bg-[var(--accent,#d4884a)] px-4 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {running ? (
             <>
@@ -433,12 +433,12 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
       {/* Main split */}
       <div className="flex flex-1 overflow-hidden">
         {/* Code editor (55%) */}
-        <div className="flex w-[55%] flex-col border-r border-[var(--border,#262320)]">
+        <div className="flex w-[55%] flex-col border-r border-[var(--border,#d5cfc6)]">
           <div className="flex flex-1 overflow-auto">
             {/* Line numbers */}
             <div
               aria-hidden
-              className="select-none border-r border-[var(--border,#262320)] bg-[var(--bg-secondary,#1e1b18)] px-2 py-3 text-right font-mono text-xs leading-[1.625rem] text-[var(--text-muted,#706b64)]"
+              className="select-none border-r border-[var(--border,#d5cfc6)] bg-[var(--bg-secondary,#f0ebe4)] px-2 py-3 text-right font-mono text-xs leading-[1.625rem] text-[var(--text-muted,#9a9590)]"
             >
               {Array.from({ length: lineCount }, (_, i) => (
                 <div key={i}>{i + 1}</div>
@@ -452,7 +452,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
               onChange={(e) => setCode(e.target.value)}
               onKeyDown={handleKeyDown}
               spellCheck={false}
-              className="flex-1 resize-none bg-[var(--bg-primary,#181614)] p-3 font-mono text-xs leading-[1.625rem] text-[var(--text-primary,#faf6f1)] caret-[var(--accent,#d4884a)] outline-none placeholder:text-[var(--text-muted,#706b64)]"
+              className="flex-1 resize-none bg-[var(--bg-primary,#f8f4ef)] p-3 font-mono text-xs leading-[1.625rem] text-[var(--text-primary,#2a2520)] caret-[var(--accent,#d4884a)] outline-none placeholder:text-[var(--text-muted,#9a9590)]"
               placeholder="# Write your Python code here..."
             />
           </div>
@@ -464,11 +464,11 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
           <div className="flex-1 overflow-auto p-4">{renderOutput()}</div>
 
           {/* History panel (collapsible) */}
-          <div className="border-t border-[var(--border,#262320)]">
+          <div className="border-t border-[var(--border,#d5cfc6)]">
             <button
               type="button"
               onClick={() => setHistoryOpen((v) => !v)}
-              className="flex w-full items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted,#706b64)] transition hover:text-[var(--text-secondary,#a19b94)]"
+              className="flex w-full items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted,#9a9590)] transition hover:text-[var(--text-secondary,#6b665f)]"
             >
               <svg
                 className={`h-3 w-3 transition-transform ${historyOpen ? 'rotate-0' : '-rotate-90'}`}
@@ -485,7 +485,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
             {historyOpen && (
               <div className="max-h-44 overflow-auto px-4 pb-3">
                 {history.length === 0 ? (
-                  <p className="text-xs text-[var(--text-muted,#706b64)]">No executions yet</p>
+                  <p className="text-xs text-[var(--text-muted,#9a9590)]">No executions yet</p>
                 ) : (
                   <ul className="space-y-1">
                     {history.map((entry) => {
@@ -500,7 +500,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
                           <button
                             type="button"
                             onClick={() => loadHistory(entry)}
-                            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition hover:bg-[var(--bg-tertiary,#282521)]"
+                            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition hover:bg-[var(--bg-tertiary,#e8e2d9)]"
                           >
                             {/* Success / fail badge */}
                             <span
@@ -510,14 +510,14 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
                                   : 'bg-[var(--error,#d4645a)]'
                               }`}
                             />
-                            <span className="flex-1 truncate font-mono text-xs text-[var(--text-secondary,#a19b94)]">
+                            <span className="flex-1 truncate font-mono text-xs text-[var(--text-secondary,#6b665f)]">
                               {firstLine}
                             </span>
-                            <span className="flex-shrink-0 text-[10px] text-[var(--text-muted,#706b64)]">
+                            <span className="flex-shrink-0 text-[10px] text-[var(--text-muted,#9a9590)]">
                               {timeStr}
                             </span>
                             {entry.executionTime > 0 && (
-                              <span className="flex-shrink-0 text-[10px] text-[var(--text-muted,#706b64)]">
+                              <span className="flex-shrink-0 text-[10px] text-[var(--text-muted,#9a9590)]">
                                 {entry.executionTime.toFixed(2)}s
                               </span>
                             )}

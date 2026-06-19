@@ -2129,8 +2129,8 @@ export default function App() {
   const sectionAccent: Record<string, string> = {
     core: "var(--seed-primary)",
     research: "var(--seed-accent)",
-    workspace: "#b8956a",
-    system: "#8a8680",
+    workspace: "var(--workspace-accent, #b8956a)",
+    system: "var(--system-accent, #8a8680)",
   };
   const activeGroupKey = sidebarGroupsData.find((g) => g.tabs.some((t) => t.id === activeTab))?.key ?? "core";
   const activeAccent = sectionAccent[activeGroupKey] ?? sectionAccent.core;

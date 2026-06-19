@@ -84,28 +84,28 @@ function StatusBadge({ status }: { status: Job["status"] }) {
   switch (status) {
     case "pending":
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#d5cfc6] px-2.5 py-0.5 text-xs text-[#9a9590]">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-border px-2.5 py-0.5 text-xs text-text-muted">
           <Clock size={12} />
           Pending
         </span>
       );
     case "running":
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#d4884a]/15 px-2.5 py-0.5 text-xs text-[#d4884a]">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-2.5 py-0.5 text-xs text-accent">
           <Loader2 size={12} className="animate-spin" />
           Running
         </span>
       );
     case "done":
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#6b9e8a]/15 px-2.5 py-0.5 text-xs text-[#6b9e8a]">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-0.5 text-xs text-success">
           <CheckCircle2 size={12} />
           Done
         </span>
       );
     case "failed":
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#d4645a]/15 px-2.5 py-0.5 text-xs text-[#d4645a]">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-error/15 px-2.5 py-0.5 text-xs text-error">
           <XCircle size={12} />
           Failed
         </span>
@@ -127,10 +127,10 @@ function ChartTooltipContent({
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-[#d5cfc6] bg-[#f0ebe4] px-3 py-2 shadow-lg">
+    <div className="rounded-lg border border-border bg-bg-secondary px-3 py-2 shadow-lg">
       {payload.map((entry, i) => (
-        <p key={i} className="text-xs text-[#6b665f]">
-          <span className="text-[#2a2520]">{entry.name}:</span>{" "}
+        <p key={i} className="text-xs text-text-secondary">
+          <span className="text-text-primary">{entry.name}:</span>{" "}
           {typeof entry.value === "number" ? entry.value.toFixed(4) : entry.value}
         </p>
       ))}
@@ -357,25 +357,25 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="flex min-h-screen flex-col gap-6 bg-[#f8f4ef] p-6 text-[#2a2520]">
+    <div className="flex min-h-screen flex-col gap-6 bg-bg-primary p-6 text-text-primary">
       {/* ================================================================== */}
       {/* DEFINE PANEL                                                        */}
       {/* ================================================================== */}
-      <section className="rounded-xl border border-[#d5cfc6] bg-[#f0ebe4] p-5">
-        <h2 className="mb-4 text-lg font-semibold tracking-tight text-[#2a2520]">
+      <section className="rounded-xl border border-border bg-bg-secondary p-5">
+        <h2 className="mb-4 text-lg font-semibold tracking-tight text-text-primary">
           Define Sweep
         </h2>
 
         {/* Template selector */}
         <div className="mb-4">
-          <label className="mb-1.5 block text-xs font-medium text-[#6b665f]">
+          <label className="mb-1.5 block text-xs font-medium text-text-secondary">
             Workflow Template
           </label>
           <select
             value={selectedTemplate}
             onChange={(e) => setSelectedTemplate(e.target.value)}
             disabled={sweepRunning}
-            className="w-full rounded-lg border border-[#d5cfc6] bg-[#e8e2d9] px-3 py-2 text-sm text-[#2a2520] outline-none transition focus:border-[#d4884a] disabled:opacity-50"
+            className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary outline-none transition focus:border-accent disabled:opacity-50"
           >
             {templates.length === 0 && (
               <option value="" disabled>
@@ -391,16 +391,16 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
         </div>
 
         {/* Parameter input */}
-        <div className="mb-4 rounded-lg border border-[#d5cfc6] bg-[#f8f4ef] p-4">
+        <div className="mb-4 rounded-lg border border-border bg-bg-primary p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-[#6b665f]">Add Parameter</h3>
-            <div className="flex rounded-md border border-[#d5cfc6] text-xs">
+            <h3 className="text-sm font-medium text-text-secondary">Add Parameter</h3>
+            <div className="flex rounded-md border border-border text-xs">
               <button
                 onClick={() => setInputMode("range")}
                 className={`px-2.5 py-1 transition ${
                   inputMode === "range"
-                    ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#9a9590] hover:text-[#6b665f]"
+                    ? "bg-accent/15 text-accent"
+                    : "text-text-muted hover:text-text-secondary"
                 }`}
               >
                 Range
@@ -409,8 +409,8 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                 onClick={() => setInputMode("explicit")}
                 className={`px-2.5 py-1 transition ${
                   inputMode === "explicit"
-                    ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#9a9590] hover:text-[#6b665f]"
+                    ? "bg-accent/15 text-accent"
+                    : "text-text-muted hover:text-text-secondary"
                 }`}
               >
                 Explicit
@@ -421,53 +421,53 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           <div className="flex flex-wrap items-end gap-3">
             {/* Name */}
             <div className="min-w-[120px] flex-1">
-              <label className="mb-1 block text-xs text-[#9a9590]">Name</label>
+              <label className="mb-1 block text-xs text-text-muted">Name</label>
               <input
                 type="text"
                 value={newParamName}
                 onChange={(e) => setNewParamName(e.target.value)}
                 placeholder="e.g. temperature"
                 disabled={sweepRunning}
-                className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
+                className="w-full rounded-md border border-border bg-bg-tertiary px-2.5 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent disabled:opacity-50"
               />
             </div>
 
             {inputMode === "range" ? (
               <>
                 <div className="w-24">
-                  <label className="mb-1 block text-xs text-[#9a9590]">Min</label>
+                  <label className="mb-1 block text-xs text-text-muted">Min</label>
                   <input
                     type="number"
                     value={newParamMin}
                     onChange={(e) => setNewParamMin(e.target.value)}
                     disabled={sweepRunning}
-                    className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
+                    className="w-full rounded-md border border-border bg-bg-tertiary px-2.5 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent disabled:opacity-50"
                   />
                 </div>
                 <div className="w-24">
-                  <label className="mb-1 block text-xs text-[#9a9590]">Max</label>
+                  <label className="mb-1 block text-xs text-text-muted">Max</label>
                   <input
                     type="number"
                     value={newParamMax}
                     onChange={(e) => setNewParamMax(e.target.value)}
                     disabled={sweepRunning}
-                    className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
+                    className="w-full rounded-md border border-border bg-bg-tertiary px-2.5 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent disabled:opacity-50"
                   />
                 </div>
                 <div className="w-24">
-                  <label className="mb-1 block text-xs text-[#9a9590]">Step</label>
+                  <label className="mb-1 block text-xs text-text-muted">Step</label>
                   <input
                     type="number"
                     value={newParamStep}
                     onChange={(e) => setNewParamStep(e.target.value)}
                     disabled={sweepRunning}
-                    className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
+                    className="w-full rounded-md border border-border bg-bg-tertiary px-2.5 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent disabled:opacity-50"
                   />
                 </div>
               </>
             ) : (
               <div className="min-w-[200px] flex-1">
-                <label className="mb-1 block text-xs text-[#9a9590]">
+                <label className="mb-1 block text-xs text-text-muted">
                   Values (comma-separated)
                 </label>
                 <input
@@ -476,7 +476,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                   onChange={(e) => setNewParamExplicit(e.target.value)}
                   placeholder="100, 200, 300, 500"
                   disabled={sweepRunning}
-                  className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
+                  className="w-full rounded-md border border-border bg-bg-tertiary px-2.5 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent disabled:opacity-50"
                 />
               </div>
             )}
@@ -484,7 +484,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
             <button
               onClick={handleAddParam}
               disabled={sweepRunning}
-              className="flex items-center gap-1.5 rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-3 py-1.5 text-sm text-[#6b665f] transition hover:border-[#d4884a] hover:text-[#d4884a] disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-secondary transition hover:border-accent hover:text-accent disabled:opacity-50"
             >
               <Plus size={14} />
               Add
@@ -498,21 +498,21 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
             {sweepParams.map((p, i) => (
               <div
                 key={i}
-                className="flex items-center justify-between rounded-lg border border-[#d5cfc6] bg-[#e8e2d9] px-3 py-2"
+                className="flex items-center justify-between rounded-lg border border-border bg-bg-tertiary px-3 py-2"
               >
                 <div className="text-sm">
-                  <span className="font-medium text-[#2a2520]">{p.name}</span>
-                  <span className="ml-2 text-[#9a9590]">
+                  <span className="font-medium text-text-primary">{p.name}</span>
+                  <span className="ml-2 text-text-muted">
                     [{p.values.join(", ")}]
                   </span>
-                  <span className="ml-2 text-xs text-[#9a9590]">
+                  <span className="ml-2 text-xs text-text-muted">
                     ({p.values.length} values)
                   </span>
                 </div>
                 <button
                   onClick={() => handleRemoveParam(i)}
                   disabled={sweepRunning}
-                  className="text-[#9a9590] transition hover:text-[#d4645a] disabled:opacity-50"
+                  className="text-text-muted transition hover:text-error disabled:opacity-50"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -523,9 +523,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
 
         {/* Summary + actions */}
         <div className="flex items-center justify-between">
-          <p className="text-sm text-[#6b665f]">
+          <p className="text-sm text-text-secondary">
             Total combinations:{" "}
-            <span className="font-mono font-semibold text-[#2a2520]">
+            <span className="font-mono font-semibold text-text-primary">
               {totalCombinations}
             </span>
           </p>
@@ -533,7 +533,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
             {sweepRunning && (
               <button
                 onClick={handleCancel}
-                className="flex items-center gap-1.5 rounded-lg border border-[#d4645a]/30 bg-[#d4645a]/10 px-4 py-2 text-sm font-medium text-[#d4645a] transition hover:bg-[#d4645a]/20"
+                className="flex items-center gap-1.5 rounded-lg border border-error/30 bg-error/10 px-4 py-2 text-sm font-medium text-error transition hover:bg-error/20"
               >
                 <X size={14} />
                 Cancel
@@ -547,7 +547,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                 sweepParams.length === 0 ||
                 totalCombinations === 0
               }
-              className="flex items-center gap-1.5 rounded-lg bg-[#d4884a] px-5 py-2 text-sm font-medium text-[#2a2520] transition hover:bg-[#c07840] disabled:opacity-40 disabled:hover:bg-[#d4884a]"
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-5 py-2 text-sm font-medium text-white transition hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent"
             >
               <Play size={14} />
               Submit Sweep
@@ -560,20 +560,20 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
       {/* PROGRESS MATRIX                                                     */}
       {/* ================================================================== */}
       {jobs.length > 0 && (
-        <section className="rounded-xl border border-[#d5cfc6] bg-[#f0ebe4] p-5">
+        <section className="rounded-xl border border-border bg-bg-secondary p-5">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold tracking-tight text-[#2a2520]">
+            <h2 className="text-lg font-semibold tracking-tight text-text-primary">
               Progress Matrix
             </h2>
-            <div className="flex items-center gap-4 text-xs text-[#6b665f]">
+            <div className="flex items-center gap-4 text-xs text-text-secondary">
               <span>
-                <span className="font-mono font-semibold text-[#6b9e8a]">
+                <span className="font-mono font-semibold text-success">
                   {summaryStats.done}
                 </span>
                 /{summaryStats.total} done
               </span>
               <span>
-                <span className="font-mono font-semibold text-[#d4645a]">
+                <span className="font-mono font-semibold text-error">
                   {summaryStats.failed}
                 </span>{" "}
                 failed
@@ -581,7 +581,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
               {summaryStats.avgTime > 0 && (
                 <span>
                   avg{" "}
-                  <span className="font-mono font-semibold text-[#2a2520]">
+                  <span className="font-mono font-semibold text-text-primary">
                     {formatDuration(Math.round(summaryStats.avgTime))}
                   </span>
                 </span>
@@ -590,9 +590,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           </div>
 
           {/* Progress bar */}
-          <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-[#d5cfc6]">
+          <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-border">
             <div
-              className="h-full rounded-full bg-[#6b9e8a] transition-all duration-500"
+              className="h-full rounded-full bg-success transition-all duration-500"
               style={{
                 width: `${summaryStats.total > 0 ? (summaryStats.done / summaryStats.total) * 100 : 0}%`,
               }}
@@ -603,7 +603,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-[#d5cfc6] text-xs text-[#9a9590]">
+                <tr className="border-b border-border text-xs text-text-muted">
                   <th className="w-10 py-2 pr-3 font-medium">#</th>
                   {paramNames.map((name) => (
                     <th key={name} className="px-3 py-2 font-medium">
@@ -623,9 +623,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       onClick={() =>
                         setExpandedRow(expandedRow === idx ? null : idx)
                       }
-                      className="cursor-pointer border-b border-[#d5cfc6]/50 transition hover:bg-[#e8e2d9]/60"
+                      className="cursor-pointer border-b border-border/50 transition hover:bg-bg-tertiary/60"
                     >
-                      <td className="py-2.5 pr-3 font-mono text-xs text-[#9a9590]">
+                      <td className="py-2.5 pr-3 font-mono text-xs text-text-muted">
                         {expandedRow === idx ? (
                           <ChevronDown size={14} />
                         ) : (
@@ -636,7 +636,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       {paramNames.map((name) => (
                         <td
                           key={name}
-                          className="px-3 py-2.5 font-mono text-xs text-[#2a2520]"
+                          className="px-3 py-2.5 font-mono text-xs text-text-primary"
                         >
                           {job.params[name]}
                         </td>
@@ -644,7 +644,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       <td className="px-3 py-2.5">
                         <StatusBadge status={job.status} />
                       </td>
-                      <td className="max-w-[200px] truncate px-3 py-2.5 text-xs text-[#6b665f]">
+                      <td className="max-w-[200px] truncate px-3 py-2.5 text-xs text-text-secondary">
                         {job.status === "done" && job.result
                           ? typeof job.result === "object"
                             ? JSON.stringify(job.result).slice(0, 60) +
@@ -656,18 +656,18 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                             ? "—"
                             : "—"}
                       </td>
-                      <td className="px-3 py-2.5 font-mono text-xs text-[#6b665f]">
+                      <td className="px-3 py-2.5 font-mono text-xs text-text-secondary">
                         {job.duration > 0 ? formatDuration(job.duration) : "—"}
                       </td>
                     </tr>
                     {/* Expanded detail row */}
                     {expandedRow === idx && job.result && (
-                      <tr key={`${idx}-detail`} className="border-b border-[#d5cfc6]/50">
+                      <tr key={`${idx}-detail`} className="border-b border-border/50">
                         <td
                           colSpan={paramNames.length + 4}
-                          className="bg-[#f8f4ef] px-4 py-3"
+                          className="bg-bg-primary px-4 py-3"
                         >
-                          <pre className="max-h-48 overflow-auto rounded-lg bg-[#e8e2d9] p-3 font-mono text-xs text-[#6b665f]">
+                          <pre className="max-h-48 overflow-auto rounded-lg bg-bg-tertiary p-3 font-mono text-xs text-text-secondary">
                             {JSON.stringify(job.result, null, 2)}
                           </pre>
                         </td>
@@ -685,18 +685,18 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
       {/* RESULTS CHART                                                        */}
       {/* ================================================================== */}
       {jobs.some((j) => j.status === "done") && (
-        <section className="rounded-xl border border-[#d5cfc6] bg-[#f0ebe4] p-5">
+        <section className="rounded-xl border border-border bg-bg-secondary p-5">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold tracking-tight text-[#2a2520]">
+            <h2 className="text-lg font-semibold tracking-tight text-text-primary">
               Results
             </h2>
-            <div className="flex rounded-md border border-[#d5cfc6] text-xs">
+            <div className="flex rounded-md border border-border text-xs">
               <button
                 onClick={() => setViewMode("chart")}
                 className={`flex items-center gap-1 px-2.5 py-1 transition ${
                   viewMode === "chart"
-                    ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#9a9590] hover:text-[#6b665f]"
+                    ? "bg-accent/15 text-accent"
+                    : "text-text-muted hover:text-text-secondary"
                 }`}
               >
                 <BarChart3 size={12} />
@@ -706,8 +706,8 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                 onClick={() => setViewMode("table")}
                 className={`flex items-center gap-1 px-2.5 py-1 transition ${
                   viewMode === "table"
-                    ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#9a9590] hover:text-[#6b665f]"
+                    ? "bg-accent/15 text-accent"
+                    : "text-text-muted hover:text-text-secondary"
                 }`}
               >
                 <Table size={12} />
@@ -719,11 +719,11 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           {/* Axis selectors */}
           <div className="mb-4 flex flex-wrap gap-4">
             <div>
-              <label className="mb-1 block text-xs text-[#9a9590]">X-Axis</label>
+              <label className="mb-1 block text-xs text-text-muted">X-Axis</label>
               <select
                 value={chartXAxis}
                 onChange={(e) => setChartXAxis(e.target.value)}
-                className="rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none focus:border-[#d4884a]"
+                className="rounded-md border border-border bg-bg-tertiary px-2.5 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
               >
                 <option value="" disabled>
                   Select...
@@ -736,11 +736,11 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[#9a9590]">Y-Axis</label>
+              <label className="mb-1 block text-xs text-text-muted">Y-Axis</label>
               <select
                 value={chartYAxis}
                 onChange={(e) => setChartYAxis(e.target.value)}
-                className="rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none focus:border-[#d4884a]"
+                className="rounded-md border border-border bg-bg-tertiary px-2.5 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
               >
                 <option value="" disabled>
                   Select...
@@ -756,9 +756,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
 
           {/* Chart or table */}
           {viewMode === "chart" ? (
-            <div className="rounded-lg bg-[#f8f4ef] p-4">
+            <div className="rounded-lg bg-bg-primary p-4">
               {!chartXAxis || !chartYAxis ? (
-                <p className="flex h-64 items-center justify-center text-sm text-[#9a9590]">
+                <p className="flex h-64 items-center justify-center text-sm text-text-muted">
                   Select X and Y axes to visualize results
                 </p>
               ) : isMultiParam ? (
@@ -858,10 +858,10 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
             </div>
           ) : (
             /* Data table view */
-            <div className="overflow-x-auto rounded-lg border border-[#d5cfc6]">
+            <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-[#d5cfc6] bg-[#e8e2d9] text-xs text-[#9a9590]">
+                  <tr className="border-b border-border bg-bg-tertiary text-xs text-text-muted">
                     <th className="px-3 py-2 font-medium">#</th>
                     {paramNames.map((n) => (
                       <th key={n} className="px-3 py-2 font-medium">
@@ -879,15 +879,15 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                   {chartData.map((point, i) => (
                     <tr
                       key={i}
-                      className="border-b border-[#d5cfc6]/50 hover:bg-[#e8e2d9]/40"
+                      className="border-b border-border/50 hover:bg-bg-tertiary/40"
                     >
-                      <td className="px-3 py-2 font-mono text-xs text-[#9a9590]">
+                      <td className="px-3 py-2 font-mono text-xs text-text-muted">
                         {i + 1}
                       </td>
                       {paramNames.map((n) => (
                         <td
                           key={n}
-                          className="px-3 py-2 font-mono text-xs text-[#2a2520]"
+                          className="px-3 py-2 font-mono text-xs text-text-primary"
                         >
                           {point[n] ?? "—"}
                         </td>
@@ -895,7 +895,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       {resultMetricKeys.map((k) => (
                         <td
                           key={k}
-                          className="px-3 py-2 font-mono text-xs text-[#6b665f]"
+                          className="px-3 py-2 font-mono text-xs text-text-secondary"
                         >
                           {point[k] != null
                             ? typeof point[k] === "number"
