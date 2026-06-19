@@ -9,6 +9,11 @@ import {
 } from "@tauri-apps/plugin-notification";
 import Pet from "./Pet";
 import { playTaskComplete, playError as playErrorSound } from "./sounds";
+import PeriodicTable from "./components/PeriodicTable";
+import SandboxPanel from "./components/SandboxPanel";
+import Notebook from "./components/Notebook";
+import SweepDashboard from "./components/SweepDashboard";
+import StructureViewer from "./components/StructureViewer";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -18,6 +23,7 @@ import {
   MessageCircle, Puzzle, FileText, Bird, Briefcase, HelpCircle,
   Dna, Play, Compass, Stethoscope, Monitor, ChevronDown, Sparkles,
   Search, X,
+  Atom, Notebook as NotebookIcon, TerminalSquare, BarChart3, Box,
 } from 'lucide-react';
 
 interface Message {
@@ -465,6 +471,11 @@ export default function App() {
     | "explore"
     | "diagnose"
     | "hpc"
+    | "periodic"
+    | "notebook"
+    | "sandbox"
+    | "sweep"
+    | "structure"
   >("chat");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -2077,13 +2088,17 @@ export default function App() {
       label: "RESEARCH",
       tabs: [
         { id: "knowledge", label: "Knowledge", icon: <BookOpen size={iconSize} /> },
+        { id: "periodic", label: "Periodic Table", icon: <Atom size={iconSize} /> },
         { id: "project", label: "Project", icon: <Briefcase size={iconSize} /> },
+        { id: "notebook", label: "Notebook", icon: <NotebookIcon size={iconSize} />, indented: true },
         { id: "benchmark", label: "Benchmark", icon: <FlaskConical size={iconSize} />, indented: true },
         { id: "evolution", label: "Evolution", icon: <Dna size={iconSize} />, indented: true },
         { id: "execute", label: "Execute", icon: <Play size={iconSize} />, indented: true },
         { id: "workflows", label: "Workflows", icon: <Zap size={iconSize} />, indented: true },
+        { id: "sweep", label: "Sweep", icon: <BarChart3 size={iconSize} />, indented: true },
         { id: "explore", label: "Explore", icon: <Compass size={iconSize} />, indented: true },
         { id: "diagnose", label: "Diagnose", icon: <Stethoscope size={iconSize} />, indented: true },
+        { id: "structure", label: "Structure", icon: <Box size={iconSize} />, indented: true },
         { id: "hpc", label: "HPC", icon: <Monitor size={iconSize} />, indented: true },
       ],
     },
@@ -2093,6 +2108,7 @@ export default function App() {
       tabs: [
         { id: "files", label: "Files", icon: <FolderTree size={iconSize} /> },
         { id: "terminal", label: "Terminal", icon: <Terminal size={iconSize} /> },
+        { id: "sandbox", label: "Sandbox", icon: <TerminalSquare size={iconSize} /> },
         { id: "review", label: "Review", icon: <GitBranch size={iconSize} /> },
         { id: "tools", label: "Tools", icon: <Wrench size={iconSize} /> },
         { id: "skills", label: "Skills", icon: <Sparkles size={iconSize} /> },
@@ -4489,6 +4505,36 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {activeTab === "periodic" && (
+            <div className="h-full overflow-y-auto p-4">
+              <PeriodicTable API_BASE={API_BASE} />
+            </div>
+          )}
+
+          {activeTab === "notebook" && (
+            <div className="h-full overflow-hidden p-4">
+              <Notebook API_BASE={API_BASE} />
+            </div>
+          )}
+
+          {activeTab === "sandbox" && (
+            <div className="h-full overflow-hidden p-4">
+              <SandboxPanel API_BASE={API_BASE} />
+            </div>
+          )}
+
+          {activeTab === "sweep" && (
+            <div className="h-full overflow-y-auto p-4">
+              <SweepDashboard API_BASE={API_BASE} />
+            </div>
+          )}
+
+          {activeTab === "structure" && (
+            <div className="h-full overflow-hidden p-4">
+              <StructureViewer API_BASE={API_BASE} />
             </div>
           )}
         </div>
