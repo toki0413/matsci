@@ -8,29 +8,43 @@ so they can be used in the Agent Loop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import os
 import typing
-from typing import Any, Callable, get_origin
+from collections.abc import Callable
+from typing import Any, get_origin
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
+from huginn.constraints import ConstraintAdapter
+from huginn.constraints.boundaries import BoundaryEvolution, BoundaryState
+from huginn.permissions import PermissionConfig
+from huginn.pet import PetMood, get_pet_bus
+from huginn.privacy import redact_secrets
 from huginn.security.audit import AuditLogger
+from huginn.telemetry import get_telemetry_collector
 from huginn.tools.base import HuginnTool
+from huginn.tools.compress import compress_tool_output
 from huginn.types import (
     PermissionMode,
     ToolContext,
     ToolResult,
 )
-from huginn.permissions import PermissionConfig
-from huginn.pet import get_pet_bus, PetMood
-from huginn.privacy import redact_secrets
-from huginn.telemetry import get_telemetry_collector
-from huginn.tools.compress import compress_tool_output
-from huginn.utils.tokens import rough_token_count_for_text
+from huginn.utils.cache import TimedLRUCache
 
+# Map tool names to the constraint scope used for post-call validation.
+_TOOL_CONSTRAINT_SCOPES: dict[str, str] = {
+    "vasp_tool": "dft",
+    "qe_tool": "dft",
+    "cp2k_tool": "dft",
+    "lammps_tool": "md",
+    "openfoam_tool": "cfd",
+    "comsol_tool": "fea",
+    "abaqus_tool": "fea",
+}
 
 ApprovalCallback = Callable[[str, str], bool]
 """Callback signature: (tool_name, reason) -> approved."""
@@ -61,6 +75,13 @@ def _default_audit_logger() -> AuditLogger:
 class ToolAdapter:
     """Adapts HuginnTool instances to LangChain StructuredTool."""
 
+    # Bounded cache for read-only tool outputs to improve cache hit rate and
+    # reduce repeated token-heavy outputs in the agent context window.
+    _read_only_cache: TimedLRUCache[dict[str, Any]] = TimedLRUCache(
+        max_size=256, ttl=300.0
+    )
+    _constraint_adapter: ConstraintAdapter = ConstraintAdapter.default()
+
     @staticmethod
     def adapt(
         tool: HuginnTool,
@@ -70,6 +91,8 @@ class ToolAdapter:
         approval_callback: ApprovalCallback | None = None,
         audit_logger: AuditLogger | None = None,
         max_tool_output_tokens: int | None = None,
+        compression_max_tokens: int | None = None,
+        boundary_state: BoundaryState | None = None,
     ) -> StructuredTool:
         """Convert a HuginnTool to LangChain StructuredTool.
 
@@ -88,12 +111,30 @@ class ToolAdapter:
         permission_config = permission_config or PermissionConfig()
         audit_logger = audit_logger or _default_audit_logger()
         if max_tool_output_tokens is None:
-            max_tool_output_tokens = int(os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000"))
+            max_tool_output_tokens = int(
+                os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")
+            )
+        if compression_max_tokens is None:
+            compression_max_tokens = int(
+                os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", str(max_tool_output_tokens))
+            )
 
         def _check_permission(input_data: BaseModel) -> tuple[bool, str | None]:
             """Return (approved, reason_or_none)."""
             name = tool.name
             mode = permission_config.get_mode(name)
+            scope = _TOOL_CONSTRAINT_SCOPES.get(name)
+
+            if boundary_state is not None:
+                if name in boundary_state.blocked_tools:
+                    return False, f"Tool '{name}' is blocked by dynamic boundary"
+                if scope is not None and scope in boundary_state.blocked_scopes:
+                    return (
+                        False,
+                        f"Tool '{name}' is blocked by dynamic boundary (scope: {scope})",
+                    )
+                if boundary_state.require_confirmation and mode == PermissionMode.AUTO:
+                    mode = PermissionMode.ASK
 
             if permission_config.auto_approve_all or mode == PermissionMode.AUTO:
                 return True, None
@@ -132,7 +173,9 @@ class ToolAdapter:
 
             return False, reason
 
-        def _build_inputs(**kwargs: Any) -> tuple[BaseModel | dict[str, Any], ToolContext]:
+        def _build_inputs(
+            **kwargs: Any,
+        ) -> tuple[BaseModel | dict[str, Any], ToolContext]:
             input_data = tool.input_schema(**kwargs)
             context = ToolContext(
                 session_id="default",
@@ -140,9 +183,46 @@ class ToolAdapter:
                 memory_manager=memory_manager,
                 agent_factory=agent_factory,
                 audit_logger=audit_logger,
+                boundary_state=boundary_state,
             )
             payload = input_data.model_dump() if wants_dict else input_data
             return payload, context
+
+        def _check_constraints(result: ToolResult, context: ToolContext) -> ToolResult:
+            """Run domain constraints on successful tool outputs."""
+            if not result.success:
+                return result
+            scope = _TOOL_CONSTRAINT_SCOPES.get(tool.name)
+            if scope is None or not isinstance(result.data, dict):
+                return result
+
+            checks = ToolAdapter._constraint_adapter.evaluate_all(scope, result.data)
+            warnings = [c for c in checks if not c.passed and c.severity != "block"]
+            blocks = [c for c in checks if not c.passed and c.severity == "block"]
+
+            if warnings:
+                result.data["_constraint_warnings"] = [
+                    {"name": c.name, "message": c.message, "severity": c.severity}
+                    for c in warnings
+                ]
+
+            # Evolve the session boundary based on constraint outcomes.
+            if context.boundary_state is not None:
+                BoundaryEvolution(context.boundary_state).update(checks)
+                if blocks:
+                    context.boundary_state.blocked_tools.add(tool.name)
+                    if scope is not None:
+                        context.boundary_state.blocked_scopes.add(scope)
+
+            if blocks:
+                messages = "; ".join(f"{c.name}: {c.message}" for c in blocks)
+                return ToolResult(
+                    data=result.data,
+                    success=False,
+                    error=f"Constraint check failed: {messages}",
+                )
+
+            return result
 
         def _serialize(result: ToolResult) -> dict[str, Any]:
             data: dict[str, Any]
@@ -160,15 +240,11 @@ class ToolAdapter:
                 s = obj
                 if os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0":
                     s = redact_secrets(s)
-                return compress_tool_output(
-                    s, max_output_tokens=max_tool_output_tokens
-                )
+                return compress_tool_output(s, max_output_tokens=compression_max_tokens)
 
             # Everything else: apply structured compression (numeric summaries,
             # list head/tail, long-text truncation).
-            return compress_tool_output(
-                obj, max_output_tokens=max_tool_output_tokens
-            )
+            return compress_tool_output(obj, max_output_tokens=compression_max_tokens)
 
         def _audit(
             input_data: BaseModel,
@@ -183,23 +259,39 @@ class ToolAdapter:
                 }
                 if reason:
                     details["reason"] = reason
+                raw_input = json.dumps(
+                    input_data.model_dump(), default=str, sort_keys=True
+                )
+                raw_output = json.dumps(output, default=str, sort_keys=True)
                 audit_logger.log(
                     event_type="tool_call",
                     actor="agent",
                     action=tool.name,
                     details=details,
-                    input_data=json.dumps(input_data.model_dump(), default=str, sort_keys=True),
-                    output_data=json.dumps(output, default=str, sort_keys=True),
+                    input_data=redact_secrets(raw_input),
+                    output_data=redact_secrets(raw_output),
                 )
             except Exception:
                 # Audit failures must not break tool execution.
                 pass
 
-        def _publish(mood: PetMood, message: str, details: dict[str, Any] | None = None) -> None:
-            try:
+        def _publish(
+            mood: PetMood, message: str, details: dict[str, Any] | None = None
+        ) -> None:
+            with contextlib.suppress(Exception):
                 get_pet_bus().publish(mood, message, details)
-            except Exception:
-                pass
+
+        def _cache_key(input_data: BaseModel) -> str:
+            return f"{tool.name}:{json.dumps(input_data.model_dump(), sort_keys=True, default=str)}"
+
+        def _get_cached(input_data: BaseModel) -> dict[str, Any] | None:
+            if not getattr(tool, "read_only", False):
+                return None
+            return ToolAdapter._read_only_cache.get(_cache_key(input_data))
+
+        def _set_cached(input_data: BaseModel, output: dict[str, Any]) -> None:
+            if getattr(tool, "read_only", False) and output.get("error") is None:
+                ToolAdapter._read_only_cache.set(_cache_key(input_data), output)
 
         async def _arun(**kwargs: Any) -> dict[str, Any]:
             """Async execution wrapper."""
@@ -217,8 +309,18 @@ class ToolAdapter:
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
-                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} input invalid",
+                    {"reason": validation.message},
+                )
                 return output
+
+            cached = _get_cached(input_data)
+            if cached is not None:
+                _audit(input_data, cached, approved=True, reason="cache_hit")
+                _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
+                return cached
 
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
@@ -226,6 +328,7 @@ class ToolAdapter:
                     result = await tool.call(payload, context)
                 else:
                     result = tool.call(payload, context)
+                result = _check_constraints(result, context)
                 output = _serialize(result)
                 span.metadata["success"] = result.success
                 if result.error:
@@ -233,8 +336,13 @@ class ToolAdapter:
             _audit(input_data, output, approved=True, reason=None)
             if result.success:
                 _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
+                _set_cached(input_data, output)
             else:
-                _publish(PetMood.ERROR, f"{tool.name} failed", {"tool": tool.name, "error": result.error})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} failed",
+                    {"tool": tool.name, "error": result.error},
+                )
             return output
 
         def _run(**kwargs: Any) -> dict[str, Any]:
@@ -264,8 +372,18 @@ class ToolAdapter:
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
-                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} input invalid",
+                    {"reason": validation.message},
+                )
                 return output
+
+            cached = _get_cached(input_data)
+            if cached is not None:
+                _audit(input_data, cached, approved=True, reason="cache_hit")
+                _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
+                return cached
 
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
@@ -278,6 +396,7 @@ class ToolAdapter:
                         result = loop.run_until_complete(tool.call(payload, context))
                 else:
                     result = tool.call(payload, context)
+                result = _check_constraints(result, context)
                 output = _serialize(result)
                 span.metadata["success"] = result.success
                 if result.error:
@@ -285,8 +404,13 @@ class ToolAdapter:
             _audit(input_data, output, approved=True, reason=None)
             if result.success:
                 _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
+                _set_cached(input_data, output)
             else:
-                _publish(PetMood.ERROR, f"{tool.name} failed", {"tool": tool.name, "error": result.error})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} failed",
+                    {"tool": tool.name, "error": result.error},
+                )
             return output
 
         return StructuredTool.from_function(
@@ -308,6 +432,8 @@ class ToolAdapter:
         approval_callback: ApprovalCallback | None = None,
         audit_logger: AuditLogger | None = None,
         max_tool_output_tokens: int | None = None,
+        compression_max_tokens: int | None = None,
+        boundary_state: BoundaryState | None = None,
     ) -> list[StructuredTool]:
         """Adapt all tools from a ToolRegistry."""
         tools = []
@@ -323,6 +449,8 @@ class ToolAdapter:
                         approval_callback=approval_callback,
                         audit_logger=audit_logger,
                         max_tool_output_tokens=max_tool_output_tokens,
+                        compression_max_tokens=compression_max_tokens,
+                        boundary_state=boundary_state,
                     )
                 )
         return tools

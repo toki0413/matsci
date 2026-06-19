@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import StrEnum
 from typing import Any
 
 import sympy as sp
 
 
-class FieldKind(str, Enum):
+class FieldKind(StrEnum):
     """Kind of physical field."""
 
     SCALAR = "scalar"
@@ -18,7 +18,7 @@ class FieldKind(str, Enum):
     PHASE_SPACE = "phase_space"
 
 
-class DomainType(str, Enum):
+class DomainType(StrEnum):
     """Type of computational domain."""
 
     CONTINUUM = "continuum"
@@ -27,16 +27,16 @@ class DomainType(str, Enum):
     MESH = "mesh"
 
 
-class VariationalPrinciple(str, Enum):
+class VariationalPrinciple(StrEnum):
     """Principle from which governing equations are derived."""
 
-    STATIONARY = "stationary"           # δE = 0
-    MINIMUM = "minimum"                 # min E
-    MAXIMUM = "maximum"                 # max E
-    HAMILTONIAN = "hamiltonian"         # Hamilton's equations / least action
-    SELF_CONSISTENT = "self_consistent" # Kohn-Sham style
-    CONSERVATION = "conservation"       # balance laws (mass, momentum, energy)
-    DISSIPATIVE = "dissipative"         # entropy production / Onsager
+    STATIONARY = "stationary"  # δE = 0
+    MINIMUM = "minimum"  # min E
+    MAXIMUM = "maximum"  # max E
+    HAMILTONIAN = "hamiltonian"  # Hamilton's equations / least action
+    SELF_CONSISTENT = "self_consistent"  # Kohn-Sham style
+    CONSERVATION = "conservation"  # balance laws (mass, momentum, energy)
+    DISSIPATIVE = "dissipative"  # entropy production / Onsager
 
 
 @dataclass
@@ -68,16 +68,27 @@ class Domain:
     coordinates: list[sp.Symbol] = field(default_factory=list)
 
     @classmethod
-    def continuum_1d(cls, x: sp.Symbol | None = None, bounds: tuple[float, float] = (0.0, 1.0)) -> Domain:
+    def continuum_1d(
+        cls, x: sp.Symbol | None = None, bounds: tuple[float, float] = (0.0, 1.0)
+    ) -> Domain:
         x = x or sp.Symbol("x")
-        return cls(name="continuum_1d", kind=DomainType.CONTINUUM, dimension=1, bounds={str(x): bounds}, coordinates=[x])
+        return cls(
+            name="continuum_1d",
+            kind=DomainType.CONTINUUM,
+            dimension=1,
+            bounds={str(x): bounds},
+            coordinates=[x],
+        )
 
     @classmethod
     def continuum_2d(
         cls,
         x: sp.Symbol | None = None,
         y: sp.Symbol | None = None,
-        bounds: tuple[tuple[float, float], tuple[float, float]] = ((0.0, 1.0), (0.0, 1.0)),
+        bounds: tuple[tuple[float, float], tuple[float, float]] = (
+            (0.0, 1.0),
+            (0.0, 1.0),
+        ),
     ) -> Domain:
         x = x or sp.Symbol("x")
         y = y or sp.Symbol("y")
@@ -91,7 +102,9 @@ class Domain:
 
     @classmethod
     def particles(cls, n: int, dim: int = 3) -> Domain:
-        return cls(name=f"particles_{n}_{dim}d", kind=DomainType.PARTICLES, dimension=n * dim)
+        return cls(
+            name=f"particles_{n}_{dim}d", kind=DomainType.PARTICLES, dimension=n * dim
+        )
 
 
 @dataclass
@@ -147,7 +160,16 @@ class UnifiedProblem:
                 "kind": self.domain.kind.value if self.domain else None,
                 "dimension": self.domain.dimension if self.domain else None,
             },
-            "fields": {k: {"kind": v.kind.value, "description": v.description} for k, v in self.fields.items()},
-            "energy": {"name": self.energy.name, "expression": str(self.energy.expression)} if self.energy else None,
-            "constitutive": {"name": self.constitutive.name} if self.constitutive else None,
+            "fields": {
+                k: {"kind": v.kind.value, "description": v.description}
+                for k, v in self.fields.items()
+            },
+            "energy": (
+                {"name": self.energy.name, "expression": str(self.energy.expression)}
+                if self.energy
+                else None
+            ),
+            "constitutive": (
+                {"name": self.constitutive.name} if self.constitutive else None
+            ),
         }

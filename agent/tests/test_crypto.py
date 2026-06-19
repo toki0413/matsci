@@ -4,8 +4,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import InvalidToken
 
-from huginn.crypto import CryptoVault, KeyManager, EncryptedDatabase, EncryptedConfig
+from huginn.crypto import CryptoVault, EncryptedConfig, EncryptedDatabase, KeyManager
 
 
 class TestCryptoVault:
@@ -95,7 +96,7 @@ class TestKeyManager:
             km = KeyManager(key_file)
             km.create_key_file("correct", key_file)
             km2 = KeyManager(key_file)
-            with pytest.raises(Exception):
+            with pytest.raises(InvalidToken):
                 km2.load_key_file("wrong")
 
 

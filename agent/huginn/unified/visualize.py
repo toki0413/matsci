@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
+
 matplotlib.use("Agg")  # non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
@@ -45,7 +46,9 @@ def plot_solution(
         # 2D regular grid heatmap
         nx, ny = shape
         u = np.array(solution).reshape(nx, ny)
-        im = ax.imshow(u, origin="lower", extent=[0, 1, 0, 1], cmap="viridis", aspect="auto")
+        im = ax.imshow(
+            u, origin="lower", extent=[0, 1, 0, 1], cmap="viridis", aspect="auto"
+        )
         ax.set_title(title)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)

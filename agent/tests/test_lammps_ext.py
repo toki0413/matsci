@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from huginn.tools.lammps_tool import LammpsTool, _HAS_HUGINN_EXT
-
+from huginn.tools.lammps_tool import _HAS_HUGINN_EXT, LammpsTool
 
 TRJ_PATH = Path(__file__).parent.parent / "lammps_traj_test" / "traj.lammpstrj"
 
@@ -22,13 +21,17 @@ def test_python_parser_baseline():
     assert "rdf" in result
 
 
-@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
+@pytest.mark.skipif(
+    not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed"
+)
 def test_rust_extension_available():
     """The Rust extension should be importable in this environment."""
     assert _HAS_HUGINN_EXT is True
 
 
-@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
+@pytest.mark.skipif(
+    not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed"
+)
 def test_rust_parser_matches_python():
     """Rust parser output should match the Python parser output."""
     tool = LammpsTool()
@@ -58,7 +61,9 @@ def test_rust_parser_matches_python():
         assert r_g == pytest.approx(p_g, abs=1e-9)
 
 
-@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
+@pytest.mark.skipif(
+    not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed"
+)
 def test_rust_parser_raw_api():
     """Test the raw huginn_ext API directly."""
     import huginn_ext
@@ -76,11 +81,13 @@ def test_rust_parser_raw_api():
     assert "id" in result["frames"][0]["atoms"][0]
 
 
-@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
+@pytest.mark.skipif(
+    not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed"
+)
 def test_general_msd() -> None:
     """Test compute_msd on a NumPy array against a reference implementation."""
-    import numpy as np
     import huginn_ext
+    import numpy as np
 
     np.random.seed(0)
     positions = np.random.rand(5, 8, 3).astype(np.float64)
@@ -98,11 +105,13 @@ def test_general_msd() -> None:
         assert entry["msd"] == pytest.approx(expected, abs=1e-9)
 
 
-@pytest.mark.skipif(not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed")
+@pytest.mark.skipif(
+    not _HAS_HUGINN_EXT, reason="huginn_ext Rust extension not installed"
+)
 def test_general_rdf() -> None:
     """Test compute_rdf on a NumPy array against a reference implementation."""
-    import numpy as np
     import huginn_ext
+    import numpy as np
 
     np.random.seed(1)
     positions = np.random.rand(20, 3).astype(np.float64)

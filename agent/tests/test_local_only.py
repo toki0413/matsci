@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from huginn.config import HuginnConfig, ModelConfig
@@ -35,7 +37,5 @@ def test_local_only_allows_ollama() -> None:
     registry = ModelRegistry.from_config(config)
     # Ollama import may not be installed, but the local-only check should pass first.
     # We just verify no ValueError about local-only mode is raised.
-    try:
+    with contextlib.suppress(ImportError):
         registry.get("local")
-    except ImportError:
-        pass

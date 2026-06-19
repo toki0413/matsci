@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
-from huginn.knowledge.store import KnowledgeBase, get_knowledge_base
+from huginn.knowledge.store import (
+    KnowledgeBase,
+    get_knowledge_base,
+    seed_knowledge_base,
+)
 
-__all__ = ["KnowledgeBase", "get_knowledge_base"]
+__all__ = ["KnowledgeBase", "get_knowledge_base", "seed_knowledge_base"]

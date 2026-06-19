@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 import pytest
 
 from huginn.agents.factory import AgentFactory
-from huginn.config import HuginnConfig, ModelConfig, AgentProfileConfig
+from huginn.config import AgentProfileConfig, HuginnConfig, ModelConfig
 from huginn.models.registry import ModelRegistry, create_langchain_model
 
 
@@ -44,7 +43,9 @@ class TestCreateLangchainModelThinking:
         assert model.kwargs["thinking"] == {"type": "enabled", "budget_tokens": 4096}
         assert model.kwargs["max_tokens"] == 8192
 
-    def test_anthropic_high_intensity_respects_max_tokens(self, monkeypatch: pytest.MonkeyPatch):
+    def test_anthropic_high_intensity_respects_max_tokens(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         _patch_anthropic(monkeypatch)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         model = create_langchain_model(
@@ -69,7 +70,9 @@ class TestCreateLangchainModelThinking:
         assert model.kwargs["thinking"] == custom
         assert model.kwargs["max_tokens"] == 20000
 
-    def test_openai_reasoning_effort_for_o_series(self, monkeypatch: pytest.MonkeyPatch):
+    def test_openai_reasoning_effort_for_o_series(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         _patch_openai(monkeypatch)
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         model = create_langchain_model(
@@ -79,7 +82,9 @@ class TestCreateLangchainModelThinking:
         )
         assert model.kwargs["reasoning_effort"] == "medium"
 
-    def test_openai_no_reasoning_effort_for_regular_model(self, monkeypatch: pytest.MonkeyPatch):
+    def test_openai_no_reasoning_effort_for_regular_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         _patch_openai(monkeypatch)
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         model = create_langchain_model(
@@ -103,15 +108,17 @@ class TestConfigParsing:
     def test_models_json_with_thinking(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv(
             "HUGINN_MODELS",
-            json.dumps([
-                {
-                    "alias": "claude",
-                    "provider": "anthropic",
-                    "model": "claude-sonnet-4",
-                    "thinking": "high",
-                    "max_tokens": 48000,
-                }
-            ]),
+            json.dumps(
+                [
+                    {
+                        "alias": "claude",
+                        "provider": "anthropic",
+                        "model": "claude-sonnet-4",
+                        "thinking": "high",
+                        "max_tokens": 48000,
+                    }
+                ]
+            ),
         )
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         cfg = HuginnConfig.from_env()
@@ -131,18 +138,24 @@ class TestConfigParsing:
         monkeypatch.setenv("HUGINN_PROVIDER", "anthropic")
         monkeypatch.setenv("HUGINN_MODEL", "claude-sonnet-4")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        monkeypatch.setenv("HUGINN_THINKING", json.dumps({"type": "enabled", "budget_tokens": 8000}))
+        monkeypatch.setenv(
+            "HUGINN_THINKING", json.dumps({"type": "enabled", "budget_tokens": 8000})
+        )
         cfg = HuginnConfig.from_env()
         assert cfg.thinking == {"type": "enabled", "budget_tokens": 8000}
 
 
 class TestModelRegistryOverride:
-    def test_request_level_override_creates_separate_cache_entry(self, monkeypatch: pytest.MonkeyPatch):
+    def test_request_level_override_creates_separate_cache_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         _patch_openai(monkeypatch)
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-        registry = ModelRegistry(models=[
-            ModelConfig(alias="o1", provider="openai", model="o1", thinking="low"),
-        ])
+        registry = ModelRegistry(
+            models=[
+                ModelConfig(alias="o1", provider="openai", model="o1", thinking="low"),
+            ]
+        )
         default_model = registry.get("o1")
         override_model = registry.get("o1", thinking="high")
         assert default_model is not override_model
@@ -155,20 +168,36 @@ class TestAgentFactoryOverride:
         _patch_anthropic(monkeypatch)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         config = HuginnConfig(
-            models=[ModelConfig(alias="claude", provider="anthropic", model="claude-sonnet-4")],
-            agents=[AgentProfileConfig(id="lead", model_alias="claude", thinking="medium")],
+            models=[
+                ModelConfig(
+                    alias="claude", provider="anthropic", model="claude-sonnet-4"
+                )
+            ],
+            agents=[
+                AgentProfileConfig(id="lead", model_alias="claude", thinking="medium")
+            ],
         )
         factory = AgentFactory(config)
         agent = factory.create("lead")
-        assert agent.model.kwargs["thinking"] == {"type": "enabled", "budget_tokens": 16000}
+        assert agent.model.kwargs["thinking"] == {
+            "type": "enabled",
+            "budget_tokens": 16000,
+        }
 
     def test_factory_request_override(self, monkeypatch: pytest.MonkeyPatch):
         _patch_anthropic(monkeypatch)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         config = HuginnConfig(
-            models=[ModelConfig(alias="claude", provider="anthropic", model="claude-sonnet-4")],
+            models=[
+                ModelConfig(
+                    alias="claude", provider="anthropic", model="claude-sonnet-4"
+                )
+            ],
             agents=[AgentProfileConfig(id="lead", model_alias="claude")],
         )
         factory = AgentFactory(config)
         agent = factory.create("lead", thinking="high")
-        assert agent.model.kwargs["thinking"] == {"type": "enabled", "budget_tokens": 32000}
+        assert agent.model.kwargs["thinking"] == {
+            "type": "enabled",
+            "budget_tokens": 32000,
+        }

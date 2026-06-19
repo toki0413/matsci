@@ -4,39 +4,40 @@ for later evolutionary analysis."""
 from __future__ import annotations
 
 import json
-import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
 class ToolCallRecord:
     """Record of a single tool invocation."""
+
     session_id: str
     tool_name: str
-    tool_input: Dict[str, Any]
-    result_data: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
+    tool_input: dict[str, Any]
+    result_data: dict[str, Any] | None = None
+    error_message: str | None = None
     success: bool = False
     walltime_ms: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    tags: List[str] = field(default_factory=list)
-    software: Optional[str] = None
-    calculation_type: Optional[str] = None
+    tags: list[str] = field(default_factory=list)
+    software: str | None = None
+    calculation_type: str | None = None
 
 
 @dataclass
 class ConversationRecord:
     """Record of a user-agent conversation turn."""
+
     session_id: str
     user_message: str
     agent_response: str
-    tools_used: List[str] = field(default_factory=list)
-    satisfaction: Optional[float] = None  # 0-1, inferred from follow-up
+    tools_used: list[str] = field(default_factory=list)
+    satisfaction: float | None = None  # 0-1, inferred from follow-up
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    topic_tags: List[str] = field(default_factory=list)
+    topic_tags: list[str] = field(default_factory=list)
 
 
 class ExecutionLogger:
@@ -48,12 +49,14 @@ class ExecutionLogger:
         logger.log_conversation(user="...", agent="...", tools_used=[...])
     """
 
-    def __init__(self, persist_dir: Optional[str] = None):
-        self.persist_dir = Path(persist_dir) if persist_dir else Path.home() / ".huginn" / "logs"
+    def __init__(self, persist_dir: str | None = None):
+        self.persist_dir = (
+            Path(persist_dir) if persist_dir else Path.home() / ".huginn" / "logs"
+        )
         self.persist_dir.mkdir(parents=True, exist_ok=True)
-        self._tool_calls: List[ToolCallRecord] = []
-        self._conversations: List[ConversationRecord] = []
-        self._session_stats: Dict[str, Dict[str, Any]] = {}
+        self._tool_calls: list[ToolCallRecord] = []
+        self._conversations: list[ConversationRecord] = []
+        self._session_stats: dict[str, dict[str, Any]] = {}
         self._load_existing()
 
     def _load_existing(self) -> None:
@@ -80,12 +83,12 @@ class ExecutionLogger:
         self,
         session_id: str,
         tool_name: str,
-        tool_input: Dict[str, Any],
-        result: Optional[Any] = None,
-        error: Optional[str] = None,
+        tool_input: dict[str, Any],
+        result: Any | None = None,
+        error: str | None = None,
         walltime_ms: float = 0.0,
-        software: Optional[str] = None,
-        calculation_type: Optional[str] = None,
+        software: str | None = None,
+        calculation_type: str | None = None,
     ) -> None:
         """Log a tool invocation."""
         success = error is None and result is not None
@@ -112,12 +115,15 @@ class ExecutionLogger:
         self._flush_tool_record(record)
 
         # Update session stats
-        stats = self._session_stats.setdefault(session_id, {
-            "total_calls": 0,
-            "success_calls": 0,
-            "failed_calls": 0,
-            "tools_used": set(),
-        })
+        stats = self._session_stats.setdefault(
+            session_id,
+            {
+                "total_calls": 0,
+                "success_calls": 0,
+                "failed_calls": 0,
+                "tools_used": set(),
+            },
+        )
         stats["total_calls"] += 1
         if success:
             stats["success_calls"] += 1
@@ -130,8 +136,8 @@ class ExecutionLogger:
         session_id: str,
         user_message: str,
         agent_response: str,
-        tools_used: List[str] = None,
-        topic_tags: List[str] = None,
+        tools_used: list[str] = None,
+        topic_tags: list[str] = None,
     ) -> None:
         """Log a conversation turn."""
         record = ConversationRecord(
@@ -160,23 +166,30 @@ class ExecutionLogger:
     # Analytics API for Evolution
     # ------------------------------------------------------------------
 
-    def get_failure_patterns(self, min_count: int = 2) -> List[Dict[str, Any]]:
+    def get_failure_patterns(self, min_count: int = 2) -> list[dict[str, Any]]:
         """Extract recurring failure patterns."""
         from collections import Counter
+
         failures = [r for r in self._tool_calls if not r.success]
         patterns = Counter()
         for f in failures:
             key = f"{f.tool_name}|{f.error_message[:80]}"
             patterns[key] += 1
         return [
-            {"pattern": p, "tool": p.split("|")[0], "error": p.split("|")[1], "count": c}
+            {
+                "pattern": p,
+                "tool": p.split("|")[0],
+                "error": p.split("|")[1],
+                "count": c,
+            }
             for p, c in patterns.most_common()
             if c >= min_count
         ]
 
-    def get_tool_success_rate(self) -> Dict[str, float]:
+    def get_tool_success_rate(self) -> dict[str, float]:
         """Compute per-tool success rate."""
         from collections import defaultdict
+
         stats = defaultdict(lambda: {"success": 0, "total": 0})
         for r in self._tool_calls:
             stats[r.tool_name]["total"] += 1
@@ -187,9 +200,10 @@ class ExecutionLogger:
             for tool, s in stats.items()
         }
 
-    def get_software_failure_rates(self) -> Dict[str, float]:
+    def get_software_failure_rates(self) -> dict[str, float]:
         """Compute per-software failure rate."""
         from collections import defaultdict
+
         stats = defaultdict(lambda: {"success": 0, "total": 0})
         for r in self._tool_calls:
             if r.software:
@@ -201,7 +215,7 @@ class ExecutionLogger:
             for sw, s in stats.items()
         }
 
-    def get_recent_errors(self, n: int = 20) -> List[Dict[str, Any]]:
+    def get_recent_errors(self, n: int = 20) -> list[dict[str, Any]]:
         """Get the N most recent errors."""
         failures = [r for r in self._tool_calls if not r.success]
         failures.sort(key=lambda x: x.timestamp, reverse=True)
@@ -216,12 +230,13 @@ class ExecutionLogger:
             for r in failures[:n]
         ]
 
-    def export_for_evolution(self, output_path: Optional[str] = None) -> str:
+    def export_for_evolution(self, output_path: str | None = None) -> str:
         """Export a summary dataset for the EvolutionEngine."""
         summary = {
             "total_tool_calls": len(self._tool_calls),
             "total_conversations": len(self._conversations),
-            "success_rate": sum(1 for r in self._tool_calls if r.success) / max(len(self._tool_calls), 1),
+            "success_rate": sum(1 for r in self._tool_calls if r.success)
+            / max(len(self._tool_calls), 1),
             "tool_success_rates": self.get_tool_success_rate(),
             "software_failure_rates": self.get_software_failure_rates(),
             "failure_patterns": self.get_failure_patterns(min_count=2),

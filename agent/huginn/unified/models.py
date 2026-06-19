@@ -189,7 +189,9 @@ def one_d_kohn_sham_dft() -> UnifiedProblem:
         C_tf * n_sym ** (sp.Rational(5, 3))
         + v_ext * n_sym
         + sp.Rational(1, 2) * n_sym * sp.Symbol("V_H")
-        - sp.Rational(3, 4) * (3 / sp.pi) ** (sp.Rational(1, 3)) * n_sym ** (sp.Rational(4, 3))
+        - sp.Rational(3, 4)
+        * (3 / sp.pi) ** (sp.Rational(1, 3))
+        * n_sym ** (sp.Rational(4, 3))
     )
     energy = EnergyFunctional(
         name="hohenberg_kohn_1d",
@@ -200,7 +202,7 @@ def one_d_kohn_sham_dft() -> UnifiedProblem:
     )
     xc = ConstitutiveModel(
         name="lda_xc_1d",
-        expression=-(3 / sp.pi) ** (sp.Rational(1, 3)) * n_sym ** (sp.Rational(1, 3)),
+        expression=-((3 / sp.pi) ** (sp.Rational(1, 3))) * n_sym ** (sp.Rational(1, 3)),
         parameters={},
     )
     return UnifiedProblem(

@@ -7,9 +7,10 @@ through computation to result or failure.
 from __future__ import annotations
 
 import uuid
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
-from huginn.exploration.core import Branch, Decision, BranchStatus, ExplorationSpace
+from huginn.exploration.core import Branch, BranchStatus, Decision, ExplorationSpace
 
 
 class BranchLifecycleManager:
@@ -20,8 +21,8 @@ class BranchLifecycleManager:
         execute_fn: Callable[[Branch], Awaitable[dict[str, Any]]] | None = None,
     ):
         """Args:
-            execute_fn: Async function that executes a branch's computational tasks.
-                       Should return a dict with at least {"success": bool, "objectives": dict}.
+        execute_fn: Async function that executes a branch's computational tasks.
+                   Should return a dict with at least {"success": bool, "objectives": dict}.
         """
         self.execute_fn = execute_fn or self._default_execute
 
@@ -46,7 +47,9 @@ class BranchLifecycleManager:
         space.active_branches.add(branch_id)
         return branch
 
-    async def execute_branch(self, space: ExplorationSpace, branch_id: str) -> dict[str, Any]:
+    async def execute_branch(
+        self, space: ExplorationSpace, branch_id: str
+    ) -> dict[str, Any]:
         """Execute a branch's computational tasks."""
         if branch_id not in space.branches:
             return {"success": False, "error": f"Branch {branch_id} not found"}
@@ -68,7 +71,9 @@ class BranchLifecycleManager:
             else:
                 branch.status = BranchStatus.FAILED
                 space.knowledge_graph.nodes[branch_id]["status"] = "failed"
-                space.knowledge_graph.nodes[branch_id]["error"] = result.get("error", "Unknown")
+                space.knowledge_graph.nodes[branch_id]["error"] = result.get(
+                    "error", "Unknown"
+                )
 
             space.active_branches.discard(branch_id)
             return result
@@ -93,11 +98,17 @@ class BranchLifecycleManager:
         if cascade:
             # Find and prune children
             children = [
-                bid for bid, b in space.branches.items()
+                bid
+                for bid, b in space.branches.items()
                 if b.parent_branch == branch_id and b.status != BranchStatus.PRUNED
             ]
             for child_id in children:
-                await self.prune_branch(space, child_id, f"Parent {branch_id} pruned: {reason}", cascade=True)
+                await self.prune_branch(
+                    space,
+                    child_id,
+                    f"Parent {branch_id} pruned: {reason}",
+                    cascade=True,
+                )
 
     async def backtrack(
         self,
@@ -141,6 +152,7 @@ class BranchLifecycleManager:
     async def _default_execute(self, branch: Branch) -> dict[str, Any]:
         """Default no-op execution (for testing/mocking)."""
         import random
+
         return {
             "success": True,
             "results": {"mock": True, "hypothesis": branch.hypothesis},

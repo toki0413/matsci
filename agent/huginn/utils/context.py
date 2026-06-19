@@ -36,7 +36,9 @@ def compact_messages(
         return messages
 
     trimmed = list(messages)
-    while len(trimmed) > keep_last_n and estimate_message_tokens(trimmed) > budget_tokens:
+    while (
+        len(trimmed) > keep_last_n and estimate_message_tokens(trimmed) > budget_tokens
+    ):
         # Drop the oldest message that is not within the keep-last window.
         trimmed.pop(0)
     return trimmed

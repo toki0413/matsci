@@ -1,12 +1,12 @@
 """Unit tests for Lean 4 integration."""
 
+from pathlib import Path
+
 import pytest
 import sympy as sp
-from pathlib import Path
 
 from huginn.lean.interface import LeanInterface
 from huginn.lean.sympy_to_lean import SymPyToLean
-
 
 LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
@@ -63,7 +63,7 @@ class TestSymPyToLean:
 
     def test_sin_cos(self, translator):
         x = sp.Symbol("x")
-        expr = sp.sin(x)**2 + sp.cos(x)**2
+        expr = sp.sin(x) ** 2 + sp.cos(x) ** 2
         result = translator.translate(expr)
         assert "Real.sin" in result
         assert "Real.cos" in result
@@ -93,6 +93,7 @@ class TestLeanToolAutoVerify:
             pytest.skip("HuginnLean project not found")
         from huginn.tools.lean_tool import LeanTool, LeanToolInput
         from huginn.types import ToolContext
+
         tool = LeanTool()
         return tool, LeanToolInput, ToolContext(session_id="test", workspace=".")
 
@@ -100,9 +101,12 @@ class TestLeanToolAutoVerify:
     async def test_auto_verify_constitutive(self, lean_tool):
         tool, Input, ctx = lean_tool
         result = await tool.call(
-            Input(action="auto_verify", auto_verify_action="constitutive",
-                  symbolic_result={"pressure": "-B0*(V0/V)**BP"},
-                  symbols=["B0", "V0", "V", "BP"]),
+            Input(
+                action="auto_verify",
+                auto_verify_action="constitutive",
+                symbolic_result={"pressure": "-B0*(V0/V)**BP"},
+                symbols=["B0", "V0", "V", "BP"],
+            ),
             ctx,
         )
         assert result.success, result.error
@@ -111,11 +115,14 @@ class TestLeanToolAutoVerify:
     async def test_auto_verify_derivative(self, lean_tool):
         tool, Input, ctx = lean_tool
         result = await tool.call(
-            Input(action="auto_verify", auto_verify_action="derivative",
-                  original_expression="x**3 + 2*x**2",
-                  variable="x",
-                  expected_expression="3*x**2 + 4*x",
-                  test_points={"x": 2.0}),
+            Input(
+                action="auto_verify",
+                auto_verify_action="derivative",
+                original_expression="x**3 + 2*x**2",
+                variable="x",
+                expected_expression="3*x**2 + 4*x",
+                test_points={"x": 2.0},
+            ),
             ctx,
         )
         assert result.success, result.error
@@ -124,16 +131,18 @@ class TestLeanToolAutoVerify:
     async def test_auto_verify_eigenvalue(self, lean_tool):
         tool, Input, ctx = lean_tool
         result = await tool.call(
-            Input(action="auto_verify", auto_verify_action="eigenvalue",
-                  symbolic_result={
-                      "eigenvalues": [{"value": "a + b"}, {"value": "a - b"}],
-                      "trace": "2*a",
-                  },
-                  symbols=["a", "b"]),
+            Input(
+                action="auto_verify",
+                auto_verify_action="eigenvalue",
+                symbolic_result={
+                    "eigenvalues": [{"value": "a + b"}, {"value": "a - b"}],
+                    "trace": "2*a",
+                },
+                symbols=["a", "b"],
+            ),
             ctx,
         )
         assert result.success, result.error
-
 
     @pytest.mark.asyncio
     async def test_auto_verify_unified(self, lean_tool):
@@ -157,7 +166,6 @@ class TestLeanToolAutoVerify:
         )
         assert result.success, result.error
 
-
     @pytest.mark.asyncio
     async def test_auto_verify_discretization(self, lean_tool):
         tool, Input, ctx = lean_tool
@@ -168,7 +176,11 @@ class TestLeanToolAutoVerify:
                 symbolic_result={
                     "method": "fem",
                     "n_dof": 3,
-                    "stiffness_matrix": [[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]],
+                    "stiffness_matrix": [
+                        [2.0, -1.0, 0.0],
+                        [-1.0, 2.0, -1.0],
+                        [0.0, -1.0, 2.0],
+                    ],
                     "load_vector": [0.0, 1.0, 0.0],
                     "solution": [0.0, 0.5, 0.0],
                 },

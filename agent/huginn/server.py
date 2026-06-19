@@ -8,25 +8,27 @@ Serves the desktop frontend with:
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import difflib
 import json
 import os
-import asyncio
-import difflib
 import tempfile
-import base64
 import traceback
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import Depends, FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from contextlib import asynccontextmanager
+from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.messages import AIMessage, ToolMessage
 
 try:
     from huginn.knowledge import get_knowledge_base
+
     _KB_AVAILABLE = True
 except Exception:
     _KB_AVAILABLE = False
@@ -34,6 +36,7 @@ except Exception:
 
 try:
     from huginn.codebase import get_codebase_index
+
     _CODEBASE_AVAILABLE = True
 except Exception:
     _CODEBASE_AVAILABLE = False
@@ -41,47 +44,53 @@ except Exception:
 
 from huginn import __version__
 from huginn.agent import HuginnAgent
-from huginn.tools import register_all_tools
-from huginn.tools.registry import ToolRegistry
-from huginn.config import HuginnConfig
-from huginn.personas import PersonaManager
-from huginn.project_context import (
-    load_project_context,
-    save_project_context,
-    context_source,
-    project_context_path,
-)
-from huginn.types import ToolContext
-from huginn.permissions import PermissionConfig, PermissionMode
-from huginn.security.audit import AuditLogger
-from huginn.pet import get_pet_bus, PetMood, configure_pet
-from huginn.memory.manager import MemoryManager, MemoryConfig
-from huginn.models.registry import ModelRegistry
 from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator, SubTask
-from huginn.workflows.engine import WorkflowEngine
-from huginn.workflows.templates import get_template
+from huginn.config import HuginnConfig
 from huginn.hpc.client import HPCClient, HPCConfig
+from huginn.memory.manager import MemoryConfig, MemoryManager
+from huginn.models.registry import ModelRegistry
+from huginn.permissions import PermissionMode
+from huginn.personas import PersonaManager
+from huginn.pet import (
+    PetMood,
+    configure_pet,
+    feed_pet,
+    get_pet_bus,
+    pet_stroke,
+    reset_pet_progress,
+    toggle_pet_accessory,
+)
+from huginn.project_context import (
+    context_source,
+    load_project_context,
+    project_context_path,
+    save_project_context,
+)
+from huginn.security.auth import require_admin_key, require_api_key
+from huginn.server_context import ServerContext, get_server_context
 from huginn.skills.base import DeclarativeSkillExecutor
 from huginn.skills.registry import SkillRegistry
-
+from huginn.tools import register_all_tools
+from huginn.tools.registry import ToolRegistry
+from huginn.types import ToolContext
+from huginn.workflows.engine import WorkflowEngine
+from huginn.workflows.templates import get_template
 
 # Register all tools
 register_all_tools()
 
-# Global agent and MCP manager
-_agent: HuginnAgent | None = None
-_planner_agent: HuginnAgent | None = None
-_mcp_manager = None
-_kb: Any | None = None
-_codebase: Any | None = None
-_memory_manager: Any | None = None
-_agent_factory: AgentFactory | None = None
-_orchestrator: Orchestrator | None = None
+# Single server-wide context (replaces the previous module-level globals)
+_context: ServerContext | None = None
 
-# Server-wide security policy
-_permission_config = PermissionConfig()
-_audit_logger = AuditLogger(Path.home() / ".huginn" / "audit.jsonl")
+
+def get_context() -> ServerContext:
+    """Return the server context, initializing it lazily if needed."""
+    global _context
+    if _context is None:
+        _context = get_server_context()
+    return _context
+
 
 # In-memory checkpoints for diff review (snapshot path -> content)
 _checkpoints: dict[str, tuple[Path, dict[str, str]]] = {}
@@ -95,34 +104,38 @@ _EDIT_TOOLS = {"file_write_tool", "file_edit_tool"}
 
 async def _init_mcp_tools():
     """Connect to local MCP servers and register their tools."""
-    global _mcp_manager
     try:
-        from huginn.mcp_client import MCPClientManager, MCPServerConfig
-        from huginn.tools.mcp_adapter import register_mcp_tools
         from pathlib import Path
 
-        _mcp_manager = MCPClientManager()
+        from huginn.mcp_client import MCPClientManager, MCPServerConfig
+        from huginn.tools.mcp_adapter import register_mcp_tools
+
+        get_context().mcp_manager = MCPClientManager()
         base = Path(__file__).parent.parent.parent  # repo root
 
         # Try mat-db-mcp
         mat_db_path = base / "servers" / "mat-db-mcp" / "server.py"
         if mat_db_path.exists():
-            await _mcp_manager.connect(MCPServerConfig(
-                name="mat-db",
-                command="python",
-                args=[str(mat_db_path)],
-            ))
+            await get_context().mcp_manager.connect(
+                MCPServerConfig(
+                    name="mat-db",
+                    command="python",
+                    args=[str(mat_db_path)],
+                )
+            )
 
         # Try math-anything-mcp
         math_path = base / "servers" / "math-anything-mcp" / "server.py"
         if math_path.exists():
-            await _mcp_manager.connect(MCPServerConfig(
-                name="math-anything",
-                command="python",
-                args=[str(math_path)],
-            ))
+            await get_context().mcp_manager.connect(
+                MCPServerConfig(
+                    name="math-anything",
+                    command="python",
+                    args=[str(math_path)],
+                )
+            )
 
-        registered = register_mcp_tools(_mcp_manager)
+        registered = register_mcp_tools(get_context().mcp_manager)
         print(f"[MCP] Registered {len(registered)} tools from MCP servers")
     except Exception as e:
         print(f"[MCP] Warning: Could not initialize MCP tools: {e}")
@@ -130,26 +143,24 @@ async def _init_mcp_tools():
 
 async def _shutdown_mcp():
     """Disconnect all MCP servers."""
-    global _mcp_manager
-    if _mcp_manager:
-        await _mcp_manager.disconnect_all()
-        _mcp_manager = None
+    if get_context().mcp_manager:
+        await get_context().mcp_manager.disconnect_all()
+        get_context().mcp_manager = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _kb, _codebase
     await _init_mcp_tools()
-    if _KB_AVAILABLE and _kb is None:
+    if _KB_AVAILABLE and get_context().kb is None:
         try:
             cfg = HuginnConfig.from_env()
-            _kb = get_knowledge_base(cfg.workspace)
+            get_context().kb = get_knowledge_base(cfg.workspace)
         except Exception as e:
             print(f"[KB] Warning: could not initialize knowledge base: {e}")
-    if _CODEBASE_AVAILABLE and _codebase is None:
+    if _CODEBASE_AVAILABLE and get_context().codebase is None:
         try:
             cfg = HuginnConfig.from_env()
-            _codebase = get_codebase_index(cfg.workspace)
+            get_context().codebase = get_codebase_index(cfg.workspace)
         except Exception as e:
             print(f"[Codebase] Warning: could not initialize codebase index: {e}")
     try:
@@ -179,7 +190,12 @@ def _get_cors_origins() -> list[str]:
     ]
 
 
-app = FastAPI(title="Huginn Server", version=__version__, lifespan=lifespan)
+app = FastAPI(
+    title="Huginn Server",
+    version=__version__,
+    lifespan=lifespan,
+    dependencies=[Depends(require_api_key)],
+)
 
 _cors_origins = _get_cors_origins()
 app.add_middleware(
@@ -195,6 +211,7 @@ def _check_ollama_available(base_url: str, timeout: float = 2.0) -> bool:
     """Quick check if Ollama is responding."""
     try:
         import urllib.request
+
         req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
@@ -204,10 +221,9 @@ def _check_ollama_available(base_url: str, timeout: float = 2.0) -> bool:
 
 def get_agent() -> HuginnAgent:
     """Get or create the HuginnAgent instance."""
-    global _agent
-    if _agent is not None:
-        return _agent
-    
+    if get_context().agent is not None:
+        return get_context().agent
+
     cfg = HuginnConfig.from_env()
     memory_manager = get_memory_manager()
     factory = get_agent_factory()
@@ -218,74 +234,72 @@ def get_agent() -> HuginnAgent:
         if ollama_models and not _check_ollama_available(cfg.ollama_host):
             print(f"Warning: Ollama not responding at {cfg.ollama_host}")
             print("Falling back to mock mode (no LLM)")
-            _agent = HuginnAgent(model=None, memory_manager=memory_manager)
-            _agent.register_tools_from_registry()
-            return _agent
+            get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
+            get_context().agent.register_tools_from_registry()
+            return get_context().agent
 
     try:
-        _agent = factory.create_lead()
+        get_context().agent = factory.create_lead()
     except ImportError as e:
         print(f"Warning: Missing dependency for configured model: {e}")
         print("Falling back to mock mode (no LLM)")
-        _agent = HuginnAgent(model=None, memory_manager=memory_manager)
-        _agent.register_tools_from_registry()
+        get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
+        get_context().agent.register_tools_from_registry()
     except ValueError as e:
         print(f"Warning: {e}")
         print("Falling back to mock mode (no LLM)")
-        _agent = HuginnAgent(model=None, memory_manager=memory_manager)
-        _agent.register_tools_from_registry()
+        get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
+        get_context().agent.register_tools_from_registry()
     except Exception as e:
         print(f"Warning: Failed to initialize agent: {e}")
         print("Falling back to mock mode (no LLM)")
-        _agent = HuginnAgent(model=None, memory_manager=memory_manager)
-        _agent.register_tools_from_registry()
+        get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
+        get_context().agent.register_tools_from_registry()
 
-    return _agent
+    return get_context().agent
 
 
 def get_memory_manager() -> MemoryManager:
     """Get or create the global MemoryManager."""
-    global _memory_manager
-    if _memory_manager is not None:
-        return _memory_manager
+    if get_context().memory_manager is not None:
+        return get_context().memory_manager
     cfg = HuginnConfig.from_env()
     memory_md = Path(cfg.workspace) / "MEMORY.md" if cfg.workspace else None
-    _memory_manager = MemoryManager(
+    get_context().memory_manager = MemoryManager(
         config=MemoryConfig(memory_md_path=memory_md),
     )
-    return _memory_manager
+    return get_context().memory_manager
 
 
 def get_agent_factory() -> AgentFactory:
     """Get or create the global AgentFactory from current config."""
-    global _agent_factory
-    if _agent_factory is not None:
-        return _agent_factory
+    if get_context().agent_factory is not None:
+        return get_context().agent_factory
     cfg = HuginnConfig.from_env()
     registry = ModelRegistry.from_config(cfg)
-    _agent_factory = AgentFactory(
+    get_context().agent_factory = AgentFactory(
         config=cfg,
         model_registry=registry,
         memory_manager=get_memory_manager(),
     )
-    return _agent_factory
+    return get_context().agent_factory
 
 
 def get_orchestrator() -> Orchestrator:
     """Get or create the global multi-agent Orchestrator."""
-    global _orchestrator
-    if _orchestrator is not None:
-        return _orchestrator
+    if get_context().orchestrator is not None:
+        return get_context().orchestrator
     cfg = HuginnConfig.from_env()
-    _orchestrator = Orchestrator(
+    get_context().orchestrator = Orchestrator(
         factory=get_agent_factory(),
         memory_manager=get_memory_manager(),
         max_concurrent=cfg.max_concurrent_subagents,
     )
-    return _orchestrator
+    return get_context().orchestrator
 
 
 # ── Health & Info ──────────────────────────────────────────────
+
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
@@ -320,16 +334,15 @@ async def health_rust() -> dict[str, Any]:
         }
 
 
-@app.get("/config")
+@app.get("/config", dependencies=[Depends(require_admin_key)])
 async def get_config() -> dict[str, Any]:
     """Return current server-side configuration (API key masked)."""
     return HuginnConfig.from_env().to_dict(mask_key=True)
 
 
-@app.post("/config")
+@app.post("/config", dependencies=[Depends(require_admin_key)])
 async def update_config(params: dict[str, Any]) -> dict[str, Any]:
     """Update server-side configuration and reset the agent so changes take effect."""
-    global _agent, _agent_factory, _planner_agent
 
     if "provider" in params:
         os.environ["HUGINN_PROVIDER"] = str(params["provider"])
@@ -349,12 +362,20 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
         os.environ["OLLAMA_HOST"] = str(params["ollama_host"])
     if "persona" in params:
         os.environ["HUGINN_PERSONA"] = str(params["persona"])
+    if "persona_auto_route_threshold" in params:
+        os.environ["HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD"] = str(
+            params["persona_auto_route_threshold"]
+        )
     if "rag_enabled" in params:
         os.environ["HUGINN_RAG_ENABLED"] = "true" if params["rag_enabled"] else "false"
     if "team_mode_enabled" in params:
-        os.environ["HUGINN_TEAM_MODE"] = "true" if params["team_mode_enabled"] else "false"
+        os.environ["HUGINN_TEAM_MODE"] = (
+            "true" if params["team_mode_enabled"] else "false"
+        )
     if "max_concurrent_subagents" in params:
-        os.environ["HUGINN_MAX_CONCURRENT_SUBAGENTS"] = str(params["max_concurrent_subagents"])
+        os.environ["HUGINN_MAX_CONCURRENT_SUBAGENTS"] = str(
+            params["max_concurrent_subagents"]
+        )
     if "models" in params:
         os.environ["HUGINN_MODELS"] = json.dumps(params["models"])
     if "agents" in params:
@@ -363,8 +384,12 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
         os.environ["HUGINN_PET_NAME"] = str(params["pet_name"])
     if "pet_personality" in params:
         os.environ["HUGINN_PET_PERSONALITY"] = str(params["pet_personality"])
+    if "pet_accessories" in params:
+        os.environ["HUGINN_PET_ACCESSORIES"] = json.dumps(params["pet_accessories"])
     if "encrypt_config" in params:
-        os.environ["HUGINN_ENCRYPT_CONFIG"] = "true" if params["encrypt_config"] else "false"
+        os.environ["HUGINN_ENCRYPT_CONFIG"] = (
+            "true" if params["encrypt_config"] else "false"
+        )
     if "encryption_password" in params:
         pw = params["encryption_password"]
         if pw:
@@ -378,17 +403,17 @@ async def update_config(params: dict[str, Any]) -> dict[str, Any]:
         else:
             os.environ.pop("HUGINN_ENCRYPTION_KEY_FILE", None)
 
-    _agent = None
-    _agent_factory = None
-    _planner_agent = None
-    global _orchestrator
-    _orchestrator = None
+    get_context().agent = None
+    get_context().agent_factory = None
+    get_context().planner_agent = None
+    get_context().orchestrator = None
     cfg = HuginnConfig.from_env()
     configure_pet(cfg.pet_name, cfg.pet_personality)
     return {"success": True, "config": cfg.to_dict(mask_key=True)}
 
 
 # ── Project Context ─────────────────────────────────────────────
+
 
 @app.get("/project-context")
 async def get_project_context() -> dict[str, Any]:
@@ -408,8 +433,7 @@ async def update_project_context(params: dict[str, Any]) -> dict[str, Any]:
     content = params.get("content", "")
     try:
         result = save_project_context(cfg.workspace, content)
-        global _agent
-        _agent = None  # force re-init so new context is loaded
+        get_context().agent = None  # force re-init so new context is loaded
         return {"success": True, **result}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -433,12 +457,11 @@ If the request is simple enough that no plan is needed, respond normally but sti
 
 def get_planner_agent() -> HuginnAgent:
     """Get or create a read-only planning agent (no tools registered)."""
-    global _planner_agent
-    if _planner_agent is not None:
-        return _planner_agent
+    if get_context().planner_agent is not None:
+        return get_context().planner_agent
 
     cfg = HuginnConfig.from_env()
-    persona_manager = PersonaManager()
+    persona_manager = PersonaManager(workspace=get_context().config.workspace)
     base_prompt = persona_manager.get(cfg.persona).system_prompt
 
     try:
@@ -451,19 +474,25 @@ def get_planner_agent() -> HuginnAgent:
     system_prompt = base_prompt + PLANNER_SUFFIX
 
     if cfg.provider == "default" and not cfg.models:
-        _planner_agent = HuginnAgent(model=None, system_prompt=system_prompt)
-        return _planner_agent
+        get_context().planner_agent = HuginnAgent(
+            model=None, system_prompt=system_prompt
+        )
+        return get_context().planner_agent
 
     try:
         factory = get_agent_factory()
-        _planner_agent = factory.create_lead(system_prompt_override=system_prompt)
+        get_context().planner_agent = factory.create_lead(
+            system_prompt_override=system_prompt
+        )
     except Exception as e:
         print(f"Warning: Failed to initialize planner model: {e}")
-        _planner_agent = HuginnAgent(model=None, system_prompt=system_prompt)
+        get_context().planner_agent = HuginnAgent(
+            model=None, system_prompt=system_prompt
+        )
 
     # Planner is read-only: strip all tools
-    _planner_agent.langchain_tools.clear()
-    return _planner_agent
+    get_context().planner_agent.langchain_tools.clear()
+    return get_context().planner_agent
 
 
 @app.post("/plan")
@@ -471,7 +500,9 @@ async def generate_plan(params: dict[str, Any]) -> dict[str, Any]:
     """Generate a step-by-step plan without executing any tools."""
     agent = get_planner_agent()
     if agent.model is None:
-        return {"error": "No LLM configured. Set provider and API key to generate plans."}
+        return {
+            "error": "No LLM configured. Set provider and API key to generate plans."
+        }
 
     content = params.get("content", "")
     thread_id = params.get("thread_id", "plan")
@@ -479,9 +510,11 @@ async def generate_plan(params: dict[str, Any]) -> dict[str, Any]:
         return {"error": "content is required"}
 
     # Optionally ground the plan with codebase search results
-    if _codebase is not None:
+    if get_context().codebase is not None:
         try:
-            results = await asyncio.to_thread(_codebase.search, content, top_k=3)
+            results = await asyncio.to_thread(
+                get_context().codebase.search, content, top_k=3
+            )
             if results:
                 ctx = "\n\n".join(
                     f"[{i+1}] {r['path']}\n{r['text']}" for i, r in enumerate(results)
@@ -511,13 +544,14 @@ async def generate_plan(params: dict[str, Any]) -> dict[str, Any]:
 
 # ── Codebase Semantic Search ────────────────────────────────────
 
+
 @app.get("/codebase")
 async def codebase_status() -> dict[str, Any]:
     """Return codebase index status."""
-    if _codebase is None:
+    if get_context().codebase is None:
         return {"available": False, "error": "Codebase index not initialized"}
     try:
-        return _codebase.status()
+        return get_context().codebase.status()
     except Exception as e:
         return {"available": False, "error": str(e)}
 
@@ -525,10 +559,13 @@ async def codebase_status() -> dict[str, Any]:
 @app.post("/codebase/index")
 async def codebase_index() -> dict[str, Any]:
     """Re-index the workspace codebase."""
-    if _codebase is None:
+    if get_context().codebase is None:
         return {"success": False, "error": "Codebase index not initialized"}
     try:
-        return {"success": True, **await asyncio.to_thread(_codebase.index_workspace)}
+        return {
+            "success": True,
+            **await asyncio.to_thread(get_context().codebase.index_workspace),
+        }
     except Exception as e:
         traceback.print_exc()
         return {"success": False, "error": str(e)}
@@ -537,12 +574,12 @@ async def codebase_index() -> dict[str, Any]:
 @app.post("/codebase/search")
 async def codebase_search(params: dict[str, Any]) -> dict[str, Any]:
     """Search the codebase index."""
-    if _codebase is None:
+    if get_context().codebase is None:
         return {"results": [], "error": "Codebase index not initialized"}
     try:
         query = params.get("query", "")
         top_k = int(params.get("top_k", 5))
-        results = await asyncio.to_thread(_codebase.search, query, top_k)
+        results = await asyncio.to_thread(get_context().codebase.search, query, top_k)
         return {"results": results}
     except Exception as e:
         traceback.print_exc()
@@ -551,14 +588,15 @@ async def codebase_search(params: dict[str, Any]) -> dict[str, Any]:
 
 # ── Knowledge Base / RAG ───────────────────────────────────────
 
+
 @app.post("/knowledge/upload")
 async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
     """Upload a document to the private knowledge base."""
-    if _kb is None:
+    if get_context().kb is None:
         return {"error": "Knowledge base is not available"}
     try:
         content = await file.read()
-        result = _kb.add_document(file.filename or "unnamed", content)
+        result = get_context().kb.add_document(file.filename or "unnamed", content)
         return {"success": True, "document": result}
     except Exception as e:
         traceback.print_exc()
@@ -568,10 +606,14 @@ async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
 @app.get("/knowledge")
 async def list_knowledge() -> dict[str, Any]:
     """List documents in the knowledge base."""
-    if _kb is None:
+    if get_context().kb is None:
         return {"documents": [], "available": False}
     try:
-        return {"documents": _kb.list_documents(), "count": _kb.count(), "available": True}
+        return {
+            "documents": get_context().kb.list_documents(),
+            "count": get_context().kb.count(),
+            "available": True,
+        }
     except Exception as e:
         return {"documents": [], "error": str(e), "available": False}
 
@@ -579,24 +621,43 @@ async def list_knowledge() -> dict[str, Any]:
 @app.delete("/knowledge/{doc_id}")
 async def delete_knowledge(doc_id: str) -> dict[str, Any]:
     """Remove a document from the knowledge base."""
-    if _kb is None:
+    if get_context().kb is None:
         return {"success": False, "error": "Knowledge base is not available"}
     try:
-        deleted = _kb.delete_document(doc_id)
+        deleted = get_context().kb.delete_document(doc_id)
         return {"success": True, "deleted": deleted}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
+@app.get("/export", dependencies=[Depends(require_api_key)])
+async def export_data(
+    source: str = "audit",
+    fmt: str = "json",
+) -> Any:
+    """Export Huginn records as a downloadable file."""
+    from huginn.export_manager import ExportManager
+
+    manager = ExportManager(get_context().config.workspace)
+    suffix = "md" if fmt == "markdown" else fmt
+    output = Path(tempfile.gettempdir()) / f"huginn_export_{source}.{suffix}"
+    result = manager.export(source=source, output_path=output, fmt=fmt)
+    return FileResponse(
+        result.output_path,
+        filename=result.output_path.name,
+        media_type="application/octet-stream",
+    )
+
+
 @app.post("/knowledge/query")
 async def query_knowledge(params: dict[str, Any]) -> dict[str, Any]:
     """Query the knowledge base and return relevant chunks."""
-    if _kb is None:
+    if get_context().kb is None:
         return {"chunks": [], "error": "Knowledge base is not available"}
     try:
         text = params.get("query", "")
         top_k = int(params.get("top_k", 5))
-        chunks = _kb.query(text, top_k=top_k)
+        chunks = get_context().kb.query(text, top_k=top_k)
         return {"chunks": chunks}
     except Exception as e:
         return {"chunks": [], "error": str(e)}
@@ -610,9 +671,9 @@ async def list_tools() -> list[dict[str, Any]]:
 
 def _server_allows_tool(tool_name: str, input_data: Any) -> tuple[bool, str | None]:
     """Check server-side permission policy for a tool call."""
-    mode = _permission_config.get_mode(tool_name)
+    mode = get_context().permission_config.get_mode(tool_name)
 
-    if _permission_config.auto_approve_all or mode == PermissionMode.AUTO:
+    if get_context().permission_config.auto_approve_all or mode == PermissionMode.AUTO:
         return True, None
 
     if mode == PermissionMode.DENY:
@@ -655,7 +716,7 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     allowed, reason = _server_allows_tool(tool_name, input_data)
     if not allowed:
-        _audit_logger.log(
+        get_context().audit_logger.log(
             event_type="tool_call",
             actor="http",
             action=tool_name,
@@ -669,17 +730,21 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         workspace=".",
         memory_manager=get_memory_manager(),
         agent_factory=get_agent_factory(),
-        audit_logger=_audit_logger,
+        audit_logger=get_context().audit_logger,
     )
     result = await tool.call(input_data, context)
 
-    _audit_logger.log(
+    get_context().audit_logger.log(
         event_type="tool_call",
         actor="http",
         action=tool_name,
         details={"approved": True, "success": result.success},
         input_data=json.dumps(args, sort_keys=True, default=str),
-        output_data=json.dumps(result.data, sort_keys=True, default=str) if result.data else None,
+        output_data=(
+            json.dumps(result.data, sort_keys=True, default=str)
+            if result.data
+            else None
+        ),
     )
 
     return {
@@ -709,7 +774,7 @@ async def events_stream() -> StreamingResponse:
                     "timestamp": event.timestamp,
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Keep connection alive with the latest state.
                 yield f"data: {json.dumps({'type': 'heartbeat', 'state': bus.state.to_dict()})}\n\n"
 
@@ -724,15 +789,63 @@ async def events_stream() -> StreamingResponse:
     )
 
 
+# ── Pet Actions ─────────────────────────────────────────────────
+
+
+@app.post("/pet/feed")
+async def pet_feed(amount: int = 25) -> dict[str, Any]:
+    """Feed the desktop pet."""
+    feed_pet(amount)
+    bus = get_pet_bus()
+    return {"ok": True, "hunger": bus.state.hunger}
+
+
+@app.post("/pet/pet")
+async def pet_pet(amount: int = 15) -> dict[str, Any]:
+    """Stroke/pet the desktop pet."""
+    pet_stroke(amount)
+    bus = get_pet_bus()
+    return {"ok": True, "happiness": bus.state.happiness}
+
+
+@app.post("/pet/accessory")
+async def pet_accessory(params: dict[str, Any]) -> dict[str, Any]:
+    """Toggle an accessory on the desktop pet."""
+    accessory_id = params.get("accessory_id", "")
+    toggle_pet_accessory(accessory_id)
+    bus = get_pet_bus()
+    return {"ok": True, "accessories": bus.state.accessories}
+
+
+@app.post("/pet/reset")
+async def pet_reset() -> dict[str, Any]:
+    """Reset pet gamification progress."""
+    reset_pet_progress()
+    bus = get_pet_bus()
+    return {"ok": True, "level": bus.state.level, "experience": bus.state.experience}
+
+
+@app.get("/pet/status")
+async def pet_status() -> dict[str, Any]:
+    """Get current pet status including gamification state."""
+    bus = get_pet_bus()
+    return bus.state.to_dict()
+
+
 # ── Memory Management ────────────────────────────────────────────
 
+
 @app.get("/memory")
-async def list_memories(category: str | None = None, tier: str | None = None, limit: int = 100) -> dict[str, Any]:
+async def list_memories(
+    category: str | None = None, tier: str | None = None, limit: int = 100
+) -> dict[str, Any]:
     """List long-term memories, optionally filtered by category or tier."""
     try:
         mgr = get_memory_manager()
         if category:
-            entries = mgr.longterm.list_by_category(category, limit=limit, alive_only=True)
+            entries = mgr.longterm.list_by_category(
+                category, limit=limit, alive_only=True
+            )
         else:
             entries = mgr.longterm.list_all(limit=limit, alive_only=True)
         if tier:
@@ -804,8 +917,12 @@ async def delete_memory(memory_id: str) -> dict[str, Any]:
 
 
 @app.post("/memory/promote/{memory_id}")
-async def promote_memory(memory_id: str, params: dict[str, Any] = {}) -> dict[str, Any]:
+async def promote_memory(
+    memory_id: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Promote a memory to a higher tier (default long)."""
+    if params is None:
+        params = {}
     try:
         mgr = get_memory_manager()
         ok = mgr.longterm.promote(memory_id, target_tier=params.get("tier", "long"))
@@ -815,8 +932,10 @@ async def promote_memory(memory_id: str, params: dict[str, Any] = {}) -> dict[st
 
 
 @app.post("/memory/prune")
-async def prune_memories(params: dict[str, Any] = {}) -> dict[str, Any]:
+async def prune_memories(params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Prune expired and low-importance memories."""
+    if params is None:
+        params = {}
     try:
         mgr = get_memory_manager()
         expired = mgr.longterm.prune_expired()
@@ -850,6 +969,7 @@ async def memory_stats() -> dict[str, Any]:
 
 
 # ── Multi-Provider / Multi-Agent ─────────────────────────────────
+
 
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
@@ -911,8 +1031,9 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
 async def list_personas() -> dict[str, Any]:
     """List available personas and the current default."""
     from huginn.personas import PersonaManager
+
     try:
-        mgr = PersonaManager()
+        mgr = PersonaManager(workspace=get_context().config.workspace)
         return {
             "default": mgr.get_default_name(),
             "personas": [
@@ -934,8 +1055,9 @@ async def list_personas() -> dict[str, Any]:
 async def get_persona(name: str) -> dict[str, Any]:
     """Get a single persona."""
     from huginn.personas import PersonaManager
+
     try:
-        mgr = PersonaManager()
+        mgr = PersonaManager(workspace=get_context().config.workspace)
         p = mgr.get(name)
         return {
             "success": True,
@@ -954,8 +1076,9 @@ async def get_persona(name: str) -> dict[str, Any]:
 async def create_persona(params: dict[str, Any]) -> dict[str, Any]:
     """Create a new persona."""
     from huginn.personas import PersonaManager
+
     try:
-        mgr = PersonaManager()
+        mgr = PersonaManager(workspace=get_context().config.workspace)
         p = mgr.create(
             name=params["name"],
             system_prompt=params.get("system_prompt", ""),
@@ -969,12 +1092,43 @@ async def create_persona(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+@app.post("/personas/match")
+async def match_persona(params: dict[str, Any]) -> dict[str, Any]:
+    """Match a query to the most suitable persona."""
+    from huginn.persona_matcher import PersonaMatcher
+    from huginn.personas import PersonaManager
+
+    try:
+        mgr = PersonaManager(workspace=get_context().config.workspace)
+        matcher = PersonaMatcher(manager=mgr)
+        results = matcher.match(
+            params.get("query", ""),
+            top_k=int(params.get("top_k", 3)),
+            score_threshold=float(params.get("threshold", 0.3)),
+        )
+        return {
+            "success": True,
+            "matches": [
+                {
+                    "name": p.name,
+                    "score": float(score),
+                    "description": p.description,
+                    "when_to_use": p.when_to_use,
+                }
+                for p, score in results
+            ],
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.patch("/personas/{name}/default")
 async def set_default_persona(name: str) -> dict[str, Any]:
     """Set the default persona."""
     from huginn.personas import PersonaManager
+
     try:
-        mgr = PersonaManager()
+        mgr = PersonaManager(workspace=get_context().config.workspace)
         mgr.set_default(name)
         return {"success": True, "default": mgr.get_default_name()}
     except Exception as e:
@@ -985,10 +1139,58 @@ async def set_default_persona(name: str) -> dict[str, Any]:
 async def delete_persona(name: str) -> dict[str, Any]:
     """Delete a user-defined persona."""
     from huginn.personas import PersonaManager
+
     try:
-        mgr = PersonaManager()
+        mgr = PersonaManager(workspace=get_context().config.workspace)
         mgr.delete(name)
         return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/personas/{name}/switch")
+async def switch_persona(name: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Switch the active persona for the current chat session.
+
+    Returns the new persona metadata; clients can send a follow-up user message
+    to chat with the switched persona.
+    """
+    from huginn.persona_emotion import EmotionTracker
+    from huginn.personas import PersonaManager
+
+    try:
+        mgr = PersonaManager(workspace=get_context().config.workspace)
+        p = mgr.get(name)
+        os.environ["HUGINN_PERSONA"] = name
+        get_context().agent = None  # force re-init with new default persona
+        tracker = EmotionTracker(name, workspace=get_context().config.workspace)
+        return {
+            "success": True,
+            "persona": p.name,
+            "system_prompt": p.system_prompt,
+            "begin_dialogs": p.begin_dialogs,
+            "emotion": tracker.current_state().to_dict(),
+            "context_prompt": tracker.context_prompt(),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/personas/{name}/emotion")
+async def get_persona_emotion(name: str) -> dict[str, Any]:
+    """Return the current emotional trajectory for a persona."""
+    from huginn.persona_emotion import EmotionTracker
+
+    try:
+        tracker = EmotionTracker(name, workspace=get_context().config.workspace)
+        state = tracker.current_state()
+        return {
+            "success": True,
+            "persona": name,
+            "state": state.to_dict(),
+            "context_prompt": tracker.context_prompt(),
+            "trajectory": tracker.trajectory(),
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -999,17 +1201,25 @@ async def orchestrate(params: dict[str, Any]) -> dict[str, Any]:
     try:
         factory = get_agent_factory()
         from huginn.agents.orchestrator import Orchestrator
+
         orch = Orchestrator(
             factory=factory,
             memory_manager=get_memory_manager(),
-            max_concurrent=params.get("max_concurrent", factory.config.max_concurrent_subagents),
+            max_concurrent=params.get(
+                "max_concurrent", factory.config.max_concurrent_subagents
+            ),
         )
         result = await orch.run(params.get("objective", ""))
         return {
             "success": result.success,
             "objective": result.objective,
             "plan": [
-                {"task_id": t.task_id, "agent_id": t.agent_id, "status": t.status, "prompt": t.prompt}
+                {
+                    "task_id": t.task_id,
+                    "agent_id": t.agent_id,
+                    "status": t.status,
+                    "prompt": t.prompt,
+                }
                 for t in result.plan.tasks
             ],
             "outputs": result.outputs,
@@ -1022,6 +1232,7 @@ async def orchestrate(params: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Benchmark & Evolution ─────────────────────────────────────
+
 
 @app.post("/bench/run")
 async def bench_run(params: dict[str, Any]) -> dict[str, Any]:
@@ -1097,12 +1308,13 @@ async def execute_stages(params: dict[str, Any]) -> dict[str, Any]:
                 workspace=working_dir,
                 memory_manager=get_memory_manager(),
                 agent_factory=get_agent_factory(),
-                audit_logger=_audit_logger,
+                audit_logger=get_context().audit_logger,
             )
             result = await tool.call(input_data, context)
             if not result.success:
                 raise RuntimeError(result.error or f"{tool.name} failed")
             return result.data
+
         return _run
 
     orch = ExecutionOrchestrator(working_dir=working_dir)
@@ -1131,15 +1343,17 @@ async def explore_http(params: dict[str, Any]) -> dict[str, Any]:
     objective = params.get("objective", "")
     max_iterations = int(params.get("max_iterations", 20))
     max_branches = int(params.get("max_branches", 10))
-    initial_branches = params.get("initial_branches", [
-        {"name": "baseline", "hypothesis": f"Baseline for: {objective}"}
-    ])
+    initial_branches = params.get(
+        "initial_branches",
+        [{"name": "baseline", "hypothesis": f"Baseline for: {objective}"}],
+    )
     objectives_config = params.get("objectives_config", {"score": "maximize"})
+    cfg = get_context().config
 
     try:
         orch = ExplorationOrchestrator(
             strategy=ParetoPruningStrategy(max_active=max_branches),
-            max_parallel=min(5, max_branches),
+            max_parallel=min(cfg.max_parallel_branches, max_branches),
         )
         result = await orch.explore(
             objective=objective,
@@ -1163,7 +1377,7 @@ async def explore_http(params: dict[str, Any]) -> dict[str, Any]:
 @app.post("/diagnose")
 async def diagnose_error(params: dict[str, Any]) -> dict[str, Any]:
     """Diagnose a computational chemistry/MD error."""
-    from huginn.tools.diagnose_tool import DiagnoseTool, DiagnoseInput
+    from huginn.tools.diagnose_tool import DiagnoseInput, DiagnoseTool
 
     try:
         tool = DiagnoseTool()
@@ -1178,7 +1392,7 @@ async def diagnose_error(params: dict[str, Any]) -> dict[str, Any]:
             workspace=".",
             memory_manager=get_memory_manager(),
             agent_factory=get_agent_factory(),
-            audit_logger=_audit_logger,
+            audit_logger=get_context().audit_logger,
         )
         result = await tool.call(input_data, context)
         return {"success": result.success, "data": result.data}
@@ -1187,7 +1401,7 @@ async def diagnose_error(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@app.post("/config/encrypt")
+@app.post("/config/encrypt", dependencies=[Depends(require_admin_key)])
 async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
     """Encrypt the current or provided configuration file."""
     path = params.get("path", "huginn.toml")
@@ -1200,7 +1414,11 @@ async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         cfg = HuginnConfig.load(path) if target.exists() else HuginnConfig.from_env()
         cfg.encrypt_config = True
         cfg.encryption_password = password
-        out = target if str(target).endswith(".enc") else target.with_suffix(target.suffix + ".enc")
+        out = (
+            target
+            if str(target).endswith(".enc")
+            else target.with_suffix(target.suffix + ".enc")
+        )
         cfg.save(out, format="json")
         return {"success": True, "path": str(out)}
     except Exception as e:
@@ -1211,8 +1429,9 @@ async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
 @app.get("/unified/models")
 async def unified_models() -> dict[str, Any]:
     """List unified models and multiscale bridges."""
-    from huginn.unified.models import list_models
     from huginn.unified.bridge import list_bridges
+    from huginn.unified.models import list_models
+
     return {"models": list_models(), "bridges": list_bridges()}
 
 
@@ -1245,13 +1464,16 @@ async def unified_solve_endpoint(params: dict[str, Any]) -> dict[str, Any]:
     """Discretize and solve a unified model."""
     from huginn.unified import solve
     from huginn.unified.models import get_model
+
     model_name = params.get("model")
     factory = get_model(model_name)
     if not factory:
         return {"success": False, "error": f"Model '{model_name}' not found"}
     try:
         problem = factory()
-        result = solve(problem, method=params.get("method", "fem"), n=params.get("n", 10))
+        result = solve(
+            problem, method=params.get("method", "fem"), n=params.get("n", 10)
+        )
         return {"success": True, **result}
     except Exception as e:
         traceback.print_exc()
@@ -1263,6 +1485,7 @@ async def unified_plot_endpoint(params: dict[str, Any]) -> dict[str, Any]:
     """Solve a unified model and return a plot."""
     from huginn.unified import solve_and_plot
     from huginn.unified.models import get_model
+
     model_name = params.get("model")
     factory = get_model(model_name)
     if not factory:
@@ -1293,34 +1516,40 @@ async def unified_plot_endpoint(params: dict[str, Any]) -> dict[str, Any]:
 @app.get("/workflows")
 async def list_workflows() -> list[str]:
     from huginn.workflows.templates import list_templates
+
     return list_templates()
 
 
 @app.post("/workflows/execute")
 async def execute_workflow(params: dict[str, Any]) -> dict[str, Any]:
     """Execute a workflow template.
-    
+
     Args:
         template: Template name (e.g., "standard_dft", "aimd")
         args: Arguments passed to the template function
     """
     template_name = params.get("template")
     template_args = params.get("args", {})
-    
+
     template_fn = get_template(template_name)
     if not template_fn:
         return {"error": f"Template '{template_name}' not found"}
-    
+
     try:
         stages = template_fn(**template_args)
     except Exception as e:
         return {"error": f"Failed to build workflow: {e}"}
-    
+
     engine = WorkflowEngine(ToolRegistry)
-    context = ToolContext(session_id="http", workspace=".", memory_manager=get_memory_manager(), agent_factory=get_agent_factory())
+    context = ToolContext(
+        session_id="http",
+        workspace=".",
+        memory_manager=get_memory_manager(),
+        agent_factory=get_agent_factory(),
+    )
 
     result = await engine.execute(stages, context)
-    
+
     return {
         "success": result.success,
         "total_walltime": result.total_walltime,
@@ -1339,6 +1568,7 @@ async def execute_workflow(params: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Skills ─────────────────────────────────────────────────────
+
 
 @app.get("/skills")
 async def list_skills() -> list[dict[str, Any]]:
@@ -1380,23 +1610,43 @@ async def execute_skill(params: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Skill '{skill_name}' not found"}
 
     executor = DeclarativeSkillExecutor(ToolRegistry)
-    context = ToolContext(session_id="http", workspace=".", memory_manager=get_memory_manager(), agent_factory=get_agent_factory())
-    result = await executor.execute(skill, skill_args, {})
+    context = ToolContext(
+        session_id="http",
+        workspace=".",
+        memory_manager=get_memory_manager(),
+        agent_factory=get_agent_factory(),
+    )
+    result = await executor.execute(skill, skill_args, context.__dict__)
+    # Keep the response JSON-serializable: drop non-primitive objects from the
+    # skill's final context (e.g. MemoryManager, AgentFactory).
+    if isinstance(result, dict) and "context" in result:
+        safe_types = (str, int, float, bool, type(None), list, dict, tuple)
+        result["context"] = {
+            k: v
+            for k, v in result["context"].items()
+            if isinstance(v, safe_types)
+        }
     return result
 
 
 # ── MCP / Plugin Management ────────────────────────────────────
 
+
 @app.get("/mcp/servers")
 async def list_mcp_servers() -> dict[str, Any]:
     """List connected MCP servers and their discovered tools."""
-    if _mcp_manager is None:
+    if get_context().mcp_manager is None:
         return {"servers": [], "connected": []}
     servers = []
-    for name in _mcp_manager._sessions.keys():
+    for name in get_context().mcp_manager._sessions:
         tools = [
-            {"name": t.name, "description": t.description, "input_schema": t.input_schema}
-            for t in _mcp_manager._tools if t.server_name == name
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+            }
+            for t in get_context().mcp_manager._tools
+            if t.server_name == name
         ]
         servers.append({"name": name, "connected": True, "tools": tools})
     return {"servers": servers}
@@ -1411,22 +1661,24 @@ async def discover_mcp_servers() -> dict[str, Any]:
         for entry in base.iterdir():
             server_py = entry / "server.py"
             if entry.is_dir() and server_py.exists():
-                found.append({
-                    "name": entry.name,
-                    "path": str(server_py),
-                    "command": "python",
-                    "args": [str(server_py)],
-                })
+                found.append(
+                    {
+                        "name": entry.name,
+                        "path": str(server_py),
+                        "command": "python",
+                        "args": [str(server_py)],
+                    }
+                )
     return {"servers": found}
 
 
 @app.post("/mcp/servers/connect")
 async def connect_mcp_server(params: dict[str, Any]) -> dict[str, Any]:
     """Connect to an MCP server and register its tools."""
-    global _mcp_manager
-    if _mcp_manager is None:
+    if get_context().mcp_manager is None:
         from huginn.mcp_client import MCPClientManager
-        _mcp_manager = MCPClientManager()
+
+        get_context().mcp_manager = MCPClientManager()
 
     name = params.get("name", "")
     command = params.get("command", "python")
@@ -1439,19 +1691,22 @@ async def connect_mcp_server(params: dict[str, Any]) -> dict[str, Any]:
         from huginn.mcp_client import MCPServerConfig
         from huginn.tools.mcp_adapter import register_mcp_tools
 
-        await _mcp_manager.connect(MCPServerConfig(
-            name=name,
-            command=command,
-            args=args,
-            env=env,
-        ))
-        registered = register_mcp_tools(_mcp_manager)
+        await get_context().mcp_manager.connect(
+            MCPServerConfig(
+                name=name,
+                command=command,
+                args=args,
+                env=env,
+            )
+        )
+        registered = register_mcp_tools(get_context().mcp_manager)
         return {
             "success": True,
             "server": name,
             "tools": [
                 {"name": t.name, "description": t.description}
-                for t in registered if t.server_name == name
+                for t in registered
+                if t.server_name == name
             ],
         }
     except Exception as e:
@@ -1462,15 +1717,14 @@ async def connect_mcp_server(params: dict[str, Any]) -> dict[str, Any]:
 @app.post("/mcp/servers/{name}/disconnect")
 async def disconnect_mcp_server(name: str) -> dict[str, Any]:
     """Disconnect an MCP server and unregister its tools."""
-    global _mcp_manager
-    if _mcp_manager is None:
+    if get_context().mcp_manager is None:
         return {"success": False, "error": "MCP manager not initialized"}
 
     try:
         tools_to_remove = [
-            t.name for t in _mcp_manager._tools if t.server_name == name
+            t.name for t in get_context().mcp_manager._tools if t.server_name == name
         ]
-        await _mcp_manager.disconnect(name)
+        await get_context().mcp_manager.disconnect(name)
         for tool_name in tools_to_remove:
             ToolRegistry.unregister(tool_name)
         return {"success": True, "unregistered": tools_to_remove}
@@ -1479,6 +1733,7 @@ async def disconnect_mcp_server(name: str) -> dict[str, Any]:
 
 
 # ── Thread Management ────────────────────────────────────────────
+
 
 @app.get("/threads")
 async def list_threads() -> dict[str, Any]:
@@ -1491,7 +1746,9 @@ async def list_threads() -> dict[str, Any]:
                 "created_at": t.get("created_at", ""),
                 "last_active": t.get("last_active", ""),
             }
-            for t in sorted(_threads.values(), key=lambda x: x.get("last_active", ""), reverse=True)
+            for t in sorted(
+                _threads.values(), key=lambda x: x.get("last_active", ""), reverse=True
+            )
         ]
     }
 
@@ -1529,20 +1786,21 @@ async def delete_thread(thread_id: str) -> dict[str, Any]:
 
 # ── WebSocket ──────────────────────────────────────────────────
 
+
 @app.websocket("/ws/agent")
 async def agent_websocket(websocket: WebSocket):
     """WebSocket endpoint for real-time Agent chat."""
     await websocket.accept()
-    
+
     try:
         while True:
             message = await websocket.receive_text()
             data = json.loads(message)
-            
+
             msg_type = data.get("type", "user_input")
             content = data.get("content", "")
             thread_id = data.get("thread_id", "default")
-            
+
             if msg_type == "user_input":
                 cfg_chat = HuginnConfig.from_env()
                 factory = get_agent_factory()
@@ -1551,7 +1809,12 @@ async def agent_websocket(websocket: WebSocket):
 
                 # Request-level thinking/max_tokens override requires a fresh agent
                 # because the cached global agent is built from the default config.
-                if thinking is not None or max_tokens is not None:
+                # Persona auto-routing: a "persona" field switches the active
+                # persona for this turn; otherwise we optionally infer the best
+                # persona from the query when auto_routing is enabled.
+                requested_persona = data.get("persona")
+
+                if thinking is not None or max_tokens is not None or requested_persona:
                     try:
                         agent = factory.create_lead(
                             thread_id=thread_id,
@@ -1559,10 +1822,43 @@ async def agent_websocket(websocket: WebSocket):
                             max_tokens=max_tokens,
                         )
                     except Exception as e:
-                        await websocket.send_json({"type": "error", "error": f"Cannot create agent: {e}"})
+                        await websocket.send_json(
+                            {"type": "error", "error": f"Cannot create agent: {e}"}
+                        )
                         continue
                 else:
                     agent = get_agent()
+
+                if requested_persona:
+                    from huginn.persona_emotion import EmotionTracker
+                    from huginn.personas import PersonaManager
+
+                    mgr = PersonaManager(workspace=get_context().config.workspace)
+                    agent.set_persona(
+                        mgr.get(requested_persona),
+                        emotion_tracker=EmotionTracker(
+                            requested_persona, workspace=get_context().config.workspace
+                        ),
+                    )
+                elif cfg_chat.persona_auto_route:
+                    from huginn.persona_emotion import EmotionTracker
+                    from huginn.persona_matcher import match_persona_for_query
+                    from huginn.personas import PersonaManager
+
+                    mgr = PersonaManager(workspace=get_context().config.workspace)
+                    matched = match_persona_for_query(
+                        content,
+                        manager=mgr,
+                        score_threshold=cfg_chat.persona_auto_route_threshold,
+                    )
+                    if matched and matched != agent.persona_name:
+                        agent.set_persona(
+                            mgr.get(matched),
+                            emotion_tracker=EmotionTracker(
+                                matched, workspace=get_context().config.workspace
+                            ),
+                        )
+
                 team_mode = cfg_chat.team_mode_enabled
 
                 # Track this thread
@@ -1591,7 +1887,12 @@ async def agent_websocket(websocket: WebSocket):
                                 max_tokens=max_tokens,
                             )
                         except Exception as e:
-                            await websocket.send_json({"type": "error", "error": f"Cannot spawn agent @{maybe_id}: {e}"})
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "error": f"Cannot spawn agent @{maybe_id}: {e}",
+                                }
+                            )
                             continue
 
                 # Team mode trigger: explicit /team prefix or enabled + first turn heuristic
@@ -1605,9 +1906,15 @@ async def agent_websocket(websocket: WebSocket):
                     use_team = len(content) > 120
 
                 if use_team and agent.model is not None:
-                    await websocket.send_json({"type": "text_delta", "text": "🧑‍🤝‍🧑 Assembling agent team...\n"})
+                    await websocket.send_json(
+                        {
+                            "type": "text_delta",
+                            "text": "🧑‍🤝‍🧑 Assembling agent team...\n",
+                        }
+                    )
                     try:
                         from huginn.agents.orchestrator import Orchestrator
+
                         orch = Orchestrator(
                             factory=factory,
                             memory_manager=get_memory_manager(),
@@ -1616,40 +1923,60 @@ async def agent_websocket(websocket: WebSocket):
 
                         def _on_status(task):
                             # Fire-and-forget status message
-                            asyncio.create_task(websocket.send_json({
-                                "type": "agent_status",
-                                "task_id": task.task_id,
-                                "agent_id": task.agent_id,
-                                "status": task.status,
-                            }))
+                            asyncio.create_task(
+                                websocket.send_json(
+                                    {
+                                        "type": "agent_status",
+                                        "task_id": task.task_id,
+                                        "agent_id": task.agent_id,
+                                        "status": task.status,
+                                    }
+                                )
+                            )
 
                         result = await orch.run(objective, on_status=_on_status)
                         for task in result.plan.tasks:
-                            await websocket.send_json({
-                                "type": "agent_status",
-                                "task_id": task.task_id,
-                                "agent_id": task.agent_id,
-                                "status": task.status,
-                                "output": task.result[:1000] if task.result else "",
-                            })
-                        await websocket.send_json({"type": "text_delta", "text": result.summary or "\n".join(result.outputs.values())})
+                            await websocket.send_json(
+                                {
+                                    "type": "agent_status",
+                                    "task_id": task.task_id,
+                                    "agent_id": task.agent_id,
+                                    "status": task.status,
+                                    "output": task.result[:1000] if task.result else "",
+                                }
+                            )
+                        await websocket.send_json(
+                            {
+                                "type": "text_delta",
+                                "text": result.summary
+                                or "\n".join(result.outputs.values()),
+                            }
+                        )
                         await websocket.send_json({"type": "done"})
                     except Exception as e:
                         traceback.print_exc()
-                        await websocket.send_json({"type": "error", "error": f"Team mode error: {e}"})
+                        await websocket.send_json(
+                            {"type": "error", "error": f"Team mode error: {e}"}
+                        )
                     continue
 
                 if agent.model is None:
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": "No LLM configured. Set HUGINN_PROVIDER and API keys, or start Ollama."
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "error": "No LLM configured. Set HUGINN_PROVIDER and API keys, or start Ollama.",
+                        }
+                    )
                     continue
 
                 # Augment with RAG context if enabled
-                if cfg_chat.rag_enabled and _kb is not None and _kb.count() > 0:
+                if (
+                    cfg_chat.rag_enabled
+                    and get_context().kb is not None
+                    and get_context().kb.count() > 0
+                ):
                     try:
-                        chunks = _kb.query(content, top_k=5)
+                        chunks = get_context().kb.query(content, top_k=5)
                         if chunks:
                             context = "\n\n".join(
                                 f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)
@@ -1686,76 +2013,101 @@ async def agent_websocket(websocket: WebSocket):
                                     # Auto-checkpoint before any file-editing tool runs
                                     if name in _EDIT_TOOLS and auto_cp_id is None:
                                         try:
-                                            snapshot = _snapshot_directory(workspace_path)
+                                            snapshot = _snapshot_directory(
+                                                workspace_path
+                                            )
                                             auto_cp_id = uuid.uuid4().hex[:8]
-                                            _checkpoints[auto_cp_id] = (workspace_path, snapshot)
-                                            await websocket.send_json({
-                                                "type": "auto_checkpoint",
-                                                "id": auto_cp_id,
-                                                "base": str(workspace_path),
-                                                "files": len(snapshot),
-                                            })
+                                            _checkpoints[auto_cp_id] = (
+                                                workspace_path,
+                                                snapshot,
+                                            )
+                                            await websocket.send_json(
+                                                {
+                                                    "type": "auto_checkpoint",
+                                                    "id": auto_cp_id,
+                                                    "base": str(workspace_path),
+                                                    "files": len(snapshot),
+                                                }
+                                            )
                                         except Exception as e:
                                             print(f"[auto-cp] failed: {e}")
-                                    await websocket.send_json({
-                                        "type": "tool_call",
-                                        "id": tid,
-                                        "name": name,
-                                        "args": tc.get("args", {}),
-                                    })
+                                    await websocket.send_json(
+                                        {
+                                            "type": "tool_call",
+                                            "id": tid,
+                                            "name": name,
+                                            "args": tc.get("args", {}),
+                                        }
+                                    )
 
                         # Emit tool results
                         if isinstance(last_msg, ToolMessage):
                             tid = getattr(last_msg, "tool_call_id", None)
                             if tid and tid not in seen_tool_results:
                                 seen_tool_results.add(tid)
-                                await websocket.send_json({
-                                    "type": "tool_result",
-                                    "id": tid,
-                                    "content": str(getattr(last_msg, "content", "")),
-                                })
+                                await websocket.send_json(
+                                    {
+                                        "type": "tool_result",
+                                        "id": tid,
+                                        "content": str(
+                                            getattr(last_msg, "content", "")
+                                        ),
+                                    }
+                                )
 
                         # Only send text delta for assistant content
-                        if hasattr(last_msg, "content") and not isinstance(last_msg, ToolMessage):
+                        if hasattr(last_msg, "content") and not isinstance(
+                            last_msg, ToolMessage
+                        ):
                             # Only send delta (new content)
-                            delta = last_msg.content[len(full_response):]
+                            delta = last_msg.content[len(full_response) :]
                             if delta:
                                 full_response = last_msg.content
-                                await websocket.send_json({
-                                    "type": "text_delta",
-                                    "text": delta,
-                                })
-                    
+                                await websocket.send_json(
+                                    {
+                                        "type": "text_delta",
+                                        "text": delta,
+                                    }
+                                )
+
                     # Signal completion
                     await websocket.send_json({"type": "done"})
-                    
+
                 except Exception as e:
                     traceback.print_exc()
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": f"Agent error: {str(e)}"
-                    })
-            
+                    await websocket.send_json(
+                        {"type": "error", "error": f"Agent error: {str(e)}"}
+                    )
+
             elif msg_type == "explore_start":
                 # Exploration mode — run real exploration engine
-                await websocket.send_json({
-                    "type": "text_delta",
-                    "text": f"🚀 Starting exploration: {content}\n"
-                })
+                await websocket.send_json(
+                    {
+                        "type": "text_delta",
+                        "text": f"🚀 Starting exploration: {content}\n",
+                    }
+                )
                 try:
                     from huginn.exploration.orchestrator import ExplorationOrchestrator
                     from huginn.exploration.strategies import ParetoPruningStrategy
 
+                    cfg = get_context().config
                     orch = ExplorationOrchestrator(
                         strategy=ParetoPruningStrategy(max_active=5),
-                        max_parallel=3,
+                        max_parallel=cfg.max_parallel_branches,
                     )
 
                     # Parse exploration config from message if provided
                     config = data.get("config", {})
-                    initial_branches = config.get("initial_branches", [
-                        {"name": "baseline", "hypothesis": f"Baseline for: {content}"}
-                    ])
+                    initial_branches = config.get(
+                        "initial_branches",
+                        [
+                            {
+                                "name": "baseline",
+                                "hypothesis": f"Baseline for: {content}",
+                            }
+                        ],
+                    )
                     objectives = config.get("objectives", {"score": "maximize"})
 
                     result = await orch.explore(
@@ -1766,44 +2118,49 @@ async def agent_websocket(websocket: WebSocket):
                     )
 
                     # Stream results
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "text": f"\n✅ Exploration complete!\n"
-                                f"• Branches explored: {result.n_branches_explored}\n"
-                                f"• Branches pruned: {result.n_branches_pruned}\n"
-                                f"• Pareto front size: {len(result.pareto_front)}\n"
-                                f"• Convergence: {result.convergence_reason}\n",
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "text_delta",
+                            "text": f"\n✅ Exploration complete!\n"
+                            f"• Branches explored: {result.n_branches_explored}\n"
+                            f"• Branches pruned: {result.n_branches_pruned}\n"
+                            f"• Pareto front size: {len(result.pareto_front)}\n"
+                            f"• Convergence: {result.convergence_reason}\n",
+                        }
+                    )
 
                     if result.best_branch:
-                        await websocket.send_json({
-                            "type": "text_delta",
-                            "text": f"\n🏆 Best branch: {result.best_branch['name']}\n"
-                                    f"   Hypothesis: {result.best_branch['hypothesis']}\n"
-                                    f"   Objectives: {result.best_branch['objectives']}\n",
-                        })
+                        await websocket.send_json(
+                            {
+                                "type": "text_delta",
+                                "text": f"\n🏆 Best branch: {result.best_branch['name']}\n"
+                                f"   Hypothesis: {result.best_branch['hypothesis']}\n"
+                                f"   Objectives: {result.best_branch['objectives']}\n",
+                            }
+                        )
 
                     # Send structured data as final message
-                    await websocket.send_json({
-                        "type": "exploration_result",
-                        "data": {
-                            "pareto_front": result.pareto_front,
-                            "best_branch": result.best_branch,
-                            "convergence_reason": result.convergence_reason,
+                    await websocket.send_json(
+                        {
+                            "type": "exploration_result",
+                            "data": {
+                                "pareto_front": result.pareto_front,
+                                "best_branch": result.best_branch,
+                                "convergence_reason": result.convergence_reason,
+                            },
                         }
-                    })
+                    )
 
                 except Exception as e:
                     traceback.print_exc()
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": f"Exploration failed: {str(e)}"
-                    })
+                    await websocket.send_json(
+                        {"type": "error", "error": f"Exploration failed: {str(e)}"}
+                    )
                 await websocket.send_json({"type": "done"})
-            
+
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
-    
+
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -1811,6 +2168,7 @@ async def agent_websocket(websocket: WebSocket):
 
 
 # ── math-anything compatibility stubs ──────────────────────────
+
 
 @app.get("/firewall/status")
 async def firewall_status() -> dict[str, Any]:
@@ -1825,14 +2183,17 @@ async def sandbox_execute(params: dict[str, Any]) -> dict[str, Any]:
 
     # Pre-validate code against restricted execution policy
     try:
-        from huginn.security import validate_code, RestrictedPythonError
+        from huginn.security import RestrictedPythonError, validate_code
+
         validate_code(code)
     except RestrictedPythonError as e:
         return {"success": False, "error": f"Policy violation: {e}"}
 
     try:
         import subprocess
-        from huginn.security import SandboxExecutor, SandboxConfig
+
+        from huginn.security import SandboxConfig, SandboxExecutor
+
         # Write code to temp file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)
@@ -1914,6 +2275,7 @@ async def viz_sindy(params: dict[str, Any]) -> dict[str, Any]:
 
 # ── HPC endpoints ──────────────────────────────────────────────
 
+
 @app.post("/hpc/test")
 async def hpc_test_connection(params: dict[str, Any]) -> dict[str, Any]:
     """Test SSH connection to an HPC cluster."""
@@ -1924,10 +2286,10 @@ async def hpc_test_connection(params: dict[str, Any]) -> dict[str, Any]:
         key_path=params.get("key_path"),
         port=params.get("port", 22),
     )
-    
+
     if not cfg.host or not cfg.username:
         return {"success": False, "error": "host and username are required"}
-    
+
     try:
         with HPCClient(cfg) as client:
             stdout, stderr, rc = client._exec("hostname")
@@ -1953,10 +2315,10 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
         key_path=params.get("key_path"),
         remote_work_dir=params.get("remote_work_dir", "~/huginn_jobs"),
     )
-    
+
     if not cfg.host or not cfg.username:
         return {"success": False, "error": "host and username are required"}
-    
+
     try:
         with HPCClient(cfg) as client:
             script = client.generate_job_script(
@@ -1969,7 +2331,9 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
                 modules=params.get("modules", []),
                 env_vars=params.get("env_vars", {}),
             )
-            job_id = client.submit_job(script, job_name=params.get("job_name", "huginn_job"))
+            job_id = client.submit_job(
+                script, job_name=params.get("job_name", "huginn_job")
+            )
             return {"success": True, "job_id": job_id, "host": cfg.host}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1984,11 +2348,11 @@ async def hpc_status(params: dict[str, Any]) -> dict[str, Any]:
         scheduler=params.get("scheduler", "slurm"),
         key_path=params.get("key_path"),
     )
-    
+
     job_id = params.get("job_id")
     if not job_id:
         return {"success": False, "error": "job_id is required"}
-    
+
     try:
         with HPCClient(cfg) as client:
             status = client.poll_status(job_id)
@@ -2005,6 +2369,7 @@ async def hpc_status(params: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Multi-Agent Team ───────────────────────────────────────────
+
 
 @app.get("/team/profiles")
 async def team_profiles() -> dict[str, Any]:
@@ -2064,14 +2429,16 @@ async def team_run(params: dict[str, Any]) -> dict[str, Any]:
         mood = (
             PetMood.WORKING
             if task.status == "running"
-            else PetMood.SUCCESS
-            if task.status == "done"
-            else PetMood.ERROR
+            else PetMood.SUCCESS if task.status == "done" else PetMood.ERROR
         )
         get_pet_bus().publish(
             mood=mood,
             message=f"{task.task_id} ({task.agent_id}): {task.status}",
-            details={"task_id": task.task_id, "agent_id": task.agent_id, "status": task.status},
+            details={
+                "task_id": task.task_id,
+                "agent_id": task.agent_id,
+                "status": task.status,
+            },
         )
 
     try:
@@ -2089,6 +2456,7 @@ async def team_run(params: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Coder Mode ─────────────────────────────────────────────────
+
 
 @app.post("/coder")
 async def run_coder(params: dict[str, Any]) -> dict[str, Any]:
@@ -2132,6 +2500,7 @@ async def run_coder(params: dict[str, Any]) -> dict[str, Any]:
 
 # ── Checkpoint / Diff Review ───────────────────────────────────
 
+
 def _snapshot_directory(base: Path) -> dict[str, str]:
     """Snapshot text files under base into a dict keyed by relative path."""
     snapshot: dict[str, str] = {}
@@ -2147,7 +2516,9 @@ def _snapshot_directory(base: Path) -> dict[str, str]:
             data = path.read_bytes()
             if b"\x00" in data:
                 continue
-            snapshot[str(path.relative_to(base))] = data.decode("utf-8", errors="ignore")
+            snapshot[str(path.relative_to(base))] = data.decode(
+                "utf-8", errors="ignore"
+            )
         except Exception:
             continue
     return snapshot
@@ -2184,7 +2555,11 @@ async def checkpoint_diff(cp_id: str) -> dict[str, Any]:
         new = current.get(rel, "")
         if old == new:
             continue
-        status = "added" if rel not in snapshot else "deleted" if rel not in current else "modified"
+        status = (
+            "added"
+            if rel not in snapshot
+            else "deleted" if rel not in current else "modified"
+        )
         diff_text = "\n".join(
             difflib.unified_diff(
                 old.splitlines(),
@@ -2194,13 +2569,15 @@ async def checkpoint_diff(cp_id: str) -> dict[str, Any]:
                 lineterm="",
             )
         )
-        diffs.append({
-            "path": rel,
-            "status": status,
-            "diff": diff_text,
-            "old": old,
-            "new": new,
-        })
+        diffs.append(
+            {
+                "path": rel,
+                "status": status,
+                "diff": diff_text,
+                "old": old,
+                "new": new,
+            }
+        )
     return {"id": cp_id, "base": str(base), "diffs": diffs}
 
 
@@ -2227,14 +2604,10 @@ async def reject_checkpoint(cp_id: str) -> dict[str, Any]:
     for rel in current:
         if rel not in snapshot:
             path = base / rel
-            try:
+            with suppress(Exception):
                 path.unlink()
-            except Exception:
-                pass
     del _checkpoints[cp_id]
     return {"success": True}
-
-
 
 
 @app.get("/telemetry/summary")
@@ -2287,8 +2660,12 @@ async def swarm_run(params: dict[str, Any]) -> dict[str, Any]:
             return {"error": "task is required"}
 
         workers = [
-            SwarmAgent("planner", AgentRole.PLANNER, agent, "Break the task into steps."),
-            SwarmAgent("scientist", AgentRole.SCIENTIST, agent, "Choose physical models."),
+            SwarmAgent(
+                "planner", AgentRole.PLANNER, agent, "Break the task into steps."
+            ),
+            SwarmAgent(
+                "scientist", AgentRole.SCIENTIST, agent, "Choose physical models."
+            ),
             SwarmAgent("coder", AgentRole.CODER, agent, "Write code or tool calls."),
             SwarmAgent("executor", AgentRole.EXECUTOR, agent, "Run the solution."),
             SwarmAgent("critic", AgentRole.CRITIC, agent, "Review correctness."),
@@ -2307,6 +2684,8 @@ async def get_thread(thread_id: str) -> dict[str, Any]:
         return {"thread_id": thread_id, **dict(_threads[thread_id])}
     return {"thread_id": thread_id, "exists": False}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=8000)

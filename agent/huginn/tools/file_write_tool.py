@@ -11,7 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class FileWriteToolInput(BaseModel):
@@ -29,9 +29,13 @@ class FileWriteTool(HuginnTool):
     destructive = True
     input_schema = FileWriteToolInput
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = FileWriteToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         path = work_dir / input_data.file_path
         if not path.is_absolute():
             path = path.resolve()
@@ -60,4 +64,6 @@ class FileWriteTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Failed to write file: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Failed to write file: {e}"
+            )

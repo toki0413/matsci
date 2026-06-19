@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from cryptography.fernet import InvalidToken
 
 from huginn.config import HuginnConfig, ModelConfig
 
@@ -14,7 +15,9 @@ def test_encrypted_config_roundtrip(tmp_path):
         api_key="sk-secret",
         encrypt_config=True,
         encryption_password="super-pass",
-        models=[ModelConfig(alias="gpt4", provider="openai", api_key="sk-model-secret")],
+        models=[
+            ModelConfig(alias="gpt4", provider="openai", api_key="sk-model-secret")
+        ],
     )
     path = tmp_path / "config.enc"
     cfg.save(path)
@@ -38,7 +41,7 @@ def test_encrypted_config_wrong_password(tmp_path):
     path = tmp_path / "config.enc"
     cfg.save(path)
 
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidToken):
         HuginnConfig.load(path, password="wrong")
 
 

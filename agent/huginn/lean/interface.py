@@ -9,19 +9,19 @@ Usage:
 
 from __future__ import annotations
 
-import os
-import re
 import shutil
-from huginn.security import SandboxExecutor, SandboxConfig
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+
+from huginn.security import SandboxExecutor
 
 
 @dataclass
 class LeanResult:
     """Result of a Lean 4 compilation / verification."""
+
     success: bool
     stdout: str
     stderr: str
@@ -38,7 +38,9 @@ class LeanInterface:
       - `run_lean_code()`: compile a snippet of Lean 4 code in isolation
     """
 
-    def __init__(self, project_path: str | Path, sandbox: SandboxExecutor | None = None):
+    def __init__(
+        self, project_path: str | Path, sandbox: SandboxExecutor | None = None
+    ):
         self.project_path = Path(project_path).resolve()
         if not (self.project_path / "lakefile.toml").exists():
             raise ValueError(f"No lakefile.toml found in {self.project_path}")
@@ -68,7 +70,7 @@ class LeanInterface:
     def run_lean_code(
         self,
         code: str,
-        imports: List[str] | None = None,
+        imports: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify a snippet of Lean 4 code in a temporary file.
@@ -80,7 +82,9 @@ class LeanInterface:
         """
         imports = imports or []
         header_lines = [f"import {imp}" for imp in imports]
-        full_source = "\n".join(header_lines) + ("\n\n" if header_lines else "") + code + "\n"
+        full_source = (
+            "\n".join(header_lines) + ("\n\n" if header_lines else "") + code + "\n"
+        )
 
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -107,7 +111,7 @@ class LeanInterface:
     def eval_lean_code(
         self,
         code: str,
-        imports: List[str] | None = None,
+        imports: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Execute a snippet of Lean 4 code and capture printed output.
@@ -123,8 +127,10 @@ class LeanInterface:
         imports = imports or []
         header_lines = [f"import {imp}" for imp in imports]
         full_source = (
-            "\n".join(header_lines) + "\n\n"
-            + code + "\n\n"
+            "\n".join(header_lines)
+            + "\n\n"
+            + code
+            + "\n\n"
             + "def main : IO Unit := pure ()\n"
         )
 
@@ -149,7 +155,9 @@ class LeanInterface:
 
         return result
 
-    def verify_theorem(self, theorem_name: str, module: str = "HuginnLean.ContinuumMechanics") -> LeanResult:
+    def verify_theorem(
+        self, theorem_name: str, module: str = "HuginnLean.ContinuumMechanics"
+    ) -> LeanResult:
         """Verify that a named theorem compiles successfully.
 
         This is a thin wrapper around `lake build <module>` plus a regex
@@ -186,8 +194,9 @@ class LeanInterface:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _run(self, cmd: List[str], cwd: Path, timeout: int = 300) -> LeanResult:
+    def _run(self, cmd: list[str], cwd: Path, timeout: int = 300) -> LeanResult:
         import time
+
         start = time.time()
         try:
             sb = self.sandbox.run(
@@ -195,12 +204,14 @@ class LeanInterface:
                 cwd=str(cwd),
                 timeout=timeout,
             )
+
             # Adapt SandboxResult to LeanResult fields
             class _Adapter:
                 def __init__(self, sb):
                     self.stdout = sb.stdout
                     self.stderr = sb.stderr
                     self.returncode = sb.returncode
+
             proc = _Adapter(sb)
         except subprocess.TimeoutExpired as e:
             return LeanResult(

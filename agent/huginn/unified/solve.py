@@ -54,7 +54,7 @@ def solve(
     try:
         u = np.linalg.solve(K, F)
     except np.linalg.LinAlgError as e:
-        raise ValueError(f"Linear solve failed: {e}")
+        raise ValueError(f"Linear solve failed: {e}") from e
 
     residual = np.linalg.norm(K @ u - F)
     result = {

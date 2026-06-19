@@ -9,8 +9,8 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Dict, Any
 from pathlib import Path
+from typing import Any
 
 from huginn.lean.interface import LeanInterface
 
@@ -35,7 +35,7 @@ class StabilityPipeline:
     # ------------------------------------------------------------------
     # Cubic
     # ------------------------------------------------------------------
-    def verify_cubic(self, constants: Dict[str, float], timeout: int = 60) -> Any:
+    def verify_cubic(self, constants: dict[str, float], timeout: int = 60) -> Any:
         """Verify Born stability for a cubic crystal.
 
         Args:
@@ -52,12 +52,14 @@ def mat : CubicElastic := ⟨{c11}, {c12}, {c44}⟩
 #eval cubicZenerRatio mat
 #eval cubicUniversalAnisotropy mat
 """
-        return self._lean.eval_lean_code(code, imports=["HuginnLean.Elasticity"], timeout=timeout)
+        return self._lean.eval_lean_code(
+            code, imports=["HuginnLean.Elasticity"], timeout=timeout
+        )
 
     # ------------------------------------------------------------------
     # Hexagonal
     # ------------------------------------------------------------------
-    def verify_hexagonal(self, constants: Dict[str, float], timeout: int = 60) -> Any:
+    def verify_hexagonal(self, constants: dict[str, float], timeout: int = 60) -> Any:
         """Verify Born stability for a hexagonal crystal.
 
         Args:
@@ -79,12 +81,16 @@ def mat : HexElastic := ⟨{c11}, {c12}, {c13}, {c33}, {c44}, {c66}⟩
 #eval hexShearModulusReuss mat
 #eval hexUniversalAnisotropy mat
 """
-        return self._lean.eval_lean_code(code, imports=["HuginnLean.BornStability"], timeout=timeout)
+        return self._lean.eval_lean_code(
+            code, imports=["HuginnLean.BornStability"], timeout=timeout
+        )
 
     # ------------------------------------------------------------------
     # Orthorhombic
     # ------------------------------------------------------------------
-    def verify_orthorhombic(self, constants: Dict[str, float], timeout: int = 60) -> Any:
+    def verify_orthorhombic(
+        self, constants: dict[str, float], timeout: int = 60
+    ) -> Any:
         """Verify Born stability for an orthorhombic crystal.
 
         Args:
@@ -102,12 +108,16 @@ def mat : OrthoElastic := ⟨{', '.join(str(v) for v in vals)}⟩
 #eval orthoShearModulusReuss mat
 #eval orthoUniversalAnisotropy mat
 """
-        return self._lean.eval_lean_code(code, imports=["HuginnLean.BornStability"], timeout=timeout)
+        return self._lean.eval_lean_code(
+            code, imports=["HuginnLean.BornStability"], timeout=timeout
+        )
 
     # ------------------------------------------------------------------
     # Generic dispatcher
     # ------------------------------------------------------------------
-    def verify(self, crystal_system: str, constants: Dict[str, float], timeout: int = 60) -> Any:
+    def verify(
+        self, crystal_system: str, constants: dict[str, float], timeout: int = 60
+    ) -> Any:
         """Dispatch to the appropriate verifier by crystal system."""
         system = crystal_system.lower()
         if system == "cubic":

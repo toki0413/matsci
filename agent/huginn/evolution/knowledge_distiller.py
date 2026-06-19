@@ -9,34 +9,35 @@ Pipeline:
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 @dataclass
 class DistilledKnowledge:
     """A single piece of distilled knowledge ready for RAG."""
+
     knowledge_id: str
     content: str  # The actual text to store in RAG
     source_type: str  # "error_lesson", "success_pattern", "tool_tip", "domain_fact"
-    source_evidence: List[str]  # IDs of source logs that support this
+    source_evidence: list[str]  # IDs of source logs that support this
     confidence: float = 0.5
     category: str = "general"  # For routing in hierarchical RAG
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     usage_count: int = 0
     verification_status: str = "unverified"  # "unverified", "confirmed", "rejected"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DistilledKnowledge":
+    def from_dict(cls, data: dict[str, Any]) -> DistilledKnowledge:
         return cls(**data)
 
 
@@ -45,13 +46,15 @@ class KnowledgeDistiller:
 
     def __init__(
         self,
-        output_dir: Optional[str] = None,
-        sobkso_db_path: Optional[str] = None,
+        output_dir: str | None = None,
+        sobkso_db_path: str | None = None,
     ):
-        self.output_dir = Path(output_dir) if output_dir else Path.home() / ".huginn" / "distilled"
+        self.output_dir = (
+            Path(output_dir) if output_dir else Path.home() / ".huginn" / "distilled"
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.sobkso_db_path = Path(sobkso_db_path) if sobkso_db_path else None
-        self.knowledge_base: List[DistilledKnowledge] = []
+        self.knowledge_base: list[DistilledKnowledge] = []
         self._load_existing()
 
     def _load_existing(self) -> None:
@@ -59,18 +62,27 @@ class KnowledgeDistiller:
         if kb_file.exists():
             with kb_file.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-                self.knowledge_base = [DistilledKnowledge.from_dict(item) for item in data]
+                self.knowledge_base = [
+                    DistilledKnowledge.from_dict(item) for item in data
+                ]
 
     def _save(self) -> None:
         kb_file = self.output_dir / "distilled_knowledge.json"
         with kb_file.open("w", encoding="utf-8") as f:
-            json.dump([k.to_dict() for k in self.knowledge_base], f, ensure_ascii=False, indent=2)
+            json.dump(
+                [k.to_dict() for k in self.knowledge_base],
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
     # ------------------------------------------------------------------
     # Distillation Methods
     # ------------------------------------------------------------------
 
-    def distill_error_lessons(self, failure_logs: List[Dict[str, Any]]) -> List[DistilledKnowledge]:
+    def distill_error_lessons(
+        self, failure_logs: list[dict[str, Any]]
+    ) -> list[DistilledKnowledge]:
         """Extract 'lessons learned' from failures."""
         new_knowledge = []
         for log in failure_logs:
@@ -105,10 +117,13 @@ class KnowledgeDistiller:
             self._save()
         return new_knowledge
 
-    def distill_success_patterns(self, success_logs: List[Dict[str, Any]]) -> List[DistilledKnowledge]:
+    def distill_success_patterns(
+        self, success_logs: list[dict[str, Any]]
+    ) -> list[DistilledKnowledge]:
         """Extract successful parameter combinations as knowledge."""
         new_knowledge = []
         from collections import defaultdict
+
         grouped = defaultdict(list)
 
         for log in success_logs:
@@ -121,7 +136,9 @@ class KnowledgeDistiller:
 
             software, calc_type = key.split("_", 1)
             # Find common successful parameters
-            common_params = self._find_common_params([l.get("tool_input", {}) for l in logs])
+            common_params = self._find_common_params(
+                [log.get("tool_input", {}) for log in logs]
+            )
 
             if common_params:
                 content = f"Successful {calc_type} calculation with {software} uses these parameters: {json.dumps(common_params, ensure_ascii=False)}"
@@ -133,7 +150,9 @@ class KnowledgeDistiller:
                     knowledge_id=kid,
                     content=content,
                     source_type="success_pattern",
-                    source_evidence=[l.get("session_id", "unknown") for l in logs[:5]],
+                    source_evidence=[
+                        log.get("session_id", "unknown") for log in logs[:5]
+                    ],
                     confidence=min(0.5 + len(logs) * 0.05, 0.95),
                     category=f"best_practices_{software}",
                     tags=["success", "pattern", software, calc_type],
@@ -145,10 +164,13 @@ class KnowledgeDistiller:
             self._save()
         return new_knowledge
 
-    def distill_tool_tips(self, tool_logs: List[Dict[str, Any]]) -> List[DistilledKnowledge]:
+    def distill_tool_tips(
+        self, tool_logs: list[dict[str, Any]]
+    ) -> list[DistilledKnowledge]:
         """Extract tool-specific tips and tricks."""
         new_knowledge = []
         from collections import defaultdict
+
         by_tool = defaultdict(list)
 
         for log in tool_logs:
@@ -158,8 +180,8 @@ class KnowledgeDistiller:
             if len(logs) < 3:
                 continue
 
-            failures = [l for l in logs if not l.get("success")]
-            successes = [l for l in logs if l.get("success")]
+            failures = [log for log in logs if not log.get("success")]
+            successes = [log for log in logs if log.get("success")]
 
             # Compare failures vs successes to extract tips
             if failures and successes:
@@ -170,7 +192,9 @@ class KnowledgeDistiller:
                         knowledge_id=kid,
                         content=tip,
                         source_type="tool_tip",
-                        source_evidence=[l.get("session_id", "unknown") for l in logs[:5]],
+                        source_evidence=[
+                            log.get("session_id", "unknown") for log in logs[:5]
+                        ],
                         confidence=0.7,
                         category=f"tips_{tool}",
                         tags=["tip", tool],
@@ -182,7 +206,9 @@ class KnowledgeDistiller:
             self._save()
         return new_knowledge
 
-    def distill_domain_facts(self, conversations: List[Dict[str, Any]]) -> List[DistilledKnowledge]:
+    def distill_domain_facts(
+        self, conversations: list[dict[str, Any]]
+    ) -> list[DistilledKnowledge]:
         """Extract domain facts from successful conversations."""
         new_knowledge = []
         for conv in conversations:
@@ -217,7 +243,7 @@ class KnowledgeDistiller:
     # Export to RAG
     # ------------------------------------------------------------------
 
-    def export_to_rag_format(self, output_path: Optional[str] = None) -> str:
+    def export_to_rag_format(self, output_path: str | None = None) -> str:
         """Export distilled knowledge in a format ready for ChromaDB ingestion."""
         if output_path is None:
             output_path = self.output_dir / "rag_ready_chunks.jsonl"
@@ -239,7 +265,7 @@ class KnowledgeDistiller:
 
         return str(output_path)
 
-    def merge_with_sobko_db(self, sobkso_chunks_path: Optional[str] = None) -> str:
+    def merge_with_sobko_db(self, sobkso_chunks_path: str | None = None) -> str:
         """Merge distilled knowledge with existing Sobko database."""
         if sobkso_chunks_path is None:
             # Try to find Sobko chunks
@@ -272,7 +298,7 @@ class KnowledgeDistiller:
 
             # Append existing Sobko chunks if available
             if sobkso_chunks_path and Path(sobkso_chunks_path).exists():
-                with open(sobkso_chunks_path, "r", encoding="utf-8") as sobkso:
+                with open(sobkso_chunks_path, encoding="utf-8") as sobkso:
                     for line in sobkso:
                         line = line.strip()
                         if line:
@@ -284,7 +310,9 @@ class KnowledgeDistiller:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _generate_error_lesson(self, tool: str, error: str, software: str, calc_type: str) -> Optional[str]:
+    def _generate_error_lesson(
+        self, tool: str, error: str, software: str, calc_type: str
+    ) -> str | None:
         """Generate a human-readable lesson from an error."""
         error_lower = error.lower()
 
@@ -304,12 +332,13 @@ class KnowledgeDistiller:
         # Generic lesson
         return f"Error encountered in {software} {calc_type}: {error[:200]}. Review input parameters and consider consulting documentation for this specific error type."
 
-    def _find_common_params(self, inputs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _find_common_params(self, inputs: list[dict[str, Any]]) -> dict[str, Any]:
         """Find parameter values that appear in multiple successful runs."""
         if not inputs:
             return {}
 
         from collections import Counter
+
         param_values = {}
         for inp in inputs:
             for key, val in inp.items():
@@ -326,23 +355,31 @@ class KnowledgeDistiller:
 
         return common
 
-    def _compare_to_tip(self, tool: str, failures: List[Dict], successes: List[Dict]) -> Optional[str]:
+    def _compare_to_tip(
+        self, tool: str, failures: list[dict], successes: list[dict]
+    ) -> str | None:
         """Compare failure vs success patterns to generate a tip."""
-        fail_params = self._find_common_params([f.get("tool_input", {}) for f in failures])
-        succ_params = self._find_common_params([s.get("tool_input", {}) for s in successes])
+        fail_params = self._find_common_params(
+            [f.get("tool_input", {}) for f in failures]
+        )
+        succ_params = self._find_common_params(
+            [s.get("tool_input", {}) for s in successes]
+        )
 
         differences = []
         for key in set(fail_params.keys()) | set(succ_params.keys()):
             f_val = fail_params.get(key)
             s_val = succ_params.get(key)
             if f_val and s_val and f_val != s_val:
-                differences.append(f"{key}: failures use '{f_val}', successes use '{s_val}'")
+                differences.append(
+                    f"{key}: failures use '{f_val}', successes use '{s_val}'"
+                )
 
         if differences:
             return f"Tip for {tool}: " + "; ".join(differences)
         return None
 
-    def _extract_facts(self, user_msg: str, agent_resp: str) -> List[str]:
+    def _extract_facts(self, user_msg: str, agent_resp: str) -> list[str]:
         """Extract factual statements from conversation."""
         facts = []
         # Simple heuristic: extract sentences that look like definitions or explanations
@@ -350,9 +387,19 @@ class KnowledgeDistiller:
             sentences = text.split("。")
             for sent in sentences:
                 sent = sent.strip()
-                if len(sent) > 20 and any(kw in sent for kw in [
-                    "is a", "are used", "requires", "depends on", "calculated",
-                    "is defined", "refers to", "consists of", "based on",
-                ]):
+                if len(sent) > 20 and any(
+                    kw in sent
+                    for kw in [
+                        "is a",
+                        "are used",
+                        "requires",
+                        "depends on",
+                        "calculated",
+                        "is defined",
+                        "refers to",
+                        "consists of",
+                        "based on",
+                    ]
+                ):
                     facts.append(sent)
         return facts[:3]  # Limit to top 3 per conversation

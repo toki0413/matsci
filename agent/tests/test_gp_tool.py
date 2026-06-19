@@ -1,7 +1,6 @@
 """Tests for the Gaussian process surrogate tool."""
 
 import numpy as np
-import pytest
 
 from huginn.tools.gp_tool import GPTool, GPToolInput
 
@@ -10,7 +9,9 @@ def test_gp_tool_fit_and_predict() -> None:
     """GPTool should fit a GP and predict on new points."""
     tool = GPTool()
     x = np.linspace(0, 10, 8).reshape(-1, 1).tolist()
-    y = (np.sin(np.linspace(0, 10, 8)) + np.random.default_rng(0).normal(0, 0.05, 8)).tolist()
+    y = (
+        np.sin(np.linspace(0, 10, 8)) + np.random.default_rng(0).normal(0, 0.05, 8)
+    ).tolist()
     result = tool.call({"action": "fit", "X": x, "y": y})
     assert result.success is True
     assert result.data["n_train"] == 8

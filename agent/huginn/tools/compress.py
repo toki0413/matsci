@@ -8,7 +8,6 @@ success/failure status, key scalars, short summaries, and error tails.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from huginn.utils.tokens import rough_token_count_for_text
@@ -60,7 +59,9 @@ class ToolOutputCompressor:
         lines = text.splitlines()
         if len(lines) > self.max_text_lines:
             head = lines[: self.max_text_lines // 2]
-            tail = lines[-self.max_text_lines // 2 :] if self.max_text_lines // 2 else []
+            tail = (
+                lines[-self.max_text_lines // 2 :] if self.max_text_lines // 2 else []
+            )
             text = "\n".join(
                 head
                 + [f"... ({len(lines) - len(head) - len(tail)} lines omitted) ..."]
@@ -112,11 +113,16 @@ class ToolOutputCompressor:
         for key, value in data.items():
             # Always preserve small critical keys.
             if key in self.keep_keys:
-                result[key] = value if not isinstance(value, str) else self._compress_text(value)
+                result[key] = (
+                    value if not isinstance(value, str) else self._compress_text(value)
+                )
                 continue
 
             # Large string values under unknown keys get summarized.
-            if isinstance(value, str) and rough_token_count_for_text(value) > self.max_output_tokens:
+            if (
+                isinstance(value, str)
+                and rough_token_count_for_text(value) > self.max_output_tokens
+            ):
                 result[key] = self._compress_text(value)
                 continue
 

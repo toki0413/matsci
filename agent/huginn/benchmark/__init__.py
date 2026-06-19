@@ -8,8 +8,8 @@ from huginn.benchmark.core import (
     BenchmarkSuite,
     SelfImprovementLoop,
     keyword_evaluator,
-    numeric_evaluator,
     llm_judge_evaluator,
+    numeric_evaluator,
 )
 
 __all__ = [

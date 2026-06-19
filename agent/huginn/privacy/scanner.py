@@ -26,7 +26,11 @@ _ANTHROPIC_PFX = "-".join(["sk", "ant", "api"])
 
 _SECRET_PATTERNS: list[tuple[str, str, str | None]] = [
     # Cloud providers
-    ("aws-access-token", r"\b((?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16})\b", None),
+    (
+        "aws-access-token",
+        r"\b((?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16})\b",
+        None,
+    ),
     ("gcp-api-key", r"\b(AIza[\w-]{35})(?:[\x60'\"\s;]|\\[nr]|$)", None),
     (
         "azure-ad-client-secret",
@@ -34,7 +38,11 @@ _SECRET_PATTERNS: list[tuple[str, str, str | None]] = [
         None,
     ),
     ("digitalocean-pat", r"\b(dop_v1_[a-f0-9]{64})(?:[\x60'\"\s;]|\\[nr]|$)", None),
-    ("digitalocean-access-token", r"\b(doo_v1_[a-f0-9]{64})(?:[\x60'\"\s;]|\\[nr]|$)", None),
+    (
+        "digitalocean-access-token",
+        r"\b(doo_v1_[a-f0-9]{64})(?:[\x60'\"\s;]|\\[nr]|$)",
+        None,
+    ),
     # AI APIs
     (
         "anthropic-api-key",
@@ -69,17 +77,41 @@ _SECRET_PATTERNS: list[tuple[str, str, str | None]] = [
     ("slack-user-token", r"xox[pe](?:-[0-9]{10,13}){3}-[a-zA-Z0-9-]{28,34}", None),
     ("slack-app-token", r"xapp-\d-[A-Z0-9]+-\d+-[a-z0-9]+", re.IGNORECASE),
     ("twilio-api-key", r"SK[0-9a-fA-F]{32}", None),
-    ("sendgrid-api-token", r"\b(SG\.[a-zA-Z0-9=_\-.]{66})(?:[\x60'\"\s;]|\\[nr]|$)", None),
+    (
+        "sendgrid-api-token",
+        r"\b(SG\.[a-zA-Z0-9=_\-.]{66})(?:[\x60'\"\s;]|\\[nr]|$)",
+        None,
+    ),
     # Dev tooling
     ("npm-access-token", r"\b(npm_[a-zA-Z0-9]{36})(?:[\x60'\"\s;]|\\[nr]|$)", None),
     ("pypi-upload-token", r"pypi-AgEIcHlwaS5vcmc[\w-]{50,1000}", None),
-    ("databricks-api-token", r"\b(dapi[a-f0-9]{32}(?:-\d)?)(?:[\x60'\"\s;]|\\[nr]|$)", None),
-    ("hashicorp-tf-api-token", r"[a-zA-Z0-9]{14}\.atlasv1\.[a-zA-Z0-9\-_=]{60,70}", None),
+    (
+        "databricks-api-token",
+        r"\b(dapi[a-f0-9]{32}(?:-\d)?)(?:[\x60'\"\s;]|\\[nr]|$)",
+        None,
+    ),
+    (
+        "hashicorp-tf-api-token",
+        r"[a-zA-Z0-9]{14}\.atlasv1\.[a-zA-Z0-9\-_=]{60,70}",
+        None,
+    ),
     ("pulumi-api-token", r"\b(pul-[a-f0-9]{40})(?:[\x60'\"\s;]|\\[nr]|$)", None),
-    ("postman-api-token", r"\b(PMAK-[a-fA-F0-9]{24}-[a-fA-F0-9]{34})(?:[\x60'\"\s;]|\\[nr]|$)", None),
+    (
+        "postman-api-token",
+        r"\b(PMAK-[a-fA-F0-9]{24}-[a-fA-F0-9]{34})(?:[\x60'\"\s;]|\\[nr]|$)",
+        None,
+    ),
     # Observability
-    ("grafana-api-key", r"\b(eyJrIjoi[A-Za-z0-9+/]{70,400}={0,3})(?:[\x60'\"\s;]|\\[nr]|$)", None),
-    ("grafana-cloud-api-token", r"\b(glc_[A-Za-z0-9+/]{32,400}={0,3})(?:[\x60'\"\s;]|\\[nr]|$)", None),
+    (
+        "grafana-api-key",
+        r"\b(eyJrIjoi[A-Za-z0-9+/]{70,400}={0,3})(?:[\x60'\"\s;]|\\[nr]|$)",
+        None,
+    ),
+    (
+        "grafana-cloud-api-token",
+        r"\b(glc_[A-Za-z0-9+/]{32,400}={0,3})(?:[\x60'\"\s;]|\\[nr]|$)",
+        None,
+    ),
     (
         "grafana-service-account-token",
         r"\b(glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})(?:[\x60'\"\s;]|\\[nr]|$)",
@@ -154,7 +186,9 @@ class SecretScanner:
                 continue
             if pattern.search(text):
                 seen.add(rule_id)
-                matches.append(SecretMatch(rule_id=rule_id, label=_label_for_rule(rule_id)))
+                matches.append(
+                    SecretMatch(rule_id=rule_id, label=_label_for_rule(rule_id))
+                )
         return matches
 
     def redact(self, text: str) -> str:

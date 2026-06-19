@@ -10,20 +10,30 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
-from huginn.rag.vector_store import VectorStore, EncryptedVectorStore
+from huginn.types import ToolContext, ToolResult
 
 
 class RAGToolInput(BaseModel):
     action: Literal["search", "ingest", "list", "delete", "count", "get"] = Field(...)
     query: str = Field(default="", description="Search query (for search action)")
-    file_path: str | None = Field(default=None, description="File to ingest (for ingest action)")
-    document: str | None = Field(default=None, description="Raw text to ingest (for ingest action)")
-    doc_id: str | None = Field(default=None, description="Document ID to get (for get action)")
-    doc_ids: list[str] = Field(default_factory=list, description="Document IDs to delete")
+    file_path: str | None = Field(
+        default=None, description="File to ingest (for ingest action)"
+    )
+    document: str | None = Field(
+        default=None, description="Raw text to ingest (for ingest action)"
+    )
+    doc_id: str | None = Field(
+        default=None, description="Document ID to get (for get action)"
+    )
+    doc_ids: list[str] = Field(
+        default_factory=list, description="Document IDs to delete"
+    )
     top_k: int = Field(default=5, ge=1, le=20)
-    source_filter: str | None = Field(default=None, description="Filter by source (e.g., 'vasp_manual')")
+    source_filter: str | None = Field(
+        default=None, description="Filter by source (e.g., 'vasp_manual')"
+    )
 
 
 class RAGTool(HuginnTool):
@@ -71,11 +81,15 @@ class RAGTool(HuginnTool):
         elif args.action == "get":
             return self._get(args)
 
-        return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+        return ToolResult(
+            data=None, success=False, error=f"Unknown action: {args.action}"
+        )
 
     def _search(self, args: RAGToolInput) -> ToolResult:
         if not args.query:
-            return ToolResult(data=None, success=False, error="query is required for search")
+            return ToolResult(
+                data=None, success=False, error="query is required for search"
+            )
 
         try:
             filter_dict = None
@@ -103,7 +117,9 @@ class RAGTool(HuginnTool):
         if args.file_path:
             path = Path(args.file_path)
             if not path.exists():
-                return ToolResult(data=None, success=False, error=f"File not found: {path}")
+                return ToolResult(
+                    data=None, success=False, error=f"File not found: {path}"
+                )
 
             try:
                 ids = self.store.ingest_file(str(path))
@@ -120,7 +136,9 @@ class RAGTool(HuginnTool):
 
         elif args.document:
             try:
-                ids = self.store.ingest([args.document], metadatas=[{"source": "manual"}])
+                ids = self.store.ingest(
+                    [args.document], metadatas=[{"source": "manual"}]
+                )
                 return ToolResult(
                     data={"ingested": len(ids), "ids": ids},
                     success=True,
@@ -128,7 +146,9 @@ class RAGTool(HuginnTool):
             except Exception as e:
                 return ToolResult(data=None, success=False, error=f"Ingest failed: {e}")
 
-        return ToolResult(data=None, success=False, error="file_path or document required for ingest")
+        return ToolResult(
+            data=None, success=False, error="file_path or document required for ingest"
+        )
 
     def _list_docs(self) -> ToolResult:
         try:
@@ -142,18 +162,24 @@ class RAGTool(HuginnTool):
 
     def _get(self, args: RAGToolInput) -> ToolResult:
         if not args.doc_id:
-            return ToolResult(data=None, success=False, error="doc_id is required for get")
+            return ToolResult(
+                data=None, success=False, error="doc_id is required for get"
+            )
         try:
             doc = self.store.get_document(args.doc_id)
             if doc is None:
-                return ToolResult(data=None, success=False, error=f"Document not found: {args.doc_id}")
+                return ToolResult(
+                    data=None, success=False, error=f"Document not found: {args.doc_id}"
+                )
             return ToolResult(data=doc, success=True)
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Get failed: {e}")
 
     def _delete(self, args: RAGToolInput) -> ToolResult:
         if not args.doc_ids:
-            return ToolResult(data=None, success=False, error="doc_ids required for delete")
+            return ToolResult(
+                data=None, success=False, error="doc_ids required for delete"
+            )
 
         try:
             self.store.delete(args.doc_ids)

@@ -1,12 +1,15 @@
 """Tests for exploration engine."""
 
-import asyncio
 import pytest
 
-from huginn.exploration.core import ExplorationSpace, Branch, Decision, BranchStatus
-from huginn.exploration.strategies import ParetoPruningStrategy, BayesianExplorationStrategy, AdaptiveGridStrategy
+from huginn.exploration.core import Branch, BranchStatus, Decision, ExplorationSpace
 from huginn.exploration.lifecycle import BranchLifecycleManager
 from huginn.exploration.orchestrator import ExplorationOrchestrator, ExplorationResult
+from huginn.exploration.strategies import (
+    AdaptiveGridStrategy,
+    BayesianExplorationStrategy,
+    ParetoPruningStrategy,
+)
 
 
 class TestExplorationSpace:
@@ -17,9 +20,21 @@ class TestExplorationSpace:
             objective="Test objective",
             objectives_config={"energy": "minimize", "stability": "maximize"},
         )
-        b1 = Branch(id="b1", name="A", hypothesis="h1", objectives={"energy": 10, "stability": 5})
-        b2 = Branch(id="b2", name="B", hypothesis="h2", objectives={"energy": 8, "stability": 6})
-        b3 = Branch(id="b3", name="C", hypothesis="h3", objectives={"energy": 12, "stability": 3})
+        b1 = Branch(
+            id="b1",
+            name="A",
+            hypothesis="h1",
+            objectives={"energy": 10, "stability": 5},
+        )
+        b2 = Branch(
+            id="b2", name="B", hypothesis="h2", objectives={"energy": 8, "stability": 6}
+        )
+        b3 = Branch(
+            id="b3",
+            name="C",
+            hypothesis="h3",
+            objectives={"energy": 12, "stability": 3},
+        )
         for b in [b1, b2, b3]:
             b.status = BranchStatus.COMPLETED
             space.add_branch(b)
@@ -109,7 +124,15 @@ class TestLifecycle:
         space = ExplorationSpace(id="test", name="Test", objective="test")
         mgr = BranchLifecycleManager()
         branch = await mgr.create_branch(space, "orig", "original")
-        branch.decisions.append(Decision(id="d1", description="pick x", decision_type="categorical", chosen_option="A", available_options=["A", "B"]))
+        branch.decisions.append(
+            Decision(
+                id="d1",
+                description="pick x",
+                decision_type="categorical",
+                chosen_option="A",
+                available_options=["A", "B"],
+            )
+        )
 
         new_branch = await mgr.backtrack(space, branch.id, 0, "B")
         assert new_branch.parent_branch == branch.id
@@ -119,6 +142,7 @@ class TestLifecycle:
 class TestOrchestrator:
     async def _mock_execute(self, branch: Branch) -> dict:
         import random
+
         return {
             "success": True,
             "results": {},

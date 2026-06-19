@@ -6,7 +6,10 @@ import asyncio
 import time
 
 from huginn.agent import HuginnAgent
-from huginn.telemetry import TelemetryCollector, get_telemetry_collector, set_telemetry_collector
+from huginn.telemetry import (
+    TelemetryCollector,
+    set_telemetry_collector,
+)
 
 
 class TestTelemetryCollector:
@@ -19,9 +22,8 @@ class TestTelemetryCollector:
 
     def test_nested_spans(self):
         collector = TelemetryCollector()
-        with collector.span("outer") as outer:
-            with collector.span("inner"):
-                pass
+        with collector.span("outer") as outer, collector.span("inner"):
+            pass
         assert len(outer.children) == 1
         assert outer.children[0].name == "inner"
 

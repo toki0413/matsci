@@ -33,7 +33,15 @@ class HierarchicalRetriever:
         "COMSOL": ["comsol", "mph", "multiphysics", "physics", "feature"],
         "DAMASK": ["damask", "cpfem", "crystal plasticity", "spectral", "grid"],
         # CFD / Fluid Mechanics
-        "OpenFOAM": ["openfoam", "foam", "simplefoam", "pimplefoam", "interfoam", "fvscheme", "fvsolution"],
+        "OpenFOAM": [
+            "openfoam",
+            "foam",
+            "simplefoam",
+            "pimplefoam",
+            "interfoam",
+            "fvscheme",
+            "fvsolution",
+        ],
         "Fluent": ["fluent", "udf", "scheme", "journal", "case", "data"],
     }
 
@@ -52,16 +60,50 @@ class HierarchicalRetriever:
         "Fukui": ["fukui", "福井函数", "反应位点", "reactivity"],
         "DualDescriptor": ["dual descriptor", "双描述符", "dd"],
         # FEA / Solid Mechanics
-        "FEA": ["fea", "finite element", "有限元", "structural analysis", "stress", "strain", "deformation"],
-        "CPFEM": ["cpfem", "crystal plasticity", "晶体塑性", "slip system", "taylor model"],
-        "Fracture": ["fracture", "j-integral", "ctod", "stress intensity", "crack", "断裂"],
+        "FEA": [
+            "fea",
+            "finite element",
+            "有限元",
+            "structural analysis",
+            "stress",
+            "strain",
+            "deformation",
+        ],
+        "CPFEM": [
+            "cpfem",
+            "crystal plasticity",
+            "晶体塑性",
+            "slip system",
+            "taylor model",
+        ],
+        "Fracture": [
+            "fracture",
+            "j-integral",
+            "ctod",
+            "stress intensity",
+            "crack",
+            "断裂",
+        ],
         "Modal": ["modal", "eigenvalue", "natural frequency", "mode shape", "振型"],
         "Buckling": ["buckling", "eigenvalue buckling", "critical load", "失稳"],
         # CFD / Fluid Mechanics
         "RANS": ["rans", "k-epsilon", "k-omega", "sst", "spalart-allmaras", "湍流"],
         "LES": ["les", "large eddy simulation", "smagorinsky", "wale", "subgrid"],
-        "Multiphase": ["multiphase", "vof", "euler-euler", "dpm", "两相流", "interface"],
-        "HeatTransfer": ["heat transfer", "conjugate heat transfer", "cht", "nusselt", "传热"],
+        "Multiphase": [
+            "multiphase",
+            "vof",
+            "euler-euler",
+            "dpm",
+            "两相流",
+            "interface",
+        ],
+        "HeatTransfer": [
+            "heat transfer",
+            "conjugate heat transfer",
+            "cht",
+            "nusselt",
+            "传热",
+        ],
     }
 
     def __init__(self, vector_store: Any, index_path: str | None = None):
@@ -71,14 +113,19 @@ class HierarchicalRetriever:
 
     def _load_index(self, path: str | None) -> None:
         if path and Path(path).exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 self._index = json.load(f)
             return
         # Try default location
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        default = repo_root / "Sobko_MCP_project" / "advanced_optimization" / "hierarchical_index.json"
+        default = (
+            repo_root
+            / "Sobko_MCP_project"
+            / "advanced_optimization"
+            / "hierarchical_index.json"
+        )
         if default.exists():
-            with open(default, "r", encoding="utf-8") as f:
+            with open(default, encoding="utf-8") as f:
                 self._index = json.load(f)
 
     def _detect_route(self, query: str) -> tuple[str | None, str | None]:

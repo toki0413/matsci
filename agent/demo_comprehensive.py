@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
 from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext
 
 
@@ -76,53 +76,81 @@ async def main() -> int:
     # Phase 1: FEM Weak Forms
     print("\n--- Phase 1: FEM Weak Forms ---")
     results["heat_conduction"] = await run_symbolic_then_lean(
-        "Heat Conduction", "weak_form", "heat_conduction",
-        ["u", "v", "x", "k", "f"], auto_verify="fem"
+        "Heat Conduction",
+        "weak_form",
+        "heat_conduction",
+        ["u", "v", "x", "k", "f"],
+        auto_verify="fem",
     )
     results["linear_elasticity"] = await run_symbolic_then_lean(
-        "Linear Elasticity", "weak_form", "linear_elasticity",
-        ["ux", "uy", "vx", "vy", "x", "y", "E", "nu"], auto_verify="fem"
+        "Linear Elasticity",
+        "weak_form",
+        "linear_elasticity",
+        ["ux", "uy", "vx", "vy", "x", "y", "E", "nu"],
+        auto_verify="fem",
     )
     results["bar_element"] = await run_symbolic_then_lean(
-        "Bar Element", "weak_form", "assemble_element_matrix",
-        ["E", "A", "h"], expression="bar", auto_verify="fem"
+        "Bar Element",
+        "weak_form",
+        "assemble_element_matrix",
+        ["E", "A", "h"],
+        expression="bar",
+        auto_verify="fem",
     )
 
     # Phase 2: Tensor Algebra
     print("\n--- Phase 2: Tensor Algebra ---")
     results["tensor"] = await run_symbolic_then_lean(
-        "Matrix Invariants", "tensor_ops", "",
-        ["a", "b", "c"], matrix=[["a", "b"], ["b", "c"]], auto_verify="tensor_ops"
+        "Matrix Invariants",
+        "tensor_ops",
+        "",
+        ["a", "b", "c"],
+        matrix=[["a", "b"], ["b", "c"]],
+        auto_verify="tensor_ops",
     )
 
     # Phase 3: Numerical Linear Algebra
     print("\n--- Phase 3: Numerical Linear Algebra ---")
     results["la"] = await run_symbolic_then_lean(
-        "Cholesky", "linear_algebra", "cholesky",
-        ["A", "L"], matrix=[["4", "2"], ["2", "3"]], auto_verify="linear_algebra"
+        "Cholesky",
+        "linear_algebra",
+        "cholesky",
+        ["A", "L"],
+        matrix=[["4", "2"], ["2", "3"]],
+        auto_verify="linear_algebra",
     )
 
     # Phase 4: DFT
     print("\n--- Phase 4: DFT ---")
     results["dft_fermi"] = await run_symbolic_then_lean(
-        "Free Electron Fermi Energy", "dft", "fermi_energy",
-        ["n", "kF", "EF"], expression="n=0.05", auto_verify="dft"
+        "Free Electron Fermi Energy",
+        "dft",
+        "fermi_energy",
+        ["n", "kF", "EF"],
+        expression="n=0.05",
+        auto_verify="dft",
     )
 
     # Phase 5: Thermodynamics
     print("\n--- Phase 5: Thermodynamics ---")
     results["thermo_ideal_gas"] = await run_symbolic_then_lean(
-        "Ideal Gas Pressure", "thermodynamics", "ideal_gas",
-        ["n", "T", "V", "P"], expression="n=1.0,T=273.15,V=0.022414",
-        auto_verify="thermodynamics"
+        "Ideal Gas Pressure",
+        "thermodynamics",
+        "ideal_gas",
+        ["n", "T", "V", "P"],
+        expression="n=1.0,T=273.15,V=0.022414",
+        auto_verify="thermodynamics",
     )
 
     # Phase 6: Probability
     print("\n--- Phase 6: Probability ---")
     results["prob_normal"] = await run_symbolic_then_lean(
-        "Normal PDF", "probability", "normal_pdf",
-        ["mu", "sigma", "x", "pdf"], expression="mu=0.0,sigma=1.0,x=0.0",
-        auto_verify="probability"
+        "Normal PDF",
+        "probability",
+        "normal_pdf",
+        ["mu", "sigma", "x", "pdf"],
+        expression="mu=0.0,sigma=1.0,x=0.0",
+        auto_verify="probability",
     )
 
     # Summary

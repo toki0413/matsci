@@ -19,6 +19,8 @@ def test_default_cors_origins_are_local():
 
 
 def test_env_override(monkeypatch):
-    monkeypatch.setenv("HUGINN_CORS_ORIGINS", "https://app.example.com, https://other.example.com")
+    monkeypatch.setenv(
+        "HUGINN_CORS_ORIGINS", "https://app.example.com, https://other.example.com"
+    )
     origins = _get_cors_origins()
     assert origins == ["https://app.example.com", "https://other.example.com"]

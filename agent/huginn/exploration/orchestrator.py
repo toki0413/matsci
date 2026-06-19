@@ -8,19 +8,22 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
-from huginn.exploration.core import ExplorationSpace, Branch, Decision, BranchStatus
-from huginn.exploration.strategies import (
-    ExplorationStrategy, ParetoPruningStrategy, Action,
-)
+from huginn.exploration.core import Branch, BranchStatus, Decision, ExplorationSpace
 from huginn.exploration.lifecycle import BranchLifecycleManager
+from huginn.exploration.strategies import (
+    ExplorationStrategy,
+    ParetoPruningStrategy,
+)
 
 
 @dataclass
 class ExplorationResult:
     """Final result of an exploration run."""
+
     space: ExplorationSpace
     pareto_front: list[dict[str, Any]]
     best_branch: dict[str, Any] | None
@@ -107,15 +110,15 @@ class ExplorationOrchestrator:
 
             # 1. Execute all pending branches (up to max_parallel)
             pending = [
-                bid for bid, b in space.branches.items()
+                bid
+                for bid, b in space.branches.items()
                 if b.status == BranchStatus.PENDING
             ]
             if pending:
                 batch = pending[: self.max_parallel]
-                await asyncio.gather(*[
-                    self.lifecycle.execute_branch(space, bid)
-                    for bid in batch
-                ])
+                await asyncio.gather(
+                    *[self.lifecycle.execute_branch(space, bid) for bid in batch]
+                )
 
             # 2. Evaluate strategy
             actions = self.strategy.evaluate(space)
@@ -153,10 +156,13 @@ class ExplorationOrchestrator:
 
             # 4. Check if all branches are resolved
             unresolved = [
-                b for b in space.branches.values()
+                b
+                for b in space.branches.values()
                 if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
             ]
-            if not unresolved and not any(a.action_type in {"expand", "refine"} for a in actions):
+            if not unresolved and not any(
+                a.action_type in {"expand", "refine"} for a in actions
+            ):
                 convergence_reason = "All branches resolved with no new actions"
                 break
 
@@ -184,7 +190,13 @@ class ExplorationOrchestrator:
                 for bid in front
             ],
             best_branch=best,
-            n_branches_explored=len([b for b in space.branches.values() if b.status == BranchStatus.COMPLETED]),
+            n_branches_explored=len(
+                [
+                    b
+                    for b in space.branches.values()
+                    if b.status == BranchStatus.COMPLETED
+                ]
+            ),
             n_branches_pruned=len(space.pruned_branches),
             convergence_reason=convergence_reason,
             knowledge_graph_json=space.export_knowledge_graph("json"),

@@ -9,19 +9,15 @@ and optional key file storage with additional password protection.
 from __future__ import annotations
 
 import base64
-import getpass
-import hashlib
 import os
 import secrets
 import shutil
 import tarfile
 import tempfile
-from contextlib import contextmanager
-from io import BytesIO
 from pathlib import Path
-from typing import BinaryIO, Iterator, Literal
+from typing import BinaryIO
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
@@ -220,7 +216,9 @@ class KeyManager:
         """Generate a random 256-bit master key."""
         return base64.urlsafe_b64encode(os.urandom(32))
 
-    def create_key_file(self, password: str, key_file: str | Path | None = None) -> bytes:
+    def create_key_file(
+        self, password: str, key_file: str | Path | None = None
+    ) -> bytes:
         """Create a new key file encrypted with password. Returns the raw master key."""
         path = Path(key_file) if key_file else self.key_file
         if path is None:
@@ -270,7 +268,9 @@ class KeyManager:
             self.load_key_file(password)
 
         if self._master_key is None:
-            raise RuntimeError("No master key loaded. Provide password or call load_key_file().")
+            raise RuntimeError(
+                "No master key loaded. Provide password or call load_key_file()."
+            )
 
         # Use master key directly as vault password (it's already high-entropy)
         vault = CryptoVault()
@@ -308,7 +308,9 @@ class EncryptedDatabase:
             return self._plaintext_path
 
         self._temp_dir = Path(tempfile.mkdtemp(prefix="huginn_db_"))
-        self._plaintext_path = self._temp_dir / self.encrypted_path.name.replace(".enc", "")
+        self._plaintext_path = self._temp_dir / self.encrypted_path.name.replace(
+            ".enc", ""
+        )
 
         if self.encrypted_path.exists():
             self.vault.decrypt_file(self.encrypted_path, self._plaintext_path)
@@ -343,8 +345,12 @@ class EncryptedDatabase:
 class EncryptedConfig:
     """Encrypted configuration file manager."""
 
-    def __init__(self, config_path: str | Path | None = None, vault: CryptoVault | None = None):
-        self.config_path = Path(config_path) if config_path else Path.home() / ".huginn" / "config.enc"
+    def __init__(
+        self, config_path: str | Path | None = None, vault: CryptoVault | None = None
+    ):
+        self.config_path = (
+            Path(config_path) if config_path else Path.home() / ".huginn" / "config.enc"
+        )
         self.vault = vault or CryptoVault()
 
     def load(self) -> dict:

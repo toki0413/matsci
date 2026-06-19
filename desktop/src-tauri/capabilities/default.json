@@ -6,8 +6,9 @@
     "core:default",
     "core:window:allow-create",
     "core:window:allow-set-focus",
-    "core:window:allow-get",
     "core:window:allow-start-dragging",
+    "core:webview:allow-get-all-webviews",
+    "core:webview:allow-create-webview-window",
     "shell:default",
     "notification:default",
     {

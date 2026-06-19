@@ -7,7 +7,6 @@ ChromaDB collection so code and documents don't contaminate each other.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +60,9 @@ CODE_EXTENSIONS = {
 }
 
 
-def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+def _chunk_text(
+    text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
+) -> list[str]:
     chunks = []
     start = 0
     while start < len(text):
@@ -105,7 +106,9 @@ class CodebaseIndex:
         except ImportError as e:
             raise RuntimeError("Codebase search requires chromadb") from e
 
-        self.client = chromadb.PersistentClient(path=str(self.root / ".huginn_kb" / "chroma"))
+        self.client = chromadb.PersistentClient(
+            path=str(self.root / ".huginn_kb" / "chroma")
+        )
         self.collection = self.client.get_or_create_collection("huginn_codebase")
 
     @property
@@ -114,7 +117,9 @@ class CodebaseIndex:
             try:
                 from sentence_transformers import SentenceTransformer
             except ImportError as e:
-                raise RuntimeError("Codebase search requires sentence-transformers") from e
+                raise RuntimeError(
+                    "Codebase search requires sentence-transformers"
+                ) from e
             self._model = SentenceTransformer(EMBED_MODEL)
         return self._model
 
@@ -183,22 +188,30 @@ class CodebaseIndex:
         chunks = []
         for i, doc_id in enumerate(results.get("ids", [[]])[0]):
             meta = results["metadatas"][0][i]
-            chunks.append({
-                "chunk_id": doc_id,
-                "path": meta.get("path"),
-                "language": meta.get("language"),
-                "chunk": meta.get("chunk", 0),
-                "text": results["documents"][0][i],
-                "distance": results["distances"][0][i],
-            })
+            chunks.append(
+                {
+                    "chunk_id": doc_id,
+                    "path": meta.get("path"),
+                    "language": meta.get("language"),
+                    "chunk": meta.get("chunk", 0),
+                    "text": results["documents"][0][i],
+                    "distance": results["distances"][0][i],
+                }
+            )
         return chunks
 
     def status(self) -> dict[str, Any]:
         return {
             "available": True,
-            "indexed_files": len(set(
-                m.get("path") for m in (self.collection.get(include=["metadatas"]).get("metadatas") or [])
-            )),
+            "indexed_files": len(
+                {
+                    m.get("path")
+                    for m in (
+                        self.collection.get(include=["metadatas"]).get("metadatas")
+                        or []
+                    )
+                }
+            ),
             "chunks": self.collection.count(),
             "root": str(self.root),
         }

@@ -5,6 +5,7 @@ When QE is not installed, the tool falls back to input-export mode.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -15,12 +16,14 @@ from pydantic import BaseModel, Field
 
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class QuantumEspressoToolInput(BaseModel):
     action: Literal["generate", "run", "parse"] = Field(default="run")
-    calculation: Literal["scf", "relax", "vc-relax", "md", "bands"] = Field(default="scf")
+    calculation: Literal["scf", "relax", "vc-relax", "md", "bands"] = Field(
+        default="scf"
+    )
     structure: dict = Field(
         default_factory=lambda: {
             "lattice": [[5.43, 0.0, 0.0], [0.0, 5.43, 0.0], [0.0, 0.0, 5.43]],
@@ -32,7 +35,9 @@ class QuantumEspressoToolInput(BaseModel):
     pseudopotentials: dict[str, str] = Field(
         default_factory=lambda: {"Si": "Si.pbe-n-kjpaw_psl.1.0.0.UPF"}
     )
-    kpoints: dict = Field(default_factory=lambda: {"mode": "automatic", "grid": [4, 4, 4]})
+    kpoints: dict = Field(
+        default_factory=lambda: {"mode": "automatic", "grid": [4, 4, 4]}
+    )
     ecutwfc: float = Field(default=40.0)
     ecutrho: float | None = Field(default=None)
     smearing: str = Field(default="gaussian")
@@ -55,7 +60,9 @@ class QuantumEspressoTool(HuginnTool):
     )
     input_schema = QuantumEspressoToolInput
 
-    def __init__(self, qe_executable: str | None = None, sandbox: SandboxExecutor | None = None):
+    def __init__(
+        self, qe_executable: str | None = None, sandbox: SandboxExecutor | None = None
+    ):
         super().__init__()
         self.qe_executable = qe_executable or self._find_qe()
         self.sandbox = sandbox or SandboxExecutor()
@@ -69,16 +76,22 @@ class QuantumEspressoTool(HuginnTool):
                 return cmd
         return None
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = QuantumEspressoToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             if input_data.action == "parse":
                 return self._parse_results(input_data, work_dir)
 
-            input_path = self._generate_input(input_data, work_dir, input_data.output_prefix)
+            input_path = self._generate_input(
+                input_data, work_dir, input_data.output_prefix
+            )
 
             if input_data.action == "generate":
                 return ToolResult(
@@ -105,13 +118,13 @@ class QuantumEspressoTool(HuginnTool):
         lines.append(f"  calculation = '{args.calculation}'")
         lines.append(f"  prefix = '{prefix}'")
         lines.append(f"  outdir = '{work_dir.as_posix()}'")
-        lines.append(f"  pseudo_dir = './'")
-        lines.append(f"  tprnfor = .true.")
-        lines.append(f"  tstress = .true.")
+        lines.append("  pseudo_dir = './'")
+        lines.append("  tprnfor = .true.")
+        lines.append("  tstress = .true.")
         lines.append("/")
 
         lines.append("&SYSTEM")
-        lines.append(f"  ibrav = 0")
+        lines.append("  ibrav = 0")
         lines.append(f"  nat = {len(args.structure.get('species', []))}")
         lines.append(f"  ntyp = {len(set(args.structure.get('species', [])))}")
         lines.append(f"  ecutwfc = {args.ecutwfc}")
@@ -149,7 +162,9 @@ class QuantumEspressoTool(HuginnTool):
         lines.append("K_POINTS {automatic}")
         grid = args.kpoints.get("grid", [4, 4, 4])
         shift = args.kpoints.get("shift", [0, 0, 0])
-        lines.append(f"  {grid[0]} {grid[1]} {grid[2]} {shift[0]} {shift[1]} {shift[2]}")
+        lines.append(
+            f"  {grid[0]} {grid[1]} {grid[2]} {shift[0]} {shift[1]} {shift[2]}"
+        )
 
         lines.append("CELL_PARAMETERS {angstrom}")
         lattice = args.structure.get("lattice", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
@@ -161,12 +176,36 @@ class QuantumEspressoTool(HuginnTool):
 
     def _atomic_mass(self, element: str) -> float:
         masses = {
-            "H": 1.008, "He": 4.0026, "Li": 6.94, "Be": 9.0122, "B": 10.81,
-            "C": 12.011, "N": 14.007, "O": 15.999, "F": 18.998, "Ne": 20.180,
-            "Na": 22.990, "Mg": 24.305, "Al": 26.982, "Si": 28.085, "P": 30.974,
-            "S": 32.06, "Cl": 35.45, "Ar": 39.948, "K": 39.098, "Ca": 40.078,
-            "Sc": 44.956, "Ti": 47.867, "V": 50.942, "Cr": 51.996, "Mn": 54.938,
-            "Fe": 55.845, "Co": 58.933, "Ni": 58.693, "Cu": 63.546, "Zn": 65.38,
+            "H": 1.008,
+            "He": 4.0026,
+            "Li": 6.94,
+            "Be": 9.0122,
+            "B": 10.81,
+            "C": 12.011,
+            "N": 14.007,
+            "O": 15.999,
+            "F": 18.998,
+            "Ne": 20.180,
+            "Na": 22.990,
+            "Mg": 24.305,
+            "Al": 26.982,
+            "Si": 28.085,
+            "P": 30.974,
+            "S": 32.06,
+            "Cl": 35.45,
+            "Ar": 39.948,
+            "K": 39.098,
+            "Ca": 40.078,
+            "Sc": 44.956,
+            "Ti": 47.867,
+            "V": 50.942,
+            "Cr": 51.996,
+            "Mn": 54.938,
+            "Fe": 55.845,
+            "Co": 58.933,
+            "Ni": 58.693,
+            "Cu": 63.546,
+            "Zn": 65.38,
         }
         return masses.get(element, 1.0)
 
@@ -207,7 +246,11 @@ class QuantumEspressoTool(HuginnTool):
                 "output_path": str(output_path),
                 "qe_available": True,
                 "parsed": parsed,
-                "message": "QE execution completed." if success else "QE execution failed; see output.",
+                "message": (
+                    "QE execution completed."
+                    if success
+                    else "QE execution failed; see output."
+                ),
             },
             success=success,
         )
@@ -235,10 +278,8 @@ class QuantumEspressoTool(HuginnTool):
             if "!    total energy" in line:
                 parts = line.split("=")
                 if len(parts) > 1:
-                    try:
+                    with contextlib.suppress(ValueError, IndexError):
                         result["energy"] = float(parts[-1].strip().split()[0])
-                    except (ValueError, IndexError):
-                        pass
 
         # Convergence
         result["converged"] = "convergence has been achieved" in content
@@ -259,13 +300,11 @@ class QuantumEspressoTool(HuginnTool):
                 if line.strip().startswith("atom"):
                     parts = line.split()
                     if len(parts) >= 8:
-                        try:
+                        with contextlib.suppress(ValueError, IndexError):
                             fx = float(parts[-3])
                             fy = float(parts[-2])
                             fz = float(parts[-1])
                             current_block.append([fx, fy, fz])
-                        except (ValueError, IndexError):
-                            pass
                 elif "Total force" in line:
                     if current_block:
                         force_blocks.append(current_block)
@@ -282,28 +321,37 @@ class QuantumEspressoTool(HuginnTool):
 
         # Stress (last occurrence)
         for i, line in enumerate(lines):
-            if "total   stress" in line or "stress" in line.lower() and "kbar" in line.lower():
+            if (
+                "total   stress" in line
+                or "stress" in line.lower()
+                and "kbar" in line.lower()
+            ):
                 stress = []
                 for j in range(1, 4):
                     if i + j < len(lines):
                         parts = lines[i + j].split()
                         if len(parts) >= 3:
-                            try:
-                                stress.append([float(parts[0]), float(parts[1]), float(parts[2])])
-                            except (ValueError, IndexError):
-                                pass
+                            with contextlib.suppress(ValueError, IndexError):
+                                stress.append(
+                                    [float(parts[0]), float(parts[1]), float(parts[2])]
+                                )
                 if len(stress) == 3:
                     result["stress"] = stress
 
         return result
 
-    def _parse_results(self, args: QuantumEspressoToolInput, work_dir: Path) -> ToolResult:
+    def _parse_results(
+        self, args: QuantumEspressoToolInput, work_dir: Path
+    ) -> ToolResult:
         parsed: dict[str, Any] = {}
         for file_name in args.result_files:
             file_path = work_dir / file_name
             parsed[file_name] = self._parse_output_file(file_path)
 
         return ToolResult(
-            data={"results": parsed, "message": f"Parsed {len(parsed)} QE output files."},
+            data={
+                "results": parsed,
+                "message": f"Parsed {len(parsed)} QE output files.",
+            },
             success=True,
         )

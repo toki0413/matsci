@@ -6,12 +6,17 @@ can execute with minimal user input.
 
 from __future__ import annotations
 
-from huginn.workflows.engine import ComputationalStage, ValidationRule, RetryPolicy
+import contextlib
+from typing import Any
+
+from huginn.workflows.engine import ComputationalStage, RetryPolicy, ValidationRule
 
 
-def standard_dft_workflow(structure_path: str, engine: str = "vasp") -> list[ComputationalStage]:
+def standard_dft_workflow(
+    structure_path: str, engine: str = "vasp"
+) -> list[ComputationalStage]:
     """Standard DFT workflow: relax → SCF → properties.
-    
+
     Args:
         structure_path: Path to initial structure file
         engine: Computational engine (vasp, qe, etc.)
@@ -24,7 +29,7 @@ def standard_dft_workflow(structure_path: str, engine: str = "vasp") -> list[Com
             tool_input={
                 "action": "relax",
                 "structure_file": structure_path,
-                "params": {"ISIF": 3, "IBRION": 2, "EDIFFG": -0.01}
+                "params": {"ISIF": 3, "IBRION": 2, "EDIFFG": -0.01},
             },
             validation=ValidationRule(check="convergence"),
             retry_policy=RetryPolicy(max_retries=2, retry_on=["convergence_fail"]),
@@ -36,7 +41,7 @@ def standard_dft_workflow(structure_path: str, engine: str = "vasp") -> list[Com
             tool_input={
                 "action": "scf",
                 "structure_file": "${relax.output_structure}",
-                "params": {"ISTART": 1}
+                "params": {"ISTART": 1},
             },
             dependencies=["relax"],
             validation=ValidationRule(check="convergence"),
@@ -49,7 +54,7 @@ def standard_dft_workflow(structure_path: str, engine: str = "vasp") -> list[Com
                 "action": "band",
                 "structure_file": "${relax.output_structure}",
                 "charge_density": "${scf.chgcar}",
-                "params": {"ICHARG": 11, "LORBIT": 11}
+                "params": {"ICHARG": 11, "LORBIT": 11},
             },
             dependencies=["scf"],
             validation=ValidationRule(check="energy_sign"),
@@ -68,10 +73,14 @@ def standard_dft_workflow(structure_path: str, engine: str = "vasp") -> list[Com
     ]
 
 
-def aimd_workflow(structure_path: str, temperature: float = 300.0, 
-                  timestep_fs: float = 1.0, steps: int = 10000) -> list[ComputationalStage]:
+def aimd_workflow(
+    structure_path: str,
+    temperature: float = 300.0,
+    timestep_fs: float = 1.0,
+    steps: int = 10000,
+) -> list[ComputationalStage]:
     """Ab-initio MD workflow: minimization → equilibration → production.
-    
+
     Args:
         structure_path: Path to initial structure
         temperature: Target temperature in K
@@ -86,7 +95,7 @@ def aimd_workflow(structure_path: str, temperature: float = 300.0,
             tool_input={
                 "action": "relax",
                 "structure_file": structure_path,
-                "params": {"ISIF": 2, "IBRION": 2, "NSW": 100}
+                "params": {"ISIF": 2, "IBRION": 2, "NSW": 100},
             },
             validation=ValidationRule(check="force_convergence", threshold=0.05),
         ),
@@ -104,7 +113,7 @@ def aimd_workflow(structure_path: str, temperature: float = 300.0,
                     "TEEND": temperature,
                     "NSW": 1000,
                     "POTIM": timestep_fs,
-                }
+                },
             },
             dependencies=["minimize"],
             validation=ValidationRule(check="convergence"),
@@ -120,7 +129,7 @@ def aimd_workflow(structure_path: str, temperature: float = 300.0,
                     "MDALGO": 0,  # NVE
                     "NSW": steps,
                     "POTIM": timestep_fs,
-                }
+                },
             },
             dependencies=["equil_nvt"],
             validation=ValidationRule(check="energy_conservation"),
@@ -129,10 +138,11 @@ def aimd_workflow(structure_path: str, temperature: float = 300.0,
     ]
 
 
-def defect_workflow(pristine_path: str, defect_type: str, 
-                    site_index: int | None = None) -> list[ComputationalStage]:
+def defect_workflow(
+    pristine_path: str, defect_type: str, site_index: int | None = None
+) -> list[ComputationalStage]:
     """Defect calculation workflow.
-    
+
     Args:
         pristine_path: Path to pristine structure
         defect_type: "vacancy", "substitution", or "interstitial"
@@ -186,10 +196,11 @@ def defect_workflow(pristine_path: str, defect_type: str,
     ]
 
 
-def surface_workflow(bulk_path: str, miller_index: str = "111", 
-                     layers: int = 6, vacuum: float = 15.0) -> list[ComputationalStage]:
+def surface_workflow(
+    bulk_path: str, miller_index: str = "111", layers: int = 6, vacuum: float = 15.0
+) -> list[ComputationalStage]:
     """Surface calculation workflow.
-    
+
     Args:
         bulk_path: Path to bulk structure
         miller_index: Miller index of surface (e.g., "111", "100")
@@ -227,7 +238,7 @@ def surface_workflow(bulk_path: str, miller_index: str = "111",
             tool_input={
                 "action": "relax",
                 "structure_file": "${cut_surface.output_path}",
-                "params": {"ISIF": 2}  # Only relax ions, keep cell fixed
+                "params": {"ISIF": 2},  # Only relax ions, keep cell fixed
             },
             dependencies=["cut_surface"],
             validation=ValidationRule(check="convergence"),
@@ -235,10 +246,11 @@ def surface_workflow(bulk_path: str, miller_index: str = "111",
     ]
 
 
-def ml_potential_workflow(training_structures: list[str], 
-                          potential_type: str = "nep") -> list[ComputationalStage]:
+def ml_potential_workflow(
+    training_structures: list[str], potential_type: str = "nep"
+) -> list[ComputationalStage]:
     """ML potential training workflow.
-    
+
     Args:
         training_structures: List of DFT-calculated structure paths
         potential_type: "nep", "snap", "gap", or "ace"
@@ -642,7 +654,5 @@ def register_template(name: str, template_fn):
 # Import and register quantum chemistry templates from Sobko knowledge base
 # This registers: wavefunction_analysis, reactivity_prediction, weak_interaction,
 # excited_state, charge_analysis
-try:
-    from huginn.workflows import templates_qc
-except ImportError:
-    pass  # templates_qc not available
+with contextlib.suppress(ImportError):
+    from huginn.workflows import templates_qc  # noqa: F401

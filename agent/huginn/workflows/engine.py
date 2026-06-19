@@ -6,106 +6,145 @@ validation, and retry policies.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Literal, Any
-from datetime import datetime
 import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from huginn.types import ToolContext, ToolResult
+from huginn.queue import InMemoryTaskBackend, TaskBackend
+from huginn.types import (
+    BudgetDecision,
+    BudgetPolicy,
+    CostEstimate,
+    ToolContext,
+    ToolResult,
+)
+from huginn.workflows.checkpoint import WorkflowCheckpoint
+from huginn.workflows.stages import (
+    ComputationalStage,
+    RetryPolicy,
+    ValidationRule,
+    WorkflowResult,
+)
 
-
-@dataclass
-class ValidationRule:
-    """Rule for validating stage output."""
-    check: Literal["convergence", "energy_sign", "force_threshold", "custom"]
-    threshold: float | None = None
-    custom_fn: str | None = None  # Name of validation function
-
-
-@dataclass
-class RetryPolicy:
-    """Retry policy for failed stages."""
-    max_retries: int = 2
-    backoff_factor: float = 2.0
-    retry_on: list[Literal["convergence_fail", "timeout", "oom", "any"]] = field(
-        default_factory=lambda: ["convergence_fail", "timeout"]
-    )
-    auto_diagnose: bool = True  # Whether to call diagnose_tool before retry
-    apply_auto_fix: bool = True  # Whether to apply suggested fixes from diagnosis
-
-
-@dataclass
-class ComputationalStage:
-    """Single stage in a computational workflow."""
-    id: str
-    name: str
-    tool: str  # Tool name to invoke
-    tool_input: dict[str, Any]
-    dependencies: list[str] = field(default_factory=list)
-    validation: ValidationRule | None = None
-    retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
-    
-    # Execution state
-    status: Literal["pending", "running", "completed", "failed", "skipped"] = "pending"
-    result: ToolResult | None = None
-    attempts: int = 0
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-
-
-@dataclass
-class WorkflowResult:
-    """Result of a complete workflow execution."""
-    success: bool
-    stages: dict[str, ComputationalStage]
-    outputs: dict[str, Any]
-    error: str | None = None
-    total_walltime: float = 0.0  # seconds
+# Re-export dataclasses so existing imports keep working.
+__all__ = [
+    "WorkflowEngine",
+    "ComputationalStage",
+    "ValidationRule",
+    "RetryPolicy",
+    "WorkflowResult",
+]
 
 
 class WorkflowEngine:
     """Engine for executing computational workflows."""
-    
-    def __init__(self, tool_registry: Any):
+
+    def __init__(
+        self,
+        tool_registry: Any,
+        budget_policy: BudgetPolicy | None = None,
+        task_backend: TaskBackend | None = None,
+    ):
         self.registry = tool_registry
-    
+        self.budget_policy = budget_policy
+        self.task_backend = task_backend or InMemoryTaskBackend()
+        self.task_backend.register_task(
+            "huginn.workflow.stage", self._execute_stage_sync
+        )
+
     async def execute(
         self,
         stages: list[ComputationalStage],
-        context: ToolContext
+        context: ToolContext,
+        checkpoint_path: str | Path | None = None,
+        budget_policy: BudgetPolicy | None = None,
     ) -> WorkflowResult:
-        """Execute a workflow with topological ordering and parallelization."""
-        
+        """Execute a workflow with topological ordering and parallelization.
+
+        If ``checkpoint_path`` is provided, the engine writes a snapshot after
+        every stage transition so the workflow can be resumed later.
+        """
+
         stage_map = {s.id: s for s in stages}
-        completed: set[str] = set()
-        failed: set[str] = set()
-        outputs: dict[str, Any] = {}
-        
+        completed: set[str] = {s.id for s in stages if s.status == "completed"}
+        failed: set[str] = {s.id for s in stages if s.status == "failed"}
+        outputs: dict[str, Any] = {
+            s.id: s.result.data
+            for s in stages
+            if s.status == "completed" and s.result is not None
+        }
+
         start_time = datetime.now()
-        
+
+        def _maybe_checkpoint() -> None:
+            if checkpoint_path is not None:
+                WorkflowCheckpoint(
+                    stages=list(stage_map.values()), outputs=outputs
+                ).save(checkpoint_path)
+
         while len(completed) + len(failed) < len(stages):
             # Find stages whose dependencies are all satisfied
             ready = [
-                s for s in stages
-                if s.id not in completed and s.id not in failed
+                s
+                for s in stages
+                if s.id not in completed
+                and s.id not in failed
                 and all(dep in completed for dep in s.dependencies)
             ]
-            
+
             if not ready:
                 # Deadlock or all remaining blocked by failures
-                remaining = [s.id for s in stages if s.id not in completed and s.id not in failed]
+                remaining = [
+                    s.id for s in stages if s.id not in completed and s.id not in failed
+                ]
+                _maybe_checkpoint()
                 return WorkflowResult(
                     success=False,
                     stages=stage_map,
                     outputs=outputs,
-                    error=f"Workflow blocked: stages {remaining} have unsatisfied dependencies"
+                    error=f"Workflow blocked: stages {remaining} have unsatisfied dependencies",
                 )
-            
-            # Execute ready stages in parallel
-            tasks = [self._execute_stage(s, context, outputs) for s in ready]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for stage, result in zip(ready, results):
+
+            # Budget check for ready stages
+            effective_budget = budget_policy or self.budget_policy
+            allowed_ready: list[ComputationalStage] = []
+            for stage in ready:
+                if effective_budget is None:
+                    allowed_ready.append(stage)
+                    continue
+                estimate = self._estimate_stage_cost(stage)
+                decision, reason = effective_budget.check(estimate)
+                if decision == BudgetDecision.DENY:
+                    stage.status = "failed"
+                    stage.result = ToolResult(
+                        data=None,
+                        success=False,
+                        error=f"Budget denied: {reason}",
+                    )
+                    failed.add(stage.id)
+                elif decision == BudgetDecision.WARN:
+                    # Proceed but surface the warning
+                    stage.tool_input.setdefault("__budget_warnings", []).append(reason)
+                    allowed_ready.append(stage)
+                else:
+                    allowed_ready.append(stage)
+
+            if not allowed_ready:
+                _maybe_checkpoint()
+                continue
+
+            # Execute ready stages in parallel, optionally through a task backend.
+            if self.task_backend is not None:
+                results = await self._dispatch_stages(allowed_ready, context, outputs)
+            else:
+                tasks = [
+                    self._execute_stage(s, context, outputs) for s in allowed_ready
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for stage, result in zip(allowed_ready, results):
                 if isinstance(result, Exception):
                     stage.status = "failed"
                     failed.add(stage.id)
@@ -116,55 +155,188 @@ class WorkflowEngine:
                     completed.add(stage.id)
                 else:
                     # Check retry policy
-                    if stage.attempts < stage.retry_policy.max_retries:
+                    if self._should_retry(stage, result.error):
                         stage.status = "pending"
                         stage.attempts += 1
-                        
+
                         # Auto-diagnose and apply fixes if enabled
                         if stage.retry_policy.auto_diagnose:
                             await self._diagnose_and_fix(stage, result, context)
-                        
+
                         # Backoff delay
-                        delay = stage.retry_policy.backoff_factor ** stage.attempts
+                        delay = stage.retry_policy.backoff_factor**stage.attempts
                         await asyncio.sleep(min(delay, 30))  # Cap at 30s
                     else:
                         stage.status = "failed"
                         failed.add(stage.id)
-        
+
+                _maybe_checkpoint()
+
+        _maybe_checkpoint()
         total_time = (datetime.now() - start_time).total_seconds()
         success = len(failed) == 0
-        
+
         return WorkflowResult(
             success=success,
             stages=stage_map,
             outputs=outputs,
             error=f"Stages failed: {failed}" if failed else None,
-            total_walltime=total_time
+            total_walltime=total_time,
         )
-    
+
+    async def resume(
+        self,
+        stages: list[ComputationalStage],
+        context: ToolContext,
+        checkpoint_path: str | Path,
+        budget_policy: BudgetPolicy | None = None,
+    ) -> WorkflowResult:
+        """Resume a workflow from a saved checkpoint.
+
+        The provided ``stages`` are used as the template; their runtime state is
+        overlaid with whatever is stored in the checkpoint.
+        """
+        checkpoint = WorkflowCheckpoint.load(checkpoint_path)
+        checkpoint_map = {s.id: s for s in checkpoint.stages}
+
+        restored_stages: list[ComputationalStage] = []
+        for stage in stages:
+            if stage.id in checkpoint_map:
+                restored_stages.append(checkpoint_map[stage.id])
+            else:
+                restored_stages.append(stage)
+
+        return await self.execute(
+            restored_stages,
+            context,
+            checkpoint_path=checkpoint_path,
+            budget_policy=budget_policy,
+        )
+
+    def _should_retry(self, stage: ComputationalStage, error: str | None) -> bool:
+        """Check whether a failed stage should be retried."""
+        if stage.attempts >= stage.retry_policy.max_retries:
+            return False
+
+        error_lower = (error or "").lower()
+        retry_on = set(stage.retry_policy.retry_on)
+        if "any" in retry_on:
+            return True
+
+        if "timeout" in retry_on and any(
+            tag in error_lower for tag in ("timeout", "timed out", "walltime")
+        ):
+            return True
+
+        if "oom" in retry_on and any(
+            tag in error_lower for tag in ("memory", "oom", "out of memory")
+        ):
+            return True
+
+        if "remote_failure" in retry_on and self._is_remote_failure(error):
+            return True
+
+        # Default: retry on any non-empty error when policy allows it
+        return bool(error)
+
+    @staticmethod
+    def _is_remote_failure(error: str | None) -> bool:
+        """Detect transient remote-execution failures worth retrying."""
+        if not error:
+            return False
+        error_lower = error.lower()
+        remote_markers = (
+            "ssh",
+            "connection",
+            "connection refused",
+            "timed out",
+            "timeout",
+            "eof occurred",
+            "temporarily unavailable",
+            "slurm",
+            "pbs",
+            "qsub",
+            "sbatch",
+            "remote execution failed",
+            "node failure",
+            "job killed",
+        )
+        return any(marker in error_lower for marker in remote_markers)
+
+    def _estimate_stage_cost(self, stage: ComputationalStage) -> CostEstimate:
+        """Heuristic cost estimate for a workflow stage.
+
+        Uses explicit resource hints in tool_input when available; otherwise
+        falls back to rough per-tool defaults.
+        """
+        inp = stage.tool_input
+        tool_lower = stage.tool.lower()
+
+        walltime_hours = float(
+            inp.get("walltime_hours")
+            or inp.get("walltime", "24:00:00").split(":")[0]
+            or 1.0
+        )
+        nodes = int(inp.get("nodes", 1))
+        ntasks = int(inp.get("ntasks_per_node", inp.get("cores", 4)))
+        memory_gb = float(inp.get("memory_gb", nodes * ntasks * 2))
+        storage_gb = float(inp.get("storage_gb", 1.0))
+
+        if "vasp" in tool_lower:
+            # Larger k-grid / encut / MD steps scale CPU work
+            encut = float(inp.get("encut", 520))
+            kpts = inp.get("kpoints", "1 1 1")
+            n_kpts = 1
+            if isinstance(kpts, str):
+                try:
+                    parts = [int(x) for x in kpts.split() if x.isdigit()]
+                    n_kpts = max(
+                        1, (parts[1] * parts[2] * parts[3]) if len(parts) >= 4 else 1
+                    )
+                except Exception:
+                    n_kpts = 1
+            walltime_hours *= max(1.0, encut / 520.0) * max(1.0, n_kpts / 8.0)
+        elif "lammps" in tool_lower:
+            n_steps = int(inp.get("n_steps", 1000))
+            walltime_hours *= max(1.0, n_steps / 1000.0)
+        elif "aimd" in tool_lower or "md" in tool_lower:
+            n_steps = int(inp.get("n_steps", inp.get("md_steps", 1000)))
+            walltime_hours *= max(1.0, n_steps / 1000.0)
+
+        cpu_hours = nodes * ntasks * walltime_hours
+        gpu_hours = (
+            walltime_hours if inp.get("queue") == "gpu" or "gpu" in tool_lower else 0.0
+        )
+
+        return CostEstimate(
+            cpu_hours=cpu_hours,
+            gpu_hours=gpu_hours,
+            memory_gb=memory_gb,
+            storage_gb=storage_gb,
+            walltime_hours=walltime_hours,
+        )
+
     async def _execute_stage(
         self,
         stage: ComputationalStage,
         context: ToolContext,
-        available_outputs: dict[str, Any]
+        available_outputs: dict[str, Any],
     ) -> ToolResult:
         """Execute a single stage."""
         stage.status = "running"
         stage.started_at = datetime.now()
-        
+
         # Resolve inputs from dependency outputs
         tool_input = self._resolve_inputs(stage.tool_input, available_outputs)
-        
+
         tool = self.registry.get(stage.tool)
         if not tool:
             return ToolResult(
-                data=None,
-                success=False,
-                error=f"Tool '{stage.tool}' not found"
+                data=None, success=False, error=f"Tool '{stage.tool}' not found"
             )
-        
+
         # Convert dict to tool's Pydantic input schema
-        if hasattr(tool, 'input_schema') and tool.input_schema:
+        if hasattr(tool, "input_schema") and tool.input_schema:
             try:
                 tool_input = tool.input_schema(**tool_input)
             except Exception as e:
@@ -172,38 +344,89 @@ class WorkflowEngine:
                 return ToolResult(
                     data=None,
                     success=False,
-                    error=f"Invalid input for '{stage.tool}': {e}"
+                    error=f"Invalid input for '{stage.tool}': {e}",
                 )
-        
+
         # Validate and execute
         result = await tool.call(tool_input, context)
-        
+
         stage.completed_at = datetime.now()
-        
+
         # Apply validation
         if result.success and stage.validation:
             valid = self._validate(result.data, stage.validation)
             if not valid:
                 result.success = False
                 result.error = f"Validation failed: {stage.validation.check}"
-        
+
         return result
-    
-    def _resolve_inputs(
+
+    def _execute_stage_sync(
         self,
-        tool_input: dict[str, Any],
-        available_outputs: dict[str, Any]
+        stage: ComputationalStage,
+        context: ToolContext,
+        available_outputs: dict[str, Any],
+    ) -> ToolResult:
+        """Synchronous wrapper used by task backends to run an async stage."""
+        return asyncio.run(self._execute_stage(stage, context, available_outputs))
+
+    async def _dispatch_stages(
+        self,
+        stages: list[ComputationalStage],
+        context: ToolContext,
+        available_outputs: dict[str, Any],
+    ) -> list[Any]:
+        """Submit ready stages to the task backend and await their results."""
+        task_ids: list[tuple[ComputationalStage, str]] = []
+        for stage in stages:
+            task_id = self.task_backend.send_task(
+                "huginn.workflow.stage",
+                args=(stage, context, available_outputs),
+                task_id=f"{context.session_id}:{stage.id}:{stage.attempts}",
+            )
+            task_ids.append((stage, task_id))
+
+        raw_results = await asyncio.gather(
+            *[
+                asyncio.to_thread(self.task_backend.wait_for, task_id)
+                for _, task_id in task_ids
+            ],
+            return_exceptions=True,
+        )
+
+        results: list[Any] = []
+        for (_, task_id), raw in zip(task_ids, raw_results):
+            if isinstance(raw, Exception):
+                results.append(raw)
+                continue
+            from huginn.queue.base import TaskResult
+
+            if not isinstance(raw, TaskResult):
+                results.append(RuntimeError(f"Unexpected task result for {task_id}"))
+                continue
+            if raw.status == "SUCCESS":
+                results.append(raw.result)
+            else:
+                results.append(RuntimeError(raw.error or f"Task {task_id} failed"))
+        return results
+
+    def _resolve_inputs(
+        self, tool_input: dict[str, Any], available_outputs: dict[str, Any]
     ) -> dict[str, Any]:
         """Resolve input references like '${stage_id.output_key}'."""
         resolved = {}
         for key, value in tool_input.items():
-            if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+            if (
+                isinstance(value, str)
+                and value.startswith("${")
+                and value.endswith("}")
+            ):
                 # Reference to another stage's output
                 ref = value[2:-1]  # stage_id.output_key
                 parts = ref.split(".")
                 stage_id = parts[0]
                 output_key = ".".join(parts[1:]) if len(parts) > 1 else None
-                
+
                 if stage_id in available_outputs:
                     stage_output = available_outputs[stage_id]
                     if output_key and isinstance(stage_output, dict):
@@ -215,33 +438,31 @@ class WorkflowEngine:
             else:
                 resolved[key] = value
         return resolved
-    
+
     async def _diagnose_and_fix(
-        self,
-        stage: ComputationalStage,
-        result: ToolResult,
-        context: ToolContext
+        self, stage: ComputationalStage, result: ToolResult, context: ToolContext
     ) -> None:
         """Diagnose stage failure and apply automatic fixes to tool_input.
-        
+
         Uses diagnose_tool to analyze error messages, then maps suggested
         fixes to the stage's tool_input for the next retry attempt.
         Also queries Sobko knowledge base for domain-specific guidance.
         """
         if not stage.retry_policy.auto_diagnose:
             return
-        
+
         error_msg = result.error or "Unknown error"
-        
+
         # Detect software and calculation type from stage context
         software = self._detect_software_from_stage(stage)
         calc_type = self._detect_calculation_type_from_stage(stage)
-        
+
         # Call diagnose_tool with error message
         diagnose_tool = self.registry.get("diagnose_tool")
         if diagnose_tool:
             try:
-                from huginn.tools.diagnose_tool import DiagnoseToolInput
+                from huginn.tools.diagnose_tool import DiagnoseInput as DiagnoseToolInput
+
                 diag_input = DiagnoseToolInput(
                     error_message=error_msg,
                     software=software,
@@ -249,34 +470,35 @@ class WorkflowEngine:
                     context=json.dumps(stage.tool_input, ensure_ascii=False)[:500],
                 )
                 diag_result = await diagnose_tool.call(diag_input, context)
-                
+
                 if diag_result.success and diag_result.data:
                     report = diag_result.data
                     findings = report.get("findings", [])
                     general_advice = report.get("general_advice", [])
                     next_steps = report.get("recommended_next_steps", [])
-                    
+
                     # Store diagnosis in stage metadata for logging
                     stage.tool_input["__diagnosis"] = {
                         "findings": findings[:3],
                         "advice": general_advice[:3],
                         "next_steps": next_steps[:3],
                     }
-                    
+
                     # Apply heuristic auto-fixes based on findings
                     if stage.retry_policy.apply_auto_fix:
                         fixes = self._extract_fixes_from_diagnosis(report, software)
                         if fixes:
                             self._apply_fixes_to_stage(stage, fixes, software)
-                
+
             except Exception:
                 pass  # Silently ignore diagnosis errors
-        
+
         # Also query Sobko knowledge base for additional context
         rag_tool = self.registry.get("rag_tool")
         if rag_tool:
             try:
                 from huginn.rag.rag_tool import RAGToolInput
+
                 rag_input = RAGToolInput(
                     action="search",
                     query=f"{software} {error_msg[:100]} 解决方法",
@@ -290,7 +512,7 @@ class WorkflowEngine:
                         stage.tool_input["__sobko_hints"] = kb_hints
             except Exception:
                 pass
-    
+
     def _detect_software_from_stage(self, stage: ComputationalStage) -> str | None:
         """Detect which software this stage uses."""
         tool_lower = stage.tool.lower()
@@ -306,18 +528,33 @@ class WorkflowEngine:
             return "Multiwfn"
         if "cp2k" in tool_lower:
             return "CP2K"
-        if "qe" in tool_lower or "quantum espresso" in tool_lower or "pw.x" in tool_lower:
+        if (
+            "qe" in tool_lower
+            or "quantum espresso" in tool_lower
+            or "pw.x" in tool_lower
+        ):
             return "QuantumESPRESSO"
         if "gromacs" in tool_lower:
             return "GROMACS"
         # Try to infer from tool_input
         params = json.dumps(stage.tool_input).lower()
-        for sw in ["gaussian", "orca", "vasp", "lammps", "cp2k", "qe", "gromacs", "multiwfn"]:
+        for sw in [
+            "gaussian",
+            "orca",
+            "vasp",
+            "lammps",
+            "cp2k",
+            "qe",
+            "gromacs",
+            "multiwfn",
+        ]:
             if sw in params:
                 return sw.title()
         return None
-    
-    def _detect_calculation_type_from_stage(self, stage: ComputationalStage) -> str | None:
+
+    def _detect_calculation_type_from_stage(
+        self, stage: ComputationalStage
+    ) -> str | None:
         """Detect calculation type from stage context."""
         params = json.dumps(stage.tool_input).lower()
         if any(k in params for k in ["scf", "dft", "pbe", "b3lyp"]):
@@ -331,7 +568,7 @@ class WorkflowEngine:
         if any(k in params for k in ["band", "dos"]):
             return "band_structure"
         return None
-    
+
     def _extract_fixes_from_diagnosis(
         self, report: dict[str, Any], software: str | None
     ) -> dict[str, Any]:
@@ -340,7 +577,7 @@ class WorkflowEngine:
         all_text = " ".join(
             f.get("text", "") for f in report.get("findings", [])
         ).lower()
-        
+
         # VASP-specific fixes
         if software == "VASP":
             if "converg" in all_text or "scf" in all_text:
@@ -350,21 +587,21 @@ class WorkflowEngine:
                 fixes["NCORE"] = 4
             if "band" in all_text:
                 fixes["NBANDS"] = "__increase_20pct"
-        
+
         # Gaussian-specific fixes
         elif software == "Gaussian":
             if "converg" in all_text:
                 fixes["scf"] = "(xqc,MaxCycle=128)"
             if "td" in all_text or "excited" in all_text:
                 fixes["IOp(9/40)"] = 4
-        
+
         # LAMMPS-specific fixes
         elif software == "LAMMPS":
             if "timestep" in all_text:
                 fixes["timestep"] = "__reduce_half"
             if "neighbor" in all_text:
                 fixes["neighbor"] = "0.3 bin"
-        
+
         # General fixes
         if "basis" in all_text or "diffuse" in all_text:
             fixes["__recommend_diffuse"] = True
@@ -372,14 +609,11 @@ class WorkflowEngine:
             fixes["__check_smearing"] = True
         if "grid" in all_text:
             fixes["__increase_grid"] = True
-        
+
         return fixes
-    
+
     def _apply_fixes_to_stage(
-        self,
-        stage: ComputationalStage,
-        fixes: dict[str, Any],
-        software: str | None
+        self, stage: ComputationalStage, fixes: dict[str, Any], software: str | None
     ) -> None:
         """Apply extracted fixes to stage tool_input."""
         if software == "VASP":
@@ -391,7 +625,7 @@ class WorkflowEngine:
                     overrides[key] = value
             stage.tool_input["incar_overrides"] = overrides
             stage.tool_input["__diagnosis_applied"] = list(fixes.keys())
-        
+
         elif software in ("Gaussian", "ORCA"):
             params = stage.tool_input.get("params", {})
             if not isinstance(params, dict):
@@ -401,7 +635,7 @@ class WorkflowEngine:
                     params[key] = value
             stage.tool_input["params"] = params
             stage.tool_input["__diagnosis_applied"] = list(fixes.keys())
-        
+
         elif software == "LAMMPS":
             existing = stage.tool_input.get("fixes", {})
             if not isinstance(existing, dict):
@@ -409,27 +643,27 @@ class WorkflowEngine:
             existing.update(fixes)
             stage.tool_input["fixes"] = existing
             stage.tool_input["__diagnosis_applied"] = list(existing.keys())
-        
+
         else:
             # Generic: store in metadata
             stage.tool_input["__auto_fixes"] = fixes
-    
+
     def _validate(self, data: Any, rule: ValidationRule) -> bool:
         """Apply validation rule to stage output."""
         if rule.check == "convergence":
             if isinstance(data, dict):
                 return data.get("converged", False)
             return False
-        
+
         if rule.check == "energy_sign":
             if isinstance(data, dict) and "energy" in data:
                 return data["energy"] < 0
             return True  # Can't validate, assume ok
-        
+
         if rule.check == "force_threshold":
             if isinstance(data, dict) and "max_force" in data:
                 threshold = rule.threshold or 0.01
                 return data["max_force"] < threshold
             return True
-        
+
         return True  # Custom validation not yet implemented

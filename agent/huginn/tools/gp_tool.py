@@ -7,6 +7,7 @@ available; otherwise falls back to a pure NumPy implementation.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,7 +15,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class CalibrationVariableSpec(BaseModel):
@@ -27,13 +28,19 @@ class GPToolInput(BaseModel):
     action: Literal["fit", "predict", "suggest", "calibrate"] = Field(default="fit")
     X: list[list[float]] = Field(default_factory=list, description="Training inputs")
     y: list[float] = Field(default_factory=list, description="Training targets")
-    X_new: list[list[float]] = Field(default_factory=list, description="Prediction candidate inputs")
+    X_new: list[list[float]] = Field(
+        default_factory=list, description="Prediction candidate inputs"
+    )
     length_scale: float = Field(default=1.0, gt=0)
     sigma_f: float = Field(default=1.0, gt=0, description="Signal variance")
     sigma_n: float = Field(default=1e-5, ge=0, description="Observation noise")
-    maximize: bool = Field(default=False, description="If True, maximize y; else minimize")
+    maximize: bool = Field(
+        default=False, description="If True, maximize y; else minimize"
+    )
     # Calibration / Bayesian optimization
-    objective_expression: str | None = Field(default=None, description="SymPy expression for the true objective")
+    objective_expression: str | None = Field(
+        default=None, description="SymPy expression for the true objective"
+    )
     calibration_variables: list[CalibrationVariableSpec] = Field(default_factory=list)
     n_initial: int = Field(default=5, ge=1)
     n_iterations: int = Field(default=10, ge=1)
@@ -68,11 +75,11 @@ class NumPyGP:
         self.alpha: np.ndarray | None = None
 
     @staticmethod
-    def _kernel(a: np.ndarray, b: np.ndarray, length_scale: float, sigma_f: float) -> np.ndarray:
+    def _kernel(
+        a: np.ndarray, b: np.ndarray, length_scale: float, sigma_f: float
+    ) -> np.ndarray:
         sqdist = (
-            np.sum(a**2, axis=1).reshape(-1, 1)
-            + np.sum(b**2, axis=1)
-            - 2 * a @ b.T
+            np.sum(a**2, axis=1).reshape(-1, 1) + np.sum(b**2, axis=1) - 2 * a @ b.T
         )
         return sigma_f**2 * np.exp(-0.5 * sqdist / length_scale**2)
 
@@ -117,13 +124,18 @@ class GPTool(HuginnTool):
     def _check_sklearn() -> bool:
         try:
             import sklearn.gaussian_process  # noqa: F401
+
             return True
         except ImportError:
             return False
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = GPToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -141,9 +153,13 @@ class GPTool(HuginnTool):
         X = np.asarray(args.X, dtype=float)
         y = np.asarray(args.y, dtype=float)
         if len(X) == 0 or len(y) == 0:
-            return ToolResult(data=None, success=False, error="X and y must be non-empty.")
+            return ToolResult(
+                data=None, success=False, error="X and y must be non-empty."
+            )
         if len(X) != len(y):
-            return ToolResult(data=None, success=False, error="X and y must have the same length.")
+            return ToolResult(
+                data=None, success=False, error="X and y must have the same length."
+            )
 
         # Use a tiny dummy prediction to verify the GP is usable.
         gp = self._create_gp(args)
@@ -165,7 +181,9 @@ class GPTool(HuginnTool):
 
     def _predict(self, args: GPToolInput) -> ToolResult:
         if not args.X_new:
-            return ToolResult(data=None, success=False, error="predict action requires X_new.")
+            return ToolResult(
+                data=None, success=False, error="predict action requires X_new."
+            )
         gp = self._create_gp(args)
         gp.fit(np.asarray(args.X, dtype=float), np.asarray(args.y, dtype=float))
         mu, sigma = gp.predict(np.asarray(args.X_new, dtype=float))
@@ -180,7 +198,11 @@ class GPTool(HuginnTool):
 
     def _suggest(self, args: GPToolInput) -> ToolResult:
         if not args.X_new:
-            return ToolResult(data=None, success=False, error="suggest action requires candidate X_new.")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="suggest action requires candidate X_new.",
+            )
         gp = self._create_gp(args)
         gp.fit(np.asarray(args.X, dtype=float), np.asarray(args.y, dtype=float))
         mu, sigma = gp.predict(np.asarray(args.X_new, dtype=float))
@@ -207,12 +229,22 @@ class GPTool(HuginnTool):
     def _create_gp(self, args: GPToolInput):
         if self._sklearn_available:
             from sklearn.gaussian_process import GaussianProcessRegressor
-            from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
+            from sklearn.gaussian_process.kernels import (
+                RBF,
+                WhiteKernel,
+            )
+            from sklearn.gaussian_process.kernels import (
+                ConstantKernel as C,
+            )
 
             kernel = C(args.sigma_f**2, (1e-3, 1e3)) * RBF(
                 args.length_scale, (1e-3, 1e3)
-            ) + WhiteKernel(noise_level=args.sigma_n**2, noise_level_bounds=(1e-10, 1e1))
-            return _SklearnGPAdapter(GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=0))
+            ) + WhiteKernel(
+                noise_level=args.sigma_n**2, noise_level_bounds=(1e-10, 1e1)
+            )
+            return _SklearnGPAdapter(
+                GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=0)
+            )
         return NumPyGP(args.length_scale, args.sigma_f, args.sigma_n)
 
     def _calibrate(self, args: GPToolInput) -> ToolResult:
@@ -262,14 +294,23 @@ class GPTool(HuginnTool):
             mu, sigma = gp.predict(cand_arr)
 
             incumbent = float(np.max(y_arr)) if args.maximize else float(np.min(y_arr))
-            ei = self._expected_improvement(mu, sigma, incumbent, maximize=args.maximize)
+            ei = self._expected_improvement(
+                mu, sigma, incumbent, maximize=args.maximize
+            )
             best_idx = int(np.argmax(ei))
             next_x = candidates[best_idx]
             next_y = evaluate(next_x)
 
             X.append(next_x)
             y.append(next_y)
-            history.append({"iteration": iteration, "X": next_x, "y": next_y, "ei": float(ei[best_idx])})
+            history.append(
+                {
+                    "iteration": iteration,
+                    "X": next_x,
+                    "y": next_y,
+                    "ei": float(ei[best_idx]),
+                }
+            )
 
         y_arr = np.asarray(y, dtype=float)
         best_idx = int(np.argmax(y_arr)) if args.maximize else int(np.argmin(y_arr))
@@ -299,7 +340,9 @@ class GPTool(HuginnTool):
         try:
             import sympy as sp
         except ImportError as exc:
-            raise RuntimeError("GP calibration requires sympy. Install with: pip install sympy") from exc
+            raise RuntimeError(
+                "GP calibration requires sympy. Install with: pip install sympy"
+            ) from exc
 
         symbols = {v.name: sp.Symbol(v.name) for v in args.calibration_variables}
         expr = sp.sympify(args.objective_expression, locals=symbols)
@@ -313,7 +356,9 @@ class GPTool(HuginnTool):
 
         tool = ToolRegistry.get(args.objective_tool)
         if tool is None:
-            raise RuntimeError(f"Objective tool '{args.objective_tool}' not found in registry.")
+            raise RuntimeError(
+                f"Objective tool '{args.objective_tool}' not found in registry."
+            )
 
         values = {name: float(row[i]) for i, name in enumerate(var_names)}
         tool_args = self._format_template(args.tool_input_template, values, args)
@@ -343,11 +388,12 @@ class GPTool(HuginnTool):
 
         if inspect.iscoroutinefunction(tool.call):
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
             except RuntimeError:
                 return asyncio.run(tool.call(tool_args))
             # Already inside an async loop: schedule and run to completion
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(asyncio.run, tool.call(tool_args))
                 return future.result()
@@ -365,7 +411,9 @@ class GPTool(HuginnTool):
         return current
 
     @staticmethod
-    def _lhs_samples(n: int, bounds: list[tuple[float, float]], rng: np.random.Generator) -> list[list[float]]:
+    def _lhs_samples(
+        n: int, bounds: list[tuple[float, float]], rng: np.random.Generator
+    ) -> list[list[float]]:
         """Generate Latin-hypercube-like samples within bounds."""
         dim = len(bounds)
         samples = np.zeros((n, dim))
@@ -418,6 +466,7 @@ def _phi_cdf(z: np.ndarray) -> np.ndarray:
         from scipy.special import erf
     except ImportError:
         import math
+
         erf = np.vectorize(math.erf)
     return 0.5 * (1 + erf(z / np.sqrt(2)))
 

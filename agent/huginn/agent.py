@@ -11,33 +11,37 @@ import asyncio
 import functools
 import os
 import time
+from collections.abc import AsyncIterator
 from contextlib import ExitStack
-from typing import Any, AsyncIterator
+from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from huginn.checkpointer import create_in_memory_checkpointer, persistent_checkpointer
-from huginn.prompts import HUGINN_SYSTEM_PROMPT, EXPLORATION_PROMPT
-from huginn.tools.registry import ToolRegistry
-from huginn.tools.adapter import ToolAdapter
+from huginn.benchmark import BenchmarkSuite
+from huginn.checkpointer import create_in_memory_checkpointer
 from huginn.models.registry import create_langchain_model
 from huginn.models.router import ModelRouter
-from huginn.pet import get_pet_bus, PetMood
+from huginn.permissions import PermissionConfig
+from huginn.personas import Persona
+from huginn.pet import PetMood, get_pet_bus
 from huginn.privacy import redact_secrets, scan_for_secrets
-from huginn.telemetry import get_telemetry_collector, TelemetryCollector
-from huginn.benchmark import BenchmarkSuite
+from huginn.prompts import EXPLORATION_PROMPT, HUGINN_SYSTEM_PROMPT
+from huginn.telemetry import NullTelemetryCollector, TelemetryCollector
+from huginn.tools.adapter import ToolAdapter
+from huginn.tools.registry import ToolRegistry
 from huginn.utils.context import compact_messages, estimate_message_tokens
-from huginn.utils.tokens import rough_token_count_for_text
 from huginn.utils.prompt_cache import PromptCacheBuilder
+from huginn.utils.tokens import rough_token_count_for_text
 
 
 class HuginnAgent:
     """Material Science specialized Agent.
-    
+
     Wraps EvoScientist's model and infrastructure with huginn-specific
     tools, prompts, exploration engine, memory, and skills.
     """
-    
+
     def __init__(
         self,
         model: Any | None = None,
@@ -64,6 +68,15 @@ class HuginnAgent:
         memory_decay_enabled: bool | None = None,
         memory_decay_interval_turns: int | None = None,
         memory_decay_prune_threshold: float | None = None,
+        workspace: str = ".",
+        kg_enabled: bool = False,
+        kg_depth: int = 1,
+        kg_top_k: int = 10,
+        auto_approve: bool | None = None,
+        compression_max_tokens: int | None = None,
+        telemetry_enabled: bool | None = None,
+        persona_name: str | None = None,
+        emotion_tracker: Any | None = None,
     ):
         self.model = model
         self.model_router = model_router
@@ -97,6 +110,9 @@ class HuginnAgent:
             begin_dialogs=self.begin_dialogs,
             cache_control=self.prompt_cache_control,
         )
+        # Detect provider so prompt-cache markers can be provider-specific.
+        self._cache_builder.set_provider(self._detect_provider())
+
         self.enable_exploration = enable_exploration
         self.profile_id = profile_id
         self.thread_id = thread_id
@@ -127,37 +143,107 @@ class HuginnAgent:
         self.memory_decay_interval_turns = memory_decay_interval_turns
         self.memory_decay_prune_threshold = memory_decay_prune_threshold
 
+        # Approval / automation
+        if auto_approve is None:
+            auto_approve = (
+                os.environ.get("HUGINN_AUTO_APPROVE", "0").lower() in ("1", "true", "yes")
+            )
+        self.auto_approve = auto_approve
+        self._permission_config = PermissionConfig(auto_approve_all=auto_approve)
+
+        # Tool output compression budget (separate from truncation budget)
+        if compression_max_tokens is None:
+            compression_max_tokens = int(
+                os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")
+            )
+        self.compression_max_tokens = compression_max_tokens
+
+        # Telemetry
+        if telemetry_enabled is None:
+            telemetry_enabled = (
+                os.environ.get("HUGINN_TELEMETRY_ENABLED", "1").lower() != "false"
+            )
+        self.telemetry_enabled = telemetry_enabled
+        self._telemetry_collector = (
+            TelemetryCollector() if telemetry_enabled else NullTelemetryCollector()
+        )
+
         # Security layer
         self.sandbox = sandbox
         self.audit = audit
 
         # Privacy controls (default to env vars if not explicitly passed)
         if privacy_redact_secrets is None:
-            privacy_redact_secrets = os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0"
+            privacy_redact_secrets = (
+                os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0"
+            )
         if privacy_block_on_secrets is None:
-            privacy_block_on_secrets = os.environ.get("HUGINN_PRIVACY_BLOCK_ON_SECRETS", "0") == "1"
+            privacy_block_on_secrets = (
+                os.environ.get("HUGINN_PRIVACY_BLOCK_ON_SECRETS", "0") == "1"
+            )
         self.privacy_redact_secrets = privacy_redact_secrets
         self.privacy_block_on_secrets = privacy_block_on_secrets
 
         # Context/output budgets
         if max_tool_output_tokens is None:
-            max_tool_output_tokens = int(os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000"))
+            max_tool_output_tokens = int(
+                os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")
+            )
         if context_budget_tokens is None:
-            context_budget_tokens = int(os.environ.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0"))
+            context_budget_tokens = int(
+                os.environ.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0")
+            )
         self.max_tool_output_tokens = max_tool_output_tokens
         self.context_budget_tokens = context_budget_tokens
+
+        # Knowledge graph integration
+        self.workspace = workspace
+        self.kg_enabled = kg_enabled
+        self.kg_depth = kg_depth
+        self.kg_top_k = kg_top_k
+        self._kg: Any | None = None
+
+        # Persona emotional trajectory
+        self.persona_name = persona_name
+        self.emotion_tracker = emotion_tracker
 
         # Memory integration
         if memory_manager is None:
             from huginn.memory.manager import MemoryManager
+
             memory_manager = MemoryManager()
         self.memory = memory_manager
 
         # Skills integration
         if skill_executor is None:
             from huginn.skills.base import DeclarativeSkillExecutor
+
             skill_executor = DeclarativeSkillExecutor(ToolRegistry)
         self.skills = skill_executor
+
+    def _detect_provider(self) -> str | None:
+        """Detect the LLM provider from the configured model."""
+        if self.model is None:
+            return None
+        # LangChain models often expose _llm_type.
+        llm_type = getattr(self.model, "_llm_type", None)
+        if isinstance(llm_type, str):
+            return llm_type
+        # Fallback to module/class name.
+        cls_name = self.model.__class__.__name__.lower()
+        module_name = getattr(self.model, "__module__", "").lower()
+        for hint in (module_name, cls_name):
+            if "anthropic" in hint or "claude" in hint:
+                return "anthropic"
+            if "openai" in hint:
+                return "openai"
+            if "kimi" in hint or "moonshot" in hint:
+                return "kimi"
+            if "deepseek" in hint:
+                return "deepseek"
+            if "google" in hint or "genai" in hint:
+                return "google"
+        return None
 
     @classmethod
     def from_provider(
@@ -169,7 +255,7 @@ class HuginnAgent:
         **kwargs: Any,
     ) -> HuginnAgent:
         """Create a HuginnAgent from any supported provider.
-        
+
         Unified factory that handles all supported LLM providers directly
         via their langchain integrations — no EvoScientist required.
         """
@@ -180,7 +266,7 @@ class HuginnAgent:
             base_url=base_url,
         )
         return cls(model=model_instance, **kwargs)
-    
+
     @classmethod
     def from_anthropic(
         cls,
@@ -190,7 +276,7 @@ class HuginnAgent:
     ) -> HuginnAgent:
         """Create via Anthropic Claude."""
         return cls.from_provider("anthropic", model=model, api_key=api_key, **kwargs)
-    
+
     @classmethod
     def from_openai(
         cls,
@@ -200,8 +286,10 @@ class HuginnAgent:
         **kwargs: Any,
     ) -> HuginnAgent:
         """Create via OpenAI."""
-        return cls.from_provider("openai", model=model, api_key=api_key, base_url=base_url, **kwargs)
-    
+        return cls.from_provider(
+            "openai", model=model, api_key=api_key, base_url=base_url, **kwargs
+        )
+
     @classmethod
     def from_ollama(
         cls,
@@ -211,7 +299,7 @@ class HuginnAgent:
     ) -> HuginnAgent:
         """Create via local Ollama."""
         return cls.from_provider("ollama", model=model, base_url=base_url, **kwargs)
-    
+
     @classmethod
     def from_deepseek(
         cls,
@@ -221,7 +309,7 @@ class HuginnAgent:
     ) -> HuginnAgent:
         """Create via DeepSeek."""
         return cls.from_provider("deepseek", model=model, api_key=api_key, **kwargs)
-    
+
     @classmethod
     def from_google(
         cls,
@@ -231,7 +319,7 @@ class HuginnAgent:
     ) -> HuginnAgent:
         """Create via Google GenAI (Gemini)."""
         return cls.from_provider("google-genai", model=model, api_key=api_key, **kwargs)
-    
+
     @classmethod
     def from_evo_config(
         cls,
@@ -242,9 +330,10 @@ class HuginnAgent:
         """Create a HuginnAgent using EvoScientist's model configuration."""
         try:
             from EvoScientist.llm.models import get_chat_model
+
             model = get_chat_model(model=model_name, provider=provider)
-        except ImportError:
-            raise ImportError("EvoScientist not installed.")
+        except ImportError as err:
+            raise ImportError("EvoScientist not installed.") from err
         return cls(model=model, **kwargs)
 
     @classmethod
@@ -272,14 +361,19 @@ class HuginnAgent:
         kwargs = config.build_agent_kwargs(profile_id=profile_id)
         kwargs.update(overrides)
         return cls(**kwargs)
-    
+
     def register_tool(self, tool: Any) -> None:
         """Register a HuginnTool or LangChain tool."""
         from huginn.tools.base import HuginnTool
 
         if isinstance(tool, HuginnTool):
             self.langchain_tools.append(
-                ToolAdapter.adapt(tool, max_tool_output_tokens=self.max_tool_output_tokens)
+                ToolAdapter.adapt(
+                    tool,
+                    max_tool_output_tokens=self.max_tool_output_tokens,
+                    compression_max_tokens=self.compression_max_tokens,
+                    permission_config=self._permission_config,
+                )
             )
         else:
             # Assume it's already a LangChain tool
@@ -304,6 +398,8 @@ class HuginnAgent:
                         memory_manager=self.memory,
                         agent_factory=self.agent_factory,
                         max_tool_output_tokens=self.max_tool_output_tokens,
+                        compression_max_tokens=self.compression_max_tokens,
+                        permission_config=self._permission_config,
                     )
                 )
             else:
@@ -327,7 +423,7 @@ class HuginnAgent:
         """Build the LangGraph agent graph."""
         if self._agent_graph is not None:
             return self._agent_graph
-        
+
         # Try deepagents first (for full middleware support)
         try:
             from deepagents import create_deep_agent
@@ -349,7 +445,7 @@ class HuginnAgent:
 
         except ImportError:
             return self._build_simple_graph()
-    
+
     def _build_simple_graph(self) -> Any:
         """Build a simple ReAct agent without deepagents."""
         try:
@@ -370,12 +466,12 @@ class HuginnAgent:
             self._agent_graph = agent
             return agent
 
-        except ImportError:
+        except ImportError as err:
             raise ImportError(
                 "Neither deepagents nor langgraph prebuilt agents are available. "
                 "Install one of them to use HuginnAgent."
-            )
-    
+            ) from err
+
     def _build_memory_text(self, query: str | None = None) -> str:
         """Recall relevant long-term memory formatted for the prompt tail.
 
@@ -390,17 +486,59 @@ class HuginnAgent:
         except Exception:
             return ""
 
+    def _build_kg_text(self, query: str) -> str:
+        """Query the project knowledge graph and format results for the prompt."""
+        if not self.kg_enabled:
+            return ""
+        try:
+            from huginn.kg.graph import ProjectKnowledgeGraph
+
+            if self._kg is None:
+                self._kg = ProjectKnowledgeGraph(Path(self.workspace) / ".huginn")
+            result = self._kg.query(query, depth=self.kg_depth, top_k=self.kg_top_k)
+            nodes = {n["id"] for n in result.get("nodes", [])}
+            if not nodes:
+                return ""
+            text = self._kg.to_text(nodes)
+            if not text:
+                return ""
+            return (
+                "### Project Knowledge Context\n"
+                "The following project-specific facts and relationships may help:\n"
+                f"{text}\n"
+                "### End Project Knowledge Context"
+            )
+        except Exception:
+            return ""
+
     def _build_state_modifier(self) -> list[SystemMessage]:
         """Static system message used as the graph state modifier."""
         return self._cache_builder.build_state_modifier()
 
     def _build_input_messages(
-        self, message: str, memory_text: str | None = None
+        self, message: str, memory_text: str | None = None, kg_text: str | None = None
     ) -> list[Any]:
-        """Dynamic input messages: memory context + current user."""
+        """Dynamic input messages: memory context + KG context + current user."""
         if memory_text is None:
             memory_text = self._build_memory_text(query=message)
-        return self._cache_builder.build_input_messages(memory_text, message)
+        if kg_text is None:
+            kg_text = self._build_kg_text(query=message)
+        messages = self._cache_builder.build_input_messages(
+            memory_text, message, kg_text=kg_text
+        )
+        emotion_text = self._build_emotion_text(message)
+        if emotion_text:
+            # Insert the mood context just before the current user message so it
+            # remains dynamic and does not invalidate the cached static prefix.
+            messages.insert(-1, SystemMessage(content=emotion_text))
+        return messages
+
+    def _build_emotion_text(self, message: str) -> str | None:
+        """Update the persona's emotional trajectory and return mood context."""
+        if self.emotion_tracker is None:
+            return None
+        self.emotion_tracker.update_from_message(message, source="user")
+        return self.emotion_tracker.context_prompt()
 
     def _rebuild_cache_builder(self) -> None:
         """Recreate the cache builder when the system prompt changes."""
@@ -409,6 +547,41 @@ class HuginnAgent:
             begin_dialogs=self.begin_dialogs,
             cache_control=self.prompt_cache_control,
         )
+        self._cache_builder.set_provider(self._detect_provider())
+
+    def set_persona(
+        self,
+        persona: Persona | None = None,
+        system_prompt: str | None = None,
+        begin_dialogs: list[tuple[str, str]] | None = None,
+        emotion_tracker: Any | None = None,
+    ) -> None:
+        """Switch the agent's active persona at runtime.
+
+        Rebuilds the prompt-cache builder and invalidates the compiled graph so
+        the new system prompt and begin dialogs take effect on the next turn.
+        Memory and knowledge-graph state are preserved.
+        """
+        if persona is not None:
+            self.persona_name = persona.name
+            self.system_prompt = system_prompt or persona.system_prompt
+            self.begin_dialogs = (
+                begin_dialogs
+                if begin_dialogs is not None
+                else [
+                    (d.get("role", "user"), d.get("content", ""))
+                    for d in persona.begin_dialogs
+                ]
+            )
+        else:
+            if system_prompt is not None:
+                self.system_prompt = system_prompt
+            if begin_dialogs is not None:
+                self.begin_dialogs = begin_dialogs
+        if emotion_tracker is not None:
+            self.emotion_tracker = emotion_tracker
+        self._rebuild_cache_builder()
+        self._agent_graph = None
 
     def telemetry_summary(self) -> dict[str, Any]:
         """Return a coarse summary of agent telemetry spans."""
@@ -422,7 +595,7 @@ class HuginnAgent:
         """Release resources held by the agent (checkpointer, etc.)."""
         self._exit_stack.close()
 
-    def __enter__(self) -> "HuginnAgent":
+    def __enter__(self) -> HuginnAgent:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -474,7 +647,7 @@ class HuginnAgent:
             if stats:
                 break
         return stats
-    
+
     def _process_stream_state(
         self,
         state: dict[str, Any],
@@ -523,7 +696,9 @@ class HuginnAgent:
                 yield {
                     "messages": [
                         HumanMessage(content=message),
-                        AIMessage(content=f"I can't send this message because it may contain sensitive data: {labels}. Please remove the secrets and try again."),
+                        AIMessage(
+                            content=f"I can't send this message because it may contain sensitive data: {labels}. Please remove the secrets and try again."
+                        ),
                     ]
                 }
                 return
@@ -542,7 +717,9 @@ class HuginnAgent:
         from huginn.telemetry import set_telemetry_collector
 
         set_telemetry_collector(self._telemetry_collector)
-        with self._telemetry_collector.span("agent_turn", thread_id=thread_id) as turn_span:
+        with self._telemetry_collector.span(
+            "agent_turn", thread_id=thread_id
+        ) as turn_span:
             graph = self.build_graph()
 
             # Build input stream: begin-dialogs (static), recalled memory
@@ -552,9 +729,7 @@ class HuginnAgent:
             memory_text = self._build_memory_text(query=message)
             messages = self._build_input_messages(message, memory_text=memory_text)
 
-            inputs = {
-                "messages": messages
-            }
+            inputs = {"messages": messages}
 
             # Compact initial messages if a context budget is configured.
             if self.context_budget_tokens > 0:
@@ -599,7 +774,9 @@ class HuginnAgent:
                         self._process_stream_state(state, turn_span, thread_id, pet)
                         yield state
                 else:
-                    async for state in graph.astream(inputs, config, stream_mode="values"):
+                    async for state in graph.astream(
+                        inputs, config, stream_mode="values"
+                    ):
                         self._process_stream_state(state, turn_span, thread_id, pet)
                         yield state
             except Exception as exc:
@@ -634,7 +811,7 @@ class HuginnAgent:
         """Enter exploration mode for systematic design-space search."""
         if not self.enable_exploration:
             raise RuntimeError("Exploration mode is disabled")
-        
+
         exploration_prompt = self.system_prompt + "\n\n" + EXPLORATION_PROMPT
 
         original_prompt = self.system_prompt
@@ -649,35 +826,45 @@ class HuginnAgent:
             self.system_prompt = original_prompt
             self._rebuild_cache_builder()
             self._agent_graph = None
-    
+
     def invoke(self, message: str, thread_id: str = "default") -> dict[str, Any]:
         """Synchronous single-turn invocation."""
         import asyncio
-        
+
         async def _run():
             final_state = None
             async for state in self.chat(message, thread_id):
                 final_state = state
             return final_state
-        
+
         try:
             loop = asyncio.get_running_loop()
             return loop.run_until_complete(_run())
         except RuntimeError:
             return asyncio.run(_run())
-    
+
     # --- Memory shortcuts ---
-    
-    def remember(self, content: str, category: str = "fact", tags: list[str] | None = None, importance: float = 0.5) -> str:
+
+    def remember(
+        self,
+        content: str,
+        category: str = "fact",
+        tags: list[str] | None = None,
+        importance: float = 0.5,
+    ) -> str:
         """Explicitly store a fact in long-term memory."""
-        return self.memory.remember(content, category=category, tags=tags, importance=importance)
-    
-    def recall(self, query: str, category: str | None = None, top_k: int = 5) -> list[dict[str, Any]]:
+        return self.memory.remember(
+            content, category=category, tags=tags, importance=importance
+        )
+
+    def recall(
+        self, query: str, category: str | None = None, top_k: int = 5
+    ) -> list[dict[str, Any]]:
         """Search long-term memory."""
         return self.memory.recall(query, category=category, top_k=top_k)
-    
+
     # --- Skills ---
-    
+
     async def execute_skill(
         self,
         skill_name: str,
@@ -686,16 +873,17 @@ class HuginnAgent:
     ) -> dict[str, Any]:
         """Execute a preset skill by name."""
         from huginn.skills.registry import SkillRegistry
-        
+
         skill = SkillRegistry.get(skill_name)
         if skill is None:
             return {"success": False, "error": f"Skill '{skill_name}' not found"}
-        
+
         return await self.skills.execute(skill, params, context or {})
-    
+
     def list_skills(self, category: str | None = None) -> list[str]:
         """List available skills."""
         from huginn.skills.registry import SkillRegistry
+
         return SkillRegistry.list_skills(category=category)
 
 
@@ -704,6 +892,7 @@ def retry_llm_call(max_retries: int = 3, backoff: float = 1.0):
 
     Catches rate-limit, timeout, and transient API errors.
     """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -735,7 +924,9 @@ def retry_llm_call(max_retries: int = 3, backoff: float = 1.0):
                     wait = backoff * (2 ** (attempt - 1))
                     time.sleep(wait)
             raise last_exc
+
         return wrapper
+
     return decorator
 
 

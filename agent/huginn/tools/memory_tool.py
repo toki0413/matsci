@@ -14,10 +14,18 @@ from huginn.types import ToolResult
 
 class RememberInput(BaseModel):
     content: str = Field(description="The fact, insight, or observation to remember.")
-    category: str = Field(default="fact", description="Memory category: fact, insight, conversation, calculation, error, episode.")
+    category: str = Field(
+        default="fact",
+        description="Memory category: fact, insight, conversation, calculation, error, episode.",
+    )
     tags: list[str] = Field(default_factory=list, description="Tags for filtering.")
-    importance: float = Field(default=0.5, ge=0.0, le=1.0, description="Importance score 0-1.")
-    tier: str = Field(default="mid", description="Memory tier: short (6h), mid (7d), long (permanent).")
+    importance: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="Importance score 0-1."
+    )
+    tier: str = Field(
+        default="mid",
+        description="Memory tier: short (6h), mid (7d), long (permanent).",
+    )
 
 
 class RememberOutput(BaseModel):
@@ -28,8 +36,12 @@ class RememberOutput(BaseModel):
 class RecallInput(BaseModel):
     query: str = Field(description="Search query for long-term memory.")
     category: str | None = Field(default=None, description="Optional category filter.")
-    tier: str | None = Field(default=None, description="Optional tier filter: short, mid, long.")
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of memories to retrieve.")
+    tier: str | None = Field(
+        default=None, description="Optional tier filter: short, mid, long."
+    )
+    top_k: int = Field(
+        default=5, ge=1, le=20, description="Number of memories to retrieve."
+    )
 
 
 class RecallOutput(BaseModel):
@@ -46,7 +58,11 @@ class RememberTool(HuginnTool[RememberInput, RememberOutput]):
 
     async def call(self, args: RememberInput, context) -> ToolResult:
         if context.memory_manager is None:
-            return ToolResult(data=None, success=False, error="Memory manager not available in this context.")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="Memory manager not available in this context.",
+            )
         try:
             mid = context.memory_manager.remember(
                 content=args.content,
@@ -66,7 +82,9 @@ class RememberTool(HuginnTool[RememberInput, RememberOutput]):
 
 class RecallTool(HuginnTool[RecallInput, RecallOutput]):
     name = "recall"
-    description = "Search long-term memory for relevant facts, insights, or prior conversations."
+    description = (
+        "Search long-term memory for relevant facts, insights, or prior conversations."
+    )
     destructive = False
     read_only = True
     input_schema = RecallInput
@@ -74,7 +92,11 @@ class RecallTool(HuginnTool[RecallInput, RecallOutput]):
 
     async def call(self, args: RecallInput, context) -> ToolResult:
         if context.memory_manager is None:
-            return ToolResult(data=None, success=False, error="Memory manager not available in this context.")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="Memory manager not available in this context.",
+            )
         try:
             results = context.memory_manager.recall(
                 query=args.query,

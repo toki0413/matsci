@@ -1,15 +1,19 @@
 """Workflow engine package."""
 
-from huginn.workflows.engine import (
-    WorkflowEngine,
-    ComputationalStage,
-    WorkflowResult,
-    ValidationRule,
-    RetryPolicy,
-)
-
 # Import submodules to auto-register workflow templates
-from huginn.workflows import templates_qc, templates_fea, templates_cfd, templates_symbolic
+from huginn.workflows import (
+    templates_cfd,
+    templates_fea,
+    templates_qc,
+    templates_symbolic,
+)
+from huginn.workflows.engine import (
+    ComputationalStage,
+    RetryPolicy,
+    ValidationRule,
+    WorkflowEngine,
+    WorkflowResult,
+)
 
 __all__ = [
     "WorkflowEngine",
@@ -17,4 +21,8 @@ __all__ = [
     "WorkflowResult",
     "ValidationRule",
     "RetryPolicy",
+    "templates_cfd",
+    "templates_fea",
+    "templates_qc",
+    "templates_symbolic",
 ]

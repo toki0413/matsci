@@ -10,10 +10,11 @@ from __future__ import annotations
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Generator
+from typing import Any
 
 
 @dataclass
@@ -108,7 +109,10 @@ class TelemetryCollector:
 
         return {
             "total_spans": sum(counts.values()),
-            "by_name": {name: {"count": counts[name], "duration_ms": totals[name]} for name in counts},
+            "by_name": {
+                name: {"count": counts[name], "duration_ms": totals[name]}
+                for name in counts
+            },
         }
 
     def clear(self) -> None:
@@ -136,3 +140,40 @@ def get_telemetry_collector() -> TelemetryCollector:
 def set_telemetry_collector(collector: TelemetryCollector | None) -> None:
     """Replace the current telemetry collector."""
     _telemetry_ctx.set(collector)
+
+
+class NullTelemetryCollector(TelemetryCollector):
+    """Telemetry collector that discards all spans.
+
+    Used when telemetry is disabled so that instrumented call sites can keep
+    using ``span()`` and ``add_event()`` without branching.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    @contextmanager
+    def span(
+        self,
+        name: str,
+        **metadata: Any,
+    ) -> Generator[TelemetrySpan, None, None]:
+        # Yield a throwaway finished span so callers can still inspect metadata.
+        span = TelemetrySpan(name=name, metadata=dict(metadata))
+        span.finish()
+        try:
+            yield span
+        finally:
+            pass
+
+    def add_event(self, name: str, **metadata: Any) -> None:
+        pass
+
+    def to_dict(self) -> list[dict[str, Any]]:
+        return []
+
+    def summary(self) -> dict[str, Any]:
+        return {"total_spans": 0, "by_name": {}}
+
+    def clear(self) -> None:
+        pass

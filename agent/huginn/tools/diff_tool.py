@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class DiffToolInput(BaseModel):
@@ -21,26 +21,38 @@ class DiffToolInput(BaseModel):
 
 class DiffTool(HuginnTool):
     """Compare two calculations semantically (not just text diff)."""
-    
+
     name = "diff_tool"
     description = "Semantically compare two calculations: parameter changes, mathematical structure differences, and physical implications"
     input_schema = DiffToolInput
-    
+
     def is_read_only(self, args: DiffToolInput) -> bool:
         return True
-    
+
     async def call(self, args: DiffToolInput, context: ToolContext) -> ToolResult:
         # TODO: integrate math-anything MathDiffer
-        
+
         return ToolResult(
             data={
                 "comparison_type": args.comparison_type,
                 "changes": [
-                    {"type": "parameter", "field": "ENCUT", "old": 400, "new": 520, "impact": "improved basis set completeness"},
-                    {"type": "result", "field": "energy", "old": -100.0, "new": -102.5, "impact": "lower total energy"},
+                    {
+                        "type": "parameter",
+                        "field": "ENCUT",
+                        "old": 400,
+                        "new": 520,
+                        "impact": "improved basis set completeness",
+                    },
+                    {
+                        "type": "result",
+                        "field": "energy",
+                        "old": -100.0,
+                        "new": -102.5,
+                        "impact": "lower total energy",
+                    },
                 ],
                 "semantic_summary": "ENCUT increase from 400 to 520 eV led to ~2.5% energy improvement, indicating previous basis set was incomplete.",
-                "note": "Full semantic diff requires math-anything MathDiffer integration"
+                "note": "Full semantic diff requires math-anything MathDiffer integration",
             },
-            success=True
+            success=True,
         )

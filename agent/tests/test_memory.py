@@ -3,11 +3,9 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from huginn.memory.session import SessionContext, ToolCallRecord
 from huginn.memory.longterm import LongTermMemory
-from huginn.memory.manager import MemoryManager, MemoryConfig
+from huginn.memory.manager import MemoryConfig, MemoryManager
+from huginn.memory.session import SessionContext, ToolCallRecord
 from huginn.types import AgentMessage, ToolResult
 
 
@@ -27,7 +25,9 @@ class TestSessionContext:
 
     def test_tool_calls(self):
         ctx = SessionContext()
-        ctx.add_tool_call(ToolCallRecord(tool_name="vasp_tool", input_args={"action": "relax"}))
+        ctx.add_tool_call(
+            ToolCallRecord(tool_name="vasp_tool", input_args={"action": "relax"})
+        )
         assert len(ctx.tool_calls) == 1
         assert ctx.tool_calls[0].tool_name == "vasp_tool"
 
@@ -43,7 +43,9 @@ class TestLongTermMemory:
     def test_store_and_retrieve(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = LongTermMemory(db_path=Path(tmp) / "memory.db")
-            entry_id = mem.store("Ti has hcp structure", category="fact", tags=["Ti", "structure"])
+            entry_id = mem.store(
+                "Ti has hcp structure", category="fact", tags=["Ti", "structure"]
+            )
             assert entry_id.startswith("mem_")
 
             results = mem.retrieve("hcp structure")
@@ -80,7 +82,9 @@ class TestMemoryManager:
     def test_promote_tool_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = LongTermMemory(db_path=Path(tmp) / "memory.db")
-            mgr = MemoryManager(longterm=mem, config=MemoryConfig(auto_promote_to_longterm=True))
+            mgr = MemoryManager(
+                longterm=mem, config=MemoryConfig(auto_promote_to_longterm=True)
+            )
             mgr.add_tool_call(
                 "vasp_tool",
                 {"action": "relax"},
@@ -94,6 +98,8 @@ class TestMemoryManager:
         with tempfile.TemporaryDirectory() as tmp:
             mem = LongTermMemory(db_path=Path(tmp) / "memory.db")
             mgr = MemoryManager(longterm=mem)
-            mgr.remember("Si band gap is 1.1 eV", category="fact", tags=["Si", "band_gap"])
+            mgr.remember(
+                "Si band gap is 1.1 eV", category="fact", tags=["Si", "band_gap"]
+            )
             prompt = mgr.recall_for_prompt("band gap")
             assert "Si band gap" in prompt

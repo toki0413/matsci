@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class GitToolInput(BaseModel):
@@ -31,9 +31,13 @@ class GitTool(HuginnTool):
     def is_read_only(self, args: GitToolInput) -> bool:
         return True
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = GitToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
 
         cmd_map = {
             "status": ["git", "status", "--short"],
@@ -42,7 +46,11 @@ class GitTool(HuginnTool):
         }
         cmd = cmd_map.get(input_data.action)
         if cmd is None:
-            return ToolResult(data=None, success=False, error=f"Unknown git action: {input_data.action}")
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Unknown git action: {input_data.action}",
+            )
 
         try:
             result = subprocess.run(
@@ -54,7 +62,9 @@ class GitTool(HuginnTool):
                 errors="replace",
                 timeout=30.0,
             )
-            output = (result.stdout + result.stderr).splitlines()[: input_data.max_lines]
+            output = (result.stdout + result.stderr).splitlines()[
+                : input_data.max_lines
+            ]
             return ToolResult(
                 data={
                     "action": input_data.action,

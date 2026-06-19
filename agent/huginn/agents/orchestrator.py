@@ -6,13 +6,14 @@ Inspired by Claude Code Agent Teams (Lead + Teammates) and Hermes PolyBrain.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from huginn.agents.factory import AgentFactory
-from huginn.memory.manager import MemoryManager
 from huginn.memory.longterm import LongTermMemory
+from huginn.memory.manager import MemoryManager
 
 
 @dataclass
@@ -82,9 +83,15 @@ class Orchestrator:
             for p in self.factory.list_profiles()
         )
         lead = self.factory.create_lead()
-        prompt = _PLANNER_PROMPT.format(profiles=profiles) + f"\n\nObjective: {objective}"
+        prompt = (
+            _PLANNER_PROMPT.format(profiles=profiles) + f"\n\nObjective: {objective}"
+        )
         state = lead.invoke(prompt)
-        raw = state.get("messages", [{}])[-1].content if isinstance(state, dict) and "messages" in state else str(state)
+        raw = (
+            state.get("messages", [{}])[-1].content
+            if isinstance(state, dict) and "messages" in state
+            else str(state)
+        )
         return self._parse_plan(objective, raw)
 
     def _parse_plan(self, objective: str, raw: str) -> TaskPlan:
@@ -98,11 +105,13 @@ class Orchestrator:
             tasks = [SubTask(**t) for t in data.get("tasks", [])]
         except Exception:
             # Fallback: single task for lead agent
-            tasks = [SubTask(
-                task_id="t1",
-                agent_id="lead",
-                prompt=text or objective,
-            )]
+            tasks = [
+                SubTask(
+                    task_id="t1",
+                    agent_id="lead",
+                    prompt=text or objective,
+                )
+            ]
         return TaskPlan(objective=objective, tasks=tasks)
 
     async def execute(
@@ -120,10 +129,8 @@ class Orchestrator:
             async with semaphore:
                 task.status = "running"
                 if on_status:
-                    try:
+                    with contextlib.suppress(Exception):
                         on_status(task)
-                    except Exception:
-                        pass
                 try:
                     # Build context from dependencies
                     dep_context = ""
@@ -149,18 +156,13 @@ class Orchestrator:
                     task.result = f"Error: {exc}"
                     result.outputs[task.task_id] = task.result
                 if on_status:
-                    try:
+                    with contextlib.suppress(Exception):
                         on_status(task)
-                    except Exception:
-                        pass
                 completed.add(task.task_id)
 
         pending = list(plan.tasks)
         while pending or running:
-            ready = [
-                t for t in pending
-                if set(t.depends_on) <= completed
-            ]
+            ready = [t for t in pending if set(t.depends_on) <= completed]
             for t in ready:
                 pending.remove(t)
                 coro = asyncio.create_task(run_task(t))
@@ -206,7 +208,9 @@ class Orchestrator:
         result.summary = summary
         return summary
 
-    async def run(self, objective: str, on_status: Any | None = None) -> OrchestratorResult:
+    async def run(
+        self, objective: str, on_status: Any | None = None
+    ) -> OrchestratorResult:
         """Plan, execute, and synthesize in one call."""
         plan = await self.plan(objective)
         result = await self.execute(plan, on_status=on_status)
@@ -217,7 +221,9 @@ class Orchestrator:
 
     def _make_sub_memory(self) -> MemoryManager:
         """Create a MemoryManager that shares long-term memory but has a fresh session."""
-        longterm = self.memory_manager.longterm if self.memory_manager else LongTermMemory()
+        longterm = (
+            self.memory_manager.longterm if self.memory_manager else LongTermMemory()
+        )
         return MemoryManager(longterm=longterm)
 
     @staticmethod

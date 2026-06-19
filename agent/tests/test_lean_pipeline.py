@@ -1,10 +1,10 @@
 """End-to-end tests for the Python → Lean 4 stability verification pipeline."""
 
-import pytest
 from pathlib import Path
 
-from huginn.lean.pipeline import StabilityPipeline
+import pytest
 
+from huginn.lean.pipeline import StabilityPipeline
 
 LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
@@ -34,10 +34,16 @@ class TestStabilityPipeline:
         assert "false" in result.stdout
 
     def test_hexagonal_zinc(self, pipe):
-        result = pipe.verify_hexagonal({
-            "C11": 165.0, "C12": 31.0, "C13": 50.0,
-            "C33": 61.0, "C44": 39.0, "C66": 67.0,
-        })
+        result = pipe.verify_hexagonal(
+            {
+                "C11": 165.0,
+                "C12": 31.0,
+                "C13": 50.0,
+                "C33": 61.0,
+                "C44": 39.0,
+                "C66": 67.0,
+            }
+        )
         assert result.success, result.stderr
         assert "true" in result.stdout
         # Check that moduli and AU are present in output
@@ -52,11 +58,19 @@ class TestStabilityPipeline:
         assert au > 0.0  # zinc is anisotropic
 
     def test_orthorhombic_olivine(self, pipe):
-        result = pipe.verify_orthorhombic({
-            "C11": 324.0, "C22": 197.0, "C33": 235.0,
-            "C44": 64.0,  "C55": 78.0,  "C66": 79.0,
-            "C12": 59.0,  "C13": 79.0,  "C23": 78.0,
-        })
+        result = pipe.verify_orthorhombic(
+            {
+                "C11": 324.0,
+                "C22": 197.0,
+                "C33": 235.0,
+                "C44": 64.0,
+                "C55": 78.0,
+                "C66": 79.0,
+                "C12": 59.0,
+                "C13": 79.0,
+                "C23": 78.0,
+            }
+        )
         assert result.success, result.stderr
         assert "true" in result.stdout
         lines = result.stdout.strip().splitlines()

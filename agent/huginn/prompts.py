@@ -159,7 +159,7 @@ You are now in **Exploration Mode**. Your goal is to systematically explore a de
    - Detect patterns in successes/failures
    - Generate follow-up hypotheses
 
-5. **Adaptive Refinement**: 
+5. **Adaptive Refinement**:
    - If a region shows promise → zoom in (finer grid, more candidates)
    - If a region is flat or consistently poor → prune
    - If results contradict hypothesis → backtrack and reformulate

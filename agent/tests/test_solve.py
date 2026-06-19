@@ -7,11 +7,10 @@ import asyncio
 import numpy as np
 import pytest
 
-from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext
 from huginn.unified import solve
 from huginn.unified.models import heat_equation_fem, linear_elasticity_fem
-
 
 CTX = ToolContext(session_id="test", workspace=".")
 
@@ -50,16 +49,18 @@ class TestUnifiedSymbolicSolve:
         return SymbolicMathTool()
 
     def test_unified_solve_fem(self, tool):
-        result = asyncio.run(tool.call(
-            SymbolicMathInput(
-                action="unified",
-                target="solve",
-                expression="linear_elasticity_fem",
-                variable="fem",
-                order=6,
-            ),
-            CTX,
-        ))
+        result = asyncio.run(
+            tool.call(
+                SymbolicMathInput(
+                    action="unified",
+                    target="solve",
+                    expression="linear_elasticity_fem",
+                    variable="fem",
+                    order=6,
+                ),
+                CTX,
+            )
+        )
         assert result.success
         assert result.data["method"] == "fem"
         assert result.data["n_dof"] == 7
@@ -67,16 +68,18 @@ class TestUnifiedSymbolicSolve:
         assert result.data["residual"] < 1e-10
 
     def test_unified_solve_fd(self, tool):
-        result = asyncio.run(tool.call(
-            SymbolicMathInput(
-                action="unified",
-                target="solve",
-                expression="heat_equation_fem",
-                variable="fd",
-                order=5,
-            ),
-            CTX,
-        ))
+        result = asyncio.run(
+            tool.call(
+                SymbolicMathInput(
+                    action="unified",
+                    target="solve",
+                    expression="heat_equation_fem",
+                    variable="fd",
+                    order=5,
+                ),
+                CTX,
+            )
+        )
         assert result.success
         assert result.data["method"] == "fd"
         assert result.data["n_dof"] == 5

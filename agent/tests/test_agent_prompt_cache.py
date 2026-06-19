@@ -7,12 +7,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from huginn.agent import HuginnAgent
-from huginn.memory.manager import MemoryManager, MemoryConfig
 from huginn.memory.longterm import LongTermMemory
+from huginn.memory.manager import MemoryManager
 from huginn.utils.prompt_cache import PromptCacheBuilder
 
 
@@ -84,9 +83,23 @@ class TestPromptCacheBuilder:
             cache_control=False,
         )
         msgs = builder.build_input_messages("", "q")
-        assert not any(
-            "cache_control" in m.additional_kwargs for m in msgs
+        assert not any("cache_control" in m.additional_kwargs for m in msgs)
+
+    def test_provider_specific_cache_control(self):
+        anthropic = PromptCacheBuilder(
+            system_prompt="static",
+            cache_control=True,
+            provider="anthropic",
         )
+        openai = PromptCacheBuilder(
+            system_prompt="static",
+            cache_control=True,
+            provider="openai",
+        )
+        assert anthropic.build_state_modifier()[0].additional_kwargs.get(
+            "cache_control"
+        ) == {"type": "ephemeral"}
+        assert "cache_control" not in openai.build_state_modifier()[0].additional_kwargs
 
     def test_full_messages_combines_prefix_and_input(self):
         builder = PromptCacheBuilder(
@@ -210,7 +223,9 @@ class TestHuginnAgentPromptCache:
         msgs = [
             AIMessage(
                 content="ok",
-                response_metadata={"usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+                response_metadata={
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+                },
             )
         ]
         stats = agent._extract_cache_stats(msgs)

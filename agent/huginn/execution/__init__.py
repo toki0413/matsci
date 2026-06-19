@@ -9,10 +9,10 @@ Components:
   - AutoFixLoop: Detects failures, applies fixes, and retries automatically
 """
 
+from huginn.execution.autofix import AutoFixLoop
 from huginn.execution.input_generator import InputFileGenerator
 from huginn.execution.orchestrator import ExecutionOrchestrator, StageResult
 from huginn.execution.result_parser import ResultParser
-from huginn.execution.autofix import AutoFixLoop
 
 __all__ = [
     "InputFileGenerator",

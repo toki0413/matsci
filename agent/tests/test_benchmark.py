@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from huginn.agent import HuginnAgent
-from huginn.benchmark import BenchmarkCase, BenchmarkSuite, keyword_evaluator, numeric_evaluator
+from huginn.benchmark import (
+    BenchmarkCase,
+    BenchmarkSuite,
+    keyword_evaluator,
+    numeric_evaluator,
+)
 from huginn.benchmark.core import SelfImprovementLoop, llm_judge_evaluator
-from huginn.memory.manager import MemoryManager
 from huginn.memory.longterm import LongTermMemory
+from huginn.memory.manager import MemoryManager
 
 
 class _FakeAgent:

@@ -6,9 +6,9 @@ Inspired by Claude Code's Tool.ts — every type is explicit and serializable.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Callable, Awaitable
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+from typing import Any, Literal
 
 
 class PermissionMode(Enum):
@@ -32,6 +32,7 @@ class PermissionResult:
 @dataclass
 class ToolResult:
     """Result of a tool execution, mirroring Claude Code's ToolResult<T>."""
+
     data: Any
     success: bool = True
     error: str | None = None
@@ -57,6 +58,7 @@ class AgentMessage:
 @dataclass
 class ToolContext:
     """Runtime context passed to every tool call."""
+
     session_id: str
     workspace: str
     abort_controller: Any | None = None
@@ -64,9 +66,11 @@ class ToolContext:
     memory_manager: Any | None = None
     agent_factory: Any | None = None
     audit_logger: Any | None = None
+    boundary_state: Any | None = None
+    config: Any | None = None
 
 
-@dataclass 
+@dataclass
 class CostEstimate:
     cpu_hours: float
     gpu_hours: float
@@ -82,12 +86,21 @@ class BudgetPolicy:
     max_storage_gb: float = float("inf")
     max_parallel_jobs: int = 5
     max_walltime_hours: float = 168.0
-    
+
     def check(self, estimate: CostEstimate) -> tuple[BudgetDecision, str]:
         if estimate.cpu_hours > self.max_cpu_hours:
-            return BudgetDecision.DENY, f"CPU hours {estimate.cpu_hours:.1f} exceed budget {self.max_cpu_hours:.1f}"
+            return (
+                BudgetDecision.DENY,
+                f"CPU hours {estimate.cpu_hours:.1f} exceed budget {self.max_cpu_hours:.1f}",
+            )
         if estimate.gpu_hours > self.max_gpu_hours:
-            return BudgetDecision.DENY, f"GPU hours {estimate.gpu_hours:.1f} exceed budget {self.max_gpu_hours:.1f}"
+            return (
+                BudgetDecision.DENY,
+                f"GPU hours {estimate.gpu_hours:.1f} exceed budget {self.max_gpu_hours:.1f}",
+            )
         if estimate.storage_gb > self.max_storage_gb:
-            return BudgetDecision.DENY, f"Storage {estimate.storage_gb:.1f}GB exceed budget {self.max_storage_gb:.1f}GB"
+            return (
+                BudgetDecision.DENY,
+                f"Storage {estimate.storage_gb:.1f}GB exceed budget {self.max_storage_gb:.1f}GB",
+            )
         return BudgetDecision.ALLOW, ""

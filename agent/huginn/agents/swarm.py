@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-class AgentRole(str, enum.Enum):
+class AgentRole(enum.StrEnum):
     PLANNER = "planner"
     SCIENTIST = "scientist"
     CODER = "coder"
@@ -77,11 +77,13 @@ class HuginnSwarm:
         self.workers = {w.role: w for w in workers}
         self.trace: list[SwarmStep] = []
 
-    def add_worker(self, worker: SwarmAgent) -> "HuginnSwarm":
+    def add_worker(self, worker: SwarmAgent) -> HuginnSwarm:
         self.workers[worker.role] = worker
         return self
 
-    async def run(self, task: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def run(
+        self, task: str, context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Run the task through the swarm and return the final result."""
         self.trace.clear()
         ctx = dict(context or {})
@@ -105,8 +107,7 @@ class HuginnSwarm:
         ctx["scientific_reasoning"] = role_outputs.get(AgentRole.SCIENTIST, "")
         ctx["code"] = role_outputs.get(AgentRole.CODER, "")
         ctx["execution_result"] = role_outputs.get(
-            AgentRole.EXECUTOR,
-            "No executor step completed."
+            AgentRole.EXECUTOR, "No executor step completed."
         )
 
         # 3. Critic review (only if the plan did not already include one).
@@ -205,7 +206,8 @@ class HuginnSwarm:
 
         while pending:
             ready = [
-                s for s in pending.values()
+                s
+                for s in pending.values()
                 if all(dep in results for dep in s.depends_on)
             ]
             if not ready:
@@ -248,9 +250,13 @@ class HuginnSwarm:
         ctx: dict[str, Any],
     ) -> str:
         start = time.time()
-        full_prompt = f"{worker.instructions}\n\n{task}" if worker.instructions else task
+        full_prompt = (
+            f"{worker.instructions}\n\n{task}" if worker.instructions else task
+        )
         final_output = ""
-        async for state in worker.agent.chat(full_prompt, thread_id=ctx.get("thread_id", "swarm")):
+        async for state in worker.agent.chat(
+            full_prompt, thread_id=ctx.get("thread_id", "swarm")
+        ):
             messages = state.get("messages", [])
             for msg in messages:
                 content = getattr(msg, "content", None)

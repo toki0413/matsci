@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +18,7 @@ from huginn.types import AgentMessage, ToolResult
 @dataclass
 class ToolCallRecord:
     """Record of a single tool invocation."""
+
     tool_name: str
     input_args: dict[str, Any]
     result: ToolResult | None = None
@@ -29,6 +30,7 @@ class ToolCallRecord:
 @dataclass
 class SessionContext:
     """Mutable context for the current agent session."""
+
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=datetime.now)
     messages: list[AgentMessage] = field(default_factory=list)
@@ -42,7 +44,9 @@ class SessionContext:
     max_tool_calls: int = 50
     max_reasoning_lines: int = 200
 
-    def add_message(self, message: AgentMessage | str, content: str | None = None) -> None:
+    def add_message(
+        self, message: AgentMessage | str, content: str | None = None
+    ) -> None:
         if isinstance(message, str) and content is not None:
             message = AgentMessage(role=message, content=content)
         self.messages.append(message)
@@ -97,7 +101,11 @@ class SessionContext:
             "messages": [
                 {
                     "role": m.role,
-                    "content": m.content if isinstance(m.content, str) else json.dumps(m.content),
+                    "content": (
+                        m.content
+                        if isinstance(m.content, str)
+                        else json.dumps(m.content)
+                    ),
                     "timestamp": m.timestamp.isoformat(),
                 }
                 for m in self.messages

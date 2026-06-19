@@ -30,56 +30,66 @@ def constitutive_derivation_pipeline(
     stages = []
 
     # Stage 1: Symbolic derivation of stress from free energy
-    stages.append({
-        "name": "derive_stress",
-        "tool": "symbolic_math_tool",
-        "action": "constitutive",
-        "params": {
-            "free_energy": free_energy_expr,
-            "symbols": symbols or ["C10", "D1", "I1", "J", "C"],
-            "target": "stress_from_psi",
-        },
-    })
+    stages.append(
+        {
+            "name": "derive_stress",
+            "tool": "symbolic_math_tool",
+            "action": "constitutive",
+            "params": {
+                "free_energy": free_energy_expr,
+                "symbols": symbols or ["C10", "D1", "I1", "J", "C"],
+                "target": "stress_from_psi",
+            },
+        }
+    )
 
     # Stage 2: Compute tangent modulus (derivative of stress)
-    stages.append({
-        "name": "tangent_modulus",
-        "tool": "symbolic_math_tool",
-        "action": "differentiate",
-        "params": {
-            "expression": "${derive_stress.second_pk_stress}",
-            "symbols": symbols or ["C10", "D1", "I1", "J", "C"],
-            "variable": "C",
-            "order": 1,
-        },
-        "depends_on": ["derive_stress"],
-    })
+    stages.append(
+        {
+            "name": "tangent_modulus",
+            "tool": "symbolic_math_tool",
+            "action": "differentiate",
+            "params": {
+                "expression": "${derive_stress.second_pk_stress}",
+                "symbols": symbols or ["C10", "D1", "I1", "J", "C"],
+                "variable": "C",
+                "order": 1,
+            },
+            "depends_on": ["derive_stress"],
+        }
+    )
 
     # Stage 3: Verify positive definiteness of tangent modulus
-    stages.append({
-        "name": "stability_check",
-        "tool": "autodiff_tool",
-        "action": "hessian",
-        "params": {
-            "function_type": "neo_hookean" if "neo" in material_type.lower() else "custom",
-            "function_params": {"expression": free_energy_expr},
-            "variables": {"I1": [3.0], "J": [1.0]},
-            "use_jax": True,
-        },
-        "depends_on": ["tangent_modulus"],
-    })
+    stages.append(
+        {
+            "name": "stability_check",
+            "tool": "autodiff_tool",
+            "action": "hessian",
+            "params": {
+                "function_type": (
+                    "neo_hookean" if "neo" in material_type.lower() else "custom"
+                ),
+                "function_params": {"expression": free_energy_expr},
+                "variables": {"I1": [3.0], "J": [1.0]},
+                "use_jax": True,
+            },
+            "depends_on": ["tangent_modulus"],
+        }
+    )
 
     # Stage 4: Dimensional analysis
-    stages.append({
-        "name": "dimensional_check",
-        "tool": "symbolic_math_tool",
-        "action": "dimensional_analysis",
-        "params": {
-            "free_energy": free_energy_expr,
-            "material_type": material_type,
-        },
-        "depends_on": ["derive_stress"],
-    })
+    stages.append(
+        {
+            "name": "dimensional_check",
+            "tool": "symbolic_math_tool",
+            "action": "dimensional_analysis",
+            "params": {
+                "free_energy": free_energy_expr,
+                "material_type": material_type,
+            },
+            "depends_on": ["derive_stress"],
+        }
+    )
 
     return stages
 
@@ -101,28 +111,36 @@ def fem_weak_form_verification_pipeline(
     stages = []
 
     # Stage 1: Derive weak form via integration by parts
-    stages.append({
-        "name": "derive_weak_form",
-        "tool": "symbolic_math_tool",
-        "action": "weak_form",
-        "params": {
-            "expression": strong_form,
-            "symbols": [trial_function, test_function, "x", "y", "z"][:domain_dim + 2],
-            "target": "weak_form_derivation",
-        },
-    })
+    stages.append(
+        {
+            "name": "derive_weak_form",
+            "tool": "symbolic_math_tool",
+            "action": "weak_form",
+            "params": {
+                "expression": strong_form,
+                "symbols": [trial_function, test_function, "x", "y", "z"][
+                    : domain_dim + 2
+                ],
+                "target": "weak_form_derivation",
+            },
+        }
+    )
 
     # Stage 2: Verify boundary terms vanish (simplified)
-    stages.append({
-        "name": "boundary_check",
-        "tool": "symbolic_math_tool",
-        "action": "simplify",
-        "params": {
-            "expression": "${derive_weak_form.integration_by_parts_boundary}",
-            "symbols": [trial_function, test_function, "x", "y", "z"][:domain_dim + 2],
-        },
-        "depends_on": ["derive_weak_form"],
-    })
+    stages.append(
+        {
+            "name": "boundary_check",
+            "tool": "symbolic_math_tool",
+            "action": "simplify",
+            "params": {
+                "expression": "${derive_weak_form.integration_by_parts_boundary}",
+                "symbols": [trial_function, test_function, "x", "y", "z"][
+                    : domain_dim + 2
+                ],
+            },
+            "depends_on": ["derive_weak_form"],
+        }
+    )
 
     return stages
 
@@ -142,44 +160,50 @@ def eos_fitting_pipeline(
     stages = []
 
     # Stage 1: Symbolic EOS expression
-    stages.append({
-        "name": "eos_expression",
-        "tool": "symbolic_math_tool",
-        "action": "constitutive",
-        "params": {
-            "free_energy": "E0 + B0*V0/BP * ((V/V0)**(-1/3)-1)**BP * (BP-1) + 1) * exp(-((V/V0)**(-1/3)-1))",
-            "symbols": ["E0", "B0", "V0", "BP", "V"],
-            "target": "pressure_from_eos",
-        },
-    })
+    stages.append(
+        {
+            "name": "eos_expression",
+            "tool": "symbolic_math_tool",
+            "action": "constitutive",
+            "params": {
+                "free_energy": "E0 + B0*V0/BP * ((V/V0)**(-1/3)-1)**BP * (BP-1) + 1) * exp(-((V/V0)**(-1/3)-1))",
+                "symbols": ["E0", "B0", "V0", "BP", "V"],
+                "target": "pressure_from_eos",
+            },
+        }
+    )
 
     # Stage 2: Fit parameters using autodiff optimization
-    stages.append({
-        "name": "eos_fit",
-        "tool": "autodiff_tool",
-        "action": "optimize",
-        "params": {
-            "function_type": eos_model,
-            "function_params": {"E0": -10.0, "B0": 100.0, "V0": 20.0, "BP": 4.0},
-            "variables": {"V": volume_data, "target": energy_data},
-            "use_jax": True,
-        },
-        "depends_on": ["eos_expression"],
-    })
+    stages.append(
+        {
+            "name": "eos_fit",
+            "tool": "autodiff_tool",
+            "action": "optimize",
+            "params": {
+                "function_type": eos_model,
+                "function_params": {"E0": -10.0, "B0": 100.0, "V0": 20.0, "BP": 4.0},
+                "variables": {"V": volume_data, "target": energy_data},
+                "use_jax": True,
+            },
+            "depends_on": ["eos_expression"],
+        }
+    )
 
     # Stage 3: Compute bulk modulus B = -V dP/dV at V0
-    stages.append({
-        "name": "bulk_modulus",
-        "tool": "autodiff_tool",
-        "action": "hessian",
-        "params": {
-            "function_type": eos_model,
-            "function_params": "${eos_fit.optimized_params}",
-            "variables": {"V": [volume_data[len(volume_data)//2]]},
-            "use_jax": True,
-        },
-        "depends_on": ["eos_fit"],
-    })
+    stages.append(
+        {
+            "name": "bulk_modulus",
+            "tool": "autodiff_tool",
+            "action": "hessian",
+            "params": {
+                "function_type": eos_model,
+                "function_params": "${eos_fit.optimized_params}",
+                "variables": {"V": [volume_data[len(volume_data) // 2]]},
+                "use_jax": True,
+            },
+            "depends_on": ["eos_fit"],
+        }
+    )
 
     return stages
 
@@ -199,29 +223,36 @@ def stability_analysis_pipeline(
     stages = []
 
     # Stage 1: Compute Hessian
-    stages.append({
-        "name": "hessian",
-        "tool": "autodiff_tool",
-        "action": "hessian",
-        "params": {
-            "function_type": "custom",
-            "function_params": {"expression": energy_expr},
-            "variables": {v: [evaluation_point.get(v, 1.0) if evaluation_point else 1.0] for v in variables},
-            "use_jax": True,
-        },
-    })
+    stages.append(
+        {
+            "name": "hessian",
+            "tool": "autodiff_tool",
+            "action": "hessian",
+            "params": {
+                "function_type": "custom",
+                "function_params": {"expression": energy_expr},
+                "variables": {
+                    v: [evaluation_point.get(v, 1.0) if evaluation_point else 1.0]
+                    for v in variables
+                },
+                "use_jax": True,
+            },
+        }
+    )
 
     # Stage 2: Check positive definiteness
-    stages.append({
-        "name": "stability_verdict",
-        "tool": "symbolic_math_tool",
-        "action": "eigenvalue",
-        "params": {
-            "matrix": "${hessian.hessian_matrix}",
-            "symbols": variables,
-        },
-        "depends_on": ["hessian"],
-    })
+    stages.append(
+        {
+            "name": "stability_verdict",
+            "tool": "symbolic_math_tool",
+            "action": "eigenvalue",
+            "params": {
+                "matrix": "${hessian.hessian_matrix}",
+                "symbols": variables,
+            },
+            "depends_on": ["hessian"],
+        }
+    )
 
     return stages
 

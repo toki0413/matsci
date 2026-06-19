@@ -26,12 +26,16 @@ class Persona:
     mood_dialogs: list[dict[str, str]] = field(default_factory=list)
     variables: dict[str, Any] = field(default_factory=dict)
     avatar: str | None = None
+    description: str = ""
+    when_to_use: list[str] = field(default_factory=list)
+    source_path: str | None = None
+    kind: str = "json"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Persona":
+    def from_dict(cls, data: dict[str, Any]) -> Persona:
         return cls(
             name=data.get("name", "default"),
             system_prompt=data.get("system_prompt", data.get("prompt", "")),
@@ -39,6 +43,10 @@ class Persona:
             mood_dialogs=data.get("mood_dialogs", []),
             variables=data.get("variables", {}),
             avatar=data.get("avatar"),
+            description=data.get("description", ""),
+            when_to_use=data.get("when_to_use", []),
+            source_path=data.get("source_path"),
+            kind=data.get("kind", "json"),
         )
 
 
@@ -91,26 +99,43 @@ When answering questions:
 ]
 
 
-def _default_personas_path() -> Path:
+def _default_personas_path(workspace: str | Path | None = None) -> Path:
     """Default file for user-defined personas."""
-    return Path.cwd() / "personas.json"
+    base = Path(workspace) if workspace else Path.cwd()
+    return base / ".huginn" / "personas.json"
+
+
+def _default_skill_dirs(workspace: str | Path | None = None) -> list[Path]:
+    """Default directories to scan for Nuwa-style persona skills."""
+    base = Path(workspace) if workspace else Path.cwd()
+    return [base / ".huginn" / "personas"]
 
 
 class PersonaManager:
-    """Manage persona definitions: built-ins plus user-defined overrides."""
+    """Manage persona definitions: built-ins plus user-defined overrides and skills."""
 
     def __init__(
         self,
         personas_path: str | Path | None = None,
         default_persona: str = "default",
+        skill_dirs: list[Path] | None = None,
+        workspace: str | Path | None = None,
     ):
-        self._path = Path(personas_path) if personas_path else _default_personas_path()
+        self._path = (
+            Path(personas_path) if personas_path else _default_personas_path(workspace)
+        )
         self._default_name = default_persona
+        self._skill_dirs = (
+            skill_dirs if skill_dirs is not None else _default_skill_dirs(workspace)
+        )
+        self._workspace = Path(workspace) if workspace else Path.cwd()
         self._personas: dict[str, Persona] = {}
         self._load()
 
     def _load(self) -> None:
-        """Load built-ins and user-defined personas."""
+        """Load built-ins, JSON personas, and Nuwa-style skill personas."""
+        from huginn.persona_loader import scan_persona_skills
+
         self._personas = {p.name: p for p in BUILT_IN_PERSONAS}
         if self._path.exists():
             try:
@@ -123,17 +148,59 @@ class PersonaManager:
             except Exception:
                 pass
 
+        # Skill personas override JSON-defined personas of the same name.
+        for name, persona in scan_persona_skills(*self._skill_dirs).items():
+            self._personas[name] = persona
+
+    def import_skill(
+        self,
+        source: Path,
+        dest_dir: Path | None = None,
+    ) -> Persona:
+        """Copy a Nuwa-style SKILL.md into the persona store and load it."""
+        from huginn.persona_loader import load_persona_skill
+
+        dest_dir = dest_dir or self._skill_dirs[0]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        persona = load_persona_skill(source)
+        dest_path = dest_dir / f"{persona.name}.md"
+        dest_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+        persona.source_path = str(dest_path.resolve())
+        self._personas[persona.name] = persona
+        return persona
+
+    def match_for_query(self, query: str, top_k: int = 1) -> list[Persona]:
+        """Return skill personas whose description/when_to_use match the query.
+
+        This method is kept for backward compatibility; new callers should use
+        :class:`huginn.persona_matcher.PersonaMatcher` for semantic matching.
+        """
+        from huginn.persona_matcher import _keyword_score
+
+        scored = [(_keyword_score(query, p), p) for p in self._personas.values()]
+        scored.sort(key=lambda x: -x[0])
+        return [p for score, p in scored[:top_k] if score > 0]
+
     def save(self) -> None:
-        """Persist user-defined personas and default selection."""
+        """Persist JSON-defined personas and default selection.
+
+        Nuwa-style skill personas are file-backed and are not rewritten here.
+        """
+        builtin_names = {bp.name for bp in BUILT_IN_PERSONAS}
         data = {
             "default_persona": self._default_name,
             "personas": [
-                p.to_dict() for p in self._personas.values()
-                if p.name not in {bp.name for bp in BUILT_IN_PERSONAS}
+                p.to_dict()
+                for p in self._personas.values()
+                if p.name not in builtin_names and p.kind != "nuwa"
             ],
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        self._path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     def list(self) -> list[str]:
         return sorted(self._personas.keys())
@@ -161,6 +228,8 @@ class PersonaManager:
         mood_dialogs: list[dict[str, str]] | None = None,
         variables: dict[str, Any] | None = None,
         avatar: str | None = None,
+        description: str = "",
+        when_to_use: list[str] | None = None,
     ) -> Persona:
         if not name:
             raise ValueError("Persona name is required")
@@ -171,6 +240,8 @@ class PersonaManager:
             mood_dialogs=mood_dialogs or [],
             variables=variables or {},
             avatar=avatar,
+            description=description,
+            when_to_use=when_to_use or [],
         )
         self._personas[name] = persona
         self.save()
@@ -202,6 +273,3 @@ class PersonaManager:
 def _personas_dict(manager: PersonaManager | None = None) -> dict[str, str]:
     mgr = manager or PersonaManager()
     return {name: mgr.get(name).system_prompt for name in mgr.list()}
-
-
-PERSONAS: dict[str, str] = _personas_dict()

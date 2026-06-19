@@ -1,27 +1,30 @@
 """Skills package for material science workflows."""
 
 from huginn.skills.base import (
+    DeclarativeSkillExecutor,
     SkillDefinition,
+    SkillExecutor,
     SkillParameter,
     SkillStep,
-    SkillExecutor,
-    DeclarativeSkillExecutor,
 )
-from huginn.skills.registry import SkillRegistry, register_skill
 from huginn.skills.presets import (
-    STANDARD_DFT,
+    ACTIVE_LEARNING_SAMPLING,
     AIMD_WORKFLOW,
+    AUTORESEARCH_WORKFLOW,
+    BAND_GAP_ANALYSIS,
+    CONVERGENCE_DIAGNOSIS,
     DEFECT_CALCULATION,
-    SURFACE_CALCULATION,
+    ELASTIC_CONSTANTS,
+    HPC_REMOTE_RUN,
+    HT_SCREENING,
     LAMMPS_MELT_QUENCH,
     ML_POTENTIAL_TRAINING,
-    BAND_GAP_ANALYSIS,
-    ELASTIC_CONSTANTS,
     PHONON_CALCULATION,
-    CONVERGENCE_DIAGNOSIS,
-    HT_SCREENING,
+    STANDARD_DFT,
+    SURFACE_CALCULATION,
     SYMBOLIC_REGRESSION,
 )
+from huginn.skills.registry import SkillRegistry, register_skill
 
 __all__ = [
     "SkillDefinition",
@@ -44,4 +47,7 @@ __all__ = [
     "CONVERGENCE_DIAGNOSIS",
     "HT_SCREENING",
     "SYMBOLIC_REGRESSION",
+    "HPC_REMOTE_RUN",
+    "ACTIVE_LEARNING_SAMPLING",
+    "AUTORESEARCH_WORKFLOW",
 ]

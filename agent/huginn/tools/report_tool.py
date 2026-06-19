@@ -14,7 +14,7 @@ Output formats: Markdown (default), LaTeX, JSON.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -22,17 +22,25 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class ReportToolInput(BaseModel):
     action: Literal["generate", "compare", "export"] = Field(default="generate")
-    workflow_results: dict[str, Any] | None = Field(default=None, description="Results from a workflow execution")
-    calculation_dir: str | None = Field(default=None, description="Directory containing calculation outputs")
+    workflow_results: dict[str, Any] | None = Field(
+        default=None, description="Results from a workflow execution"
+    )
+    calculation_dir: str | None = Field(
+        default=None, description="Directory containing calculation outputs"
+    )
     style: Literal["brief", "full", "paper_methods"] = Field(default="full")
     format: Literal["markdown", "latex", "json", "html"] = Field(default="markdown")
-    output_path: str | None = Field(default=None, description="Where to save the report")
-    include_files: list[str] = Field(default_factory=list, description="Additional files to include")
+    output_path: str | None = Field(
+        default=None, description="Where to save the report"
+    )
+    include_files: list[str] = Field(
+        default_factory=list, description="Additional files to include"
+    )
 
 
 @dataclass
@@ -95,11 +103,15 @@ class ReportGenerator:
         # Literature comparison
         literature = data.get("literature_comparison", {})
         if literature:
-            self.add_section("Literature Comparison", self._render_literature(literature), 6)
+            self.add_section(
+                "Literature Comparison", self._render_literature(literature), 6
+            )
 
         # Resources
         resources = data.get("resources", {})
-        self.add_section("Computational Resources", self._render_resources(resources), 7)
+        self.add_section(
+            "Computational Resources", self._render_resources(resources), 7
+        )
 
         # Reproducibility
         self.add_section("Reproducibility", self._render_reproducibility(data), 8)
@@ -121,8 +133,8 @@ class ReportGenerator:
             "",
             "### Parameters",
             "",
-            f"| Parameter | Value |",
-            f"|-----------|-------|",
+            "| Parameter | Value |",
+            "|-----------|-------|",
             f"| Plane-wave cutoff | {methods.get('encut', 'N/A')} eV |",
             f"| K-point mesh | {methods.get('kpoints', 'N/A')} |",
             f"| Pseudopotentials | {methods.get('pseudopotentials', 'N/A')} |",
@@ -141,8 +153,8 @@ class ReportGenerator:
             "",
             "### Lattice parameters",
             "",
-            f"| Parameter | Initial | Final | Change |",
-            f"|-----------|---------|-------|--------|",
+            "| Parameter | Initial | Final | Change |",
+            "|-----------|---------|-------|--------|",
         ]
         for param in ["a", "b", "c", "alpha", "beta", "gamma"]:
             init = structure.get(f"initial_{param}", "N/A")
@@ -183,7 +195,9 @@ class ReportGenerator:
         checks = validation.get("checks", [])
         for check in checks:
             status = "✅" if check.get("passed") else "❌"
-            lines.append(f"{status} {check.get('name', 'Unknown')}: {check.get('message', '')}")
+            lines.append(
+                f"{status} {check.get('name', 'Unknown')}: {check.get('message', '')}"
+            )
         lines.append("")
         return "\n".join(lines)
 
@@ -191,10 +205,12 @@ class ReportGenerator:
         lines = ["## Literature Comparison", ""]
         comparisons = literature.get("comparisons", [])
         for comp in comparisons:
-            lines.append(f"- {comp.get('property', 'N/A')}: "
-                        f"calculated = {comp.get('calculated', 'N/A')}, "
-                        f"reference = {comp.get('reference', 'N/A')} "
-                        f"({comp.get('source', 'N/A')})")
+            lines.append(
+                f"- {comp.get('property', 'N/A')}: "
+                f"calculated = {comp.get('calculated', 'N/A')}, "
+                f"reference = {comp.get('reference', 'N/A')} "
+                f"({comp.get('source', 'N/A')})"
+            )
         lines.append("")
         return "\n".join(lines)
 
@@ -241,12 +257,14 @@ class ReportGenerator:
             "\\documentclass{article}",
             "\\usepackage{booktabs}",
             "\\begin{document}",
-            f"\\section*{{Computational Report}}",
+            "\\section*{Computational Report}",
         ]
         for section in self.sections:
             lines.append(f"\\subsection*{{{section.title}}}")
             # Very rough markdown-to-latex conversion
-            content = section.content.replace("**", "\\textbf{").replace("##", "\\subsection*{")
+            content = section.content.replace("**", "\\textbf{").replace(
+                "##", "\\subsection*{"
+            )
             lines.append(content)
         lines.append("\\end{document}")
         return "\n".join(lines)
@@ -256,8 +274,7 @@ class ReportGenerator:
             "style": self.style,
             "generated_at": datetime.now().isoformat(),
             "sections": [
-                {"title": s.title, "content": s.content}
-                for s in self.sections
+                {"title": s.title, "content": s.content} for s in self.sections
             ],
         }
         return json.dumps(data, indent=2, ensure_ascii=False)
@@ -298,7 +315,9 @@ class ReportTool(HuginnTool):
             return self._compare(args)
         elif args.action == "export":
             return self._export(args)
-        return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+        return ToolResult(
+            data=None, success=False, error=f"Unknown action: {args.action}"
+        )
 
     def _generate(self, args: ReportToolInput) -> ToolResult:
         data = args.workflow_results or {}
@@ -329,15 +348,23 @@ class ReportTool(HuginnTool):
     def _export(self, args: ReportToolInput) -> ToolResult:
         return self._generate(args)
 
-    def _scan_directory(self, calc_dir: str, existing: dict[str, Any]) -> dict[str, Any]:
+    def _scan_directory(
+        self, calc_dir: str, existing: dict[str, Any]
+    ) -> dict[str, Any]:
         """Scan a calculation directory for common output files."""
         path = Path(calc_dir)
         data = dict(existing)
 
         # Look for common files
         files = list(path.glob("*"))
-        data["input_files"] = [f.name for f in files if f.suffix in {".incar", ".poscar", ".kpoints", ".lammps"}]
-        data["output_files"] = [f.name for f in files if f.suffix in {".outcar", ".oszicar", ".xml", ".log"}]
+        data["input_files"] = [
+            f.name
+            for f in files
+            if f.suffix in {".incar", ".poscar", ".kpoints", ".lammps"}
+        ]
+        data["output_files"] = [
+            f.name for f in files if f.suffix in {".outcar", ".oszicar", ".xml", ".log"}
+        ]
 
         # Try to extract basic info from OUTCAR-like files
         for f in files:
@@ -348,7 +375,9 @@ class ReportTool(HuginnTool):
                         if "ENCUT" in line and "=" in line:
                             parts = line.split("=")
                             if len(parts) >= 2:
-                                data.setdefault("methods", {})["encut"] = parts[-1].strip().split()[0]
+                                data.setdefault("methods", {})["encut"] = (
+                                    parts[-1].strip().split()[0]
+                                )
                             break
                 break
 

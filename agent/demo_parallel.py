@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
 from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext
 
 
@@ -27,18 +27,27 @@ def _ctx() -> ToolContext:
     return ToolContext(session_id="demo", workspace=".")
 
 
-def run_pipeline_sync(name: str, action: str, target: str, symbols: list[str],
-                      expression: str = "", equations: list[str] | None = None,
-                      matrix: list[list[str]] | None = None,
-                      auto_verify: str = "") -> tuple[str, bool, float]:
+def run_pipeline_sync(
+    name: str,
+    action: str,
+    target: str,
+    symbols: list[str],
+    expression: str = "",
+    equations: list[str] | None = None,
+    matrix: list[list[str]] | None = None,
+    auto_verify: str = "",
+) -> tuple[str, bool, float]:
     """Synchronous wrapper for a single pipeline."""
     t0 = time.time()
 
     async def _inner():
         sym_tool = SymbolicMathTool()
         sym_in = SymbolicMathInput(
-            action=action, target=target, symbols=symbols,
-            expression=expression, equations=equations or [],
+            action=action,
+            target=target,
+            symbols=symbols,
+            expression=expression,
+            equations=equations or [],
             matrix=matrix,
         )
         sym_res = await sym_tool.call(sym_in, _ctx())
@@ -66,22 +75,86 @@ def main() -> int:
     print("=" * 60)
 
     tasks = [
-        ("Heat Conduction", "weak_form", "heat_conduction",
-         ["u", "v", "x", "k", "f"], "", None, None, "fem"),
-        ("Linear Elasticity", "weak_form", "linear_elasticity",
-         ["ux", "uy", "vx", "vy", "x", "y", "E", "nu"], "", None, None, "fem"),
-        ("Bar Element", "weak_form", "assemble_element_matrix",
-         ["E", "A", "h"], "bar", None, None, "fem"),
-        ("Tensor Invariants", "tensor_ops", "",
-         ["a", "b", "c"], "", None, [["a", "b"], ["b", "c"]], "tensor_ops"),
-        ("Cholesky", "linear_algebra", "cholesky",
-         ["A", "L"], "", None, [["4", "2"], ["2", "3"]], "linear_algebra"),
-        ("Free Electron Fermi Energy", "dft", "fermi_energy",
-         ["n", "kF", "EF"], "n=0.05", None, None, "dft"),
-        ("Ideal Gas Pressure", "thermodynamics", "ideal_gas",
-         ["n", "T", "V", "P"], "n=1.0,T=273.15,V=0.022414", None, None, "thermodynamics"),
-        ("Normal PDF", "probability", "normal_pdf",
-         ["mu", "sigma", "x", "pdf"], "mu=0.0,sigma=1.0,x=0.0", None, None, "probability"),
+        (
+            "Heat Conduction",
+            "weak_form",
+            "heat_conduction",
+            ["u", "v", "x", "k", "f"],
+            "",
+            None,
+            None,
+            "fem",
+        ),
+        (
+            "Linear Elasticity",
+            "weak_form",
+            "linear_elasticity",
+            ["ux", "uy", "vx", "vy", "x", "y", "E", "nu"],
+            "",
+            None,
+            None,
+            "fem",
+        ),
+        (
+            "Bar Element",
+            "weak_form",
+            "assemble_element_matrix",
+            ["E", "A", "h"],
+            "bar",
+            None,
+            None,
+            "fem",
+        ),
+        (
+            "Tensor Invariants",
+            "tensor_ops",
+            "",
+            ["a", "b", "c"],
+            "",
+            None,
+            [["a", "b"], ["b", "c"]],
+            "tensor_ops",
+        ),
+        (
+            "Cholesky",
+            "linear_algebra",
+            "cholesky",
+            ["A", "L"],
+            "",
+            None,
+            [["4", "2"], ["2", "3"]],
+            "linear_algebra",
+        ),
+        (
+            "Free Electron Fermi Energy",
+            "dft",
+            "fermi_energy",
+            ["n", "kF", "EF"],
+            "n=0.05",
+            None,
+            None,
+            "dft",
+        ),
+        (
+            "Ideal Gas Pressure",
+            "thermodynamics",
+            "ideal_gas",
+            ["n", "T", "V", "P"],
+            "n=1.0,T=273.15,V=0.022414",
+            None,
+            None,
+            "thermodynamics",
+        ),
+        (
+            "Normal PDF",
+            "probability",
+            "normal_pdf",
+            ["mu", "sigma", "x", "pdf"],
+            "mu=0.0,sigma=1.0,x=0.0",
+            None,
+            None,
+            "probability",
+        ),
     ]
 
     print(f"\nLaunching {len(tasks)} pipelines in thread pool...\n")

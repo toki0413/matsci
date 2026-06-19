@@ -8,9 +8,15 @@ is done or after a maximum number of iterations.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.tools import BaseTool
 
 from huginn.config import CoderSettings, get_settings
@@ -65,12 +71,12 @@ class CoderRunner:
         if tools is not None:
             return tools
 
+        from huginn.tools.bash_tool import BashTool
+        from huginn.tools.code_tool import CodeTool
+        from huginn.tools.file_edit_tool import FileEditTool
         from huginn.tools.file_read_tool import FileReadTool
         from huginn.tools.file_write_tool import FileWriteTool
-        from huginn.tools.file_edit_tool import FileEditTool
-        from huginn.tools.bash_tool import BashTool
         from huginn.tools.git_tool import GitTool
-        from huginn.tools.code_tool import CodeTool
 
         originals = [
             FileReadTool(),

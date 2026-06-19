@@ -1,10 +1,10 @@
 """Tests for the NumericalAnalysis error-bound framework in Lean 4."""
 
-import pytest
 from pathlib import Path
 
-from huginn.lean.interface import LeanInterface
+import pytest
 
+from huginn.lean.interface import LeanInterface
 
 LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 
@@ -26,7 +26,9 @@ def matD : Float := 2.0
 #eval (sym2x2Eigenvalues matA matB matD).1
 #eval (sym2x2Eigenvalues matA matB matD).2
 """
-        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(
+            code, imports=["HuginnLean.NumericalAnalysis"], timeout=60
+        )
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 2
@@ -34,6 +36,7 @@ def matD : Float := 2.0
         lam2 = float(lines[-1])
         # Exact eigenvalues of [[3,1],[1,2]] are (5±√5)/2
         import math
+
         assert abs(lam1 - (5.0 + math.sqrt(5.0)) / 2.0) < 1e-5
         assert abs(lam2 - (5.0 - math.sqrt(5.0)) / 2.0) < 1e-5
 
@@ -43,7 +46,9 @@ def matD : Float := 2.0
 
 #eval (ErrFloat.mk 1.0 0.0 + ErrFloat.mk 2.0 0.0).err
 """
-        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(
+            code, imports=["HuginnLean.NumericalAnalysis"], timeout=60
+        )
         assert result.success, result.stderr
         err = float(result.stdout.strip().splitlines()[-1].strip())
         # err = ε·|3| ≈ 6.66e-16; Lean #eval rounds to 0.000000 for display,
@@ -68,7 +73,9 @@ def prod : ErrMatrix2x2 := m1 * m2
 #eval (errMatEigenvalues prod).1.val
 #eval (errMatEigenvalues prod).2.val
 """
-        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(
+            code, imports=["HuginnLean.NumericalAnalysis"], timeout=60
+        )
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 4
@@ -100,7 +107,9 @@ def m3J : ErrMatrix3x3 := jacobiStep01 m3
 #eval m3J.a22.val
 #eval m3J.a33.val
 """
-        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(
+            code, imports=["HuginnLean.NumericalAnalysis"], timeout=60
+        )
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 6
@@ -118,6 +127,7 @@ def m3J : ErrMatrix3x3 := jacobiStep01 m3
         assert abs(a12_jac) < 1e-5
         # Eigenvalues of [[4,1],[1,3]] are (7±√5)/2
         import math
+
         assert abs(a11_jac - (7.0 + math.sqrt(5.0)) / 2.0) < 1e-5
         assert abs(a22_jac - (7.0 - math.sqrt(5.0)) / 2.0) < 1e-5
         # a33 unchanged
@@ -140,7 +150,9 @@ def m3_diag : ErrMatrix3x3 := jacobiIterate m3 10 1e-6
 #eval m3_diag.a13.val
 #eval m3_diag.a23.val
 """
-        result = lean.eval_lean_code(code, imports=["HuginnLean.NumericalAnalysis"], timeout=60)
+        result = lean.eval_lean_code(
+            code, imports=["HuginnLean.NumericalAnalysis"], timeout=60
+        )
         assert result.success, result.stderr
         lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
         assert len(lines) >= 6
@@ -151,6 +163,7 @@ def m3_diag : ErrMatrix3x3 := jacobiIterate m3 10 1e-6
         a13 = float(lines[-2])
         a23 = float(lines[-1])
         import math
+
         # Eigenvalues should be (7±√5)/2 and 5
         assert abs(a11 - (7.0 + math.sqrt(5.0)) / 2.0) < 1e-5
         assert abs(a22 - (7.0 - math.sqrt(5.0)) / 2.0) < 1e-5

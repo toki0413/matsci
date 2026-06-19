@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from huginn.tools.packing_tool import PackingTool, PackingToolInput
 
 
