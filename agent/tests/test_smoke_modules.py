@@ -10,6 +10,13 @@ from pathlib import Path
 
 import pytest
 
+MCP_AVAILABLE = False
+try:
+    from huginn.mcp_client import MCPClientManager
+    MCP_AVAILABLE = True
+except ImportError:
+    pass
+
 
 class TestEvolutionSmoke:
     def test_execution_logger(self, tmp_path: Path):
@@ -86,6 +93,7 @@ class TestPhysicsValidationSmoke:
 
 
 class TestMCPClientSmoke:
+    @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
     async def test_manager_initial_state(self):
         from huginn.mcp_client import MCPClientManager
 

@@ -1,6 +1,10 @@
-"""Tests for domestic / OpenAI-compatible LLM providers."""
 
 from __future__ import annotations
+
+import pytest
+pytest.importorskip("openai", reason="openai SDK not installed")
+
+"""Tests for domestic / OpenAI-compatible LLM providers."""
 
 from typing import Any
 

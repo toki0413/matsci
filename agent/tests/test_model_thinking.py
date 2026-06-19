@@ -1,6 +1,10 @@
-"""Tests for model thinking/reasoning intensity configuration."""
 
 from __future__ import annotations
+
+import pytest
+pytest.importorskip("anthropic", reason="anthropic SDK not installed")
+
+"""Tests for model thinking/reasoning intensity configuration."""
 
 import json
 from typing import Any

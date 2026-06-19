@@ -1,3 +1,7 @@
+
+import pytest
+pytest.importorskip("chromadb", reason="chromadb not installed (pip install huginn-agent[rag])")
+
 """Tests for RAG and encrypted RAG modules."""
 
 import tempfile
