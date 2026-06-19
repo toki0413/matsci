@@ -40,7 +40,12 @@ def md_stress_to_continuum() -> dict[str, Any]:
     Omega = sp.Symbol("Omega")
     i = sp.Idx("i")
     j = sp.Idx("j")
-    m, v, f, r = sp.IndexedBase("m"), sp.IndexedBase("v"), sp.IndexedBase("f"), sp.IndexedBase("r")
+    m, v, f, r = (
+        sp.IndexedBase("m"),
+        sp.IndexedBase("v"),
+        sp.IndexedBase("f"),
+        sp.IndexedBase("r"),
+    )
     kinetic = m[i] * v[i] ** 2
     virial = sp.Rational(1, 2) * r[i, j] * f[i, j]
     sigma = (kinetic + virial) / Omega

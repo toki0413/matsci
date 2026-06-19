@@ -5,14 +5,13 @@ Supports SLURM (sbatch) and PBS (qsub) schedulers.
 
 from __future__ import annotations
 
-import os
+import contextlib
+import re
+import shlex
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
-
-import re
-import shlex
 
 
 def _sanitize_job_name(name: str) -> str:
@@ -28,13 +27,21 @@ def _sanitize_job_name(name: str) -> str:
 
 def _validate_path_component(path: str) -> None:
     """Ensure a path does not contain shell metacharacters."""
-    if not path or ";" in path or "|" in path or "&" in path or "`" in path or "$" in path:
+    if (
+        not path
+        or ";" in path
+        or "|" in path
+        or "&" in path
+        or "`" in path
+        or "$" in path
+    ):
         raise ValueError(f"Path contains forbidden characters: {path!r}")
 
 
 @dataclass
 class HPCConfig:
-    """Configuration for HPC connection."""
+    """Configuration for HPC connection and resource selection."""
+
     host: str
     username: str
     scheduler: Literal["slurm", "pbs"] = "slurm"
@@ -43,9 +50,14 @@ class HPCConfig:
     port: int = 22
     remote_work_dir: str = "~/huginn_jobs"
     default_queue: str | None = None
+    gpu_queue: str | None = None
+    queue_map: dict[str, str] = field(default_factory=dict)
     default_walltime: str = "24:00:00"
     default_nodes: int = 1
     default_ntasks_per_node: int = 4
+    default_gpus_per_node: int = 0
+    max_retries: int = 3
+    retry_backoff: float = 1.0
     strict_host_key_checking: bool = True
     known_hosts_path: str | None = None
 
@@ -53,6 +65,7 @@ class HPCConfig:
 @dataclass
 class JobStatus:
     """Status of a remote HPC job."""
+
     job_id: str
     state: Literal["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]
     exit_code: int | None = None
@@ -63,12 +76,12 @@ class JobStatus:
 
 class HPCClient:
     """SSH-based HPC client for job submission and monitoring."""
-    
+
     def __init__(self, config: HPCConfig):
         self.config = config
         self._ssh = None
         self._sftp = None
-    
+
     def connect(self, timeout: int = 10) -> None:
         """Establish SSH connection to the HPC host.
 
@@ -109,16 +122,14 @@ class HPCClient:
         if known_hosts:
             self._ssh.load_host_keys(known_hosts)
         else:
-            try:
+            with contextlib.suppress(OSError):
                 self._ssh.load_system_host_keys()
-            except OSError:
-                pass
 
         if not self._ssh.get_host_keys().keys():
             raise paramiko.SSHException(
                 "Strict host key checking is enabled but no known_hosts entries were loaded."
             )
-    
+
     def disconnect(self) -> None:
         """Close SSH connection."""
         if self._sftp:
@@ -127,11 +138,11 @@ class HPCClient:
         if self._ssh:
             self._ssh.close()
             self._ssh = None
-    
+
     def _ensure_connected(self) -> None:
         if self._ssh is None or self._ssh.get_transport() is None:
             self.connect()
-    
+
     def _exec(self, command: str | list[str]) -> tuple[str, str, int]:
         """Execute a command on the remote host.
 
@@ -143,12 +154,14 @@ class HPCClient:
             command = shlex.join(command)
         stdin, stdout, stderr = self._ssh.exec_command(command)
         exit_code = stdout.channel.recv_exit_status()
-        return stdout.read().decode("utf-8", errors="ignore").strip(), \
-               stderr.read().decode("utf-8", errors="ignore").strip(), \
-               exit_code
-    
+        return (
+            stdout.read().decode("utf-8", errors="ignore").strip(),
+            stderr.read().decode("utf-8", errors="ignore").strip(),
+            exit_code,
+        )
+
     # ── Job Script Generation ─────────────────────────────────────
-    
+
     def generate_job_script(
         self,
         command: str,
@@ -159,19 +172,36 @@ class HPCClient:
         queue: str | None = None,
         modules: list[str] | None = None,
         env_vars: dict[str, str] | None = None,
+        gpus_per_node: int | None = None,
     ) -> str:
         """Generate a job script for the configured scheduler."""
         if self.config.scheduler == "slurm":
             return self._generate_slurm_script(
-                command, job_name, walltime, nodes, ntasks_per_node, queue, modules, env_vars
+                command,
+                job_name,
+                walltime,
+                nodes,
+                ntasks_per_node,
+                queue,
+                modules,
+                env_vars,
+                gpus_per_node,
             )
         elif self.config.scheduler == "pbs":
             return self._generate_pbs_script(
-                command, job_name, walltime, nodes, ntasks_per_node, queue, modules, env_vars
+                command,
+                job_name,
+                walltime,
+                nodes,
+                ntasks_per_node,
+                queue,
+                modules,
+                env_vars,
+                gpus_per_node,
             )
         else:
             raise ValueError(f"Unsupported scheduler: {self.config.scheduler}")
-    
+
     def _generate_slurm_script(
         self,
         command: str,
@@ -182,35 +212,46 @@ class HPCClient:
         queue: str | None,
         modules: list[str] | None,
         env_vars: dict[str, str] | None,
+        gpus_per_node: int | None,
     ) -> str:
         lines = ["#!/bin/bash"]
         lines.append(f"#SBATCH --job-name={job_name}")
         lines.append(f"#SBATCH --time={walltime or self.config.default_walltime}")
         lines.append(f"#SBATCH --nodes={nodes or self.config.default_nodes}")
-        lines.append(f"#SBATCH --ntasks-per-node={ntasks_per_node or self.config.default_ntasks_per_node}")
-        
+        lines.append(
+            f"#SBATCH --ntasks-per-node={ntasks_per_node or self.config.default_ntasks_per_node}"
+        )
+
+        gpus = (
+            gpus_per_node
+            if gpus_per_node is not None
+            else self.config.default_gpus_per_node
+        )
+        if gpus > 0:
+            lines.append(f"#SBATCH --gres=gpu:{gpus}")
+
         if queue or self.config.default_queue:
             lines.append(f"#SBATCH --partition={queue or self.config.default_queue}")
-        
+
         lines.append("#SBATCH --output=slurm-%j.out")
         lines.append("#SBATCH --error=slurm-%j.err")
         lines.append("")
-        
+
         if modules:
             for mod in modules:
                 lines.append(f"module load {mod}")
             lines.append("")
-        
+
         if env_vars:
             for key, value in env_vars.items():
                 lines.append(f"export {key}={value}")
             lines.append("")
-        
+
         lines.append(command)
         lines.append("")
-        
+
         return "\n".join(lines)
-    
+
     def _generate_pbs_script(
         self,
         command: str,
@@ -221,38 +262,48 @@ class HPCClient:
         queue: str | None,
         modules: list[str] | None,
         env_vars: dict[str, str] | None,
+        gpus_per_node: int | None,
     ) -> str:
         lines = ["#!/bin/bash"]
         lines.append(f"#PBS -N {job_name}")
         lines.append(f"#PBS -l walltime={walltime or self.config.default_walltime}")
-        lines.append(f"#PBS -l nodes={nodes or self.config.default_nodes}:ppn={ntasks_per_node or self.config.default_ntasks_per_node}")
-        
+
+        gpus = (
+            gpus_per_node
+            if gpus_per_node is not None
+            else self.config.default_gpus_per_node
+        )
+        node_spec = f"nodes={nodes or self.config.default_nodes}:ppn={ntasks_per_node or self.config.default_ntasks_per_node}"
+        if gpus > 0:
+            node_spec += f":ngpus={gpus}"
+        lines.append(f"#PBS -l {node_spec}")
+
         if queue or self.config.default_queue:
             lines.append(f"#PBS -q {queue or self.config.default_queue}")
-        
+
         lines.append("#PBS -o pbs-$PBS_JOBID.out")
         lines.append("#PBS -e pbs-$PBS_JOBID.err")
         lines.append("")
-        lines.append(f"cd $PBS_O_WORKDIR")
+        lines.append("cd $PBS_O_WORKDIR")
         lines.append("")
-        
+
         if modules:
             for mod in modules:
                 lines.append(f"module load {mod}")
             lines.append("")
-        
+
         if env_vars:
             for key, value in env_vars.items():
                 lines.append(f"export {key}={value}")
             lines.append("")
-        
+
         lines.append(command)
         lines.append("")
-        
+
         return "\n".join(lines)
-    
+
     # ── Job Submission ────────────────────────────────────────────
-    
+
     def submit_job(
         self,
         script_content: str,
@@ -286,6 +337,7 @@ class HPCClient:
                 raise RuntimeError(f"sbatch failed: {stderr}")
             # Parse job ID: "Submitted batch job 12345"
             import re
+
             match = re.search(r"Submitted batch job (\d+)", stdout)
             if match:
                 return match.group(1)
@@ -302,16 +354,23 @@ class HPCClient:
 
         else:
             raise ValueError(f"Unsupported scheduler: {self.config.scheduler}")
-    
+
     # ── Job Polling ───────────────────────────────────────────────
-    
+
     def poll_status(self, job_id: str) -> JobStatus:
         """Check the status of a submitted job."""
         self._ensure_connected()
-        
+
         if self.config.scheduler == "slurm":
             stdout, stderr, rc = self._exec(
-                ["sacct", "-j", job_id, "--format=JobID,State,ExitCode,Partition,Elapsed", "--noheader", "-P"]
+                [
+                    "sacct",
+                    "-j",
+                    job_id,
+                    "--format=JobID,State,ExitCode,Partition,Elapsed",
+                    "--noheader",
+                    "-P",
+                ]
             )
             if rc != 0 or not stdout:
                 # Fallback to squeue for running jobs
@@ -326,7 +385,7 @@ class HPCClient:
                         message=parts[2] if len(parts) > 2 else None,
                     )
                 return JobStatus(job_id=job_id, state="UNKNOWN", message=stderr)
-            
+
             # Parse sacct output: "12345|COMPLETED|0:0|normal|01:23:45"
             lines = stdout.strip().split("\n")
             for line in lines:
@@ -334,7 +393,11 @@ class HPCClient:
                 if len(parts) >= 5:
                     state = parts[1].upper()
                     exit_str = parts[2]
-                    exit_code = int(exit_str.split(":")[0]) if ":" in exit_str else int(exit_str)
+                    exit_code = (
+                        int(exit_str.split(":")[0])
+                        if ":" in exit_str
+                        else int(exit_str)
+                    )
                     return JobStatus(
                         job_id=job_id,
                         state=state,
@@ -343,7 +406,7 @@ class HPCClient:
                         runtime=parts[4] if parts[4] else None,
                     )
             return JobStatus(job_id=job_id, state="UNKNOWN")
-        
+
         elif self.config.scheduler == "pbs":
             stdout, stderr, rc = self._exec(["qstat", "-f", job_id])
             if rc != 0:
@@ -352,15 +415,16 @@ class HPCClient:
                 if rc2 != 0:
                     return JobStatus(job_id=job_id, state="UNKNOWN", message=stderr)
                 stdout = stdout2
-            
+
             # Parse PBS qstat output
             import re
+
             state_match = re.search(r"job_state\s*=\s*(\w+)", stdout)
             state = state_match.group(1).upper() if state_match else "UNKNOWN"
-            
+
             exit_match = re.search(r"exit_status\s*=\s*(\d+)", stdout)
             exit_code = int(exit_match.group(1)) if exit_match else None
-            
+
             # Map PBS states
             pbs_state_map = {
                 "Q": "PENDING",
@@ -370,16 +434,16 @@ class HPCClient:
                 "H": "PENDING",  # Held
             }
             mapped_state = pbs_state_map.get(state, state)
-            
+
             return JobStatus(
                 job_id=job_id,
                 state=mapped_state,
                 exit_code=exit_code,
             )
-        
+
         else:
             raise ValueError(f"Unsupported scheduler: {self.config.scheduler}")
-    
+
     def wait_for_job(
         self,
         job_id: str,
@@ -393,16 +457,16 @@ class HPCClient:
             if status.state in ("COMPLETED", "FAILED", "CANCELLED"):
                 return status
             time.sleep(poll_interval)
-        
+
         return JobStatus(job_id=job_id, state="UNKNOWN", message="Polling timeout")
-    
+
     # ── File Operations ───────────────────────────────────────────
-    
+
     def download_file(self, remote_path: str, local_path: str) -> None:
         """Download a file from the remote host."""
         self._ensure_connected()
         self._sftp.get(remote_path, local_path)
-    
+
     def upload_file(self, local_path: str, remote_path: str) -> None:
         """Upload a file to the remote host."""
         self._ensure_connected()
@@ -411,7 +475,7 @@ class HPCClient:
         _validate_path_component(remote_dir)
         self._exec(["mkdir", "-p", remote_dir])
         self._sftp.put(local_path, remote_path)
-    
+
     def list_remote_files(self, remote_dir: str) -> list[str]:
         """List files in a remote directory."""
         self._ensure_connected()
@@ -420,11 +484,11 @@ class HPCClient:
         if rc != 0:
             return []
         return stdout.strip().split("\n") if stdout.strip() else []
-    
+
     def __enter__(self):
         self.connect()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
         return False

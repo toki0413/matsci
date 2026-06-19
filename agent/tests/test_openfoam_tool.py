@@ -155,7 +155,9 @@ def test_openfoam_tool_set_fields_from_packing(tmp_path: Path) -> None:
     assert result.success is True
     case_dir = Path(result.data["case_dir"])
     assert (case_dir / "system" / "setFieldsDict").exists()
-    set_fields_text = (case_dir / "system" / "setFieldsDict").read_text(encoding="utf-8")
+    set_fields_text = (case_dir / "system" / "setFieldsDict").read_text(
+        encoding="utf-8"
+    )
     assert "sphereToCell" in set_fields_text
     assert "alpha.water" in set_fields_text
     assert (case_dir / "0" / "alpha.water").exists()

@@ -13,29 +13,44 @@ returned to the agent.
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.security import SandboxConfig, SandboxExecutor
-from huginn.security.restricted_python import validate_code, RestrictedPythonError
+from huginn.privacy import redact_secrets
+from huginn.security import (
+    ContainerExecutor,
+    SandboxConfig,
+    SandboxError,
+    SandboxExecutor,
+    get_executor,
+)
+from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class CodeToolInput(BaseModel):
     action: Literal["execute", "analyze", "generate"] = Field(default="execute")
     code: str = Field(..., description="Code snippet to execute or analyze")
-    language: Literal["python"] = Field(default="python", description="Programming language")
+    language: Literal["python"] = Field(
+        default="python", description="Programming language"
+    )
     working_dir: str | None = Field(default=None)
-    input_files: list[str] = Field(default_factory=list, description="Input files available to the code")
-    output_files: list[str] = Field(default_factory=list, description="Expected output file names to collect")
-    result_variable: str | None = Field(default=None, description="Variable to serialize and return")
-    timeout: float = Field(default=60.0, gt=0, description="Execution timeout in seconds")
+    input_files: list[str] = Field(
+        default_factory=list, description="Input files available to the code"
+    )
+    output_files: list[str] = Field(
+        default_factory=list, description="Expected output file names to collect"
+    )
+    result_variable: str | None = Field(
+        default=None, description="Variable to serialize and return"
+    )
+    timeout: float = Field(
+        default=60.0, gt=0, description="Execution timeout in seconds"
+    )
 
 
 class CodeTool(HuginnTool):
@@ -54,16 +69,22 @@ class CodeTool(HuginnTool):
         super().__init__()
         self.sandbox = sandbox or SandboxExecutor()
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = CodeToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             if input_data.action == "generate":
                 return self._generate(input_data)
             if input_data.action == "analyze":
-                return self._execute(input_data, work_dir, analyze=True, context=context)
+                return self._execute(
+                    input_data, work_dir, analyze=True, context=context
+                )
             return self._execute(input_data, work_dir, context=context)
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Code tool failed: {e}")
@@ -87,12 +108,18 @@ class CodeTool(HuginnTool):
         context: ToolContext | None = None,
     ) -> ToolResult:
         if args.language != "python":
-            return ToolResult(data=None, success=False, error=f"Language '{args.language}' not supported yet.")
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Language '{args.language}' not supported yet.",
+            )
 
         try:
             validate_code(args.code)
         except RestrictedPythonError as exc:
-            return ToolResult(data=None, success=False, error=f"Code security check failed: {exc}")
+            return ToolResult(
+                data=None, success=False, error=f"Code security check failed: {exc}"
+            )
 
         script_path = work_dir / "_code_tool_script.py"
         full_code = self._wrap_code(args.code, args.result_variable, analyze)
@@ -101,19 +128,36 @@ class CodeTool(HuginnTool):
         # Snapshot existing files to detect new outputs
         before_files = set(work_dir.iterdir())
 
-        cfg = SandboxConfig(
-            dry_run=False,
-            allowed_executables=self.sandbox.config.allowed_executables | {"python", "python3"},
-            default_timeout=args.timeout,
-        )
-        result = self.sandbox.run(
-            [shutil.which("python") or "python", str(script_path)],
-            cwd=work_dir,
-            config=cfg,
-            capture_output=True,
-            text=True,
-            timeout=args.timeout,
-        )
+        try:
+            executor = get_executor()
+        except SandboxError as exc:
+            return ToolResult(
+                data=None, success=False, error=f"Execution blocked: {exc}"
+            )
+
+        if isinstance(executor, ContainerExecutor):
+            result = executor.run(
+                ["python", script_path.name],
+                cwd=work_dir,
+                timeout=args.timeout,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            cfg = SandboxConfig(
+                dry_run=False,
+                allowed_executables=self.sandbox.config.allowed_executables
+                | {"python", "python3"},
+                default_timeout=args.timeout,
+            )
+            result = self.sandbox.run(
+                [shutil.which("python") or "python", str(script_path)],
+                cwd=work_dir,
+                config=cfg,
+                capture_output=True,
+                text=True,
+                timeout=args.timeout,
+            )
 
         # Collect requested or auto-detected output files
         after_files = set(work_dir.iterdir())
@@ -126,7 +170,16 @@ class CodeTool(HuginnTool):
                 output_paths[name] = str(path)
 
         for path in new_files:
-            if path.is_file() and path.suffix.lower() in (".png", ".jpg", ".jpeg", ".csv", ".json", ".txt", ".xyz", ".data"):
+            if path.is_file() and path.suffix.lower() in (
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".csv",
+                ".json",
+                ".txt",
+                ".xyz",
+                ".data",
+            ):
                 output_paths[path.name] = str(path)
 
         parsed_result = self._parse_result_marker(result.stdout)
@@ -138,7 +191,11 @@ class CodeTool(HuginnTool):
                 "stderr": result.stderr,
                 "result": parsed_result,
                 "output_files": output_paths,
-                "message": "Code executed successfully." if result.success else "Code execution failed; see stderr.",
+                "message": (
+                    "Code executed successfully."
+                    if result.success
+                    else "Code execution failed; see stderr."
+                ),
             },
             success=result.success,
         )
@@ -157,6 +214,12 @@ class CodeTool(HuginnTool):
             return
         try:
             import json as _json
+
+            output_data = (
+                _json.dumps(result.data, default=str, sort_keys=True)
+                if result.data
+                else None
+            )
             context.audit_logger.log(
                 event_type="code_execution",
                 actor="agent",
@@ -165,10 +228,12 @@ class CodeTool(HuginnTool):
                     "language": args.language,
                     "success": result.success,
                     "timeout": args.timeout,
-                    "returncode": result.data.get("returncode") if result.data else None,
+                    "returncode": (
+                        result.data.get("returncode") if result.data else None
+                    ),
                 },
-                input_data=args.code,
-                output_data=_json.dumps(result.data, default=str, sort_keys=True) if result.data else None,
+                input_data=redact_secrets(args.code),
+                output_data=redact_secrets(output_data) if output_data else None,
             )
         except Exception:
             pass
@@ -176,7 +241,9 @@ class CodeTool(HuginnTool):
     def _wrap_code(self, code: str, result_variable: str | None, analyze: bool) -> str:
         header = "# Code generated by huginn-agent code_tool\n"
         if analyze:
-            header += "# Analysis mode: input files are available in the working directory\n"
+            header += (
+                "# Analysis mode: input files are available in the working directory\n"
+            )
 
         footer = "\n"
         footer += "import json\n"
@@ -194,11 +261,11 @@ class CodeTool(HuginnTool):
     def _parse_result_marker(self, stdout: str) -> Any:
         for line in reversed(stdout.splitlines()):
             if line.startswith("__CODE_TOOL_RESULT__:"):
-                payload = line[len("__CODE_TOOL_RESULT__:"):]
+                payload = line[len("__CODE_TOOL_RESULT__:") :]
                 try:
                     return json.loads(payload)
                 except json.JSONDecodeError:
                     return payload
             if line.startswith("__CODE_TOOL_RESULT_ERROR__:"):
-                return {"error": line[len("__CODE_TOOL_RESULT_ERROR__:"):]};
+                return {"error": line[len("__CODE_TOOL_RESULT_ERROR__:") :]}
         return None

@@ -9,37 +9,51 @@ property prediction formulas, and process-structure-property linkages.
 from __future__ import annotations
 
 import csv
-import json
 import sys
 import tempfile
 import traceback
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.security import SafeEvalError
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
-from huginn.security import safe_eval, SafeEvalError
+from huginn.types import ToolContext, ToolResult
 
 
 class SymbolicRegressionInput(BaseModel):
     action: str = Field(default="discover", description="discover | evaluate | compare")
-    data_file: str | None = Field(default=None, description="Path to CSV file (last column = target)")
-    data_json: dict[str, list[float]] | None = Field(default=None, description="Inline data as {feature: [values], target: [values]}")
+    data_file: str | None = Field(
+        default=None, description="Path to CSV file (last column = target)"
+    )
+    data_json: dict[str, list[float]] | None = Field(
+        default=None, description="Inline data as {feature: [values], target: [values]}"
+    )
     target_column: str = Field(default="", description="Name of target variable")
-    feature_columns: list[str] | None = Field(default=None, description="Feature names (auto-detect if None)")
+    feature_columns: list[str] | None = Field(
+        default=None, description="Feature names (auto-detect if None)"
+    )
     operators: list[str] = Field(
         default=["Add", "Mul", "Identity", "Sin", "Cos", "Exp", "Log"],
         description="Allowed operators for expression search",
     )
-    time_limit: int = Field(default=300, ge=10, le=3600, description="Search time limit in seconds")
+    time_limit: int = Field(
+        default=300, ge=10, le=3600, description="Search time limit in seconds"
+    )
     use_const: bool = Field(default=True, description="Fit numerical constants")
-    n_symbol_layers: int = Field(default=3, ge=2, le=5, description="PSRN depth (2=speed, 5=expressiveness)")
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of candidate expressions to return")
-    probe_expression: str | None = Field(default=None, description="Known expression to verify recovery")
-    n_down_sample: int | None = Field(default=None, description="Subsample large datasets for speed")
+    n_symbol_layers: int = Field(
+        default=3, ge=2, le=5, description="PSRN depth (2=speed, 5=expressiveness)"
+    )
+    top_k: int = Field(
+        default=5, ge=1, le=20, description="Number of candidate expressions to return"
+    )
+    probe_expression: str | None = Field(
+        default=None, description="Known expression to verify recovery"
+    )
+    n_down_sample: int | None = Field(
+        default=None, description="Subsample large datasets for speed"
+    )
 
 
 class SymbolicRegressionTool(HuginnTool):
@@ -62,7 +76,9 @@ class SymbolicRegressionTool(HuginnTool):
 
     def __init__(self, pse_path: str | None = None):
         super().__init__()
-        self.pse_path = Path(pse_path) if pse_path else Path.home() / "Desktop" / "符号回归" / "PSE"
+        self.pse_path = (
+            Path(pse_path) if pse_path else Path.home() / "Desktop" / "符号回归" / "PSE"
+        )
         self._regressor_class = None
         self._model_module = None
 
@@ -75,20 +91,29 @@ class SymbolicRegressionTool(HuginnTool):
             if str(pse_model) not in sys.path:
                 sys.path.insert(0, str(pse_model.parent))
             from model.regressor import PSRN_Regressor
+
             self._regressor_class = PSRN_Regressor
             return True
         except Exception:
             return False
 
-    def _load_data(self, args: SymbolicRegressionInput) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    def _load_data(
+        self, args: SymbolicRegressionInput
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """Load X, Y and feature names from file or inline JSON."""
         if args.data_json:
             data = args.data_json
             if args.target_column not in data:
-                raise ValueError(f"target_column '{args.target_column}' not found in data_json")
+                raise ValueError(
+                    f"target_column '{args.target_column}' not found in data_json"
+                )
             y = np.array(data[args.target_column], dtype=np.float64)
-            feature_cols = args.feature_columns or [k for k in data.keys() if k != args.target_column]
-            x = np.column_stack([np.array(data[c], dtype=np.float64) for c in feature_cols])
+            feature_cols = args.feature_columns or [
+                k for k in data if k != args.target_column
+            ]
+            x = np.column_stack(
+                [np.array(data[c], dtype=np.float64) for c in feature_cols]
+            )
             return x, y.reshape(-1, 1), feature_cols
 
         if not args.data_file:
@@ -99,7 +124,7 @@ class SymbolicRegressionTool(HuginnTool):
             raise FileNotFoundError(f"Data file not found: {path}")
 
         # Parse CSV
-        with open(path, "r", encoding="utf-8", newline="") as f:
+        with open(path, encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
 
@@ -126,23 +151,31 @@ class SymbolicRegressionTool(HuginnTool):
             raise ValueError("No feature columns found")
 
         y = np.array([float(r[target]) for r in rows], dtype=np.float64)
-        x = np.array([[float(r[c]) for c in feature_cols] for r in rows], dtype=np.float64)
+        x = np.array(
+            [[float(r[c]) for c in feature_cols] for r in rows], dtype=np.float64
+        )
         return x, y.reshape(-1, 1), feature_cols
 
-    async def call(self, args: SymbolicRegressionInput, context: ToolContext) -> ToolResult:
+    async def call(
+        self, args: SymbolicRegressionInput, context: ToolContext
+    ) -> ToolResult:
         if args.action == "discover":
             return await self._discover(args)
         elif args.action == "evaluate":
             return await self._evaluate(args)
         elif args.action == "compare":
             return await self._compare(args)
-        return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+        return ToolResult(
+            data=None, success=False, error=f"Unknown action: {args.action}"
+        )
 
     async def _discover(self, args: SymbolicRegressionInput) -> ToolResult:
         try:
             X, Y, features = self._load_data(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Data loading failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Data loading failed: {e}"
+            )
 
         # Check PSE availability
         if not self._ensure_pse_available():
@@ -172,14 +205,20 @@ class SymbolicRegressionTool(HuginnTool):
                     "n_sample_variables": len(features),
                 },
                 "stages": [
-                    {"time_limit": min(30, args.time_limit // 3), "n_psrn_inputs": min(3 + len(features), 7)},
+                    {
+                        "time_limit": min(30, args.time_limit // 3),
+                        "n_psrn_inputs": min(3 + len(features), 7),
+                    },
                     {},
                 ],
             }
 
             # Write temporary stage config
             import yaml
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yaml", delete=False
+            ) as f:
                 yaml.dump(stage_config, f)
                 stage_path = f.name
 
@@ -252,10 +291,14 @@ class SymbolicRegressionTool(HuginnTool):
         try:
             X, Y, features = self._load_data(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Data loading failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Data loading failed: {e}"
+            )
 
         if not args.probe_expression:
-            return ToolResult(data=None, success=False, error="probe_expression required for evaluate")
+            return ToolResult(
+                data=None, success=False, error="probe_expression required for evaluate"
+            )
 
         try:
             # Safe evaluation of expression
@@ -263,29 +306,47 @@ class SymbolicRegressionTool(HuginnTool):
             local_vars["np"] = np
             # Whitelist common numpy functions for expression evaluation
             allowed_funcs = {
-                "sin", "cos", "tan", "exp", "log", "sqrt", "abs",
-                "max", "min", "sum", "mean", "std", "pi", "e",
+                "sin",
+                "cos",
+                "tan",
+                "exp",
+                "log",
+                "sqrt",
+                "abs",
+                "max",
+                "min",
+                "sum",
+                "mean",
+                "std",
+                "pi",
+                "e",
             }
             # Validate expression before eval
             import ast
+
             tree = ast.parse(args.probe_expression, mode="eval")
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     # Allow np.* calls where * is in allowed_funcs
-                    if isinstance(node.func, ast.Attribute):
-                        if node.func.attr not in allowed_funcs:
-                            raise SafeEvalError(f"Forbidden function: {node.func.attr}")
-                    elif isinstance(node.func, ast.Name):
-                        if node.func.id not in allowed_funcs:
-                            raise SafeEvalError(f"Forbidden function: {node.func.id}")
-                elif isinstance(node, ast.Attribute):
-                    if node.attr not in allowed_funcs:
-                        raise SafeEvalError(f"Forbidden attribute: {node.attr}")
+                    if (
+                        isinstance(node.func, ast.Attribute)
+                        and node.func.attr not in allowed_funcs
+                    ):
+                        raise SafeEvalError(f"Forbidden function: {node.func.attr}")
+                    elif (
+                        isinstance(node.func, ast.Name)
+                        and node.func.id not in allowed_funcs
+                    ):
+                        raise SafeEvalError(f"Forbidden function: {node.func.id}")
+                elif isinstance(node, ast.Attribute) and node.attr not in allowed_funcs:
+                    raise SafeEvalError(f"Forbidden attribute: {node.attr}")
             predicted = eval(args.probe_expression, {"__builtins__": {}}, local_vars)
             predicted = np.asarray(predicted).reshape(-1, 1)
             mse = float(np.mean((predicted - Y) ** 2))
             rmse = float(np.sqrt(mse))
-            r2 = float(1.0 - np.sum((Y - predicted) ** 2) / np.sum((Y - np.mean(Y)) ** 2))
+            r2 = float(
+                1.0 - np.sum((Y - predicted) ** 2) / np.sum((Y - np.mean(Y)) ** 2)
+            )
 
             return ToolResult(
                 data={
@@ -312,6 +373,7 @@ class SymbolicRegressionTool(HuginnTool):
     def _cuda_available(self) -> bool:
         try:
             import torch
+
             return torch.cuda.is_available()
         except Exception:
             return False

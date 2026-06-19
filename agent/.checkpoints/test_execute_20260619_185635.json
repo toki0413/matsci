@@ -1,0 +1,25 @@
+{
+  "workflow_name": "test_execute",
+  "started_at": "2026-06-19T18:56:35.970706",
+  "finished_at": "2026-06-19T18:56:35.972369",
+  "stage_results": [
+    {
+      "stage_id": "echo",
+      "stage_name": "echo",
+      "tool_name": "bash_tool",
+      "success": false,
+      "output_data": {},
+      "error_message": "huginn.tools.bash_tool.BashToolInput() argument after ** must be a mapping, not BashToolInput",
+      "stdout": "",
+      "stderr": "",
+      "walltime_seconds": 0.0003764629364013672,
+      "started_at": "2026-06-19T18:56:35.971161",
+      "finished_at": "2026-06-19T18:56:35.971554",
+      "retry_count": 0,
+      "auto_fixed": false,
+      "fix_applied": null
+    }
+  ],
+  "overall_success": false,
+  "working_directory": "."
+}

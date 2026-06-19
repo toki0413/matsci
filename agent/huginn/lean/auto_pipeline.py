@@ -7,30 +7,63 @@ compiling them without hand-written Lean code.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import sympy as sp
 
 from huginn.lean.interface import LeanInterface, LeanResult
 from huginn.lean.sympy_to_lean import SymPyToLean
 
-import re
-
 
 class LeanCodeFixer:
     """Rule-based fixer for common Lean 4 compilation errors in generated code."""
 
     _LEAN_KEYWORDS = {
-        "def", "theorem", "lemma", "example", "class", "structure",
-        "inductive", "match", "if", "then", "else", "let", "in",
-        "where", "namespace", "section", "end", "import", "open",
-        "variable", "variables", "universe", "universes", "axiom",
-        "constant", "partial", "mutual", "return", "do", "for",
-        "while", "try", "catch", "finally", "throw", "macro",
-        "syntax", "deriving", "instance", "opaque", "abbrev",
+        "def",
+        "theorem",
+        "lemma",
+        "example",
+        "class",
+        "structure",
+        "inductive",
+        "match",
+        "if",
+        "then",
+        "else",
+        "let",
+        "in",
+        "where",
+        "namespace",
+        "section",
+        "end",
+        "import",
+        "open",
+        "variable",
+        "variables",
+        "universe",
+        "universes",
+        "axiom",
+        "constant",
+        "partial",
+        "mutual",
+        "return",
+        "do",
+        "for",
+        "while",
+        "try",
+        "catch",
+        "finally",
+        "throw",
+        "macro",
+        "syntax",
+        "deriving",
+        "instance",
+        "opaque",
+        "abbrev",
     }
 
     def __init__(self, raw_symbols=None):
@@ -66,10 +99,13 @@ class LeanCodeFixer:
         return code
 
     def _fix_missing_float_imports(self, code, stderr):
-        if "Float.sin" in code and "unknown identifier 'Float.sin'" in stderr:
-            if "import Std" not in code:
-                code = "import Std\n" + code
-                self._fixes_applied.append("add_std_import")
+        if (
+            "Float.sin" in code
+            and "unknown identifier 'Float.sin'" in stderr
+            and "import Std" not in code
+        ):
+            code = "import Std\n" + code
+            self._fixes_applied.append("add_std_import")
         return code
 
     def _fix_numeric_literals(self, code, stderr):
@@ -167,8 +203,8 @@ class AutoLeanPipeline:
         self,
         expr: sp.Expr | str,
         name: str,
-        symbols: Optional[List[str]] = None,
-        imports: Optional[List[str]] = None,
+        symbols: list[str] | None = None,
+        imports: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Convert a single SymPy expression to a Lean `def` and compile it.
@@ -185,11 +221,18 @@ class AutoLeanPipeline:
         """
         if isinstance(expr, str):
             sym_dict = {s: sp.Symbol(s) for s in (symbols or [])}
-            sym_dict.update({
-                "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
-                "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
-                "pi": sp.pi, "E": sp.E,
-            })
+            sym_dict.update(
+                {
+                    "sin": sp.sin,
+                    "cos": sp.cos,
+                    "tan": sp.tan,
+                    "exp": sp.exp,
+                    "log": sp.log,
+                    "sqrt": sp.sqrt,
+                    "pi": sp.pi,
+                    "E": sp.E,
+                }
+            )
             expr = sp.sympify(expr, locals=sym_dict)
 
         lean_expr = self._translator.translate(expr)
@@ -207,9 +250,9 @@ class AutoLeanPipeline:
 
     def verify_expression_dict(
         self,
-        expressions: Dict[str, sp.Expr | str],
-        symbols: Optional[List[str]] = None,
-        imports: Optional[List[str]] = None,
+        expressions: dict[str, sp.Expr | str],
+        symbols: list[str] | None = None,
+        imports: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Batch-convert multiple named expressions to Lean defs and compile.
@@ -225,8 +268,12 @@ class AutoLeanPipeline:
             if isinstance(expr, str):
                 # Defaults first, then user symbols override (so 'E' can be Young's modulus)
                 sym_dict = {
-                    "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
-                    "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
+                    "sin": sp.sin,
+                    "cos": sp.cos,
+                    "tan": sp.tan,
+                    "exp": sp.exp,
+                    "log": sp.log,
+                    "sqrt": sp.sqrt,
                     "pi": sp.pi,
                 }
                 sym_dict.update({s: sp.Symbol(s) for s in (symbols or [])})
@@ -268,8 +315,8 @@ class AutoLeanPipeline:
 
     def verify_constitutive(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify constitutive-relation expressions from SymbolicMathTool.
@@ -281,7 +328,7 @@ class AutoLeanPipeline:
             symbols: Extra symbol names for parsing.
             timeout: Compilation timeout.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
         for key, val in symbolic_result.items():
             if isinstance(val, str) and val.strip():
                 lean_key = self._sanitize_lean_name(key)
@@ -305,8 +352,8 @@ class AutoLeanPipeline:
 
     def verify_tensor_calculus(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify tensor calculus results from SymbolicMathTool.
@@ -314,7 +361,7 @@ class AutoLeanPipeline:
         Converts invariants, principal values, and Voigt vectors into
         Lean `Float` definitions and compiles them.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
         invariants = symbolic_result.get("invariants", {})
         for key, val in invariants.items():
@@ -339,12 +386,17 @@ class AutoLeanPipeline:
 
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No tensor calculus data found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No tensor calculus data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.TensorAlgebra"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.TensorAlgebra"],
+            timeout=timeout,
         )
 
     def verify_derivative(
@@ -352,7 +404,7 @@ class AutoLeanPipeline:
         original: str,
         variable: str,
         expected: str,
-        test_points: Optional[Dict[str, float]] = None,
+        test_points: dict[str, float] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Numerically verify a derivative at sample points.
@@ -370,13 +422,20 @@ class AutoLeanPipeline:
         if test_points is None:
             test_points = {variable: 1.0}
 
-        sym_dict = {s: sp.Symbol(s) for s in test_points.keys()}
+        sym_dict = {s: sp.Symbol(s) for s in test_points}
         sym_dict[variable] = sp.Symbol(variable)
-        sym_dict.update({
-            "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
-            "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
-            "pi": sp.pi, "E": sp.E,
-        })
+        sym_dict.update(
+            {
+                "sin": sp.sin,
+                "cos": sp.cos,
+                "tan": sp.tan,
+                "exp": sp.exp,
+                "log": sp.log,
+                "sqrt": sp.sqrt,
+                "pi": sp.pi,
+                "E": sp.E,
+            }
+        )
 
         orig_expr = sp.sympify(original, locals=sym_dict)
         deriv_expr = sp.sympify(expected, locals=sym_dict)
@@ -385,8 +444,7 @@ class AutoLeanPipeline:
         # Build finite-difference expression: (f(x+h) - f(x-h)) / (2h)
         h = sp.Symbol("h")
         fd_expr = (
-            orig_expr.subs(var_sym, var_sym + h)
-            - orig_expr.subs(var_sym, var_sym - h)
+            orig_expr.subs(var_sym, var_sym + h) - orig_expr.subs(var_sym, var_sym - h)
         ) / (2 * h)
 
         lean_fd = self._translator.translate(fd_expr)
@@ -441,8 +499,8 @@ def derivVal (x : Float) : Float := {lean_deriv}
 
     def verify_weak_form(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify weak-form expressions from SymbolicMathTool.
@@ -450,7 +508,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
         Converts terms like 'diffusion', 'reaction', 'convection' into
         Lean function definitions.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
         for key, val in symbolic_result.get("weak_form_terms", {}).items():
             if isinstance(val, str) and val.strip():
                 expressions[f"weakForm{key.capitalize()}"] = val
@@ -459,18 +517,23 @@ def derivVal (x : Float) : Float := {lean_deriv}
                 expressions[f"boundaryTerm{key.capitalize()}"] = val
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No weak-form terms found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No weak-form terms found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.ContinuumMechanics"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.ContinuumMechanics"],
+            timeout=timeout,
         )
 
     def verify_fem(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 120,
     ) -> LeanResult:
         """Verify FEM results from SymbolicMathTool.
@@ -478,7 +541,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
         Converts element stiffness matrices and weak-form expressions into
         Lean definitions that import HuginnLean.FiniteElement.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
         # Weak-form terms
         for key, val in symbolic_result.get("weak_form_terms", {}).items():
@@ -504,25 +567,30 @@ def derivVal (x : Float) : Float := {lean_deriv}
 
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No FEM data found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No FEM data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.FiniteElement"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.FiniteElement"],
+            timeout=timeout,
         )
 
     def verify_eigenvalue(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify eigenvalue expressions from SymbolicMathTool.
 
         Converts symbolic eigenvalues, trace and determinant into Lean defs.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
         for i, ev in enumerate(symbolic_result.get("eigenvalues", [])):
             val = ev.get("value", "") if isinstance(ev, dict) else str(ev)
             if val:
@@ -535,21 +603,26 @@ def derivVal (x : Float) : Float := {lean_deriv}
             expressions["matDet"] = det
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No eigenvalue data found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No eigenvalue data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols, timeout=timeout,
+            expressions,
+            symbols=symbols,
+            timeout=timeout,
         )
 
     def verify_tensor_ops(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify tensor invariant expressions from SymbolicMathTool."""
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
         for key, val in symbolic_result.get("invariants", {}).items():
             if isinstance(val, str) and val.strip():
                 expressions[f"invariant{key}"] = val
@@ -561,24 +634,29 @@ def derivVal (x : Float) : Float := {lean_deriv}
             expressions["tensorDet"] = det
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No tensor invariants found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No tensor invariants found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols, timeout=timeout,
+            expressions,
+            symbols=symbols,
+            timeout=timeout,
         )
 
     def verify_solve(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify solution expressions from SymbolicMathTool.
 
         Each solution dict like {"x": "2", "y": "3"} becomes a set of defs.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
         solutions = symbolic_result.get("solutions", [])
         if not solutions:
             sol = symbolic_result.get("solution", "")
@@ -591,17 +669,22 @@ def derivVal (x : Float) : Float := {lean_deriv}
                         expressions[f"sol{i}{var_name}"] = val
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No solutions found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No solutions found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols, timeout=timeout,
+            expressions,
+            symbols=symbols,
+            timeout=timeout,
         )
 
     def verify_linear_algebra(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify linear algebra results from SymbolicMathTool.
@@ -609,7 +692,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
         Converts matrix entries, solution vectors, and decomposition
         factors into Lean Float definitions.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
         # LU or Cholesky factor L
         L = symbolic_result.get("L")
@@ -644,18 +727,23 @@ def derivVal (x : Float) : Float := {lean_deriv}
 
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No linear algebra data found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No linear algebra data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.NumericalLinearAlgebra"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.NumericalLinearAlgebra"],
+            timeout=timeout,
         )
 
     def verify_dft(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify DFT computation results from SymbolicMathTool.
@@ -663,7 +751,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
         Converts energies, DOS values, band structure points, and
         LDA XC energies into Lean Float definitions.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
         fe = symbolic_result.get("fermi_energy")
         if isinstance(fe, (int, float)):
@@ -705,18 +793,23 @@ def derivVal (x : Float) : Float := {lean_deriv}
 
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No DFT data found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No DFT data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.DFT"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.DFT"],
+            timeout=timeout,
         )
 
     def verify_thermodynamics(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify thermodynamics computation results from SymbolicMathTool.
@@ -724,32 +817,51 @@ def derivVal (x : Float) : Float := {lean_deriv}
         Converts pressures, energies, chemical potentials, and partition
         functions into Lean Float definitions.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
-        for key in ["pressure", "internal_energy", "volume", "temperature",
-                    "moles", "helmholtz_energy", "gibbs_energy", "enthalpy",
-                    "entropy", "entropy_change", "chemical_potential",
-                    "slope_dPdT", "latent_heat", "delta_volume",
-                    "single_partition_function", "thermal_wavelength",
-                    "critical_temperature", "critical_pressure"]:
+        for key in [
+            "pressure",
+            "internal_energy",
+            "volume",
+            "temperature",
+            "moles",
+            "helmholtz_energy",
+            "gibbs_energy",
+            "enthalpy",
+            "entropy",
+            "entropy_change",
+            "chemical_potential",
+            "slope_dPdT",
+            "latent_heat",
+            "delta_volume",
+            "single_partition_function",
+            "thermal_wavelength",
+            "critical_temperature",
+            "critical_pressure",
+        ]:
             val = symbolic_result.get(key)
             if isinstance(val, (int, float)):
                 expressions[f"thermo{key.title().replace('_', '')}"] = str(val)
 
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No thermodynamics data found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No thermodynamics data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.Thermodynamics"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.Thermodynamics"],
+            timeout=timeout,
         )
 
     def verify_probability(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify probability and GP results from SymbolicMathTool.
@@ -757,29 +869,42 @@ def derivVal (x : Float) : Float := {lean_deriv}
         Converts PDF values, CDF values, kernel values, integrals,
         and Bayesian posterior parameters into Lean Float definitions.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
-        for key in ["pdf", "cdf", "kernel_value", "integral", "exact",
-                    "posterior_mean", "posterior_variance", "prior_mean",
-                    "prior_variance"]:
+        for key in [
+            "pdf",
+            "cdf",
+            "kernel_value",
+            "integral",
+            "exact",
+            "posterior_mean",
+            "posterior_variance",
+            "prior_mean",
+            "prior_variance",
+        ]:
             val = symbolic_result.get(key)
             if isinstance(val, (int, float)):
                 expressions[f"prob{key.title().replace('_', '')}"] = str(val)
 
         if not expressions:
             return LeanResult(
-                success=False, stdout="", stderr="No probability data found",
-                returncode=-1, elapsed_seconds=0.0,
+                success=False,
+                stdout="",
+                stderr="No probability data found",
+                returncode=-1,
+                elapsed_seconds=0.0,
             )
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.Probability"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.Probability"],
+            timeout=timeout,
         )
 
     def verify_unified(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify unified-framework derivation results in Lean 4.
@@ -789,7 +914,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
         derivatives or functions are skipped because they need a prior
         discretization step.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
         energy = symbolic_result.get("energy_expression")
         if isinstance(energy, str) and energy.strip():
@@ -832,13 +957,15 @@ def derivVal (x : Float) : Float := {lean_deriv}
             )
 
         return self.verify_expression_dict(
-            expressions, symbols=symbols, timeout=timeout,
+            expressions,
+            symbols=symbols,
+            timeout=timeout,
         )
 
     def verify_discretization(
         self,
-        symbolic_result: Dict[str, Any],
-        symbols: Optional[List[str]] = None,
+        symbolic_result: dict[str, Any],
+        symbols: list[str] | None = None,
         timeout: int = 60,
     ) -> LeanResult:
         """Verify a discretized/solved unified problem in Lean 4.
@@ -847,7 +974,7 @@ def derivVal (x : Float) : Float := {lean_deriv}
         Lean `Float` definitions.  If a solution vector is present, it is
         also compiled so downstream checks (e.g. residual) can be added.
         """
-        expressions: Dict[str, str] = {}
+        expressions: dict[str, str] = {}
 
         K = symbolic_result.get("stiffness_matrix")
         if isinstance(K, list):
@@ -876,8 +1003,10 @@ def derivVal (x : Float) : Float := {lean_deriv}
             )
 
         return self.verify_expression_dict(
-            expressions, symbols=symbols,
-            imports=["HuginnLean.NumericalLinearAlgebra"], timeout=timeout,
+            expressions,
+            symbols=symbols,
+            imports=["HuginnLean.NumericalLinearAlgebra"],
+            timeout=timeout,
         )
 
     # ------------------------------------------------------------------

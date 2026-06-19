@@ -10,8 +10,6 @@ Long-term memory grows indefinitely. These policies keep it useful by:
 
 from __future__ import annotations
 
-import json
-import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -60,9 +58,11 @@ class MemoryDecayPolicy:
                 idle_days = (now - last_accessed).total_seconds() / 86400
 
                 # Decay importance based on idle time.
-                new_importance = importance * (self.decay_per_day ** idle_days)
+                new_importance = importance * (self.decay_per_day**idle_days)
                 # Boost based on historical access.
-                new_importance = min(1.0, new_importance + self.access_boost * access_count)
+                new_importance = min(
+                    1.0, new_importance + self.access_boost * access_count
+                )
 
                 if abs(new_importance - importance) > 0.001:
                     conn.execute(
@@ -116,15 +116,15 @@ class MemoryDeduplicator:
         seen: dict[str, str] = {}  # normalized content -> kept id
 
         with memory._connect() as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT id, content, importance, last_accessed FROM memories
                 ORDER BY importance DESC, last_accessed DESC
-                """
-            ).fetchall()
+                """).fetchall()
 
             for row in rows:
-                normalized = row["content"] if self.case_sensitive else row["content"].lower()
+                normalized = (
+                    row["content"] if self.case_sensitive else row["content"].lower()
+                )
                 if normalized in seen:
                     conn.execute("DELETE FROM memories WHERE id = ?", (row["id"],))
                     removed += 1

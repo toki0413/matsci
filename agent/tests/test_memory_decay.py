@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from huginn.memory.longterm import LongTermMemory
-from huginn.memory.decay import MemoryDecayPolicy, MemoryDeduplicator
 
 
 class TestMemoryDecayPolicy:
@@ -65,7 +64,9 @@ class TestMemoryDecayPolicy:
                 )
                 conn.commit()
 
-            mem.apply_decay_policy(decay_per_day=0.9, access_boost=0.05, prune_threshold=0.5)
+            mem.apply_decay_policy(
+                decay_per_day=0.9, access_boost=0.05, prune_threshold=0.5
+            )
             entry = mem.get_by_id(eid)
             assert entry["importance"] >= 0.5
 

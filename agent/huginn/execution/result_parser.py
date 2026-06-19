@@ -13,28 +13,28 @@ Supported parsers:
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
 class ParsedResult:
     """Structured result from parsing a calculation output."""
+
     software: str
     task: str
     converged: bool
-    energy: Optional[float] = None
-    forces: Optional[List[List[float]]] = None
-    stress: Optional[List[float]] = None
-    band_gap: Optional[float] = None
-    magnetic_moment: Optional[float] = None
-    physical_quantities: Dict[str, Any] = field(default_factory=dict)
-    warnings: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    energy: float | None = None
+    forces: list[list[float]] | None = None
+    stress: list[float] | None = None
+    band_gap: float | None = None
+    magnetic_moment: float | None = None
+    physical_quantities: dict[str, Any] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ResultParser:
@@ -56,7 +56,7 @@ class ResultParser:
             "openfoam_log": self._parse_openfoam_log,
         }
 
-    def parse(self, file_path: Path, file_type: Optional[str] = None) -> ParsedResult:
+    def parse(self, file_path: Path, file_type: str | None = None) -> ParsedResult:
         """Auto-detect file type and parse."""
         if file_type is None:
             file_type = self._detect_file_type(file_path)
@@ -103,7 +103,16 @@ class ResultParser:
         # Task detection
         if "IBRION =" in text:
             ibrion = self._extract_int(text, r"IBRION\s*=\s*(\d+)")
-            result.task = {0: "MD", 1: "relax", 2: "relax", 3: "relax", 5: "freq", 6: "freq", 7: "freq", 8: "freq"}.get(ibrion, "scf")
+            result.task = {
+                0: "MD",
+                1: "relax",
+                2: "relax",
+                3: "relax",
+                5: "freq",
+                6: "freq",
+                7: "freq",
+                8: "freq",
+            }.get(ibrion, "scf")
 
         # Energy
         energy_match = re.search(r"free  energy   TOTEN\s*=\s+([-\d.]+)", text)
@@ -115,17 +124,23 @@ class ResultParser:
             result.converged = True
         elif "EDIFFG" in text and result.task == "relax":
             # Check if ionic relaxation converged
-            result.converged = "reached required accuracy - stopping structural energy minimisation" in text
+            result.converged = (
+                "reached required accuracy - stopping structural energy minimisation"
+                in text
+            )
 
         # Forces (last ionic step)
         forces = self._extract_forces_outcar(text)
         if forces:
             result.forces = forces
-            max_force = max(sum(f[i]**2 for i in range(3))**0.5 for f in forces)
+            max_force = max(sum(f[i] ** 2 for i in range(3)) ** 0.5 for f in forces)
             result.physical_quantities["max_force"] = max_force
 
         # Stress
-        stress_match = re.search(r"in kB\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", text)
+        stress_match = re.search(
+            r"in kB\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)",
+            text,
+        )
         if stress_match:
             result.stress = [float(stress_match.group(i)) for i in range(1, 7)]
 
@@ -142,9 +157,13 @@ class ResultParser:
 
         # Warnings
         if "ZBRENT" in text:
-            result.warnings.append("ZBRENT error encountered — possible SCF convergence issue")
+            result.warnings.append(
+                "ZBRENT error encountered — possible SCF convergence issue"
+            )
         if "EDDDAV" in text:
-            result.warnings.append("EDDDAV error — try reducing NBANDS or changing ALGO")
+            result.warnings.append(
+                "EDDDAV error — try reducing NBANDS or changing ALGO"
+            )
         if "WARNING" in text:
             warns = re.findall(r"WARNING:\s*(.+?)(?:\n|$)", text)
             result.warnings.extend(warns[:5])
@@ -153,10 +172,14 @@ class ResultParser:
         result.metadata["lines"] = text.count("\n")
         return result
 
-    def _extract_forces_outcar(self, text: str) -> Optional[List[List[float]]]:
+    def _extract_forces_outcar(self, text: str) -> list[list[float]] | None:
         """Extract forces from the last ionic step in OUTCAR."""
         # Find all force blocks
-        blocks = list(re.finditer(r"TOTAL-FORCE \(eV/Angst\)\n-{2,}\n(.+?)(?:\n-{2,})", text, re.DOTALL))
+        blocks = list(
+            re.finditer(
+                r"TOTAL-FORCE \(eV/Angst\)\n-{2,}\n(.+?)(?:\n-{2,})", text, re.DOTALL
+            )
+        )
         if not blocks:
             return None
         last_block = blocks[-1].group(1)
@@ -178,7 +201,7 @@ class ResultParser:
             result.energy = float(e_match.group(1))
 
         # Convergence
-        if "<v name=\"converged\">T</v>" in text or "<i name=\"converged\">T</i>" in text:
+        if '<v name="converged">T</v>' in text or '<i name="converged">T</i>' in text:
             result.converged = True
 
         return result
@@ -219,10 +242,14 @@ class ResultParser:
                 result.errors.append(err_match.group(1).strip())
 
         # HOMO-LUMO gap
-        homo_match = re.search(r"Alpha\s+occ\.\s+.*?([-]?\d+\.\d+)\s*\n\s*Alpha\s+virt\.", text, re.DOTALL)
+        homo_match = re.search(
+            r"Alpha\s+occ\.\s+.*?([-]?\d+\.\d+)\s*\n\s*Alpha\s+virt\.", text, re.DOTALL
+        )
         if homo_match:
             homo = float(homo_match.group(1))
-            lumo_match = re.search(r"Alpha\s+virt\.\s+.*?([-]?\d+\.\d+)", text, re.DOTALL)
+            lumo_match = re.search(
+                r"Alpha\s+virt\.\s+.*?([-]?\d+\.\d+)", text, re.DOTALL
+            )
             if lumo_match:
                 lumo = float(lumo_match.group(1))
                 result.band_gap = (lumo - homo) * 27.2114  # Hartree to eV
@@ -236,7 +263,9 @@ class ResultParser:
             result.physical_quantities["frequencies"] = [float(f) for f in freqs]
             imag = [f for f in result.physical_quantities["frequencies"] if f < 0]
             if imag:
-                result.warnings.append(f"{len(imag)} imaginary frequencies — not a true minimum")
+                result.warnings.append(
+                    f"{len(imag)} imaginary frequencies — not a true minimum"
+                )
 
         return result
 
@@ -259,23 +288,36 @@ class ResultParser:
                 continue
             if in_thermo:
                 parts = line.split()
-                if len(parts) == len(headers) and parts[0].replace(".", "", 1).isdigit():
+                if (
+                    len(parts) == len(headers)
+                    and parts[0].replace(".", "", 1).isdigit()
+                ):
                     thermo_lines.append({h: float(v) for h, v in zip(headers, parts)})
                 else:
                     in_thermo = False
 
         if thermo_lines:
-            result.physical_quantities["final_temperature"] = thermo_lines[-1].get("Temp")
+            result.physical_quantities["final_temperature"] = thermo_lines[-1].get(
+                "Temp"
+            )
             result.physical_quantities["final_pressure"] = thermo_lines[-1].get("Press")
             result.physical_quantities["final_pe"] = thermo_lines[-1].get("PotEng")
             result.physical_quantities["final_ke"] = thermo_lines[-1].get("KinEng")
-            result.physical_quantities["total_steps"] = int(thermo_lines[-1].get("Step", 0))
+            result.physical_quantities["total_steps"] = int(
+                thermo_lines[-1].get("Step", 0)
+            )
 
             # Energy conservation check
             if len(thermo_lines) > 10:
-                pe_values = [row.get("TotEng", row.get("PotEng", 0)) for row in thermo_lines]
+                pe_values = [
+                    row.get("TotEng", row.get("PotEng", 0)) for row in thermo_lines
+                ]
                 if pe_values:
-                    pe_drift = (max(pe_values) - min(pe_values)) / abs(pe_values[0]) if pe_values[0] != 0 else 0
+                    pe_drift = (
+                        (max(pe_values) - min(pe_values)) / abs(pe_values[0])
+                        if pe_values[0] != 0
+                        else 0
+                    )
                     result.physical_quantities["energy_drift_relative"] = pe_drift
                     if pe_drift > 0.01:
                         result.warnings.append(f"High energy drift: {pe_drift:.2%}")
@@ -303,7 +345,9 @@ class ResultParser:
             result.converged = True
 
         # Extract element stresses/strains (simplified)
-        stress_blocks = re.findall(r"S11\s+S22\s+S33\s+S12\s+S13\s+S23\n(.+?)(?:\n\n|\Z)", text, re.DOTALL)
+        stress_blocks = re.findall(
+            r"S11\s+S22\s+S33\s+S12\s+S13\s+S23\n(.+?)(?:\n\n|\Z)", text, re.DOTALL
+        )
         if stress_blocks:
             result.physical_quantities["stress_blocks_found"] = len(stress_blocks)
 
@@ -330,11 +374,11 @@ class ResultParser:
 
         # Extract final residuals
         residuals = {}
-        for field in ["Ux", "Uy", "Uz", "p", "k", "omega", "epsilon"]:
-            pattern = rf"{field}\s+final residual\s*=\s+([\d.eE+-]+)"
+        for field_name in ["Ux", "Uy", "Uz", "p", "k", "omega", "epsilon"]:
+            pattern = rf"{field_name}\s+final residual\s*=\s+([\d.eE+-]+)"
             matches = re.findall(pattern, text)
             if matches:
-                residuals[field] = float(matches[-1])
+                residuals[field_name] = float(matches[-1])
 
         if residuals:
             result.physical_quantities["final_residuals"] = residuals
@@ -347,7 +391,9 @@ class ResultParser:
         elif "Continuity error" in text:
             cont_match = re.search(r"Continuity error = ([\d.eE+-]+)", text)
             if cont_match:
-                result.physical_quantities["continuity_error"] = float(cont_match.group(1))
+                result.physical_quantities["continuity_error"] = float(
+                    cont_match.group(1)
+                )
 
         # Execution time
         time_match = re.search(r"ExecutionTime = ([\d.]+) s", text)
@@ -365,6 +411,6 @@ class ResultParser:
     # Utilities
     # ------------------------------------------------------------------
 
-    def _extract_int(self, text: str, pattern: str) -> Optional[int]:
+    def _extract_int(self, text: str, pattern: str) -> int | None:
         match = re.search(pattern, text)
         return int(match.group(1)) if match else None

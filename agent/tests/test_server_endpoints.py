@@ -9,8 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from huginn.personas import PersonaManager
-
 
 @pytest.fixture
 def personas_path(tmp_path):
@@ -22,19 +20,23 @@ class TestPersonaEndpoints:
         return await func(*args, **kwargs)
 
     def test_list_personas(self, personas_path, monkeypatch):
+        import huginn.personas as personas_module
         from huginn.server import list_personas
 
-        import huginn.personas as personas_module
-        monkeypatch.setattr(personas_module, "_default_personas_path", lambda: personas_path)
+        monkeypatch.setattr(
+            personas_module, "_default_personas_path", lambda _=None: personas_path
+        )
         result = asyncio.run(self._call(list_personas))
         assert "default" in [p["name"] for p in result["personas"]]
         assert result["default"] == "default"
 
     def test_create_and_get_persona(self, personas_path, monkeypatch):
+        import huginn.personas as personas_module
         from huginn.server import create_persona, get_persona
 
-        import huginn.personas as personas_module
-        monkeypatch.setattr(personas_module, "_default_personas_path", lambda: personas_path)
+        monkeypatch.setattr(
+            personas_module, "_default_personas_path", lambda _=None: personas_path
+        )
         created = asyncio.run(
             self._call(
                 create_persona,
@@ -57,7 +59,9 @@ class TestUnifiedEndpoints:
         from huginn.server import unified_solve_endpoint
 
         result = asyncio.run(
-            unified_solve_endpoint({"model": "heat_equation_fem", "method": "fem", "n": 6})
+            unified_solve_endpoint(
+                {"model": "heat_equation_fem", "method": "fem", "n": 6}
+            )
         )
         assert result["success"] is True
         assert result["method"] == "fem"
@@ -71,7 +75,12 @@ class TestUnifiedEndpoints:
             output_path = Path(tmpdir) / "plot.png"
             result = asyncio.run(
                 unified_plot_endpoint(
-                    {"model": "linear_elasticity_fem", "method": "fem", "n": 5, "output_path": str(output_path)}
+                    {
+                        "model": "linear_elasticity_fem",
+                        "method": "fem",
+                        "n": 5,
+                        "output_path": str(output_path),
+                    }
                 )
             )
             assert result["success"] is True

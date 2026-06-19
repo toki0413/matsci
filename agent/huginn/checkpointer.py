@@ -8,9 +8,13 @@ small factory that switches to SQLite persistence when a path is configured.
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from huginn.persistence import CheckpointerBackend
 
 
 @contextmanager
@@ -38,9 +42,13 @@ def persistent_checkpointer(
         yield saver
 
 
-def create_checkpointer(path: str | Path | None = None) -> Any:
+def create_checkpointer(
+    path: str | Path | None = None,
+    backend: CheckpointerBackend | None = None,
+) -> Any:
     """Create a LangGraph checkpointer.
 
+    * ``backend`` is given -> use the provided persistence backend.
     * ``path`` is given -> SQLite-backed persistent checkpointer.
     * ``path`` is ``":memory:"`` -> SQLite in-memory checkpointer.
     * ``path`` is None -> use ``HUGINN_CHECKPOINTER_PATH`` env var if set,
@@ -48,6 +56,9 @@ def create_checkpointer(path: str | Path | None = None) -> Any:
 
     The returned object is a ``langgraph.checkpoint.sqlite.SqliteSaver``.
     """
+    if backend is not None:
+        return backend.get()
+
     if path is None:
         path = os.environ.get("HUGINN_CHECKPOINTER_PATH")
     if path is None:

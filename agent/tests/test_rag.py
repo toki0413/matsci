@@ -3,11 +3,9 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from huginn.crypto import CryptoVault
-from huginn.rag.vector_store import VectorStore, EncryptedVectorStore
 from huginn.rag.encrypted_rag import EncryptedRAGManager
+from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
 
 
 class TestVectorStore:
@@ -95,7 +93,9 @@ class TestEncryptedVectorStore:
         plain_store.ingest(["public"])
 
         # Encrypted store's internal documents should be encrypted markers
-        raw_doc = enc_store._store.get_document(enc_store._store.list_documents(limit=1)[0]["id"])
+        raw_doc = enc_store._store.get_document(
+            enc_store._store.list_documents(limit=1)[0]["id"]
+        )
         assert raw_doc["document"].startswith("__ENC__")
 
 

@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from huginn.agents.swarm import AgentRole, SwarmAgent, HuginnSwarm
+from huginn.agents.swarm import AgentRole, HuginnSwarm, SwarmAgent
 
 __all__ = ["AgentRole", "SwarmAgent", "HuginnSwarm"]

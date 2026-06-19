@@ -5,13 +5,12 @@ Can be expensive. ASK permission mode by default.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class PotentialToolInput(BaseModel):
@@ -25,52 +24,54 @@ class PotentialToolInput(BaseModel):
 
 class PotentialTool(HuginnTool):
     """Train and use machine learning potentials for molecular dynamics."""
-    
+
     name = "potential_tool"
     description = "Train and apply ML potentials (NEP, SNAP, GAP, ACE) for fast molecular dynamics simulations"
     input_schema = PotentialToolInput
-    
+
     def estimate_cost(self, args: PotentialToolInput) -> dict[str, float] | None:
         if args.action == "train":
             return {"cpu_hours": 48, "gpu_hours": 12, "walltime_hours": 24}
         return {"cpu_hours": 1, "walltime_hours": 1}
-    
+
     async def call(self, args: PotentialToolInput, context: ToolContext) -> ToolResult:
         if args.action == "prepare_dataset":
             return ToolResult(
-                data={"dataset_path": "dataset.extxyz", "num_structures": 1000, "note": "Mock dataset"},
-                success=True
+                data={
+                    "dataset_path": "dataset.extxyz",
+                    "num_structures": 1000,
+                    "note": "Mock dataset",
+                },
+                success=True,
             )
-        
+
         elif args.action == "train":
             return ToolResult(
                 data={
                     "potential_path": f"trained_{args.potential_type}.xml",
                     "training_rmse_energy": 0.005,
                     "training_rmse_force": 0.1,
-                    "note": "Mock training result"
+                    "note": "Mock training result",
                 },
-                success=True
+                success=True,
             )
-        
+
         elif args.action == "validate":
             return ToolResult(
                 data={
                     "test_rmse_energy": 0.008,
                     "test_rmse_force": 0.15,
-                    "note": "Mock validation result"
+                    "note": "Mock validation result",
                 },
-                success=True
+                success=True,
             )
-        
+
         elif args.action == "inference":
             return ToolResult(
                 data={"energy": -123.45, "forces": "[[...]]", "note": "Mock inference"},
-                success=True
+                success=True,
             )
-        
+
         return ToolResult(
-            data=None,
-            success=False,
-            error=f"Unknown action: {args.action}"
+            data=None, success=False, error=f"Unknown action: {args.action}"
         )

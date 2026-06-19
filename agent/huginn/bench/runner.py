@@ -19,7 +19,6 @@ from huginn.tools import register_all_tools
 
 from .task import BenchmarkTask, TaskResult
 
-
 DEFAULT_TASKS: list[BenchmarkTask] = [
     BenchmarkTask(
         id="math-simple",
@@ -59,7 +58,9 @@ DEFAULT_TASKS: list[BenchmarkTask] = [
             "Reply with only the Lean code block."
         ),
         evaluator=lambda out: (
-            "def f" in out and "Float" in out and "x ^ 2 + 3 * x" in out.replace("**", "^"),
+            "def f" in out
+            and "Float" in out
+            and "x ^ 2 + 3 * x" in out.replace("**", "^"),
             "missing Lean definition or incorrect body",
         ),
         tags=["lean", "formal"],
@@ -143,6 +144,7 @@ class BenchmarkRunner:
         evolution_report = None
         if evolve:
             from huginn.evolution.engine import EvolutionEngine
+
             engine = EvolutionEngine(logger=self.logger)
             evolution_report = engine.run_full_evolution_cycle()
 
@@ -189,9 +191,13 @@ class BenchmarkRunner:
         if alias:
             model = registry.resolve(alias)
         elif self.config.provider and self.config.provider != "default":
-            model = registry.resolve(f"{self.config.provider}/{self.config.model or 'auto'}")
+            model = registry.resolve(
+                f"{self.config.provider}/{self.config.model or 'auto'}"
+            )
         else:
-            raise RuntimeError("No model configured. Set HUGINN_PROVIDER and HUGINN_API_KEY.")
+            raise RuntimeError(
+                "No model configured. Set HUGINN_PROVIDER and HUGINN_API_KEY."
+            )
 
         agent = HuginnAgent(
             model=model,
@@ -238,4 +244,6 @@ class BenchmarkRunner:
             ],
             "evolution_report": report.evolution_report,
         }
-        target.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        target.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )

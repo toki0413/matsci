@@ -3,15 +3,30 @@
 Provides command execution sandboxing, audit logging, and credential management.
 """
 
-from huginn.security.sandbox import SandboxExecutor, SandboxConfig, SandboxError
-from huginn.security.audit import AuditLogger, AuditEvent
-from huginn.security.safe_eval import safe_eval, SafeEvalError
-from huginn.security.restricted_python import validate_code, RestrictedPythonError
+from huginn.security.audit import AuditEvent, AuditLogger
+from huginn.security.container_executor import ContainerExecutor
+from huginn.security.execution import allow_local_bash, get_executor
+from huginn.security.restricted_python import RestrictedPythonError, validate_code
+from huginn.security.safe_eval import SafeEvalError, safe_eval
+from huginn.security.sandbox import SandboxConfig, SandboxError, SandboxExecutor
+from huginn.security.secrets import (
+    EnvSecretBackend,
+    SecretBackend,
+    VaultSecretBackend,
+    get_secret_backend,
+)
 
 __all__ = [
     "SandboxExecutor",
     "SandboxConfig",
     "SandboxError",
+    "ContainerExecutor",
+    "get_executor",
+    "allow_local_bash",
+    "SecretBackend",
+    "EnvSecretBackend",
+    "VaultSecretBackend",
+    "get_secret_backend",
     "AuditLogger",
     "AuditEvent",
     "safe_eval",

@@ -7,7 +7,6 @@ without requiring external API keys.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -61,7 +60,9 @@ def e2e_calculator(expression: str) -> str:
             return f"Error: {exc}"
 
 
-def _build_agent(tmp_path: Any, responses: list[AIMessage], **kwargs: Any) -> HuginnAgent:
+def _build_agent(
+    tmp_path: Any, responses: list[AIMessage], **kwargs: Any
+) -> HuginnAgent:
     """Build an isolated HuginnAgent with a fake model."""
     model = FakeToolCallingModel(responses=responses)
     memory = MemoryManager(
@@ -76,7 +77,9 @@ def _build_agent(tmp_path: Any, responses: list[AIMessage], **kwargs: Any) -> Hu
     )
 
 
-async def _consume(agent: HuginnAgent, message: str, thread_id: str = "e2e") -> dict[str, Any]:
+async def _consume(
+    agent: HuginnAgent, message: str, thread_id: str = "e2e"
+) -> dict[str, Any]:
     """Consume the async chat stream and return the last state."""
     final_state = None
     async for state in agent.chat(message, thread_id=thread_id):
@@ -110,7 +113,10 @@ class TestAgentFlow:
             # Memory captured the assistant/tool interaction.
             session_messages = agent.memory.session.messages
             assert any(m.role == "assistant" for m in session_messages)
-            assert any(tc.tool_name == "e2e_calculator" for tc in agent.memory.session.tool_calls)
+            assert any(
+                tc.tool_name == "e2e_calculator"
+                for tc in agent.memory.session.tool_calls
+            )
 
             # Telemetry recorded the turn and the nested tool span.
             spans = agent.telemetry_spans()
@@ -178,7 +184,9 @@ class TestAgentFlow:
         responses2 = [AIMessage(content="Previously we got 100.")]
         agent2 = _build_agent(tmp_path, responses2)
         try:
-            final_state = await _consume(agent2, "What did we get?", thread_id="restore_thread")
+            final_state = await _consume(
+                agent2, "What did we get?", thread_id="restore_thread"
+            )
             messages = final_state["messages"]
             # The new user message is present, and prior assistant message should be loaded.
             roles = [type(m).__name__ for m in messages]

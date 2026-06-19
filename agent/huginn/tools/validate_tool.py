@@ -9,8 +9,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.constraints import ConstraintAdapter
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class ValidateToolInput(BaseModel):
@@ -20,48 +21,41 @@ class ValidateToolInput(BaseModel):
 
 class ValidateTool(HuginnTool):
     """Validate physical reasonableness of calculation results."""
-    
+
     name = "validate_tool"
-    description = "Run physical validation checks on calculation results: energy signs, convergence, band gaps, force thresholds, etc."
+    description = (
+        "Run physical validation checks on calculation results: energy signs, "
+        "convergence, band gaps, force thresholds, etc."
+    )
     input_schema = ValidateToolInput
-    
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._adapter = ConstraintAdapter.default()
+
     def is_read_only(self, args: ValidateToolInput) -> bool:
         return True
-    
+
     async def call(self, args: ValidateToolInput, context: ToolContext) -> ToolResult:
-        from huginn.validation.physics import PhysicsValidator
-        
-        validator = PhysicsValidator()
-        
-        if args.result_type == "dft":
-            checks = validator.validate_dft_result(args.result_data)
-        elif args.result_type == "md":
-            checks = validator.validate_md_result(args.result_data)
-        elif args.result_type == "phonon":
-            checks = validator.validate_phonon_result(args.result_data)
-        else:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Unknown result_type: {args.result_type}"
-            )
-        
-        all_passed = all(c.passed for c in checks)
-        
+        results = self._adapter.evaluate_all(args.result_type, args.result_data)
+        all_passed = all(r.passed for r in results)
+
         return ToolResult(
             data={
                 "all_passed": all_passed,
                 "checks": [
                     {
-                        "name": c.name,
-                        "passed": c.passed,
-                        "value": c.value,
-                        "expected": c.expected,
-                        "message": c.message
+                        "name": r.name,
+                        "passed": r.passed,
+                        "value": r.value,
+                        "expected": r.expected,
+                        "message": r.message,
+                        "severity": r.severity,
+                        "family": r.family,
                     }
-                    for c in checks
+                    for r in results
                 ],
-                "summary": f"{sum(c.passed for c in checks)}/{len(checks)} checks passed"
+                "summary": f"{sum(r.passed for r in results)}/{len(results)} checks passed",
             },
-            success=True
+            success=True,
         )

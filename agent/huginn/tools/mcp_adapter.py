@@ -6,16 +6,19 @@ Allows Huginn to use tools from external MCP servers
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine
+import json
+from typing import Any
 
 from pydantic import BaseModel, create_model
 
-from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
 from huginn.mcp_client import MCPClientManager
+from huginn.tools.base import HuginnTool
+from huginn.types import ToolContext, ToolResult
 
 
-def _schema_to_pydantic(schema: dict[str, Any], model_name: str = "DynamicInput") -> type[BaseModel]:
+def _schema_to_pydantic(
+    schema: dict[str, Any], model_name: str = "DynamicInput"
+) -> type[BaseModel]:
     """Convert a JSON schema to a Pydantic model dynamically."""
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
@@ -130,6 +133,3 @@ def register_mcp_tools(client_manager: MCPClientManager) -> list[HuginnTool]:
         tools.append(adapter)
 
     return tools
-
-
-import json

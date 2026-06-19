@@ -14,7 +14,11 @@ class _FakeAgent:
         self.reply = reply
 
     async def chat(self, message: str, thread_id: str = "default"):
-        yield {"messages": [type("Msg", (), {"content": f"{self.reply}({message[:20]})"})()]}
+        yield {
+            "messages": [
+                type("Msg", (), {"content": f"{self.reply}({message[:20]})"})()
+            ]
+        }
 
 
 class _PlannerAgent:
@@ -32,14 +36,18 @@ class TestHuginnSwarm:
     async def test_swarm_runs_all_workers(self):
         swarm = HuginnSwarm(
             [
-                SwarmAgent("planner", AgentRole.PLANNER, _PlannerAgent("""
+                SwarmAgent(
+                    "planner",
+                    AgentRole.PLANNER,
+                    _PlannerAgent("""
                 [
                     {"id": "s1", "role": "scientist", "task": "analyze", "depends_on": []},
                     {"id": "s2", "role": "coder", "task": "code", "depends_on": []},
                     {"id": "s3", "role": "executor", "task": "run", "depends_on": ["s1", "s2"]},
                     {"id": "s4", "role": "critic", "task": "review", "depends_on": ["s3"]}
                 ]
-                """)),
+                """),
+                ),
                 SwarmAgent("scientist", AgentRole.SCIENTIST, _FakeAgent("Science:")),
                 SwarmAgent("coder", AgentRole.CODER, _FakeAgent("Code:")),
                 SwarmAgent("executor", AgentRole.EXECUTOR, _FakeAgent("Exec:")),
@@ -65,18 +73,24 @@ class TestHuginnSwarm:
 
             async def chat(self, message: str, thread_id: str = "default"):
                 await asyncio.sleep(delays[self.role])
-                yield {"messages": [type("Msg", (), {"content": f"{self.role}:done"})()]}
+                yield {
+                    "messages": [type("Msg", (), {"content": f"{self.role}:done"})()]
+                }
 
         start = asyncio.get_event_loop().time()
         swarm = HuginnSwarm(
             [
-                SwarmAgent("planner", AgentRole.PLANNER, _PlannerAgent("""
+                SwarmAgent(
+                    "planner",
+                    AgentRole.PLANNER,
+                    _PlannerAgent("""
                 [
                     {"id": "s1", "role": "scientist", "task": "a", "depends_on": []},
                     {"id": "s2", "role": "coder", "task": "b", "depends_on": []},
                     {"id": "s3", "role": "executor", "task": "c", "depends_on": ["s1", "s2"]}
                 ]
-                """)),
+                """),
+                ),
                 SwarmAgent("scientist", AgentRole.SCIENTIST, _SlowAgent("scientist")),
                 SwarmAgent("coder", AgentRole.CODER, _SlowAgent("coder")),
                 SwarmAgent("executor", AgentRole.EXECUTOR, _FakeAgent("Exec:")),

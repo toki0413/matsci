@@ -12,59 +12,64 @@ skill evolution changes the Agent's BEHAVIOR REPERTOIRE.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 
 @dataclass
 class Skill:
     """A reusable, evolvable skill for the Agent."""
+
     skill_id: str
     name: str
     description: str
     domain: str  # e.g., "quantum_chemistry", "molecular_dynamics"
-    trigger_patterns: List[str]  # Keywords/phrases that activate this skill
-    workflow: List[Dict[str, Any]]  # Ordered steps [{"tool": "...", "params": {...}}]
-    prerequisites: List[str] = field(default_factory=list)  # Required inputs
-    expected_outputs: List[str] = field(default_factory=list)
-    validation_checks: List[str] = field(default_factory=list)
+    trigger_patterns: list[str]  # Keywords/phrases that activate this skill
+    workflow: list[dict[str, Any]]  # Ordered steps [{"tool": "...", "params": {...}}]
+    prerequisites: list[str] = field(default_factory=list)  # Required inputs
+    expected_outputs: list[str] = field(default_factory=list)
+    validation_checks: list[str] = field(default_factory=list)
     # Evolution metadata
     source: str = "manual"  # "manual", "extracted", "mutated"
-    parent_skill: Optional[str] = None
-    extraction_session: Optional[str] = None
+    parent_skill: str | None = None
+    extraction_session: str | None = None
     confidence: float = 0.5
     usage_count: int = 0
     success_count: int = 0
     failure_count: int = 0
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    last_used: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    last_used: str | None = None
+    tags: list[str] = field(default_factory=list)
 
     @property
     def success_rate(self) -> float:
         total = self.success_count + self.failure_count
         return self.success_count / total if total > 0 else 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Skill":
+    def from_dict(cls, data: dict[str, Any]) -> Skill:
         return cls(**data)
 
 
 class SkillLibrary:
     """Persistent library of evolved skills."""
 
-    def __init__(self, library_path: Optional[str] = None):
-        self.library_path = Path(library_path) if library_path else Path.home() / ".huginn" / "skills.json"
+    def __init__(self, library_path: str | None = None):
+        self.library_path = (
+            Path(library_path)
+            if library_path
+            else Path.home() / ".huginn" / "skills.json"
+        )
         self.library_path.parent.mkdir(parents=True, exist_ok=True)
-        self.skills: Dict[str, Skill] = {}
+        self.skills: dict[str, Skill] = {}
         self._load()
 
     def _load(self) -> None:
@@ -77,32 +82,39 @@ class SkillLibrary:
 
     def save(self) -> None:
         with self.library_path.open("w", encoding="utf-8") as f:
-            json.dump([s.to_dict() for s in self.skills.values()], f, ensure_ascii=False, indent=2)
+            json.dump(
+                [s.to_dict() for s in self.skills.values()],
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
     def add(self, skill: Skill) -> None:
         self.skills[skill.skill_id] = skill
         self.save()
 
-    def get(self, skill_id: str) -> Optional[Skill]:
+    def get(self, skill_id: str) -> Skill | None:
         return self.skills.get(skill_id)
 
-    def find_by_trigger(self, query: str, top_k: int = 5) -> List[Skill]:
+    def find_by_trigger(self, query: str, top_k: int = 5) -> list[Skill]:
         """Find skills whose trigger patterns match the query."""
         query_lower = query.lower()
         scored = []
         for skill in self.skills.values():
-            score = sum(2 if pat in query_lower else 1
-                       for pat in skill.trigger_patterns
-                       if pat in query_lower or query_lower in pat)
+            score = sum(
+                2 if pat in query_lower else 1
+                for pat in skill.trigger_patterns
+                if pat in query_lower or query_lower in pat
+            )
             if score > 0:
                 scored.append((score * skill.confidence, skill))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s for _, s in scored[:top_k]]
 
-    def find_by_domain(self, domain: str) -> List[Skill]:
+    def find_by_domain(self, domain: str) -> list[Skill]:
         return [s for s in self.skills.values() if s.domain == domain]
 
-    def get_high_confidence_skills(self, min_confidence: float = 0.7) -> List[Skill]:
+    def get_high_confidence_skills(self, min_confidence: float = 0.7) -> list[Skill]:
         return [s for s in self.skills.values() if s.confidence >= min_confidence]
 
     def update_stats(self, skill_id: str, success: bool) -> None:
@@ -118,7 +130,9 @@ class SkillLibrary:
             skill.confidence = 0.7 * skill.confidence + 0.3 * skill.success_rate
             self.save()
 
-    def mutate_skill(self, skill_id: str, mutation_type: str, params: Dict[str, Any]) -> Optional[Skill]:
+    def mutate_skill(
+        self, skill_id: str, mutation_type: str, params: dict[str, Any]
+    ) -> Skill | None:
         """Create a variant of an existing skill (exploration)."""
         parent = self.skills.get(skill_id)
         if not parent:
@@ -170,7 +184,9 @@ class SkillExtractor:
     def __init__(self, library: SkillLibrary):
         self.library = library
 
-    def extract_from_session(self, session_logs: List[Dict[str, Any]], min_success_rate: float = 0.8) -> List[Skill]:
+    def extract_from_session(
+        self, session_logs: list[dict[str, Any]], min_success_rate: float = 0.8
+    ) -> list[Skill]:
         """Extract skills from a completed session's tool call logs."""
         # Group consecutive successful calls into workflows
         workflows = self._segment_workflows(session_logs)
@@ -195,11 +211,17 @@ class SkillExtractor:
             # Build workflow steps
             steps = []
             for step in wf:
-                steps.append({
-                    "tool": step.get("tool_name", "unknown"),
-                    "params": {k: v for k, v in step.get("tool_input", {}).items() if not k.startswith("_")},
-                    "purpose": step.get("purpose", ""),
-                })
+                steps.append(
+                    {
+                        "tool": step.get("tool_name", "unknown"),
+                        "params": {
+                            k: v
+                            for k, v in step.get("tool_input", {}).items()
+                            if not k.startswith("_")
+                        },
+                        "purpose": step.get("purpose", ""),
+                    }
+                )
 
             skill_id = f"skill_{domain}_{hashlib.md5(json.dumps(steps, sort_keys=True).encode()).hexdigest()[:8]}"
 
@@ -226,7 +248,9 @@ class SkillExtractor:
 
         return extracted
 
-    def _segment_workflows(self, logs: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    def _segment_workflows(
+        self, logs: list[dict[str, Any]]
+    ) -> list[list[dict[str, Any]]]:
         """Segment a session log into individual workflow instances."""
         workflows = []
         current = []
@@ -239,7 +263,7 @@ class SkillExtractor:
             workflows.append(current)
         return workflows if workflows else [logs]
 
-    def _infer_domain(self, workflow: List[Dict[str, Any]]) -> List[str]:
+    def _infer_domain(self, workflow: list[dict[str, Any]]) -> list[str]:
         """Infer scientific domain from tool names and inputs."""
         domains = set()
         for step in workflow:
@@ -256,7 +280,7 @@ class SkillExtractor:
                 domains.add("wavefunction_analysis")
         return list(domains)
 
-    def _extract_triggers(self, workflow: List[Dict[str, Any]]) -> List[str]:
+    def _extract_triggers(self, workflow: list[dict[str, Any]]) -> list[str]:
         """Extract likely trigger keywords from workflow inputs."""
         triggers = set()
         for step in workflow:
@@ -265,22 +289,37 @@ class SkillExtractor:
                 if isinstance(val, str):
                     # Extract meaningful keywords
                     words = val.lower().split()
-                    triggers.update(w for w in words if len(w) > 3 and w not in {
-                        "calculate", "compute", "using", "with", "from", "file",
-                        "path", "input", "output", "method", "basis",
-                    })
+                    triggers.update(
+                        w
+                        for w in words
+                        if len(w) > 3
+                        and w
+                        not in {
+                            "calculate",
+                            "compute",
+                            "using",
+                            "with",
+                            "from",
+                            "file",
+                            "path",
+                            "input",
+                            "output",
+                            "method",
+                            "basis",
+                        }
+                    )
         return list(triggers)[:10]  # Limit to top 10
 
-    def _extract_prerequisites(self, workflow: List[Dict[str, Any]]) -> List[str]:
+    def _extract_prerequisites(self, workflow: list[dict[str, Any]]) -> list[str]:
         """Extract required inputs for this workflow."""
         prereqs = set()
         for step in workflow:
-            for key in step.get("tool_input", {}).keys():
+            for key in step.get("tool_input", {}):
                 if key not in {"__auto_fixes", "__diagnosis"}:
                     prereqs.add(key)
         return list(prereqs)
 
-    def _extract_outputs(self, workflow: List[Dict[str, Any]]) -> List[str]:
+    def _extract_outputs(self, workflow: list[dict[str, Any]]) -> list[str]:
         """Extract expected outputs from result data."""
         outputs = set()
         for step in workflow:
@@ -301,11 +340,12 @@ class SkillRanker:
 
         # Fitness = success_rate * confidence * log(usage_count)
         import math
+
         usage_bonus = math.log1p(skill.usage_count)
         return skill.success_rate * skill.confidence * usage_bonus
 
     @staticmethod
-    def select_skills(skills: List[Skill], n: int = 10) -> List[Skill]:
+    def select_skills(skills: list[Skill], n: int = 10) -> list[Skill]:
         """Select top-N skills by fitness (tournament selection style)."""
         ranked = [(SkillRanker.fitness(s), s) for s in skills]
         ranked.sort(key=lambda x: x[0], reverse=True)

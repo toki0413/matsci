@@ -13,12 +13,13 @@ from typing import Any, Literal
 
 import numpy as np
 
-from huginn.exploration.core import ExplorationSpace, Branch, BranchStatus
+from huginn.exploration.core import Branch, BranchStatus, ExplorationSpace
 
 
 @dataclass
 class Action:
     """An action to take on the exploration space."""
+
     action_type: Literal["expand", "prune", "backtrack", "refine", "terminate"]
     target_branch: str | None = None
     new_branches: list[dict[str, Any]] = None
@@ -34,8 +35,7 @@ class ExplorationStrategy(ABC):
         ...
 
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
 
 class ParetoPruningStrategy(ExplorationStrategy):
@@ -72,41 +72,60 @@ class ParetoPruningStrategy(ExplorationStrategy):
                 continue
             # Check if significantly dominated
             if self._is_significantly_dominated(space, branch_id, front):
-                actions.append(Action(
-                    action_type="prune",
-                    target_branch=branch_id,
-                    reason="Dominated by Pareto front branches",
-                ))
+                actions.append(
+                    Action(
+                        action_type="prune",
+                        target_branch=branch_id,
+                        reason="Dominated by Pareto front branches",
+                    )
+                )
 
         # If we have room, suggest expanding near Pareto front
-        active_count = len([b for b in space.branches.values() if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}])
+        active_count = len(
+            [
+                b
+                for b in space.branches.values()
+                if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
+            ]
+        )
         if active_count < self.max_active and front:
             # Find gaps in the Pareto front and suggest refinement
             gaps = self._find_front_gaps(space, front)
             for gap in gaps[: self.max_active - active_count]:
-                actions.append(Action(
-                    action_type="refine",
-                    target_branch=gap["near_branch"],
-                    new_branches=[{"hypothesis": f"Refine between {gap['a']} and {gap['b']}"}],
-                    reason=f"Gap in Pareto front between objectives",
-                ))
+                actions.append(
+                    Action(
+                        action_type="refine",
+                        target_branch=gap["near_branch"],
+                        new_branches=[
+                            {"hypothesis": f"Refine between {gap['a']} and {gap['b']}"}
+                        ],
+                        reason="Gap in Pareto front between objectives",
+                    )
+                )
 
         # Termination check: front converged
         if len(front) == self._previous_front_size and active_count == 0:
-            actions.append(Action(action_type="terminate", reason="Pareto front converged"))
+            actions.append(
+                Action(action_type="terminate", reason="Pareto front converged")
+            )
         self._previous_front_size = len(front)
 
         return actions
 
-    def _is_significantly_dominated(self, space: ExplorationSpace, branch_id: str, front: list[str]) -> bool:
+    def _is_significantly_dominated(
+        self, space: ExplorationSpace, branch_id: str, front: list[str]
+    ) -> bool:
         branch = space.branches[branch_id]
         for fid in front:
             front_branch = space.branches[fid]
             if space._dominates(front_branch, branch):
                 # Check margin
                 margin_ok = True
-                for obj, direction in space.objectives_config.items():
-                    diff = abs(front_branch.objectives.get(obj, 0) - branch.objectives.get(obj, 0))
+                for obj, _direction in space.objectives_config.items():
+                    diff = abs(
+                        front_branch.objectives.get(obj, 0)
+                        - branch.objectives.get(obj, 0)
+                    )
                     ref = abs(branch.objectives.get(obj, 1)) or 1.0
                     if diff / ref < self.min_improvement:
                         margin_ok = False
@@ -115,7 +134,9 @@ class ParetoPruningStrategy(ExplorationStrategy):
                     return True
         return False
 
-    def _find_front_gaps(self, space: ExplorationSpace, front: list[str]) -> list[dict[str, Any]]:
+    def _find_front_gaps(
+        self, space: ExplorationSpace, front: list[str]
+    ) -> list[dict[str, Any]]:
         """Find large gaps between Pareto front points."""
         if len(front) < 2:
             return []
@@ -127,7 +148,9 @@ class ParetoPruningStrategy(ExplorationStrategy):
 
         # Sort by first objective
         primary = obj_names[0]
-        sorted_front = sorted(front, key=lambda fid: space.branches[fid].objectives.get(primary, 0))
+        sorted_front = sorted(
+            front, key=lambda fid: space.branches[fid].objectives.get(primary, 0)
+        )
 
         for i in range(len(sorted_front) - 1):
             a = space.branches[sorted_front[i]]
@@ -144,7 +167,14 @@ class ParetoPruningStrategy(ExplorationStrategy):
                     dist += ((va - vb) / range_val) ** 2
             dist = np.sqrt(dist)
             if dist > 0.3:  # Threshold for "large gap"
-                gaps.append({"a": sorted_front[i], "b": sorted_front[i + 1], "distance": dist, "near_branch": sorted_front[i]})
+                gaps.append(
+                    {
+                        "a": sorted_front[i],
+                        "b": sorted_front[i + 1],
+                        "distance": dist,
+                        "near_branch": sorted_front[i],
+                    }
+                )
 
         gaps.sort(key=lambda x: -x["distance"])
         return gaps
@@ -175,14 +205,20 @@ class BayesianExplorationStrategy(ExplorationStrategy):
     def evaluate(self, space: ExplorationSpace) -> list[Action]:
         actions: list[Action] = []
 
-        completed = [b for b in space.branches.values() if b.status == BranchStatus.COMPLETED]
+        completed = [
+            b for b in space.branches.values() if b.status == BranchStatus.COMPLETED
+        ]
         if len(completed) < self.n_initial:
             # Need more samples — suggest random exploration
-            actions.append(Action(
-                action_type="expand",
-                new_branches=[{"hypothesis": "Random exploration for surrogate training"}],
-                reason="Insufficient samples for Bayesian model",
-            ))
+            actions.append(
+                Action(
+                    action_type="expand",
+                    new_branches=[
+                        {"hypothesis": "Random exploration for surrogate training"}
+                    ],
+                    reason="Insufficient samples for Bayesian model",
+                )
+            )
             return actions
 
         # Update surrogate data
@@ -194,15 +230,19 @@ class BayesianExplorationStrategy(ExplorationStrategy):
             best_idx = np.argmax(self._evaluated_objectives)
             best_params = self._evaluated_params[best_idx]
             # Suggest a small perturbation near the best point
-            actions.append(Action(
-                action_type="refine",
-                target_branch=completed[best_idx].id,
-                new_branches=[{
-                    "hypothesis": f"Bayesian refinement near best point (obj={self._evaluated_objectives[best_idx]:.3f})",
-                    "params": best_params,
-                }],
-                reason="Expected improvement maximization",
-            ))
+            actions.append(
+                Action(
+                    action_type="refine",
+                    target_branch=completed[best_idx].id,
+                    new_branches=[
+                        {
+                            "hypothesis": f"Bayesian refinement near best point (obj={self._evaluated_objectives[best_idx]:.3f})",
+                            "params": best_params,
+                        }
+                    ],
+                    reason="Expected improvement maximization",
+                )
+            )
 
         return actions
 
@@ -221,7 +261,10 @@ class BayesianExplorationStrategy(ExplorationStrategy):
                         break
             if obj_val is not None:
                 # Dummy parameter vector from decision path length + random seed
-                params = [len(branch.decisions), hash(branch.hypothesis) % 1000 / 1000.0]
+                params = [
+                    len(branch.decisions),
+                    hash(branch.hypothesis) % 1000 / 1000.0,
+                ]
                 self._evaluated_params.append(params)
                 self._evaluated_objectives.append(obj_val)
 
@@ -244,13 +287,19 @@ class AdaptiveGridStrategy(ExplorationStrategy):
     def evaluate(self, space: ExplorationSpace) -> list[Action]:
         actions: list[Action] = []
 
-        completed = [b for b in space.branches.values() if b.status == BranchStatus.COMPLETED]
+        completed = [
+            b for b in space.branches.values() if b.status == BranchStatus.COMPLETED
+        ]
         if not completed:
-            actions.append(Action(
-                action_type="expand",
-                new_branches=[{"hypothesis": f"Coarse grid level {self.resolution}"}],
-                reason="Initial grid exploration",
-            ))
+            actions.append(
+                Action(
+                    action_type="expand",
+                    new_branches=[
+                        {"hypothesis": f"Coarse grid level {self.resolution}"}
+                    ],
+                    reason="Initial grid exploration",
+                )
+            )
             return actions
 
         # Identify high-potential regions
@@ -264,22 +313,32 @@ class AdaptiveGridStrategy(ExplorationStrategy):
         # Refine top regions
         for branch_id, potential in sorted_regions[:3]:
             if potential > 0.7 and self.resolution < self.max_resolution:
-                actions.append(Action(
-                    action_type="refine",
-                    target_branch=branch_id,
-                    new_branches=[{
-                        "hypothesis": f"Grid refinement (res={self.resolution + 1}) near high-potential region",
-                    }],
-                    reason=f"Region potential = {potential:.2f}",
-                ))
+                actions.append(
+                    Action(
+                        action_type="refine",
+                        target_branch=branch_id,
+                        new_branches=[
+                            {
+                                "hypothesis": f"Grid refinement (res={self.resolution + 1}) near high-potential region",
+                            }
+                        ],
+                        reason=f"Region potential = {potential:.2f}",
+                    )
+                )
 
         if not actions and self.resolution < self.max_resolution:
             self.resolution += 1
-            actions.append(Action(
-                action_type="expand",
-                new_branches=[{"hypothesis": f"Uniform grid refinement to level {self.resolution}"}],
-                reason="No high-potential regions found — uniform refinement",
-            ))
+            actions.append(
+                Action(
+                    action_type="expand",
+                    new_branches=[
+                        {
+                            "hypothesis": f"Uniform grid refinement to level {self.resolution}"
+                        }
+                    ],
+                    reason="No high-potential regions found — uniform refinement",
+                )
+            )
 
         return actions
 

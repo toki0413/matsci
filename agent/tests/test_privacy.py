@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from huginn.privacy import scan_for_secrets, redact_secrets
+from huginn.privacy import redact_secrets, scan_for_secrets
 
 
 def _dummy_openai_key() -> str:

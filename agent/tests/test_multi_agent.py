@@ -6,14 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from huginn.config import HuginnConfig, ModelConfig, AgentProfileConfig
-from huginn.models.registry import ModelRegistry
 from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator, SubTask, TaskPlan
-from huginn.tools.registry import ToolRegistry
-from huginn.tools.memory_tool import RememberTool, RecallTool
+from huginn.config import AgentProfileConfig, HuginnConfig, ModelConfig
+from huginn.models.registry import ModelRegistry
+from huginn.tools.memory_tool import RecallTool, RememberTool
 from huginn.tools.orchestrate_tool import OrchestrateTool
-
+from huginn.tools.registry import ToolRegistry
 
 ToolRegistry.register(RememberTool())
 ToolRegistry.register(RecallTool())
@@ -23,8 +22,12 @@ ToolRegistry.register(OrchestrateTool())
 def test_model_registry_list_and_default():
     cfg = HuginnConfig(
         models=[
-            ModelConfig(alias="cheap", provider="openai", model="gpt-4o-mini", api_key="x"),
-            ModelConfig(alias="smart", provider="anthropic", model="claude-opus", api_key="x"),
+            ModelConfig(
+                alias="cheap", provider="openai", model="gpt-4o-mini", api_key="x"
+            ),
+            ModelConfig(
+                alias="smart", provider="anthropic", model="claude-opus", api_key="x"
+            ),
         ]
     )
     registry = ModelRegistry.from_config(cfg)
@@ -36,7 +39,9 @@ def test_model_registry_list_and_default():
 def test_model_registry_resolve_alias():
     fake_model = MagicMock()
     registry = ModelRegistry()
-    registry.register(ModelConfig(alias="a", provider="openai", model="gpt-4o", api_key="x"))
+    registry.register(
+        ModelConfig(alias="a", provider="openai", model="gpt-4o", api_key="x")
+    )
     # Cache a fake instance under the alias
     registry._cache["a"] = fake_model
     assert registry.resolve("a") is fake_model
@@ -52,6 +57,7 @@ def test_model_registry_resolve_provider_model():
 def test_config_migration_to_model_pool():
     """Legacy single-provider config still yields a model pool and agent profile."""
     import os
+
     env = os.environ.copy()
     try:
         os.environ["HUGINN_PROVIDER"] = "openai"
@@ -83,7 +89,11 @@ def test_agent_factory_lists_profiles():
 def test_agent_factory_respects_tool_filter():
     cfg = HuginnConfig(
         models=[ModelConfig(alias="m", provider="openai", model="gpt-4o", api_key="x")],
-        agents=[AgentProfileConfig(id="limited", model_alias="m", tools=["remember", "recall"])],
+        agents=[
+            AgentProfileConfig(
+                id="limited", model_alias="m", tools=["remember", "recall"]
+            )
+        ],
     )
     fake_model = MagicMock()
     registry = ModelRegistry()
@@ -115,9 +125,11 @@ async def test_orchestrator_dependency_order():
 
     def fake_create(profile_id, **kwargs):
         mock_agent = MagicMock()
+
         def invoke(prompt):
             calls.append((profile_id, prompt))
             return {"messages": [MagicMock(content=f"result:{profile_id}")]}
+
         mock_agent.invoke = invoke
         return mock_agent
 

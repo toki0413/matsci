@@ -10,11 +10,11 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from huginn.memory.manager import MemoryManager
-
 
 EvaluatorT = Callable[[str, "BenchmarkCase"], tuple[bool, float]]
 """Evaluator(response, case) -> (success, score)."""
@@ -42,7 +42,9 @@ def numeric_evaluator(response: str, case: BenchmarkCase) -> tuple[bool, float]:
     if expected is None:
         return keyword_evaluator(response, case)
 
-    numbers = [float(m) for m in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", response)]
+    numbers = [
+        float(m) for m in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", response)
+    ]
     if not numbers:
         return False, 0.0
 
@@ -68,7 +70,7 @@ def llm_judge_evaluator(
             f"Task: {case.task}\n"
             f"Rubric: {case.rubric or 'Answer should be correct and complete.'}\n\n"
             f"Answer: {response[:2000]}\n\n"
-            "Respond ONLY with JSON: {\"score\": float between 0 and 1, \"reason\": string}"
+            'Respond ONLY with JSON: {"score": float between 0 and 1, "reason": string}'
         )
         try:
             raw = judge_model(prompt)
@@ -119,11 +121,11 @@ class BenchmarkSuite:
         self.name = name
         self.cases: list[BenchmarkCase] = []
 
-    def add(self, case: BenchmarkCase) -> "BenchmarkSuite":
+    def add(self, case: BenchmarkCase) -> BenchmarkSuite:
         self.cases.append(case)
         return self
 
-    def add_defaults(self) -> "BenchmarkSuite":
+    def add_defaults(self) -> BenchmarkSuite:
         """Register a small set of materials-science sanity checks."""
         self.add(
             BenchmarkCase(
@@ -221,7 +223,9 @@ class BenchmarkSuite:
             "passed": passed,
             "failed": len(results) - passed,
             "avg_score": round(sum(r.score for r in results) / len(results), 3),
-            "avg_duration_ms": round(sum(r.duration_ms for r in results) / len(results), 2),
+            "avg_duration_ms": round(
+                sum(r.duration_ms for r in results) / len(results), 2
+            ),
         }
 
 

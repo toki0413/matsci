@@ -7,13 +7,14 @@ into declarative units.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, get_origin
+from typing import Any, get_origin
 
-from pydantic import BaseModel
+from huginn.security import SafeEvalError, safe_eval
 
 
 def _wants_dict(tool: Any) -> bool:
@@ -32,6 +33,7 @@ def _wants_dict(tool: Any) -> bool:
 @dataclass
 class SkillStep:
     """A single step in a skill workflow."""
+
     name: str
     tool: str  # tool name
     input_mapping: dict[str, str]  # maps skill params → tool args
@@ -44,6 +46,7 @@ class SkillStep:
 @dataclass
 class SkillParameter:
     """Declared parameter for a skill."""
+
     name: str
     type: str
     description: str
@@ -54,6 +57,7 @@ class SkillParameter:
 @dataclass
 class SkillDefinition:
     """Declarative skill definition."""
+
     name: str
     description: str
     category: str  # "computation", "analysis", "diagnostics", "reporting"
@@ -117,15 +121,17 @@ class DeclarativeSkillExecutor(SkillExecutor):
                 working_context[param.name] = param.default
 
         for step in skill.steps:
-            step_result = {"step": step.name, "success": False, "output": None, "error": None}
+            step_result = {
+                "step": step.name,
+                "success": False,
+                "output": None,
+                "error": None,
+            }
 
             # Resolve tool inputs from context + params
             tool_input = {}
             for key, mapping in step.input_mapping.items():
-                if mapping.startswith("$"):
-                    tool_input[key] = working_context.get(mapping[1:], mapping)
-                else:
-                    tool_input[key] = mapping
+                tool_input[key] = self._resolve_value(mapping, working_context)
 
             # Get tool
             tool = self.tool_registry.get(step.tool)
@@ -181,5 +187,33 @@ class DeclarativeSkillExecutor(SkillExecutor):
                 results["success"] = False
                 break
 
-        results["context"] = {k: v for k, v in working_context.items() if not k.startswith("_")}
+        results["context"] = {
+            k: v for k, v in working_context.items() if not k.startswith("_")
+        }
         return results
+
+    @staticmethod
+    def _resolve_value(mapping: str, context: dict[str, Any]) -> Any:
+        """Resolve a step input mapping against the working context.
+
+        Mappings starting with ``$`` are treated as context lookups and support
+        dotted paths such as ``$relax_result.relaxed_structure``. Other values
+        are parsed with ``ast.literal_eval`` so that ``'relax'`` becomes the
+        string ``relax`` and ``3`` becomes the integer ``3``.
+        """
+        mapping = mapping.strip()
+        if mapping.startswith("$"):
+            path = mapping[1:]
+            value: Any = context
+            for part in path.split("."):
+                if isinstance(value, dict):
+                    value = value.get(part)
+                elif hasattr(value, part):
+                    value = getattr(value, part)
+                else:
+                    return None
+            return value
+        try:
+            return ast.literal_eval(mapping)
+        except (ValueError, SyntaxError):
+            return mapping

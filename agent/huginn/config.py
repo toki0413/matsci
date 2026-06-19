@@ -9,24 +9,55 @@ import json
 import os
 import pathlib
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal
 
 from huginn.crypto import CryptoVault, EncryptedConfig, KeyManager
 
-
 ThinkingIntensity = Literal["low", "medium", "high"]
+
+
+def _parse_queue_map(value: str | None) -> dict[str, str]:
+    """Parse a JSON or comma-separated queue map from an environment variable."""
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return {str(k): str(v) for k, v in parsed.items()}
+    except json.JSONDecodeError:
+        pass
+    result: dict[str, str] = {}
+    for part in value.split(","):
+        if "=" in part:
+            key, val = part.split("=", 1)
+            result[key.strip()] = val.strip()
+    return result
 
 
 @dataclass
 class ModelConfig:
     """A single LLM provider/model entry in the model pool."""
+
     alias: str  # e.g. "gpt4o", "claude-sonnet"
     provider: Literal[
-        "anthropic", "openai", "ollama", "deepseek",
-        "google-genai", "openrouter", "nvidia", "vllm", "local", "default",
-        "siliconflow", "moonshot", "zhipu", "baichuan",
-        "dashscope", "qianfan", "doubao", "hunyuan",
+        "anthropic",
+        "openai",
+        "ollama",
+        "deepseek",
+        "google-genai",
+        "openrouter",
+        "nvidia",
+        "vllm",
+        "local",
+        "default",
+        "siliconflow",
+        "moonshot",
+        "zhipu",
+        "baichuan",
+        "dashscope",
+        "qianfan",
+        "doubao",
+        "hunyuan",
         "openai-compatible",
     ]
     model: str | None = None
@@ -43,6 +74,7 @@ class ModelConfig:
 @dataclass
 class AgentProfileConfig:
     """A reusable agent profile that maps to a model alias + persona + tools."""
+
     id: str  # e.g. "lead", "coder", "reviewer"
     name: str = ""
     model_alias: str = ""
@@ -55,15 +87,64 @@ class AgentProfileConfig:
 
 
 @dataclass
+class SecurityConfig:
+    """Security, privacy, and encryption settings."""
+
+    api_key: str | None = None
+    encryption_enabled: bool = False
+    encryption_password: str | None = None
+    encryption_key_file: str | None = None
+    encrypt_config: bool = False
+    encrypt_rag_documents: bool = True
+    encrypt_rag_metadata: bool = True
+    privacy_redact_secrets: bool = True
+    privacy_block_on_secrets: bool = False
+    local_only_mode: bool = False
+
+
+@dataclass
+class PersistenceConfig:
+    """Persistence settings for checkpoints, memory, and remote jobs."""
+
+    checkpointer_path: str | None = None
+
+
+@dataclass
+class SandboxConfig:
+    """Sandbox and container execution settings."""
+
+    container_runtime: Literal[
+        "none", "docker", "podman", "apptainer", "singularity"
+    ] = "none"
+    container_image: str | None = None
+    max_tool_output_tokens: int = 25000
+    context_budget_tokens: int = 0
+
+
+@dataclass
 class HuginnConfig:
     """Huginn configuration."""
 
     # Legacy single-model settings (kept for backward compatibility)
     provider: Literal[
-        "anthropic", "openai", "ollama", "deepseek",
-        "google-genai", "openrouter", "nvidia", "vllm", "local", "default",
-        "siliconflow", "moonshot", "zhipu", "baichuan",
-        "dashscope", "qianfan", "doubao", "hunyuan",
+        "anthropic",
+        "openai",
+        "ollama",
+        "deepseek",
+        "google-genai",
+        "openrouter",
+        "nvidia",
+        "vllm",
+        "local",
+        "default",
+        "siliconflow",
+        "moonshot",
+        "zhipu",
+        "baichuan",
+        "dashscope",
+        "qianfan",
+        "doubao",
+        "hunyuan",
         "openai-compatible",
     ] = "default"
     model: str | None = None
@@ -83,10 +164,33 @@ class HuginnConfig:
     vasp_executable: str | None = None
     lammps_executable: str | None = None
 
-    # HPC settings
+    # Public materials database API keys
+    mp_api_key: str | None = None
+    oqmd_api_key: str | None = None
+
+    # HPC / remote execution settings
+    execution_backend: Literal["local", "remote"] = "local"
+    container_runtime: Literal[
+        "none", "docker", "podman", "apptainer", "singularity"
+    ] = "none"
+    container_image: str | None = None
     hpc_scheduler: Literal["slurm", "pbs", "local"] = "local"
     hpc_host: str | None = None
     hpc_username: str | None = None
+    hpc_key_path: str | None = None
+    hpc_password: str | None = None
+    hpc_port: int = 22
+    remote_work_dir: str = "~/huginn_jobs"
+    hpc_default_queue: str | None = None
+    hpc_gpu_queue: str | None = None
+    hpc_queue_map: dict[str, str] = field(default_factory=dict)
+    hpc_default_walltime: str = "24:00:00"
+    hpc_default_nodes: int = 1
+    hpc_default_ntasks_per_node: int = 4
+    hpc_default_gpus_per_node: int = 0
+    hpc_max_retries: int = 3
+    hpc_retry_backoff: float = 1.0
+    hpc_strict_host_key_checking: bool = True
 
     # MCP server paths
     abaqus_mcp_server: str | None = None
@@ -99,7 +203,14 @@ class HuginnConfig:
     enable_exploration: bool = True
     max_parallel_branches: int = 5
     persona: str = "default"
+    persona_auto_route: bool = True
+    persona_auto_route_threshold: float = 0.3
     rag_enabled: bool = False
+
+    # Knowledge graph
+    kg_enabled: bool = False
+    kg_depth: int = 1
+    kg_top_k: int = 10
 
     # Encryption settings
     encryption_enabled: bool = False
@@ -142,8 +253,29 @@ class HuginnConfig:
     max_tokens: int | None = None
 
     # Pet customization
-    pet_name: str = "Muninn"
+    pet_name: str = "渡鸦"
     pet_personality: Literal["cheerful", "nerdy", "calm", "sassy"] = "cheerful"
+
+    def apply_overrides(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        ollama_url: str | None = None,
+        thinking: str | None = None,
+    ) -> None:
+        """Apply CLI flag overrides to this config instance in-place."""
+        if provider:
+            self.provider = provider  # type: ignore[assignment]
+        if model:
+            self.model = model
+        if base_url:
+            self.base_url = base_url
+        if ollama_url:
+            self.ollama_host = ollama_url
+        if thinking:
+            self.thinking = thinking  # type: ignore[assignment]
 
     def build_agent_kwargs(self, profile_id: str = "lead") -> dict[str, Any]:
         """Build keyword arguments for constructing a HuginnAgent.
@@ -151,7 +283,10 @@ class HuginnConfig:
         Resolves the requested agent profile, builds the model router when a
         model pool is configured, and applies all agent-scoped settings.
         """
-        from huginn.checkpointer import create_checkpointer, create_in_memory_checkpointer
+        from huginn.checkpointer import (
+            create_checkpointer,
+            create_in_memory_checkpointer,
+        )
         from huginn.models.router import ModelRouter
 
         profile = self.get_profile(profile_id)
@@ -169,7 +304,15 @@ class HuginnConfig:
             for m in self.models:
                 if not m.enabled:
                     continue
-                thinking = m.thinking if m.thinking is not None else effective_thinking if effective_thinking is not None else self.thinking
+                thinking = (
+                    m.thinking
+                    if m.thinking is not None
+                    else (
+                        effective_thinking
+                        if effective_thinking is not None
+                        else self.thinking
+                    )
+                )
                 try:
                     model_router.register_provider(
                         name=m.alias,
@@ -180,7 +323,11 @@ class HuginnConfig:
                         tags={m.alias, profile_id},
                         temperature=m.temperature,
                         thinking=thinking,
-                        max_tokens=m.max_tokens if m.max_tokens is not None else self.max_tokens,
+                        max_tokens=(
+                            m.max_tokens
+                            if m.max_tokens is not None
+                            else self.max_tokens
+                        ),
                     )
                 except Exception:
                     # Skip models that cannot be initialized (missing keys, etc.)
@@ -188,9 +335,14 @@ class HuginnConfig:
         else:
             # Legacy single-model path
             from huginn.models.registry import create_langchain_model
+
             provider = self.provider
             if provider and provider != "default":
-                thinking = effective_thinking if effective_thinking is not None else self.thinking
+                thinking = (
+                    effective_thinking
+                    if effective_thinking is not None
+                    else self.thinking
+                )
                 model = create_langchain_model(
                     provider=provider,
                     model_name=self.model or None,
@@ -218,6 +370,16 @@ class HuginnConfig:
             "context_budget_tokens": self.context_budget_tokens,
             "prompt_cache_control": self.prompt_cache_control,
             "tool_filter": profile.tools if profile else None,
+            "workspace": self.workspace,
+            "kg_enabled": self.kg_enabled,
+            "kg_depth": self.kg_depth,
+            "kg_top_k": self.kg_top_k,
+            "auto_approve": self.auto_approve,
+            "compression_max_tokens": self.tool_compression_max_tokens,
+            "telemetry_enabled": self.telemetry_enabled,
+            "memory_decay_enabled": self.memory_decay_enabled,
+            "memory_decay_interval_turns": self.memory_decay_interval_turns,
+            "memory_decay_prune_threshold": self.memory_decay_prune_threshold,
         }
 
     def get_profile(self, profile_id: str) -> AgentProfileConfig | None:
@@ -261,26 +423,30 @@ class HuginnConfig:
 
         # If no model pool but legacy provider is set, synthesize a default model entry.
         if not models and provider != "default":
-            models = [ModelConfig(
-                alias="default",
-                provider=provider,  # type: ignore[arg-type]
-                model=os.environ.get("HUGINN_MODEL"),
-                api_key=api_key,
-                base_url=os.environ.get("HUGINN_BASE_URL"),
-                thinking=thinking,
-                max_tokens=max_tokens,
-            )]
+            models = [
+                ModelConfig(
+                    alias="default",
+                    provider=provider,  # type: ignore[arg-type]
+                    model=os.environ.get("HUGINN_MODEL"),
+                    api_key=api_key,
+                    base_url=os.environ.get("HUGINN_BASE_URL"),
+                    thinking=thinking,
+                    max_tokens=max_tokens,
+                )
+            ]
 
         # If no agent profiles, synthesize a default lead agent pointing at the default/only model.
         if not agents:
             model_alias = models[0].alias if models else "default"
-            agents = [AgentProfileConfig(
-                id="lead",
-                name="Lead",
-                model_alias=model_alias,
-                persona=os.environ.get("HUGINN_PERSONA", "default").strip(),
-                thinking=thinking,
-            )]
+            agents = [
+                AgentProfileConfig(
+                    id="lead",
+                    name="Lead",
+                    model_alias=model_alias,
+                    persona=os.environ.get("HUGINN_PERSONA", "default").strip(),
+                    thinking=thinking,
+                )
+            ]
 
         return cls(
             provider=provider,
@@ -290,41 +456,113 @@ class HuginnConfig:
             models=models,
             agents=agents,
             team_mode_enabled=os.environ.get("HUGINN_TEAM_MODE", "").lower() == "true",
-            max_concurrent_subagents=int(os.environ.get("HUGINN_MAX_CONCURRENT_SUBAGENTS", "3")),
+            max_concurrent_subagents=int(
+                os.environ.get("HUGINN_MAX_CONCURRENT_SUBAGENTS", "3")
+            ),
             ollama_host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
             vasp_executable=os.environ.get("VASP_EXECUTABLE"),
             lammps_executable=os.environ.get("LAMMPS_EXECUTABLE"),
+            mp_api_key=os.environ.get("MP_API_KEY") or None,
+            oqmd_api_key=os.environ.get("OQMD_API_KEY") or None,
+            execution_backend=os.environ.get("HUGINN_EXECUTION_BACKEND", "local").lower(),  # type: ignore[arg-type]
+            container_runtime=os.environ.get("HUGINN_CONTAINER_RUNTIME", "none").lower(),  # type: ignore[arg-type]
+            container_image=os.environ.get("HUGINN_CONTAINER_IMAGE") or None,
             hpc_scheduler=os.environ.get("HPC_SCHEDULER", "local"),
             hpc_host=os.environ.get("HPC_HOST"),
             hpc_username=os.environ.get("HPC_USERNAME"),
+            hpc_key_path=os.environ.get("HPC_KEY_PATH") or None,
+            hpc_password=os.environ.get("HPC_PASSWORD") or None,
+            hpc_port=int(os.environ.get("HPC_PORT", "22")),
+            remote_work_dir=os.environ.get("HUGINN_REMOTE_WORK_DIR", "~/huginn_jobs"),
+            hpc_default_queue=os.environ.get("HPC_DEFAULT_QUEUE") or None,
+            hpc_gpu_queue=os.environ.get("HPC_GPU_QUEUE") or None,
+            hpc_queue_map=_parse_queue_map(os.environ.get("HPC_QUEUE_MAP")),
+            hpc_default_walltime=os.environ.get("HPC_DEFAULT_WALLTIME", "24:00:00"),
+            hpc_default_nodes=int(os.environ.get("HPC_DEFAULT_NODES", "1")),
+            hpc_default_ntasks_per_node=int(
+                os.environ.get("HPC_DEFAULT_NTASKS_PER_NODE", "4")
+            ),
+            hpc_default_gpus_per_node=int(
+                os.environ.get("HPC_DEFAULT_GPUS_PER_NODE", "0")
+            ),
+            hpc_max_retries=int(os.environ.get("HPC_MAX_RETRIES", "3")),
+            hpc_retry_backoff=float(os.environ.get("HPC_RETRY_BACKOFF", "1.0")),
+            hpc_strict_host_key_checking=os.environ.get(
+                "HPC_STRICT_HOST_KEY_CHECKING", "true"
+            ).lower()
+            != "false",
             abaqus_mcp_server=os.environ.get("ABAQUS_MCP_SERVER_PATH"),
             workspace=os.environ.get("HUGINN_WORKSPACE", "."),
             auto_approve=os.environ.get("HUGINN_AUTO_APPROVE", "").lower() == "true",
-            enable_exploration=os.environ.get("HUGINN_ENABLE_EXPLORATION", "true").lower() == "true",
+            enable_exploration=os.environ.get(
+                "HUGINN_ENABLE_EXPLORATION", "true"
+            ).lower()
+            == "true",
             max_parallel_branches=int(os.environ.get("HUGINN_MAX_BRANCHES", "5")),
-            encryption_enabled=os.environ.get("HUGINN_ENCRYPTION_ENABLED", "").lower() == "true",
+            persona=os.environ.get("HUGINN_PERSONA", "default").strip(),
+            persona_auto_route=os.environ.get(
+                "HUGINN_PERSONA_AUTO_ROUTE", "true"
+            ).lower()
+            != "false",
+            persona_auto_route_threshold=float(
+                os.environ.get("HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD", "0.3")
+            ),
+            rag_enabled=os.environ.get("HUGINN_RAG_ENABLED", "").lower() == "true",
+            kg_enabled=os.environ.get("HUGINN_KG_ENABLED", "").lower() == "true",
+            kg_depth=int(os.environ.get("HUGINN_KG_DEPTH", "1")),
+            kg_top_k=int(os.environ.get("HUGINN_KG_TOP_K", "10")),
+            local_only_mode=os.environ.get("HUGINN_LOCAL_ONLY", "").lower() == "true",
+            encryption_enabled=os.environ.get("HUGINN_ENCRYPTION_ENABLED", "").lower()
+            == "true",
+            encrypt_config=os.environ.get("HUGINN_ENCRYPT_CONFIG", "").lower()
+            == "true",
+            privacy_redact_secrets=os.environ.get(
+                "HUGINN_PRIVACY_REDACT_SECRETS", "true"
+            ).lower()
+            != "false",
             encryption_password=os.environ.get("HUGINN_ENCRYPTION_PASSWORD") or None,
             encryption_key_file=os.environ.get("HUGINN_ENCRYPTION_KEY_FILE") or None,
-            encrypt_rag_documents=os.environ.get("HUGINN_ENCRYPT_RAG_DOCS", "true").lower() == "true",
-            encrypt_rag_metadata=os.environ.get("HUGINN_ENCRYPT_RAG_META", "true").lower() == "true",
-            encrypt_config=os.environ.get("HUGINN_ENCRYPT_CONFIG", "").lower() == "true",
-            persona=os.environ.get("HUGINN_PERSONA", "default").strip(),
-            rag_enabled=os.environ.get("HUGINN_RAG_ENABLED", "").lower() == "true",
-            local_only_mode=os.environ.get("HUGINN_LOCAL_ONLY", "").lower() == "true",
-            privacy_redact_secrets=os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "true").lower() != "false",
-            privacy_block_on_secrets=os.environ.get("HUGINN_PRIVACY_BLOCK_ON_SECRETS", "").lower() == "true",
-            max_tool_output_tokens=int(os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")),
-            context_budget_tokens=int(os.environ.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0")),
-            prompt_cache_control=os.environ.get("HUGINN_PROMPT_CACHE_CONTROL", "true").lower() != "false",
+            encrypt_rag_documents=os.environ.get(
+                "HUGINN_ENCRYPT_RAG_DOCS", "true"
+            ).lower()
+            == "true",
+            encrypt_rag_metadata=os.environ.get(
+                "HUGINN_ENCRYPT_RAG_META", "true"
+            ).lower()
+            == "true",
+            privacy_block_on_secrets=os.environ.get(
+                "HUGINN_PRIVACY_BLOCK_ON_SECRETS", ""
+            ).lower()
+            == "true",
+            max_tool_output_tokens=int(
+                os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")
+            ),
+            context_budget_tokens=int(
+                os.environ.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0")
+            ),
+            prompt_cache_control=os.environ.get(
+                "HUGINN_PROMPT_CACHE_CONTROL", "true"
+            ).lower()
+            != "false",
             checkpointer_path=os.environ.get("HUGINN_CHECKPOINTER_PATH") or None,
-            telemetry_enabled=os.environ.get("HUGINN_TELEMETRY_ENABLED", "true").lower() != "false",
-            memory_decay_enabled=os.environ.get("HUGINN_MEMORY_DECAY_ENABLED", "").lower() == "true",
-            memory_decay_interval_turns=int(os.environ.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")),
-            memory_decay_prune_threshold=float(os.environ.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")),
-            tool_compression_max_tokens=int(os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")),
+            telemetry_enabled=os.environ.get("HUGINN_TELEMETRY_ENABLED", "true").lower()
+            != "false",
+            memory_decay_enabled=os.environ.get(
+                "HUGINN_MEMORY_DECAY_ENABLED", ""
+            ).lower()
+            == "true",
+            memory_decay_interval_turns=int(
+                os.environ.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")
+            ),
+            memory_decay_prune_threshold=float(
+                os.environ.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")
+            ),
+            tool_compression_max_tokens=int(
+                os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")
+            ),
             thinking=thinking,
             max_tokens=max_tokens,
-            pet_name=os.environ.get("HUGINN_PET_NAME", "Muninn").strip() or "Muninn",
+            pet_name=os.environ.get("HUGINN_PET_NAME", "渡鸦").strip() or "渡鸦",
             pet_personality=os.environ.get("HUGINN_PET_PERSONALITY", "cheerful").strip().lower() or "cheerful",  # type: ignore[arg-type]
         )
 
@@ -379,7 +617,6 @@ class HuginnConfig:
         except Exception:
             pass
         return []
-    
 
     @staticmethod
     def resolve_key(raw: str | None) -> str | None:
@@ -400,8 +637,8 @@ class HuginnConfig:
         if raw.startswith("keyring:"):
             try:
                 import keyring
-            except ImportError:
-                raise ImportError("pip install keyring")
+            except ImportError as err:
+                raise ImportError("pip install keyring") from err
             parts = raw[8:].split(":", 1)
             service = parts[0] if parts else "huginn"
             username = parts[1] if len(parts) > 1 else "default"
@@ -452,24 +689,48 @@ class HuginnConfig:
             "team_mode_enabled": self.team_mode_enabled,
             "max_concurrent_subagents": self.max_concurrent_subagents,
             "ollama_host": self.ollama_host,
+            "mp_api_key": mask(self.mp_api_key),
+            "oqmd_api_key": mask(self.oqmd_api_key),
             "vasp_executable": self.vasp_executable,
             "lammps_executable": self.lammps_executable,
+            "execution_backend": self.execution_backend,
             "hpc_scheduler": self.hpc_scheduler,
+            "hpc_host": self.hpc_host,
+            "hpc_username": self.hpc_username,
+            "hpc_key_path": self.hpc_key_path,
+            "hpc_password": mask(self.hpc_password),
+            "hpc_port": self.hpc_port,
+            "remote_work_dir": self.remote_work_dir,
+            "hpc_default_queue": self.hpc_default_queue,
+            "hpc_gpu_queue": self.hpc_gpu_queue,
+            "hpc_queue_map": self.hpc_queue_map,
+            "hpc_default_walltime": self.hpc_default_walltime,
+            "hpc_default_nodes": self.hpc_default_nodes,
+            "hpc_default_ntasks_per_node": self.hpc_default_ntasks_per_node,
+            "hpc_default_gpus_per_node": self.hpc_default_gpus_per_node,
+            "hpc_max_retries": self.hpc_max_retries,
+            "hpc_retry_backoff": self.hpc_retry_backoff,
+            "hpc_strict_host_key_checking": self.hpc_strict_host_key_checking,
             "workspace": self.workspace,
             "auto_approve": self.auto_approve,
             "enable_exploration": self.enable_exploration,
             "max_parallel_branches": self.max_parallel_branches,
+            "persona": self.persona,
+            "persona_auto_route": self.persona_auto_route,
+            "persona_auto_route_threshold": self.persona_auto_route_threshold,
+            "rag_enabled": self.rag_enabled,
+            "kg_enabled": self.kg_enabled,
+            "kg_depth": self.kg_depth,
+            "kg_top_k": self.kg_top_k,
+            "local_only_mode": self.local_only_mode,
             "encryption_enabled": self.encryption_enabled,
             "encryption_password": mask(self.encryption_password),
             "encryption_key_file": self.encryption_key_file,
             "encrypt_rag_documents": self.encrypt_rag_documents,
             "encrypt_rag_metadata": self.encrypt_rag_metadata,
             "encrypt_config": self.encrypt_config,
-            "persona": self.persona,
-            "rag_enabled": self.rag_enabled,
             "privacy_redact_secrets": self.privacy_redact_secrets,
             "privacy_block_on_secrets": self.privacy_block_on_secrets,
-            "local_only_mode": self.local_only_mode,
             "max_tool_output_tokens": self.max_tool_output_tokens,
             "context_budget_tokens": self.context_budget_tokens,
             "prompt_cache_control": self.prompt_cache_control,
@@ -493,15 +754,52 @@ class HuginnConfig:
         kwargs = {k: v for k, v in data.items() if k not in ("models", "agents")}
 
         if models_raw is not None:
-            kwargs["models"] = [ModelConfig(**m) for m in models_raw if isinstance(m, dict)]
+            kwargs["models"] = [
+                ModelConfig(**m) for m in models_raw if isinstance(m, dict)
+            ]
         if agents_raw is not None:
-            kwargs["agents"] = [AgentProfileConfig(**a) for a in agents_raw if isinstance(a, dict)]
+            kwargs["agents"] = [
+                AgentProfileConfig(**a) for a in agents_raw if isinstance(a, dict)
+            ]
 
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in kwargs.items() if k in known}
         return cls(**filtered)
 
-    def save(self, path: str | pathlib.Path, format: Literal["toml", "json"] = "toml") -> None:
+    @property
+    def security_config(self) -> SecurityConfig:
+        """Return the security/privacy slice of the configuration."""
+        return SecurityConfig(
+            api_key=self.api_key,
+            encryption_enabled=self.encryption_enabled,
+            encryption_password=self.encryption_password,
+            encryption_key_file=self.encryption_key_file,
+            encrypt_config=self.encrypt_config,
+            encrypt_rag_documents=self.encrypt_rag_documents,
+            encrypt_rag_metadata=self.encrypt_rag_metadata,
+            privacy_redact_secrets=self.privacy_redact_secrets,
+            privacy_block_on_secrets=self.privacy_block_on_secrets,
+            local_only_mode=self.local_only_mode,
+        )
+
+    @property
+    def persistence_config(self) -> PersistenceConfig:
+        """Return the persistence slice of the configuration."""
+        return PersistenceConfig(checkpointer_path=self.checkpointer_path)
+
+    @property
+    def sandbox_config(self) -> SandboxConfig:
+        """Return the sandbox/container execution slice of the configuration."""
+        return SandboxConfig(
+            container_runtime=self.container_runtime,
+            container_image=self.container_image,
+            max_tool_output_tokens=self.max_tool_output_tokens,
+            context_budget_tokens=self.context_budget_tokens,
+        )
+
+    def save(
+        self, path: str | pathlib.Path, format: Literal["toml", "json"] = "toml"
+    ) -> None:
         """Persist configuration to a file.
 
         When ``encrypt_config`` is enabled (or the path ends in ``.enc``),
@@ -522,16 +820,19 @@ class HuginnConfig:
         if format == "toml":
             try:
                 import toml
-            except ImportError:
-                raise ImportError("pip install toml")
+            except ImportError as err:
+                raise ImportError("pip install toml") from err
             target.write_text(toml.dumps(data), encoding="utf-8")
         else:
             import json
+
             target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def _get_vault(self) -> CryptoVault:
         """Return an unlocked CryptoVault for config encryption."""
-        password = self.encryption_password or os.environ.get("HUGINN_ENCRYPTION_PASSWORD")
+        password = self.encryption_password or os.environ.get(
+            "HUGINN_ENCRYPTION_PASSWORD"
+        )
         if not password:
             raise RuntimeError(
                 "Config encryption requires encryption_password or HUGINN_ENCRYPTION_PASSWORD."
@@ -579,11 +880,12 @@ class HuginnConfig:
         if fmt == "toml":
             try:
                 import toml
-            except ImportError:
-                raise ImportError("pip install toml")
+            except ImportError as err:
+                raise ImportError("pip install toml") from err
             data = toml.loads(text)
         else:
             import json
+
             data = json.loads(text)
         return cls.from_dict(data)
 
@@ -596,7 +898,7 @@ class CoderSettings:
     done_marker: str = "[DONE]"
 
     @classmethod
-    def from_env(cls) -> "CoderSettings":
+    def from_env(cls) -> CoderSettings:
         """Load coder settings from environment variables."""
         return cls(
             max_iterations=int(os.environ.get("HUGINN_CODER_MAX_ITER", "50")),

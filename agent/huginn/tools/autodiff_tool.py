@@ -13,23 +13,35 @@ This bridges symbolic math (exact derivatives) with numerical computation
 
 from __future__ import annotations
 
-import json
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class AutoDiffInput(BaseModel):
-    action: str = Field(..., description="gradient | hessian | jacobian | sensitivity | optimize")
-    function_type: str = Field(default="custom", description="Custom function name or 'custom'")
-    function_params: dict[str, Any] = Field(default_factory=dict, description="Parameters defining the function")
-    variables: dict[str, list[float]] = Field(default_factory=dict, description="Variable values for evaluation")
-    target_variable: str | None = Field(default=None, description="Variable to differentiate with respect to")
-    step_size: float = Field(default=1e-5, description="Finite difference step size (fallback)")
+    action: str = Field(
+        ..., description="gradient | hessian | jacobian | sensitivity | optimize"
+    )
+    function_type: str = Field(
+        default="custom", description="Custom function name or 'custom'"
+    )
+    function_params: dict[str, Any] = Field(
+        default_factory=dict, description="Parameters defining the function"
+    )
+    variables: dict[str, list[float]] = Field(
+        default_factory=dict, description="Variable values for evaluation"
+    )
+    target_variable: str | None = Field(
+        default=None, description="Variable to differentiate with respect to"
+    )
+    step_size: float = Field(
+        default=1e-5, description="Finite difference step size (fallback)"
+    )
     use_jax: bool = Field(default=True, description="Use JAX autodiff if available")
 
 
@@ -56,14 +68,11 @@ class AutoDiffTool(HuginnTool):
         self._built_in_functions = self._register_functions()
 
     def _check_jax(self) -> bool:
-        try:
-            import jax
-            import jax.numpy as jnp
-            return True
-        except ImportError:
-            return False
+        import importlib.util
 
-    def _register_functions(self) -> Dict[str, Callable]:
+        return importlib.util.find_spec("jax") is not None
+
+    def _register_functions(self) -> dict[str, Callable]:
         """Register built-in material science functions."""
         functions = {}
 
@@ -87,7 +96,9 @@ class AutoDiffTool(HuginnTool):
 
         # Murnaghan EOS: E(V) = E0 + B0*V/BP * [ (V0/V)^BP / (BP-1) + 1 ] - B0*V0/(BP-1)
         def murnaghan(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
-            return E0 + B0 * V / BP * ((V0 / V) ** BP / (BP - 1) + 1) - B0 * V0 / (BP - 1)
+            return (
+                E0 + B0 * V / BP * ((V0 / V) ** BP / (BP - 1) + 1) - B0 * V0 / (BP - 1)
+            )
 
         functions["murnaghan"] = murnaghan
 
@@ -95,7 +106,9 @@ class AutoDiffTool(HuginnTool):
         def vinet(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
             x = (V / V0) ** (1.0 / 3.0)
             eta = 1.5 * (BP - 1)
-            return E0 + 2 * B0 * V0 / (BP - 1) ** 2 * (1 - (1 + eta * (x - 1)) * np.exp(-eta * (x - 1)))
+            return E0 + 2 * B0 * V0 / (BP - 1) ** 2 * (
+                1 - (1 + eta * (x - 1)) * np.exp(-eta * (x - 1))
+            )
 
         functions["vinet"] = vinet
 
@@ -114,7 +127,7 @@ class AutoDiffTool(HuginnTool):
         # Lennard-Jones potential: E(r) = 4ε[(σ/r)^12 - (σ/r)^6]
         def lennard_jones(r, epsilon=1.0, sigma=1.0):
             sr6 = (sigma / r) ** 6
-            return 4 * epsilon * (sr6 ** 2 - sr6)
+            return 4 * epsilon * (sr6**2 - sr6)
 
         functions["lennard_jones"] = lennard_jones
 
@@ -144,9 +157,13 @@ class AutoDiffTool(HuginnTool):
             if action == "optimize":
                 return self._optimize_parameters(args)
 
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"AutoDiff error: {str(e)}")
+            return ToolResult(
+                data=None, success=False, error=f"AutoDiff error: {str(e)}"
+            )
 
     # ------------------------------------------------------------------
     # Core computations
@@ -184,7 +201,7 @@ class AutoDiffTool(HuginnTool):
             except Exception:
                 # Fallback to finite differences
                 pass
-        if 'result' not in locals():
+        if "result" not in locals():
             # Finite difference fallback
             result = {"gradients": {}, "method": "finite difference"}
             for name, values in args.variables.items():
@@ -222,7 +239,10 @@ class AutoDiffTool(HuginnTool):
 
             # Convert to matrix format
             n = len(var_names)
-            hess_matrix = [[float(H[var_names[i]][var_names[j]]) for j in range(n)] for i in range(n)]
+            hess_matrix = [
+                [float(H[var_names[i]][var_names[j]]) for j in range(n)]
+                for i in range(n)
+            ]
 
             # Compute eigenvalues for stability analysis
             H_np = np.array(hess_matrix)
@@ -237,12 +257,15 @@ class AutoDiffTool(HuginnTool):
             }
 
             if not result["positive_definite"]:
-                result["stability_warning"] = "Hessian has negative eigenvalues — system is at a saddle point or maximum"
+                result["stability_warning"] = (
+                    "Hessian has negative eigenvalues — system is at a saddle point or maximum"
+                )
 
             return ToolResult(data=result, success=True)
         else:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="Hessian computation requires JAX. Install with: pip install jax jaxlib",
             )
 
@@ -266,11 +289,14 @@ class AutoDiffTool(HuginnTool):
             diff = np.squeeze(np.asarray((f_plus - f_minus) / (2 * h)))
             jac[name] = float(diff)
 
-        return ToolResult(data={
-            "jacobian": jac,
-            "variables": var_names,
-            "method": "finite difference",
-        }, success=True)
+        return ToolResult(
+            data={
+                "jacobian": jac,
+                "variables": var_names,
+                "method": "finite difference",
+            },
+            success=True,
+        )
 
     def _compute_sensitivity(self, args: AutoDiffInput) -> ToolResult:
         """Compute normalized sensitivity coefficients: S = (∂f/∂x) * (x/f)."""
@@ -280,7 +306,10 @@ class AutoDiffTool(HuginnTool):
 
         gradients = grad_result.data["gradients"]
         fn = self._get_function(args)
-        f0 = fn(**{name: np.array(v) for name, v in args.variables.items()}, **args.function_params)
+        f0 = fn(
+            **{name: np.array(v) for name, v in args.variables.items()},
+            **args.function_params,
+        )
         f0 = float(np.squeeze(np.asarray(f0)))
 
         sensitivities = {}
@@ -292,12 +321,15 @@ class AutoDiffTool(HuginnTool):
                 sensitivities[name] = None
 
         f0_scalar = f0
-        return ToolResult(data={
-            "sensitivities": sensitivities,
-            "function_value": f0_scalar,
-            "gradients": gradients,
-            "interpretation": "|S| > 1: highly sensitive; |S| < 0.1: weakly sensitive",
-        }, success=True)
+        return ToolResult(
+            data={
+                "sensitivities": sensitivities,
+                "function_value": f0_scalar,
+                "gradients": gradients,
+                "interpretation": "|S| > 1: highly sensitive; |S| < 0.1: weakly sensitive",
+            },
+            success=True,
+        )
 
     def _optimize_parameters(self, args: AutoDiffInput) -> ToolResult:
         """Simple gradient descent optimization of model parameters."""
@@ -307,7 +339,11 @@ class AutoDiffTool(HuginnTool):
         input_data = {k: v for k, v in args.variables.items() if k != "target"}
 
         if not target_data:
-            return ToolResult(data=None, success=False, error="No target data provided for optimization")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="No target data provided for optimization",
+            )
 
         # Simple gradient descent on sum of squared errors
         lr = 0.01
@@ -320,10 +356,21 @@ class AutoDiffTool(HuginnTool):
         for _ in range(n_iter):
             # Compute loss and gradients
             predictions = [
-                fn(**{k: np.array([v_i]) for k, v_i in zip(input_data.keys(), input_rows[i])}, **params)
+                fn(
+                    **{
+                        k: np.array([v_i])
+                        for k, v_i in zip(input_data.keys(), input_rows[i])
+                    },
+                    **params,
+                )
                 for i in range(n_data)
             ]
-            loss = float(sum(float(np.squeeze(p - t)) ** 2 for p, t in zip(predictions, target_data)))
+            loss = float(
+                sum(
+                    float(np.squeeze(p - t)) ** 2
+                    for p, t in zip(predictions, target_data)
+                )
+            )
 
             # Finite difference gradients for each parameter
             for p_name in param_names:
@@ -333,27 +380,76 @@ class AutoDiffTool(HuginnTool):
                 params_plus[p_name] += h
                 params_minus[p_name] -= h
 
-                loss_plus = float(sum(
-                    float(np.squeeze(fn(**{k: np.array([v_i]) for k, v_i in zip(input_data.keys(), input_rows[i])}, **params_plus) - target_data[i])) ** 2
-                    for i in range(n_data)
-                ))
-                loss_minus = float(sum(
-                    float(np.squeeze(fn(**{k: np.array([v_i]) for k, v_i in zip(input_data.keys(), input_rows[i])}, **params_minus) - target_data[i])) ** 2
-                    for i in range(n_data)
-                ))
+                loss_plus = float(
+                    sum(
+                        float(
+                            np.squeeze(
+                                fn(
+                                    **{
+                                        k: np.array([v_i])
+                                        for k, v_i in zip(
+                                            input_data.keys(), input_rows[i]
+                                        )
+                                    },
+                                    **params_plus,
+                                )
+                                - target_data[i]
+                            )
+                        )
+                        ** 2
+                        for i in range(n_data)
+                    )
+                )
+                loss_minus = float(
+                    sum(
+                        float(
+                            np.squeeze(
+                                fn(
+                                    **{
+                                        k: np.array([v_i])
+                                        for k, v_i in zip(
+                                            input_data.keys(), input_rows[i]
+                                        )
+                                    },
+                                    **params_minus,
+                                )
+                                - target_data[i]
+                            )
+                        )
+                        ** 2
+                        for i in range(n_data)
+                    )
+                )
 
                 grad = (loss_plus - loss_minus) / (2 * h)
                 params[p_name] -= lr * grad
                 # Project parameters that must remain positive (physical constraints)
-                if p_name in ("V0", "V", "r", "re", "sigma", "B0", "BP", "C10", "D1", "C01", "De", "a", "epsilon"):
+                if p_name in (
+                    "V0",
+                    "V",
+                    "r",
+                    "re",
+                    "sigma",
+                    "B0",
+                    "BP",
+                    "C10",
+                    "D1",
+                    "C01",
+                    "De",
+                    "a",
+                    "epsilon",
+                ):
                     params[p_name] = max(params[p_name], 1e-6)
 
-        return ToolResult(data={
-            "optimized_params": params,
-            "final_loss": float(loss),
-            "iterations": n_iter,
-            "method": "gradient descent",
-        }, success=True)
+        return ToolResult(
+            data={
+                "optimized_params": params,
+                "final_loss": float(loss),
+                "iterations": n_iter,
+                "method": "gradient descent",
+            },
+            success=True,
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -368,9 +464,11 @@ class AutoDiffTool(HuginnTool):
         # Try to parse as sympy expression
         if args.function_params.get("expression"):
             import sympy as sp
+
             expr_str = args.function_params["expression"]
-            symbols = [sp.Symbol(s) for s in args.variables.keys()]
             expr = sp.sympify(expr_str)
             return lambda **kwargs: float(expr.subs(kwargs))
 
-        raise ValueError(f"Unknown function: {fn_name}. Available: {list(self._built_in_functions.keys())}")
+        raise ValueError(
+            f"Unknown function: {fn_name}. Available: {list(self._built_in_functions.keys())}"
+        )

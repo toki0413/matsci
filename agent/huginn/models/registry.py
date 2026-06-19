@@ -13,11 +13,25 @@ from typing import Any, Literal
 from huginn.config import HuginnConfig, ModelConfig, ThinkingIntensity
 
 ProviderT = Literal[
-    "anthropic", "openai", "ollama", "deepseek",
-    "google-genai", "openrouter", "nvidia", "vllm", "local", "default",
+    "anthropic",
+    "openai",
+    "ollama",
+    "deepseek",
+    "google-genai",
+    "openrouter",
+    "nvidia",
+    "vllm",
+    "local",
+    "default",
     # Domestic / OpenAI-compatible providers
-    "siliconflow", "moonshot", "zhipu", "baichuan",
-    "dashscope", "qianfan", "doubao", "hunyuan",
+    "siliconflow",
+    "moonshot",
+    "zhipu",
+    "baichuan",
+    "dashscope",
+    "qianfan",
+    "doubao",
+    "hunyuan",
     "openai-compatible",
 ]
 
@@ -29,7 +43,9 @@ _INTENSITY_TO_ANTHROPIC_BUDGET: dict[ThinkingIntensity, int] = {
 }
 
 
-def _anthropic_thinking(thinking: ThinkingIntensity | dict[str, Any] | None) -> dict[str, Any] | None:
+def _anthropic_thinking(
+    thinking: ThinkingIntensity | dict[str, Any] | None,
+) -> dict[str, Any] | None:
     """Map a thinking intensity to Anthropic's thinking dict."""
     if thinking is None:
         return None
@@ -80,6 +96,7 @@ def _apply_thinking_kwargs(
         return
 
     # DeepSeek, Google, Ollama, NVIDIA, domestic: no standard mapping yet.
+
 
 #: OpenAI-compatible domestic providers with default base URLs and env keys.
 _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
@@ -231,8 +248,8 @@ def _create_openai_compatible(
     """Create a ChatOpenAI instance for an OpenAI-compatible provider."""
     try:
         from langchain_openai import ChatOpenAI
-    except ImportError:
-        raise ImportError("pip install langchain-openai")
+    except ImportError as err:
+        raise ImportError("pip install langchain-openai") from err
 
     cfg = _DOMESTIC_OPENAI_COMPATIBLE.get(provider, {})
     env_var = cfg.get("env") or "OPENAI_API_KEY"
@@ -299,12 +316,16 @@ def create_langchain_model(
     if provider == "anthropic":
         try:
             from langchain_anthropic import ChatAnthropic
-        except ImportError:
-            raise ImportError("pip install langchain-anthropic")
+        except ImportError as err:
+            raise ImportError("pip install langchain-anthropic") from err
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             raise ValueError("ANTHROPIC_API_KEY not set")
-        kwargs: dict[str, Any] = {"model": model, "api_key": key, "temperature": temperature}
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": key,
+            "temperature": temperature,
+        }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
@@ -313,11 +334,13 @@ def create_langchain_model(
     if provider in ("openai", "vllm", "local"):
         try:
             from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError("pip install langchain-openai")
+        except ImportError as err:
+            raise ImportError("pip install langchain-openai") from err
         key = api_key or os.environ.get("OPENAI_API_KEY")
         if not key and not _is_local_url(base_url):
-            raise ValueError("OPENAI_API_KEY not set (required for non-local endpoints)")
+            raise ValueError(
+                "OPENAI_API_KEY not set (required for non-local endpoints)"
+            )
         kwargs = {
             "model": model,
             "api_key": key or "not-needed",
@@ -332,15 +355,19 @@ def create_langchain_model(
     if provider == "ollama":
         try:
             from langchain_ollama import ChatOllama
-        except ImportError:
-            raise ImportError("pip install langchain-ollama")
-        return ChatOllama(model=model, base_url=base_url or "http://localhost:11434", temperature=temperature)
+        except ImportError as err:
+            raise ImportError("pip install langchain-ollama") from err
+        return ChatOllama(
+            model=model,
+            base_url=base_url or "http://localhost:11434",
+            temperature=temperature,
+        )
 
     if provider == "deepseek":
         try:
             from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError("pip install langchain-openai")
+        except ImportError as err:
+            raise ImportError("pip install langchain-openai") from err
         key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         if not key:
             raise ValueError("DEEPSEEK_API_KEY not set")
@@ -358,8 +385,8 @@ def create_langchain_model(
     if provider == "google-genai":
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError:
-            raise ImportError("pip install langchain-google-genai")
+        except ImportError as err:
+            raise ImportError("pip install langchain-google-genai") from err
         key = api_key or os.environ.get("GOOGLE_API_KEY")
         if not key:
             raise ValueError("GOOGLE_API_KEY not set")
@@ -372,8 +399,8 @@ def create_langchain_model(
     if provider == "openrouter":
         try:
             from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError("pip install langchain-openai")
+        except ImportError as err:
+            raise ImportError("pip install langchain-openai") from err
         key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not key:
             raise ValueError("OPENROUTER_API_KEY not set")
@@ -402,8 +429,8 @@ def create_langchain_model(
     if provider == "nvidia":
         try:
             from langchain_nvidia_ai_endpoints import ChatNVIDIA
-        except ImportError:
-            raise ImportError("pip install langchain-nvidia-ai-endpoints")
+        except ImportError as err:
+            raise ImportError("pip install langchain-nvidia-ai-endpoints") from err
         key = api_key or os.environ.get("NVIDIA_API_KEY")
         kwargs = {"model": model, "api_key": key, "temperature": temperature}
         if max_tokens is not None:
@@ -428,6 +455,7 @@ def resolve_provider_key(provider: ProviderT, api_key: str | None) -> str | None
 @dataclass
 class ModelRef:
     """Lightweight record returned by ModelRegistry.list()."""
+
     alias: str
     provider: str
     model: str | None
@@ -489,7 +517,11 @@ class ModelRegistry:
         """Include thinking/max_tokens in the cache key to avoid sharing instances."""
         parts = [alias]
         if thinking is not None:
-            parts.append(str(thinking) if isinstance(thinking, str) else json.dumps(thinking, sort_keys=True))
+            parts.append(
+                str(thinking)
+                if isinstance(thinking, str)
+                else json.dumps(thinking, sort_keys=True)
+            )
         if max_tokens is not None:
             parts.append(f"max_tokens={max_tokens}")
         return "|".join(parts)
@@ -557,7 +589,7 @@ class ModelRegistry:
         return None
 
     @classmethod
-    def from_config(cls, config: HuginnConfig) -> "ModelRegistry":
+    def from_config(cls, config: HuginnConfig) -> ModelRegistry:
         local_only = config.local_only_mode
         if local_only is None:
             local_only = os.environ.get("HUGINN_LOCAL_ONLY", "0") == "1"

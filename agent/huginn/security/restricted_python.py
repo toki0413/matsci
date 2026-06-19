@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Set
 
 
 class RestrictedPythonError(Exception):
@@ -16,7 +15,7 @@ class RestrictedPythonError(Exception):
 
 
 # Modules that may compromise the host if imported
-FORBIDDEN_MODULES: Set[str] = {
+FORBIDDEN_MODULES: set[str] = {
     "os",
     "sys",
     "subprocess",
@@ -48,7 +47,7 @@ FORBIDDEN_MODULES: Set[str] = {
 }
 
 # Built-in functions that must not be called
-FORBIDDEN_BUILTINS: Set[str] = {
+FORBIDDEN_BUILTINS: set[str] = {
     "__import__",
     "eval",
     "exec",
@@ -61,7 +60,7 @@ FORBIDDEN_BUILTINS: Set[str] = {
 }
 
 # Dangerous dunder attributes
-FORBIDDEN_ATTRIBUTES: Set[str] = {
+FORBIDDEN_ATTRIBUTES: set[str] = {
     "__subclasses__",
     "__bases__",
     "__base__",
@@ -103,7 +102,10 @@ class _PolicyChecker(ast.NodeVisitor):
         # Detect eval(), exec(), compile(), __import__(), open()
         if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_BUILTINS:
             self._report(node, f"Forbidden builtin call: {node.func.id}()")
-        if isinstance(node.func, ast.Attribute) and node.func.attr in FORBIDDEN_BUILTINS:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in FORBIDDEN_BUILTINS
+        ):
             self._report(node, f"Forbidden method call: {node.func.attr}()")
         self.generic_visit(node)
 

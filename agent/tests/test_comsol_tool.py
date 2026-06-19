@@ -46,9 +46,7 @@ def test_comsol_tool_parse_csv(tmp_path: Path) -> None:
     tool = ComsolTool()
     result_file = tmp_path / "results.txt"
     result_file.write_text(
-        "x y z stress\n"
-        "0.0 0.0 0.0 1.0\n"
-        "1.0 0.0 0.0 2.0\n",
+        "x y z stress\n" "0.0 0.0 0.0 1.0\n" "1.0 0.0 0.0 2.0\n",
         encoding="utf-8",
     )
 

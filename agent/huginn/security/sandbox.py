@@ -85,7 +85,9 @@ class SandboxExecutor:
             raise SandboxError(f"Executable not found: {cmd[0]}")
         return exe
 
-    def _validate_command(self, cmd: list[str], config: SandboxConfig | None = None) -> None:
+    def _validate_command(
+        self, cmd: list[str], config: SandboxConfig | None = None
+    ) -> None:
         """Validate that the command complies with sandbox policy."""
         if not cmd:
             raise SandboxError("Empty command")
@@ -134,6 +136,16 @@ class SandboxExecutor:
                 )
         return path
 
+    # Kwargs meant for remote schedulers; they must not be passed to subprocess.run.
+    _REMOTE_KWARGS = {
+        "queue",
+        "walltime",
+        "nodes",
+        "ntasks_per_node",
+        "modules",
+        "job_name",
+    }
+
     def run(
         self,
         cmd: list[str],
@@ -168,6 +180,9 @@ class SandboxExecutor:
                 dry_run=True,
             )
 
+        # Drop scheduler-only hints so they do not reach subprocess.run.
+        run_kwargs = {k: v for k, v in kwargs.items() if k not in self._REMOTE_KWARGS}
+
         try:
             result = subprocess.run(
                 cmd,
@@ -178,7 +193,7 @@ class SandboxExecutor:
                 errors="replace",
                 timeout=timeout,
                 env=env,
-                **kwargs,
+                **run_kwargs,
             )
         except subprocess.TimeoutExpired as e:
             return SandboxResult(

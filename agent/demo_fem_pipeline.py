@@ -12,15 +12,14 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 
 # Ensure imports work when run from agent/ directory
 sys.path.insert(0, str(Path(__file__).parent))
 
-from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
 from huginn.tools.lean_tool import LeanTool, LeanToolInput
+from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext
 
 
@@ -54,7 +53,9 @@ async def main() -> int:
 
     print(f"  strong_form: {sym_result.data.get('strong_form', 'N/A')}")
     print(f"  bilinear_form: {sym_result.data.get('bilinear_form', 'N/A')[:80]}...")
-    print(f"  linear_functional: {sym_result.data.get('linear_functional', 'N/A')[:80]}...")
+    print(
+        f"  linear_functional: {sym_result.data.get('linear_functional', 'N/A')[:80]}..."
+    )
     print(f"  element_type: {sym_result.data.get('element_type', 'N/A')}")
 
     # ------------------------------------------------------------------

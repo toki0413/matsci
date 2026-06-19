@@ -48,11 +48,6 @@ class AuditLogger:
         # Ensure parent directory exists
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _compute_hash(self, event: AuditEvent) -> str:
-        """Compute hash of the event for chaining."""
-        payload = json.dumps(asdict(event), sort_keys=True, default=str)
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
-
     def _now(self) -> str:
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -87,9 +82,9 @@ class AuditLogger:
             prev_hash=self._last_hash,
         )
 
+        line = json.dumps(asdict(event), sort_keys=True, default=str)
         with self._lock:
-            self._last_hash = self._compute_hash(event)
-            line = json.dumps(asdict(event), default=str)
+            self._last_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
                 f.flush()
@@ -106,33 +101,30 @@ class AuditLogger:
     def verify_chain(self) -> list[tuple[int, str, str]]:
         """Verify the integrity of the audit log hash chain.
 
-        Returns a list of (line_number, expected_hash, actual_hash) for mismatches.
+        Each event's ``prev_hash`` must equal the SHA-256 hash of the previous
+        event's JSON line. Returns a list of (line_number, expected_hash,
+        actual_hash) for mismatches.
         """
         mismatches: list[tuple[int, str, str]] = []
         if not self.log_path.exists():
             return mismatches
 
-        prev_hash = ""
-        with open(self.log_path, "r", encoding="utf-8") as f:
+        prev_line_hash = ""
+        with open(self.log_path, encoding="utf-8") as f:
             for i, line in enumerate(f, start=1):
                 line = line.strip()
                 if not line:
                     continue
-                record = json.loads(line)
-                # Reconstruct event without prev_hash to compute expected
-                record["prev_hash"] = prev_hash
-                payload = json.dumps(record, sort_keys=True, default=str)
-                expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
-                actual = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
-                # Actually we need to recompute the event hash as stored
-                event = AuditEvent(**record)
-                computed = self._compute_hash(event)
-                stored_next = record.get("prev_hash", "")
-                # We can't directly compare because the stored line has the writer's prev_hash
-                # Let's just recompute what the hash should be
-                if computed != stored_next and i > 1:
-                    # This is a simplified check; full verification requires re-reading prev hash
-                    pass
-                prev_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    mismatches.append((i, "valid_json", f"parse_error:{exc}"))
+                    break
+
+                stored_prev = record.get("prev_hash", "")
+                if i > 1 and stored_prev != prev_line_hash:
+                    mismatches.append((i, prev_line_hash, stored_prev))
+
+                prev_line_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
 
         return mismatches

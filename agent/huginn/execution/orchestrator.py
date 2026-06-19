@@ -15,21 +15,23 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
 class StageResult:
     """Result of executing a single workflow stage."""
+
     stage_id: str
     stage_name: str
     tool_name: str
     success: bool
-    output_data: Dict[str, Any] = field(default_factory=dict)
-    error_message: Optional[str] = None
+    output_data: dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
     stdout: str = ""
     stderr: str = ""
     walltime_seconds: float = 0.0
@@ -37,19 +39,20 @@ class StageResult:
     finished_at: str = ""
     retry_count: int = 0
     auto_fixed: bool = False
-    fix_applied: Optional[str] = None
+    fix_applied: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 @dataclass
 class WorkflowExecutionRecord:
     """Complete record of a workflow execution."""
+
     workflow_name: str
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    finished_at: Optional[str] = None
-    stage_results: List[StageResult] = field(default_factory=list)
+    finished_at: str | None = None
+    stage_results: list[StageResult] = field(default_factory=list)
     overall_success: bool = False
     working_directory: str = ""
 
@@ -71,7 +74,7 @@ class ExecutionOrchestrator:
     def __init__(
         self,
         working_dir: str = "",
-        tool_registry: Optional[Dict[str, Callable]] = None,
+        tool_registry: dict[str, Callable] | None = None,
         enable_autofix: bool = True,
         max_retries: int = 2,
     ):
@@ -80,7 +83,7 @@ class ExecutionOrchestrator:
         self.tool_registry = tool_registry or {}
         self.enable_autofix = enable_autofix
         self.max_retries = max_retries
-        self._execution_history: List[WorkflowExecutionRecord] = []
+        self._execution_history: list[WorkflowExecutionRecord] = []
 
     def register_tool(self, name: str, fn: Callable) -> None:
         """Register a tool function for execution."""
@@ -92,7 +95,7 @@ class ExecutionOrchestrator:
 
     async def run(
         self,
-        stages: List[Dict[str, Any]],
+        stages: list[dict[str, Any]],
         workflow_name: str = "unnamed_workflow",
     ) -> WorkflowExecutionRecord:
         """Execute a workflow defined as a list of stages.
@@ -113,11 +116,12 @@ class ExecutionOrchestrator:
         results_by_id: dict[str, StageResult] = {}
 
         # Execute stages in waves (topological order via BFS)
-        pending = set(s["id"] for s in stages)
+        pending = {s["id"] for s in stages}
         while pending:
             # Find stages whose dependencies are all satisfied
             ready = [
-                sid for sid in pending
+                sid
+                for sid in pending
                 if all(d in completed for d in graph.get(sid, []))
             ]
             if not ready:
@@ -160,8 +164,14 @@ class ExecutionOrchestrator:
                 record.stage_results.append(result)
 
                 # If autofix enabled and stage failed, try to fix and retry
-                if self.enable_autofix and not result.success and result.retry_count < self.max_retries:
-                    fixed = await self._attempt_autofix(result, self._find_stage(stages, sid))
+                if (
+                    self.enable_autofix
+                    and not result.success
+                    and result.retry_count < self.max_retries
+                ):
+                    fixed = await self._attempt_autofix(
+                        result, self._find_stage(stages, sid)
+                    )
                     if fixed:
                         # Re-execute with fix
                         retry_result = await self._execute_stage(
@@ -184,8 +194,8 @@ class ExecutionOrchestrator:
 
     async def _execute_stage(
         self,
-        stage: Dict[str, Any],
-        previous_results: Dict[str, StageResult],
+        stage: dict[str, Any],
+        previous_results: dict[str, StageResult],
         retry_count: int = 0,
     ) -> StageResult:
         """Execute a single stage."""
@@ -255,12 +265,13 @@ class ExecutionOrchestrator:
     async def _attempt_autofix(
         self,
         failed_result: StageResult,
-        stage: Dict[str, Any],
+        stage: dict[str, Any],
     ) -> bool:
         """Attempt to automatically fix a failed stage."""
         # Import autofix logic
         try:
             from huginn.execution.autofix import AutoFixLoop
+
             fixer = AutoFixLoop()
             fixed_params = fixer.apply_fix(
                 tool_name=failed_result.tool_name,
@@ -279,14 +290,18 @@ class ExecutionOrchestrator:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_dependency_graph(self, stages: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    def _build_dependency_graph(
+        self, stages: list[dict[str, Any]]
+    ) -> dict[str, list[str]]:
         graph = {}
         for s in stages:
             deps = s.get("depends_on", [])
             graph[s["id"]] = deps if isinstance(deps, list) else [deps] if deps else []
         return graph
 
-    def _find_stage(self, stages: List[Dict[str, Any]], stage_id: str) -> Dict[str, Any]:
+    def _find_stage(
+        self, stages: list[dict[str, Any]], stage_id: str
+    ) -> dict[str, Any]:
         for s in stages:
             if s.get("id") == stage_id:
                 return s
@@ -294,9 +309,9 @@ class ExecutionOrchestrator:
 
     def _resolve_param_refs(
         self,
-        params: Dict[str, Any],
-        previous_results: Dict[str, StageResult],
-    ) -> Dict[str, Any]:
+        params: dict[str, Any],
+        previous_results: dict[str, StageResult],
+    ) -> dict[str, Any]:
         """Replace ${stage_id.output_key} references with actual values."""
         resolved = {}
         for key, val in params.items():
@@ -306,16 +321,20 @@ class ExecutionOrchestrator:
                 if "." in inner:
                     sid, out_key = inner.split(".", 1)
                     if sid in previous_results:
-                        resolved[key] = previous_results[sid].output_data.get(out_key, val)
+                        resolved[key] = previous_results[sid].output_data.get(
+                            out_key, val
+                        )
                     else:
                         resolved[key] = val
                 else:
-                    resolved[key] = previous_results.get(inner, StageResult(inner, "", "", False)).output_data
+                    resolved[key] = previous_results.get(
+                        inner, StageResult(inner, "", "", False)
+                    ).output_data
             else:
                 resolved[key] = val
         return resolved
 
-    def _serialize_output(self, output: Any) -> Dict[str, Any]:
+    def _serialize_output(self, output: Any) -> dict[str, Any]:
         """Convert tool output to a serializable dict."""
         if isinstance(output, dict):
             return output
@@ -334,15 +353,17 @@ class ExecutionOrchestrator:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(asdict(record), f, ensure_ascii=False, indent=2)
 
-    def list_checkpoints(self) -> List[Path]:
+    def list_checkpoints(self) -> list[Path]:
         """List available checkpoint files."""
         checkpoint_dir = self.working_dir / ".checkpoints"
         if not checkpoint_dir.exists():
             return []
-        return sorted(checkpoint_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return sorted(
+            checkpoint_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
 
-    def load_checkpoint(self, path: Path) -> Optional[WorkflowExecutionRecord]:
+    def load_checkpoint(self, path: Path) -> WorkflowExecutionRecord | None:
         """Load a workflow execution from checkpoint."""
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return WorkflowExecutionRecord(**data)

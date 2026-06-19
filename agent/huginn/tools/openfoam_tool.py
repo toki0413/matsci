@@ -5,6 +5,7 @@ When OpenFOAM is not installed, the tool falls back to case-export mode.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -14,9 +15,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.security import SandboxConfig, SandboxExecutor
+from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class BoundaryCondition(BaseModel):
@@ -70,7 +71,9 @@ class OpenFoamTool(HuginnTool):
     )
     input_schema = OpenFoamToolInput
 
-    def __init__(self, openfoam_dir: str | None = None, sandbox: SandboxExecutor | None = None):
+    def __init__(
+        self, openfoam_dir: str | None = None, sandbox: SandboxExecutor | None = None
+    ):
         super().__init__()
         self.openfoam_dir = openfoam_dir or self._find_openfoam()
         self.sandbox = sandbox or SandboxExecutor()
@@ -99,9 +102,13 @@ class OpenFoamTool(HuginnTool):
                 return str(candidate)
         return shutil.which(name)
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = OpenFoamToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
         case_dir = work_dir / input_data.case_name
 
@@ -118,7 +125,8 @@ class OpenFoamTool(HuginnTool):
                 return ToolResult(
                     data={
                         "case_dir": str(case_dir),
-                        "openfoam_available": self._openfoam_cmd("blockMesh") is not None,
+                        "openfoam_available": self._openfoam_cmd("blockMesh")
+                        is not None,
                         "message": "Generated OpenFOAM case directory.",
                     },
                     success=True,
@@ -126,7 +134,9 @@ class OpenFoamTool(HuginnTool):
 
             return self._run_openfoam(input_data, case_dir)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"OpenFOAM tool failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"OpenFOAM tool failed: {e}"
+            )
 
     def _generate_case(self, args: OpenFoamToolInput, case_dir: Path) -> None:
         """Generate a minimal OpenFOAM case directory."""
@@ -382,7 +392,9 @@ PISO
 // ************************************************************************* //
 """
 
-    def _block_mesh_dict(self, L: float, W: float, H: float, nx: int, ny: int, nz: int) -> str:
+    def _block_mesh_dict(
+        self, L: float, W: float, H: float, nx: int, ny: int, nz: int
+    ) -> str:
         return f"""FoamFile
 {{
     version     2.0;
@@ -690,9 +702,14 @@ boundaryField
 
         cfg = SandboxConfig(
             dry_run=False,
-            allowed_executables=self.sandbox.config.allowed_executables | {
-                "blockmesh", "icofoam", "simplefoam", "pimplefoam",
-                "laplacianfoam", "potentialfoam",
+            allowed_executables=self.sandbox.config.allowed_executables
+            | {
+                "blockmesh",
+                "icofoam",
+                "simplefoam",
+                "pimplefoam",
+                "laplacianfoam",
+                "potentialfoam",
             },
         )
         log_path = case_dir / f"{args.solver}.log"
@@ -738,7 +755,11 @@ boundaryField
                 "log_path": str(log_path),
                 "openfoam_available": True,
                 "parsed": parsed,
-                "message": "OpenFOAM execution completed." if success else "OpenFOAM solver failed; see log.",
+                "message": (
+                    "OpenFOAM execution completed."
+                    if success
+                    else "OpenFOAM solver failed; see log."
+                ),
             },
             success=success,
         )
@@ -779,7 +800,8 @@ boundaryField
 
             cfg = SandboxConfig(
                 dry_run=False,
-                allowed_executables=self.sandbox.config.allowed_executables | {"setfields"},
+                allowed_executables=self.sandbox.config.allowed_executables
+                | {"setfields"},
             )
             result = self.sandbox.run(
                 [setfields_cmd],
@@ -802,7 +824,11 @@ boundaryField
                 "setfields_log": setfields_log,
                 "message": (
                     "setFields configuration written"
-                    + (" and executed." if ran_setfields else "; run setFields manually or after blockMesh.")
+                    + (
+                        " and executed."
+                        if ran_setfields
+                        else "; run setFields manually or after blockMesh."
+                    )
                 ),
             },
             success=True,
@@ -836,8 +862,7 @@ boundaryField
         for obj in objects:
             centre = " ".join(f"{c:.6f}" for c in obj["center"])
             radius = float(obj["radius"])
-            region_blocks.append(
-                f"""    sphereToCell
+            region_blocks.append(f"""    sphereToCell
     {{
         centre ({centre});
         radius {radius:.6f};
@@ -845,8 +870,7 @@ boundaryField
         (
             volScalarFieldValue {field_name} {set_value};
         );
-    }}"""
-            )
+    }}""")
 
         content = f"""FoamFile
 {{
@@ -935,20 +959,18 @@ boundaryField
             if "Time =" in line:
                 parts = line.split("=")
                 if len(parts) > 1:
-                    try:
+                    with contextlib.suppress(ValueError, IndexError):
                         result["final_time"] = float(parts[-1].strip())
-                    except (ValueError, IndexError):
-                        pass
 
             if "continuity errors" in line.lower():
                 # Extract the "global" continuity error value, e.g.
                 # "time step continuity errors : sum local = 1.2e-06, global = -4.3e-08"
                 parts = line.split("global =")
                 if len(parts) > 1:
-                    try:
-                        result["continuity_errors"].append(float(parts[-1].strip().split(",")[0].split()[0]))
-                    except (ValueError, IndexError):
-                        pass
+                    with contextlib.suppress(ValueError, IndexError):
+                        result["continuity_errors"].append(
+                            float(parts[-1].strip().split(",")[0].split()[0])
+                        )
 
             # Final residuals: "Solving for Ux, Initial residual = ..., Final residual = ..."
             if "Solving for" in line and "Final residual" in line:
@@ -972,6 +994,9 @@ boundaryField
             parsed[file_name] = self._parse_log_file(file_path)
 
         return ToolResult(
-            data={"results": parsed, "message": f"Parsed {len(parsed)} OpenFOAM log files."},
+            data={
+                "results": parsed,
+                "message": f"Parsed {len(parsed)} OpenFOAM log files.",
+            },
             success=True,
         )

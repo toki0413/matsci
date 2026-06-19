@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -18,14 +17,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from huginn.crypto import CryptoVault
-from huginn.memory.session import SessionContext
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryManager
+from huginn.memory.session import SessionContext
+from huginn.skills.presets import HT_SCREENING, STANDARD_DFT, SYMBOLIC_VERIFY
 from huginn.skills.registry import SkillRegistry
-from huginn.skills.base import DeclarativeSkillExecutor
-from huginn.skills.presets import STANDARD_DFT, HT_SCREENING, SYMBOLIC_VERIFY
 from huginn.tools.report_tool import ReportTool, ReportToolInput
-from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool, SymbolicRegressionInput
+from huginn.tools.symbolic_regression_tool import (
+    SymbolicRegressionInput,
+    SymbolicRegressionTool,
+)
 from huginn.types import ToolContext
 
 
@@ -44,7 +45,7 @@ class TestCryptoMemoryIntegration:
 
     def test_encrypted_memory_roundtrip(self, tmp_db_path):
         """Store and retrieve memories with encrypted content.
-        
+
         Note: Encrypted content cannot be searched by keyword (FTS5/LIKE).
         This test verifies storage/retrieval of encrypted data via category filter.
         """
@@ -89,6 +90,7 @@ class TestSkillsExecution:
     def test_skill_serialization(self):
         """Skills can be serialized to/from dict."""
         import dataclasses
+
         data = dataclasses.asdict(STANDARD_DFT)
         assert data["name"] == "standard_dft"
         assert len(data["steps"]) > 0
@@ -127,13 +129,26 @@ class TestReportGeneration:
             },
             "validation": {
                 "checks": [
-                    {"name": "Energy convergence", "passed": True, "message": "< 1e-5 eV"},
-                    {"name": "Force convergence", "passed": True, "message": "< 0.01 eV/Å"},
+                    {
+                        "name": "Energy convergence",
+                        "passed": True,
+                        "message": "< 1e-5 eV",
+                    },
+                    {
+                        "name": "Force convergence",
+                        "passed": True,
+                        "message": "< 0.01 eV/Å",
+                    },
                 ]
             },
             "literature_comparison": {
                 "comparisons": [
-                    {"property": "band_gap", "calculated": 0.65, "reference": 1.12, "source": "Exp."},
+                    {
+                        "property": "band_gap",
+                        "calculated": 0.65,
+                        "reference": 1.12,
+                        "source": "Exp.",
+                    },
                 ]
             },
             "resources": {
@@ -155,7 +170,9 @@ class TestReportGeneration:
             format="markdown",
             output_path=os.path.join(tmp_report_dir, "report.md"),
         )
-        result = asyncio.run(tool.call(args, ToolContext(session_id="test", workspace=".")))
+        result = asyncio.run(
+            tool.call(args, ToolContext(session_id="test", workspace="."))
+        )
 
         assert result.success
         assert result.data is not None
@@ -178,7 +195,9 @@ class TestReportGeneration:
             "results": {"band_gap": 0.65},
         }
         args = ReportToolInput(action="generate", workflow_results=data, format="json")
-        result = asyncio.run(tool.call(args, ToolContext(session_id="test", workspace=".")))
+        result = asyncio.run(
+            tool.call(args, ToolContext(session_id="test", workspace="."))
+        )
 
         assert result.success
         assert "band_gap" in result.data["report"] and "0.65" in result.data["report"]
@@ -192,7 +211,9 @@ class TestReportGeneration:
             "results": {"band_gap": 0.65},
         }
         args = ReportToolInput(action="generate", workflow_results=data, format="html")
-        result = asyncio.run(tool.call(args, ToolContext(session_id="test", workspace=".")))
+        result = asyncio.run(
+            tool.call(args, ToolContext(session_id="test", workspace="."))
+        )
 
         assert result.success
         assert "<!DOCTYPE html>" in result.data["report"]
@@ -206,7 +227,9 @@ class TestReportGeneration:
             "results": {"band_gap": 0.65},
         }
         args = ReportToolInput(action="generate", workflow_results=data, format="latex")
-        result = asyncio.run(tool.call(args, ToolContext(session_id="test", workspace=".")))
+        result = asyncio.run(
+            tool.call(args, ToolContext(session_id="test", workspace="."))
+        )
 
         assert result.success
         assert "\\documentclass" in result.data["report"]
@@ -227,7 +250,9 @@ class TestSymbolicRegression:
             feature_columns=["x"],
             time_limit=10,
         )
-        result = asyncio.run(tool.call(args, ToolContext(session_id="test", workspace=".")))
+        result = asyncio.run(
+            tool.call(args, ToolContext(session_id="test", workspace="."))
+        )
         # Mock mode returns success=False but with helpful data
         assert result.data is not None
         assert "message" in result.data
@@ -242,7 +267,9 @@ class TestSymbolicRegression:
             feature_columns=["x"],
             probe_expression="x**2",
         )
-        result = asyncio.run(tool.call(args, ToolContext(session_id="test", workspace=".")))
+        result = asyncio.run(
+            tool.call(args, ToolContext(session_id="test", workspace="."))
+        )
         assert result.success or result.data is not None
 
 
@@ -280,26 +307,36 @@ class TestToolRegistryIntegration:
 
     def test_all_tools_importable(self):
         """All tool modules can be imported."""
-        from huginn.tools.structure_tool import StructureTool
+        from huginn.evaluation.evaluation_tool import EvaluationTool
+        from huginn.rag.rag_tool import RAGTool
+        from huginn.tools.database_tool import DatabaseTool
+        from huginn.tools.diagnose_tool import DiagnoseTool
+        from huginn.tools.diff_tool import DiffTool
         from huginn.tools.extract_tool import ExtractTool
         from huginn.tools.job_tool import JobTool
-        from huginn.tools.database_tool import DatabaseTool
-        from huginn.tools.potential_tool import PotentialTool
-        from huginn.tools.diff_tool import DiffTool
-        from huginn.tools.validate_tool import ValidateTool
-        from huginn.tools.diagnose_tool import DiagnoseTool
-        from huginn.tools.vasp_tool import VaspTool
         from huginn.tools.lammps_tool import LammpsTool
-        from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
+        from huginn.tools.potential_tool import PotentialTool
         from huginn.tools.report_tool import ReportTool
-        from huginn.rag.rag_tool import RAGTool
-        from huginn.evaluation.evaluation_tool import EvaluationTool
+        from huginn.tools.structure_tool import StructureTool
+        from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
+        from huginn.tools.validate_tool import ValidateTool
+        from huginn.tools.vasp_tool import VaspTool
 
         tools = [
-            StructureTool, ExtractTool, JobTool, DatabaseTool,
-            PotentialTool, DiffTool, ValidateTool, DiagnoseTool,
-            VaspTool, LammpsTool, SymbolicRegressionTool, ReportTool,
-            RAGTool, EvaluationTool,
+            StructureTool,
+            ExtractTool,
+            JobTool,
+            DatabaseTool,
+            PotentialTool,
+            DiffTool,
+            ValidateTool,
+            DiagnoseTool,
+            VaspTool,
+            LammpsTool,
+            SymbolicRegressionTool,
+            ReportTool,
+            RAGTool,
+            EvaluationTool,
         ]
         for T in tools:
             inst = T()

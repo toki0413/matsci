@@ -19,8 +19,12 @@ class _FakeModel:
 class TestModelRouter:
     def test_select_by_tag_priority(self):
         router = ModelRouter()
-        router.register("cheap", _FakeModel("cheap"), tags={"cheap", "summarize"}, priority=1)
-        router.register("strong", _FakeModel("strong"), tags={"science", "reasoning"}, priority=5)
+        router.register(
+            "cheap", _FakeModel("cheap"), tags={"cheap", "summarize"}, priority=1
+        )
+        router.register(
+            "strong", _FakeModel("strong"), tags={"science", "reasoning"}, priority=5
+        )
         router.register("default", _FakeModel("default"), tags={"default"}, priority=0)
 
         assert router.select("science").name == "strong"
@@ -29,8 +33,12 @@ class TestModelRouter:
 
     def test_prefer_cheap(self):
         router = ModelRouter()
-        router.register("a", _FakeModel("a"), tags={"default"}, cost_input=10, priority=5)
-        router.register("b", _FakeModel("b"), tags={"default"}, cost_input=1, priority=1)
+        router.register(
+            "a", _FakeModel("a"), tags={"default"}, cost_input=10, priority=5
+        )
+        router.register(
+            "b", _FakeModel("b"), tags={"default"}, cost_input=1, priority=1
+        )
 
         assert router.select("default").name == "a"
         assert router.select("default", prefer_cheap=True).name == "b"

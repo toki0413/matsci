@@ -13,13 +13,19 @@ from huginn.types import ToolResult
 
 
 class OrchestrateInput(BaseModel):
-    objective: str = Field(description="High-level goal to decompose across sub-agents.")
+    objective: str = Field(
+        description="High-level goal to decompose across sub-agents."
+    )
     agent_ids: list[str] = Field(
         default_factory=list,
         description="Optional list of agent profile IDs to use. If empty, all enabled profiles are available.",
     )
-    thread_id: str = Field(default="default", description="Thread ID for shared context.")
-    synthesize: bool = Field(default=True, description="Whether to ask the lead agent to synthesize outputs.")
+    thread_id: str = Field(
+        default="default", description="Thread ID for shared context."
+    )
+    synthesize: bool = Field(
+        default=True, description="Whether to ask the lead agent to synthesize outputs."
+    )
 
 
 class OrchestrateOutput(BaseModel):
@@ -80,7 +86,15 @@ class OrchestrateTool(HuginnTool[OrchestrateInput, OrchestrateOutput]):
                 data=OrchestrateOutput(
                     success=result.success,
                     objective=result.objective,
-                    plan=[{"task_id": t.task_id, "agent_id": t.agent_id, "status": t.status, "prompt": t.prompt} for t in result.plan.tasks],
+                    plan=[
+                        {
+                            "task_id": t.task_id,
+                            "agent_id": t.agent_id,
+                            "status": t.status,
+                            "prompt": t.prompt,
+                        }
+                        for t in result.plan.tasks
+                    ],
                     outputs=result.outputs,
                     summary=summary,
                     error=result.error,

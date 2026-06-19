@@ -8,11 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 
 def _embedding_model_cached() -> bool:
@@ -47,6 +44,7 @@ class VectorStore:
     def _get_client(self):
         if self._client is None:
             import chromadb
+
             self._client = chromadb.PersistentClient(path=self.persist_dir)
         return self._client
 
@@ -62,8 +60,9 @@ class VectorStore:
 
         try:
             import importlib
+
             ef_module = importlib.import_module("chromadb.utils.embedding_functions")
-            DefaultEF = getattr(ef_module, "DefaultEmbeddingFunction")
+            DefaultEF = ef_module.DefaultEmbeddingFunction
             self._embedding_fn = DefaultEF()
             _ = self._embedding_fn(["test"])
             self._embedding_available = True
@@ -180,11 +179,10 @@ class VectorStore:
         except Exception:
             return None
 
-    def _matches_filter(self, metadata: dict[str, Any], filter_dict: dict[str, Any]) -> bool:
-        for key, value in filter_dict.items():
-            if metadata.get(key) != value:
-                return False
-        return True
+    def _matches_filter(
+        self, metadata: dict[str, Any], filter_dict: dict[str, Any]
+    ) -> bool:
+        return all(metadata.get(key) == value for key, value in filter_dict.items())
 
     def search(
         self,
@@ -198,14 +196,20 @@ class VectorStore:
         if query_embedding:
             # Try Rust-accelerated exact top-k over stored embeddings.
             try:
-                all_data = collection.get(include=["documents", "metadatas", "embeddings"])
+                all_data = collection.get(
+                    include=["documents", "metadatas", "embeddings"]
+                )
                 docs = all_data.get("documents") or []
                 metas = all_data.get("metadatas") or [{}] * len(docs)
                 embs = all_data.get("embeddings") or []
 
                 indices = list(range(len(docs)))
                 if filter_dict:
-                    indices = [i for i in indices if self._matches_filter(metas[i], filter_dict)]
+                    indices = [
+                        i
+                        for i in indices
+                        if self._matches_filter(metas[i], filter_dict)
+                    ]
                     docs = [docs[i] for i in indices]
                     metas = [metas[i] for i in indices]
                     embs = [embs[i] for i in indices]
@@ -215,12 +219,14 @@ class VectorStore:
                     if ranked is not None:
                         output = []
                         for idx, score in ranked:
-                            output.append({
-                                "id": all_data["ids"][indices[idx]],
-                                "document": docs[idx],
-                                "metadata": metas[idx],
-                                "distance": 1.0 - score,
-                            })
+                            output.append(
+                                {
+                                    "id": all_data["ids"][indices[idx]],
+                                    "document": docs[idx],
+                                    "metadata": metas[idx],
+                                    "distance": 1.0 - score,
+                                }
+                            )
                         return output
             except Exception:
                 pass
@@ -235,12 +241,14 @@ class VectorStore:
 
             output = []
             for i in range(len(results["ids"][0])):
-                output.append({
-                    "id": results["ids"][0][i],
-                    "document": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                    "distance": results["distances"][0][i],
-                })
+                output.append(
+                    {
+                        "id": results["ids"][0][i],
+                        "document": results["documents"][0][i],
+                        "metadata": results["metadatas"][0][i],
+                        "distance": results["distances"][0][i],
+                    }
+                )
             return output
 
         else:
@@ -252,14 +260,18 @@ class VectorStore:
             scored = self._keyword_search(query, docs, top_k)
             output = []
             for idx, score in scored:
-                output.append({
-                    "id": all_docs["ids"][idx],
-                    "document": docs[idx],
-                    "metadata": all_docs["metadatas"][idx]
-                    if all_docs.get("metadatas")
-                    else {},
-                    "distance": 1.0 - score,
-                })
+                output.append(
+                    {
+                        "id": all_docs["ids"][idx],
+                        "document": docs[idx],
+                        "metadata": (
+                            all_docs["metadatas"][idx]
+                            if all_docs.get("metadatas")
+                            else {}
+                        ),
+                        "distance": 1.0 - score,
+                    }
+                )
             return output
 
     def delete(self, ids: list[str]) -> None:
@@ -271,10 +283,12 @@ class VectorStore:
         results = collection.get(include=["metadatas"], limit=limit)
         docs = []
         for i in range(len(results["ids"])):
-            docs.append({
-                "id": results["ids"][i],
-                "metadata": results["metadatas"][i],
-            })
+            docs.append(
+                {
+                    "id": results["ids"][i],
+                    "metadata": results["metadatas"][i],
+                }
+            )
         return docs
 
     def count(self) -> int:
@@ -334,34 +348,51 @@ class VectorStore:
         return self.ingest(chunks, metadatas=metadatas)
 
     def _parse_file(self, path: Path) -> str:
+        from huginn.knowledge.ocr_loader import (
+            extract_text_with_ocr,
+            is_image_file,
+        )
+
         suffix = path.suffix.lower()
+
+        if is_image_file(path.name):
+            return extract_text_with_ocr(path.name, path.read_bytes())
 
         if suffix == ".pdf":
             try:
                 import PyPDF2
+
                 text = ""
                 with open(path, "rb") as f:
                     reader = PyPDF2.PdfReader(f)
                     for page in reader.pages:
                         text += page.extract_text() or ""
+                # Fall back to OCR for scanned/image-based PDFs.
+                if not text.strip():
+                    ocr_text = extract_text_with_ocr(path.name, path.read_bytes())
+                    if ocr_text.strip():
+                        return ocr_text
                 return text
-            except ImportError:
-                raise ImportError("PyPDF2 not installed. Run: pip install PyPDF2")
+            except ImportError as err:
+                raise ImportError(
+                    "PyPDF2 not installed. Run: pip install PyPDF2"
+                ) from err
 
         elif suffix in {".json"}:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             return json.dumps(data, indent=2, ensure_ascii=False)
 
         elif suffix in {".csv"}:
             import csv
-            with open(path, "r", encoding="utf-8") as f:
+
+            with open(path, encoding="utf-8") as f:
                 reader = csv.reader(f)
                 rows = list(reader)
             return "\n".join(", ".join(row) for row in rows[:500])
 
         else:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(path, encoding="utf-8", errors="ignore") as f:
                 return f.read()
 
     def _chunk_text(self, text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
@@ -477,7 +508,9 @@ class EncryptedVectorStore:
         embeddings = self._store._compute_embeddings(documents)
 
         # Encrypt documents and sensitive metadata
-        enc_docs = [self._encrypt(d) if self.encrypt_documents else d for d in documents]
+        enc_docs = [
+            self._encrypt(d) if self.encrypt_documents else d for d in documents
+        ]
         enc_metas = [self._encrypt_metadata(m) for m in metadatas]
 
         return self._store.ingest(

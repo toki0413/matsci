@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: huginn
+      POSTGRES_PASSWORD: huginn
+      POSTGRES_DB: huginn
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U huginn -d huginn"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      HUGINN_API_KEY: ${HUGINN_API_KEY:-changeme}
+      HUGINN_CORS_ORIGINS: ""
+      HUGINN_CONTAINER_RUNTIME: ${HUGINN_CONTAINER_RUNTIME:-none}
+      HUGINN_WORKSPACE: /app/workspace
+      # Persistence backends will be wired in Phase 2.
+      # HUGINN_DATABASE_URL: postgresql://huginn:huginn@postgres:5432/huginn
+      # HUGINN_REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./workspace:/app/workspace
+      - huginn_state:/app/.huginn
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  huginn_state:

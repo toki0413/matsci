@@ -7,7 +7,6 @@ Discovers tools dynamically and routes calls to the correct server.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MCPServerConfig:
     """Configuration for a single MCP server connection."""
+
     name: str
     command: str
     args: list[str]
@@ -30,6 +30,7 @@ class MCPServerConfig:
 @dataclass
 class MCPToolInfo:
     """Discovered MCP tool with routing info."""
+
     name: str
     description: str
     input_schema: dict[str, Any]
@@ -83,13 +84,16 @@ class MCPClientManager:
                 info = MCPToolInfo(
                     name=tool.name,
                     description=tool.description or "",
-                    input_schema=tool.inputSchema or {"type": "object", "properties": {}},
+                    input_schema=tool.inputSchema
+                    or {"type": "object", "properties": {}},
                     server_name=config.name,
                 )
                 self._tools.append(info)
                 self._tool_index[tool.name] = info
 
-            logger.info(f"Connected to MCP server '{config.name}' with {len(tools_result.tools)} tools")
+            logger.info(
+                f"Connected to MCP server '{config.name}' with {len(tools_result.tools)} tools"
+            )
 
         except Exception as e:
             logger.error(f"Failed to connect to MCP server '{config.name}': {e}")
@@ -103,7 +107,9 @@ class MCPClientManager:
 
         # Remove tools from this server
         self._tools = [t for t in self._tools if t.server_name != name]
-        self._tool_index = {k: v for k, v in self._tool_index.items() if v.server_name != name}
+        self._tool_index = {
+            k: v for k, v in self._tool_index.items() if v.server_name != name
+        }
 
         if session:
             await session.__aexit__(None, None, None)
@@ -128,7 +134,9 @@ class MCPClientManager:
         """Call an MCP tool by name."""
         info = self._tool_index.get(name)
         if not info:
-            raise ValueError(f"MCP tool '{name}' not found. Available: {list(self._tool_index.keys())}")
+            raise ValueError(
+                f"MCP tool '{name}' not found. Available: {list(self._tool_index.keys())}"
+            )
 
         session = self._sessions.get(info.server_name)
         if not session:
@@ -160,7 +168,7 @@ class MCPClientManager:
             return result.contents[0].text if result.contents else ""
 
         # Try all servers
-        for name, session in self._sessions.items():
+        for _name, session in self._sessions.items():
             try:
                 result = await session.read_resource(uri)
                 return result.contents[0].text if result.contents else ""

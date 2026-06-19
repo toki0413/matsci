@@ -7,19 +7,19 @@ promotion of important session data to long-term storage.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.memory.longterm import LongTermMemory
 from huginn.memory.session import SessionContext, ToolCallRecord
-from huginn.memory.longterm import LongTermMemory, MemoryEntry
 from huginn.types import AgentMessage, ToolResult
 
 
 @dataclass
 class MemoryConfig:
     """Configuration for memory management."""
+
     auto_promote_to_longterm: bool = True
     promotion_importance_threshold: float = 0.6
     max_session_age_hours: float = 24.0
@@ -54,6 +54,7 @@ class MemoryManager:
         duration_ms: float = 0.0,
     ) -> None:
         from huginn.types import ToolResult
+
         record = ToolCallRecord(
             tool_name=tool_name,
             input_args=input_args,
@@ -63,10 +64,14 @@ class MemoryManager:
         self.session.add_tool_call(record)
 
         # Auto-promote important tool results to long-term memory
-        if self.config.auto_promote_to_longterm and result:
-            if hasattr(result, "success") and result.success:
-                if tool_name in {"vasp_tool", "lammps_tool", "structure_tool"}:
-                    self._promote_tool_result(record)
+        if (
+            self.config.auto_promote_to_longterm
+            and result
+            and hasattr(result, "success")
+            and result.success
+            and tool_name in {"vasp_tool", "lammps_tool", "structure_tool"}
+        ):
+            self._promote_tool_result(record)
 
     def add_reasoning(self, text: str) -> None:
         self.session.add_reasoning(text)
@@ -121,7 +126,9 @@ class MemoryManager:
         lines = ["## Relevant past knowledge:"]
         for r in results:
             provenance = f" ({r.get('source', '')})" if r.get("source") else ""
-            lines.append(f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}")
+            lines.append(
+                f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}"
+            )
         return "\n".join(lines)
 
     # --- Session promotion ---
@@ -139,15 +146,56 @@ class MemoryManager:
         """Promote a successful computational result to long-term memory."""
         if not record.result or not record.result.data:
             return
-        content = f"{record.tool_name}: {json.dumps(record.result.data, default=str)[:500]}"
+        content = (
+            f"{record.tool_name}: {json.dumps(record.result.data, default=str)[:500]}"
+        )
+        importance = self._score_importance(record)
         self.longterm.store(
             content=content,
             category="calculation",
             tags=[record.tool_name, "auto_promoted"],
             source=f"session:{self.session.session_id}/call:{record.call_id}",
-            importance=self.config.promotion_importance_threshold,
+            importance=importance,
             tier="mid",
         )
+
+    def _score_importance(self, record: ToolCallRecord) -> float:
+        """Heuristic importance score for a tool result (0.0 - 1.0).
+
+        Successful calculations with physical quantities (energy, gap, etc.)
+        and failures with actionable errors are scored higher than generic
+        outputs.
+        """
+        base = self.config.promotion_importance_threshold
+        score = base
+        text = ""
+        if record.result:
+            text = json.dumps(record.result.data, default=str).lower()
+            if record.result.success:
+                score += 0.1
+            else:
+                score += 0.05
+
+        high_value_markers = [
+            "energy",
+            "band_gap",
+            "converged",
+            "lattice",
+            "formation",
+            "diffusivity",
+            "conductivity",
+            "elastic",
+            "phonon",
+            "magnetic",
+        ]
+        for marker in high_value_markers:
+            if marker in text:
+                score += 0.05
+
+        if record.tool_name in {"vasp_tool", "lammps_tool", "structure_tool"}:
+            score += 0.05
+
+        return max(0.0, min(1.0, score))
 
     def promote_session_summary(self, tier: str = "mid") -> str:
         """Summarize current session and store in long-term memory."""
@@ -266,7 +314,16 @@ class MemoryManager:
         for msg in self.session.messages:
             if isinstance(msg.content, str):
                 text = msg.content.lower()
-                for keyword in ["vasp", "lammps", "dft", "md", "band", "phonon", "defect", "surface"]:
+                for keyword in [
+                    "vasp",
+                    "lammps",
+                    "dft",
+                    "md",
+                    "band",
+                    "phonon",
+                    "defect",
+                    "surface",
+                ]:
                     if keyword in text:
                         topics.add(keyword)
         return ", ".join(sorted(topics)) if topics else "general"

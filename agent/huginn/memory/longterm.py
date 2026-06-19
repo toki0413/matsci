@@ -6,6 +6,7 @@ semantic retrieval of past conversations, facts, and insights.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import uuid
@@ -23,14 +24,15 @@ _decay_module: Any | None = None
 
 TIER_TTL_HOURS = {
     "short": 6.0,
-    "mid": 168.0,   # 7 days
-    "long": None,   # permanent
+    "mid": 168.0,  # 7 days
+    "long": None,  # permanent
 }
 
 
 @dataclass
 class MemoryEntry:
     """A single long-term memory entry."""
+
     id: str
     category: str  # "fact", "insight", "conversation", "calculation", "error"
     content: str
@@ -53,7 +55,9 @@ class LongTermMemory:
         vector_store: VectorStore | None = None,
         enable_semantic: bool = True,
     ):
-        self.db_path = Path(db_path) if db_path else Path.home() / ".huginn" / "memory.db"
+        self.db_path = (
+            Path(db_path) if db_path else Path.home() / ".huginn" / "memory.db"
+        )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._vector_store = vector_store
         self._enable_semantic = enable_semantic and vector_store is not None
@@ -92,14 +96,12 @@ class LongTermMemory:
                 CREATE INDEX IF NOT EXISTS idx_tags ON memories(tags)
             """)
             # Migrate old databases without tier/expires_at before indexing them
-            for col, ddl in [
+            for _col, ddl in [
                 ("tier", "ALTER TABLE memories ADD COLUMN tier TEXT DEFAULT 'mid'"),
                 ("expires_at", "ALTER TABLE memories ADD COLUMN expires_at TEXT"),
             ]:
-                try:
+                with contextlib.suppress(sqlite3.OperationalError):
                     conn.execute(ddl)
-                except sqlite3.OperationalError:
-                    pass
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_tier ON memories(tier)
             """)
@@ -131,7 +133,9 @@ class LongTermMemory:
         """
         if tier not in TIER_TTL_HOURS:
             raise ValueError(f"Invalid tier {tier}; choose from {list(TIER_TTL_HOURS)}")
-        entry_id = f"mem_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        entry_id = (
+            f"mem_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        )
         tags = tags or []
         now = datetime.now()
         expires = None
@@ -148,25 +152,42 @@ class LongTermMemory:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    entry_id, category, content, json.dumps(tags), source, importance, tier,
-                    now.isoformat(), now.isoformat(), expires,
+                    entry_id,
+                    category,
+                    content,
+                    json.dumps(tags),
+                    source,
+                    importance,
+                    tier,
+                    now.isoformat(),
+                    now.isoformat(),
+                    expires,
                 ),
             )
-            conn.execute("INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
-                         (conn.execute("SELECT last_insert_rowid()").fetchone()[0], content, " ".join(tags), source))
+            conn.execute(
+                "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
+                (
+                    conn.execute("SELECT last_insert_rowid()").fetchone()[0],
+                    content,
+                    " ".join(tags),
+                    source,
+                ),
+            )
             conn.commit()
 
         if self._enable_semantic:
             self._vector_store.ingest(
                 [content],
-                metadatas=[{
-                    "memory_id": entry_id,
-                    "category": category,
-                    "tags": ",".join(tags),
-                    "source": source,
-                    "importance": str(importance),
-                    "tier": tier,
-                }],
+                metadatas=[
+                    {
+                        "memory_id": entry_id,
+                        "category": category,
+                        "tags": ",".join(tags),
+                        "source": source,
+                        "importance": str(importance),
+                        "tier": tier,
+                    }
+                ],
                 ids=[entry_id],
             )
 
@@ -252,7 +273,12 @@ class LongTermMemory:
                     SET expires_at = ?
                     WHERE tier = ? AND id IN ({placeholders}) AND (expires_at IS NOT NULL AND expires_at > ?)
                     """,
-                    ((now + timedelta(hours=ttl)).isoformat(), tier, *entry_ids, now.isoformat()),
+                    (
+                        (now + timedelta(hours=ttl)).isoformat(),
+                        tier,
+                        *entry_ids,
+                        now.isoformat(),
+                    ),
                 )
             conn.commit()
 
@@ -284,7 +310,9 @@ class LongTermMemory:
     ) -> bool:
         with self._connect() as conn:
             if content is not None:
-                conn.execute("UPDATE memories SET content = ? WHERE id = ?", (content, entry_id))
+                conn.execute(
+                    "UPDATE memories SET content = ? WHERE id = ?", (content, entry_id)
+                )
                 if self._enable_semantic:
                     self._vector_store.ingest(
                         [content],
@@ -292,14 +320,22 @@ class LongTermMemory:
                         ids=[entry_id],
                     )
             if tags is not None:
-                conn.execute("UPDATE memories SET tags = ? WHERE id = ?", (json.dumps(tags), entry_id))
+                conn.execute(
+                    "UPDATE memories SET tags = ? WHERE id = ?",
+                    (json.dumps(tags), entry_id),
+                )
             if importance is not None:
-                conn.execute("UPDATE memories SET importance = ? WHERE id = ?", (importance, entry_id))
+                conn.execute(
+                    "UPDATE memories SET importance = ? WHERE id = ?",
+                    (importance, entry_id),
+                )
             if tier is not None:
                 if tier not in TIER_TTL_HOURS:
                     raise ValueError(f"Invalid tier {tier}")
                 ttl = ttl_hours if ttl_hours is not None else TIER_TTL_HOURS[tier]
-                expires = (datetime.now() + timedelta(hours=ttl)).isoformat() if ttl else None
+                expires = (
+                    (datetime.now() + timedelta(hours=ttl)).isoformat() if ttl else None
+                )
                 conn.execute(
                     "UPDATE memories SET tier = ?, expires_at = ? WHERE id = ?",
                     (tier, expires, entry_id),
@@ -319,14 +355,18 @@ class LongTermMemory:
                 self._vector_store.delete([entry_id])
             return conn.total_changes > 0
 
-    def list_by_category(self, category: str, limit: int = 50, alive_only: bool = True) -> list[dict[str, Any]]:
+    def list_by_category(
+        self, category: str, limit: int = 50, alive_only: bool = True
+    ) -> list[dict[str, Any]]:
         alive_where, alive_params = self._where_alive()
         with self._connect() as conn:
             sql = f"SELECT * FROM memories AS m WHERE category = ? AND {alive_where} ORDER BY last_accessed DESC LIMIT ?"
             rows = conn.execute(sql, (category, *alive_params, limit)).fetchall()
             return [dict(r) for r in rows]
 
-    def list_all(self, limit: int = 200, alive_only: bool = True) -> list[dict[str, Any]]:
+    def list_all(
+        self, limit: int = 200, alive_only: bool = True
+    ) -> list[dict[str, Any]]:
         if alive_only:
             alive_where, alive_params = self._where_alive()
             sql = f"SELECT * FROM memories AS m WHERE {alive_where} ORDER BY last_accessed DESC LIMIT ?"
@@ -348,7 +388,9 @@ class LongTermMemory:
             conn.commit()
             return cursor.rowcount
 
-    def prune_low_importance(self, threshold: float = 0.2, older_than_days: int = 30) -> int:
+    def prune_low_importance(
+        self, threshold: float = 0.2, older_than_days: int = 30
+    ) -> int:
         """Remove old, low-importance non-long memories. Returns count deleted."""
         with self._connect() as conn:
             cursor = conn.execute(
@@ -373,7 +415,7 @@ class LongTermMemory:
 
     def import_(self, path: str | Path) -> int:
         """Import memories from JSON. Returns count imported."""
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         count = 0
         for item in data:
@@ -383,7 +425,9 @@ class LongTermMemory:
                 if "expires_at" in item and item["expires_at"]:
                     try:
                         expires = datetime.fromisoformat(item["expires_at"])
-                        ttl_hours = max(0, (expires - datetime.now()).total_seconds() / 3600)
+                        ttl_hours = max(
+                            0, (expires - datetime.now()).total_seconds() / 3600
+                        )
                     except Exception:
                         pass
                 self.store(

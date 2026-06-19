@@ -6,11 +6,10 @@ import asyncio
 
 import pytest
 
-from huginn.tools.symbolic_math_tool import SymbolicMathTool, SymbolicMathInput
+from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext
 from huginn.unified import discretize
-from huginn.unified.models import heat_equation_fem, linear_elasticity_fem
-
+from huginn.unified.models import heat_equation_fem
 
 CTX = ToolContext(session_id="test", workspace=".")
 
@@ -45,6 +44,7 @@ def test_fd_heat_discretization() -> None:
 
 def test_discretize_unsupported_principle() -> None:
     from huginn.unified.models import harmonic_oscillator_md
+
     problem = harmonic_oscillator_md()
     with pytest.raises(ValueError, match="variational principles"):
         discretize(problem, method="fem", n=4)
@@ -56,32 +56,36 @@ class TestUnifiedSymbolicDiscretize:
         return SymbolicMathTool()
 
     def test_unified_discretize_fem(self, tool):
-        result = asyncio.run(tool.call(
-            SymbolicMathInput(
-                action="unified",
-                target="discretize",
-                expression="linear_elasticity_fem",
-                variable="fem",
-                order=4,
-            ),
-            CTX,
-        ))
+        result = asyncio.run(
+            tool.call(
+                SymbolicMathInput(
+                    action="unified",
+                    target="discretize",
+                    expression="linear_elasticity_fem",
+                    variable="fem",
+                    order=4,
+                ),
+                CTX,
+            )
+        )
         assert result.success
         assert result.data["method"] == "fem"
         assert result.data["n_dof"] == 5
         assert len(result.data["stiffness_matrix"]) == 5
 
     def test_unified_discretize_fd(self, tool):
-        result = asyncio.run(tool.call(
-            SymbolicMathInput(
-                action="unified",
-                target="discretize",
-                expression="heat_equation_fem",
-                variable="fd",
-                order=5,
-            ),
-            CTX,
-        ))
+        result = asyncio.run(
+            tool.call(
+                SymbolicMathInput(
+                    action="unified",
+                    target="discretize",
+                    expression="heat_equation_fem",
+                    variable="fd",
+                    order=5,
+                ),
+                CTX,
+            )
+        )
         assert result.success
         assert result.data["method"] == "fd"
         assert result.data["n_dof"] == 5

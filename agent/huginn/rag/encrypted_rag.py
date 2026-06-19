@@ -7,12 +7,11 @@ interface with database-at-rest encryption support.
 from __future__ import annotations
 
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from huginn.crypto import CryptoVault, KeyManager, EncryptedDatabase
-from huginn.rag.vector_store import VectorStore, EncryptedVectorStore
+from huginn.crypto import CryptoVault, EncryptedDatabase, KeyManager
+from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
 
 
 class EncryptedRAGManager:
@@ -126,7 +125,9 @@ class EncryptedRAGManager:
         chunk_size: int = 500,
         chunk_overlap: int = 50,
     ) -> list[str]:
-        return self.store.ingest_file(file_path, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        return self.store.ingest_file(
+            file_path, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
 
     def search(
         self,
@@ -204,10 +205,15 @@ class EncryptedRAGManager:
             raise RuntimeError("Vault must be unlocked to create backup.")
 
         persist = Path(self._persist_dir or Path.home() / ".huginn" / "rag")
-        backup_path = Path(backup_dir) / f"rag_backup_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.enc"
+        backup_path = (
+            Path(backup_dir)
+            / f"rag_backup_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.enc"
+        )
         backup_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._vault.encrypt_directory(persist, backup_path, exclude=["__pycache__", ".pytest_cache"])
+        self._vault.encrypt_directory(
+            persist, backup_path, exclude=["__pycache__", ".pytest_cache"]
+        )
         return backup_path
 
     def restore_encrypted(self, backup_path: str | Path) -> None:

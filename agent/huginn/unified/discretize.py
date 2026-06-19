@@ -23,7 +23,9 @@ def _bounds_1d(problem: UnifiedProblem) -> tuple[float, float]:
     return (0.0, 1.0)
 
 
-def _bounds_2d(problem: UnifiedProblem) -> tuple[tuple[float, float], tuple[float, float]]:
+def _bounds_2d(
+    problem: UnifiedProblem,
+) -> tuple[tuple[float, float], tuple[float, float]]:
     if problem.domain and problem.domain.bounds:
         bounds = list(problem.domain.bounds.values())
         if len(bounds) >= 2:
@@ -169,14 +171,22 @@ def _discretize_fem_2d(problem: UnifiedProblem, n: int) -> dict[str, Any]:
             p11 = node_coord(i + 1, j + 1)
 
             triangles = [
-                ([p00, p10, p01], [node_idx(i, j), node_idx(i + 1, j), node_idx(i, j + 1)]),
-                ([p10, p11, p01], [node_idx(i + 1, j), node_idx(i + 1, j + 1), node_idx(i, j + 1)]),
+                (
+                    [p00, p10, p01],
+                    [node_idx(i, j), node_idx(i + 1, j), node_idx(i, j + 1)],
+                ),
+                (
+                    [p10, p11, p01],
+                    [node_idx(i + 1, j), node_idx(i + 1, j + 1), node_idx(i, j + 1)],
+                ),
             ]
 
             for tri, nodes in triangles:
                 ke = element_stiffness(tri)
-                area = 0.5 * abs((tri[1][0] - tri[0][0]) * (tri[2][1] - tri[0][1])
-                                 - (tri[2][0] - tri[0][0]) * (tri[1][1] - tri[0][1]))
+                area = 0.5 * abs(
+                    (tri[1][0] - tri[0][0]) * (tri[2][1] - tri[0][1])
+                    - (tri[2][0] - tri[0][0]) * (tri[1][1] - tri[0][1])
+                )
                 fe = element_load(area)
                 for a in range(3):
                     F[nodes[a]] += fe[a]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -32,7 +31,10 @@ def test_create_and_persist() -> None:
         mgr.create(
             name="test_bot",
             system_prompt="You are a test bot.",
-            begin_dialogs=[{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}],
+            begin_dialogs=[
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello"},
+            ],
         )
         assert "test_bot" in mgr.list()
 
@@ -64,10 +66,12 @@ def test_cannot_delete_builtin() -> None:
 
 
 def test_persona_from_dict() -> None:
-    p = Persona.from_dict({
-        "name": "legacy",
-        "prompt": "legacy prompt",
-        "begin_dialogs": [{"role": "user", "content": "hello"}],
-    })
+    p = Persona.from_dict(
+        {
+            "name": "legacy",
+            "prompt": "legacy prompt",
+            "begin_dialogs": [{"role": "user", "content": "hello"}],
+        }
+    )
     assert p.name == "legacy"
     assert p.system_prompt == "legacy prompt"

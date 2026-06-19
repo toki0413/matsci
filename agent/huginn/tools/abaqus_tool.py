@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class AbaqusToolInput(BaseModel):
@@ -65,16 +65,22 @@ class AbaqusTool(HuginnTool):
             return env_path
         return shutil.which("abaqus")
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = AbaqusToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             if input_data.action == "import_packing":
                 return self._import_packing(input_data, work_dir)
             if input_data.action == "run":
-                script_path = Path(input_data.script_path) if input_data.script_path else None
+                script_path = (
+                    Path(input_data.script_path) if input_data.script_path else None
+                )
                 if script_path is None or not script_path.exists():
                     return ToolResult(
                         data=None,
@@ -82,9 +88,13 @@ class AbaqusTool(HuginnTool):
                         error="run action requires an existing script_path.",
                     )
                 return self._execute_script(script_path, work_dir)
-            return ToolResult(data=None, success=False, error=f"Unknown action: {input_data.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {input_data.action}"
+            )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Abaqus tool failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Abaqus tool failed: {e}"
+            )
 
     def _import_packing(self, args: AbaqusToolInput, work_dir: Path) -> ToolResult:
         objects = self._load_packing_data(args.packing_data, work_dir)
@@ -124,7 +134,8 @@ class AbaqusTool(HuginnTool):
         cmd = [self.abaqus_executable, "cae", f"noGUI={script_path}"]
         cfg = SandboxConfig(
             dry_run=False,
-            allowed_executables=self.sandbox.config.allowed_executables | {"abaqus", "abaqus.bat"},
+            allowed_executables=self.sandbox.config.allowed_executables
+            | {"abaqus", "abaqus.bat"},
         )
         result = self.sandbox.run(cmd, cwd=work_dir, config=cfg)
 
@@ -175,7 +186,9 @@ from caeModules import *
 {body}
 """
 
-    def _reference_point_body(self, base_model: str, objects: list[dict[str, Any]]) -> str:
+    def _reference_point_body(
+        self, base_model: str, objects: list[dict[str, Any]]
+    ) -> str:
         lines = [
             f"model = mdb.models['{base_model}']",
             "assy = model.rootAssembly",
@@ -184,17 +197,21 @@ from caeModules import *
         for obj in objects:
             c = obj["center"]
             r = float(obj["radius"])
-            lines.append(f"    {{'center': ({c[0]:.6f}, {c[1]:.6f}, {c[2]:.6f}), 'radius': {r:.6f}}},")
-        lines.extend([
-            "]",
-            "",
-            "for i, p in enumerate(particles):",
-            "    x, y, z = p['center']",
-            "    rp = assy.ReferencePoint(point=(x, y, z))",
-            "    assy.Set(referencePoints=(rp,), name='Particle_%d' % i)",
-            "    # Radius stored in set description for later use",
-            "    assy.sets['Particle_%d' % i].description = 'radius=%g' % p['radius']",
-        ])
+            lines.append(
+                f"    {{'center': ({c[0]:.6f}, {c[1]:.6f}, {c[2]:.6f}), 'radius': {r:.6f}}},"
+            )
+        lines.extend(
+            [
+                "]",
+                "",
+                "for i, p in enumerate(particles):",
+                "    x, y, z = p['center']",
+                "    rp = assy.ReferencePoint(point=(x, y, z))",
+                "    assy.Set(referencePoints=(rp,), name='Particle_%d' % i)",
+                "    # Radius stored in set description for later use",
+                "    assy.sets['Particle_%d' % i].description = 'radius=%g' % p['radius']",
+            ]
+        )
         return "\n".join(lines)
 
     def _sphere_part_body(self, base_model: str, objects: list[dict[str, Any]]) -> str:
@@ -206,21 +223,25 @@ from caeModules import *
         for obj in objects:
             c = obj["center"]
             r = float(obj["radius"])
-            lines.append(f"    {{'center': ({c[0]:.6f}, {c[1]:.6f}, {c[2]:.6f}), 'radius': {r:.6f}}},")
-        lines.extend([
-            "]",
-            "",
-            "for i, p in enumerate(particles):",
-            "    r = p['radius']",
-            "    x, y, z = p['center']",
-            "    part_name = 'Particle_%d' % i",
-            "    sketch = model.ConstrainedSketch(name='__sphere_profile', sheetSize=2*r)",
-            "    sketch.ConstructionLine(point1=(0.0, -r), point2=(0.0, r))",
-            "    sketch.Line(point1=(0.0, -r), point2=(0.0, r))",
-            "    sketch.ArcByCenterEnds(center=(0.0, 0.0), point1=(0.0, -r), point2=(0.0, r), direction=CLOCKWISE)",
-            "    part = model.Part(name=part_name, dimensionality=THREE_D, type=DEFORMABLE_BODY)",
-            "    part.BaseSolidRevolve(sketch=sketch, angle=360.0)",
-            "    instance = assy.Instance(name=part_name, part=part, dependent=ON)",
-            "    assy.translate(instanceList=(part_name,), vector=(x, y, z))",
-        ])
+            lines.append(
+                f"    {{'center': ({c[0]:.6f}, {c[1]:.6f}, {c[2]:.6f}), 'radius': {r:.6f}}},"
+            )
+        lines.extend(
+            [
+                "]",
+                "",
+                "for i, p in enumerate(particles):",
+                "    r = p['radius']",
+                "    x, y, z = p['center']",
+                "    part_name = 'Particle_%d' % i",
+                "    sketch = model.ConstrainedSketch(name='__sphere_profile', sheetSize=2*r)",
+                "    sketch.ConstructionLine(point1=(0.0, -r), point2=(0.0, r))",
+                "    sketch.Line(point1=(0.0, -r), point2=(0.0, r))",
+                "    sketch.ArcByCenterEnds(center=(0.0, 0.0), point1=(0.0, -r), point2=(0.0, r), direction=CLOCKWISE)",
+                "    part = model.Part(name=part_name, dimensionality=THREE_D, type=DEFORMABLE_BODY)",
+                "    part.BaseSolidRevolve(sketch=sketch, angle=360.0)",
+                "    instance = assy.Instance(name=part_name, part=part, dependent=ON)",
+                "    assy.translate(instanceList=(part_name,), vector=(x, y, z))",
+            ]
+        )
         return "\n".join(lines)

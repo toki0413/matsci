@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import sympy as sp
 
@@ -22,20 +22,24 @@ import sympy as sp
 @dataclass
 class PhysicalQuantity:
     """A physical quantity with value, unit, and dimensions."""
+
     name: str
     value: float
     unit: str
-    dimensions: Dict[str, float] = field(default_factory=dict)  # {M:1, L:-1, T:-2} for stress
+    dimensions: dict[str, float] = field(
+        default_factory=dict
+    )  # {M:1, L:-1, T:-2} for stress
 
 
 @dataclass
 class DimensionalCheckResult:
     """Result of a dimensional analysis check."""
+
     consistent: bool
     equation: str
-    lhs_dimensions: Dict[str, float] = field(default_factory=dict)
-    rhs_dimensions: Dict[str, float] = field(default_factory=dict)
-    notes: List[str] = field(default_factory=list)
+    lhs_dimensions: dict[str, float] = field(default_factory=dict)
+    rhs_dimensions: dict[str, float] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
 
 
 class DimensionalValidator:
@@ -46,13 +50,21 @@ class DimensionalValidator:
     """
 
     # Unit → dimension mapping (in terms of M, L, T)
-    BASE_UNITS: Dict[str, Dict[str, float]] = {
+    BASE_UNITS: dict[str, dict[str, float]] = {
         # Length
-        "m": {"L": 1}, "cm": {"L": 1}, "nm": {"L": 1}, "angstrom": {"L": 1},
+        "m": {"L": 1},
+        "cm": {"L": 1},
+        "nm": {"L": 1},
+        "angstrom": {"L": 1},
         # Mass
-        "kg": {"M": 1}, "g": {"M": 1}, "amu": {"M": 1},
+        "kg": {"M": 1},
+        "g": {"M": 1},
+        "amu": {"M": 1},
         # Time
-        "s": {"T": 1}, "fs": {"T": 1}, "ps": {"T": 1}, "ns": {"T": 1},
+        "s": {"T": 1},
+        "fs": {"T": 1},
+        "ps": {"T": 1},
+        "ns": {"T": 1},
         # Temperature
         "K": {"Theta": 1},
         # Force
@@ -93,16 +105,18 @@ class DimensionalValidator:
     }
 
     def __init__(self):
-        self._history: List[DimensionalCheckResult] = []
+        self._history: list[DimensionalCheckResult] = []
 
-    def parse_quantity(self, quantity_str: str) -> Tuple[float, str, Dict[str, float]]:
+    def parse_quantity(self, quantity_str: str) -> tuple[float, str, dict[str, float]]:
         """Parse a quantity string like '210 GPa' into (value, unit, dimensions).
 
         Returns:
             (value, unit_symbol, dimension_dict)
         """
         # Match number + optional spaces + unit
-        match = re.match(r"^\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*(\S+)\s*$", quantity_str)
+        match = re.match(
+            r"^\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s*(\S+)\s*$", quantity_str
+        )
         if not match:
             raise ValueError(f"Cannot parse quantity: {quantity_str}")
 
@@ -112,7 +126,7 @@ class DimensionalValidator:
         dims = self._get_dimensions(unit)
         return value, unit, dims
 
-    def _get_dimensions(self, unit: str) -> Dict[str, float]:
+    def _get_dimensions(self, unit: str) -> dict[str, float]:
         """Get dimensions for a unit string."""
         # Direct lookup
         if unit in self.BASE_UNITS:
@@ -129,9 +143,9 @@ class DimensionalValidator:
 
         raise ValueError(f"Unknown unit: {unit}")
 
-    def _parse_compound_unit(self, unit: str) -> Dict[str, float]:
+    def _parse_compound_unit(self, unit: str) -> dict[str, float]:
         """Parse compound units like kg/(m·s²) or GPa·nm."""
-        dims: Dict[str, float] = {}
+        dims: dict[str, float] = {}
 
         # Split by / to find numerator and denominator
         parts = unit.split("/")
@@ -182,8 +196,8 @@ class DimensionalValidator:
 
     def check_equation(
         self,
-        lhs_quantities: List[str],
-        rhs_quantities: List[str],
+        lhs_quantities: list[str],
+        rhs_quantities: list[str],
         equation_name: str = "",
     ) -> DimensionalCheckResult:
         """Check dimensional consistency of an equation LHS = RHS.
@@ -193,8 +207,8 @@ class DimensionalValidator:
             rhs_quantities: List of quantity strings on right side
             equation_name: Human-readable name for the equation
         """
-        lhs_dims: Dict[str, float] = {}
-        rhs_dims: Dict[str, float] = {}
+        lhs_dims: dict[str, float] = {}
+        rhs_dims: dict[str, float] = {}
         notes = []
 
         # Sum dimensions on each side
@@ -229,7 +243,8 @@ class DimensionalValidator:
 
         result = DimensionalCheckResult(
             consistent=consistent,
-            equation=equation_name or f"{' × '.join(lhs_quantities)} = {' × '.join(rhs_quantities)}",
+            equation=equation_name
+            or f"{' × '.join(lhs_quantities)} = {' × '.join(rhs_quantities)}",
             lhs_dimensions=lhs_dims,
             rhs_dimensions=rhs_dims,
             notes=notes,
@@ -237,7 +252,7 @@ class DimensionalValidator:
         self._history.append(result)
         return result
 
-    def check_vasp_inputs(self, params: Dict[str, Any]) -> List[DimensionalCheckResult]:
+    def check_vasp_inputs(self, params: dict[str, Any]) -> list[DimensionalCheckResult]:
         """Check common VASP input parameters for physical consistency."""
         results = []
 
@@ -246,43 +261,51 @@ class DimensionalValidator:
             encut = params["ENCUT"]
             try:
                 _, unit, dims = self.parse_quantity(f"{encut} eV")
-                results.append(DimensionalCheckResult(
-                    consistent=True,
-                    equation=f"ENCUT = {encut} eV",
-                    notes=["ENCUT has energy dimensions ✓"],
-                ))
+                results.append(
+                    DimensionalCheckResult(
+                        consistent=True,
+                        equation=f"ENCUT = {encut} eV",
+                        notes=["ENCUT has energy dimensions ✓"],
+                    )
+                )
             except ValueError:
-                results.append(DimensionalCheckResult(
-                    consistent=False,
-                    equation=f"ENCUT = {encut}",
-                    notes=["ENCUT should have energy units (eV)"],
-                ))
+                results.append(
+                    DimensionalCheckResult(
+                        consistent=False,
+                        equation=f"ENCUT = {encut}",
+                        notes=["ENCUT should have energy units (eV)"],
+                    )
+                )
 
         # SIGMA should be in eV (energy)
         if "SIGMA" in params:
             sigma = params["SIGMA"]
-            results.append(DimensionalCheckResult(
-                consistent=True,
-                equation=f"SIGMA = {sigma} eV",
-                notes=["SIGMA has energy dimensions ✓"],
-            ))
+            results.append(
+                DimensionalCheckResult(
+                    consistent=True,
+                    equation=f"SIGMA = {sigma} eV",
+                    notes=["SIGMA has energy dimensions ✓"],
+                )
+            )
 
         # POTIM should be in fs (time)
         if "POTIM" in params:
             potim = params["POTIM"]
-            results.append(DimensionalCheckResult(
-                consistent=True,
-                equation=f"POTIM = {potim} fs",
-                notes=["POTIM has time dimensions ✓"],
-            ))
+            results.append(
+                DimensionalCheckResult(
+                    consistent=True,
+                    equation=f"POTIM = {potim} fs",
+                    notes=["POTIM has time dimensions ✓"],
+                )
+            )
 
         return results
 
     def buckingham_pi(
         self,
-        variables: List[Tuple[str, str]],
+        variables: list[tuple[str, str]],
         target: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Apply Buckingham π theorem to find dimensionless groups.
 
         Args:
@@ -297,15 +320,12 @@ class DimensionalValidator:
         dim_matrix = []
         dim_names = ["M", "L", "T", "Theta", "N", "I"]
 
-        for name, unit in variables:
-            _, _, dims = self.parse_quantity(f"1 {unit}")
+        for _name, unit in variables:
+            _parsed, _base, dims = self.parse_quantity(f"1 {unit}")
             row = [dims.get(d, 0) for d in dim_names]
             dim_matrix.append(row)
 
         M = sp.Matrix(dim_matrix)
-        rank = M.rank()
-        n_vars = len(variables)
-        n_pi = n_vars - rank
 
         # Find null space vectors (π groups)
         nullspace = M.nullspace()
@@ -317,15 +337,26 @@ class DimensionalValidator:
                 if j < len(symbols) and abs(c) > 1e-10:
                     group_vars[symbols[j]] = c
             if group_vars:
-                pi_groups.append({
-                    "pi_id": i + 1,
-                    "expression": " x ".join(f"{s}^{c:.2f}" for s, c in group_vars.items()),
-                    "variables": group_vars,
-                })
+                pi_groups.append(
+                    {
+                        "pi_id": i + 1,
+                        "expression": " x ".join(
+                            f"{s}^{c:.2f}" for s, c in group_vars.items()
+                        ),
+                        "variables": group_vars,
+                    }
+                )
 
         return pi_groups
 
-    def validate_stress_strain(self, stress_val: float, stress_unit: str, E_val: float, E_unit: str, strain: float) -> DimensionalCheckResult:
+    def validate_stress_strain(
+        self,
+        stress_val: float,
+        stress_unit: str,
+        E_val: float,
+        E_unit: str,
+        strain: float,
+    ) -> DimensionalCheckResult:
         """Validate σ = E·ε dimensional consistency."""
         return self.check_equation(
             lhs_quantities=[f"{stress_val} {stress_unit}"],
@@ -333,29 +364,37 @@ class DimensionalValidator:
             equation_name="Hooke's law: σ = E·ε",
         )
 
-    def validate_navier_stokes(self, rho: str, u: str, p: str, mu: str, L: str, U: str) -> List[DimensionalCheckResult]:
+    def validate_navier_stokes(
+        self, rho: str, u: str, p: str, mu: str, L: str, U: str
+    ) -> list[DimensionalCheckResult]:
         """Validate Navier-Stokes equation terms for dimensional consistency."""
         results = []
 
         # Inertial term: ρ(u·∇)u ~ ρ U²/L
-        results.append(self.check_equation(
-            lhs_quantities=[rho, u, u, f"1/{L}"],
-            rhs_quantities=[rho, U, U, f"1/{L}"],
-            equation_name="Inertial term: ρ(u·∇)u",
-        ))
+        results.append(
+            self.check_equation(
+                lhs_quantities=[rho, u, u, f"1/{L}"],
+                rhs_quantities=[rho, U, U, f"1/{L}"],
+                equation_name="Inertial term: ρ(u·∇)u",
+            )
+        )
 
         # Pressure gradient: ∇p ~ [p]/[L]
-        results.append(self.check_equation(
-            lhs_quantities=[p, f"1/{L}"],
-            rhs_quantities=[p, f"1/{L}"],
-            equation_name="Pressure gradient: ∇p",
-        ))
+        results.append(
+            self.check_equation(
+                lhs_quantities=[p, f"1/{L}"],
+                rhs_quantities=[p, f"1/{L}"],
+                equation_name="Pressure gradient: ∇p",
+            )
+        )
 
         # Viscous term: μ∇²u ~ μU/L²
-        results.append(self.check_equation(
-            lhs_quantities=[mu, u, f"1/{L}", f"1/{L}"],
-            rhs_quantities=[mu, U, f"1/{L}", f"1/{L}"],
-            equation_name="Viscous term: μ∇²u",
-        ))
+        results.append(
+            self.check_equation(
+                lhs_quantities=[mu, u, f"1/{L}", f"1/{L}"],
+                rhs_quantities=[mu, U, f"1/{L}", f"1/{L}"],
+                equation_name="Viscous term: μ∇²u",
+            )
+        )
 
         return results

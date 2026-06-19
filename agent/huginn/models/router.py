@@ -17,7 +17,6 @@ from typing import Any, Literal
 from huginn.config import ThinkingIntensity
 from huginn.models.registry import ProviderT, create_langchain_model
 
-
 TaskT = Literal[
     "default",
     "agent",
@@ -118,7 +117,9 @@ class ModelRouter:
             priority=priority,
         )
 
-    def select(self, task: TaskT | str | None = None, prefer_cheap: bool = False) -> Any:
+    def select(
+        self, task: TaskT | str | None = None, prefer_cheap: bool = False
+    ) -> Any:
         """Pick the best model for ``task``.
 
         Falls back to the first registered model if no tag matches.
@@ -151,7 +152,7 @@ class ModelRouter:
         return list(self._models.keys())
 
     @classmethod
-    def from_env(cls) -> "ModelRouter":
+    def from_env(cls) -> ModelRouter:
         """Build a router from environment variables.
 
         Example:

@@ -14,7 +14,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class VariableSpec(BaseModel):
@@ -27,7 +27,9 @@ class VariableSpec(BaseModel):
 
 
 class UQToolInput(BaseModel):
-    action: Literal["monte_carlo", "sensitivity", "sobol"] = Field(default="monte_carlo")
+    action: Literal["monte_carlo", "sensitivity", "sobol"] = Field(
+        default="monte_carlo"
+    )
     expression: str = Field(..., description="SymPy-compatible expression")
     variables: list[VariableSpec] = Field(default_factory=list)
     n_samples: int = Field(default=1000, ge=10)
@@ -46,9 +48,13 @@ class UQTool(HuginnTool):
     )
     input_schema = UQToolInput
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = UQToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -64,7 +70,9 @@ class UQTool(HuginnTool):
         try:
             import sympy as sp
         except ImportError as exc:
-            raise RuntimeError("UQ tool requires sympy. Install with: pip install sympy") from exc
+            raise RuntimeError(
+                "UQ tool requires sympy. Install with: pip install sympy"
+            ) from exc
 
         symbols = {v.name: sp.Symbol(v.name) for v in variables}
         expr = sp.sympify(expression, locals=symbols)
@@ -166,7 +174,11 @@ class UQTool(HuginnTool):
                 "symbolic_derivative": derivative_value,
                 "finite_difference": finite_diff,
                 "nominal": x0,
-                "elasticity": derivative_value * x0 / nominal_output if nominal_output != 0 else None,
+                "elasticity": (
+                    derivative_value * x0 / nominal_output
+                    if nominal_output != 0
+                    else None
+                ),
             }
 
         return ToolResult(
@@ -213,7 +225,11 @@ class UQTool(HuginnTool):
 
         # Two independent sample matrices
         A = self._sample_matrix(args.variables, args.n_samples, args.seed)
-        B = self._sample_matrix(args.variables, args.n_samples, (args.seed + 1) if args.seed is not None else None)
+        B = self._sample_matrix(
+            args.variables,
+            args.n_samples,
+            (args.seed + 1) if args.seed is not None else None,
+        )
 
         fA = f(*[A[:, i] for i in range(A.shape[1])])
         fB = f(*[B[:, i] for i in range(B.shape[1])])

@@ -6,14 +6,15 @@ computational material science convergence failures.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Literal
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 
 @dataclass
 class DiagnosisReport:
     """Report from convergence failure diagnosis."""
+
     problem: str
     cause: str
     suggestions: list[str]
@@ -138,63 +139,65 @@ LAMMPS_FAILURE_PATTERNS = {
 
 class ConvergenceDiagnostician:
     """Diagnoses convergence failures from job logs."""
-    
+
     def __init__(self):
         self.patterns = {
             "vasp": VASP_FAILURE_PATTERNS,
             "lammps": LAMMPS_FAILURE_PATTERNS,
         }
-    
+
     def diagnose(self, engine: str, log_content: str) -> DiagnosisReport | None:
         """Analyze log content and return diagnosis if a known pattern is found."""
         engine_patterns = self.patterns.get(engine.lower(), {})
-        
+
         for pattern_key, report in engine_patterns.items():
             if pattern_key.lower() in log_content.lower():
                 return report
-        
+
         # Generic timeout/termination detection
         lower_log = log_content.lower()
         if "killed" in lower_log or "terminated" in lower_log:
             if "oom" in lower_log or "memory" in lower_log:
                 return VASP_FAILURE_PATTERNS["oom"]
             return VASP_FAILURE_PATTERNS["killed"]
-        
+
         return None
-    
-    def diagnose_from_file(self, engine: str, log_path: str | Path) -> DiagnosisReport | None:
+
+    def diagnose_from_file(
+        self, engine: str, log_path: str | Path
+    ) -> DiagnosisReport | None:
         """Read log file and diagnose."""
         path = Path(log_path)
         if not path.exists():
             return None
-        
+
         # Read last 500 lines (failures are usually near the end)
         lines = path.read_text(encoding="utf-8", errors="ignore").split("\n")
         log_tail = "\n".join(lines[-500:])
-        
+
         return self.diagnose(engine, log_tail)
-    
+
     def suggest_auto_fix(self, report: DiagnosisReport) -> dict[str, str] | None:
         """If auto_fixable, return parameter modifications."""
         if not report.auto_fixable:
             return None
-        
+
         fixes = {}
-        
+
         if report.problem.startswith("电子步不收敛"):
             fixes["ALGO"] = "Normal"
             fixes["NELM"] = "100"
             fixes["AMIX"] = "0.1"
             fixes["BMIX"] = "1.0"
-        
+
         elif report.problem.startswith("离子步不收敛"):
             fixes["POTIM"] = "0.1"
             fixes["EDIFFG"] = "-0.05"
-        
+
         elif "能带数不足" in report.problem:
             fixes["NBANDS"] = "auto"  # Will be computed at runtime
-        
+
         elif report.problem.startswith("交换关联势错误"):
             fixes["_action"] = "regenerate_potcar"
-        
+
         return fixes if fixes else None

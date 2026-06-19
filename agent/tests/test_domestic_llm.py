@@ -25,15 +25,60 @@ class TestDomesticProviders:
     @pytest.mark.parametrize(
         "provider,env_var,expected_base,default_model",
         [
-            ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-chat"),
-            ("siliconflow", "SILICONFLOW_API_KEY", "https://api.siliconflow.cn/v1", "deepseek-ai/DeepSeek-V3"),
-            ("moonshot", "MOONSHOT_API_KEY", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
-            ("zhipu", "ZHIPU_API_KEY", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash"),
-            ("baichuan", "BAICHUAN_API_KEY", "https://api.baichuan-ai.com/v1", "Baichuan4"),
-            ("dashscope", "DASHSCOPE_API_KEY", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-max"),
-            ("qianfan", "QIANFAN_API_KEY", "https://qianfan.baidubce.com/v2", "ernie-4.0-turbo-8k"),
-            ("doubao", "DOUBAO_API_KEY", "https://ark.cn-beijing.volces.com/api/v3", "doubao-pro-32k"),
-            ("hunyuan", "HUNYUAN_API_KEY", "https://api.hunyuan.tencentcloudapi.com/v1", "hunyuan-turbo"),
+            (
+                "deepseek",
+                "DEEPSEEK_API_KEY",
+                "https://api.deepseek.com",
+                "deepseek-chat",
+            ),
+            (
+                "siliconflow",
+                "SILICONFLOW_API_KEY",
+                "https://api.siliconflow.cn/v1",
+                "deepseek-ai/DeepSeek-V3",
+            ),
+            (
+                "moonshot",
+                "MOONSHOT_API_KEY",
+                "https://api.moonshot.cn/v1",
+                "moonshot-v1-8k",
+            ),
+            (
+                "zhipu",
+                "ZHIPU_API_KEY",
+                "https://open.bigmodel.cn/api/paas/v4/",
+                "glm-4-flash",
+            ),
+            (
+                "baichuan",
+                "BAICHUAN_API_KEY",
+                "https://api.baichuan-ai.com/v1",
+                "Baichuan4",
+            ),
+            (
+                "dashscope",
+                "DASHSCOPE_API_KEY",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "qwen-max",
+            ),
+            (
+                "qianfan",
+                "QIANFAN_API_KEY",
+                "https://qianfan.baidubce.com/v2",
+                "ernie-4.0-turbo-8k",
+            ),
+            (
+                "doubao",
+                "DOUBAO_API_KEY",
+                "https://ark.cn-beijing.volces.com/api/v3",
+                "doubao-pro-32k",
+            ),
+            (
+                "hunyuan",
+                "HUNYUAN_API_KEY",
+                "https://api.hunyuan.tencentcloudapi.com/v1",
+                "hunyuan-turbo",
+            ),
         ],
     )
     def test_default_base_url_and_model(
@@ -61,9 +106,13 @@ class TestDomesticProviders:
         _patch_openai(monkeypatch)
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         with pytest.raises(ValueError, match="model name"):
-            create_langchain_model(provider="openai-compatible", base_url="http://localhost:8000/v1")
+            create_langchain_model(
+                provider="openai-compatible", base_url="http://localhost:8000/v1"
+            )
 
-    def test_openai_compatible_uses_provided_values(self, monkeypatch: pytest.MonkeyPatch):
+    def test_openai_compatible_uses_provided_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         _patch_openai(monkeypatch)
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         model = create_langchain_model(
@@ -111,13 +160,15 @@ class TestConfigParsingDomestic:
 
         monkeypatch.setenv(
             "HUGINN_MODELS",
-            json.dumps([
-                {
-                    "alias": "qwen",
-                    "provider": "dashscope",
-                    "model": "qwen-max",
-                }
-            ]),
+            json.dumps(
+                [
+                    {
+                        "alias": "qwen",
+                        "provider": "dashscope",
+                        "model": "qwen-max",
+                    }
+                ]
+            ),
         )
         monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
         cfg = HuginnConfig.from_env()

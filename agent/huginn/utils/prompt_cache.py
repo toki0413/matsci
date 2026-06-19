@@ -28,17 +28,46 @@ class PromptCacheBuilder:
       the current user message. Begin-dialogs are static, but they live in the
       input stream so that a changing memory/user tail does not invalidate the
       cached prefix that precedes it.
+
+    Provider-specific ``cache_control`` markers are only emitted for providers
+    known to support prompt caching (Anthropic Claude, Kimi). Other providers
+    still benefit from the stable prefix because identical prefixes share KV
+    cache on the provider side even without explicit markers.
     """
+
+    _SUPPORTED_PROVIDERS = {"anthropic", "claude", "kimi", "moonshot"}
 
     def __init__(
         self,
         system_prompt: str,
         begin_dialogs: list[tuple[str, str]] | None = None,
         cache_control: bool = False,
+        provider: str | None = None,
     ):
         self.system_prompt = system_prompt
         self.begin_dialogs = begin_dialogs or []
         self.cache_control = cache_control
+        self.provider = (provider or "").lower().strip()
+
+    def set_provider(self, provider: str | None) -> None:
+        """Update provider after the builder is constructed."""
+        self.provider = (provider or "").lower().strip()
+
+    def _provider_supports_cache_control(self) -> bool:
+        if not self.cache_control:
+            return False
+        if not self.provider:
+            # Default to the Anthropic-style ephemeral marker for backward
+            # compatibility when no provider is specified.
+            return True
+        return any(p in self.provider for p in self._SUPPORTED_PROVIDERS)
+
+    def _cache_control_kwargs(self) -> dict[str, Any]:
+        if "kimi" in self.provider or "moonshot" in self.provider:
+            # Kimi-style context caching uses the same ephemeral marker as
+            # Anthropic in most integrations; override here if needed.
+            return {"cache_control": {"type": "ephemeral"}}
+        return {"cache_control": {"type": "ephemeral"}}
 
     def _static_prefix(self) -> list[BaseMessage]:
         """Return system prompt + begin-dialogs as a single static prefix.
@@ -56,8 +85,8 @@ class PromptCacheBuilder:
                 # Treat any other role as a system-level instruction.
                 messages.append(SystemMessage(content=content))
 
-        if self.cache_control and messages:
-            messages[-1].additional_kwargs["cache_control"] = {"type": "ephemeral"}
+        if self._provider_supports_cache_control() and messages:
+            messages[-1].additional_kwargs.update(self._cache_control_kwargs())
 
         return messages
 
@@ -75,10 +104,12 @@ class PromptCacheBuilder:
         self,
         memory_text: str,
         user_message: str,
+        kg_text: str = "",
     ) -> list[BaseMessage]:
         """Messages placed after the system prompt.
 
         Order: begin-dialogs (static), optional memory context (dynamic),
+        optional project knowledge graph context (dynamic),
         current user message (dynamic).
         """
         prefix = self._static_prefix()
@@ -87,6 +118,9 @@ class PromptCacheBuilder:
         if memory_text:
             messages.append(SystemMessage(content=memory_text))
 
+        if kg_text:
+            messages.append(SystemMessage(content=kg_text))
+
         messages.append(HumanMessage(content=user_message))
         return messages
 
@@ -94,8 +128,9 @@ class PromptCacheBuilder:
         self,
         memory_text: str,
         user_message: str,
+        kg_text: str = "",
     ) -> list[BaseMessage]:
         """Convenience: full message list for one-shot callers."""
         return self.build_state_modifier() + self.build_input_messages(
-            memory_text, user_message
+            memory_text, user_message, kg_text=kg_text
         )

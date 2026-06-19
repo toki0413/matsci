@@ -18,8 +18,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from huginn.security.sandbox import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
-
+from huginn.types import ToolContext, ToolResult
 
 _ELEMENT_COLORS: dict[str, str] = {
     "H": "#FFFFFF",
@@ -35,23 +34,30 @@ _ELEMENT_COLORS: dict[str, str] = {
     "Zn": "#7D80B0",
     "Si": "#F0C8A0",
     "Au": "#FFD123",
-    "P": "#FF8000",
 }
 _DEFAULT_COLOR = "#FF69B4"
 
 
 class ComponentSpec(BaseModel):
-    source: str = Field(..., description="Molecule/particle source (XYZ path, SMILES, name, or JSON)")
+    source: str = Field(
+        ..., description="Molecule/particle source (XYZ path, SMILES, name, or JSON)"
+    )
     count: int = Field(default=1, ge=1)
-    source_type: Literal["auto", "xyz", "smiles", "name", "particle"] = Field(default="auto")
+    source_type: Literal["auto", "xyz", "smiles", "name", "particle"] = Field(
+        default="auto"
+    )
 
 
 class PackingToolInput(BaseModel):
     action: Literal["pack", "generate", "preview"] = Field(default="pack")
     mode: Literal["molecules", "particles"] = Field(default="molecules")
     components: list[ComponentSpec] = Field(default_factory=list)
-    box: list[float] = Field(default=[20.0, 20.0, 20.0], description="Box dimensions in Angstrom")
-    tolerance: float = Field(default=2.0, gt=0, description="Minimum inter-object distance")
+    box: list[float] = Field(
+        default=[20.0, 20.0, 20.0], description="Box dimensions in Angstrom"
+    )
+    tolerance: float = Field(
+        default=2.0, gt=0, description="Minimum inter-object distance"
+    )
     max_trials: int = Field(default=1000, ge=1)
     seed: int | None = Field(default=None)
     output_format: Literal["xyz", "pdb", "lammps-data"] = Field(default="xyz")
@@ -60,11 +66,13 @@ class PackingToolInput(BaseModel):
     write_packmol_input: bool = Field(
         default=False, description="Also write a Packmol input file (molecules mode)"
     )
-    structure_file: str | None = Field(default=None, description="File to preview (XYZ/PDB)")
+    structure_file: str | None = Field(
+        default=None, description="File to preview (XYZ/PDB)"
+    )
     working_dir: str | None = Field(default=None)
 
     @model_validator(mode="after")
-    def _check_box(self) -> "PackingToolInput":
+    def _check_box(self) -> PackingToolInput:
         if len(self.box) != 3 or any(v <= 0 for v in self.box):
             raise ValueError("box must be a positive 3-vector")
         return self
@@ -80,7 +88,11 @@ class PackingTool(HuginnTool):
     )
     input_schema = PackingToolInput
 
-    def __init__(self, packmol_executable: str | None = None, sandbox: SandboxExecutor | None = None) -> None:
+    def __init__(
+        self,
+        packmol_executable: str | None = None,
+        sandbox: SandboxExecutor | None = None,
+    ) -> None:
         super().__init__()
         self.packmol_executable = packmol_executable or self._find_packmol()
         self.sandbox = sandbox or SandboxExecutor()
@@ -91,9 +103,13 @@ class PackingTool(HuginnTool):
             return env_path
         return shutil.which("packmol")
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = PackingToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -103,7 +119,9 @@ class PackingTool(HuginnTool):
                 return self._generate_packmol_input(input_data, work_dir)
             return self._pack(input_data, work_dir)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Packing tool failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Packing tool failed: {e}"
+            )
 
     # ------------------------------------------------------------------
     # Source loading
@@ -181,7 +199,9 @@ class PackingTool(HuginnTool):
         atoms: list[tuple[str, np.ndarray]] = []
         for i in range(mol.GetNumAtoms()):
             pos = conf.GetAtomPosition(i)
-            atoms.append((mol.GetAtomWithIdx(i).GetSymbol(), np.array([pos.x, pos.y, pos.z])))
+            atoms.append(
+                (mol.GetAtomWithIdx(i).GetSymbol(), np.array([pos.x, pos.y, pos.z]))
+            )
         return atoms
 
     def _name_to_geometry(self, name: str) -> list[tuple[str, np.ndarray]]:
@@ -189,6 +209,7 @@ class PackingTool(HuginnTool):
         try:
             from ase.build import molecule
             from ase.io import write
+
             atoms = molecule(name)
             tmp_xyz = Path(f"__tmp_{name}.xyz")
             write(tmp_xyz, atoms)
@@ -201,7 +222,7 @@ class PackingTool(HuginnTool):
             raise RuntimeError(
                 f"Named molecule '{name}' requires ASE or RDKit. "
                 "Install ase/rdkit or provide an XYZ file."
-            )
+            ) from None
         except Exception:
             # ASE may raise KeyError for unknown names; fall back to built-ins.
             if builtin is not None:
@@ -259,9 +280,12 @@ class PackingTool(HuginnTool):
         points_per_face = max(1, n // 6)
         points: list[np.ndarray] = []
         faces = [
-            ("x", half), ("x", -half),
-            ("y", half), ("y", -half),
-            ("z", half), ("z", -half),
+            ("x", half),
+            ("x", -half),
+            ("y", half),
+            ("y", -half),
+            ("z", half),
+            ("z", -half),
         ]
         for axis, value in faces:
             u = np.linspace(-half, half, int(np.sqrt(points_per_face)))
@@ -318,7 +342,9 @@ class PackingTool(HuginnTool):
             base_coords = np.stack([c for _, c in base])
             base_symbols = [s for s, _ in base]
             source_type = self._detect_source_type(spec)
-            particle_meta = self._particle_meta(spec.source) if source_type == "particle" else {}
+            particle_meta = (
+                self._particle_meta(spec.source) if source_type == "particle" else {}
+            )
             success_count = 0
             fail_count = 0
 
@@ -371,7 +397,10 @@ class PackingTool(HuginnTool):
 
         if not placed:
             return ToolResult(
-                data={"components": component_summaries, "message": "No objects placed."},
+                data={
+                    "components": component_summaries,
+                    "message": "No objects placed.",
+                },
                 success=False,
             )
 
@@ -380,7 +409,9 @@ class PackingTool(HuginnTool):
         base_path = work_dir / args.output_prefix
         output_files: dict[str, str] = {}
 
-        structure_path = self._write_structure(base_path, args.output_format, placed, box)
+        structure_path = self._write_structure(
+            base_path, args.output_format, placed, box
+        )
         output_files["structure"] = str(structure_path)
 
         if args.mode == "molecules" and args.write_packmol_input:
@@ -476,7 +507,9 @@ class PackingTool(HuginnTool):
     def _write_xyz(self, path: Path, atoms: list[tuple[str, np.ndarray]]) -> None:
         lines = [str(len(atoms)), "Packed by huginn-agent packing_tool"]
         for symbol, coord in atoms:
-            lines.append(f"{symbol:>3} {coord[0]:12.6f} {coord[1]:12.6f} {coord[2]:12.6f}")
+            lines.append(
+                f"{symbol:>3} {coord[0]:12.6f} {coord[1]:12.6f} {coord[2]:12.6f}"
+            )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _write_pdb(self, path: Path, atoms: list[tuple[str, np.ndarray]]) -> None:
@@ -545,20 +578,33 @@ class PackingTool(HuginnTool):
     # Visualization
     # ------------------------------------------------------------------
 
-    def _render_image(self, atoms: list[tuple[str, np.ndarray]], image_path: str) -> None:
+    def _render_image(
+        self, atoms: list[tuple[str, np.ndarray]], image_path: str
+    ) -> None:
         try:
             import matplotlib
+
             matplotlib.use("Agg")
             from matplotlib import pyplot as plt
         except ImportError as exc:
-            raise RuntimeError("Visualization requires matplotlib. Install with: pip install matplotlib") from exc
+            raise RuntimeError(
+                "Visualization requires matplotlib. Install with: pip install matplotlib"
+            ) from exc
 
         coords = np.stack([c for _, c in atoms])
         colors = [_ELEMENT_COLORS.get(s, _DEFAULT_COLOR) for s, _ in atoms]
 
         fig = plt.figure(figsize=(6, 6))
         ax = fig.add_subplot(111, projection="3d")
-        ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2], c=colors, s=80, alpha=0.8, edgecolors="k")
+        ax.scatter(
+            coords[:, 0],
+            coords[:, 1],
+            coords[:, 2],
+            c=colors,
+            s=80,
+            alpha=0.8,
+            edgecolors="k",
+        )
         ax.set_xlabel("X (Å)")
         ax.set_ylabel("Y (Å)")
         ax.set_zlabel("Z (Å)")
@@ -571,7 +617,9 @@ class PackingTool(HuginnTool):
     # Packmol input generation / execution
     # ------------------------------------------------------------------
 
-    def _generate_packmol_input(self, args: PackingToolInput, work_dir: Path) -> ToolResult:
+    def _generate_packmol_input(
+        self, args: PackingToolInput, work_dir: Path
+    ) -> ToolResult:
         path = work_dir / f"{args.output_prefix}.inp"
         self._write_packmol_input_file(path, args, work_dir)
         return ToolResult(
@@ -601,13 +649,15 @@ class PackingTool(HuginnTool):
             if source_type != "xyz":
                 continue
             src = self._resolve_path(spec.source, work_dir)
-            lines.extend([
-                f"structure {src}",
-                f"  number {spec.count}",
-                f"  inside box 0.0 0.0 0.0 {args.box[0]} {args.box[1]} {args.box[2]}",
-                "end structure",
-                "",
-            ])
+            lines.extend(
+                [
+                    f"structure {src}",
+                    f"  number {spec.count}",
+                    f"  inside box 0.0 0.0 0.0 {args.box[0]} {args.box[1]} {args.box[2]}",
+                    "end structure",
+                    "",
+                ]
+            )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _run_packmol(self, args: PackingToolInput, work_dir: Path) -> ToolResult:
@@ -624,12 +674,13 @@ class PackingTool(HuginnTool):
             dry_run=False,
             allowed_executables=self.sandbox.config.allowed_executables | {"packmol"},
         )
-        result = self.sandbox.run(
-            [self.packmol_executable],
-            cwd=work_dir,
-            config=cfg,
-            stdin=open(packmol_path, "r", encoding="utf-8"),
-        )
+        with open(packmol_path, encoding="utf-8") as stdin_file:
+            result = self.sandbox.run(
+                [self.packmol_executable],
+                cwd=work_dir,
+                config=cfg,
+                stdin=stdin_file,
+            )
         return ToolResult(
             data={
                 "packmol_input": str(packmol_path),

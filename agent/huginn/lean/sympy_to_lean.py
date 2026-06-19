@@ -20,8 +20,6 @@ Example:
 
 from __future__ import annotations
 
-from typing import Any, Dict
-
 import sympy as sp
 
 
@@ -29,7 +27,7 @@ class SymPyToLean:
     """Translate SymPy expressions to Lean 4 source strings."""
 
     # Mapping of SymPy function names to Lean 4 names
-    _FUNC_MAP: Dict[str, str] = {
+    _FUNC_MAP: dict[str, str] = {
         "sin": "Real.sin",
         "cos": "Real.cos",
         "tan": "Real.tan",
@@ -49,8 +47,7 @@ class SymPyToLean:
         if isinstance(expr, sp.Matrix):
             rows = expr.tolist()
             entries = ", ".join(
-                ", ".join(self._recurse(entry) for entry in row)
-                for row in rows
+                ", ".join(self._recurse(entry) for entry in row) for row in rows
             )
             return f"!![{entries}]"
 
@@ -145,7 +142,7 @@ class SymPyToLean:
     def theorem_statement(
         self,
         name: str,
-        hypotheses: Dict[str, sp.Expr],
+        hypotheses: dict[str, sp.Expr],
         conclusion: sp.Expr,
     ) -> str:
         """Generate a Lean 4 theorem skeleton from SymPy expressions.

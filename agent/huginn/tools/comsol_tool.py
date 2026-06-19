@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class BoundaryCondition(BaseModel):
@@ -34,11 +33,16 @@ class ComsolToolInput(BaseModel):
         default="run",
         description="generate script, run COMSOL, parse results, or import packing data",
     )
-    physics: Literal[
-        "solid_mechanics", "thermal", "cfd", "modal", "buckling"
-    ] = Field(default="solid_mechanics", description="Physics interface")
+    physics: Literal["solid_mechanics", "thermal", "cfd", "modal", "buckling"] = Field(
+        default="solid_mechanics", description="Physics interface"
+    )
     geometry: dict = Field(
-        default_factory=lambda: {"type": "block", "width": 1.0, "height": 0.1, "depth": 0.1},
+        default_factory=lambda: {
+            "type": "block",
+            "width": 1.0,
+            "height": 0.1,
+            "depth": 0.1,
+        },
         description="Geometry description",
     )
     mesh: dict = Field(
@@ -82,7 +86,11 @@ class ComsolTool(HuginnTool):
     )
     input_schema = ComsolToolInput
 
-    def __init__(self, comsol_executable: str | None = None, sandbox: SandboxExecutor | None = None):
+    def __init__(
+        self,
+        comsol_executable: str | None = None,
+        sandbox: SandboxExecutor | None = None,
+    ):
         super().__init__()
         self.comsol_executable = comsol_executable or self._find_comsol()
         self.sandbox = sandbox or SandboxExecutor()
@@ -99,20 +107,28 @@ class ComsolTool(HuginnTool):
 
         # Common Windows install locations
         program_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
-        program_files_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
+        program_files_x86 = os.environ.get(
+            "PROGRAMFILES(X86)", "C:\\Program Files (x86)"
+        )
         for base in [program_files, program_files_x86]:
             base_path = Path(base)
             if not base_path.exists():
                 continue
-            for candidate in base_path.glob("COMSOL/COMSOL*/Multiphysics/bin/win64/comsol.exe"):
+            for candidate in base_path.glob(
+                "COMSOL/COMSOL*/Multiphysics/bin/win64/comsol.exe"
+            ):
                 return str(candidate)
 
         return None
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         """Dispatch COMSOL action."""
         input_data = ComsolToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -122,7 +138,9 @@ class ComsolTool(HuginnTool):
             if input_data.action == "import_packing":
                 return self._import_packing(input_data, work_dir)
 
-            script_path = self._generate_script(input_data, work_dir, input_data.output_prefix)
+            script_path = self._generate_script(
+                input_data, work_dir, input_data.output_prefix
+            )
 
             if input_data.action == "generate":
                 return ToolResult(
@@ -137,11 +155,17 @@ class ComsolTool(HuginnTool):
             if input_data.action == "run":
                 return self._run_comsol(input_data, work_dir, script_path)
 
-            return ToolResult(data=None, success=False, error=f"Unknown action: {input_data.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {input_data.action}"
+            )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"COMSOL tool failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"COMSOL tool failed: {e}"
+            )
 
-    def _generate_script(self, args: ComsolToolInput, work_dir: Path, prefix: str) -> Path:
+    def _generate_script(
+        self, args: ComsolToolInput, work_dir: Path, prefix: str
+    ) -> Path:
         """Generate a COMSOL Java script for the requested model."""
         script_path = work_dir / f"{prefix}.java"
 
@@ -398,7 +422,8 @@ public class {prefix} {{
 
         cfg = SandboxConfig(
             dry_run=False,
-            allowed_executables=self.sandbox.config.allowed_executables | {"comsol", "comsolmph"},
+            allowed_executables=self.sandbox.config.allowed_executables
+            | {"comsol", "comsolmph"},
         )
         result = self.sandbox.run(cmd, cwd=work_dir, config=cfg)
 

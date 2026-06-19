@@ -42,6 +42,7 @@ def _make_settings() -> Settings:
 def _fake_get_model_factory(responses: list[AIMessage]):
     def fake_get_model(config: Any = None) -> FakeModel:
         return FakeModel(responses)
+
     return fake_get_model
 
 
@@ -52,7 +53,14 @@ def test_default_tools_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     runner = CoderRunner(settings=_make_settings())
     names = {t.name for t in runner.tools}
-    assert names == {"file_read_tool", "file_write_tool", "file_edit_tool", "bash_tool", "git_tool", "code_tool"}
+    assert names == {
+        "file_read_tool",
+        "file_write_tool",
+        "file_edit_tool",
+        "bash_tool",
+        "git_tool",
+        "code_tool",
+    }
 
 
 def test_run_returns_final_answer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,7 +129,9 @@ def test_read_only_tool_auto_approved(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Done." in result["final_answer"]
 
 
-def test_destructive_tool_denied_without_callback(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+def test_destructive_tool_denied_without_callback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
     tool_call = AIMessage(
         content="",
         tool_calls=[
@@ -148,7 +158,9 @@ def test_destructive_tool_denied_without_callback(monkeypatch: pytest.MonkeyPatc
     assert not (tmp_path / "test.txt").exists()
 
 
-def test_destructive_tool_approved_by_callback(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+def test_destructive_tool_approved_by_callback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
     tool_call = AIMessage(
         content="",
         tool_calls=[

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
@@ -38,12 +37,16 @@ class TestHuginnAgentCheckpointer:
         assert "InMemory" in type(agent.checkpointer).__name__
 
     def test_persistent_by_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with HuginnAgent(checkpointer_path=str(Path(tmp) / "cp.sqlite")) as agent:
-                assert "Sqlite" in type(agent.checkpointer).__name__
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            HuginnAgent(checkpointer_path=str(Path(tmp) / "cp.sqlite")) as agent,
+        ):
+            assert "Sqlite" in type(agent.checkpointer).__name__
 
     def test_persistent_by_env(self, monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
-            monkeypatch.setenv("HUGINN_CHECKPOINTER_PATH", str(Path(tmp) / "env.sqlite"))
+            monkeypatch.setenv(
+                "HUGINN_CHECKPOINTER_PATH", str(Path(tmp) / "env.sqlite")
+            )
             with HuginnAgent() as agent:
                 assert "Sqlite" in type(agent.checkpointer).__name__

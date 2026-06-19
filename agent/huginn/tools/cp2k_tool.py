@@ -5,9 +5,9 @@ When CP2K is not installed, the tool falls back to input-export mode.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,12 +15,14 @@ from pydantic import BaseModel, Field
 
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 
 
 class Cp2kToolInput(BaseModel):
     action: Literal["generate", "run", "parse"] = Field(default="run")
-    run_type: Literal["ENERGY_FORCE", "GEO_OPT", "MD", "CELL_OPT"] = Field(default="ENERGY_FORCE")
+    run_type: Literal["ENERGY_FORCE", "GEO_OPT", "MD", "CELL_OPT"] = Field(
+        default="ENERGY_FORCE"
+    )
     method: str = Field(default="PBE")
     structure: dict = Field(
         default_factory=lambda: {
@@ -53,7 +55,9 @@ class Cp2kTool(HuginnTool):
     )
     input_schema = Cp2kToolInput
 
-    def __init__(self, cp2k_executable: str | None = None, sandbox: SandboxExecutor | None = None):
+    def __init__(
+        self, cp2k_executable: str | None = None, sandbox: SandboxExecutor | None = None
+    ):
         super().__init__()
         self.cp2k_executable = cp2k_executable or self._find_cp2k()
         self.sandbox = sandbox or SandboxExecutor()
@@ -67,16 +71,22 @@ class Cp2kTool(HuginnTool):
                 return cmd
         return None
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = Cp2kToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             if input_data.action == "parse":
                 return self._parse_results(input_data, work_dir)
 
-            input_path = self._generate_input(input_data, work_dir, input_data.output_prefix)
+            input_path = self._generate_input(
+                input_data, work_dir, input_data.output_prefix
+            )
 
             if input_data.action == "generate":
                 return ToolResult(
@@ -92,9 +102,7 @@ class Cp2kTool(HuginnTool):
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"CP2K tool failed: {e}")
 
-    def _generate_input(
-        self, args: Cp2kToolInput, work_dir: Path, prefix: str
-    ) -> Path:
+    def _generate_input(self, args: Cp2kToolInput, work_dir: Path, prefix: str) -> Path:
         input_path = work_dir / f"{prefix}.inp"
         species = args.structure.get("species", [])
         positions = args.structure.get("positions", [])
@@ -118,7 +126,7 @@ class Cp2kTool(HuginnTool):
             f"    BASIS_SET_FILE_NAME {args.basis_set_file}",
             f"    POTENTIAL_FILE_NAME {args.potential_file}",
             "    &QS",
-            f"      EPS_DEFAULT 1.0E-12",
+            "      EPS_DEFAULT 1.0E-12",
             "    &END QS",
             "    &MGRID",
             f"      CUTOFF {args.cutoff}",
@@ -140,43 +148,47 @@ class Cp2kTool(HuginnTool):
             f"      A {cell[0][0]:.8f} {cell[0][1]:.8f} {cell[0][2]:.8f}",
             f"      B {cell[1][0]:.8f} {cell[1][1]:.8f} {cell[1][2]:.8f}",
             f"      C {cell[2][0]:.8f} {cell[2][1]:.8f} {cell[2][2]:.8f}",
-            f"      PERIODIC XYZ",
+            "      PERIODIC XYZ",
             "    &END CELL",
             "    &COORD",
             f"      UNIT {units}",
         ]
         lines.extend(coords)
-        lines.extend([
-            "    &END COORD",
-            "    &KIND Si",
-            f"      BASIS_SET {args.basis_set}",
-            f"      POTENTIAL {args.potential}",
-            "    &END KIND",
-            "  &END SUBSYS",
-            "&END FORCE_EVAL",
-        ])
+        lines.extend(
+            [
+                "    &END COORD",
+                "    &KIND Si",
+                f"      BASIS_SET {args.basis_set}",
+                f"      POTENTIAL {args.potential}",
+                "    &END KIND",
+                "  &END SUBSYS",
+                "&END FORCE_EVAL",
+            ]
+        )
 
         if args.run_type == "MD":
-            lines.extend([
-                "",
-                "&MOTION",
-                "  &MD",
-                "    ENSEMBLE NVT",
-                "    TEMPERATURE 300.0",
-                "    TIMESTEP 1.0",
-                "    STEPS 100",
-                "    &THERMOSTAT",
-                "      TYPE NOSE",
-                "      &NOSE",
-                "        LENGTH 3",
-                "        YOSHIDA 3",
-                "        TIMECON 100.0",
-                "        MTS 2",
-                "      &END NOSE",
-                "    &END THERMOSTAT",
-                "  &END MD",
-                "&END MOTION",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "&MOTION",
+                    "  &MD",
+                    "    ENSEMBLE NVT",
+                    "    TEMPERATURE 300.0",
+                    "    TIMESTEP 1.0",
+                    "    STEPS 100",
+                    "    &THERMOSTAT",
+                    "      TYPE NOSE",
+                    "      &NOSE",
+                    "        LENGTH 3",
+                    "        YOSHIDA 3",
+                    "        TIMECON 100.0",
+                    "        MTS 2",
+                    "      &END NOSE",
+                    "    &END THERMOSTAT",
+                    "  &END MD",
+                    "&END MOTION",
+                ]
+            )
 
         input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return input_path
@@ -211,7 +223,11 @@ class Cp2kTool(HuginnTool):
                 "output_path": str(output_path),
                 "cp2k_available": True,
                 "parsed": parsed,
-                "message": "CP2K execution completed." if success else "CP2K execution failed; see output.",
+                "message": (
+                    "CP2K execution completed."
+                    if success
+                    else "CP2K execution failed; see output."
+                ),
             },
             success=success,
         )
@@ -237,18 +253,18 @@ class Cp2kTool(HuginnTool):
         for line in lines:
             if "Total energy:" in line or "ENERERGY| Total FORCE_EVAL" in line:
                 parts = line.split()
-                for i, p in enumerate(parts):
-                    try:
+                for p in parts:
+                    with contextlib.suppress(ValueError):
                         val = float(p)
                         # Accept values that look like total energies (negative or large)
                         if val < 0 or abs(val) > 1:
                             result["energy"] = val
                             break
-                    except ValueError:
-                        continue
 
         # Convergence
-        result["converged"] = "SCF run converged" in content or "*** SCF run converged" in content
+        result["converged"] = (
+            "SCF run converged" in content or "*** SCF run converged" in content
+        )
 
         # SCF steps
         result["n_scf_steps"] = content.count("SCF iteration")
@@ -257,17 +273,21 @@ class Cp2kTool(HuginnTool):
         in_forces = False
         force_block: list[list[float]] = []
         for line in lines:
-            if "ATOMIC FORCES in" in line or "FORCES" in line and "atom" in line.lower():
+            if (
+                "ATOMIC FORCES in" in line
+                or "FORCES" in line
+                and "atom" in line.lower()
+            ):
                 in_forces = True
                 force_block = []
                 continue
             if in_forces:
                 parts = line.split()
                 if len(parts) >= 6 and parts[0].isdigit():
-                    try:
-                        force_block.append([float(parts[-3]), float(parts[-2]), float(parts[-1])])
-                    except (ValueError, IndexError):
-                        pass
+                    with contextlib.suppress(ValueError, IndexError):
+                        force_block.append(
+                            [float(parts[-3]), float(parts[-2]), float(parts[-1])]
+                        )
                 elif line.strip() == "":
                     in_forces = False
         if force_block:
@@ -281,10 +301,14 @@ class Cp2kTool(HuginnTool):
                     if i + j < len(lines):
                         parts = lines[i + j].split()
                         if len(parts) >= 3:
-                            try:
-                                stress.append([float(parts[-3]), float(parts[-2]), float(parts[-1])])
-                            except (ValueError, IndexError):
-                                pass
+                            with contextlib.suppress(ValueError, IndexError):
+                                stress.append(
+                                    [
+                                        float(parts[-3]),
+                                        float(parts[-2]),
+                                        float(parts[-1]),
+                                    ]
+                                )
                 if len(stress) == 3:
                     result["stress"] = stress
 
@@ -297,6 +321,9 @@ class Cp2kTool(HuginnTool):
             parsed[file_name] = self._parse_output_file(file_path)
 
         return ToolResult(
-            data={"results": parsed, "message": f"Parsed {len(parsed)} CP2K output files."},
+            data={
+                "results": parsed,
+                "message": f"Parsed {len(parsed)} CP2K output files.",
+            },
             success=True,
         )

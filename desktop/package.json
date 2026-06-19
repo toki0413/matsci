@@ -10,15 +10,22 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@react-three/drei": "^9.120.8",
+    "@react-three/fiber": "^8.17.14",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-shell": "^2.0.0",
+    "@types/diff": "^8.0.0",
+    "@types/three": "^0.184.1",
+    "diff": "^9.0.0",
     "lucide-react": "^1.20.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
     "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "three": "^0.165.0"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.7",

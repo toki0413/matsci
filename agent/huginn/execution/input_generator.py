@@ -14,20 +14,20 @@ Supported software:
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
 class GeneratedInput:
     """A generated input file with metadata."""
+
     software: str
     filename: str
     content: str
     description: str
-    validation_notes: List[str] = field(default_factory=list)
+    validation_notes: list[str] = field(default_factory=list)
 
 
 class InputFileGenerator:
@@ -45,7 +45,7 @@ class InputFileGenerator:
             Path(inp.filename).write_text(inp.content)
     """
 
-    def __init__(self, template_dir: Optional[str] = None):
+    def __init__(self, template_dir: str | None = None):
         self.template_dir = Path(template_dir) if template_dir else None
 
     # ------------------------------------------------------------------
@@ -55,11 +55,11 @@ class InputFileGenerator:
     def generate_vasp_inputs(
         self,
         system: str,
-        structure: Dict[str, Any],
+        structure: dict[str, Any],
         task: str,
-        params: Optional[Dict[str, Any]] = None,
-        potcar_hints: Optional[Dict[str, str]] = None,
-    ) -> List[GeneratedInput]:
+        params: dict[str, Any] | None = None,
+        potcar_hints: dict[str, str] | None = None,
+    ) -> list[GeneratedInput]:
         """Generate VASP input set for a given task.
 
         Args:
@@ -88,11 +88,15 @@ class InputFileGenerator:
         # POTCAR hint file
         if potcar_hints:
             potcar_info = self._make_potcar_info(potcar_hints)
-            inputs.append(GeneratedInput("VASP", "POTCAR_HINTS", potcar_info, "POTCAR selection hints"))
+            inputs.append(
+                GeneratedInput(
+                    "VASP", "POTCAR_HINTS", potcar_info, "POTCAR selection hints"
+                )
+            )
 
         return inputs
 
-    def _make_poscar(self, system: str, structure: Dict[str, Any]) -> str:
+    def _make_poscar(self, system: str, structure: dict[str, Any]) -> str:
         lines = [system, "1.0"]
         lattice = structure.get("lattice", 1.0)
         if isinstance(lattice, (int, float)):
@@ -107,41 +111,61 @@ class InputFileGenerator:
         species = structure.get("species", [])
         basis = structure.get("basis", [])
         from collections import Counter
+
         counts = Counter(species)
         lines.append("  " + "  ".join(counts.keys()))
-        lines.append("  " + "  ".join(str(counts[s]) for s in counts.keys()))
+        lines.append("  " + "  ".join(str(counts[s]) for s in counts))
         lines.append("Direct")
         for coord in basis:
             lines.append("  " + "  ".join(f"{x:.6f}" for x in coord))
         return "\n".join(lines) + "\n"
 
-    def _make_incar(self, task: str, overrides: Dict[str, Any]) -> str:
+    def _make_incar(self, task: str, overrides: dict[str, Any]) -> str:
         defaults = {
             "relax": {
-                "ISIF": 3, "IBRION": 2, "EDIFFG": -0.01,
-                "NSW": 100, "ISMEAR": 0, "SIGMA": 0.05,
-                "ENCUT": 520, "PREC": "Normal",
+                "ISIF": 3,
+                "IBRION": 2,
+                "EDIFFG": -0.01,
+                "NSW": 100,
+                "ISMEAR": 0,
+                "SIGMA": 0.05,
+                "ENCUT": 520,
+                "PREC": "Normal",
             },
             "scf": {
-                "ISMEAR": 0, "SIGMA": 0.05,
-                "ENCUT": 520, "PREC": "Normal", "EDIFF": 1e-6,
+                "ISMEAR": 0,
+                "SIGMA": 0.05,
+                "ENCUT": 520,
+                "PREC": "Normal",
+                "EDIFF": 1e-6,
             },
             "band": {
-                "ISMEAR": 0, "SIGMA": 0.05,
-                "ENCUT": 520, "PREC": "Accurate",
-                "LORBIT": 11, "ICHARG": 11,
+                "ISMEAR": 0,
+                "SIGMA": 0.05,
+                "ENCUT": 520,
+                "PREC": "Accurate",
+                "LORBIT": 11,
+                "ICHARG": 11,
             },
             "dos": {
-                "ISMEAR": -5, "ENCUT": 520,
-                "LORBIT": 11, "NEDOS": 3001,
+                "ISMEAR": -5,
+                "ENCUT": 520,
+                "LORBIT": 11,
+                "NEDOS": 3001,
             },
             "md": {
-                "IBRION": 0, "NSW": 1000, "POTIM": 1.0,
-                "TEBEG": 300, "TEEND": 300,
-                "ISMEAR": 0, "SIGMA": 0.05,
+                "IBRION": 0,
+                "NSW": 1000,
+                "POTIM": 1.0,
+                "TEBEG": 300,
+                "TEEND": 300,
+                "ISMEAR": 0,
+                "SIGMA": 0.05,
             },
             "phonon": {
-                "IBRION": 8, "ENCUT": 520, "PREC": "Accurate",
+                "IBRION": 8,
+                "ENCUT": 520,
+                "PREC": "Accurate",
             },
         }
         tags = dict(defaults.get(task, defaults["scf"]))
@@ -157,8 +181,11 @@ class InputFileGenerator:
             return "Line-mode\n20\nReciprocal\n0 0 0  G\n0.5 0 0  X\n"
         return "Automatic mesh\n0\nGamma\n3 3 3\n0 0 0\n"
 
-    def _make_potcar_info(self, hints: Dict[str, str]) -> str:
-        lines = ["# POTCAR selection hints", "# Use 'cat' to concatenate in species order"]
+    def _make_potcar_info(self, hints: dict[str, str]) -> str:
+        lines = [
+            "# POTCAR selection hints",
+            "# Use 'cat' to concatenate in species order",
+        ]
         for elem, pot in hints.items():
             lines.append(f"{elem}: {pot}")
         return "\n".join(lines) + "\n"
@@ -173,7 +200,7 @@ class InputFileGenerator:
         method: str,
         basis: str,
         structure: str,  # xyz format or z-matrix
-        extras: Optional[Dict[str, Any]] = None,
+        extras: dict[str, Any] | None = None,
     ) -> GeneratedInput:
         """Generate Gaussian .gjf input file.
 
@@ -204,7 +231,9 @@ class InputFileGenerator:
             route += f" IOp({extras['iop']})"
 
         content = f"%chk=job.chk\n%mem=8GB\n%nprocshared=4\n{route}\n\nTitle\n\n0 1\n{structure}\n\n"
-        return GeneratedInput("Gaussian", "job.gjf", content, f"Gaussian input for {task}")
+        return GeneratedInput(
+            "Gaussian", "job.gjf", content, f"Gaussian input for {task}"
+        )
 
     # ------------------------------------------------------------------
     # LAMMPS
@@ -239,7 +268,9 @@ class InputFileGenerator:
             f"run {steps}",
             "write_data final.data",
         ]
-        return GeneratedInput("LAMMPS", "in.lammps", "\n".join(lines) + "\n", f"LAMMPS input for {task}")
+        return GeneratedInput(
+            "LAMMPS", "in.lammps", "\n".join(lines) + "\n", f"LAMMPS input for {task}"
+        )
 
     # ------------------------------------------------------------------
     # ABAQUS
@@ -249,8 +280,8 @@ class InputFileGenerator:
         self,
         job_name: str,
         element_type: str = "C3D8R",
-        material: Optional[Dict[str, Any]] = None,
-        bc: Optional[List[Dict[str, Any]]] = None,
+        material: dict[str, Any] | None = None,
+        bc: list[dict[str, Any]] | None = None,
     ) -> GeneratedInput:
         """Generate ABAQUS .inp deck skeleton."""
         mat = material or {"name": "Steel", "E": 210000, "nu": 0.3}
@@ -275,13 +306,19 @@ class InputFileGenerator:
         ]
         if bc:
             for b in bc:
-                lines.append(f"*Boundary\n{b['node_set']}, {b['dof']}, {b['dof']}, {b.get('value', 0)}")
-        lines.extend([
-            "*Output, field, variable=PRESELECT",
-            "*Output, history, variable=PRESELECT",
-            "*End Step",
-        ])
-        return GeneratedInput("ABAQUS", f"{job_name}.inp", "\n".join(lines) + "\n", "ABAQUS input deck")
+                lines.append(
+                    f"*Boundary\n{b['node_set']}, {b['dof']}, {b['dof']}, {b.get('value', 0)}"
+                )
+        lines.extend(
+            [
+                "*Output, field, variable=PRESELECT",
+                "*Output, history, variable=PRESELECT",
+                "*End Step",
+            ]
+        )
+        return GeneratedInput(
+            "ABAQUS", f"{job_name}.inp", "\n".join(lines) + "\n", "ABAQUS input deck"
+        )
 
     # ------------------------------------------------------------------
     # OpenFOAM
@@ -291,10 +328,10 @@ class InputFileGenerator:
         self,
         solver: str = "simpleFoam",
         turbulence: str = "kOmegaSST",
-        geometry: Optional[Dict[str, Any]] = None,
-        mesh: Optional[Dict[str, Any]] = None,
-        transport_properties: Optional[Dict[str, Any]] = None,
-    ) -> List[GeneratedInput]:
+        geometry: dict[str, Any] | None = None,
+        mesh: dict[str, Any] | None = None,
+        transport_properties: dict[str, Any] | None = None,
+    ) -> list[GeneratedInput]:
         """Generate essential OpenFOAM dictionary files."""
         geometry = geometry or {"length": 2.0, "width": 0.5, "height": 0.5}
         mesh = mesh or {"cells": [20, 8, 8]}
@@ -323,7 +360,9 @@ timeFormat      general;
 timePrecision   6;
 runTimeModifiable true;
 """
-        inputs.append(GeneratedInput("OpenFOAM", "controlDict", control, "Time control"))
+        inputs.append(
+            GeneratedInput("OpenFOAM", "controlDict", control, "Time control")
+        )
 
         # fvSchemes (simplified)
         schemes = """ddtSchemes
@@ -346,48 +385,52 @@ laplacianSchemes
     default         Gauss linear corrected;
 }
 """
-        inputs.append(GeneratedInput("OpenFOAM", "fvSchemes", schemes, "Discretization schemes"))
+        inputs.append(
+            GeneratedInput("OpenFOAM", "fvSchemes", schemes, "Discretization schemes")
+        )
 
         # fvSolution (simplified)
-        solution = f"""solvers
-{{
+        solution = """solvers
+{
     p
-    {{
+    {
         solver          GAMG;
         tolerance       1e-07;
         relTol          0.1;
-    }}
+    }
     U
-    {{
+    {
         solver          smoothSolver;
         smoother        symGaussSeidel;
         tolerance       1e-08;
         relTol          0.1;
-    }}
-}}
+    }
+}
 SIMPLE
-{{
+{
     nNonOrthogonalCorrectors 0;
     consistent      yes;
     residualControl
-    {{
+    {
         p               1e-5;
         U               1e-5;
-    }}
-}}
+    }
+}
 relaxationFactors
-{{
+{
     fields
-    {{
+    {
         p               0.3;
-    }}
+    }
     equations
-    {{
+    {
         U               0.7;
-    }}
-}}
+    }
+}
 """
-        inputs.append(GeneratedInput("OpenFOAM", "fvSolution", solution, "Solver settings"))
+        inputs.append(
+            GeneratedInput("OpenFOAM", "fvSolution", solution, "Solver settings")
+        )
 
         # turbulenceProperties
         turb = f"""simulationType  RAS;
@@ -398,7 +441,9 @@ RAS
     printCoeffs     on;
 }}
 """
-        inputs.append(GeneratedInput("OpenFOAM", "turbulenceProperties", turb, "Turbulence model"))
+        inputs.append(
+            GeneratedInput("OpenFOAM", "turbulenceProperties", turb, "Turbulence model")
+        )
 
         # blockMeshDict
         block_mesh = f"""convertToMeters 1;
@@ -451,14 +496,22 @@ boundary
     }}
 );
 """
-        inputs.append(GeneratedInput("OpenFOAM", "blockMeshDict", block_mesh, "Block mesh definition"))
+        inputs.append(
+            GeneratedInput(
+                "OpenFOAM", "blockMeshDict", block_mesh, "Block mesh definition"
+            )
+        )
 
         # transportProperties
         nu = transport_properties.get("nu", 1e-05)
         transport = f"""transportModel  Newtonian;
 nu              {nu};
 """
-        inputs.append(GeneratedInput("OpenFOAM", "transportProperties", transport, "Transport properties"))
+        inputs.append(
+            GeneratedInput(
+                "OpenFOAM", "transportProperties", transport, "Transport properties"
+            )
+        )
 
         # Initial fields
         p_field = """dimensions      [0 2 -2 0 0 0 0];
@@ -482,7 +535,9 @@ boundaryField
     }
 }
 """
-        inputs.append(GeneratedInput("OpenFOAM", "p", p_field, "Pressure initial/boundary field"))
+        inputs.append(
+            GeneratedInput("OpenFOAM", "p", p_field, "Pressure initial/boundary field")
+        )
 
         u_field = """dimensions      [0 1 -1 0 0 0 0];
 
@@ -505,7 +560,9 @@ boundaryField
     }
 }
 """
-        inputs.append(GeneratedInput("OpenFOAM", "U", u_field, "Velocity initial/boundary field"))
+        inputs.append(
+            GeneratedInput("OpenFOAM", "U", u_field, "Velocity initial/boundary field")
+        )
 
         return inputs
 
@@ -518,7 +575,7 @@ boundaryField
         software: str,
         task: str,
         **kwargs: Any,
-    ) -> List[GeneratedInput]:
+    ) -> list[GeneratedInput]:
         """Dispatch to the appropriate generator based on software name."""
         sw = software.lower()
         if sw == "vasp":

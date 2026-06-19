@@ -11,9 +11,8 @@ This closes the loop: execute → fail → diagnose → fix → retry.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class AutoFixLoop:
@@ -31,17 +30,22 @@ class AutoFixLoop:
             result = vasp_tool.run(**fixed_params)
     """
 
-    def __init__(self, rules_path: Optional[str] = None):
+    def __init__(self, rules_path: str | None = None):
         self.rules_path = Path(rules_path) if rules_path else None
-        self._rules: List[Dict[str, Any]] = self._load_builtin_rules()
+        self._rules: list[dict[str, Any]] = self._load_builtin_rules()
 
-    def _load_builtin_rules(self) -> List[Dict[str, Any]]:
+    def _load_builtin_rules(self) -> list[dict[str, Any]]:
         """Built-in heuristic fix rules."""
         return [
             # VASP rules
             {
                 "tools": ["vasp_tool"],
-                "patterns": ["ZBRENT", "EDDDAV", "scf convergence", "electronic convergence"],
+                "patterns": [
+                    "ZBRENT",
+                    "EDDDAV",
+                    "scf convergence",
+                    "electronic convergence",
+                ],
                 "fixes": {"ALGO": "Normal", "NELMIN": 6, "ISMEAR": 0, "SIGMA": 0.05},
                 "description": "Switch to more robust SCF algorithm",
             },
@@ -142,7 +146,10 @@ class AutoFixLoop:
             {
                 "tools": ["openfoam_tool"],
                 "patterns": ["divergence", "residual", "not converging"],
-                "fixes": {"under_relaxation": "reduce_all", "nNonOrthogonalCorrectors": 2},
+                "fixes": {
+                    "under_relaxation": "reduce_all",
+                    "nNonOrthogonalCorrectors": 2,
+                },
                 "description": "Reduce under-relaxation and add non-orthogonal correctors",
             },
             # Generic rules
@@ -170,8 +177,8 @@ class AutoFixLoop:
         self,
         tool_name: str,
         error: str,
-        current_params: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        current_params: dict[str, Any],
+    ) -> dict[str, Any] | None:
         """Apply the best matching fix rule to the current parameters.
 
         Returns:
@@ -202,7 +209,9 @@ class AutoFixLoop:
                 new_params[key] = current_params[key] / 2
             elif val == "double" and isinstance(current_params.get(key), (int, float)):
                 new_params[key] = current_params[key] * 2
-            elif val == "increase" and isinstance(current_params.get(key), (int, float)):
+            elif val == "increase" and isinstance(
+                current_params.get(key), (int, float)
+            ):
                 new_params[key] = current_params[key] * 1.5
             else:
                 new_params[key] = val
@@ -213,17 +222,17 @@ class AutoFixLoop:
 
         return new_params
 
-    def _tool_matches(self, rule_tools: List[str], tool_name: str) -> bool:
+    def _tool_matches(self, rule_tools: list[str], tool_name: str) -> bool:
         """Check if a tool name matches the rule's tool list."""
         if "*" in rule_tools:
             return True
         return any(t.lower() == tool_name.lower() for t in rule_tools)
 
-    def add_rule(self, rule: Dict[str, Any]) -> None:
+    def add_rule(self, rule: dict[str, Any]) -> None:
         """Add a custom fix rule at runtime."""
         self._rules.append(rule)
 
-    def list_rules(self, tool_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_rules(self, tool_name: str | None = None) -> list[dict[str, Any]]:
         """List all rules, optionally filtered by tool."""
         if tool_name is None:
             return list(self._rules)

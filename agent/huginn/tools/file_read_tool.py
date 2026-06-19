@@ -13,9 +13,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ToolContext
+from huginn.types import ToolContext, ToolResult
 from huginn.utils.tokens import rough_token_count_for_text
-
 
 DEFAULT_MAX_SIZE_BYTES = 256 * 1024
 DEFAULT_MAX_OUTPUT_TOKENS = 25000
@@ -26,9 +25,15 @@ class FileReadToolInput(BaseModel):
     file_path: str = Field(..., description="Path to file")
     line_offset: int | None = Field(default=1, ge=1, description="1-based start line")
     n_lines: int | None = Field(default=None, description="Number of lines to read")
-    tail_lines: int | None = Field(default=None, description="Read the last N lines instead of from line_offset")
-    max_size_bytes: int | None = Field(default=None, ge=1, description="Max file size in bytes")
-    max_output_tokens: int | None = Field(default=None, ge=1, description="Max output tokens")
+    tail_lines: int | None = Field(
+        default=None, description="Read the last N lines instead of from line_offset"
+    )
+    max_size_bytes: int | None = Field(
+        default=None, ge=1, description="Max file size in bytes"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, ge=1, description="Max output tokens"
+    )
     working_dir: str | None = Field(default=None)
 
 
@@ -42,9 +47,13 @@ class FileReadTool(HuginnTool):
     def is_read_only(self, args: FileReadToolInput) -> bool:
         return True
 
-    def call(self, args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
+    def call(
+        self, args: dict[str, Any], context: ToolContext | None = None
+    ) -> ToolResult:
         input_data = FileReadToolInput(**args)
-        work_dir = Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        work_dir = (
+            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+        )
         path = work_dir / input_data.file_path
         if not path.is_absolute():
             path = path.resolve()
@@ -55,10 +64,14 @@ class FileReadTool(HuginnTool):
             return ToolResult(data=None, success=False, error=f"Not a file: {path}")
 
         max_size = input_data.max_size_bytes or int(
-            os.environ.get("HUGINN_FILE_READ_MAX_SIZE_BYTES", str(DEFAULT_MAX_SIZE_BYTES))
+            os.environ.get(
+                "HUGINN_FILE_READ_MAX_SIZE_BYTES", str(DEFAULT_MAX_SIZE_BYTES)
+            )
         )
         max_tokens = input_data.max_output_tokens or int(
-            os.environ.get("HUGINN_FILE_READ_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS))
+            os.environ.get(
+                "HUGINN_FILE_READ_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS)
+            )
         )
 
         try:
@@ -81,11 +94,19 @@ class FileReadTool(HuginnTool):
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
                 total = len(lines)
                 start = input_data.line_offset or 1
-                end = total + 1 if input_data.n_lines is None else start + input_data.n_lines
+                end = (
+                    total + 1
+                    if input_data.n_lines is None
+                    else start + input_data.n_lines
+                )
                 selected = lines[start - 1 : end - 1]
 
-            selected, was_truncated = self._apply_token_cap(selected, start, max_tokens, path.suffix)
-            numbered = "\n".join(f"{i + start:4d}  {line}" for i, line in enumerate(selected))
+            selected, was_truncated = self._apply_token_cap(
+                selected, start, max_tokens, path.suffix
+            )
+            numbered = "\n".join(
+                f"{i + start:4d}  {line}" for i, line in enumerate(selected)
+            )
 
             msg = f"Read lines {start}-{start + len(selected) - 1} of {total}."
             if was_truncated:
@@ -102,7 +123,9 @@ class FileReadTool(HuginnTool):
                 success=True,
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Failed to read file: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Failed to read file: {e}"
+            )
 
     def _apply_token_cap(
         self,
@@ -116,7 +139,9 @@ class FileReadTool(HuginnTool):
         selected = lines
         was_truncated = False
         while selected:
-            text = "\n".join(f"{i + start_line:4d}  {line}" for i, line in enumerate(selected))
+            text = "\n".join(
+                f"{i + start_line:4d}  {line}" for i, line in enumerate(selected)
+            )
             if rough_token_count_for_text(text, ext) <= max_tokens:
                 break
             selected = selected[:-1]
@@ -127,10 +152,11 @@ class FileReadTool(HuginnTool):
         """Return the last n lines and the 1-based start line."""
         try:
             from huginn_ext import tail_lines  # type: ignore[import-not-found]
+
             lines = tail_lines(str(path), n)
             return lines, max(1, len(lines) - n + 1)
         except Exception:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 all_lines = f.read().splitlines()
             start = max(1, len(all_lines) - n + 1)
             return all_lines[-n:], start

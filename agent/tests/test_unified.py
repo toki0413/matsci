@@ -59,14 +59,20 @@ def test_dft_to_md_bridge() -> None:
     dft_problem = one_d_kohn_sham_dft()
     result = dft_potential_to_md(dft_problem)
     assert "potential" in result
-    assert "morse" in result["potential"].name.lower() or "fit" in result["potential"].parameters.get("form", "")
+    assert "morse" in result["potential"].name.lower() or "fit" in result[
+        "potential"
+    ].parameters.get("form", "")
 
 
 def test_cauchy_born_bridge() -> None:
-    from huginn.unified.bridge import ConstitutiveModel
     import sympy as sp
 
+    from huginn.unified.bridge import ConstitutiveModel
+
     r = sp.Symbol("r")
-    potential = ConstitutiveModel(name="harmonic", expression=sp.Rational(1, 2) * sp.Symbol("k") * (r - sp.Symbol("r0")) ** 2)
+    potential = ConstitutiveModel(
+        name="harmonic",
+        expression=sp.Rational(1, 2) * sp.Symbol("k") * (r - sp.Symbol("r0")) ** 2,
+    )
     result = cauchy_born_elasticity(potential)
     assert "elastic_modulus" in result

@@ -14,7 +14,12 @@ def test_uq_tool_monte_carlo() -> None:
             "expression": "E * epsilon",
             "variables": [
                 {"name": "E", "distribution": "uniform", "low": 200e9, "high": 220e9},
-                {"name": "epsilon", "distribution": "normal", "mean": 0.001, "std": 0.0001},
+                {
+                    "name": "epsilon",
+                    "distribution": "normal",
+                    "mean": 0.001,
+                    "std": 0.0001,
+                },
             ],
             "n_samples": 2000,
             "seed": 42,
@@ -46,8 +51,12 @@ def test_uq_tool_sensitivity() -> None:
     data = result.data
     assert data["method"] == "sensitivity"
     assert data["nominal_output"] == pytest.approx(6.0, abs=1e-9)
-    assert data["sensitivities"]["a"]["symbolic_derivative"] == pytest.approx(4.0, abs=1e-9)
-    assert data["sensitivities"]["b"]["symbolic_derivative"] == pytest.approx(2.0, abs=1e-9)
+    assert data["sensitivities"]["a"]["symbolic_derivative"] == pytest.approx(
+        4.0, abs=1e-9
+    )
+    assert data["sensitivities"]["b"]["symbolic_derivative"] == pytest.approx(
+        2.0, abs=1e-9
+    )
 
 
 def test_uq_tool_sobol() -> None:
