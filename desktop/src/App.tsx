@@ -662,7 +662,7 @@ export default function App() {
 
   interface DiffEntry {
     path: string;
-    status: string;
+    status: "modified" | "added" | "deleted";
     diff: string;
     old: string;
     new: string;
@@ -675,7 +675,6 @@ export default function App() {
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [activeCp, setActiveCp] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<DiffEntry[]>([]);
-  const [selectedDiff, setSelectedDiff] = useState<DiffEntry | null>(null);
 
   const pendingResponseRef = useRef<string>("");
 
@@ -1334,7 +1333,6 @@ export default function App() {
     try {
       const data = await fetch(`${API_BASE}/checkpoints/${cpId}/diff`).then((r) => r.json());
       setDiffs((data.diffs as DiffEntry[]) || []);
-      setSelectedDiff((data.diffs?.[0] as DiffEntry) || null);
       setActiveCp(cpId);
     } catch (e: any) {
       console.error("[review] load diffs failed:", e);
@@ -1348,7 +1346,6 @@ export default function App() {
       if (activeCp === cpId) {
         setActiveCp(null);
         setDiffs([]);
-        setSelectedDiff(null);
       }
     } catch (e: any) {
       console.error("[review] accept failed:", e);
@@ -1362,7 +1359,6 @@ export default function App() {
       if (activeCp === cpId) {
         setActiveCp(null);
         setDiffs([]);
-        setSelectedDiff(null);
       }
     } catch (e: any) {
       console.error("[review] reject failed:", e);
