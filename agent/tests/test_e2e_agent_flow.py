@@ -7,9 +7,14 @@ without requiring external API keys.
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 
 import pytest
+
+_sqlite_saver_available = importlib.util.find_spec("langgraph.checkpoint.sqlite") is not None
+pytestmark = pytest.mark.skipif(not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available")
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult

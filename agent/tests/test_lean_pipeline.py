@@ -1,5 +1,6 @@
 """End-to-end tests for the Python → Lean 4 stability verification pipeline."""
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,8 @@ LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 class TestStabilityPipeline:
     @pytest.fixture(scope="class")
     def pipe(self):
+        if not shutil.which("lake"):
+            pytest.skip("lake executable not found")
         if not (LEAN_PROJECT / "lakefile.toml").exists():
             pytest.skip("HuginnLean project not found")
         return StabilityPipeline(LEAN_PROJECT)

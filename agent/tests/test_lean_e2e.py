@@ -5,6 +5,7 @@ to Phase 2 (formal verification).
 """
 
 import asyncio
+import shutil
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,8 @@ class TestSymPyToLeanVerification:
 
     @pytest.fixture(scope="class")
     def lean(self):
+        if not shutil.which("lake"):
+            pytest.skip("lake executable not found")
         if not (LEAN_PROJECT / "lakefile.toml").exists():
             pytest.skip("HuginnLean project not found")
         return LeanInterface(LEAN_PROJECT)
@@ -96,6 +99,8 @@ class TestCrossGoalSymbolicToLean:
 
     @pytest.fixture
     def lean_tool(self):
+        if not shutil.which("lake"):
+            pytest.skip("lake executable not found")
         if not (LEAN_PROJECT / "lakefile.toml").exists():
             pytest.skip("HuginnLean project not found")
         return LeanTool()

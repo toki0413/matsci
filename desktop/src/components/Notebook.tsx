@@ -295,9 +295,9 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
   return (
     <div className="flex h-full w-full text-text-primary">
       {/* ── Left pane: entry list ────────────────────────────────────────── */}
-      <aside className="flex w-72 flex-shrink-0 flex-col border-r border-[#262320] bg-bg-secondary">
+      <aside className="flex w-72 flex-shrink-0 flex-col border-r border-border bg-bg-secondary">
         {/* Header */}
-        <div className="border-b border-[#262320] p-3 space-y-2">
+        <div className="border-b border-border p-3 space-y-2">
           <h2 className="text-sm font-semibold tracking-wide text-text-secondary uppercase">
             Notebook
           </h2>
@@ -406,7 +406,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
         {/* Empty state */}
         {!activeEntry && !editing && (
           <div className="flex flex-1 flex-col items-center justify-center text-center p-8 gap-4">
-            <div className="flex items-center justify-center h-16 w-16 rounded-2xl bg-bg-tertiary border border-[#262320]">
+            <div className="flex items-center justify-center h-16 w-16 rounded-2xl bg-bg-tertiary border border-border">
               <svg
                 className="h-8 w-8 text-text-muted"
                 fill="none"
@@ -462,7 +462,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 value={draft.title}
                 onChange={(e) => setDraftField('title', e.target.value)}
                 placeholder="e.g. Band structure of monolayer MoS₂"
-                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-[#262320] focus:border-accent/60 transition"
+                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-border focus:border-accent/60 transition"
               />
             </div>
 
@@ -476,7 +476,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 value={draft.material}
                 onChange={(e) => setDraftField('material', e.target.value)}
                 placeholder="e.g. Si, GaAs, Fe-Cr alloy"
-                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-[#262320] focus:border-accent/60 transition"
+                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-border focus:border-accent/60 transition"
               />
             </div>
 
@@ -488,7 +488,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
               <select
                 value={draft.calc_type}
                 onChange={(e) => setDraftField('calc_type', e.target.value)}
-                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary outline-none border border-[#262320] focus:border-accent/60 transition appearance-none cursor-pointer"
+                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary outline-none border border-border focus:border-accent/60 transition appearance-none cursor-pointer"
               >
                 {CALC_TYPES.map((ct) => (
                   <option key={ct} value={ct}>
@@ -539,7 +539,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                     value={key}
                     onChange={(e) => renameParameter(key, e.target.value)}
                     placeholder="key"
-                    className="flex-1 rounded bg-bg-secondary px-2.5 py-1.5 text-xs text-text-primary placeholder-text-muted outline-none border border-[#262320] focus:border-accent/60 transition"
+                    className="flex-1 rounded bg-bg-secondary px-2.5 py-1.5 text-xs text-text-primary placeholder-text-muted outline-none border border-border focus:border-accent/60 transition"
                   />
                   <input
                     type="text"
@@ -548,7 +548,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                       updateParameterValue(key, e.target.value)
                     }
                     placeholder="value"
-                    className="flex-1 rounded bg-bg-secondary px-2.5 py-1.5 text-xs text-text-primary placeholder-text-muted outline-none border border-[#262320] focus:border-accent/60 transition"
+                    className="flex-1 rounded bg-bg-secondary px-2.5 py-1.5 text-xs text-text-primary placeholder-text-muted outline-none border border-border focus:border-accent/60 transition"
                   />
                   <button
                     type="button"
@@ -587,7 +587,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 onChange={(e) => setDraftField('results', e.target.value)}
                 placeholder="Paste or type your results here…"
                 rows={8}
-                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-[#262320] focus:border-accent/60 transition resize-y font-mono leading-relaxed"
+                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-border focus:border-accent/60 transition resize-y font-mono leading-relaxed"
               />
             </div>
 
@@ -599,7 +599,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 onChange={(e) => setDraftField('conclusion', e.target.value)}
                 placeholder="Key takeaways or next steps…"
                 rows={4}
-                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-[#262320] focus:border-accent/60 transition resize-y"
+                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-border focus:border-accent/60 transition resize-y"
               />
             </div>
 
@@ -616,12 +616,12 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 value={draft.tags.join(', ')}
                 onChange={(e) => handleTagsInput(e.target.value)}
                 placeholder="e.g. band-structure, spin-orbit, convergence"
-                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-[#262320] focus:border-accent/60 transition"
+                className="w-full rounded bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none border border-border focus:border-accent/60 transition"
               />
             </div>
 
             {/* Action buttons */}
-            <div className="flex items-center gap-3 pt-2 border-t border-[#262320]">
+            <div className="flex items-center gap-3 pt-2 border-t border-border">
               <button
                 onClick={handleSave}
                 disabled={saving || !draft.title.trim()}
@@ -656,7 +656,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
               </button>
               <button
                 onClick={cancelEdit}
-                className="rounded bg-bg-tertiary hover:bg-bg-tertiary/80 text-text-secondary text-xs font-medium px-4 py-2 border border-[#262320] transition"
+                className="rounded bg-bg-tertiary hover:bg-bg-tertiary/80 text-text-secondary text-xs font-medium px-4 py-2 border border-border transition"
               >
                 Cancel
               </button>
@@ -675,7 +675,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   onClick={startEdit}
-                  className="flex items-center gap-1.5 rounded bg-bg-tertiary hover:bg-bg-tertiary/80 text-text-secondary text-xs font-medium px-3 py-1.5 border border-[#262320] transition"
+                  className="flex items-center gap-1.5 rounded bg-bg-tertiary hover:bg-bg-tertiary/80 text-text-secondary text-xs font-medium px-3 py-1.5 border border-border transition"
                 >
                   <svg
                     className="h-3.5 w-3.5"
@@ -762,7 +762,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
               {activeEntry.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="inline-flex items-center rounded-full bg-bg-tertiary text-text-secondary text-xs font-medium px-2.5 py-1 border border-[#262320]"
+                  className="inline-flex items-center rounded-full bg-bg-tertiary text-text-secondary text-xs font-medium px-2.5 py-1 border border-border"
                 >
                   #{tag}
                 </span>
@@ -775,7 +775,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
                   Parameters
                 </h4>
-                <div className="rounded border border-[#262320] overflow-hidden">
+                <div className="rounded border border-border overflow-hidden">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-bg-tertiary">
@@ -817,7 +817,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
                   Results
                 </h4>
-                <div className="prose prose-invert prose-sm max-w-none rounded bg-bg-secondary border border-[#262320] p-4 text-sm leading-relaxed text-text-primary [&_code]:text-accent [&_pre]:bg-bg-tertiary [&_pre]:rounded [&_pre]:p-3 [&_a]:text-accent [&_a]:underline [&_table]:border-collapse [&_th]:border [&_th]:border-[#262320] [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-[#262320] [&_td]:px-2 [&_td]:py-1">
+                <div className="prose prose-sm max-w-none rounded bg-bg-secondary border border-border p-4 text-sm leading-relaxed text-text-primary [&_code]:text-accent [&_pre]:bg-bg-tertiary [&_pre]:rounded [&_pre]:p-3 [&_a]:text-accent [&_a]:underline [&_table]:border-collapse [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {activeEntry.results}
                   </ReactMarkdown>
@@ -831,7 +831,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
                 <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
                   Conclusion
                 </h4>
-                <div className="prose prose-invert prose-sm max-w-none rounded bg-bg-secondary border border-[#262320] p-4 text-sm leading-relaxed text-text-primary [&_code]:text-accent [&_pre]:bg-bg-tertiary [&_pre]:rounded [&_pre]:p-3 [&_a]:text-accent [&_a]:underline">
+                <div className="prose prose-sm max-w-none rounded bg-bg-secondary border border-border p-4 text-sm leading-relaxed text-text-primary [&_code]:text-accent [&_pre]:bg-bg-tertiary [&_pre]:rounded [&_pre]:p-3 [&_a]:text-accent [&_a]:underline">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {activeEntry.conclusion}
                   </ReactMarkdown>
