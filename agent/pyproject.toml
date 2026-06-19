@@ -40,7 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "black>=23.0", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-benchmark>=4.0", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "black>=23.0", "memory-profiler>=0.60", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7"]
 all = ["pymatgen>=2024.0", "ase>=3.22", "dscribe>=2.0", "paramiko>=3.0", "chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3"]
 rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3"]
 
@@ -145,23 +145,7 @@ source = ["huginn"]
 omit = [
     "*/tests/*",
     "huginn/_version.py",
-    "huginn/tools/vasp_tool.py",
-    "huginn/tools/qe_tool.py",
-    "huginn/tools/cp2k_tool.py",
-    "huginn/tools/comsol_tool.py",
-    "huginn/tools/abaqus_tool.py",
-    "huginn/tools/openfoam_tool.py",
-    "huginn/tools/lammps_tool.py",
-    "huginn/tools/lean_tool.py",
-    "huginn/tools/materials_database_tool.py",
-    "huginn/tools/ml_potential_tool.py",
-    "huginn/tools/packing_tool.py",
-    "huginn/tools/symbolic_math_tool.py",
-    "huginn/tools/symbolic_regression_tool.py",
-    "huginn/tools/visualize_tool.py",
     "huginn/visualize.py",
-    "huginn/lean/*.py",
-    "huginn/hpc/*.py",
 ]
 
 [tool.coverage.report]
@@ -174,4 +158,10 @@ exclude_lines = [
     "raise AssertionError",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
+]
+
+[dependency-groups]
+dev = [
+    "memory-profiler>=0.61.0",
+    "pytest-benchmark>=5.2.3",
 ]
