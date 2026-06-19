@@ -4,22 +4,25 @@ import elementsData from "../data/elements.json";
 /* ────────────────────────────── Types ────────────────────────────── */
 
 interface Element {
-  number: number;
+  atomic_number: number;
   symbol: string;
   name: string;
   category: string;
   block: string;
   group: number | null;
   period: number;
-  grid_row: number;
-  grid_col: number;
+  row: number;
+  col: number;
   atomic_mass: number;
   electron_configuration: string;
   electronegativity: number | null;
   melting_point: number | null;
   boiling_point: number | null;
   density: number | null;
-  year_discovered: number;
+  crystal_structure?: string;
+  common_oxidation_states?: number[];
+  cpk_color?: string;
+  atomic_radius?: number;
 }
 
 type ColorMode = "category" | "block";
@@ -33,14 +36,14 @@ const elements = elementsData as Element[];
 /* ──────────────────────── Color Palettes ─────────────────────────── */
 
 const CATEGORY_COLORS: Record<string, string> = {
-  "alkali metal":          "#c9544e",
-  "alkaline earth metal":  "#d4874a",
-  "transition metal":      "#c9a84e",
-  "post-transition metal": "#6b9e8a",
+  "alkali-metal":          "#c9544e",
+  "alkaline-earth-metal":  "#d4874a",
+  "transition-metal":      "#c9a84e",
+  "post-transition-metal": "#6b9e8a",
   "metalloid":             "#8a7bb5",
   "nonmetal":              "#6ba874",
   "halogen":               "#5a8ec4",
-  "noble gas":             "#9b6bb5",
+  "noble-gas":             "#9b6bb5",
   "lanthanide":            "#c47a8a",
   "actinide":              "#c47a6a",
 };
@@ -90,7 +93,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
       return (
         el.name.toLowerCase().includes(searchLower) ||
         el.symbol.toLowerCase().includes(searchLower) ||
-        String(el.number) === searchLower
+        String(el.atomic_number) === searchLower
       );
     },
     [searchLower],
@@ -98,7 +101,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
 
   /* ── Selected elements resolved ── */
   const selectedList = useMemo(
-    () => elements.filter((el) => selectedElements.has(el.number)),
+    () => elements.filter((el) => selectedElements.has(el.atomic_number)),
     [selectedElements],
   );
 
@@ -108,15 +111,15 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
       if (compareMode) {
         setSelectedElements((prev) => {
           const next = new Set(prev);
-          if (next.has(el.number)) {
-            next.delete(el.number);
+          if (next.has(el.atomic_number)) {
+            next.delete(el.atomic_number);
           } else if (next.size < 4) {
-            next.add(el.number);
+            next.add(el.atomic_number);
           }
           return next;
         });
       } else {
-        setSelectedElements(new Set([el.number]));
+        setSelectedElements(new Set([el.atomic_number]));
         setMpResult(null);
         setMpError(null);
       }
@@ -159,14 +162,14 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
   /* ──────────────────────── Render helpers ─────────────────────────── */
 
   function renderElementCell(el: Element) {
-    const isSelected = selectedElements.has(el.number);
+    const isSelected = selectedElements.has(el.atomic_number);
     const isMatch = matchesSearch(el);
     const bg = cellBg(el, colorMode);
     const borderColor = cellBorder(el, colorMode);
 
     return (
       <button
-        key={el.number}
+        key={el.atomic_number}
         onClick={() => handleElementClick(el)}
         className={`
           relative flex flex-col items-center justify-center
@@ -178,8 +181,8 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
           ${!isMatch ? "opacity-20 pointer-events-none" : ""}
         `}
         style={{
-          gridRow: el.grid_row,
-          gridColumn: el.grid_col,
+          gridRow: el.row,
+          gridColumn: el.col,
           backgroundColor: bg,
           borderColor: isSelected ? "#d4884a" : borderColor + "66",
           minHeight: 44,
@@ -188,7 +191,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
         title={`${el.name} (${el.symbol}) — ${el.category}`}
       >
         <span className="absolute top-0.5 left-1 text-[8px] leading-none text-text-muted font-mono">
-          {el.number}
+          {el.atomic_number}
         </span>
         <span className="text-sm font-semibold leading-tight text-text-primary mt-1">
           {el.symbol}
@@ -215,7 +218,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-text-primary leading-tight">{el.name}</h2>
             <p className="text-xs text-text-secondary">
-              #{el.number} &middot; {el.category} &middot; {el.block}-block
+              #{el.atomic_number} &middot; {el.category} &middot; {el.block}-block
             </p>
             {el.group !== null && (
               <p className="text-xs text-text-muted">
@@ -245,8 +248,8 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
             value={el.density != null ? `${el.density} g/cm³` : "—"}
           />
           <PropertyRow
-            label="Discovered"
-            value={el.year_discovered < 0 ? `~${Math.abs(el.year_discovered)} BC` : String(el.year_discovered)}
+            label="Crystal"
+            value={el.crystal_structure ?? "—"}
           />
         </div>
 
@@ -306,7 +309,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
               <tr className="border-b border-border">
                 <th className="text-left py-1 pr-2 text-text-muted font-medium">Property</th>
                 {selectedList.map((el) => (
-                  <th key={el.number} className="text-center py-1 px-1 text-text-primary font-semibold">
+                  <th key={el.atomic_number} className="text-center py-1 px-1 text-text-primary font-semibold">
                     <span
                       className="inline-block w-2 h-2 rounded-full mr-1"
                       style={{ backgroundColor: cellBorder(el, colorMode) }}
@@ -317,7 +320,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
               </tr>
             </thead>
             <tbody className="text-text-secondary">
-              <CompareRow label="Number" values={selectedList.map((el) => String(el.number))} />
+              <CompareRow label="Number" values={selectedList.map((el) => String(el.atomic_number))} />
               <CompareRow label="Category" values={selectedList.map((el) => el.category)} />
               <CompareRow label="Block" values={selectedList.map((el) => el.block)} />
               <CompareRow label="Mass" values={selectedList.map((el) => `${el.atomic_mass}`)} />
