@@ -84,7 +84,7 @@ function StatusBadge({ status }: { status: Job["status"] }) {
   switch (status) {
     case "pending":
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#262320] px-2.5 py-0.5 text-xs text-[#706b64]">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#d5cfc6] px-2.5 py-0.5 text-xs text-[#9a9590]">
           <Clock size={12} />
           Pending
         </span>
@@ -127,10 +127,10 @@ function ChartTooltipContent({
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-[#262320] bg-[#1e1b18] px-3 py-2 shadow-lg">
+    <div className="rounded-lg border border-[#d5cfc6] bg-[#f0ebe4] px-3 py-2 shadow-lg">
       {payload.map((entry, i) => (
-        <p key={i} className="text-xs text-[#a19b94]">
-          <span className="text-[#faf6f1]">{entry.name}:</span>{" "}
+        <p key={i} className="text-xs text-[#6b665f]">
+          <span className="text-[#2a2520]">{entry.name}:</span>{" "}
           {typeof entry.value === "number" ? entry.value.toFixed(4) : entry.value}
         </p>
       ))}
@@ -357,25 +357,25 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="flex min-h-screen flex-col gap-6 bg-[#181614] p-6 text-[#faf6f1]">
+    <div className="flex min-h-screen flex-col gap-6 bg-[#f8f4ef] p-6 text-[#2a2520]">
       {/* ================================================================== */}
       {/* DEFINE PANEL                                                        */}
       {/* ================================================================== */}
-      <section className="rounded-xl border border-[#262320] bg-[#1e1b18] p-5">
-        <h2 className="mb-4 text-lg font-semibold tracking-tight text-[#faf6f1]">
+      <section className="rounded-xl border border-[#d5cfc6] bg-[#f0ebe4] p-5">
+        <h2 className="mb-4 text-lg font-semibold tracking-tight text-[#2a2520]">
           Define Sweep
         </h2>
 
         {/* Template selector */}
         <div className="mb-4">
-          <label className="mb-1.5 block text-xs font-medium text-[#a19b94]">
+          <label className="mb-1.5 block text-xs font-medium text-[#6b665f]">
             Workflow Template
           </label>
           <select
             value={selectedTemplate}
             onChange={(e) => setSelectedTemplate(e.target.value)}
             disabled={sweepRunning}
-            className="w-full rounded-lg border border-[#262320] bg-[#282521] px-3 py-2 text-sm text-[#faf6f1] outline-none transition focus:border-[#d4884a] disabled:opacity-50"
+            className="w-full rounded-lg border border-[#d5cfc6] bg-[#e8e2d9] px-3 py-2 text-sm text-[#2a2520] outline-none transition focus:border-[#d4884a] disabled:opacity-50"
           >
             {templates.length === 0 && (
               <option value="" disabled>
@@ -391,16 +391,16 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
         </div>
 
         {/* Parameter input */}
-        <div className="mb-4 rounded-lg border border-[#262320] bg-[#181614] p-4">
+        <div className="mb-4 rounded-lg border border-[#d5cfc6] bg-[#f8f4ef] p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-[#a19b94]">Add Parameter</h3>
-            <div className="flex rounded-md border border-[#262320] text-xs">
+            <h3 className="text-sm font-medium text-[#6b665f]">Add Parameter</h3>
+            <div className="flex rounded-md border border-[#d5cfc6] text-xs">
               <button
                 onClick={() => setInputMode("range")}
                 className={`px-2.5 py-1 transition ${
                   inputMode === "range"
                     ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#706b64] hover:text-[#a19b94]"
+                    : "text-[#9a9590] hover:text-[#6b665f]"
                 }`}
               >
                 Range
@@ -410,7 +410,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                 className={`px-2.5 py-1 transition ${
                   inputMode === "explicit"
                     ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#706b64] hover:text-[#a19b94]"
+                    : "text-[#9a9590] hover:text-[#6b665f]"
                 }`}
               >
                 Explicit
@@ -421,53 +421,53 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           <div className="flex flex-wrap items-end gap-3">
             {/* Name */}
             <div className="min-w-[120px] flex-1">
-              <label className="mb-1 block text-xs text-[#706b64]">Name</label>
+              <label className="mb-1 block text-xs text-[#9a9590]">Name</label>
               <input
                 type="text"
                 value={newParamName}
                 onChange={(e) => setNewParamName(e.target.value)}
                 placeholder="e.g. temperature"
                 disabled={sweepRunning}
-                className="w-full rounded-md border border-[#262320] bg-[#282521] px-2.5 py-1.5 text-sm text-[#faf6f1] outline-none placeholder:text-[#706b64] focus:border-[#d4884a] disabled:opacity-50"
+                className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
               />
             </div>
 
             {inputMode === "range" ? (
               <>
                 <div className="w-24">
-                  <label className="mb-1 block text-xs text-[#706b64]">Min</label>
+                  <label className="mb-1 block text-xs text-[#9a9590]">Min</label>
                   <input
                     type="number"
                     value={newParamMin}
                     onChange={(e) => setNewParamMin(e.target.value)}
                     disabled={sweepRunning}
-                    className="w-full rounded-md border border-[#262320] bg-[#282521] px-2.5 py-1.5 text-sm text-[#faf6f1] outline-none placeholder:text-[#706b64] focus:border-[#d4884a] disabled:opacity-50"
+                    className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
                   />
                 </div>
                 <div className="w-24">
-                  <label className="mb-1 block text-xs text-[#706b64]">Max</label>
+                  <label className="mb-1 block text-xs text-[#9a9590]">Max</label>
                   <input
                     type="number"
                     value={newParamMax}
                     onChange={(e) => setNewParamMax(e.target.value)}
                     disabled={sweepRunning}
-                    className="w-full rounded-md border border-[#262320] bg-[#282521] px-2.5 py-1.5 text-sm text-[#faf6f1] outline-none placeholder:text-[#706b64] focus:border-[#d4884a] disabled:opacity-50"
+                    className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
                   />
                 </div>
                 <div className="w-24">
-                  <label className="mb-1 block text-xs text-[#706b64]">Step</label>
+                  <label className="mb-1 block text-xs text-[#9a9590]">Step</label>
                   <input
                     type="number"
                     value={newParamStep}
                     onChange={(e) => setNewParamStep(e.target.value)}
                     disabled={sweepRunning}
-                    className="w-full rounded-md border border-[#262320] bg-[#282521] px-2.5 py-1.5 text-sm text-[#faf6f1] outline-none placeholder:text-[#706b64] focus:border-[#d4884a] disabled:opacity-50"
+                    className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
                   />
                 </div>
               </>
             ) : (
               <div className="min-w-[200px] flex-1">
-                <label className="mb-1 block text-xs text-[#706b64]">
+                <label className="mb-1 block text-xs text-[#9a9590]">
                   Values (comma-separated)
                 </label>
                 <input
@@ -476,7 +476,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                   onChange={(e) => setNewParamExplicit(e.target.value)}
                   placeholder="100, 200, 300, 500"
                   disabled={sweepRunning}
-                  className="w-full rounded-md border border-[#262320] bg-[#282521] px-2.5 py-1.5 text-sm text-[#faf6f1] outline-none placeholder:text-[#706b64] focus:border-[#d4884a] disabled:opacity-50"
+                  className="w-full rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none placeholder:text-[#9a9590] focus:border-[#d4884a] disabled:opacity-50"
                 />
               </div>
             )}
@@ -484,7 +484,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
             <button
               onClick={handleAddParam}
               disabled={sweepRunning}
-              className="flex items-center gap-1.5 rounded-md border border-[#262320] bg-[#282521] px-3 py-1.5 text-sm text-[#a19b94] transition hover:border-[#d4884a] hover:text-[#d4884a] disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-3 py-1.5 text-sm text-[#6b665f] transition hover:border-[#d4884a] hover:text-[#d4884a] disabled:opacity-50"
             >
               <Plus size={14} />
               Add
@@ -498,21 +498,21 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
             {sweepParams.map((p, i) => (
               <div
                 key={i}
-                className="flex items-center justify-between rounded-lg border border-[#262320] bg-[#282521] px-3 py-2"
+                className="flex items-center justify-between rounded-lg border border-[#d5cfc6] bg-[#e8e2d9] px-3 py-2"
               >
                 <div className="text-sm">
-                  <span className="font-medium text-[#faf6f1]">{p.name}</span>
-                  <span className="ml-2 text-[#706b64]">
+                  <span className="font-medium text-[#2a2520]">{p.name}</span>
+                  <span className="ml-2 text-[#9a9590]">
                     [{p.values.join(", ")}]
                   </span>
-                  <span className="ml-2 text-xs text-[#706b64]">
+                  <span className="ml-2 text-xs text-[#9a9590]">
                     ({p.values.length} values)
                   </span>
                 </div>
                 <button
                   onClick={() => handleRemoveParam(i)}
                   disabled={sweepRunning}
-                  className="text-[#706b64] transition hover:text-[#d4645a] disabled:opacity-50"
+                  className="text-[#9a9590] transition hover:text-[#d4645a] disabled:opacity-50"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -523,9 +523,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
 
         {/* Summary + actions */}
         <div className="flex items-center justify-between">
-          <p className="text-sm text-[#a19b94]">
+          <p className="text-sm text-[#6b665f]">
             Total combinations:{" "}
-            <span className="font-mono font-semibold text-[#faf6f1]">
+            <span className="font-mono font-semibold text-[#2a2520]">
               {totalCombinations}
             </span>
           </p>
@@ -547,7 +547,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                 sweepParams.length === 0 ||
                 totalCombinations === 0
               }
-              className="flex items-center gap-1.5 rounded-lg bg-[#d4884a] px-5 py-2 text-sm font-medium text-[#181614] transition hover:bg-[#e09660] disabled:opacity-40 disabled:hover:bg-[#d4884a]"
+              className="flex items-center gap-1.5 rounded-lg bg-[#d4884a] px-5 py-2 text-sm font-medium text-[#2a2520] transition hover:bg-[#c07840] disabled:opacity-40 disabled:hover:bg-[#d4884a]"
             >
               <Play size={14} />
               Submit Sweep
@@ -560,12 +560,12 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
       {/* PROGRESS MATRIX                                                     */}
       {/* ================================================================== */}
       {jobs.length > 0 && (
-        <section className="rounded-xl border border-[#262320] bg-[#1e1b18] p-5">
+        <section className="rounded-xl border border-[#d5cfc6] bg-[#f0ebe4] p-5">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold tracking-tight text-[#faf6f1]">
+            <h2 className="text-lg font-semibold tracking-tight text-[#2a2520]">
               Progress Matrix
             </h2>
-            <div className="flex items-center gap-4 text-xs text-[#a19b94]">
+            <div className="flex items-center gap-4 text-xs text-[#6b665f]">
               <span>
                 <span className="font-mono font-semibold text-[#6b9e8a]">
                   {summaryStats.done}
@@ -581,7 +581,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
               {summaryStats.avgTime > 0 && (
                 <span>
                   avg{" "}
-                  <span className="font-mono font-semibold text-[#faf6f1]">
+                  <span className="font-mono font-semibold text-[#2a2520]">
                     {formatDuration(Math.round(summaryStats.avgTime))}
                   </span>
                 </span>
@@ -590,7 +590,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           </div>
 
           {/* Progress bar */}
-          <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-[#262320]">
+          <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-[#d5cfc6]">
             <div
               className="h-full rounded-full bg-[#6b9e8a] transition-all duration-500"
               style={{
@@ -603,7 +603,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-[#262320] text-xs text-[#706b64]">
+                <tr className="border-b border-[#d5cfc6] text-xs text-[#9a9590]">
                   <th className="w-10 py-2 pr-3 font-medium">#</th>
                   {paramNames.map((name) => (
                     <th key={name} className="px-3 py-2 font-medium">
@@ -623,9 +623,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       onClick={() =>
                         setExpandedRow(expandedRow === idx ? null : idx)
                       }
-                      className="cursor-pointer border-b border-[#262320]/50 transition hover:bg-[#282521]/60"
+                      className="cursor-pointer border-b border-[#d5cfc6]/50 transition hover:bg-[#e8e2d9]/60"
                     >
-                      <td className="py-2.5 pr-3 font-mono text-xs text-[#706b64]">
+                      <td className="py-2.5 pr-3 font-mono text-xs text-[#9a9590]">
                         {expandedRow === idx ? (
                           <ChevronDown size={14} />
                         ) : (
@@ -636,7 +636,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       {paramNames.map((name) => (
                         <td
                           key={name}
-                          className="px-3 py-2.5 font-mono text-xs text-[#faf6f1]"
+                          className="px-3 py-2.5 font-mono text-xs text-[#2a2520]"
                         >
                           {job.params[name]}
                         </td>
@@ -644,7 +644,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       <td className="px-3 py-2.5">
                         <StatusBadge status={job.status} />
                       </td>
-                      <td className="max-w-[200px] truncate px-3 py-2.5 text-xs text-[#a19b94]">
+                      <td className="max-w-[200px] truncate px-3 py-2.5 text-xs text-[#6b665f]">
                         {job.status === "done" && job.result
                           ? typeof job.result === "object"
                             ? JSON.stringify(job.result).slice(0, 60) +
@@ -656,18 +656,18 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                             ? "—"
                             : "—"}
                       </td>
-                      <td className="px-3 py-2.5 font-mono text-xs text-[#a19b94]">
+                      <td className="px-3 py-2.5 font-mono text-xs text-[#6b665f]">
                         {job.duration > 0 ? formatDuration(job.duration) : "—"}
                       </td>
                     </tr>
                     {/* Expanded detail row */}
                     {expandedRow === idx && job.result && (
-                      <tr key={`${idx}-detail`} className="border-b border-[#262320]/50">
+                      <tr key={`${idx}-detail`} className="border-b border-[#d5cfc6]/50">
                         <td
                           colSpan={paramNames.length + 4}
-                          className="bg-[#181614] px-4 py-3"
+                          className="bg-[#f8f4ef] px-4 py-3"
                         >
-                          <pre className="max-h-48 overflow-auto rounded-lg bg-[#282521] p-3 font-mono text-xs text-[#a19b94]">
+                          <pre className="max-h-48 overflow-auto rounded-lg bg-[#e8e2d9] p-3 font-mono text-xs text-[#6b665f]">
                             {JSON.stringify(job.result, null, 2)}
                           </pre>
                         </td>
@@ -685,18 +685,18 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
       {/* RESULTS CHART                                                        */}
       {/* ================================================================== */}
       {jobs.some((j) => j.status === "done") && (
-        <section className="rounded-xl border border-[#262320] bg-[#1e1b18] p-5">
+        <section className="rounded-xl border border-[#d5cfc6] bg-[#f0ebe4] p-5">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold tracking-tight text-[#faf6f1]">
+            <h2 className="text-lg font-semibold tracking-tight text-[#2a2520]">
               Results
             </h2>
-            <div className="flex rounded-md border border-[#262320] text-xs">
+            <div className="flex rounded-md border border-[#d5cfc6] text-xs">
               <button
                 onClick={() => setViewMode("chart")}
                 className={`flex items-center gap-1 px-2.5 py-1 transition ${
                   viewMode === "chart"
                     ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#706b64] hover:text-[#a19b94]"
+                    : "text-[#9a9590] hover:text-[#6b665f]"
                 }`}
               >
                 <BarChart3 size={12} />
@@ -707,7 +707,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                 className={`flex items-center gap-1 px-2.5 py-1 transition ${
                   viewMode === "table"
                     ? "bg-[#d4884a]/15 text-[#d4884a]"
-                    : "text-[#706b64] hover:text-[#a19b94]"
+                    : "text-[#9a9590] hover:text-[#6b665f]"
                 }`}
               >
                 <Table size={12} />
@@ -719,11 +719,11 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
           {/* Axis selectors */}
           <div className="mb-4 flex flex-wrap gap-4">
             <div>
-              <label className="mb-1 block text-xs text-[#706b64]">X-Axis</label>
+              <label className="mb-1 block text-xs text-[#9a9590]">X-Axis</label>
               <select
                 value={chartXAxis}
                 onChange={(e) => setChartXAxis(e.target.value)}
-                className="rounded-md border border-[#262320] bg-[#282521] px-2.5 py-1.5 text-sm text-[#faf6f1] outline-none focus:border-[#d4884a]"
+                className="rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none focus:border-[#d4884a]"
               >
                 <option value="" disabled>
                   Select...
@@ -736,11 +736,11 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[#706b64]">Y-Axis</label>
+              <label className="mb-1 block text-xs text-[#9a9590]">Y-Axis</label>
               <select
                 value={chartYAxis}
                 onChange={(e) => setChartYAxis(e.target.value)}
-                className="rounded-md border border-[#262320] bg-[#282521] px-2.5 py-1.5 text-sm text-[#faf6f1] outline-none focus:border-[#d4884a]"
+                className="rounded-md border border-[#d5cfc6] bg-[#e8e2d9] px-2.5 py-1.5 text-sm text-[#2a2520] outline-none focus:border-[#d4884a]"
               >
                 <option value="" disabled>
                   Select...
@@ -756,25 +756,25 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
 
           {/* Chart or table */}
           {viewMode === "chart" ? (
-            <div className="rounded-lg bg-[#181614] p-4">
+            <div className="rounded-lg bg-[#f8f4ef] p-4">
               {!chartXAxis || !chartYAxis ? (
-                <p className="flex h-64 items-center justify-center text-sm text-[#706b64]">
+                <p className="flex h-64 items-center justify-center text-sm text-[#9a9590]">
                   Select X and Y axes to visualize results
                 </p>
               ) : isMultiParam ? (
                 <ResponsiveContainer width="100%" height={320}>
                   <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
-                    <CartesianGrid stroke="#262320" strokeDasharray="3 3" />
+                    <CartesianGrid stroke="#d5cfc6" strokeDasharray="3 3" />
                     <XAxis
                       dataKey={chartXAxis}
                       name={chartXAxis}
-                      tick={{ fill: "#706b64", fontSize: 11 }}
-                      axisLine={{ stroke: "#262320" }}
-                      tickLine={{ stroke: "#262320" }}
+                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      axisLine={{ stroke: "#d5cfc6" }}
+                      tickLine={{ stroke: "#d5cfc6" }}
                       label={{
                         value: chartXAxis,
                         position: "bottom",
-                        fill: "#a19b94",
+                        fill: "#6b665f",
                         fontSize: 12,
                         offset: 0,
                       }}
@@ -782,14 +782,14 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                     <YAxis
                       dataKey={chartYAxis}
                       name={chartYAxis}
-                      tick={{ fill: "#706b64", fontSize: 11 }}
-                      axisLine={{ stroke: "#262320" }}
-                      tickLine={{ stroke: "#262320" }}
+                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      axisLine={{ stroke: "#d5cfc6" }}
+                      tickLine={{ stroke: "#d5cfc6" }}
                       label={{
                         value: chartYAxis,
                         angle: -90,
                         position: "insideLeft",
-                        fill: "#a19b94",
+                        fill: "#6b665f",
                         fontSize: 12,
                       }}
                     />
@@ -813,36 +813,36 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                     )}
                     margin={{ top: 10, right: 20, bottom: 20, left: 10 }}
                   >
-                    <CartesianGrid stroke="#262320" strokeDasharray="3 3" />
+                    <CartesianGrid stroke="#d5cfc6" strokeDasharray="3 3" />
                     <XAxis
                       dataKey={chartXAxis}
-                      tick={{ fill: "#706b64", fontSize: 11 }}
-                      axisLine={{ stroke: "#262320" }}
-                      tickLine={{ stroke: "#262320" }}
+                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      axisLine={{ stroke: "#d5cfc6" }}
+                      tickLine={{ stroke: "#d5cfc6" }}
                       label={{
                         value: chartXAxis,
                         position: "bottom",
-                        fill: "#a19b94",
+                        fill: "#6b665f",
                         fontSize: 12,
                         offset: 0,
                       }}
                     />
                     <YAxis
                       dataKey={chartYAxis}
-                      tick={{ fill: "#706b64", fontSize: 11 }}
-                      axisLine={{ stroke: "#262320" }}
-                      tickLine={{ stroke: "#262320" }}
+                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      axisLine={{ stroke: "#d5cfc6" }}
+                      tickLine={{ stroke: "#d5cfc6" }}
                       label={{
                         value: chartYAxis,
                         angle: -90,
                         position: "insideLeft",
-                        fill: "#a19b94",
+                        fill: "#6b665f",
                         fontSize: 12,
                       }}
                     />
                     <Tooltip
                       content={<ChartTooltipContent />}
-                      cursor={{ stroke: "#706b64", strokeDasharray: "3 3" }}
+                      cursor={{ stroke: "#9a9590", strokeDasharray: "3 3" }}
                     />
                     <Line
                       type="monotone"
@@ -858,10 +858,10 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
             </div>
           ) : (
             /* Data table view */
-            <div className="overflow-x-auto rounded-lg border border-[#262320]">
+            <div className="overflow-x-auto rounded-lg border border-[#d5cfc6]">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-[#262320] bg-[#282521] text-xs text-[#706b64]">
+                  <tr className="border-b border-[#d5cfc6] bg-[#e8e2d9] text-xs text-[#9a9590]">
                     <th className="px-3 py-2 font-medium">#</th>
                     {paramNames.map((n) => (
                       <th key={n} className="px-3 py-2 font-medium">
@@ -879,15 +879,15 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                   {chartData.map((point, i) => (
                     <tr
                       key={i}
-                      className="border-b border-[#262320]/50 hover:bg-[#282521]/40"
+                      className="border-b border-[#d5cfc6]/50 hover:bg-[#e8e2d9]/40"
                     >
-                      <td className="px-3 py-2 font-mono text-xs text-[#706b64]">
+                      <td className="px-3 py-2 font-mono text-xs text-[#9a9590]">
                         {i + 1}
                       </td>
                       {paramNames.map((n) => (
                         <td
                           key={n}
-                          className="px-3 py-2 font-mono text-xs text-[#faf6f1]"
+                          className="px-3 py-2 font-mono text-xs text-[#2a2520]"
                         >
                           {point[n] ?? "—"}
                         </td>
@@ -895,7 +895,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                       {resultMetricKeys.map((k) => (
                         <td
                           key={k}
-                          className="px-3 py-2 font-mono text-xs text-[#a19b94]"
+                          className="px-3 py-2 font-mono text-xs text-[#6b665f]"
                         >
                           {point[k] != null
                             ? typeof point[k] === "number"

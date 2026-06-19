@@ -112,7 +112,7 @@ function AtomSphere({ position, color, radius, label, onClick }: {
       <sphereGeometry args={[radius, 24, 24]} />
       <meshStandardMaterial color={color} roughness={0.35} metalness={0.15} />
       {onClick && (
-        <Text position={[0, radius + 0.2, 0]} fontSize={0.22} color="#faf6f1" anchorX="center" anchorY="bottom">
+        <Text position={[0, radius + 0.2, 0]} fontSize={0.22} color="#2a2520" anchorX="center" anchorY="bottom">
           {label}
         </Text>
       )}

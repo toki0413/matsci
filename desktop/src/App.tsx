@@ -2751,8 +2751,8 @@ export default function App() {
           )}
 
           {activeTab === "terminal" && (
-            <div className="flex h-full flex-col bg-black">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+            <div className="flex h-full flex-col bg-[#1e1b18] text-[#e8e2d9]">
+              <div className="flex h-12 items-center justify-between border-b border-[#2d2926] bg-[#282521] px-4">
                 <span className="text-sm font-semibold">Integrated Terminal</span>
                 <div className="flex items-center gap-2">
                   <button
@@ -2792,7 +2792,7 @@ export default function App() {
                     }
                   }}
                   placeholder="Type a command and press Enter"
-                  className="input flex-1 bg-black font-mono text-sm"
+                  className="input flex-1 bg-[#1e1b18] font-mono text-sm border-[#2d2926] text-[#e8e2d9]"
                   spellCheck={false}
                 />
               </div>
@@ -2978,8 +2978,8 @@ export default function App() {
           )}
 
           {activeTab === "logs" && (
-            <div className="flex h-full flex-col bg-black">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+            <div className="flex h-full flex-col bg-[#1e1b18] text-[#e8e2d9]">
+              <div className="flex h-12 items-center justify-between border-b border-[#2d2926] bg-[#282521] px-4">
                 <span className="text-sm font-semibold">Backend Logs</span>
                 <div className="flex items-center gap-2">
                   <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
@@ -4491,7 +4491,7 @@ export default function App() {
       </main>
 
       {showGuide && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#2a2520]/40 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl">
             <h2 className="mb-1 text-xl font-bold">Welcome to Huginn</h2>
             <p className="mb-5 text-sm italic text-text-secondary">

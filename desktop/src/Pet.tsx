@@ -235,7 +235,7 @@ function ProgressRing({ progress, visible }: { progress: number; visible: boolea
   return (
     <div className={`pet-progress-ring ${visible ? "pet-progress-ring-visible" : ""}`}>
       <svg viewBox="0 0 130 130" className="w-full h-full" style={{ transform: "rotate(-90deg)" }}>
-        <circle cx="65" cy="65" r="60" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="2" />
+        <circle cx="65" cy="65" r="60" fill="none" stroke="rgba(42,37,32,0.08)" strokeWidth="2" />
         <circle cx="65" cy="65" r="60" fill="none" stroke="var(--seed-primary, #3b82f6)" strokeWidth="2.5" strokeLinecap="round"
           strokeDasharray={circumference} strokeDashoffset={offset}
           style={{ transition: "stroke-dashoffset 0.8s ease" }} />
