@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import shutil
 
 import pytest
 
@@ -230,6 +231,8 @@ class TestTensorAlgebraLean:
         project = Path(__file__).parent.parent / "lean" / "HuginnLean"
         if not (project / "lakefile.toml").exists():
             pytest.skip("HuginnLean project not found")
+        if not shutil.which("lake"):
+            pytest.skip("lake executable not found")
         return LeanInterface(project)
 
     def test_isotropic_stiffness_applied(self, lean):
@@ -321,7 +324,10 @@ class TestTensorCalculusCrossGoal:
     @pytest.fixture
     def lean_tool(self):
         from pathlib import Path
+        import shutil
 
+        if not shutil.which("lake"):
+            pytest.skip("lake executable not found")
         project = Path(__file__).parent.parent / "lean" / "HuginnLean"
         if not (project / "lakefile.toml").exists():
             pytest.skip("HuginnLean project not found")

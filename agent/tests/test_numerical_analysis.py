@@ -1,6 +1,7 @@
 """Tests for the NumericalAnalysis error-bound framework in Lean 4."""
 
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -14,6 +15,8 @@ class TestNumericalAnalysis:
     def lean(self):
         if not (LEAN_PROJECT / "lakefile.toml").exists():
             pytest.skip("HuginnLean project not found")
+        if not shutil.which("lake"):
+            pytest.skip("lake executable not found")
         return LeanInterface(LEAN_PROJECT)
 
     def test_sym2x2_eigenvalues(self, lean):

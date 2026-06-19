@@ -1,6 +1,10 @@
-"""Tests for the security layer: sandbox, audit, safe_eval, config key resolution."""
 
 from __future__ import annotations
+
+import pytest
+pytest.importorskip("docker", reason="docker SDK not installed")
+
+"""Tests for the security layer: sandbox, audit, safe_eval, config key resolution."""
 
 import json
 import os

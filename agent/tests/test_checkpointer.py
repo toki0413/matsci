@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
+import pytest
+
+_sqlite_saver_available = importlib.util.find_spec("langgraph.checkpoint.sqlite") is not None
+
 import tempfile
 from pathlib import Path
 
@@ -14,6 +19,7 @@ class TestCheckpointerFactory:
         cp = create_in_memory_checkpointer()
         assert cp is not None
 
+    @pytest.mark.skipif(not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available")
     def test_sqlite_checkpointer_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cp.sqlite"
@@ -21,6 +27,7 @@ class TestCheckpointerFactory:
             assert cp is not None
             assert path.exists()
 
+    @pytest.mark.skipif(not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available")
     def test_env_path(self, monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "env.sqlite"
@@ -36,6 +43,7 @@ class TestHuginnAgentCheckpointer:
         # InMemorySaver class name; avoid importing langgraph internals.
         assert "InMemory" in type(agent.checkpointer).__name__
 
+    @pytest.mark.skipif(not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available")
     def test_persistent_by_path(self):
         with (
             tempfile.TemporaryDirectory() as tmp,
@@ -43,6 +51,7 @@ class TestHuginnAgentCheckpointer:
         ):
             assert "Sqlite" in type(agent.checkpointer).__name__
 
+    @pytest.mark.skipif(not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available")
     def test_persistent_by_env(self, monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             monkeypatch.setenv(

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+pytest.importorskip("langchain_ollama", reason="langchain-ollama not installed")
+
 from huginn.agent import HuginnAgent
 from huginn.config import HuginnConfig
 from huginn.telemetry import NullTelemetryCollector

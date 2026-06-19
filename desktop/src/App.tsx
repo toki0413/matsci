@@ -12,6 +12,7 @@ import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import PeriodicTable from "./components/PeriodicTable";
 import SandboxPanel from "./components/SandboxPanel";
 import Notebook from "./components/Notebook";
+import DiffViewer from "./components/DiffViewer";
 import SweepDashboard from "./components/SweepDashboard";
 import StructureViewer from "./components/StructureViewer";
 import ReactMarkdown from 'react-markdown';
@@ -2847,71 +2848,24 @@ export default function App() {
                   <span className="text-sm font-semibold">
                     {activeCp ? `Checkpoint ${activeCp}` : "Review"}
                   </span>
-                  {activeCp && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => rejectCheckpoint(activeCp)}
-                        className="btn-secondary px-3 py-1.5 text-xs text-error hover:bg-error/10"
-                      >
-                        Reject all
-                      </button>
-                      <button
-                        onClick={() => acceptCheckpoint(activeCp)}
-                        className="btn-primary px-3 py-1.5 text-xs"
-                      >
-                        Accept all
-                      </button>
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex flex-1 overflow-hidden">
-                  {/* File list */}
-                  <div className="w-64 overflow-y-auto border-r border-border bg-bg-secondary p-2">
-                    {diffs.map((d) => (
-                      <button
-                        key={d.path}
-                        onClick={() => setSelectedDiff(d)}
-                        className={`mb-1 flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs ${
-                          selectedDiff?.path === d.path
-                            ? "bg-accent text-white"
-                            : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-                        }`}
-                      >
-                        <span className="truncate">{d.path}</span>
-                        <span
-                          className={`ml-2 shrink-0 rounded px-1 text-[10px] ${
-                            d.status === "added"
-                              ? "bg-success/20 text-success"
-                              : d.status === "deleted"
-                              ? "bg-error/20 text-error"
-                              : "bg-warning/20 text-warning"
-                          }`}
-                        >
-                          {d.status}
-                        </span>
-                      </button>
-                    ))}
-                    {activeCp && diffs.length === 0 && (
-                      <div className="p-2 text-xs text-text-muted">No changes</div>
-                    )}
-                  </div>
-
-                  {/* Diff content */}
-                  <div className="flex-1 overflow-auto bg-bg-primary p-4">
-                    {selectedDiff ? (
-                      <div>
-                        <div className="mb-2 text-sm font-semibold">{selectedDiff.path}</div>
-                        <pre className="rounded-lg border border-border bg-bg-secondary p-3 font-mono text-xs whitespace-pre-wrap">
-                          {selectedDiff.diff || "(binary or no diff)"}
-                        </pre>
-                      </div>
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-text-muted">
-                        Select a changed file to review
-                      </div>
-                    )}
-                  </div>
+                  {activeCp && diffs.length > 0 ? (
+                    <DiffViewer
+                      diffs={diffs}
+                      onAcceptAll={() => acceptCheckpoint(activeCp)}
+                      onRejectAll={() => rejectCheckpoint(activeCp)}
+                    />
+                  ) : activeCp ? (
+                    <div className="flex h-full items-center justify-center text-sm text-text-muted">
+                      No changes in this checkpoint
+                    </div>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-text-muted">
+                      Select a checkpoint to review changes
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

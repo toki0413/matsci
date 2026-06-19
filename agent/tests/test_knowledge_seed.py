@@ -1,3 +1,7 @@
+
+import pytest
+pytest.importorskip("chromadb", reason="chromadb not installed (pip install huginn-agent[rag])")
+
 """Tests for built-in knowledge-base seed documents."""
 
 import tempfile
