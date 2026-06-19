@@ -8,7 +8,7 @@ from huginn.security.container_executor import ContainerExecutor
 from huginn.security.execution import allow_local_bash, get_executor
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.security.safe_eval import SafeEvalError, safe_eval
-from huginn.security.sandbox import SandboxConfig, SandboxError, SandboxExecutor
+from huginn.security.sandbox import SandboxConfig, SandboxError, SandboxExecutor, SandboxResult
 from huginn.security.secrets import (
     EnvSecretBackend,
     SecretBackend,
@@ -20,6 +20,7 @@ __all__ = [
     "SandboxExecutor",
     "SandboxConfig",
     "SandboxError",
+    "SandboxResult",
     "ContainerExecutor",
     "get_executor",
     "allow_local_bash",
