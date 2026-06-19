@@ -63,15 +63,15 @@ const BLOCK_LABELS = Object.keys(BLOCK_COLORS);
 function cellBg(el: Element, mode: ColorMode): string {
   const map = mode === "category" ? CATEGORY_COLORS : BLOCK_COLORS;
   const key = mode === "category" ? el.category : el.block;
-  const hex = map[key] ?? "#444";
-  // return a muted fill (30 % opacity) so text stays readable on dark bg
+  const hex = map[key] ?? "#9a9590";
+  // return a muted fill (30 % opacity) so text stays readable on light bg
   return hex + "4d";
 }
 
 function cellBorder(el: Element, mode: ColorMode): string {
   const map = mode === "category" ? CATEGORY_COLORS : BLOCK_COLORS;
   const key = mode === "category" ? el.category : el.block;
-  return map[key] ?? "#444";
+  return map[key] ?? "#9a9590";
 }
 
 /* ──────────────────────── Main Component ─────────────────────────── */
