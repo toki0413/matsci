@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import {
   playPetChirp, playHappyCoo, playFeedTick, playLevelUp,
   startAmbient, stopAmbient, setMuted as setSoundMuted,
 } from "./sounds";
 
-const API_BASE = "http://localhost:8000";
+let API_BASE = "http://localhost:8000";
 
 type PetMood = "idle" | "thinking" | "working" | "success" | "error" | "sleeping" | "happy" | "eating" | "hungry" | "levelup";
 type PetPersonality = "cheerful" | "nerdy" | "calm" | "sassy";
@@ -456,37 +457,50 @@ export default function Pet() {
     document.body.style.background = "transparent";
     document.documentElement.style.background = "transparent";
 
-    const es = new EventSource(`${API_BASE}/events`);
-    es.onmessage = (ev) => {
+    // Sync backend port before opening SSE so we connect to the right URL.
+    let es: EventSource;
+    const init = async () => {
       try {
-        const data = JSON.parse(ev.data);
-        setBackendOnline(true);
-        if (data.type === "heartbeat" && data.state) {
-          updateFromState(data.state as PetState);
-          return;
-        }
-        if (data.type === "state") {
-          updateFromState(data.state as PetState);
-        } else if (data.type === "event") {
-          const moodEvt = data.mood as PetMood;
-          const msg = data.message as string;
-          const persist = moodEvt === "error";
-          speak(msg, moodEvt, persist);
-          hop();
-          // Auto XP gain on success
-          if (moodEvt === "success") {
-            gainXp(XP_PER_SUCCESS);
-            spawnParticles("star", 6, 2000);
-          }
+        const port: number = await invoke("get_backend_port");
+        if (port && port > 0) {
+          API_BASE = `http://localhost:${port}`;
         }
       } catch {
-        // ignore malformed events
+        // Tauri IPC not available — keep default
       }
+      es = new EventSource(`${API_BASE}/events`);
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          setBackendOnline(true);
+          if (data.type === "heartbeat" && data.state) {
+            updateFromState(data.state as PetState);
+            return;
+          }
+          if (data.type === "state") {
+            updateFromState(data.state as PetState);
+          } else if (data.type === "event") {
+            const moodEvt = data.mood as PetMood;
+            const msg = data.message as string;
+            const persist = moodEvt === "error";
+            speak(msg, moodEvt, persist);
+            hop();
+            // Auto XP gain on success
+            if (moodEvt === "success") {
+              gainXp(XP_PER_SUCCESS);
+              spawnParticles("star", 6, 2000);
+            }
+          }
+        } catch {
+          // ignore malformed events
+        }
+      };
+      es.onerror = () => {
+        setBackendOnline(false);
+        speak(formatMsg(pack.offline, petName), "sleeping", true);
+      };
     };
-    es.onerror = () => {
-      setBackendOnline(false);
-      speak(formatMsg(pack.offline, petName), "sleeping", true);
-    };
+    init();
 
     idleTimer.current = setInterval(() => {
       const idleMs = Date.now() - lastActivityRef.current;
@@ -520,7 +534,7 @@ export default function Pet() {
     }, Math.min(HUNGER_DECAY_INTERVAL, MOOD_DECAY_INTERVAL));
 
     return () => {
-      es.close();
+      es?.close();
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (hopTimer.current) clearTimeout(hopTimer.current);
       if (idleTimer.current) clearInterval(idleTimer.current);

@@ -119,10 +119,24 @@ interface BackendLogEvent {
   time: string;
 }
 
-const API_BASE = "http://localhost:8000";
-const WS_URL =
+let API_BASE = "http://localhost:8000";
+let WS_URL =
   ((import.meta as any).env?.VITE_WS_URL as string | undefined) ||
   `${API_BASE.replace("http", "ws")}/ws/agent`;
+
+/** Update API_BASE and WS_URL from the actual backend port reported by Tauri. */
+async function syncBackendUrl() {
+  try {
+    const port: number = await invoke("get_backend_port");
+    if (port && port > 0) {
+      API_BASE = `http://localhost:${port}`;
+      WS_URL = `${API_BASE.replace("http", "ws")}/ws/agent`;
+      console.log(`[API] synced to port ${port}`);
+    }
+  } catch {
+    // Tauri IPC not available (dev/browser) — keep defaults
+  }
+}
 
 const CONFIG_KEY = "huginn:config:v1";
 
@@ -719,6 +733,7 @@ export default function App() {
     setStatus("starting backend…");
     try {
       const result = await invoke("start_backend");
+      await syncBackendUrl();
       setStatus(`${result} • waiting for health…`);
     } catch (e: any) {
       setStatus(`backend start failed: ${e}`);
@@ -733,6 +748,7 @@ export default function App() {
       try {
         const s: any = await invoke("get_agent_status");
         if (alive) {
+          await syncBackendUrl();
           setStatus(`${s.status} • v${s.version || "0.1.0"}`);
           if (s.status === "ok") return true;
         }
@@ -1963,6 +1979,20 @@ export default function App() {
           }
           return updated;
         });
+        break;
+      case "exploration_result":
+        if (data.data) {
+          setExploreResult(data.data);
+          setExploreRunning(false);
+          const best = data.data.best_branch;
+          const summary = best
+            ? `Exploration complete — best: **${best.name}** (${data.data.convergence_reason})`
+            : `Exploration complete (${data.data.convergence_reason})`;
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: summary, timestamp: formatTime() },
+          ]);
+        }
         break;
       case "pong":
         break;
