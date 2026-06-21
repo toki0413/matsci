@@ -10,11 +10,134 @@ actual solvers (linear algebra, HPC, etc.).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from huginn.unified.core import UnifiedProblem, VariationalPrinciple
+
+
+# ====================================================================
+# Discretization metadata — lightweight annotation
+# ====================================================================
+
+@dataclass
+class DiscretizationMetadata:
+    """Metadata attached to discretization output matrices.
+
+    Provides semantic context for downstream consumers (solvers, HPC,
+    visualization) without modifying the raw matrix data.
+    """
+
+    spatial_dimension: int
+    dof_type: str  # e.g. "temperature", "displacement", "u"
+    dof_kind: str  # "scalar", "vector", "tensor"
+    dof_units: str  # e.g. "K", "m", ""
+    domain_bounds: dict[str, tuple[float, float]]
+    material_coefficient: float
+    source_term: float
+    bc_type: str  # "dirichlet", "none", "mixed"
+    bc_indices: list[int]  # DOF indices where BCs are applied
+    bc_values: list[float]  # prescribed values at bc_indices
+    interior_indices: list[int]  # DOF indices NOT constrained
+    element_type: str  # "linear_segment", "linear_triangle", "5pt_stencil"
+    matrix_structure: str  # "symmetric_positive_definite", "tridiagonal", "dense"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "spatial_dimension": self.spatial_dimension,
+            "dof_type": self.dof_type,
+            "dof_kind": self.dof_kind,
+            "dof_units": self.dof_units,
+            "domain_bounds": self.domain_bounds,
+            "material_coefficient": self.material_coefficient,
+            "source_term": self.source_term,
+            "bc_type": self.bc_type,
+            "bc_indices": self.bc_indices,
+            "bc_values": self.bc_values,
+            "interior_indices": self.interior_indices,
+            "element_type": self.element_type,
+            "matrix_structure": self.matrix_structure,
+        }
+
+
+def _attach_metadata(
+    result: dict[str, Any],
+    problem: UnifiedProblem,
+    method: str,
+) -> dict[str, Any]:
+    """Attach DiscretizationMetadata to the result dict (non-invasive)."""
+    dim = len(problem.domain.coordinates) if problem.domain else 1
+    bounds = dict(problem.domain.bounds) if problem.domain else {}
+
+    # Extract DOF type from the first field in the problem
+    dof_type, dof_kind, dof_units = "u", "scalar", ""
+    if problem.fields:
+        first_field = next(iter(problem.fields.values()))
+        dof_type = first_field.name
+        dof_kind = str(first_field.kind.value) if hasattr(first_field.kind, "value") else str(first_field.kind)
+        dof_units = first_field.units or ""
+
+    coeff = _material_coefficient(problem)
+    source = _source_term(problem)
+
+    n_dof: int = result.get("n_dof", 0)
+    bc_indices: list[int] = []
+    bc_values: list[float] = []
+
+    # Detect boundary DOFs from the stiffness matrix structure:
+    # A row that is [0, ..., 0, 1, 0, ..., 0] with rhs=0 is a Dirichlet BC row
+    K = result.get("stiffness_matrix", [])
+    F = result.get("load_vector", [])
+    for i in range(min(n_dof, len(K))):
+        row = K[i]
+        if len(row) == n_dof and abs(row[i] - 1.0) < 1e-12:
+            off_diag_sum = sum(abs(row[j]) for j in range(n_dof) if j != i)
+            if off_diag_sum < 1e-12 and i < len(F) and abs(F[i]) < 1e-12:
+                bc_indices.append(i)
+                bc_values.append(0.0)
+
+    all_indices = set(range(n_dof))
+    bc_set = set(bc_indices)
+    interior = sorted(all_indices - bc_set)
+
+    bc_type = "dirichlet" if bc_indices else "none"
+
+    # Element type label
+    if dim == 1 and method == "fem":
+        element_type = "linear_segment"
+        matrix_structure = "symmetric_positive_definite"
+    elif dim == 1 and method == "fd":
+        element_type = "3pt_stencil"
+        matrix_structure = "tridiagonal"
+    elif dim == 2 and method == "fem":
+        element_type = "linear_triangle"
+        matrix_structure = "symmetric_positive_definite"
+    elif dim == 2 and method == "fd":
+        element_type = "5pt_stencil"
+        matrix_structure = "symmetric_positive_definite"
+    else:
+        element_type = "unknown"
+        matrix_structure = "dense"
+
+    metadata = DiscretizationMetadata(
+        spatial_dimension=dim,
+        dof_type=dof_type,
+        dof_kind=dof_kind,
+        dof_units=dof_units,
+        domain_bounds=bounds,
+        material_coefficient=coeff,
+        source_term=source,
+        bc_type=bc_type,
+        bc_indices=bc_indices,
+        bc_values=bc_values,
+        interior_indices=interior,
+        element_type=element_type,
+        matrix_structure=matrix_structure,
+    )
+    result["metadata"] = metadata
+    return result
 
 
 def _bounds_1d(problem: UnifiedProblem) -> tuple[float, float]:
@@ -277,7 +400,9 @@ def discretize(
         n: Number of elements (FEM 1D) or points (FD 1D/2D).
 
     Returns:
-        dict with stiffness_matrix, load_vector, mesh, etc.
+        dict with stiffness_matrix, load_vector, mesh, and ``metadata``
+        (:class:`DiscretizationMetadata`) containing DOF type, spatial
+        dimension, boundary condition labels, and matrix structure info.
     """
     method = method.lower()
     if problem.principle not in {
@@ -293,19 +418,23 @@ def discretize(
         raise ValueError("Problem must have a domain")
 
     dim = len(problem.domain.coordinates)
+    result: dict[str, Any]
 
     if dim == 1:
         if method == "fem":
-            return _discretize_fem_1d(problem, n)
-        if method == "fd":
-            return _discretize_fd_1d(problem, n)
-        raise ValueError(f"Unknown discretization method for 1D: {method}")
-
-    if dim == 2:
+            result = _discretize_fem_1d(problem, n)
+        elif method == "fd":
+            result = _discretize_fd_1d(problem, n)
+        else:
+            raise ValueError(f"Unknown discretization method for 1D: {method}")
+    elif dim == 2:
         if method == "fem":
-            return _discretize_fem_2d(problem, n)
-        if method == "fd":
-            return _discretize_fd_2d(problem, n)
-        raise ValueError(f"Unknown discretization method for 2D: {method}")
+            result = _discretize_fem_2d(problem, n)
+        elif method == "fd":
+            result = _discretize_fd_2d(problem, n)
+        else:
+            raise ValueError(f"Unknown discretization method for 2D: {method}")
+    else:
+        raise ValueError(f"Unsupported domain dimension: {dim}")
 
-    raise ValueError(f"Unsupported domain dimension: {dim}")
+    return _attach_metadata(result, problem, method)
