@@ -7,6 +7,7 @@ Allows Huginn to use tools from external MCP servers
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from pydantic import BaseModel, create_model
@@ -14,6 +15,8 @@ from pydantic import BaseModel, create_model
 from huginn.mcp_client import MCPClientManager
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 def _schema_to_pydantic(
@@ -114,15 +117,32 @@ class MCPToolAdapter(HuginnTool):
             return ToolResult(data=None, success=False, error=f"MCP tool error: {e}")
 
 
-def register_mcp_tools(client_manager: MCPClientManager) -> list[HuginnTool]:
+def register_mcp_tools(
+    client_manager: MCPClientManager,
+    server_name: str | None = None,
+) -> list[HuginnTool]:
     """Discover MCP tools and register them as HuginnTools.
 
-    Returns the list of adapted tools for manual registration if needed.
+    If *server_name* is given, only tools from that server are registered
+    (used during reconnection).  Existing tools with the same name are
+    replaced and a debug message is logged.
+
+    Returns the list of newly registered (or replaced) adapters.
     """
     from huginn.tools.registry import ToolRegistry
 
     tools: list[HuginnTool] = []
     for info in client_manager.list_tools():
+        if server_name and info.server_name != server_name:
+            continue
+
+        existing = ToolRegistry.get(info.name)
+        if existing is not None:
+            logger.debug(
+                f"Replacing existing tool '{info.name}' "
+                f"(server: {info.server_name})"
+            )
+
         adapter = MCPToolAdapter(
             name=info.name,
             description=info.description,

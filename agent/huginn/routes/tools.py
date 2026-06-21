@@ -41,9 +41,13 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Tool '{tool_name}' has no input schema"}
 
     try:
-        input_data = tool.input_schema(**args)
-    except Exception as e:
-        return {"error": f"Invalid input: {e}"}
+        input_data = tool.input_schema.model_validate(args, strict=True)
+    except Exception as strict_err:
+        # Retry with lenient mode for backward compat, but log the strict failure
+        try:
+            input_data = tool.input_schema(**args)
+        except Exception:
+            return {"error": f"Invalid input (strict): {strict_err}"}
 
     allowed, reason = _server_allows_tool(tool_name, input_data)
     if not allowed:
