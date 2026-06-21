@@ -17,7 +17,7 @@ import json
 import re
 from typing import Any
 
-from mcp.server import Server
+from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
@@ -338,7 +338,10 @@ async def main():
             InitializationOptions(
                 server_name="math-anything-mcp",
                 server_version="0.1.0",
-                capabilities=app.get_capabilities(),
+                capabilities=app.get_capabilities(
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={},
+                ),
             ),
         )
 

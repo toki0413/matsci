@@ -102,8 +102,33 @@ _threads: dict[str, dict[str, Any]] = {}
 _EDIT_TOOLS = {"file_write_tool", "file_edit_tool"}
 
 
+async def _connect_mcp_server(
+    manager: Any,
+    name: str,
+    config: Any,
+    timeout: float = 10.0,
+) -> bool:
+    """Connect to a single MCP server with timeout and full error containment.
+
+    Returns True on success.  Never raises — all errors are caught so that a
+    misbehaving MCP server cannot corrupt the main event loop.
+    """
+    try:
+        async with asyncio.timeout(timeout):
+            await manager.connect(config)
+        return True
+    except TimeoutError:
+        print(f"[MCP] Warning: {name} connection timed out ({timeout}s)")
+    except Exception as e:
+        print(f"[MCP] Warning: failed to connect to {name}: {e}")
+    return False
+
+
 async def _init_mcp_tools():
-    """Connect to local MCP servers and register their tools."""
+    """Connect to local MCP servers and register their tools.
+
+    Failures are fully contained — this function never raises.
+    """
     try:
         from pathlib import Path
 
@@ -113,27 +138,29 @@ async def _init_mcp_tools():
         get_context().mcp_manager = MCPClientManager()
         base = Path(__file__).parent.parent.parent  # repo root
 
-        # Try mat-db-mcp
+        servers: list[tuple[str, MCPServerConfig]] = []
+
         mat_db_path = base / "servers" / "mat-db-mcp" / "server.py"
         if mat_db_path.exists():
-            await get_context().mcp_manager.connect(
-                MCPServerConfig(
-                    name="mat-db",
-                    command="python",
-                    args=[str(mat_db_path)],
-                )
+            servers.append(
+                ("mat-db", MCPServerConfig(name="mat-db", command="python", args=[str(mat_db_path)]))
             )
 
-        # Try math-anything-mcp
         math_path = base / "servers" / "math-anything-mcp" / "server.py"
         if math_path.exists():
-            await get_context().mcp_manager.connect(
-                MCPServerConfig(
-                    name="math-anything",
-                    command="python",
-                    args=[str(math_path)],
-                )
+            servers.append(
+                ("math-anything", MCPServerConfig(name="math-anything", command="python", args=[str(math_path)]))
             )
+
+        for name, cfg in servers:
+            # Run each connection in an isolated task so that anyio cancel-scope
+            # errors from a crashed MCP server cannot leak into our scope.
+            task = asyncio.create_task(
+                _connect_mcp_server(get_context().mcp_manager, name, cfg)
+            )
+            # Suppress "Task exception was never retrieved" for background cleanup
+            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            await task
 
         registered = register_mcp_tools(get_context().mcp_manager)
         print(f"[MCP] Registered {len(registered)} tools from MCP servers")
@@ -168,6 +195,30 @@ async def lifespan(app: FastAPI):
         configure_pet(cfg.pet_name, cfg.pet_personality)
     except Exception as e:
         print(f"[Pet] Warning: could not configure pet: {e}")
+
+    # Pre-warm embedding model in background so the first WS message with
+    # persona auto-routing doesn't stall for 2-4 s loading the ONNX model.
+    async def _warm_embeddings():
+        try:
+            from huginn.rag.vector_store import _embedding_model_cached
+
+            if _embedding_model_cached():
+
+                def _do_warm():
+                    from chromadb.utils.embedding_functions import (
+                        DefaultEmbeddingFunction,
+                    )
+
+                    fn = DefaultEmbeddingFunction()
+                    fn(["warmup"])
+
+                await asyncio.to_thread(_do_warm)
+                print("[init] Embedding model pre-warmed")
+        except Exception as e:
+            print(f"[init] Embedding pre-warm skipped: {e}")
+
+    asyncio.create_task(_warm_embeddings())
+
     yield
     await _shutdown_mcp()
 
@@ -207,8 +258,8 @@ app.add_middleware(
 )
 
 
-def _check_ollama_available(base_url: str, timeout: float = 2.0) -> bool:
-    """Quick check if Ollama is responding."""
+def _check_ollama_available_sync(base_url: str, timeout: float = 2.0) -> bool:
+    """Synchronous check if Ollama is responding (runs in thread pool)."""
     try:
         import urllib.request
 
@@ -219,7 +270,12 @@ def _check_ollama_available(base_url: str, timeout: float = 2.0) -> bool:
         return False
 
 
-def get_agent() -> HuginnAgent:
+async def _check_ollama_available(base_url: str, timeout: float = 2.0) -> bool:
+    """Async wrapper — delegates to thread pool to avoid blocking the event loop."""
+    return await asyncio.to_thread(_check_ollama_available_sync, base_url, timeout)
+
+
+async def get_agent() -> HuginnAgent:
     """Get or create the HuginnAgent instance."""
     if get_context().agent is not None:
         return get_context().agent
@@ -228,10 +284,10 @@ def get_agent() -> HuginnAgent:
     memory_manager = get_memory_manager()
     factory = get_agent_factory()
 
-    # Ollama: check availability first
+    # Ollama: check availability first (async — no event-loop blocking)
     if cfg.provider == "ollama" and cfg.models:
         ollama_models = [m for m in cfg.models if m.provider == "ollama" and m.enabled]
-        if ollama_models and not _check_ollama_available(cfg.ollama_host):
+        if ollama_models and not await _check_ollama_available(cfg.ollama_host):
             print(f"Warning: Ollama not responding at {cfg.ollama_host}")
             print("Falling back to mock mode (no LLM)")
             get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
@@ -732,7 +788,11 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         agent_factory=get_agent_factory(),
         audit_logger=get_context().audit_logger,
     )
-    result = await tool.call(input_data, context)
+    import asyncio
+    if asyncio.iscoroutinefunction(tool.call):
+        result = await tool.call(input_data.model_dump(), context)
+    else:
+        result = tool.call(input_data.model_dump(), context)
 
     get_context().audit_logger.log(
         event_type="tool_call",
@@ -1827,7 +1887,19 @@ async def agent_websocket(websocket: WebSocket):
                         )
                         continue
                 else:
-                    agent = get_agent()
+                    agent = await get_agent()
+
+                # Early return when no LLM is configured — skip expensive
+                # persona matching (which loads the ONNX embedding model and
+                # blocks the event loop for 2-4 seconds).
+                if agent.model is None:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "error": "No LLM configured. Set HUGINN_PROVIDER and API keys, or start Ollama.",
+                        }
+                    )
+                    continue
 
                 if requested_persona:
                     from huginn.persona_emotion import EmotionTracker
@@ -1846,10 +1918,11 @@ async def agent_websocket(websocket: WebSocket):
                     from huginn.personas import PersonaManager
 
                     mgr = PersonaManager(workspace=get_context().config.workspace)
-                    matched = match_persona_for_query(
+                    matched = await asyncio.to_thread(
+                        match_persona_for_query,
                         content,
-                        manager=mgr,
-                        score_threshold=cfg_chat.persona_auto_route_threshold,
+                        mgr,
+                        cfg_chat.persona_auto_route_threshold,
                     )
                     if matched and matched != agent.persona_name:
                         agent.set_persona(
@@ -1958,15 +2031,6 @@ async def agent_websocket(websocket: WebSocket):
                         await websocket.send_json(
                             {"type": "error", "error": f"Team mode error: {e}"}
                         )
-                    continue
-
-                if agent.model is None:
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "error": "No LLM configured. Set HUGINN_PROVIDER and API keys, or start Ollama.",
-                        }
-                    )
                     continue
 
                 # Augment with RAG context if enabled
@@ -2614,7 +2678,7 @@ async def reject_checkpoint(cp_id: str) -> dict[str, Any]:
 async def telemetry_summary() -> dict[str, Any]:
     """Return coarse telemetry summary for the global agent."""
     try:
-        agent = get_agent()
+        agent = await get_agent()
         return {"summary": agent.telemetry_summary()}
     except Exception as e:
         traceback.print_exc()
@@ -2625,7 +2689,7 @@ async def telemetry_summary() -> dict[str, Any]:
 async def telemetry_spans() -> dict[str, Any]:
     """Return all recorded telemetry spans for the global agent."""
     try:
-        agent = get_agent()
+        agent = await get_agent()
         return {"spans": agent.telemetry_spans()}
     except Exception as e:
         traceback.print_exc()
@@ -2636,7 +2700,7 @@ async def telemetry_spans() -> dict[str, Any]:
 async def memory_maintenance(params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Run long-term memory decay, prune, and deduplication."""
     try:
-        agent = get_agent()
+        agent = await get_agent()
         p = params or {}
         summary = agent.memory.maintenance(
             prune_threshold=p.get("prune_threshold", 0.15),
@@ -2654,7 +2718,7 @@ async def swarm_run(params: dict[str, Any]) -> dict[str, Any]:
     from huginn.agents.swarm import AgentRole, HuginnSwarm, SwarmAgent
 
     try:
-        agent = get_agent()
+        agent = await get_agent()
         task = params.get("task", "")
         if not task:
             return {"error": "task is required"}
