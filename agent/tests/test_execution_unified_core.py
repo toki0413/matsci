@@ -19,6 +19,9 @@ from huginn.execution.autofix import AutoFixLoop
 from huginn.execution.dimensional_validator import (
     DimensionalCheckResult,
     DimensionalValidator,
+    Unit,
+    UnitRegistry,
+    registry,
 )
 from huginn.execution.input_generator import GeneratedInput, InputFileGenerator
 from huginn.execution.orchestrator import (
@@ -241,6 +244,263 @@ class TestDimensionalValidator:
         d = DimensionalValidator()
         results = d.check_vasp_inputs({"ENCUT": 520, "SIGMA": 0.05, "POTIM": 0.5})
         assert all(r.consistent for r in results)
+
+
+# ------------------------------------------------------------------
+# Unit algebraic type
+# ------------------------------------------------------------------
+
+class TestUnitAlgebra:
+    def test_unit_base_construction(self):
+        m = Unit.base(1, "m")  # L index
+        assert m.dimensions[1] == 1.0
+        assert m.scale == 1.0
+
+    def test_unit_dimensionless(self):
+        d = Unit.dimensionless()
+        assert d.is_dimensionless
+        assert d.dimension_signature == "dimensionless"
+
+    def test_multiply_adds_dimensions(self):
+        kg = Unit.base(0, "kg")
+        m = Unit.base(1, "m")
+        result = kg * m
+        assert result.dimensions[0] == 1.0  # M
+        assert result.dimensions[1] == 1.0  # L
+
+    def test_divide_subtracts_dimensions(self):
+        m = Unit.base(1, "m")
+        s = Unit.base(2, "s")
+        velocity = m / s
+        assert velocity.dimensions[1] == 1.0   # L
+        assert velocity.dimensions[2] == -1.0  # T
+
+    def test_power_scales_dimensions(self):
+        m = Unit.base(1, "m")
+        m3 = m ** 3
+        assert m3.dimensions[1] == 3.0  # L^3
+
+    def test_equality_compares_dimensions_only(self):
+        a = Unit(scale=1.0, dimensions=(1.0, -1.0, -2.0, 0.0, 0.0, 0.0, 0.0), name="Pa")
+        b = Unit(scale=1e9, dimensions=(1.0, -1.0, -2.0, 0.0, 0.0, 0.0, 0.0), name="GPa")
+        assert a == b  # same dimensions, different scale
+
+    def test_same_dimensions_method(self):
+        m = Unit.base(1, "m")
+        cm = Unit(scale=0.01, dimensions=m.dimensions, name="cm")
+        assert m.same_dimensions(cm)
+
+    def test_dimension_dict(self):
+        Pa = Unit(scale=1.0, dimensions=(1.0, -1.0, -2.0, 0.0, 0.0, 0.0, 0.0), name="Pa")
+        d = Pa.dimension_dict
+        assert d == {"M": 1.0, "L": -1.0, "T": -2.0}
+
+    def test_dimension_signature(self):
+        Pa = Unit(scale=1.0, dimensions=(1.0, -1.0, -2.0, 0.0, 0.0, 0.0, 0.0), name="Pa")
+        sig = Pa.dimension_signature
+        assert "M1" in sig
+        assert "L-1" in sig
+        assert "T-2" in sig
+
+    def test_hash_based_on_dimensions(self):
+        a = Unit(scale=1.0, dimensions=(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        b = Unit(scale=999.0, dimensions=(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        assert hash(a) == hash(b)
+
+
+# ------------------------------------------------------------------
+# UnitRegistry — composable definitions
+# ------------------------------------------------------------------
+
+class TestUnitRegistry:
+    def test_n_per_m2_equals_pa(self):
+        """N/m² should have the same dimensions as Pa."""
+        assert registry.equivalent("N/m^2", "Pa")
+
+    def test_kg_m_per_s2_equals_n(self):
+        """kg·m/s² should have the same dimensions as N."""
+        assert registry.equivalent("kg·m/s^2", "N")
+
+    def test_j_equals_n_times_m(self):
+        """J should equal N·m in dimensions."""
+        assert registry.equivalent("J", "N·m")
+
+    def test_w_equals_j_per_s(self):
+        """W should equal J/s in dimensions."""
+        assert registry.equivalent("W", "J/s")
+
+    def test_hz_is_inverse_time(self):
+        """Hz should have dimensions T^-1."""
+        hz = registry.get("Hz")
+        assert hz.dimensions[2] == -1.0  # T
+
+    def test_gpa_to_pa_conversion(self):
+        """210 GPa should convert to 2.1e11 Pa."""
+        result = registry.convert(210, "GPa", "Pa")
+        assert result == pytest.approx(2.1e11)
+
+    def test_km_to_m_conversion(self):
+        """5 km should convert to 5000 m."""
+        result = registry.convert(5, "km", "m")
+        assert result == pytest.approx(5000.0)
+
+    def test_ev_to_j_conversion(self):
+        """1 eV should convert to ~1.602e-19 J."""
+        result = registry.convert(1, "eV", "J")
+        assert result == pytest.approx(1.60218e-19)
+
+    def test_convert_incompatible_raises(self):
+        """Converting between incompatible units should raise ValueError."""
+        with pytest.raises(ValueError, match="Incompatible"):
+            registry.convert(1, "m", "kg")
+
+    def test_si_prefix_auto_generation(self):
+        """SI-prefixed units should be auto-generated."""
+        gpa = registry.get("GPa")
+        mpa = registry.get("MPa")
+        assert gpa.dimensions == mpa.dimensions  # same dimensions
+        assert gpa.scale == pytest.approx(1e9)
+        assert mpa.scale == pytest.approx(1e6)
+
+    def test_compound_unit_kg_per_m_s2(self):
+        """kg/(m·s²) should parse correctly."""
+        u = registry.get("kg/(m·s^2)")
+        assert u.dimensions[0] == 1.0   # M
+        assert u.dimensions[1] == -1.0  # L
+        assert u.dimensions[2] == -2.0  # T
+
+    def test_compound_gpa_nm(self):
+        """GPa·nm should parse as pressure × length."""
+        u = registry.get("GPa·nm")
+        # M:1, L:-1, T:-2 * L:1 = M:1, L:0, T:-2
+        assert u.dimensions[0] == 1.0   # M
+        assert abs(u.dimensions[1]) < 1e-10  # L cancels
+        assert u.dimensions[2] == -2.0  # T
+
+    def test_compound_j_per_mol_k(self):
+        """J/(mol·K) should parse correctly."""
+        u = registry.get("J/(mol·K)")
+        assert u.dimensions[0] == 1.0    # M
+        assert u.dimensions[1] == 2.0    # L
+        assert u.dimensions[2] == -2.0   # T
+        assert u.dimensions[4] == -1.0   # N (mol)
+        assert u.dimensions[3] == -1.0   # Theta (K)
+
+    def test_all_registered_units_have_dimensions(self):
+        """Every registered unit should have a valid dimension vector."""
+        for name, u in registry.all_units().items():
+            assert len(u.dimensions) == 7
+
+    def test_register_custom_unit(self):
+        """Should be able to register a custom unit."""
+        reg = UnitRegistry()
+        custom = Unit(scale=42.0, dimensions=(0.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0), name="furlong_per_week")
+        reg.register("furlong_per_week", custom)
+        assert reg.get("furlong_per_week").scale == 42.0
+
+
+# ------------------------------------------------------------------
+# SymPy dimension inference
+# ------------------------------------------------------------------
+
+class TestSymPyInference:
+    def test_derivative_d2u_dx2(self):
+        """d²u/dx² where u has units K and x has units m → K/m²."""
+        x = sp.Symbol("x")
+        u = sp.Function("u")
+        expr = sp.diff(u(x), x, 2)
+        v = DimensionalValidator()
+        result = v.infer_dimensions(expr, {"x": "m", "u": "K"})
+        assert result.dimensions[1] == -2.0   # L^-2
+        assert result.dimensions[3] == 1.0    # Theta^1
+
+    def test_multiplication_dims(self):
+        """x * y where x is m and y is kg → m·kg."""
+        x, y = sp.symbols("x y")
+        expr = x * y
+        v = DimensionalValidator()
+        result = v.infer_dimensions(expr, {"x": "m", "y": "kg"})
+        assert result.dimensions[0] == 1.0  # M
+        assert result.dimensions[1] == 1.0  # L
+
+    def test_power_dims(self):
+        """x**2 where x is m → m²."""
+        x = sp.Symbol("x")
+        expr = x ** 2
+        v = DimensionalValidator()
+        result = v.infer_dimensions(expr, {"x": "m"})
+        assert result.dimensions[1] == 2.0  # L^2
+
+    def test_constant_is_dimensionless(self):
+        """Numeric constants should be dimensionless."""
+        x = sp.Symbol("x")
+        expr = 3 * x
+        v = DimensionalValidator()
+        result = v.infer_dimensions(expr, {"x": "m"})
+        assert result.dimensions[1] == 1.0  # L (only from x)
+
+    def test_addition_consistent_dims(self):
+        """x + y with same units should work."""
+        x, y = sp.symbols("x y")
+        expr = x + y
+        v = DimensionalValidator()
+        result = v.infer_dimensions(expr, {"x": "m", "y": "m"})
+        assert result.dimensions[1] == 1.0  # L
+
+    def test_addition_inconsistent_dims_raises(self):
+        """x + y with different units should raise ValueError."""
+        x, y = sp.symbols("x y")
+        expr = x + y
+        v = DimensionalValidator()
+        with pytest.raises(ValueError, match="Dimension mismatch"):
+            v.infer_dimensions(expr, {"x": "m", "y": "kg"})
+
+    def test_check_expression_matching(self):
+        """check_expression should return consistent=True for matching dims."""
+        x = sp.Symbol("x")
+        u = sp.Function("u")
+        expr = sp.diff(u(x), x)  # du/dx → K/m
+        v = DimensionalValidator()
+        result = v.check_expression(expr, {"x": "m", "u": "K"}, "K/m")
+        assert result.consistent is True
+
+    def test_check_expression_mismatch(self):
+        """check_expression should return consistent=False for wrong expected."""
+        x = sp.Symbol("x")
+        expr = x ** 2
+        v = DimensionalValidator()
+        result = v.check_expression(expr, {"x": "m"}, "kg")
+        assert result.consistent is False
+
+    def test_function_lookup(self):
+        """Applied function should look up its name in symbol_units."""
+        t = sp.Symbol("t")
+        T = sp.Function("T")
+        expr = T(t)
+        v = DimensionalValidator()
+        result = v.infer_dimensions(expr, {"t": "s", "T": "K"})
+        assert result.dimensions[3] == 1.0  # Theta
+
+    def test_complex_expression(self):
+        """d/dx(k * du/dx) where k is W/(m·K), u is K, x is m.
+
+        SymPy simplifies this to k * d²u/dx² (k constant wrt x).
+        [W/(m·K)] * [K/m²] = [W/m³] = M1·L-1·T-3.
+        """
+        x = sp.Symbol("x")
+        u = sp.Function("u")
+        k = sp.Symbol("k")
+        # k * du/dx
+        inner = k * sp.diff(u(x), x)
+        expr = sp.diff(inner, x)
+        v = DimensionalValidator()
+        result = v.infer_dimensions(expr, {
+            "x": "m", "u": "K", "k": "W/(m·K)"
+        })
+        # k * d²u/dx² → W/(m·K) * K/m² = W/m³ → L exponent = -1
+        assert result.dimensions[1] == pytest.approx(-1.0)  # L^-1
+        assert result.dimensions[0] == pytest.approx(1.0)   # M^1
+        assert result.dimensions[2] == pytest.approx(-3.0)  # T^-3
 
 
 # ------------------------------------------------------------------
