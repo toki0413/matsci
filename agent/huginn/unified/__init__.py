@@ -14,7 +14,7 @@ from huginn.unified.core import (
     VariationalPrinciple,
 )
 from huginn.unified.derive import derive_equations
-from huginn.unified.discretize import discretize
+from huginn.unified.discretize import DiscretizationMetadata, discretize
 from huginn.unified.models import (
     harmonic_oscillator_md,
     heat_equation_2d,
@@ -26,6 +26,7 @@ from huginn.unified.solve import solve
 from huginn.unified.visualize import plot_solution, solve_and_plot
 
 __all__ = [
+    "DiscretizationMetadata",
     "Domain",
     "DomainType",
     "EnergyFunctional",

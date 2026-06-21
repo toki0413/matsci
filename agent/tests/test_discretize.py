@@ -89,3 +89,136 @@ class TestUnifiedSymbolicDiscretize:
         assert result.success
         assert result.data["method"] == "fd"
         assert result.data["n_dof"] == 5
+
+
+# ------------------------------------------------------------------
+# DiscretizationMetadata tests
+# ------------------------------------------------------------------
+
+class TestDiscretizationMetadata:
+    """Verify that discretize() attaches correct metadata annotations."""
+
+    def test_fem_1d_metadata_present(self):
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        assert "metadata" in result
+        meta = result["metadata"]
+        from huginn.unified.discretize import DiscretizationMetadata
+        assert isinstance(meta, DiscretizationMetadata)
+
+    def test_fem_1d_spatial_dimension(self):
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        meta = result["metadata"]
+        assert meta.spatial_dimension == 1
+
+    def test_fem_1d_dof_type(self):
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        meta = result["metadata"]
+        assert meta.dof_type == "temperature"
+        assert meta.dof_kind == "scalar"
+        assert meta.dof_units == "K"  # heat equation uses temperature
+
+    def test_fem_1d_no_bc(self):
+        """1D FEM does not apply BCs at discretization time."""
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        meta = result["metadata"]
+        assert meta.bc_type == "none"
+        assert meta.bc_indices == []
+        assert meta.interior_indices == list(range(5))
+
+    def test_fem_1d_element_type(self):
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        meta = result["metadata"]
+        assert meta.element_type == "linear_segment"
+        assert meta.matrix_structure == "symmetric_positive_definite"
+
+    def test_fem_1d_material_coefficient(self):
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        meta = result["metadata"]
+        assert meta.material_coefficient == 2.0
+        assert meta.source_term == 1.0
+
+    def test_fd_1d_dirichlet_bc(self):
+        """1D FD applies Dirichlet BCs at first and last DOF."""
+        problem = heat_equation_fem(k=1.0, f=0.0)
+        result = discretize(problem, method="fd", n=5)
+        meta = result["metadata"]
+        assert meta.bc_type == "dirichlet"
+        assert meta.bc_indices == [0, 4]
+        assert meta.bc_values == [0.0, 0.0]
+        assert meta.interior_indices == [1, 2, 3]
+        assert meta.element_type == "3pt_stencil"
+        assert meta.matrix_structure == "tridiagonal"
+
+    def test_fd_1d_spatial_dimension(self):
+        problem = heat_equation_fem(k=1.0, f=0.0)
+        result = discretize(problem, method="fd", n=5)
+        meta = result["metadata"]
+        assert meta.spatial_dimension == 1
+
+    def test_fem_2d_metadata(self):
+        from huginn.unified.models import heat_equation_2d
+        problem = heat_equation_2d()
+        result = discretize(problem, method="fem", n=3)
+        meta = result["metadata"]
+        assert meta.spatial_dimension == 2
+        assert meta.element_type == "linear_triangle"
+        assert meta.bc_type == "dirichlet"
+        assert len(meta.bc_indices) > 0
+        assert len(meta.interior_indices) > 0
+        # boundary + interior = all DOFs
+        all_bc = set(meta.bc_indices)
+        all_interior = set(meta.interior_indices)
+        assert all_bc | all_interior == set(range(result["n_dof"]))
+        assert all_bc & all_interior == set()
+
+    def test_fd_2d_metadata(self):
+        from huginn.unified.models import heat_equation_2d
+        problem = heat_equation_2d()
+        result = discretize(problem, method="fd", n=4)
+        meta = result["metadata"]
+        assert meta.spatial_dimension == 2
+        assert meta.element_type == "5pt_stencil"
+        assert meta.bc_type == "dirichlet"
+        assert len(meta.bc_indices) > 0
+        # perimeter DOFs for 4x4 grid: 4*4 - 2*2 = 12 boundary
+        assert len(meta.bc_indices) == 12
+        assert len(meta.interior_indices) == 4
+
+    def test_metadata_to_dict(self):
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        meta = result["metadata"]
+        d = meta.to_dict()
+        assert isinstance(d, dict)
+        assert d["spatial_dimension"] == 1
+        assert d["dof_type"] == "temperature"
+        assert "bc_indices" in d
+        assert "interior_indices" in d
+
+    def test_metadata_domain_bounds(self):
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        meta = result["metadata"]
+        assert isinstance(meta.domain_bounds, dict)
+        assert len(meta.domain_bounds) >= 1
+
+    def test_existing_keys_unchanged(self):
+        """Verify that adding metadata does not alter existing result keys."""
+        problem = heat_equation_fem(k=2.0, f=1.0)
+        result = discretize(problem, method="fem", n=4)
+        assert "method" in result
+        assert "stiffness_matrix" in result
+        assert "load_vector" in result
+        assert "mesh" in result
+        assert "n_dof" in result
+        assert "metadata" in result
+        # The stiffness matrix should still work as before
+        K = result["stiffness_matrix"]
+        assert K[0][0] > 0
+        assert K[0][1] < 0
