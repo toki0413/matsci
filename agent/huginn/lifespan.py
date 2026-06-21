@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,6 +19,8 @@ from huginn.server_core import (
     get_context,
     get_knowledge_base,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ── MCP helpers ─────────────────────────────────────────────────────
@@ -89,6 +92,69 @@ async def _shutdown_mcp():
         get_context().mcp_manager = None
 
 
+async def _mcp_health_monitor(manager: Any) -> None:
+    """Background task: periodically probe MCP servers and reconnect failures.
+
+    Uses exponential backoff (1s → 2s → 4s → … → 30s cap) and gives up
+    after 5 consecutive failures per server.  Runs until cancelled.
+    """
+    from huginn.mcp_client import (
+        _BACKOFF_BASE,
+        _BACKOFF_FACTOR,
+        _BACKOFF_MAX,
+        _HEALTH_CHECK_INTERVAL,
+    )
+
+    while True:
+        try:
+            await asyncio.sleep(_HEALTH_CHECK_INTERVAL)
+        except asyncio.CancelledError:
+            return
+
+        for name in list(manager._configs.keys()):
+            if manager.should_stop_retrying(name):
+                continue
+
+            # Check if currently connected
+            if manager.is_connected(name):
+                healthy = await manager.check_health(name)
+                if healthy:
+                    continue
+                # Unhealthy — fall through to reconnect
+
+            # Exponential backoff based on consecutive failures
+            failures = manager._consecutive_failures.get(name, 0)
+            delay = min(
+                _BACKOFF_BASE * (_BACKOFF_FACTOR ** failures),
+                _BACKOFF_MAX,
+            )
+            logger.info(
+                f"[MCP] Reconnecting '{name}' (attempt {failures + 1}, "
+                f"backoff {delay:.1f}s)"
+            )
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+
+            success = await manager.reconnect(name)
+            if success:
+                # Re-register tools in ToolRegistry after successful reconnect
+                try:
+                    from huginn.tools.mcp_adapter import register_mcp_tools
+                    registered = register_mcp_tools(manager, server_name=name)
+                    logger.info(
+                        f"[MCP] Re-registered {len(registered)} tools from '{name}'"
+                    )
+                except Exception as e:
+                    logger.warning(f"[MCP] Tool re-registration failed for '{name}': {e}")
+            else:
+                logger.warning(
+                    f"[MCP] Reconnect failed for '{name}' "
+                    f"(consecutive failures: {manager._consecutive_failures.get(name, 0)})"
+                )
+
+
 # ── lifespan ────────────────────────────────────────────────────────
 
 
@@ -135,7 +201,23 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_warm_embeddings())
 
+    # Start MCP health monitor (periodic ping + auto-reconnect)
+    monitor_task: asyncio.Task | None = None
+    mcp_mgr = get_context().mcp_manager
+    if mcp_mgr and mcp_mgr._configs:
+        monitor_task = asyncio.create_task(_mcp_health_monitor(mcp_mgr))
+        logger.info("[MCP] Health monitor started")
+
     yield
+
+    # Shutdown: cancel monitor first, then disconnect MCP servers
+    if monitor_task and not monitor_task.done():
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("[MCP] Health monitor stopped")
     await _shutdown_mcp()
 
 

@@ -81,14 +81,13 @@ async def connect_mcp_server(params: dict[str, Any]) -> dict[str, Any]:
                 env=env,
             )
         )
-        registered = register_mcp_tools(get_context().mcp_manager)
+        registered = register_mcp_tools(get_context().mcp_manager, server_name=name)
         return {
             "success": True,
             "server": name,
             "tools": [
                 {"name": t.name, "description": t.description}
                 for t in registered
-                if t.server_name == name
             ],
         }
     except Exception as e:
@@ -110,5 +109,41 @@ async def disconnect_mcp_server(name: str) -> dict[str, Any]:
         for tool_name in tools_to_remove:
             ToolRegistry.unregister(tool_name)
         return {"success": True, "unregistered": tools_to_remove}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/mcp/status")
+async def mcp_server_status() -> dict[str, Any]:
+    """Return health and connection status for all known MCP servers."""
+    mgr = get_context().mcp_manager
+    if mgr is None:
+        return {"servers": {}, "message": "MCP manager not initialized"}
+    return {"servers": mgr.get_server_status()}
+
+
+@router.post("/mcp/servers/{name}/reconnect")
+async def reconnect_mcp_server(name: str) -> dict[str, Any]:
+    """Manually trigger a reconnection to an MCP server."""
+    mgr = get_context().mcp_manager
+    if mgr is None:
+        return {"success": False, "error": "MCP manager not initialized"}
+
+    try:
+        from huginn.tools.mcp_adapter import register_mcp_tools
+
+        success = await mgr.reconnect(name)
+        if success:
+            registered = register_mcp_tools(mgr, server_name=name)
+            return {
+                "success": True,
+                "server": name,
+                "tools": [t.name for t in registered],
+            }
+        return {
+            "success": False,
+            "error": f"Reconnect failed for '{name}' "
+            f"(failures: {mgr._consecutive_failures.get(name, 0)})",
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
