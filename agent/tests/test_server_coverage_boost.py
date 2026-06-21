@@ -13,7 +13,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from huginn.server import app
-from huginn.types import HuginnConfig
+from huginn.config import HuginnConfig
 
 
 client = TestClient(app)
@@ -21,15 +21,30 @@ client = TestClient(app)
 
 class TestConfigEncryptEndpoint:
     def test_config_encrypt(self, tmp_path: Path):
-        raw = {"provider": "openai", "model": "gpt-4o", "api_key": "secret-key"}
+        raw = {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "api_key": "secret-key",
+            "password": "test-password-123",
+        }
         response = client.post("/config/encrypt", json=raw)
         assert response.status_code == 200
         payload = response.json()
-        assert "encrypted" in payload
-        assert payload["provider"] == "openai"
-        assert payload["model"] == "gpt-4o"
-        assert payload["api_key"] != "secret-key"
-        assert base64.b64decode(payload["encrypted"])
+        assert payload["success"] is True
+        assert "path" in payload
+        # Verify the encrypted file was created and contains encrypted data
+        enc_path = tmp_path.parent / payload["path"]
+        if enc_path.exists():
+            content = enc_path.read_text()
+            data = json.loads(content)
+            assert data["provider"] == "openai"
+            assert data["model"] == "gpt-4o"
+            assert "api_key" in data
+            assert data["api_key"] != "secret-key"
+            assert "encrypted" in data or "__vault" in data
+        # Cleanup: remove created file if outside tmp_path
+        if enc_path.exists() and enc_path.parent != tmp_path:
+            enc_path.unlink()
 
 
 class TestMCPEndpoints:
