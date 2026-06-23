@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
+from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.validation.handle_validator import HandleValidator
 
 try:
     import huginn_ext
@@ -86,6 +87,28 @@ class VaspTool(HuginnTool):
             "cpu_hours": args.walltime_hours * 4,
             "walltime_hours": args.walltime_hours,
         }
+
+    async def validate_input(
+        self, args: VaspToolInput, context: ToolContext
+    ) -> ValidationResult:
+        """Pre-flight: verify working directory and required VASP input files."""
+        vr = HandleValidator.validate(HandleType.FILE_PATH, args.working_dir, context)
+        if not vr.result:
+            return ValidationResult(
+                result=False,
+                message=f"Working directory not found: {args.working_dir}",
+                error_code=404,
+            )
+        poscar = Path(args.working_dir) / "POSCAR"
+        if not poscar.exists():
+            ws_poscar = Path(context.workspace) / args.working_dir / "POSCAR" if context.workspace else None
+            if not (ws_poscar and ws_poscar.exists()):
+                return ValidationResult(
+                    result=False,
+                    message="POSCAR not found in working directory",
+                    error_code=404,
+                )
+        return ValidationResult(result=True)
 
     async def call(self, args: VaspToolInput, context: ToolContext) -> ToolResult:
         work_dir = Path(args.working_dir)

@@ -23,6 +23,15 @@ class BudgetDecision(Enum):
     DENY = "deny"
 
 
+class HandleType(str, Enum):
+    """Types of opaque handles used by tools to reference external resources."""
+
+    FILE_PATH = "file_path"
+    JOB_ID = "job_id"
+    MATERIAL_ID = "material_id"
+    FORMULA = "formula"
+
+
 @dataclass
 class PermissionResult:
     mode: PermissionMode

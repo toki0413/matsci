@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
+from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.validation.handle_validator import HandleValidator
 
 try:
     import huginn_ext
@@ -109,6 +110,55 @@ class LammpsTool(HuginnTool):
 
     def estimate_cost(self, args: LammpsToolInput) -> dict[str, float] | None:
         return {"cpu_hours": 2, "walltime_hours": 2}
+
+    async def validate_input(
+        self, args: LammpsToolInput, context: ToolContext
+    ) -> ValidationResult:
+        """Pre-flight: verify required files based on action type."""
+        if args.action == "analyze_trajectory":
+            traj = args.trajectory_file or args.input_script
+            if not traj:
+                return ValidationResult(
+                    result=False,
+                    message="Trajectory file not specified",
+                    error_code=400,
+                )
+            vr = HandleValidator.validate(HandleType.FILE_PATH, traj, context)
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Trajectory file not found: {traj}",
+                    error_code=404,
+                )
+        if args.structure_file:
+            vr = HandleValidator.validate(
+                HandleType.FILE_PATH, args.structure_file, context
+            )
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Structure file not found: {args.structure_file}",
+                    error_code=404,
+                )
+        if args.input_script and Path(args.input_script).suffix in (".lammps", ".in", ".lmp"):
+            vr = HandleValidator.validate(
+                HandleType.FILE_PATH, args.input_script, context
+            )
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Input script file not found: {args.input_script}",
+                    error_code=404,
+                )
+        for pot in args.potentials:
+            vr = HandleValidator.validate(HandleType.FILE_PATH, pot, context)
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Potential file not found: {pot}",
+                    error_code=404,
+                )
+        return ValidationResult(result=True)
 
     async def call(self, args: LammpsToolInput, context: ToolContext) -> ToolResult:
         # Handle trajectory analysis without running LAMMPS

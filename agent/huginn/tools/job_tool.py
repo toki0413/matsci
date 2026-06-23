@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field
 
 from huginn.hpc.client import HPCConfig
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
+from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.validation.handle_validator import HandleValidator
 
 
 class JobToolInput(BaseModel):
@@ -95,6 +96,30 @@ class JobTool(HuginnTool):
                 "walltime_hours": args.walltime_hours,
             }
         return None
+
+    async def validate_input(
+        self, args: JobToolInput, context: ToolContext
+    ) -> ValidationResult:
+        """Pre-flight: verify required handles based on action."""
+        if args.action in ("submit", "submit_remote") and args.script_path:
+            vr = HandleValidator.validate(HandleType.FILE_PATH, args.script_path, context)
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Job script not found: {args.script_path}",
+                    error_code=404,
+                )
+        if args.action in ("status", "cancel", "poll_remote"):
+            vr = HandleValidator.validate(
+                HandleType.JOB_ID, args.job_id or "", context
+            )
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"job_id is required for action '{args.action}'",
+                    error_code=400,
+                )
+        return ValidationResult(result=True)
 
     async def call(self, args: JobToolInput, context: ToolContext) -> ToolResult:
         if args.action == "submit":

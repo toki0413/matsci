@@ -10,7 +10,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
+from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.validation.handle_validator import HandleValidator
 
 
 class PotentialToolInput(BaseModel):
@@ -33,6 +34,38 @@ class PotentialTool(HuginnTool):
         if args.action == "train":
             return {"cpu_hours": 48, "gpu_hours": 12, "walltime_hours": 24}
         return {"cpu_hours": 1, "walltime_hours": 1}
+
+    async def validate_input(
+        self, args: PotentialToolInput, context: ToolContext
+    ) -> ValidationResult:
+        """Pre-flight: verify dataset/structure paths when provided."""
+        if args.dataset_path:
+            vr = HandleValidator.validate(HandleType.FILE_PATH, args.dataset_path, context)
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Dataset file not found: {args.dataset_path}",
+                    error_code=404,
+                )
+        if args.structure_path:
+            vr = HandleValidator.validate(HandleType.FILE_PATH, args.structure_path, context)
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Structure file not found: {args.structure_path}",
+                    error_code=404,
+                )
+        if args.trained_potential_path and args.action in ("inference", "validate"):
+            vr = HandleValidator.validate(
+                HandleType.FILE_PATH, args.trained_potential_path, context
+            )
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Trained potential not found: {args.trained_potential_path}",
+                    error_code=404,
+                )
+        return ValidationResult(result=True)
 
     async def call(self, args: PotentialToolInput, context: ToolContext) -> ToolResult:
         if args.action == "prepare_dataset":

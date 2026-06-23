@@ -11,7 +11,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
+from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.validation.handle_validator import HandleValidator
 
 
 class StructureToolInput(BaseModel):
@@ -45,6 +46,27 @@ class StructureTool(HuginnTool):
 
     def is_read_only(self, args: StructureToolInput) -> bool:
         return True
+
+    async def validate_input(
+        self, args: StructureToolInput, context: ToolContext
+    ) -> ValidationResult:
+        """Pre-flight: verify structure file exists."""
+        vr = HandleValidator.validate(HandleType.FILE_PATH, args.file_path, context)
+        if not vr.result:
+            return ValidationResult(
+                result=False,
+                message=f"Structure file not found: {args.file_path}",
+                error_code=404,
+            )
+        if args.reference_path:
+            vr2 = HandleValidator.validate(HandleType.FILE_PATH, args.reference_path, context)
+            if not vr2.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Reference file not found: {args.reference_path}",
+                    error_code=404,
+                )
+        return ValidationResult(result=True)
 
     async def call(self, args: StructureToolInput, context: ToolContext) -> ToolResult:
         path = Path(args.file_path)
