@@ -363,11 +363,109 @@ class SymbolicRegressionTool(HuginnTool):
 
     async def _compare(self, args: SymbolicRegressionInput) -> ToolResult:
         """Compare multiple expressions on the same data."""
-        # This requires probe_expression to be a list
+        if not args.probe_expression:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="probe_expression required for compare (semicolon-separated list)",
+            )
+
+        try:
+            X, Y, features = self._load_data(args)
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False, error=f"Data loading failed: {e}"
+            )
+
+        # Parse expressions: semicolon-separated
+        expressions = [
+            expr.strip()
+            for expr in args.probe_expression.split(";")
+            if expr.strip()
+        ]
+        if len(expressions) < 2:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="At least 2 expressions required for comparison",
+            )
+
+        local_vars = {f: X[:, i] for i, f in enumerate(features)}
+        local_vars["np"] = np
+
+        allowed_funcs = {
+            "sin", "cos", "tan", "exp", "log", "sqrt", "abs",
+            "max", "min", "sum", "mean", "std", "pi", "e",
+        }
+
+        import ast
+
+        results: list[dict[str, Any]] = []
+        for expr in expressions:
+            try:
+                # Validate expression safety
+                tree = ast.parse(expr, mode="eval")
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call):
+                        if isinstance(node.func, ast.Attribute) and node.func.attr not in allowed_funcs:
+                            results.append({
+                                "expression": expr,
+                                "error": f"Forbidden function: {node.func.attr}",
+                                "rank": None,
+                            })
+                            break
+                        elif isinstance(node.func, ast.Name) and node.func.id not in allowed_funcs:
+                            results.append({
+                                "expression": expr,
+                                "error": f"Forbidden function: {node.func.id}",
+                                "rank": None,
+                            })
+                            break
+                else:
+                    # All checks passed, evaluate
+                    predicted = eval(expr, {"__builtins__": {}}, local_vars)
+                    predicted = np.asarray(predicted, dtype=np.float64).reshape(-1, 1)
+                    mse = float(np.mean((predicted - Y) ** 2))
+                    rmse = float(np.sqrt(mse))
+                    ss_res = float(np.sum((Y - predicted) ** 2))
+                    ss_tot = float(np.sum((Y - np.mean(Y)) ** 2))
+                    r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+                    results.append({
+                        "expression": expr,
+                        "mse": mse,
+                        "rmse": rmse,
+                        "r2": r2,
+                        "rank": None,
+                    })
+            except Exception as e:
+                results.append({
+                    "expression": expr,
+                    "error": str(e),
+                    "rank": None,
+                })
+
+        # Rank by R² (descending), errors get lowest rank
+        valid = [r for r in results if "error" not in r]
+        valid.sort(key=lambda r: r["r2"], reverse=True)
+        for i, r in enumerate(valid, 1):
+            r["rank"] = i
+        # Assign rank after valid for errored ones
+        error_rank = len(valid) + 1
+        for r in results:
+            if r["rank"] is None:
+                r["rank"] = error_rank
+                error_rank += 1
+
         return ToolResult(
-            data=None,
-            success=False,
-            error="compare action not yet implemented — use discover + evaluate",
+            data={
+                "comparison": results,
+                "best_expression": valid[0]["expression"] if valid else None,
+                "best_r2": valid[0]["r2"] if valid else None,
+                "features": features,
+                "samples": X.shape[0],
+                "expressions_evaluated": len(results),
+            },
+            success=True,
         )
 
     def _cuda_available(self) -> bool:

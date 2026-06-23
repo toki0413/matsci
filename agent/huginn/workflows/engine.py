@@ -648,6 +648,13 @@ class WorkflowEngine:
             # Generic: store in metadata
             stage.tool_input["__auto_fixes"] = fixes
 
+    # Registry for custom validation functions
+    _custom_validators: dict[str, Any] = {}
+
+    def register_validator(self, name: str, fn: Any) -> None:
+        """Register a custom validation function for workflow rules."""
+        self._custom_validators[name] = fn
+
     def _validate(self, data: Any, rule: ValidationRule) -> bool:
         """Apply validation rule to stage output."""
         if rule.check == "convergence":
@@ -666,4 +673,34 @@ class WorkflowEngine:
                 return data["max_force"] < threshold
             return True
 
-        return True  # Custom validation not yet implemented
+        if rule.check == "custom" and rule.custom_fn:
+            fn = self._custom_validators.get(rule.custom_fn)
+            if fn is None:
+                # Try resolving as a dotted module path
+                fn = self._resolve_custom_fn(rule.custom_fn)
+            if fn is not None:
+                try:
+                    if rule.threshold is not None:
+                        return bool(fn(data, threshold=rule.threshold))
+                    return bool(fn(data))
+                except Exception:
+                    return False
+            # Unknown validator — fail closed for safety
+            return False
+
+        return True  # Unknown check type — pass through
+
+    @staticmethod
+    def _resolve_custom_fn(dotted_name: str) -> Any | None:
+        """Resolve a dotted name like 'huginn.validators.check_energy' to a callable."""
+        parts = dotted_name.rsplit(".", 1)
+        if len(parts) != 2:
+            return None
+        module_path, fn_name = parts
+        try:
+            import importlib
+
+            mod = importlib.import_module(module_path)
+            return getattr(mod, fn_name, None)
+        except (ImportError, AttributeError):
+            return None
