@@ -4,6 +4,7 @@ Each submodule exposes an ``APIRouter`` named ``router``.
 ``ALL_ROUTERS`` collects them in registration order for the FastAPI app.
 """
 
+from huginn.routes.advisor import router as advisor_router
 from huginn.routes.agents import router as agents_router
 from huginn.routes.bench import router as bench_router
 from huginn.routes.checkpoints import router as checkpoints_router
@@ -26,9 +27,13 @@ from huginn.routes.threads import router as threads_router
 from huginn.routes.tools import router as tools_router
 from huginn.routes.unified import router as unified_router
 from huginn.routes.workflows import router as workflows_router
+from huginn.routes.data_dict import router as data_dict_router
 from huginn.routes.ws import router as ws_router
+from huginn.routes.live_script import router as live_script_router
+from huginn.routes.parameters import router as parameters_router
 
 ALL_ROUTERS = [
+    advisor_router,
     health_router,
     project_router,
     planner_router,
@@ -51,5 +56,8 @@ ALL_ROUTERS = [
     hpc_router,
     team_router,
     coder_router,
+    data_dict_router,
     ws_router,
+    live_script_router,
+    parameters_router,
 ]
