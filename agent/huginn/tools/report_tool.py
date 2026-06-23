@@ -41,6 +41,10 @@ class ReportToolInput(BaseModel):
     include_files: list[str] = Field(
         default_factory=list, description="Additional files to include"
     )
+    comparison_datasets: dict[str, dict[str, Any]] | None = Field(
+        default=None,
+        description="Named datasets for comparison, e.g. {'run_A': {...}, 'run_B': {...}}",
+    )
 
 
 @dataclass
@@ -294,6 +298,85 @@ class ReportGenerator:
         return "\n".join(lines)
 
 
+class ReportComparator:
+    """Generate side-by-side comparison reports from multiple named datasets."""
+
+    def __init__(self, names: list[str], style: str = "full", fmt: str = "markdown"):
+        self.names = names
+        self.style = style
+        self.format = fmt
+
+    def generate(self, datasets: dict[str, dict[str, Any]]) -> str:
+        sections: list[str] = []
+        sections.append(self._header())
+        sections.append(self._methods_comparison(datasets))
+        sections.append(self._results_comparison(datasets))
+        sections.append(self._convergence_comparison(datasets))
+        sections.append(self._resources_comparison(datasets))
+        return "\n\n".join(s for s in sections if s)
+
+    def _header(self) -> str:
+        if self.format == "markdown":
+            return f"# Comparison Report: {' vs '.join(self.names)}"
+        elif self.format == "json":
+            return ""
+        return f"\\section*{{Comparison: {' vs '.join(self.names)}}}"
+
+    def _methods_comparison(self, datasets: dict[str, dict]) -> str:
+        lines = ["## Methods Comparison", ""]
+        lines.append("| Parameter | " + " | ".join(self.names) + " |")
+        lines.append("|-----------|" + "|".join(["-------"] * len(self.names)) + "|")
+        param_keys = ["method", "functional", "encut", "kpoints", "pseudopotentials", "smearing"]
+        for key in param_keys:
+            vals = []
+            for name in self.names:
+                methods = datasets[name].get("methods", {})
+                vals.append(str(methods.get(key, "N/A")))
+            lines.append(f"| {key} | " + " | ".join(vals) + " |")
+        return "\n".join(lines)
+
+    def _results_comparison(self, datasets: dict[str, dict]) -> str:
+        lines = ["## Results Comparison", ""]
+        lines.append("| Property | " + " | ".join(self.names) + " |")
+        lines.append("|----------|" + "|".join(["-------"] * len(self.names)) + "|")
+        all_keys: set[str] = set()
+        for ds in datasets.values():
+            all_keys.update(ds.get("results", {}).keys())
+        for key in sorted(all_keys):
+            vals = []
+            for name in self.names:
+                val = datasets[name].get("results", {}).get(key, "N/A")
+                vals.append(str(val))
+            lines.append(f"| {key} | " + " | ".join(vals) + " |")
+        return "\n".join(lines)
+
+    def _convergence_comparison(self, datasets: dict[str, dict]) -> str:
+        lines = ["## Convergence Comparison", ""]
+        conv_keys = ["energy", "n_iterations", "n_electronic", "converged"]
+        lines.append("| Metric | " + " | ".join(self.names) + " |")
+        lines.append("|--------|" + "|".join(["-------"] * len(self.names)) + "|")
+        for key in conv_keys:
+            vals = []
+            for name in self.names:
+                val = datasets[name].get("convergence", {}).get(key, "N/A")
+                vals.append(str(val))
+            lines.append(f"| {key} | " + " | ".join(vals) + " |")
+        return "\n".join(lines)
+
+    def _resources_comparison(self, datasets: dict[str, dict]) -> str:
+        lines = ["## Resource Comparison", ""]
+        res_keys = ["cpu_hours", "walltime_hours", "memory_gb", "cores"]
+        lines.append("| Resource | " + " | ".join(self.names) + " |")
+        lines.append("|----------|" + "|".join(["-------"] * len(self.names)) + "|")
+        for key in res_keys:
+            vals = []
+            for name in self.names:
+                val = datasets[name].get("resources", {}).get(key, "N/A")
+                vals.append(str(val))
+            lines.append(f"| {key} | " + " | ".join(vals) + " |")
+        return "\n".join(lines)
+
+
 class ReportTool(HuginnTool):
     """Generate computational reports from simulation results."""
 
@@ -339,11 +422,36 @@ class ReportTool(HuginnTool):
         return ToolResult(data={"report": report}, success=True)
 
     def _compare(self, args: ReportToolInput) -> ToolResult:
-        return ToolResult(
-            data={"status": "Comparison mode not yet implemented"},
-            success=False,
-            error="Use generate action for now",
-        )
+        datasets = args.comparison_datasets or {}
+        if not datasets and args.workflow_results:
+            # Try to extract comparison_datasets from workflow_results
+            datasets = args.workflow_results.get("comparison_datasets", {})
+        if not datasets:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="comparison_datasets required for compare action (dict of named result sets)",
+            )
+        if len(datasets) < 2:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="At least 2 datasets required for comparison",
+            )
+
+        names = list(datasets.keys())
+        gen = ReportComparator(names, style=args.style, fmt=args.format)
+        report = gen.generate(datasets)
+
+        if args.output_path:
+            path = Path(args.output_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(report, encoding="utf-8")
+            return ToolResult(
+                data={"report_preview": report[:500], "saved_to": str(path)},
+                success=True,
+            )
+        return ToolResult(data={"report": report}, success=True)
 
     def _export(self, args: ReportToolInput) -> ToolResult:
         return self._generate(args)

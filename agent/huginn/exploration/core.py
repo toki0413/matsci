@@ -214,15 +214,153 @@ class ExplorationSpace:
             raise ValueError(f"Unsupported format: {format}")
 
     def query(self, question: str) -> dict[str, Any]:
-        """Simple structured query interface.
+        """Structured query interface with keyword-based NL parsing.
 
-        Examples:
-        - {"type": "pareto_front"} → list of branch IDs on Pareto front
-        - {"type": "pruned", "reason_contains": "Mn"} → pruned branches matching
-        - {"type": "path", "branch_id": "xxx"} → decision path
+        Parses natural language questions into structured queries:
+        - Pareto front: "best", "optimal", "pareto", "front"
+        - Pruned: "pruned", "discarded", "rejected", "why not"
+        - Decision path: "path", "how did", "decisions for", "trace"
+        - Status: "status", "progress", "active", "running"
+        - All branches: "all", "list", "branches"
         """
-        # TODO: integrate LLM for natural language → structured query
-        return {"status": "not_implemented", "question": question}
+        q = question.lower().strip()
+
+        # Pareto front queries
+        if any(kw in q for kw in ("pareto", "best", "optimal", "front", "top")):
+            front_ids = self.pareto_front or self.update_pareto_front()
+            branches = []
+            for bid in front_ids:
+                b = self.branches.get(bid)
+                if b:
+                    branches.append({
+                        "id": b.id,
+                        "name": b.name,
+                        "objectives": b.objectives,
+                        "status": b.status.value,
+                    })
+            return {
+                "type": "pareto_front",
+                "count": len(branches),
+                "branches": branches,
+                "objectives_config": self.objectives_config,
+            }
+
+        # Pruned branch queries
+        if any(kw in q for kw in ("pruned", "discard", "rejected", "why not", "eliminated")):
+            branches = []
+            for bid in self.pruned_branches:
+                b = self.branches.get(bid)
+                if b:
+                    branches.append({
+                        "id": b.id,
+                        "name": b.name,
+                        "reason": b.prune_reason,
+                    })
+            # Optional filter by keyword
+            filter_kw = None
+            stop_words = {
+                "why", "were", "are", "the", "branches", "branch",
+                "pruned", "that", "which", "for", "been", "have",
+                "has", "did", "does", "what", "how", "show", "list",
+                "tell", "about", "with", "from", "and", "but", "not",
+                "can", "could", "would", "should", "this", "those",
+                "these", "some", "all", "any", "many", "much",
+                "discarded", "rejected", "eliminated",
+            }
+            for token in q.split():
+                clean = token.strip("?.,!;:")
+                if len(clean) > 2 and clean not in stop_words:
+                    filter_kw = clean
+                    break
+            if filter_kw:
+                branches = [
+                    b for b in branches
+                    if filter_kw in (b.get("name", "") + " " + (b.get("reason") or "")).lower()
+                ]
+            return {
+                "type": "pruned",
+                "count": len(branches),
+                "branches": branches,
+                "filter": filter_kw,
+            }
+
+        # Decision path queries
+        if any(kw in q for kw in ("path", "how did", "decisions for", "trace", "decision path")):
+            # Try to extract a branch id from the question
+            target_id = None
+            for bid in self.branches:
+                if bid in q:
+                    target_id = bid
+                    break
+            if target_id is None:
+                # Fall back to first completed branch
+                for b in self.branches.values():
+                    if b.status == BranchStatus.COMPLETED:
+                        target_id = b.id
+                        break
+            if target_id and target_id in self.branches:
+                branch = self.branches[target_id]
+                return {
+                    "type": "path",
+                    "branch_id": target_id,
+                    "branch_name": branch.name,
+                    "decisions": [
+                        {
+                            "id": d.id,
+                            "description": d.description,
+                            "chosen": d.chosen_option,
+                            "options": d.available_options,
+                            "rationale": d.rationale,
+                            "confidence": d.confidence,
+                        }
+                        for d in branch.decisions
+                    ],
+                }
+            return {"type": "path", "error": "No matching branch found", "question": question}
+
+        # Status / progress queries
+        if any(kw in q for kw in ("status", "progress", "active", "running", "summary")):
+            status_counts: dict[str, int] = {}
+            for b in self.branches.values():
+                status_counts[b.status.value] = status_counts.get(b.status.value, 0) + 1
+            return {
+                "type": "status",
+                "total_branches": len(self.branches),
+                "active": len(self.active_branches),
+                "pruned": len(self.pruned_branches),
+                "status_counts": status_counts,
+                "pareto_front_size": len(self.pareto_front),
+            }
+
+        # List all branches
+        if any(kw in q for kw in ("all", "list", "branches", "show")):
+            branches = []
+            for b in self.branches.values():
+                branches.append({
+                    "id": b.id,
+                    "name": b.name,
+                    "status": b.status.value,
+                    "objectives": b.objectives,
+                })
+            return {
+                "type": "all_branches",
+                "count": len(branches),
+                "branches": branches,
+            }
+
+        # Fallback: return a helpful message with available query types
+        return {
+            "type": "unrecognized",
+            "question": question,
+            "hint": "Try asking about: pareto front, pruned branches, decision paths, status, or list all branches",
+            "available_query_types": [
+                "pareto_front — ask about best/optimal branches",
+                "pruned — ask about discarded/rejected branches",
+                "path — ask about decisions for a specific branch",
+                "status — ask about exploration progress",
+                "all_branches — list all branches",
+            ],
+        }
 
     async def run_exploration(
         self,
