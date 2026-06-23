@@ -17,55 +17,20 @@ def register_all_tools(config: Any | None = None) -> list[str]:
     If ``config`` is provided, the execution backend (local sandbox or remote
     HPC) and per-tool executable paths are wired into the simulation tools.
     Calling this function multiple times is safe; subsequent calls are no-ops.
+
+    Optional tools whose dependencies are missing are silently skipped so the
+    agent can still start in a minimal environment (e.g. PyInstaller build).
     """
     if ToolRegistry.list_tools():
         return ToolRegistry.list_tools()
 
-    # Local imports avoid heavy dependencies at package-import time.
+    import importlib
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     from huginn.config import HuginnConfig
-    from huginn.evaluation.evaluation_tool import EvaluationTool
     from huginn.execution.remote_executor import build_executor
-    from huginn.plugins.autoresearch import AutoresearchTool
-    from huginn.rag.rag_tool import RAGTool
-    from huginn.tools.abaqus_tool import AbaqusTool
-    from huginn.tools.active_learning_tool import ActiveLearningTool
-    from huginn.tools.autodiff_tool import AutoDiffTool
-    from huginn.tools.bash_tool import BashTool
-    from huginn.tools.bourbaki_tool import BourbakiTool
-    from huginn.tools.characterization_tool import CharacterizationTool
-    from huginn.tools.code_tool import CodeTool
-    from huginn.tools.comsol_tool import ComsolTool
-    from huginn.tools.cp2k_tool import Cp2kTool
-    from huginn.tools.database_tool import DatabaseTool
-    from huginn.tools.descriptor_tool import DescriptorTool
-    from huginn.tools.diagnose_tool import DiagnoseTool
-    from huginn.tools.diff_tool import DiffTool
-    from huginn.tools.experimental_data_tool import ExperimentalDataTool
-    from huginn.tools.extract_tool import ExtractTool
-    from huginn.tools.file_edit_tool import FileEditTool
-    from huginn.tools.file_read_tool import FileReadTool
-    from huginn.tools.file_write_tool import FileWriteTool
-    from huginn.tools.git_tool import GitTool
-    from huginn.tools.gp_tool import GPTool
-    from huginn.tools.job_tool import JobTool
-    from huginn.tools.lammps_tool import LammpsTool
-    from huginn.tools.lean_tool import LeanTool
-    from huginn.tools.materials_database_tool import MaterialsDatabaseTool
-    from huginn.tools.memory_tool import RecallTool, RememberTool
-    from huginn.tools.ml_potential_tool import MLPotentialTool
-    from huginn.tools.openfoam_tool import OpenFoamTool
-    from huginn.tools.orchestrate_tool import OrchestrateTool
-    from huginn.tools.packing_tool import PackingTool
-    from huginn.tools.potential_tool import PotentialTool
-    from huginn.tools.qe_tool import QuantumEspressoTool
-    from huginn.tools.report_tool import ReportTool
-    from huginn.tools.structure_tool import StructureTool
-    from huginn.tools.symbolic_math_tool import SymbolicMathTool
-    from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
-    from huginn.tools.uq_tool import UQTool
-    from huginn.tools.validate_tool import ValidateTool
-    from huginn.tools.vasp_tool import VaspTool
-    from huginn.tools.visualize_tool import VisualizeTool
 
     resolved_config = config if config is not None else HuginnConfig.from_env()
     executor = build_executor(resolved_config)
@@ -83,12 +48,12 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         params = sig.parameters
         kwargs: dict[str, Any] = {}
 
-        if cls is VaspTool and "vasp_executable" in params:
+        if cls.__name__ == "VaspTool" and "vasp_executable" in params:
             kwargs["vasp_executable"] = resolved_config.vasp_executable
-        if cls is LammpsTool and "lammps_executable" in params:
+        if cls.__name__ == "LammpsTool" and "lammps_executable" in params:
             kwargs["lammps_executable"] = resolved_config.lammps_executable
 
-        if cls is MaterialsDatabaseTool:
+        if cls.__name__ == "MaterialsDatabaseTool":
             if "mp_api_key" in params:
                 kwargs["mp_api_key"] = resolved_config.mp_api_key
             if "oqmd_api_key" in params:
@@ -98,53 +63,82 @@ def register_all_tools(config: Any | None = None) -> list[str]:
             kwargs["sandbox"] = executor
         return kwargs
 
-    tool_classes = [
-        BourbakiTool,
-        StructureTool,
-        ExtractTool,
-        JobTool,
-        DatabaseTool,
-        PotentialTool,
-        DiffTool,
-        ValidateTool,
-        DiagnoseTool,
-        VaspTool,
-        LammpsTool,
-        SymbolicRegressionTool,
-        ReportTool,
-        LeanTool,
-        SymbolicMathTool,
-        AutoDiffTool,
-        ComsolTool,
-        QuantumEspressoTool,
-        Cp2kTool,
-        OpenFoamTool,
-        PackingTool,
-        AbaqusTool,
-        CodeTool,
-        FileReadTool,
-        FileWriteTool,
-        FileEditTool,
-        BashTool,
-        GitTool,
-        UQTool,
-        GPTool,
-        RememberTool,
-        RecallTool,
-        OrchestrateTool,
-        RAGTool,
-        EvaluationTool,
-        MaterialsDatabaseTool,
-        ExperimentalDataTool,
-        DescriptorTool,
-        VisualizeTool,
-        ActiveLearningTool,
-        MLPotentialTool,
-        CharacterizationTool,
-        AutoresearchTool,
+    # Core tools (always expected to be available)
+    core_modules = [
+        ("huginn.tools.bash_tool", "BashTool"),
+        ("huginn.tools.code_tool", "CodeTool"),
+        ("huginn.tools.file_edit_tool", "FileEditTool"),
+        ("huginn.tools.file_read_tool", "FileReadTool"),
+        ("huginn.tools.file_write_tool", "FileWriteTool"),
+        ("huginn.tools.git_tool", "GitTool"),
+        ("huginn.tools.bourbaki_tool", "BourbakiTool"),
+        ("huginn.tools.diff_tool", "DiffTool"),
+        ("huginn.tools.validate_tool", "ValidateTool"),
+        ("huginn.tools.diagnose_tool", "DiagnoseTool"),
+        ("huginn.tools.extract_tool", "ExtractTool"),
+        ("huginn.tools.job_tool", "JobTool"),
+        ("huginn.tools.database_tool", "DatabaseTool"),
+        ("huginn.tools.potential_tool", "PotentialTool"),
+        ("huginn.tools.structure_tool", "StructureTool"),
+        ("huginn.tools.report_tool", "ReportTool"),
+        ("huginn.tools.orchestrate_tool", "OrchestrateTool"),
+        ("huginn.tools.memory_tool", "RememberTool"),
+        ("huginn.tools.memory_tool", "RecallTool"),
+        ("huginn.tools.lean_tool", "LeanTool"),
+        ("huginn.evaluation.evaluation_tool", "EvaluationTool"),
+        ("huginn.rag.rag_tool", "RAGTool"),
+        ("huginn.plugins.autoresearch", "AutoresearchTool"),
     ]
 
-    for cls in tool_classes:
-        ToolRegistry.register(cls(**_tool_kwargs(cls)))
+    # Optional simulation / science tools (skip if deps missing)
+    optional_modules = [
+        ("huginn.tools.vasp_tool", "VaspTool"),
+        ("huginn.tools.lammps_tool", "LammpsTool"),
+        ("huginn.tools.symbolic_regression_tool", "SymbolicRegressionTool"),
+        ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),
+        ("huginn.tools.autodiff_tool", "AutoDiffTool"),
+        ("huginn.tools.comsol_tool", "ComsolTool"),
+        ("huginn.tools.qe_tool", "QuantumEspressoTool"),
+        ("huginn.tools.cp2k_tool", "Cp2kTool"),
+        ("huginn.tools.openfoam_tool", "OpenFoamTool"),
+        ("huginn.tools.packing_tool", "PackingTool"),
+        ("huginn.tools.abaqus_tool", "AbaqusTool"),
+        ("huginn.tools.uq_tool", "UQTool"),
+        ("huginn.tools.gp_tool", "GPTool"),
+        ("huginn.tools.materials_database_tool", "MaterialsDatabaseTool"),
+        ("huginn.tools.experimental_data_tool", "ExperimentalDataTool"),
+        ("huginn.tools.descriptor_tool", "DescriptorTool"),
+        ("huginn.tools.visualize_tool", "VisualizeTool"),
+        ("huginn.tools.active_learning_tool", "ActiveLearningTool"),
+        ("huginn.tools.ml_potential_tool", "MLPotentialTool"),
+        ("huginn.tools.characterization_tool", "CharacterizationTool"),
+    ]
+
+    registered: list[str] = []
+    skipped: list[str] = []
+
+    for module_name, class_name in core_modules + optional_modules:
+        try:
+            mod = importlib.import_module(module_name)
+            cls = getattr(mod, class_name)
+            ToolRegistry.register(cls(**_tool_kwargs(cls)))
+            registered.append(class_name)
+        except ImportError as exc:
+            skipped.append(f"{class_name} ({exc.name or module_name})")
+        except Exception as exc:
+            logger.warning(f"Tool {class_name} registration failed: {exc}")
+            skipped.append(class_name)
+
+    if skipped:
+        logger.info(f"Skipped {len(skipped)} optional tools (missing deps): {', '.join(skipped[:5])}")
+
+    # Science-skills bridge (google-deepmind/science-skills plugin)
+    try:
+        from huginn.plugins.science_skills_bridge import register_science_skills
+        science_names = register_science_skills()
+        registered.extend(science_names)
+        logger.info(f"Registered {len(science_names)} science-skills bridge tools")
+    except Exception as exc:
+        logger.warning(f"Science-skills bridge registration failed: {exc}")
 
     return ToolRegistry.list_tools()

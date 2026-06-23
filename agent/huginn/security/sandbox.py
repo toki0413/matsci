@@ -38,6 +38,7 @@ class SandboxConfig:
             "mpiexec",
             "mpirun",
             "packmol",
+            "uv",
         }
     )
 
