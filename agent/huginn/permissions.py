@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from huginn.types import PermissionMode, PermissionResult
 
 # Default permission rules for material science tools
+# Note: science_* tools (science-skills bridge) are auto-approved via wildcard
+# prefix matching in PermissionConfig.get_mode() — no entries needed here.
 DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
     # Read-only / safe tools
     "structure_tool": PermissionMode.AUTO,
@@ -67,7 +69,13 @@ class PermissionConfig:
     def get_mode(self, tool_name: str) -> PermissionMode:
         if self.auto_approve_all:
             return PermissionMode.AUTO
-        return self.rules.get(tool_name, PermissionMode.ASK)
+        # Exact match
+        if tool_name in self.rules:
+            return self.rules[tool_name]
+        # Prefix-based wildcard: science_* tools are read-only → AUTO
+        if tool_name.startswith("science_"):
+            return PermissionMode.AUTO
+        return PermissionMode.ASK
 
     def set_mode(self, tool_name: str, mode: PermissionMode) -> None:
         self.rules[tool_name] = mode
