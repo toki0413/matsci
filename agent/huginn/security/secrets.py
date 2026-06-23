@@ -1,15 +1,26 @@
 """Secret backend abstraction for Huginn.
 
 The default backend reads secrets from environment variables. Additional
-backends (e.g. HashiCorp Vault, AWS Secrets Manager, Azure Key Vault) can be
-implemented by subclassing ``SecretBackend`` and registering them via
+backends (e.g. HashiCorp Vault, AWS Secrets Manager) can be implemented
+by subclassing ``SecretBackend`` and registering them via
 ``HUGINN_SECRET_BACKEND``.
+
+Phase 4 additions:
+- ``VaultSecretBackend.set()`` — write secrets to Vault KV v2
+- ``AWSSecretsManagerBackend`` — read/write via AWS Secrets Manager
+- ``SecretRotationHook`` — automatic rotation callbacks
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import time
 from abc import ABC, abstractmethod
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 
 class SecretBackend(ABC):
@@ -25,46 +36,358 @@ class SecretBackend(ABC):
         """Store ``value`` under ``name``."""
         raise NotImplementedError
 
+    def delete(self, name: str) -> bool:
+        """Delete a secret. Returns True on success."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support deletion"
+        )
+
+    def list_keys(self, prefix: str = "") -> list[str]:
+        """List secret names matching a prefix. Optional for backends."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support listing"
+        )
+
+    def exists(self, name: str) -> bool:
+        """Check if a secret exists."""
+        return self.get(name) is not None
+
 
 class EnvSecretBackend(SecretBackend):
-    """Read secrets from environment variables."""
+    """Read/write secrets as environment variables.
+
+    Supports an optional file-backed overlay for persistence across restarts.
+    """
+
+    def __init__(self, persist_file: str | None = None) -> None:
+        self._persist_file = persist_file
+        self._store: dict[str, str] = {}
+        if persist_file:
+            self._load_persisted()
+
+    def _load_persisted(self) -> None:
+        try:
+            with open(self._persist_file, encoding="utf-8") as f:
+                self._store = json.load(f)
+            # Merge into env so other code sees them
+            for k, v in self._store.items():
+                os.environ.setdefault(k, v)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self._store = {}
+
+    def _save_persisted(self) -> None:
+        if self._persist_file:
+            with open(self._persist_file, "w", encoding="utf-8") as f:
+                json.dump(self._store, f, indent=2)
 
     def get(self, name: str) -> str | None:
         return os.environ.get(name)
 
     def set(self, name: str, value: str) -> None:
         os.environ[name] = value
+        self._store[name] = value
+        self._save_persisted()
+
+    def delete(self, name: str) -> bool:
+        removed = os.environ.pop(name, None) is not None
+        self._store.pop(name, None)
+        self._save_persisted()
+        return removed
+
+    def list_keys(self, prefix: str = "") -> list[str]:
+        keys = set(os.environ.keys()) | set(self._store.keys())
+        return sorted(k for k in keys if k.startswith(prefix))
 
 
 class VaultSecretBackend(SecretBackend):
-    """HashiCorp Vault backend (placeholder).
+    """HashiCorp Vault backend using KV v2 engine.
 
     Requires the ``hvac`` package and ``HUGINN_VAULT_ADDR`` /
     ``HUGINN_VAULT_TOKEN`` environment variables.
+
+    Secret names use the format ``path:key`` where ``path`` is the KV
+    secret path and ``key`` is the field within the secret data.
     """
 
-    def __init__(self, addr: str | None = None, token: str | None = None) -> None:
+    def __init__(
+        self,
+        addr: str | None = None,
+        token: str | None = None,
+        mount_point: str = "secret",
+    ) -> None:
         self.addr = addr or os.environ.get("HUGINN_VAULT_ADDR", "")
         self.token = token or os.environ.get("HUGINN_VAULT_TOKEN", "")
+        self.mount_point = mount_point
 
-    def get(self, name: str) -> str | None:
+    def _client(self):
         try:
             import hvac  # type: ignore[import-not-found]
         except ImportError as err:
             raise ImportError("pip install hvac to use VaultSecretBackend") from err
+        return hvac.Client(url=self.addr, token=self.token)
 
-        client = hvac.Client(url=self.addr, token=self.token)
-        path, key = name.split(":", 1) if ":" in name else (name, "value")
-        response = client.secrets.kv.v2.read_secret_version(path=path)
-        return response["data"]["data"].get(key)
+    @staticmethod
+    def _parse_name(name: str) -> tuple[str, str]:
+        """Parse ``path:key`` into (path, key).  Defaults key to 'value'."""
+        if ":" in name:
+            path, key = name.split(":", 1)
+        else:
+            path, key = name, "value"
+        return path, key
+
+    def get(self, name: str) -> str | None:
+        client = self._client()
+        path, key = self._parse_name(name)
+        try:
+            response = client.secrets.kv.v2.read_secret_version(
+                path=path, mount_point=self.mount_point
+            )
+            return response["data"]["data"].get(key)
+        except Exception:
+            return None
 
     def set(self, name: str, value: str) -> None:
-        raise NotImplementedError("VaultSecretBackend.set is not implemented")
+        """Write a secret to Vault KV v2.
+
+        If the secret path already exists, the new key is merged with existing
+        data.  Otherwise a new secret is created.
+        """
+        client = self._client()
+        path, key = self._parse_name(name)
+
+        # Read existing data to merge
+        existing: dict[str, str] = {}
+        try:
+            response = client.secrets.kv.v2.read_secret_version(
+                path=path, mount_point=self.mount_point
+            )
+            existing = response.get("data", {}).get("data", {})
+        except Exception:
+            pass  # Path doesn't exist yet
+
+        existing[key] = value
+        client.secrets.kv.v2.create_or_update_secret(
+            path=path,
+            secret=existing,
+            mount_point=self.mount_point,
+        )
+
+    def delete(self, name: str) -> bool:
+        client = self._client()
+        path, key = self._parse_name(name)
+        try:
+            # Read existing, remove the specific key, write back
+            response = client.secrets.kv.v2.read_secret_version(
+                path=path, mount_point=self.mount_point
+            )
+            data = response.get("data", {}).get("data", {})
+            if key in data:
+                del data[key]
+                if data:
+                    client.secrets.kv.v2.create_or_update_secret(
+                        path=path, secret=data, mount_point=self.mount_point
+                    )
+                else:
+                    client.secrets.kv.v2.delete_metadata_and_all_versions(
+                        path=path, mount_point=self.mount_point
+                    )
+                return True
+            return False
+        except Exception:
+            return False
+
+    def exists(self, name: str) -> bool:
+        return self.get(name) is not None
 
 
-def get_secret_backend() -> SecretBackend:
-    """Return the configured secret backend."""
-    backend_name = os.environ.get("HUGINN_SECRET_BACKEND", "env").lower()
-    if backend_name == "vault":
-        return VaultSecretBackend()
-    return EnvSecretBackend()
+class AWSSecretsManagerBackend(SecretBackend):
+    """AWS Secrets Manager backend.
+
+    Requires the ``boto3`` package and valid AWS credentials (via env vars,
+    instance profile, or ``AWS_PROFILE``).
+
+    Secret names map directly to AWS Secrets Manager secret IDs.
+    """
+
+    def __init__(
+        self,
+        region_name: str | None = None,
+        prefix: str = "",
+    ) -> None:
+        self.region_name = region_name or os.environ.get(
+            "AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        )
+        self.prefix = prefix  # e.g. "huginn/prod/"
+
+    def _client(self):
+        try:
+            import boto3  # type: ignore[import-not-found]
+        except ImportError as err:
+            raise ImportError(
+                "pip install boto3 to use AWSSecretsManagerBackend"
+            ) from err
+        return boto3.client("secretsmanager", region_name=self.region_name)
+
+    def _full_name(self, name: str) -> str:
+        return f"{self.prefix}{name}" if self.prefix else name
+
+    def get(self, name: str) -> str | None:
+        client = self._client()
+        try:
+            response = client.get_secret_value(SecretId=self._full_name(name))
+            return response.get("SecretString")
+        except client.exceptions.ResourceNotFoundException:
+            return None
+        except Exception:
+            return None
+
+    def set(self, name: str, value: str) -> None:
+        client = self._client()
+        full_name = self._full_name(name)
+        try:
+            client.put_secret_value(
+                SecretId=full_name,
+                SecretString=value,
+            )
+        except client.exceptions.ResourceNotFoundException:
+            client.create_secret(
+                Name=full_name,
+                SecretString=value,
+            )
+
+    def delete(self, name: str) -> bool:
+        client = self._client()
+        try:
+            client.delete_secret(
+                SecretId=self._full_name(name),
+                ForceDeleteWithoutRecovery=True,
+            )
+            return True
+        except Exception:
+            return False
+
+    def list_keys(self, prefix: str = "") -> list[str]:
+        client = self._client()
+        try:
+            paginator = client.get_paginator("list_secrets")
+            results = []
+            full_prefix = self._full_name(prefix)
+            for page in paginator.paginate():
+                for secret in page.get("SecretList", []):
+                    name = secret["Name"]
+                    if name.startswith(full_prefix):
+                        # Strip the backend prefix for the caller
+                        if self.prefix and name.startswith(self.prefix):
+                            name = name[len(self.prefix):]
+                        results.append(name)
+            return sorted(results)
+        except Exception:
+            return []
+
+
+# ---------------------------------------------------------------------------
+# Secret rotation hooks
+# ---------------------------------------------------------------------------
+
+class SecretRotationHook:
+    """Register callbacks for automatic secret rotation.
+
+    A rotation callback receives the old secret value and must return the
+    new secret value.  The hook then writes the new value back to the
+    backend.
+
+    Usage::
+
+        hooks = SecretRotationHook(backend)
+        hooks.register("MP_API_KEY", rotate_mp_key)
+        hooks.rotate("MP_API_KEY")
+        hooks.rotate_all()  # rotate everything registered
+    """
+
+    def __init__(self, backend: SecretBackend) -> None:
+        self.backend = backend
+        self._callbacks: dict[str, Callable[[str | None], str]] = {}
+        self._last_rotated: dict[str, float] = {}
+
+    def register(
+        self,
+        name: str,
+        callback: Callable[[str | None], str],
+    ) -> None:
+        """Register a rotation callback for a named secret."""
+        self._callbacks[name] = callback
+
+    def unregister(self, name: str) -> None:
+        self._callbacks.pop(name, None)
+
+    def rotate(self, name: str) -> str:
+        """Rotate a single secret.  Returns the new value."""
+        if name not in self._callbacks:
+            raise KeyError(f"No rotation callback registered for '{name}'")
+
+        old_value = self.backend.get(name)
+        new_value = self._callbacks[name](old_value)
+        self.backend.set(name, new_value)
+        self._last_rotated[name] = time.time()
+        logger.info("Rotated secret '%s'", name)
+        return new_value
+
+    def rotate_all(self) -> dict[str, bool]:
+        """Rotate all registered secrets.  Returns {name: success}."""
+        results: dict[str, bool] = {}
+        for name in self._callbacks:
+            try:
+                self.rotate(name)
+                results[name] = True
+            except Exception as exc:
+                logger.error("Failed to rotate '%s': %s", name, exc)
+                results[name] = False
+        return results
+
+    def needs_rotation(
+        self, name: str, max_age_seconds: float = 86400.0
+    ) -> bool:
+        """Check if a secret has exceeded its max age since last rotation."""
+        last = self._last_rotated.get(name)
+        if last is None:
+            return True
+        return (time.time() - last) > max_age_seconds
+
+    def last_rotated(self, name: str) -> float | None:
+        return self._last_rotated.get(name)
+
+    @property
+    def registered_names(self) -> list[str]:
+        return sorted(self._callbacks.keys())
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+_BACKEND_REGISTRY: dict[str, type[SecretBackend]] = {
+    "env": EnvSecretBackend,
+    "vault": VaultSecretBackend,
+    "aws": AWSSecretsManagerBackend,
+}
+
+
+def register_backend(name: str, cls: type[SecretBackend]) -> None:
+    """Register a custom secret backend type."""
+    _BACKEND_REGISTRY[name.lower()] = cls
+
+
+def get_secret_backend(name: str | None = None) -> SecretBackend:
+    """Return the configured secret backend.
+
+    Reads ``HUGINN_SECRET_BACKEND`` env var if *name* is not provided.
+    Supported values: ``env``, ``vault``, ``aws``, or any registered name.
+    """
+    backend_name = (name or os.environ.get("HUGINN_SECRET_BACKEND", "env")).lower()
+    cls = _BACKEND_REGISTRY.get(backend_name)
+    if cls is None:
+        raise ValueError(
+            f"Unknown secret backend '{backend_name}'. "
+            f"Available: {sorted(_BACKEND_REGISTRY)}"
+        )
+    return cls()
