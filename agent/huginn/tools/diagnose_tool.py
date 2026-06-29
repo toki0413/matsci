@@ -41,6 +41,7 @@ class DiagnoseTool(HuginnTool):
     """Diagnose computational chemistry errors using domain knowledge."""
 
     name = "diagnose_tool"
+    category = "core"
     description = (
         "Diagnose errors in quantum chemistry or MD calculations using "
         "authoritative computational chemistry knowledge. Provide the error message, "

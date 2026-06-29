@@ -41,6 +41,7 @@ class CharacterizationTool(HuginnTool):
     """Analyze XRD, spectroscopy, PDF, microscopy, and XPS data."""
 
     name = "characterization_tool"
+    category = "cv"
     description = (
         "Detect peaks in XRD/spectroscopy data, fit PDFs, and analyze "
         "microscopy / XPS data."

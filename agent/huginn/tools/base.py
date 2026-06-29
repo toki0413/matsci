@@ -36,6 +36,10 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     name: str = ""
     description: str = ""
 
+    # 工具分类, 用于 tool_filter / UI 分组 / 日志统计
+    # 取值: core / search / meta / sim / sci / design / cv / materials / misc
+    category: str = "misc"
+
     # Static hints for UI / permission systems
     destructive: bool = False
     read_only: bool = False
@@ -43,6 +47,10 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     # Schema definitions (Pydantic v2, replacing Zod)
     input_schema: type[InputT] | None = None
     output_schema: type[OutputT] | None = None
+
+    # 声明需要从 config 注入的构造参数: {构造参数名: config 字段名}
+    # register_all_tools() 会读这个 map 自动填充 kwargs, 避免类名 if 分支
+    _init_kwargs_map: dict[str, str] = {}
 
     @property
     def input_json_schema(self) -> dict[str, Any] | None:

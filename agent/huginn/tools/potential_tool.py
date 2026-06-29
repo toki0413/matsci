@@ -27,6 +27,7 @@ class PotentialTool(HuginnTool):
     """Train and use machine learning potentials for molecular dynamics."""
 
     name = "potential_tool"
+    category = "core"
     description = "Train and apply ML potentials (NEP, SNAP, GAP, ACE) for fast molecular dynamics simulations"
     input_schema = PotentialToolInput
 

@@ -4,13 +4,20 @@ Large tool outputs (DFT energies, MD trajectories, FEM meshes, logs) can
 quickly blow up the prompt. This module provides opinionated, lossy
 compression that preserves the information an LLM actually needs:
 success/failure status, key scalars, short summaries, and error tails.
+
+The ``smart_compress_text`` function adds LLM-based summarization of the
+middle portion of long outputs, preserving research-relevant context that
+pure head/tail truncation would discard.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Callable
 
-from huginn.utils.tokens import rough_token_count_for_text
+from huginn.utils.tokens import count_tokens, rough_token_count_for_text
+
+logger = logging.getLogger(__name__)
 
 
 class ToolOutputCompressor:
@@ -141,3 +148,72 @@ def compress_tool_output(
         keep_keys=keep_keys,
     )
     return compressor.compress(data)
+
+
+async def smart_compress_text(
+    text: str,
+    max_tokens: int = 8000,
+    summarizer: Callable[[str], Any] | None = None,
+) -> str:
+    """Compress long text with optional LLM summarization of the middle.
+
+    Strategy:
+    1. If text fits in budget, return as-is.
+    2. If a summarizer is available, keep first 20% + last 20% verbatim
+       and replace the middle 60% with an LLM-generated summary.
+    3. If no summarizer, fall back to head/tail truncation.
+
+    Args:
+        text: The text to compress.
+        max_tokens: Target token budget.
+        summarizer: Async callable that takes a text string and returns
+            a summary. If None, falls back to head/tail truncation.
+    """
+    if not text:
+        return text
+
+    token_count = count_tokens(text)
+    if token_count <= max_tokens:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    if len(lines) < 10:
+        # Too few lines to meaningfully split — just truncate
+        max_chars = max_tokens * 4
+        return text[:max_chars] + "\n...[truncated]"
+
+    # Split into head (20%), middle (60%), tail (20%)
+    n = len(lines)
+    head_end = max(1, n // 5)
+    tail_start = n - max(1, n // 5)
+    head = "".join(lines[:head_end])
+    middle = "".join(lines[head_end:tail_start])
+    tail = "".join(lines[tail_start:])
+
+    if summarizer is not None and count_tokens(middle) > 200:
+        try:
+            result = await summarizer(middle)
+            if hasattr(result, "content"):
+                summary = result.content
+            elif isinstance(result, dict):
+                summary = result.get("content", str(result))
+            else:
+                summary = str(result)
+            # Truncate summary to a reasonable size
+            summary_tokens = count_tokens(summary)
+            max_summary_tokens = max_tokens // 3
+            if summary_tokens > max_summary_tokens:
+                max_chars = max_summary_tokens * 4
+                summary = summary[:max_chars] + "..."
+            omitted = n - head_end - (n - tail_start)
+            return (
+                head
+                + f"\n[... {omitted} lines summarized: {summary} ...]\n"
+                + tail
+            )
+        except Exception as exc:
+            logger.debug("Smart compression summarization failed: %s", exc)
+
+    # Fallback: head/tail with omission marker
+    omitted = n - head_end - (n - tail_start)
+    return head + f"\n[... {omitted} lines omitted ...]\n" + tail

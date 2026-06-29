@@ -56,6 +56,7 @@ class BrowserTool(HuginnTool):
     """Automate browser interactions: navigate, click, type, fill forms, extract data."""
 
     name = "browser_tool"
+    category = "search"
     description = "Simulate human browser interactions — login, click, scroll, input, fill forms, and extract information from web pages"
     input_schema = BrowserToolInput
 
@@ -132,6 +133,9 @@ class BrowserTool(HuginnTool):
                 self._driver = None
 
         # 3. Local Playwright launch
+        # 注意: 只 catch ImportError 会漏掉浏览器二进制缺失的情况
+        # playwright python 包装了, 但 chromium 浏览器没装时会抛 FileNotFoundError
+        # 必须用 Exception 兜底, 让它降级到 mock 模式而不是炸飞整个 agent
         try:
             from playwright.async_api import async_playwright
             self._pw = await async_playwright().start()
@@ -143,8 +147,10 @@ class BrowserTool(HuginnTool):
             self._page = await self._context.new_page()
             self._connection_mode = "local"
             return True
-        except ImportError:
-            pass
+        except Exception:
+            # playwright 没装 / chromium 没下载 / 启动失败 —— 都降级到 mock
+            self._pw = None
+            self._browser = None
 
         # 4. Mock mode
         self._connection_mode = "mock"

@@ -50,6 +50,7 @@ class RecallOutput(BaseModel):
 
 class RememberTool(HuginnTool[RememberInput, RememberOutput]):
     name = "remember"
+    category = "meta"
     description = "Store a fact, insight, or observation into long-term memory."
     destructive = False
     read_only = False
@@ -82,6 +83,7 @@ class RememberTool(HuginnTool[RememberInput, RememberOutput]):
 
 class RecallTool(HuginnTool[RecallInput, RecallOutput]):
     name = "recall"
+    category = "meta"
     description = (
         "Search long-term memory for relevant facts, insights, or prior conversations."
     )

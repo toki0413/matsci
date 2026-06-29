@@ -25,13 +25,14 @@ class GitTool(HuginnTool):
     """Read-only git introspection."""
 
     name = "git_tool"
+    category = "core"
     description = "Run read-only git commands: status, diff, log."
     input_schema = GitToolInput
 
     def is_read_only(self, args: GitToolInput) -> bool:
         return True
 
-    def call(
+    async def call(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = GitToolInput(**args)

@@ -35,6 +35,7 @@ class BashTool(HuginnTool):
     """Run shell commands in the workspace."""
 
     name = "bash_tool"
+    category = "core"
     description = (
         "Run a shell command as a list of arguments inside the workspace. "
         "Use for tests, builds, git, and other command-line tasks."
@@ -88,7 +89,7 @@ class BashTool(HuginnTool):
             t_err.join()
         return "".join(stdout_chunks), "".join(stderr_chunks), returncode
 
-    def call(
+    async def call(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = BashToolInput(**args)

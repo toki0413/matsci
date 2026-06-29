@@ -381,6 +381,7 @@ class ReportTool(HuginnTool):
     """Generate computational reports from simulation results."""
 
     name = "report_tool"
+    category = "core"
     description = (
         "Automatically generate computational reports (Markdown/LaTeX/HTML/JSON) "
         "from DFT/MD simulation results, including methods, structures, convergence, "

@@ -27,6 +27,7 @@ class ExtractTool(HuginnTool):
     """Extract mathematical structure from computational engine input files."""
 
     name = "extract_tool"
+    category = "core"
     description = "Extract mathematical semantics (equations, constraints, approximations) from simulation input files using math-anything"
     input_schema = ExtractToolInput
 

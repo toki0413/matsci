@@ -11,7 +11,9 @@ import asyncio
 import contextlib
 import inspect
 import json
+import logging
 import os
+import time
 import typing
 from collections.abc import Callable
 from typing import Any, get_origin
@@ -27,13 +29,17 @@ from huginn.privacy import redact_secrets
 from huginn.security.audit import AuditLogger
 from huginn.telemetry import get_telemetry_collector
 from huginn.tools.base import HuginnTool
-from huginn.tools.compress import compress_tool_output
+from huginn.tools.compress import compress_tool_output, smart_compress_text
+from huginn.tools.timeouts import get_timeout
 from huginn.types import (
     PermissionMode,
     ToolContext,
     ToolResult,
 )
 from huginn.utils.cache import TimedLRUCache
+from huginn.utils.tokens import count_tokens
+
+logger = logging.getLogger(__name__)
 
 # Map tool names to the constraint scope used for post-call validation.
 _TOOL_CONSTRAINT_SCOPES: dict[str, str] = {
@@ -63,6 +69,26 @@ def _wants_dict(tool: HuginnTool) -> bool:
     return origin is dict or ann is dict
 
 
+# trajectory 持久化时单个字段的字符上限, 避免大输出把 JSON 文件撑爆
+_TRAJECTORY_FIELD_LIMIT = 8192
+
+
+def _truncate_for_trajectory(value: Any) -> Any:
+    """递归截断 args/result, 防止大输出撑爆 trajectory 文件。
+
+    字符串超限就截断并加标记, dict/list 递归处理, 其他类型原样返回。
+    """
+    if isinstance(value, str):
+        if len(value) > _TRAJECTORY_FIELD_LIMIT:
+            return value[:_TRAJECTORY_FIELD_LIMIT] + "...(truncated)"
+        return value
+    if isinstance(value, dict):
+        return {k: _truncate_for_trajectory(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_truncate_for_trajectory(v) for v in value]
+    return value
+
+
 def _default_audit_logger() -> AuditLogger:
     """Return a default audit logger for tool invocations."""
     from pathlib import Path
@@ -70,6 +96,71 @@ def _default_audit_logger() -> AuditLogger:
     log_path = Path.home() / ".huginn" / "audit.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return AuditLogger(log_path)
+
+
+# 熔断器/仪表盘开关，跑测试或 benchmark 时可以关掉
+_HEALTH_MONITOR_ON = os.environ.get("HUGINN_HEALTH_MONITOR", "1") == "1"
+
+
+def _breaker_blocked(tool_name: str) -> dict[str, Any] | None:
+    """熔断器开着就返回错误 dict，没装或放行返回 None。"""
+    if not _HEALTH_MONITOR_ON:
+        return None
+    try:
+        from huginn.agents.circuit_breaker import CircuitBreaker
+
+        breaker = CircuitBreaker.shared()
+        if not breaker.can_call(tool_name):
+            stats = breaker.get_stats(tool_name)
+            return {
+                "error": "circuit_open",
+                "tool": tool_name,
+                "retry_after": stats.get("retry_after", 0),
+                "_circuit_open": True,
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _record_outcome(
+    tool_name: str,
+    success: bool,
+    duration_sec: float,
+    error: str | None = None,
+) -> None:
+    """工具执行完记一笔到熔断器 + 仪表盘，best-effort 不抛。"""
+    if not _HEALTH_MONITOR_ON:
+        return
+    try:
+        from huginn.agents.circuit_breaker import CircuitBreaker
+        from huginn.agents.health_dashboard import HealthDashboard
+
+        breaker = CircuitBreaker.shared()
+        dashboard = HealthDashboard.shared()
+        if success:
+            breaker.record_success(tool_name)
+        else:
+            breaker.record_failure(tool_name, error or "")
+        dashboard.record_call(
+            tool_name, success, duration_sec, cache_hit=False, error=error
+        )
+    except Exception:
+        pass
+
+
+def _record_cache_hit(tool_name: str) -> None:
+    """缓存命中记一笔到仪表盘（不算熔断器的成败）。"""
+    if not _HEALTH_MONITOR_ON:
+        return
+    try:
+        from huginn.agents.health_dashboard import HealthDashboard
+
+        HealthDashboard.shared().record_call(
+            tool_name, True, 0.0, cache_hit=True
+        )
+    except Exception:
+        pass
 
 
 class ToolAdapter:
@@ -81,9 +172,51 @@ class ToolAdapter:
         max_size=256, ttl=300.0
     )
     _constraint_adapter: ConstraintAdapter = ConstraintAdapter.default()
+    # Class-level fallback summarizer. Instance-level ``self._summarizer``
+    # takes priority so multi-agent setups don't clobber each other.
+    _summarizer: Any = None
 
-    @staticmethod
+    def __init__(self) -> None:
+        # Per-instance summarizer; preferred over the class-level fallback.
+        self._summarizer: Any = None
+        # 当前轮次的工具调用预算，由 agent 在 chat() 开始时 set 进来，
+        # 结束后 clear。None 表示不限制。
+        self._current_budget: Any = None
+        # 最简路径决策路由, 跟 budget 同生命周期. None 表示不拦重型工具.
+        self._current_router: Any = None
+        # 工具调用循环检测器, 跟 budget / router 同生命周期. None 时不检测.
+        # 抓 LLM 反复调同工具同参数的死循环, 跟 budget 互补.
+        self._current_loop_detector: Any = None
+
+    def set_budget(self, budget: Any) -> None:
+        """设置当前轮次的工具调用预算，传 None 清除。"""
+        self._current_budget = budget
+
+    def set_router(self, router: Any) -> None:
+        """设置当前轮次的 ToolCallRouter, 传 None 清除.
+
+        router 为 None 时重型工具直接放行, 不做轻量路径 sanity check.
+        """
+        self._current_router = router
+
+    def set_loop_detector(self, detector: Any) -> None:
+        """设置当前轮次的 LoopDetector, 传 None 清除.
+
+        detector 为 None 时跳过循环检测, 兼容老调用路径.
+        """
+        self._current_loop_detector = detector
+
+    def set_summarizer(self, summarizer: Any) -> None:
+        """Register an async summarizer for smart output compression.
+
+        The summarizer should be an async callable that takes a text string
+        and returns a summary. When set, large tool outputs will have their
+        middle portion summarized instead of simply truncated.
+        """
+        self._summarizer = summarizer
+
     def adapt(
+        self,
         tool: HuginnTool,
         memory_manager: Any | None = None,
         agent_factory: Any | None = None,
@@ -100,7 +233,7 @@ class ToolAdapter:
             from huginn.tools.structure_tool import StructureTool
             from huginn.tools.adapter import ToolAdapter
 
-            lc_tool = ToolAdapter.adapt(StructureTool())
+            lc_tool = ToolAdapter().adapt(StructureTool())
             result = lc_tool.invoke({"action": "read", "file_path": "POSCAR"})
         """
         if not tool.input_schema:
@@ -184,6 +317,9 @@ class ToolAdapter:
                 agent_factory=agent_factory,
                 audit_logger=audit_logger,
                 boundary_state=boundary_state,
+                # 把 permission_config 透传给工具, 这样工具内部也能复用同一份配置
+                # 做细粒度检查 (e.g. file_edit_tool 的 diff 预览强制化)
+                config=permission_config,
             )
             payload = input_data.model_dump() if wants_dict else input_data
             return payload, context
@@ -293,6 +429,65 @@ class ToolAdapter:
             if getattr(tool, "read_only", False) and output.get("error") is None:
                 ToolAdapter._read_only_cache.set(_cache_key(input_data), output)
 
+        # Threshold (in tokens) above which a string value triggers LLM-based
+        # smart compression instead of plain head/tail truncation.
+        _smart_compress_threshold = max(2000, compression_max_tokens // 2)
+
+        async def _smart_compress_output(obj: Any) -> Any:
+            """Recursively compress large strings in ``obj`` using LLM summary.
+
+            Walks dicts/lists and applies ``smart_compress_text`` to any string
+            whose token count exceeds the threshold. The summarizer is resolved
+            per-instance first, falling back to the class-level default so
+            legacy callers without an instance still work. When neither is set,
+            this is a no-op (the regular ``compress_tool_output`` path already
+            handled truncation).
+            """
+            summarizer = self._summarizer if self._summarizer is not None else ToolAdapter._summarizer
+            if summarizer is None:
+                return obj
+            if isinstance(obj, str):
+                if count_tokens(obj) <= _smart_compress_threshold:
+                    return obj
+                try:
+                    return await smart_compress_text(
+                        obj,
+                        max_tokens=_smart_compress_threshold,
+                        summarizer=summarizer,
+                    )
+                except Exception as exc:
+                    logger.debug("smart_compress_text failed for %s: %s", tool.name, exc)
+                    return obj
+            if isinstance(obj, dict):
+                return {k: await _smart_compress_output(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [await _smart_compress_output(v) for v in obj]
+            return obj
+
+        def _sync_smart_compress(obj: Any) -> Any:
+            """Sync entry point into _smart_compress_output for the _run path.
+
+            Short-circuits when no summarizer is configured so we don't spin up
+            an event loop for nothing.
+            """
+            summarizer = self._summarizer if self._summarizer is not None else ToolAdapter._summarizer
+            if summarizer is None:
+                return obj
+            try:
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return asyncio.run(_smart_compress_output(obj))
+                # We're inside a running loop already — use a fresh one.
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(_smart_compress_output(obj))
+                finally:
+                    loop.close()
+            except Exception as exc:
+                logger.debug("smart_compress sync wrapper failed for %s: %s", tool.name, exc)
+                return obj
+
         async def _arun(**kwargs: Any) -> dict[str, Any]:
             """Async execution wrapper."""
             payload, context = _build_inputs(**kwargs)
@@ -320,17 +515,120 @@ class ToolAdapter:
             if cached is not None:
                 _audit(input_data, cached, approved=True, reason="cache_hit")
                 _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
+                _record_cache_hit(tool.name)
                 return cached
 
+            # 最简路径决策: 重型工具调用前先看轻量路径走没走过, 没走过就拦下
+            # 把 reason 喂回 LLM, 让它要么先调轻量工具, 要么加 __confirm_heavy=true
+            router = self._current_router
+            if router is not None:
+                allowed, router_reason = router.should_allow(
+                    tool.name, kwargs, {}
+                )
+                if not allowed:
+                    output = {
+                        "error": router_reason,
+                        "_router_blocked": True,
+                    }
+                    _audit(input_data, output, approved=False, reason="router_blocked")
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by router",
+                        {"reason": router_reason},
+                    )
+                    return output
+
+            # 工具调用预算检查：缓存命中不算，只有真正执行工具才计数
+            budget = self._current_budget
+            if budget is not None:
+                if not budget.record(tool.name):
+                    stop, reason = budget.should_stop()
+                    output = {
+                        "error": f"工具调用预算耗尽: {reason}",
+                        "_budget_exceeded": True,
+                    }
+                    _audit(input_data, output, approved=True, reason="budget_exceeded")
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by budget",
+                        {"reason": reason},
+                    )
+                    return output
+
+            # 工具调用循环检测: 记一笔, 命中就拦下, 把 reason 喂回 LLM
+            # 让它换思路. 缓存命中不算 (没真正执行), 跟 budget 同口径.
+            loop_detector = self._current_loop_detector
+            if loop_detector is not None:
+                is_loop = loop_detector.record(tool.name, kwargs)
+                if is_loop:
+                    _, loop_reason = loop_detector.should_break()
+                    output = {
+                        "error": loop_reason,
+                        "_loop_detected": True,
+                    }
+                    _audit(input_data, output, approved=False, reason="loop_detected")
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by loop detector",
+                        {"reason": loop_reason},
+                    )
+                    return output
+
+            # 熔断器前置检查: 连续失败的工具直接拒, 不浪费 timeout 去试
+            blocked = _breaker_blocked(tool.name)
+            if blocked is not None:
+                _audit(input_data, blocked, approved=False, reason="circuit_open")
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} circuit open",
+                    {"retry_after": blocked.get("retry_after", 0)},
+                )
+                return blocked
+
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
+            # 按工具类型分级超时，防止外部 API 卡死整个 agent
+            timeout = get_timeout(tool.name)
+            _call_start = time.time()
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
-                if is_async:
-                    result = await tool.call(payload, context)
-                else:
-                    result = tool.call(payload, context)
+                try:
+                    if is_async:
+                        result = await asyncio.wait_for(
+                            tool.call(payload, context), timeout=timeout
+                        )
+                    else:
+                        result = tool.call(payload, context)
+                except asyncio.TimeoutError:
+                    result = ToolResult(
+                        data=None,
+                        success=False,
+                        error=f"{tool.name} timed out after {timeout}s",
+                    )
+                except Exception as exc:
+                    # 非超时异常也得让熔断器/仪表盘看见, 记完再抛
+                    _record_outcome(
+                        tool.name, False, time.time() - _call_start, str(exc)
+                    )
+                    raise
+                # 到这里 result 一定是 ToolResult (正常返回或超时)
+                _record_outcome(
+                    tool.name,
+                    result.success,
+                    time.time() - _call_start,
+                    result.error if not result.success else None,
+                )
+                # 轻量工具执行完记一笔, 后续重型工具凭此放行.
+                # record_light_attempt 内部会过滤非轻量工具, 这里无脑调即可.
+                if router is not None:
+                    router.record_light_attempt(tool.name)
                 result = _check_constraints(result, context)
                 output = _serialize(result)
+                # LLM-based smart compression for very large text payloads.
+                # Runs only when a summarizer has been registered.
+                output = await _smart_compress_output(output)
                 span.metadata["success"] = result.success
+                # 记录 args/result 让 trajectory replay 能看到工具的真实输入输出
+                span.metadata["args"] = _truncate_for_trajectory(payload)
+                span.metadata["result"] = _truncate_for_trajectory(output)
                 if result.error:
                     span.metadata["error"] = result.error
             _audit(input_data, output, approved=True, reason=None)
@@ -383,22 +681,127 @@ class ToolAdapter:
             if cached is not None:
                 _audit(input_data, cached, approved=True, reason="cache_hit")
                 _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
+                _record_cache_hit(tool.name)
                 return cached
 
+            # 最简路径决策 (同步路径): 跟 _arun 同样的 sanity check
+            router = self._current_router
+            if router is not None:
+                allowed, router_reason = router.should_allow(
+                    tool.name, kwargs, {}
+                )
+                if not allowed:
+                    output = {
+                        "error": router_reason,
+                        "_router_blocked": True,
+                    }
+                    _audit(input_data, output, approved=False, reason="router_blocked")
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by router",
+                        {"reason": router_reason},
+                    )
+                    return output
+
+            # 工具调用预算检查（同步路径）
+            budget = self._current_budget
+            if budget is not None:
+                if not budget.record(tool.name):
+                    stop, reason = budget.should_stop()
+                    output = {
+                        "error": f"工具调用预算耗尽: {reason}",
+                        "_budget_exceeded": True,
+                    }
+                    _audit(input_data, output, approved=True, reason="budget_exceeded")
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by budget",
+                        {"reason": reason},
+                    )
+                    return output
+
+            # 工具调用循环检测 (同步路径): 跟 _arun 同样的口径, 缓存命中不算
+            loop_detector = self._current_loop_detector
+            if loop_detector is not None:
+                is_loop = loop_detector.record(tool.name, kwargs)
+                if is_loop:
+                    _, loop_reason = loop_detector.should_break()
+                    output = {
+                        "error": loop_reason,
+                        "_loop_detected": True,
+                    }
+                    _audit(input_data, output, approved=False, reason="loop_detected")
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by loop detector",
+                        {"reason": loop_reason},
+                    )
+                    return output
+
+            # 熔断器前置检查 (同步路径): 跟 _arun 同口径
+            blocked = _breaker_blocked(tool.name)
+            if blocked is not None:
+                _audit(input_data, blocked, approved=False, reason="circuit_open")
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} circuit open",
+                    {"retry_after": blocked.get("retry_after", 0)},
+                )
+                return blocked
+
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
+            # 同步路径也套分级超时
+            timeout = get_timeout(tool.name)
+            _call_start = time.time()
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
-                if is_async:
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        result = asyncio.run(tool.call(payload, context))
+                try:
+                    if is_async:
+                        try:
+                            loop = asyncio.get_running_loop()
+                        except RuntimeError:
+                            result = asyncio.run(
+                                asyncio.wait_for(
+                                    tool.call(payload, context), timeout=timeout
+                                )
+                            )
+                        else:
+                            result = loop.run_until_complete(
+                                asyncio.wait_for(
+                                    tool.call(payload, context), timeout=timeout
+                                )
+                            )
                     else:
-                        result = loop.run_until_complete(tool.call(payload, context))
-                else:
-                    result = tool.call(payload, context)
+                        result = tool.call(payload, context)
+                except asyncio.TimeoutError:
+                    result = ToolResult(
+                        data=None,
+                        success=False,
+                        error=f"{tool.name} timed out after {timeout}s",
+                    )
+                except Exception as exc:
+                    # 非超时异常: 记完失败再抛, 同 _arun
+                    _record_outcome(
+                        tool.name, False, time.time() - _call_start, str(exc)
+                    )
+                    raise
+                # 到这里 result 一定是 ToolResult (正常返回或超时)
+                _record_outcome(
+                    tool.name,
+                    result.success,
+                    time.time() - _call_start,
+                    result.error if not result.success else None,
+                )
+                # 轻量工具执行完记一笔 (同步路径). 同 _arun, 无脑调即可.
+                if router is not None:
+                    router.record_light_attempt(tool.name)
                 result = _check_constraints(result, context)
                 output = _serialize(result)
+                # LLM-based smart compression for very large text payloads.
+                # Mirrors the async path; only runs when a summarizer is set.
+                output = _sync_smart_compress(output)
                 span.metadata["success"] = result.success
+                span.metadata["args"] = _truncate_for_trajectory(payload)
+                span.metadata["result"] = _truncate_for_trajectory(output)
                 if result.error:
                     span.metadata["error"] = result.error
             _audit(input_data, output, approved=True, reason=None)
@@ -422,9 +825,8 @@ class ToolAdapter:
             return_direct=False,
         )
 
-    @classmethod
     def adapt_registry(
-        cls,
+        self,
         registry: Any,
         memory_manager: Any | None = None,
         agent_factory: Any | None = None,
@@ -441,7 +843,7 @@ class ToolAdapter:
             tool = registry.get(name)
             if tool:
                 tools.append(
-                    cls.adapt(
+                    self.adapt(
                         tool,
                         memory_manager=memory_manager,
                         agent_factory=agent_factory,

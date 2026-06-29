@@ -35,6 +35,7 @@ class DatabaseTool(HuginnTool):
     """Query materials databases for structures and properties."""
 
     name = "database_tool"
+    category = "core"
     description = "Search materials databases (Materials Project, AFLOW, NOMAD, OQMD) for structures, properties, and literature data"
     input_schema = DatabaseToolInput
 
