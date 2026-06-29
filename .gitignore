@@ -61,6 +61,7 @@ yarn-error.log*
 desktop/src-tauri/target/
 desktop/src-tauri/sidecars/
 desktop/dist/
+agent/desktop/
 
 # Downloaded release binaries
 Huginn_*.exe
@@ -168,6 +169,15 @@ test.txt
 arxiv_results.xml
 results.tsv
 huginn.toml.enc
+
+# Local config + secret-bearing launchers (do NOT commit)
+agent/huginn.toml
+agent/start_sidecar.bat
+
+# Personal build scripts (hardcoded local paths)
+build_tauri.py
+build_tauri.ps1
+scripts/build_all.ps1
 
 # Runtime data dirs (root level)
 /.huginn/
