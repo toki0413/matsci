@@ -619,6 +619,269 @@ def probability_verify_workflow(
     ]
 
 
+def reviewer_workflow(
+    compute_tool: str = "symbolic_math_tool",
+    compute_input: dict[str, Any] | None = None,
+) -> list[ComputationalStage]:
+    """Reviewer-driven 4-stage pipeline: compute → validate → review → report.
+
+    每个阶段钉一个 persona, 同样的物理工具会被不同专家视角解读:
+      - compute  : dft_expert            先把结果算出来
+      - validate : reviewer              用审稿人眼光校验结果
+      - review   : reviewer_1_theory     走 academic-pre-review-committee 的理论审查
+      - report   : tutor                 用教学口吻写最终报告
+
+    compute_tool / compute_input 可覆盖, 默认跑一个 symbolic_math 求导当示例.
+    后续阶段的 tool_input 用 ${stage_id} 引用上游输出, 跟其他模板保持一致.
+
+    Args:
+        compute_tool: compute 阶段调用的工具名
+        compute_input: compute 阶段的 tool_input; 不传走默认示例
+    """
+    if compute_input is None:
+        # 默认示例: 对 x**2 求导, 跑通整个 reviewer 流水线
+        compute_input = {
+            "action": "differentiate",
+            "expression": "x**2",
+            "symbols": ["x"],
+            "variable": "x",
+        }
+
+    return [
+        ComputationalStage(
+            id="compute",
+            name="Compute",
+            tool=compute_tool,
+            tool_input=compute_input,
+            persona="dft_expert",
+            validation=ValidationRule(check="custom", custom_fn="has_result"),
+        ),
+        ComputationalStage(
+            id="validate",
+            name="Validate Result",
+            tool="validate_tool",
+            tool_input={
+                "result_type": "auto",
+                "result_data": "${compute}",
+            },
+            dependencies=["compute"],
+            persona="reviewer",
+        ),
+        ComputationalStage(
+            id="review",
+            name="Peer Review",
+            tool="rag_tool",
+            tool_input={
+                "action": "search",
+                "query": "peer review checklist for computational materials science",
+                "top_k": 5,
+            },
+            dependencies=["validate"],
+            persona="reviewer_1_theory",
+        ),
+        ComputationalStage(
+            id="report",
+            name="Final Report",
+            tool="report_tool",
+            tool_input={
+                "action": "render",
+                "compute_output": "${compute}",
+                "validation_output": "${validate}",
+                "review_output": "${review}",
+            },
+            dependencies=["review"],
+            persona="tutor",
+        ),
+    ]
+
+
+def plasma_simulation_workflow(
+    plasma_density: float = 1e18,
+    electron_temp_eV: float = 1.0,
+    simulation_type: str = "pic",
+    num_steps: int = 200,
+) -> list[ComputationalStage]:
+    """等离子体仿真 workflow: setup → simulate → analyze → report.
+
+    借鉴 ai4plasma 的方法学, 把等离子体计算拆成 4 段:
+      1. setup    : 用 plasma_tool 算基础等离子体参数 (Debye 长度/频率/Bohm 速度)
+      2. simulate : 主仿真 (pic / fluid / arc, 由 simulation_type 决定)
+      3. analyze  : 后处理 — 鞘层 + 输运系数 + 波色散
+      4. report   : report_tool 汇总
+
+    Args:
+        plasma_density: 等离子体数密度 n (m^-3)
+        electron_temp_eV: 电子温度 (eV)
+        simulation_type: pic | fluid | arc, 选主仿真动作
+        num_steps: 仿真步数
+    """
+    valid_types = {"pic", "fluid", "arc"}
+    if simulation_type not in valid_types:
+        raise ValueError(
+            f"simulation_type 必须是 {valid_types} 之一, 收到 {simulation_type}"
+        )
+
+    main_action = {
+        "pic": "pic_simulation",
+        "fluid": "fluid_simulation",
+        "arc": "arc_plasma",
+    }[simulation_type]
+
+    return [
+        ComputationalStage(
+            id="setup",
+            name="Plasma Parameter Setup",
+            tool="plasma_tool",
+            tool_input={
+                "action": "sheath_model",
+                "plasma_density": plasma_density,
+                "electron_temp": electron_temp_eV,
+            },
+            validation=ValidationRule(check="custom", custom_fn="has_result"),
+        ),
+        ComputationalStage(
+            id="simulate",
+            name=f"Plasma {simulation_type.upper()} Simulation",
+            tool="plasma_tool",
+            tool_input={
+                "action": main_action,
+                "plasma_density": plasma_density,
+                "electron_temp": electron_temp_eV,
+                "num_steps": num_steps,
+            },
+            dependencies=["setup"],
+            validation=ValidationRule(check="custom", custom_fn="has_result"),
+            retry_policy=RetryPolicy(max_retries=1, retry_on=["convergence_fail"]),
+        ),
+        ComputationalStage(
+            id="analyze",
+            name="Post-Processing (Transport + Waves)",
+            tool="plasma_tool",
+            tool_input={
+                "action": "transport_coefficients",
+                "plasma_density": plasma_density,
+                "electron_temp": electron_temp_eV,
+            },
+            dependencies=["simulate"],
+        ),
+        ComputationalStage(
+            id="report",
+            name="Final Report",
+            tool="report_tool",
+            tool_input={
+                "action": "render",
+                "setup_output": "${setup}",
+                "simulate_output": "${simulate}",
+                "analyze_output": "${analyze}",
+            },
+            dependencies=["analyze"],
+        ),
+    ]
+
+
+def reaction_pathway_workflow(
+    initial_structure: str,
+    final_structure: str,
+    engine: str = "ml_potential",
+    n_images: int = 7,
+    max_iter: int = 300,
+    climbing_image: bool = True,
+) -> list[ComputationalStage]:
+    """反应路径 workflow: 弛豫初末态 → NEB → MEP 分析 → 报告.
+
+    典型用途: 找扩散势垒 / 化学反应最小能量路径 / 相变路径.
+    五段式:
+      1. relax_initial : 弛豫初始结构 (vasp_tool 或 ml_potential_tool)
+      2. relax_final   : 弛豫末态结构
+      3. neb           : neb_tool 跑 CI-NEB 找最小能量路径
+      4. analyze       : neb_tool.mep_analyze 算势垒 / 能量剖面
+      5. report        : report_tool 汇总反应路径报告
+
+    Args:
+        initial_structure: 初始结构文件路径
+        final_structure: 末态结构文件路径
+        engine: 弛豫引擎, "ml_potential" (默认, 快) 或 "vasp" (精确)
+        n_images: NEB 图像数 (含首尾)
+        max_iter: NEB 最大迭代步数
+        climbing_image: 是否启用 CI-NEB
+    """
+    if engine not in ("ml_potential", "vasp"):
+        raise ValueError(
+            f"engine 必须是 'ml_potential' 或 'vasp', 收到 {engine}"
+        )
+
+    relax_tool = f"{engine}_tool"
+    relax_action = "relax"
+    relax_input_template: dict[str, Any] = {"action": relax_action}
+
+    # NEB 评估后端跟弛豫引擎保持一致: ml_potential 走 ML 势, vasp 走 DFT
+    neb_evaluator = "ml_potential" if engine == "ml_potential" else "vasp"
+
+    return [
+        ComputationalStage(
+            id="relax_initial",
+            name="Relax Initial Structure",
+            tool=relax_tool,
+            tool_input={
+                **relax_input_template,
+                "structure_file": initial_structure,
+            },
+            validation=ValidationRule(check="convergence"),
+            retry_policy=RetryPolicy(max_retries=2, retry_on=["convergence_fail"]),
+        ),
+        ComputationalStage(
+            id="relax_final",
+            name="Relax Final Structure",
+            tool=relax_tool,
+            tool_input={
+                **relax_input_template,
+                "structure_file": final_structure,
+            },
+            validation=ValidationRule(check="convergence"),
+            retry_policy=RetryPolicy(max_retries=2, retry_on=["convergence_fail"]),
+        ),
+        ComputationalStage(
+            id="neb",
+            name="Nudged Elastic Band",
+            tool="neb_tool",
+            tool_input={
+                "action": "neb",
+                "initial_structure": "${relax_initial.output_path}",
+                "final_structure": "${relax_final.output_path}",
+                "n_images": n_images,
+                "max_iter": max_iter,
+                "climbing_image": climbing_image,
+                "energy_evaluator": neb_evaluator,
+            },
+            dependencies=["relax_initial", "relax_final"],
+            validation=ValidationRule(check="custom", custom_fn="has_result"),
+            retry_policy=RetryPolicy(max_retries=1, retry_on=["convergence_fail"]),
+        ),
+        ComputationalStage(
+            id="analyze",
+            name="MEP Analysis",
+            tool="neb_tool",
+            tool_input={
+                "action": "mep_analyze",
+                "neb_result": "${neb}",
+                "analysis_type": "energy_profile",
+            },
+            dependencies=["neb"],
+        ),
+        ComputationalStage(
+            id="report",
+            name="Reaction Pathway Report",
+            tool="report_tool",
+            tool_input={
+                "action": "render",
+                "neb_output": "${neb}",
+                "analyze_output": "${analyze}",
+            },
+            dependencies=["analyze"],
+        ),
+    ]
+
+
 # Registry of all templates
 WORKFLOW_TEMPLATES = {
     "standard_dft": standard_dft_workflow,
@@ -633,7 +896,15 @@ WORKFLOW_TEMPLATES = {
     "dft_verify": dft_verify_workflow,
     "thermo_verify": thermo_verify_workflow,
     "probability_verify": probability_verify_workflow,
+    "reviewer": reviewer_workflow,
+    "plasma_simulation": plasma_simulation_workflow,
+    "reaction_pathway": reaction_pathway_workflow,
 }
+
+# 模块级别别名, 方便 `from huginn.workflows.templates import REVIEWER_WORKFLOW`
+REVIEWER_WORKFLOW = reviewer_workflow
+PLASMA_SIMULATION_WORKFLOW = plasma_simulation_workflow
+REACTION_PATHWAY_WORKFLOW = reaction_pathway_workflow
 
 
 def list_templates() -> list[str]:

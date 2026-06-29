@@ -73,6 +73,7 @@ def client(test_context, admin_key, module_tmp):
 
     # Point personas at the temp workspace and clear any cached app state.
     os.environ["HUGINN_PERSONA"] = "default"
+    os.environ["HUGINN_DEV_MODE"] = "1"
     server_module._checkpoints.clear()
     server_module._threads.clear()
 

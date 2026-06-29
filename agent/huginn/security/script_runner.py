@@ -91,6 +91,14 @@ _BLOCKED_IMPORTS = {
     "marshal",
 }
 
+# Blocked submodules — these can be imported indirectly through allowed
+# parent packages (e.g. numpy.ctypeslib) and provide dangerous capabilities.
+_BLOCKED_SUBMODULES = {
+    "numpy.ctypeslib",
+    "numpy.testing",
+    "scipy.weave",
+}
+
 
 class ScriptRunner:
     """Execute Python scripts in a restricted environment."""
@@ -124,7 +132,19 @@ class ScriptRunner:
                 raise ImportError(
                     f"Import of '{name}' is not allowed in live scripts"
                 )
-            return real_import(name, *args, **kwargs)
+            # Block dangerous submodules of otherwise-allowed packages
+            if name in _BLOCKED_SUBMODULES:
+                raise ImportError(
+                    f"Import of '{name}' is not allowed in live scripts"
+                )
+            mod = real_import(name, *args, **kwargs)
+            # Strip dangerous attributes from numpy after import
+            if base == "numpy" and hasattr(mod, "ctypeslib"):
+                try:
+                    delattr(mod, "ctypeslib")
+                except AttributeError:
+                    pass
+            return mod
 
         safe_builtins_dict["__import__"] = safe_import
         safe_builtins_dict["__builtins__"] = safe_builtins_dict
@@ -153,7 +173,11 @@ class ScriptRunner:
             # Compile and exec with timeout
             code = compile(script, "<live_script>", "exec")
 
-            loop = asyncio.get_event_loop()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
             def _run() -> None:
                 old_stdout, old_stderr = sys.stdout, sys.stderr

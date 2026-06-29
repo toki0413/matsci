@@ -56,14 +56,20 @@ _ALLOWED_NODES = {
     ast.Set,
     ast.Dict,
     ast.Subscript,
-    ast.Index,
     ast.Slice,
-    ast.ExtSlice,
     ast.Call,
     ast.Attribute,
     ast.keyword,
     ast.Starred,
 }
+
+# ast.Index and ast.ExtSlice were removed in Python 3.12.
+# In 3.9+, subscripts use the expression directly (no Index wrapper).
+# Use getattr for cross-version compatibility.
+for _deprecated_node in ("Index", "ExtSlice"):
+    _node = getattr(ast, _deprecated_node, None)
+    if _node is not None:
+        _ALLOWED_NODES.add(_node)
 
 # ast.Num is deprecated in Python 3.14+; keep for backward compat on older versions
 if sys.version_info < (3, 14):
@@ -218,7 +224,8 @@ def safe_eval(expr: str, locals_dict: dict[str, Any] | None = None) -> Any:
             slice_val: Any
             if isinstance(node.slice, ast.Constant):
                 slice_val = node.slice.value
-            elif isinstance(node.slice, ast.Index):  # pragma: no cover
+            elif hasattr(ast, "Index") and isinstance(node.slice, ast.Index):
+                # Python < 3.9 wraps subscript index in ast.Index
                 slice_val = _eval(node.slice.value)
             else:
                 slice_val = _eval(node.slice)

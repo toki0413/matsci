@@ -32,7 +32,7 @@ async def get_project_context() -> dict[str, Any]:
 @router.post("/project-context")
 async def update_project_context(params: dict[str, Any]) -> dict[str, Any]:
     """Update the `.huginn.md` project context file."""
-    cfg = HuginnConfig.from_env()
+    cfg = get_config()
     content = params.get("content", "")
     try:
         result = save_project_context(cfg.workspace, content)

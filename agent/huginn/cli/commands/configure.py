@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import click
-from rich.panel import Panel
 
 from huginn.cli.context import CliContext
+from huginn.cli.design_system import get_design_system
 from huginn.config import HuginnConfig
 
 
@@ -14,18 +14,16 @@ from huginn.config import HuginnConfig
 @click.pass_obj
 def configure(ctx: CliContext, path: str) -> None:
     """Interactive first-run configuration wizard."""
-    ctx.console.print(
-        Panel(
-            "[bold blue]Huginn Configuration Wizard[/bold blue]",
-            title="Setup",
-            border_style="blue",
-        )
+    ds = get_design_system()
+    ds.dialog(
+        title="Setup",
+        content="[bold blue]Huginn Configuration Wizard[/bold blue]",
     )
 
     # Try to load existing config
     try:
         cfg = HuginnConfig.load(path)
-        ctx.console.print(f"[dim]Loaded existing config from {path}[/dim]")
+        ds.info(f"Loaded existing config from {path}")
     except Exception:
         cfg = HuginnConfig()
 
@@ -75,5 +73,5 @@ def configure(ctx: CliContext, path: str) -> None:
 
     fmt = "toml" if path.endswith(".toml") else "json"
     new_cfg.save(path, format=fmt)
-    ctx.console.print(f"[green]✓[/green] Config saved to [bold]{path}[/bold]")
-    ctx.console.print("[dim]Run: huginn chat --config " + path + "[/dim]")
+    ds.success(f"Config saved to {path}")
+    ds.info("Run: huginn chat --config " + path)

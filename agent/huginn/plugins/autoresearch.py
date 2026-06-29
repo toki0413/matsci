@@ -95,6 +95,7 @@ class AutoresearchTool(HuginnTool):
     """
 
     name = "autoresearch_tool"
+    category = "meta"
     description = (
         "Initialize and drive an AutoResearch workspace: prepare data, run "
         "fixed-time experiments, propose edits to train.py, and ratchet "
@@ -165,7 +166,10 @@ class AutoresearchTool(HuginnTool):
         else:
             command = args
 
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
         return await loop.run_in_executor(
             None,
             lambda: self._run_command_sync(command, cwd, timeout, capture_output, env),

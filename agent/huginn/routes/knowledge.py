@@ -16,6 +16,8 @@ from huginn.server_core import get_context
 
 router = APIRouter(tags=["knowledge"])
 
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
 
 @router.post("/knowledge/upload")
 async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
@@ -24,6 +26,11 @@ async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
         return {"error": "Knowledge base is not available"}
     try:
         content = await file.read()
+        if len(content) > _MAX_UPLOAD_BYTES:
+            return {
+                "success": False,
+                "error": f"File too large ({len(content)} bytes, max {_MAX_UPLOAD_BYTES})",
+            }
         result = get_context().kb.add_document(file.filename or "unnamed", content)
         return {"success": True, "document": result}
     except Exception as e:

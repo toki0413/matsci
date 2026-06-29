@@ -15,6 +15,7 @@ class PermissionMode(Enum):
     AUTO = "auto"
     ASK = "ask"
     DENY = "deny"
+    PLAN = "plan"  # 只读模式, 所有写工具强制 ASK
 
 
 class BudgetDecision(Enum):

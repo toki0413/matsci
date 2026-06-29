@@ -43,6 +43,10 @@ async def hpc_test_connection(params: dict[str, Any]) -> dict[str, Any]:
 @router.post("/hpc/submit")
 async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
     """Submit a job to remote HPC."""
+    command = params.get("command", "")
+    if not isinstance(command, str) or not command.strip():
+        return {"success": False, "error": "command is required and must be a non-empty string"}
+
     cfg = HPCConfig(
         host=params.get("host", ""),
         username=params.get("username", ""),
@@ -57,7 +61,7 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
     try:
         with HPCClient(cfg) as client:
             script = client.generate_job_script(
-                command=params.get("command", "echo 'Hello HPC'"),
+                command=command,
                 job_name=params.get("job_name", "huginn_job"),
                 walltime=params.get("walltime", "01:00:00"),
                 nodes=params.get("nodes", 1),
@@ -70,6 +74,8 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
                 script, job_name=params.get("job_name", "huginn_job")
             )
             return {"success": True, "job_id": job_id, "host": cfg.host}
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid input: {e}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 

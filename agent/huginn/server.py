@@ -16,12 +16,16 @@ to ``server_core._context``.
 
 from __future__ import annotations
 
+import os
 import sys
+import time
 import types
+from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from huginn import __version__
 from huginn.lifespan import _get_cors_origins, lifespan
@@ -62,6 +66,86 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+# ── Rate limiting (sliding window per client IP) ──────────────────────
+_RATE_LIMIT = int(os.environ.get("HUGINN_RATE_LIMIT_PER_MINUTE", "0"))
+_rate_buckets: dict[str, deque] = defaultdict(deque)
+_RATE_WINDOW = 60.0  # seconds
+# Sweep empty buckets every N requests so _rate_buckets doesn't grow
+# without bound as we see more and more distinct client IPs.
+_BUCKET_SWEEP_INTERVAL = 1000
+_request_counter = 0
+
+
+def _sweep_empty_buckets() -> None:
+    """Drop buckets that have drained to keep _rate_buckets bounded."""
+    for ip in [ip for ip, bucket in _rate_buckets.items() if not bucket]:
+        del _rate_buckets[ip]
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Enforce per-IP rate limiting when HUGINN_RATE_LIMIT_PER_MINUTE > 0."""
+    if _RATE_LIMIT <= 0:
+        return await call_next(request)
+
+    # Skip health checks and docs
+    path = request.url.path
+    if path in ("/health", "/docs", "/openapi.json", "/redoc"):
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    bucket = _rate_buckets[client_ip]
+
+    # Drop timestamps older than the window
+    while bucket and bucket[0] < now - _RATE_WINDOW:
+        bucket.popleft()
+
+    # If this client's bucket has drained, drop the dict entry so we don't
+    # keep empty deques around for every IP we've ever seen. defaultdict
+    # will hand us a fresh one on the next request from this IP.
+    if not bucket:
+        del _rate_buckets[client_ip]
+
+    if len(bucket) >= _RATE_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"success": False, "error": "Rate limit exceeded"},
+            headers={"Retry-After": str(int(_RATE_WINDOW))},
+        )
+
+    # defaultdict re-creates the bucket if we deleted it above.
+    _rate_buckets[client_ip].append(now)
+
+    # Every so often, reclaim buckets for clients that have gone quiet.
+    global _request_counter
+    _request_counter += 1
+    if _request_counter >= _BUCKET_SWEEP_INTERVAL:
+        _request_counter = 0
+        _sweep_empty_buckets()
+
+    return await call_next(request)
+
+
+# ── Global exception handler ──────────────────────────────────────────
+# Catches unhandled exceptions and returns a proper 500 response instead
+# of letting FastAPI return a 500 with a generic message.
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    import logging
+
+    logging.getLogger("huginn.server").error(
+        "Unhandled exception in %s %s: %s", request.method, request.url.path, exc,
+        exc_info=True,
+    )
+    # Don't leak internal details to the client
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": "Internal server error"},
+    )
+
 
 for _router in ALL_ROUTERS:
     app.include_router(_router)

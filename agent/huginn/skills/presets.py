@@ -2598,3 +2598,251 @@ AUTORESEARCH_WORKFLOW = register_skill(
         tags=["autoresearch", "ml", "experiment", "loop", "agent"],
     )
 )
+
+
+# --- Research Skills ---
+
+# 声明式壳: 真正的 LLM 推理 (假设生成 / 模板映射) 在 hypothesis_generator_tool 里.
+# 这里的 steps 把"文献综述 → 科学假设 → 可执行 workflow"的链路显式声明出来,
+# 非关键步骤 on_failure=continue, 一处失败不阻断整条链.
+HYPOTHESIS_GENERATOR = register_skill(
+    SkillDefinition(
+        name="hypothesis_generator",
+        description=(
+            "From literature review to executable workflow: generate scientific "
+            "hypotheses from literature gaps and map to workflow templates"
+        ),
+        category="research",
+        parameters=[
+            SkillParameter(
+                "research_topic",
+                "str",
+                "研究主题, 如 'GaN p-type doping efficiency'",
+                required=True,
+            ),
+            SkillParameter(
+                "literature_query",
+                "str",
+                "文献检索 query, 留空则用 research_topic",
+                default=None,
+            ),
+            SkillParameter(
+                "max_hypotheses", "int", "最多生成几个假设", default=3
+            ),
+            SkillParameter(
+                "target_workflow",
+                "str",
+                "指定 workflow 模板名 (standard_dft/aimd/defect/surface/"
+                "ml_potential/...), 不指定则自动选",
+                default=None,
+            ),
+            SkillParameter(
+                "auto_execute",
+                "bool",
+                "是否自动执行生成的 workflow",
+                default=False,
+            ),
+        ],
+        steps=[
+            # 1. 检索文献. 壳里直接拿 research_topic 当 query;
+            #    hypothesis_generator_tool 会尊重 literature_query.
+            SkillStep(
+                name="search_literature",
+                tool="web_search_tool",
+                input_mapping={"query": "$research_topic", "max_results": "10"},
+                output_key="literature_summary",
+                on_failure="continue",
+            ),
+            # 2. 识别研究空白, 喂规则分析
+            SkillStep(
+                name="identify_gaps",
+                tool="gap_analysis_tool",
+                input_mapping={
+                    "action": "'analyze_gaps'",
+                    "topic": "$research_topic",
+                    "papers": "$literature_summary.results",
+                },
+                output_key="research_gaps",
+                on_failure="continue",
+            ),
+            # 3. 生成假设. 壳里退化为 design_plan_tool 提一个计划占位,
+            #    真正的 statement/rationale/testable_prediction/required_data
+            #    由 hypothesis_generator_tool 的 LLM 推理产出.
+            SkillStep(
+                name="generate_hypotheses",
+                tool="design_plan_tool",
+                input_mapping={
+                    "action": "'propose'",
+                    "goal": "$research_topic",
+                    "expected_output": "$research_gaps.summary",
+                },
+                output_key="hypotheses_list",
+                on_failure="continue",
+            ),
+            # 4. 映射到 workflow 模板. 壳里用 code_tool 占位,
+            #    真正的 template_name/args/expected_observable/falsification_criterion
+            #    由 hypothesis_generator_tool 产出.
+            SkillStep(
+                name="map_to_workflow",
+                tool="code_tool",
+                input_mapping={
+                    "action": "'generate'",
+                    "code": "'# map hypotheses to workflow template'",
+                },
+                output_key="workflow_proposals",
+                on_failure="continue",
+            ),
+            # 5. (可选) 自动执行第一个 workflow; auto_execute=False 时跳过, 留给用户选
+            SkillStep(
+                name="execute_workflow",
+                tool="bash_tool",
+                input_mapping={
+                    "action": "'run'",
+                    "command": "['echo', 'pending workflow execution']",
+                },
+                output_key="execution_result",
+                condition="auto_execute == True",
+                on_failure="continue",
+            ),
+        ],
+        required_tools=[
+            "web_search_tool",
+            "gap_analysis_tool",
+            "design_plan_tool",
+            "code_tool",
+            "bash_tool",
+        ],
+        tags=["hypothesis", "literature", "research", "workflow_design"],
+    )
+)
+
+
+# 材料科研版 autoresearch —— 仿 Karpathy autoresearch, 但 ratchet 对象是物理量.
+# 声明式壳只有一个 step: 全部逻辑 (LLM 提参 → 跑 VASP → 抠指标 → ratchet) 在
+# materials_autoresearch_tool 里. 这里只负责把参数透传过去.
+MATERIALS_AUTORESEARCH = register_skill(
+    SkillDefinition(
+        name="materials_autoresearch",
+        description=(
+            "Materials science research loop: LLM proposes parameters → run DFT/MD "
+            "→ extract metric → ratchet"
+        ),
+        category="research",
+        parameters=[
+            SkillParameter(
+                "research_goal",
+                "str",
+                "研究目标, 如 'minimize formation energy of Li7La3Zr2O12'",
+                required=True,
+            ),
+            SkillParameter(
+                "ratchet_metric",
+                "str",
+                "ratchet 指标: formation_energy / band_gap / conductivity / "
+                "defect_formation_energy / elastic_modulus",
+                required=True,
+            ),
+            SkillParameter(
+                "ratchet_direction",
+                "str",
+                "minimize 或 maximize",
+                default="minimize",
+            ),
+            SkillParameter(
+                "initial_structure",
+                "str",
+                "初始结构文件路径 (POSCAR/CIF), 留空则用工作目录下现成的 POSCAR",
+                default=None,
+            ),
+            SkillParameter(
+                "workflow_template",
+                "str",
+                "用哪个 workflow 模板跑实验 (standard_dft/aimd/defect/surface/ml_potential/...)",
+                default="standard_dft",
+            ),
+            SkillParameter(
+                "max_iterations", "int", "最多迭代几轮", default=10
+            ),
+            SkillParameter(
+                "convergence_threshold",
+                "float",
+                "收敛阈值, 最近 3 轮指标波动小于该值就停; 留空则跑到 max_iterations",
+                default=None,
+            ),
+            SkillParameter(
+                "parameter_space",
+                "dict",
+                "LLM 可以调的参数空间, 如 "
+                "{'encut': [400, 500, 600], 'kpoints': ['4 4 4', '6 6 6'], 'ismear': [0, -5]}",
+                default=None,
+            ),
+            SkillParameter(
+                "record_history", "bool", "是否记录迭代历史", default=True
+            ),
+            SkillParameter(
+                "work_dir",
+                "str",
+                "工作根目录, 留空则用 context.workspace 下的 materials_autoresearch/",
+                default=None,
+            ),
+            SkillParameter(
+                "walltime_hours", "int", "单轮计算墙钟上限 (小时)", default=24
+            ),
+        ],
+        steps=[
+            SkillStep(
+                name="materials_research_loop",
+                tool="materials_autoresearch_tool",
+                input_mapping={
+                    "research_goal": "$research_goal",
+                    "ratchet_metric": "$ratchet_metric",
+                    "ratchet_direction": "$ratchet_direction",
+                    "initial_structure": "$initial_structure",
+                    "workflow_template": "$workflow_template",
+                    "max_iterations": "$max_iterations",
+                    "convergence_threshold": "$convergence_threshold",
+                    "parameter_space": "$parameter_space",
+                    "record_history": "$record_history",
+                    "work_dir": "$work_dir",
+                    "walltime_hours": "$walltime_hours",
+                },
+                output_key="research_loop_result",
+                on_failure="abort",
+            ),
+        ],
+        required_tools=["materials_autoresearch_tool"],
+        tags=["autoresearch", "materials", "ratchet", "research", "loop"],
+    )
+)
+
+
+# --- Meta Skills ---
+
+# 场景工具选择器: LLM 识别用户意图后, 调一次 scenario_tool 拿到该场景的
+# 推荐工具集 + 调用链 + workflow 模板, 不用逐个挑工具, 减少 token 消耗.
+# 壳只做参数透传, 真正的 LLM 匹配 + 关键词兜底逻辑在 scenario_tool 里.
+SCENARIO_TOOL_SELECTOR = register_skill(
+    SkillDefinition(
+        name="scenario_tool_selector",
+        description="Auto-select tools based on scenario description",
+        category="meta",
+        parameters=[
+            SkillParameter(
+                "scenario",
+                "str",
+                "用户场景描述, 如 '优化 Si 结构' / '调研高熵合金文献' / '审查论文'",
+                required=True,
+            ),
+        ],
+        steps=[
+            SkillStep(
+                name="select_scenario_tools",
+                tool="scenario_tool",
+                input_mapping={"scenario": "$scenario"},
+                output_key="scenario_tools",
+            ),
+        ],
+        required_tools=["scenario_tool"],
+        tags=["meta", "scenario", "tool_selection", "routing"],
+    )
+)

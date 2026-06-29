@@ -69,7 +69,7 @@ class TestAdapterConstraints:
                     }
                 )
 
-        lc_tool = ToolAdapter.adapt(
+        lc_tool = ToolAdapter().adapt(
             _BadVolumeDftTool(),
             permission_config=PermissionConfig(auto_approve_all=True),
         )
@@ -90,7 +90,7 @@ class TestAdapterConstraints:
                     data={"energy": -10.0, "max_force": 0.1, "band_gap": 1.0}
                 )
 
-        lc_tool = ToolAdapter.adapt(
+        lc_tool = ToolAdapter().adapt(
             _AlmostOkDftTool(),
             permission_config=PermissionConfig(auto_approve_all=True),
         )
@@ -102,13 +102,13 @@ class TestAdapterConstraints:
         assert "force_convergence" in warnings
 
     def test_unmapped_tool_skips_constraints(self):
-        lc_tool = ToolAdapter.adapt(_FakeReadOnlyTool())
+        lc_tool = ToolAdapter().adapt(_FakeReadOnlyTool())
         output = lc_tool.invoke({"command": "run"})
         assert "error" not in output
         assert output["result"]["formula"] == "Si"
 
     def test_md_block_on_lost_atoms(self):
-        lc_tool = ToolAdapter.adapt(
+        lc_tool = ToolAdapter().adapt(
             _FakeMdTool(), permission_config=PermissionConfig(auto_approve_all=True)
         )
         output = lc_tool.invoke({"command": "run"})
@@ -134,7 +134,7 @@ class TestBoundaryEvolution:
                 )
 
         boundary = BoundaryState(require_confirmation=False)
-        lc_tool = ToolAdapter.adapt(
+        lc_tool = ToolAdapter().adapt(
             _BadDftTool(),
             permission_config=PermissionConfig(auto_approve_all=True),
             boundary_state=boundary,
@@ -169,12 +169,12 @@ class TestBoundaryEvolution:
                 return ToolResult(data={"energy": -10.0})
 
         boundary = BoundaryState()
-        bad = ToolAdapter.adapt(
+        bad = ToolAdapter().adapt(
             _BadDftTool(),
             permission_config=PermissionConfig(auto_approve_all=True),
             boundary_state=boundary,
         )
-        another = ToolAdapter.adapt(
+        another = ToolAdapter().adapt(
             _AnotherDftTool(),
             permission_config=PermissionConfig(auto_approve_all=True),
             boundary_state=boundary,

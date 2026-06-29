@@ -24,6 +24,8 @@ class ConstraintResult:
     message: str
     severity: str = "warn"
     family: str = "quality"
+    # 数值奖励通道: None 时由聚合层从 passed 推导 (passed→1.0, failed→0.0)
+    score: float | None = None
 
 
 @dataclass

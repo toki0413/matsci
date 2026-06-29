@@ -36,6 +36,13 @@ from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext, ToolResult
 
+# 复用 skill_loader 的 frontmatter 解析和条件激活引擎
+from huginn.plugins.skill_loader import (
+    activate_conditional_skills,
+    parse_skill_file,
+    register_conditional_skills,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -145,13 +152,17 @@ class ScienceSkillsLoader:
                 continue
 
             try:
-                text = skill_md.read_text(encoding="utf-8")
+                # 用 skill_loader.parse_skill_file 统一解析 frontmatter,
+                # 支持 paths/allowed_tools/model/effort 等扩展字段
+                parsed = parse_skill_file(skill_md)
             except OSError:
                 continue
+            except Exception as exc:
+                logger.warning("解析 SKILL.md 失败 %s: %s", skill_md, exc)
+                continue
 
-            fm = _parse_frontmatter(text)
-            name = fm.get("name", entry.name)
-            description = fm.get("description", f"Science skill: {entry.name}")
+            name = parsed.get("name", entry.name)
+            description = parsed.get("description", f"Science skill: {entry.name}")
 
             # Discover scripts
             scripts_dir = entry / "scripts"
@@ -286,17 +297,22 @@ class ScienceSkillTool(HuginnTool):
             )
 
         # Prepare output path
+        # Use TemporaryDirectory for auto-cleanup when no explicit output_file
+        _tmp_cleanup = None
         if args.output_file:
             output_path = Path(args.output_file)
             output_path.parent.mkdir(parents=True, exist_ok=True)
         else:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="science_skill_"))
-            output_path = tmp_dir / "output.json"
+            _tmp_dir = tempfile.TemporaryDirectory(prefix="science_skill_")
+            _tmp_cleanup = _tmp_dir
+            output_path = Path(_tmp_dir.name) / "output.json"
 
         # Build command
         try:
             cmd = self._build_command(args, output_path, uv_exe)
         except RuntimeError as exc:
+            if _tmp_cleanup:
+                _tmp_cleanup.cleanup()
             return ToolResult(data=None, success=False, error=str(exc))
 
         # Execute via subprocess (in executor to avoid blocking)
@@ -310,12 +326,16 @@ class ScienceSkillTool(HuginnTool):
                 lambda: _run_subprocess(cmd, cwd, timeout),
             )
         except asyncio.TimeoutError:
+            if _tmp_cleanup:
+                _tmp_cleanup.cleanup()
             return ToolResult(
                 data=None,
                 success=False,
                 error=f"Skill '{self._meta.name}' timed out after {timeout}s",
             )
         except Exception as exc:
+            if _tmp_cleanup:
+                _tmp_cleanup.cleanup()
             return ToolResult(
                 data=None,
                 success=False,
@@ -324,15 +344,19 @@ class ScienceSkillTool(HuginnTool):
 
         if result["returncode"] != 0:
             stderr = result.get("stderr", "")
+            if _tmp_cleanup:
+                _tmp_cleanup.cleanup()
             return ToolResult(
                 data=None,
                 success=False,
                 error=f"Script failed (rc={result['returncode']}): {stderr[:1000]}",
             )
 
-        # Read output file
+        # Read output file before temp directory is cleaned up
         output_data: Any = None
+        output_file_str: str | None = None
         if output_path.exists():
+            output_file_str = str(output_path)
             try:
                 text = output_path.read_text(encoding="utf-8")
                 try:
@@ -344,11 +368,15 @@ class ScienceSkillTool(HuginnTool):
         elif result.get("stdout"):
             output_data = result["stdout"]
 
+        # Clean up temp directory if we created one
+        if _tmp_cleanup:
+            _tmp_cleanup.cleanup()
+
         return ToolResult(
             data={
                 "skill": self._meta.name,
                 "action": args.action,
-                "output_file": str(output_path) if output_path.exists() else None,
+                "output_file": output_file_str,
                 "result": output_data,
             },
             success=True,
@@ -422,6 +450,18 @@ def register_science_skills() -> list[str]:
             registered.append(tool.name)
         except Exception as exc:
             logger.warning("Failed to register science skill '%s': %s", meta.name, exc)
+
+    # 用 skill_loader 注册带 paths 字段的条件技能, 后续工具调用时
+    # activate_conditional_skills 会按文件路径自动激活匹配的技能
+    try:
+        skills_dir = loader.skills_dir
+        if skills_dir:
+            from huginn.plugins.skill_loader import load_skills_from_dir
+
+            all_parsed = load_skills_from_dir(skills_dir)
+            register_conditional_skills(all_parsed)
+    except Exception as exc:
+        logger.debug("条件技能注册失败(非致命): %s", exc)
 
     _registered = True
     logger.info("Registered %d science-skills tools: %s", len(registered), registered)

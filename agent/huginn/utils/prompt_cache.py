@@ -105,15 +105,20 @@ class PromptCacheBuilder:
         memory_text: str,
         user_message: str,
         kg_text: str = "",
+        history_messages: list[BaseMessage] | None = None,
     ) -> list[BaseMessage]:
         """Messages placed after the system prompt.
 
-        Order: begin-dialogs (static), optional memory context (dynamic),
+        Order: begin-dialogs (static), conversation history (dynamic),
+        optional memory context (dynamic),
         optional project knowledge graph context (dynamic),
         current user message (dynamic).
         """
         prefix = self._static_prefix()
         messages: list[BaseMessage] = list(prefix[1:])
+
+        if history_messages:
+            messages.extend(history_messages)
 
         if memory_text:
             messages.append(SystemMessage(content=memory_text))

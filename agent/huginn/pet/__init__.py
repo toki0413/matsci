@@ -266,11 +266,21 @@ class PetEventBus:
 
         return unsubscribe
 
-    async def queue(self) -> asyncio.Queue[PetEvent]:
-        """Return an async queue that receives all future events."""
-        q: asyncio.Queue[PetEvent] = asyncio.Queue()
+    async def queue(self) -> tuple[asyncio.Queue[PetEvent], Callable[[], None]]:
+        """Return an async queue that receives all future events.
+
+        The second return value is an unsubscribe function — call it when
+        the consumer disconnects so the queue is removed and garbage
+        collected instead of accumulating events forever.
+        """
+        q: asyncio.Queue[PetEvent] = asyncio.Queue(maxsize=256)
         self._queues.append(q)
-        return q
+
+        def unsubscribe() -> None:
+            with contextlib.suppress(ValueError):
+                self._queues.remove(q)
+
+        return q, unsubscribe
 
     def publish(
         self, mood: PetMood, message: str, details: dict[str, Any] | None = None

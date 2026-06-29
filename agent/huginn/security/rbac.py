@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -229,44 +230,51 @@ class SessionManager:
         self.max_idle = max_idle
         self._sessions: dict[str, UserSession] = {}
         self._user_sessions: dict[str, list[str]] = {}  # user_id → [session_ids]
+        self._lock = threading.RLock()
 
     def create(self, user_id: str) -> UserSession:
-        sid = secrets.token_urlsafe(32)
-        session = UserSession(session_id=sid, user_id=user_id)
-        self._sessions[sid] = session
-        self._user_sessions.setdefault(user_id, []).append(sid)
-        return session
+        with self._lock:
+            sid = secrets.token_urlsafe(32)
+            session = UserSession(session_id=sid, user_id=user_id)
+            self._sessions[sid] = session
+            self._user_sessions.setdefault(user_id, []).append(sid)
+            return session
 
     def get(self, session_id: str) -> UserSession | None:
-        session = self._sessions.get(session_id)
-        if session is None:
-            return None
-        if session.is_expired(self.max_idle):
-            self.destroy(session_id)
-            return None
-        session.touch()
-        return session
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if session.is_expired(self.max_idle):
+                self.destroy(session_id)
+                return None
+            session.touch()
+            return session
 
     def destroy(self, session_id: str) -> None:
-        session = self._sessions.pop(session_id, None)
-        if session:
-            sids = self._user_sessions.get(session.user_id, [])
-            if session_id in sids:
-                sids.remove(session_id)
+        with self._lock:
+            session = self._sessions.pop(session_id, None)
+            if session:
+                sids = self._user_sessions.get(session.user_id, [])
+                if session_id in sids:
+                    sids.remove(session_id)
 
     def destroy_user_sessions(self, user_id: str) -> int:
-        sids = self._user_sessions.pop(user_id, [])
-        for sid in sids:
-            self._sessions.pop(sid, None)
-        return len(sids)
+        with self._lock:
+            sids = self._user_sessions.pop(user_id, [])
+            for sid in sids:
+                self._sessions.pop(sid, None)
+            return len(sids)
 
     def cleanup_expired(self) -> int:
-        expired = [
-            sid for sid, s in self._sessions.items() if s.is_expired(self.max_idle)
-        ]
-        for sid in expired:
-            self.destroy(sid)
-        return len(expired)
+        with self._lock:
+            expired = [
+                sid for sid, s in self._sessions.items() if s.is_expired(self.max_idle)
+            ]
+            for sid in expired:
+                self.destroy(sid)
+            return len(expired)
 
     def active_count(self) -> int:
-        return len(self._sessions)
+        with self._lock:
+            return len(self._sessions)

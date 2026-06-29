@@ -44,6 +44,7 @@ class EvaluationTool(HuginnTool):
     """Multi-criteria decision analysis for material screening and selection."""
 
     name = "evaluation_tool"
+    category = "meta"
     description = "Evaluate and rank material candidates using MCDA: TOPSIS, VIKOR, TODIM, PROMETHEE, RSR, Grey + Entropy/CV/CRITIC/AHP/PCA weights"
     input_schema = EvaluationToolInput
 

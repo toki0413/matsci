@@ -8,6 +8,8 @@ expressions, and executes them as subprocess commands.
 from __future__ import annotations
 
 import re
+import shlex
+import sys
 import subprocess
 import time
 import uuid
@@ -115,14 +117,27 @@ class ScheduleManager:
         for job in due:
             start = time.time()
             try:
-                proc = subprocess.run(
-                    job.command,
-                    shell=True,
-                    cwd=self.workspace,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
+                # On Windows, shell builtins (echo, dir, ...) need shell=True.
+                # Unix commands are split with shlex for safety.
+                if isinstance(job.command, str) and sys.platform == "win32":
+                    proc = subprocess.run(
+                        job.command,
+                        shell=True,
+                        cwd=self.workspace,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
+                else:
+                    cmd = shlex.split(job.command) if isinstance(job.command, str) else job.command
+                    proc = subprocess.run(
+                        cmd,
+                        shell=False,
+                        cwd=self.workspace,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
                 ok = proc.returncode == 0
                 result = {
                     "job_id": job.id,

@@ -234,4 +234,5 @@ def _get_cors_origins() -> list[str]:
         "http://localhost:1420",
         "http://localhost:8000",
         "tauri://localhost",
+        "http://tauri.localhost",
     ]

@@ -40,6 +40,7 @@ class RAGTool(HuginnTool):
     """Retrieve material science knowledge from local vector database."""
 
     name = "rag_tool"
+    category = "search"
     description = "Search and ingest material science documents into a local knowledge base for RAG"
     input_schema = RAGToolInput
 
@@ -60,6 +61,17 @@ class RAGTool(HuginnTool):
             )
         else:
             self.store = VectorStore(persist_dir=persist_dir)
+
+        # 层次化路由检索：识别 VASP/LAMMPS/Gaussian 等14种软件 + 17种方法关键词
+        # 命中路由时在对应子索引里优先搜，提升精度；没命中就退回普通语义搜索
+        self._hierarchical: Any | None = None
+        try:
+            from huginn.rag.router_retriever import HierarchicalRetriever
+
+            self._hierarchical = HierarchicalRetriever(self.store)
+        except Exception as e:
+            # 路由检索不可用就走原来的路径，不影响主流程
+            print(f"[rag_tool] hierarchical retriever unavailable: {e}")
 
     def is_read_only(self, args: RAGToolInput) -> bool:
         return args.action in ["search", "list", "count", "get"]
@@ -91,11 +103,36 @@ class RAGTool(HuginnTool):
                 data=None, success=False, error="query is required for search"
             )
 
-        try:
-            filter_dict = None
-            if args.source_filter:
-                filter_dict = {"source": args.source_filter}
+        filter_dict = None
+        if args.source_filter:
+            filter_dict = {"source": args.source_filter}
 
+        # 优先走层次化路由检索（带软件/方法识别），失败再退回普通语义搜索
+        if self._hierarchical is not None:
+            try:
+                routed = self._hierarchical.search(
+                    query=args.query,
+                    top_k=args.top_k,
+                    filter_dict=filter_dict,
+                )
+                results = routed.get("results", [])
+                return ToolResult(
+                    data={
+                        "query": args.query,
+                        "results_count": len(results),
+                        "results": results,
+                        "route": routed.get("route"),
+                        "routing_reason": routed.get("routing_reason"),
+                        "targeted_count": routed.get("targeted_count", 0),
+                        "general_count": routed.get("general_count", 0),
+                    },
+                    success=True,
+                )
+            except Exception as e:
+                # 路由检索挂了就 fallback，不能让用户拿不到结果
+                print(f"[rag_tool] hierarchical search failed, fallback: {e}")
+
+        try:
             results = self.store.search(
                 query=args.query,
                 top_k=args.top_k,

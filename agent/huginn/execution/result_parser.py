@@ -43,7 +43,6 @@ class ResultParser:
     Usage:
         parser = ResultParser()
         result = parser.parse_vasp_outcar(Path("OUTCAR"))
-        print(result.converged, result.energy)
     """
 
     def __init__(self):

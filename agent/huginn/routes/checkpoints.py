@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from huginn.server_core import _checkpoints, _snapshot_directory
+from huginn.server_core import _checkpoints, _snapshot_directory, _state_lock
 
 router = APIRouter(tags=["checkpoints"])
 
@@ -21,23 +21,26 @@ async def create_checkpoint(params: dict[str, Any]) -> dict[str, Any]:
     base = Path(params.get("path", ".")).resolve()
     snapshot = _snapshot_directory(base)
     cp_id = uuid.uuid4().hex[:8]
-    _checkpoints[cp_id] = (base, snapshot)
+    with _state_lock:
+        _checkpoints[cp_id] = (base, snapshot)
     return {"id": cp_id, "base": str(base), "files": len(snapshot)}
 
 
 @router.get("/checkpoints/{cp_id}")
 async def get_checkpoint(cp_id: str) -> dict[str, Any]:
-    if cp_id not in _checkpoints:
-        return {"error": "checkpoint not found"}
-    base, snapshot = _checkpoints[cp_id]
+    with _state_lock:
+        if cp_id not in _checkpoints:
+            return {"error": "checkpoint not found"}
+        base, snapshot = _checkpoints[cp_id]
     return {"id": cp_id, "base": str(base), "files": list(snapshot.keys())}
 
 
 @router.get("/checkpoints/{cp_id}/diff")
 async def checkpoint_diff(cp_id: str) -> dict[str, Any]:
-    if cp_id not in _checkpoints:
-        return {"error": "checkpoint not found"}
-    base, snapshot = _checkpoints[cp_id]
+    with _state_lock:
+        if cp_id not in _checkpoints:
+            return {"error": "checkpoint not found"}
+        base, snapshot = _checkpoints[cp_id]
     current = _snapshot_directory(base)
     diffs = []
     all_files = set(snapshot.keys()) | set(current.keys())
@@ -74,17 +77,20 @@ async def checkpoint_diff(cp_id: str) -> dict[str, Any]:
 
 @router.post("/checkpoints/{cp_id}/accept")
 async def accept_checkpoint(cp_id: str) -> dict[str, Any]:
-    if cp_id not in _checkpoints:
-        return {"error": "checkpoint not found"}
-    del _checkpoints[cp_id]
+    with _state_lock:
+        if cp_id not in _checkpoints:
+            return {"error": "checkpoint not found"}
+        del _checkpoints[cp_id]
     return {"success": True}
 
 
 @router.post("/checkpoints/{cp_id}/reject")
 async def reject_checkpoint(cp_id: str) -> dict[str, Any]:
-    if cp_id not in _checkpoints:
-        return {"error": "checkpoint not found"}
-    base, snapshot = _checkpoints[cp_id]
+    with _state_lock:
+        if cp_id not in _checkpoints:
+            return {"error": "checkpoint not found"}
+        base, snapshot = _checkpoints[cp_id]
+        del _checkpoints[cp_id]
     current = _snapshot_directory(base)
     for rel, content in snapshot.items():
         if rel in current:
@@ -97,5 +103,4 @@ async def reject_checkpoint(cp_id: str) -> dict[str, Any]:
             path = base / rel
             with suppress(Exception):
                 path.unlink()
-    del _checkpoints[cp_id]
     return {"success": True}

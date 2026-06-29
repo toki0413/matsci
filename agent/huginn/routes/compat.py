@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from typing import Any
@@ -42,28 +43,30 @@ async def sandbox_execute(params: dict[str, Any]) -> dict[str, Any]:
             f.flush()
             tmp_path = f.name
 
-        sandbox = SandboxExecutor(
-            SandboxConfig(
-                allowed_executables={"python", "python3"},
-                default_timeout=min(float(timeout), 300.0),
-                max_timeout=300.0,
-                max_output_bytes=10 * 1024 * 1024,
+        try:
+            sandbox = SandboxExecutor(
+                SandboxConfig(
+                    allowed_executables={"python", "python3"},
+                    default_timeout=min(float(timeout), 300.0),
+                    max_timeout=300.0,
+                    max_output_bytes=10 * 1024 * 1024,
+                )
             )
-        )
-        sb_result = sandbox.run(
-            ["python", tmp_path],
-            timeout=min(float(timeout), 300.0),
-        )
-        result = sb_result
+            sb_result = sandbox.run(
+                ["python", tmp_path],
+                timeout=min(float(timeout), 300.0),
+            )
+            result = sb_result
 
-        os.unlink(tmp_path)
-
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode,
-        }
+            return {
+                "success": result.returncode == 0,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+            }
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
     except subprocess.TimeoutExpired:
         return {"success": False, "error": f"Execution timed out after {timeout}s"}
     except Exception as e:
