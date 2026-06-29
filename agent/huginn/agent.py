@@ -64,6 +64,11 @@ from huginn.llm_retry import (
 )
 from huginn.models.registry import create_langchain_model
 from huginn.models.router import ModelRouter
+from huginn.agent_config import (
+    AgentConfig,
+    HuginnAgentBuilder,
+    _UNSET_SENTINEL,
+)
 from huginn.permissions import PermissionConfig
 from huginn.personas import Persona
 
@@ -182,12 +187,12 @@ class HuginnAgent:
         model: Any | None = None,
         tools: list[Any] | None = None,
         system_prompt: str | None = None,
-        enable_exploration: bool = True,
+        enable_exploration: Any = _UNSET_SENTINEL,
         memory_manager: Any | None = None,
         skill_executor: Any | None = None,
         sandbox: Any | None = None,
         audit: Any | None = None,
-        profile_id: str = "default",
+        profile_id: Any = _UNSET_SENTINEL,
         thread_id: str | None = None,
         tool_filter: list[str] | None = None,
         agent_factory: Any | None = None,
@@ -203,41 +208,158 @@ class HuginnAgent:
         memory_decay_enabled: bool | None = None,
         memory_decay_interval_turns: int | None = None,
         memory_decay_prune_threshold: float | None = None,
-        workspace: str = ".",
-        kg_enabled: bool = False,
-        kg_depth: int = 1,
-        kg_top_k: int = 10,
+        workspace: Any = _UNSET_SENTINEL,
+        kg_enabled: Any = _UNSET_SENTINEL,
+        kg_depth: Any = _UNSET_SENTINEL,
+        kg_top_k: Any = _UNSET_SENTINEL,
         auto_approve: bool | None = None,
         compression_max_tokens: int | None = None,
         telemetry_enabled: bool | None = None,
         persona_name: str | None = None,
         emotion_tracker: Any | None = None,
         approval_callback: Callable[[str, str], bool] | None = None,
-        break_after_tool: bool = False,
+        break_after_tool: Any = _UNSET_SENTINEL,
         max_tool_calls: int | None = None,
         max_tool_calls_per_tool: int | None = None,
         style_learner: Any | None = None,
+        *,
+        config: AgentConfig | None = None,
     ):
-        self.model = model
-        self.model_router = model_router
-        self.langchain_tools = tools or []
+        # 1) 确定 config 基底: 显式传入 > 环境变量默认
+        if config is None:
+            config = AgentConfig.from_env()
+
+        # 2) 旧式扁平参数覆盖 config.
+        #    - "None 表示未指定" 的参数: 非 None 才覆盖 (None 时保留 config 的 env 值)
+        #    - "有真实默认值" 的参数: 非 _UNSET 才覆盖 (保持调用方显式传值优先)
+        m, t, mem = config.model, config.tools, config.memory
+        sec, tel, cb = config.security, config.telemetry, config.context_budget
+        kg, pers, core = (
+            config.knowledge_graph,
+            config.personalization,
+            config.core,
+        )
+
+        # None 表示未指定
+        if model is not None:
+            m.model = model
+        if model_router is not None:
+            m.model_router = model_router
+        if system_prompt is not None:
+            m.system_prompt = system_prompt
+        if begin_dialogs is not None:
+            m.begin_dialogs = begin_dialogs
+        if prompt_cache_control is not None:
+            m.prompt_cache_control = prompt_cache_control
+        if tools is not None:
+            t.tools = tools
+        if tool_filter is not None:
+            t.tool_filter = tool_filter
+        if max_tool_output_tokens is not None:
+            t.max_tool_output_tokens = max_tool_output_tokens
+        if max_tool_calls is not None:
+            t.max_tool_calls = max_tool_calls
+        if max_tool_calls_per_tool is not None:
+            t.max_tool_calls_per_tool = max_tool_calls_per_tool
+        if compression_max_tokens is not None:
+            t.compression_max_tokens = compression_max_tokens
+        if memory_manager is not None:
+            mem.memory_manager = memory_manager
+        if checkpointer is not None:
+            mem.checkpointer = checkpointer
+        if checkpointer_path is not None:
+            mem.checkpointer_path = checkpointer_path
+        if memory_decay_enabled is not None:
+            mem.memory_decay_enabled = memory_decay_enabled
+        if memory_decay_interval_turns is not None:
+            mem.memory_decay_interval_turns = memory_decay_interval_turns
+        if memory_decay_prune_threshold is not None:
+            mem.memory_decay_prune_threshold = memory_decay_prune_threshold
+        if sandbox is not None:
+            sec.sandbox = sandbox
+        if audit is not None:
+            sec.audit = audit
+        if privacy_redact_secrets is not None:
+            sec.privacy_redact_secrets = privacy_redact_secrets
+        if privacy_block_on_secrets is not None:
+            sec.privacy_block_on_secrets = privacy_block_on_secrets
+        if auto_approve is not None:
+            sec.auto_approve = auto_approve
+        if approval_callback is not None:
+            sec.approval_callback = approval_callback
+        if telemetry_enabled is not None:
+            tel.telemetry_enabled = telemetry_enabled
+        if context_budget_tokens is not None:
+            cb.context_budget_tokens = context_budget_tokens
+        if persona_name is not None:
+            pers.persona_name = persona_name
+        if emotion_tracker is not None:
+            pers.emotion_tracker = emotion_tracker
+        if style_learner is not None:
+            pers.style_learner = style_learner
+        if thread_id is not None:
+            core.thread_id = thread_id
+        if agent_factory is not None:
+            core.agent_factory = agent_factory
+        if skill_executor is not None:
+            core.skill_executor = skill_executor
+
+        # 有真实默认值: 非 _UNSET 才覆盖
+        if enable_exploration is not _UNSET_SENTINEL:
+            core.enable_exploration = enable_exploration
+        if profile_id is not _UNSET_SENTINEL:
+            core.profile_id = profile_id
+        if workspace is not _UNSET_SENTINEL:
+            kg.workspace = workspace
+        if kg_enabled is not _UNSET_SENTINEL:
+            kg.kg_enabled = kg_enabled
+        if kg_depth is not _UNSET_SENTINEL:
+            kg.kg_depth = kg_depth
+        if kg_top_k is not _UNSET_SENTINEL:
+            kg.kg_top_k = kg_top_k
+        if break_after_tool is not _UNSET_SENTINEL:
+            t.break_after_tool = break_after_tool
+
+        # 3) 统一从 config 初始化
+        self._init_from_config(config)
+
+    def _init_from_config(self, config: AgentConfig) -> None:
+        """从已解析的 AgentConfig 初始化所有实例状态.
+
+        环境变量默认值已在 AgentConfig.from_env() 集中处理, 这里只做
+        赋值与副作用, 保持与原 __init__ 完全一致的执行顺序.
+        """
+        m = config.model
+        t = config.tools
+        mem = config.memory
+        sec = config.security
+        tel = config.telemetry
+        cb = config.context_budget
+        kg = config.knowledge_graph
+        pers = config.personalization
+        core = config.core
+
+        # 模型 / 路由 / 工具列表
+        self.model = m.model
+        self.model_router = m.model_router
+        self.langchain_tools = t.tools or []
 
         # Resource management for persistent checkpointers and similar objects.
         self._exit_stack = ExitStack()
 
-        if checkpointer is not None:
-            self.checkpointer = checkpointer
-        elif checkpointer_path or os.environ.get("HUGINN_CHECKPOINTER_PATH"):
+        if mem.checkpointer is not None:
+            self.checkpointer = mem.checkpointer
+        elif mem.checkpointer_path:
             from huginn.checkpointer import persistent_checkpointer
 
             self.checkpointer = self._exit_stack.enter_context(
-                persistent_checkpointer(checkpointer_path)
+                persistent_checkpointer(mem.checkpointer_path)
             )
         else:
             self.checkpointer = create_in_memory_checkpointer()
 
-        self.system_prompt = system_prompt or HUGINN_SYSTEM_PROMPT
-        self.begin_dialogs = begin_dialogs or []
+        self.system_prompt = m.system_prompt or HUGINN_SYSTEM_PROMPT
+        self.begin_dialogs = m.begin_dialogs or []
 
         # Research phase state machine — provides coarse-grained workflow
         # control on top of the fine-grained ReAct loop.
@@ -245,11 +367,7 @@ class HuginnAgent:
 
         self._phase_manager = PhaseManager(initial=ResearchPhase.OPEN)
 
-        if prompt_cache_control is None:
-            prompt_cache_control = (
-                os.environ.get("HUGINN_PROMPT_CACHE_CONTROL", "1") != "0"
-            )
-        self.prompt_cache_control = prompt_cache_control
+        self.prompt_cache_control = m.prompt_cache_control
 
         self._cache_builder = PromptCacheBuilder(
             system_prompt=self.system_prompt,
@@ -259,11 +377,11 @@ class HuginnAgent:
         # Detect provider so prompt-cache markers can be provider-specific.
         self._cache_builder.set_provider(self._detect_provider())
 
-        self.enable_exploration = enable_exploration
-        self.profile_id = profile_id
-        self.thread_id = thread_id
-        self.tool_filter = set(tool_filter) if tool_filter else None
-        self.agent_factory = agent_factory
+        self.enable_exploration = core.enable_exploration
+        self.profile_id = core.profile_id
+        self.thread_id = core.thread_id
+        self.tool_filter = set(t.tool_filter) if t.tool_filter else None
+        self.agent_factory = core.agent_factory
         self._agent_graph: Any | None = None
         self._tool_description_text: str | None = None
         self._last_cache_stats: dict[str, Any] = {}
@@ -279,80 +397,46 @@ class HuginnAgent:
         self._telemetry_collector = TelemetryCollector()
         self._turn_count = 0
 
-        if memory_decay_enabled is None:
-            memory_decay_enabled = (
-                os.environ.get("HUGINN_MEMORY_DECAY_ENABLED", "").lower() == "true"
-            )
-        if memory_decay_interval_turns is None:
-            memory_decay_interval_turns = int(
-                os.environ.get("HUGINN_MEMORY_DECAY_INTERVAL_TURNS", "0")
-            )
-        if memory_decay_prune_threshold is None:
-            memory_decay_prune_threshold = float(
-                os.environ.get("HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD", "0.15")
-            )
-        self.memory_decay_enabled = memory_decay_enabled
-        self.memory_decay_interval_turns = memory_decay_interval_turns
-        self.memory_decay_prune_threshold = memory_decay_prune_threshold
+        self.memory_decay_enabled = mem.memory_decay_enabled
+        self.memory_decay_interval_turns = mem.memory_decay_interval_turns
+        self.memory_decay_prune_threshold = mem.memory_decay_prune_threshold
 
         # Approval / automation
-        if auto_approve is None:
-            auto_approve = (
-                os.environ.get("HUGINN_AUTO_APPROVE", "0").lower() in ("1", "true", "yes")
-            )
-        self.auto_approve = auto_approve
-        self._permission_config = PermissionConfig(auto_approve_all=auto_approve)
+        self.auto_approve = sec.auto_approve
+        self._permission_config = PermissionConfig(auto_approve_all=sec.auto_approve)
         # Optional interactive approval hook — invoked by the tool adapter
         # whenever a tool lands in ASK mode. Set via constructor or
         # set_approval_callback() before registering tools.
-        self._approval_callback: Callable[[str, str], bool] | None = approval_callback
+        self._approval_callback: Callable[[str, str], bool] | None = (
+            sec.approval_callback
+        )
 
         # Tool output compression budget (separate from truncation budget)
-        if compression_max_tokens is None:
-            compression_max_tokens = int(
-                os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", "8000")
-            )
-        self.compression_max_tokens = compression_max_tokens
+        self.compression_max_tokens = t.compression_max_tokens
 
         # Telemetry
-        if telemetry_enabled is None:
-            telemetry_enabled = (
-                os.environ.get("HUGINN_TELEMETRY_ENABLED", "1").lower() != "false"
-            )
-        self.telemetry_enabled = telemetry_enabled
+        self.telemetry_enabled = tel.telemetry_enabled
         self._telemetry_collector = (
-            TelemetryCollector() if telemetry_enabled else NullTelemetryCollector()
+            TelemetryCollector()
+            if tel.telemetry_enabled
+            else NullTelemetryCollector()
         )
 
         # Security layer
-        self.sandbox = sandbox
-        self.audit = audit
+        self.sandbox = sec.sandbox
+        self.audit = sec.audit
 
-        # Privacy controls (default to env vars if not explicitly passed)
-        if privacy_redact_secrets is None:
-            privacy_redact_secrets = (
-                os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0"
-            )
-        if privacy_block_on_secrets is None:
-            privacy_block_on_secrets = (
-                os.environ.get("HUGINN_PRIVACY_BLOCK_ON_SECRETS", "0") == "1"
-            )
-        self.privacy_redact_secrets = privacy_redact_secrets
-        self.privacy_block_on_secrets = privacy_block_on_secrets
+        # Privacy controls
+        self.privacy_redact_secrets = sec.privacy_redact_secrets
+        self.privacy_block_on_secrets = sec.privacy_block_on_secrets
 
         # Context/output budgets
-        if max_tool_output_tokens is None:
-            max_tool_output_tokens = int(
-                os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", "25000")
-            )
-        if context_budget_tokens is None:
-            context_budget_tokens = int(
-                os.environ.get("HUGINN_CONTEXT_BUDGET_TOKENS", "0")
-            )
-        # context_budget_tokens=0 时自动按模型名推断上下文窗口
-        if context_budget_tokens <= 0 and model is not None:
-            model_name = getattr(model, "model_name", None) or getattr(
-                model, "model", ""
+        max_tool_output_tokens = t.max_tool_output_tokens
+        context_budget_tokens = cb.context_budget_tokens
+        # context_budget_tokens<=0 时自动按模型名推断上下文窗口
+        if context_budget_tokens is not None and context_budget_tokens <= 0 and m.model is not None:
+            model_name = getattr(m.model, "model_name", None) or getattr(
+                m.model, "model", ""
             )
             if model_name:
                 context_budget_tokens = get_context_window(str(model_name))
@@ -362,28 +446,29 @@ class HuginnAgent:
         self._model_context_window = (
             get_context_window(
                 str(
-                    getattr(model, "model_name", None)
-                    or getattr(model, "model", "")
+                    getattr(m.model, "model_name", None)
+                    or getattr(m.model, "model", "")
                 )
             )
-            if model is not None
+            if m.model is not None
             else 0
         )
 
         # Knowledge graph integration
-        self.workspace = workspace
-        self.kg_enabled = kg_enabled
-        self.kg_depth = kg_depth
-        self.kg_top_k = kg_top_k
+        self.workspace = kg.workspace
+        self.kg_enabled = kg.kg_enabled
+        self.kg_depth = kg.kg_depth
+        self.kg_top_k = kg.kg_top_k
         self._kg: Any | None = None
         # 新实例清空系统上下文缓存, 避免 workspace 切换后拿到旧的 git 状态
         reset_context_cache()
 
         # Persona emotional trajectory
-        self.persona_name = persona_name
-        self.emotion_tracker = emotion_tracker
+        self.persona_name = pers.persona_name
+        self.emotion_tracker = pers.emotion_tracker
 
         # Memory integration
+        memory_manager = mem.memory_manager
         if memory_manager is None:
             from huginn.memory.manager import MemoryManager
 
@@ -391,6 +476,7 @@ class HuginnAgent:
         self.memory = memory_manager
 
         # Skills integration
+        skill_executor = core.skill_executor
         if skill_executor is None:
             from huginn.skills.base import DeclarativeSkillExecutor
 
@@ -411,26 +497,20 @@ class HuginnAgent:
         # 单步执行: 工具结果出来后暂停 chat 流, 让调用方检查 / 决定要不要继续.
         # _break_after_tool 是开关, _break_flag 是 _process_stream_state 置位、
         # chat() 消费的一次性信号.
-        self._break_after_tool = break_after_tool
+        self._break_after_tool = t.break_after_tool
         self._break_flag = False
 
         # 工具调用预算: 限制单轮 chat 最多调几次工具、同一工具最多调几次.
         # None 表示不限制. agent profile 可以按需覆盖.
-        if max_tool_calls is None:
-            max_tool_calls = int(os.environ.get("HUGINN_MAX_TOOL_CALLS", "15"))
-        if max_tool_calls_per_tool is None:
-            max_tool_calls_per_tool = int(
-                os.environ.get("HUGINN_MAX_TOOL_CALLS_PER_TOOL", "5")
-            )
-        self._max_tool_calls = max_tool_calls
-        self._max_tool_calls_per_tool = max_tool_calls_per_tool
+        self._max_tool_calls = t.max_tool_calls
+        self._max_tool_calls_per_tool = t.max_tool_calls_per_tool
 
         # 个人定制: 学习用户语言偏好, 逐步定制通信风格.
         # None 时不启用, set_style_learner() 可后续注入.
-        self.style_learner = style_learner
-        if style_learner is not None:
+        self.style_learner = pers.style_learner
+        if pers.style_learner is not None:
             from huginn.personalization import set_shared_style_learner
-            set_shared_style_learner(style_learner)
+            set_shared_style_learner(pers.style_learner)
 
     def _make_summarizer(self):
         """Create an async callable for conversation summarization.
@@ -777,7 +857,7 @@ class HuginnAgent:
             return original.invoke(kwargs)
 
         return StructuredTool.from_function(
-            name=original.name,
+            name=tool_name or "unnamed_tool",
             description=getattr(original, "description", "") or "",
             args_schema=getattr(original, "args_schema", None),
             coroutine=hooked_coroutine,
