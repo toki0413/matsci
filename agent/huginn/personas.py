@@ -9,6 +9,7 @@ Inspired by AstrBot's persona/personality mechanism:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -267,6 +268,223 @@ class PersonaManager:
         if self._default_name == name:
             self._default_name = "default"
         self.save()
+
+    # ── 用户自设 persona (Nuwa 格式 .md 文件) ──────────────────────────
+
+    def _persona_dir(self) -> Path:
+        """用户 persona 文件存放目录 (.huginn/personas/)."""
+        if self._skill_dirs:
+            return self._skill_dirs[0]
+        return self._workspace / ".huginn" / "personas"
+
+    @staticmethod
+    def _templates_path() -> Path:
+        """persona 模板库 JSON 路径 (随包分发, 不随 workspace 变)."""
+        return Path(__file__).resolve().parent / "data" / "persona_templates.json"
+
+    @staticmethod
+    def _render_template_string(template_str: str, values: dict[str, Any]) -> str:
+        """把 {{var}} 占位符替换成 values 里的值, 未匹配的占位符原样保留."""
+        def _replace(m: "re.Match[str]") -> str:
+            key = m.group(1).strip()
+            if key in values:
+                return str(values[key])
+            return m.group(0)
+        return re.sub(r"\{\{\s*(\w+)\s*\}\}", _replace, template_str)
+
+    @staticmethod
+    def _build_nuwa_markdown(
+        name: str,
+        description: str,
+        when_to_use: list[str],
+        system_prompt: str,
+    ) -> str:
+        """把 persona 字段拼成 Nuwa 格式 markdown (YAML frontmatter + body)."""
+        import yaml
+
+        front: dict[str, Any] = {"name": name}
+        if description:
+            front["description"] = description
+        if when_to_use:
+            front["when_to_use"] = when_to_use
+        # sort_keys=False 保证 name/description/when_to_use 顺序稳定
+        front_text = yaml.safe_dump(
+            front, allow_unicode=True, sort_keys=False, default_flow_style=False
+        )
+        return f"---\n{front_text}---\n\n{system_prompt.strip()}\n"
+
+    def create_persona(
+        self,
+        name: str,
+        description: str,
+        system_prompt: str,
+        when_to_use: list[str] | None = None,
+    ) -> Persona:
+        """创建用户 persona 并写入 .huginn/personas/{name}.md (Nuwa 格式).
+
+        内置 persona 同名时拒绝创建, 避免覆盖.
+        """
+        if not name:
+            raise ValueError("Persona name is required")
+        builtin_names = {bp.name for bp in BUILT_IN_PERSONAS}
+        if name in builtin_names:
+            raise ValueError(f"不能覆盖内置 persona '{name}'")
+
+        when_to_use = when_to_use or []
+        markdown = self._build_nuwa_markdown(
+            name, description, when_to_use, system_prompt
+        )
+
+        persona_dir = self._persona_dir()
+        persona_dir.mkdir(parents=True, exist_ok=True)
+        file_path = persona_dir / f"{name}.md"
+        file_path.write_text(markdown, encoding="utf-8")
+
+        # 直接更新内存里的 persona, 不走全量 reload 以免丢掉其他运行时状态
+        persona = Persona(
+            name=name,
+            system_prompt=system_prompt.strip(),
+            description=description,
+            when_to_use=when_to_use,
+            source_path=str(file_path.resolve()),
+            kind="nuwa",
+        )
+        self._personas[name] = persona
+        return persona
+
+    def update_persona(self, name: str, **fields: Any) -> Persona:
+        """更新用户 persona 字段并写回 Nuwa 文件. 内置 persona 不允许改."""
+        builtin_names = {bp.name for bp in BUILT_IN_PERSONAS}
+        if name in builtin_names:
+            raise ValueError(f"不能修改内置 persona '{name}'")
+        if name not in self._personas:
+            raise ValueError(f"Persona '{name}' not found")
+
+        persona = self._personas[name]
+        for key, value in fields.items():
+            if hasattr(persona, key) and value is not None:
+                setattr(persona, key, value)
+
+        # 重写 Nuwa 文件
+        file_path = self._persona_dir() / f"{name}.md"
+        markdown = self._build_nuwa_markdown(
+            persona.name,
+            persona.description,
+            list(persona.when_to_use),
+            persona.system_prompt,
+        )
+        file_path.write_text(markdown, encoding="utf-8")
+        persona.source_path = str(file_path.resolve())
+        self._personas[name] = persona
+        return persona
+
+    def delete_persona(self, name: str) -> bool:
+        """删除用户 persona 文件, 返回是否真的删了文件. 内置 persona 不可删."""
+        builtin_names = {bp.name for bp in BUILT_IN_PERSONAS}
+        if name in builtin_names:
+            raise ValueError(f"不能删除内置 persona '{name}'")
+
+        file_path = self._persona_dir() / f"{name}.md"
+        deleted = False
+        if file_path.exists():
+            file_path.unlink()
+            deleted = True
+        # 内存里的也清掉
+        self._personas.pop(name, None)
+        # 默认 persona 被删了就回退到 default
+        if self._default_name == name:
+            self._default_name = "default"
+            self.save()
+        return deleted
+
+    def list_templates(self) -> list[dict[str, Any]]:
+        """列出 persona_templates.json 里的全部模板."""
+        path = self._templates_path()
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return list(data.get("templates", []))
+        except Exception:
+            return []
+
+    def get_template(self, template_name: str) -> dict[str, Any] | None:
+        """按名字取单个模板, 找不到返回 None."""
+        for tpl in self.list_templates():
+            if tpl.get("name") == template_name:
+                return tpl
+        return None
+
+    def instantiate_template(self, template_name: str, **overrides: Any) -> Persona:
+        """从模板实例化 persona: 合并 default_values + overrides, 渲染占位符, 落盘."""
+        tpl = self.get_template(template_name)
+        if tpl is None:
+            raise ValueError(f"模板 '{template_name}' 未找到")
+
+        # 占位符取值: 模板默认值 < 调用方 overrides
+        values: dict[str, Any] = dict(tpl.get("default_values", {}))
+        values.update(overrides)
+
+        prompt_template = tpl.get("system_prompt_template", "")
+        system_prompt = self._render_template_string(prompt_template, values)
+
+        # 名字默认用模板名, 允许 overrides 覆盖
+        name = str(overrides.get("name", tpl.get("name", template_name)))
+        description = str(overrides.get("description", tpl.get("description", "")))
+        when_to_use = list(overrides.get("when_to_use", tpl.get("when_to_use", [])))
+
+        return self.create_persona(
+            name=name,
+            description=description,
+            system_prompt=system_prompt,
+            when_to_use=when_to_use,
+        )
+
+    def export_persona(self, name: str) -> str:
+        """把 persona 导出为 Nuwa 格式 markdown 字符串."""
+        if name not in self._personas:
+            raise ValueError(f"Persona '{name}' not found")
+        persona = self._personas[name]
+
+        # 用户 persona 直接读源文件, 保证 round-trip 一致
+        if persona.source_path and Path(persona.source_path).exists():
+            return Path(persona.source_path).read_text(encoding="utf-8")
+
+        # 内置 persona 没有 .md 文件, 现场拼一份
+        return self._build_nuwa_markdown(
+            persona.name,
+            persona.description,
+            list(persona.when_to_use),
+            persona.system_prompt,
+        )
+
+    def import_persona(self, markdown_text: str, overwrite: bool = False) -> Persona:
+        """从 Nuwa 格式 markdown 文本导入 persona, 落盘到 .huginn/personas/."""
+        from huginn.persona_loader import _split_frontmatter, load_persona_skill
+
+        builtin_names = {bp.name for bp in BUILT_IN_PERSONAS}
+
+        # 先解析出 name, 才能判断冲突
+        meta, _body = _split_frontmatter(markdown_text)
+        name = str(meta.get("name", "")).strip()
+        if not name:
+            raise ValueError("导入失败: markdown frontmatter 里缺少 name 字段")
+        if name in builtin_names:
+            raise ValueError(f"不能导入与内置 persona 同名的 '{name}'")
+
+        dest_path = self._persona_dir() / f"{name}.md"
+        if dest_path.exists() and not overwrite:
+            raise ValueError(
+                f"Persona '{name}' 已存在 ({dest_path}); 传 overwrite=True 覆盖"
+            )
+
+        self._persona_dir().mkdir(parents=True, exist_ok=True)
+        dest_path.write_text(markdown_text, encoding="utf-8")
+
+        # 用 load_persona_skill 解析落盘后的文件, 保证和 scan 路径一致
+        persona = load_persona_skill(dest_path)
+        self._personas[name] = persona
+        return persona
 
 
 # Backward-compatible flat mapping: name -> system prompt string.

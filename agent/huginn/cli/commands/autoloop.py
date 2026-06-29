@@ -1,0 +1,199 @@
+"""Autoloop CLI command — start the autonomous closed-loop engine.
+
+Usage:
+    huginn autoloop "Optimize C-S-H defect kinetics" --iterations 5
+    huginn autoloop --watch  # Watch mode: continuously monitor workspace
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+import click
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+
+from huginn.autoloop import AutoloopEngine
+from huginn.cli.context import CliContext
+
+
+@click.command()
+@click.argument("objective", required=False, default="")
+@click.option(
+    "--iterations",
+    "-i",
+    default=5,
+    type=int,
+    help="Maximum autonomous loop iterations",
+)
+@click.option(
+    "--watch",
+    "-w",
+    is_flag=True,
+    help="Watch mode: continuously monitor workspace and auto-trigger loops",
+)
+@click.option(
+    "--interval",
+    default=30,
+    type=int,
+    help="Watch mode: check interval in seconds (default: 30)",
+)
+@click.pass_obj
+def autoloop(
+    obj: CliContext,
+    objective: str,
+    iterations: int,
+    watch: bool,
+    interval: int,
+) -> None:
+    """Run the autonomous closed-loop engine.
+
+    OBJECTIVE: Natural language goal for the autonomous loop.
+    If not provided, the agent will infer a goal from the workspace state.
+
+    Examples:
+        huginn autoloop "Optimize C-S-H defect kinetics"
+        huginn autoloop --watch --interval 60
+    """
+    console = obj.console
+
+    if not objective and not watch:
+        console.print(
+            Panel(
+                "[bold yellow]Usage:[/bold yellow]\n"
+                "  huginn autoloop [OBJECTIVE]\n"
+                "  huginn autoloop --watch\n\n"
+                "[dim]Examples:[/dim]\n"
+                "  huginn autoloop 'Optimize C-S-H defect kinetics'\n"
+                "  huginn autoloop --watch --interval 60",
+                title="Autoloop Help",
+                border_style="blue",
+            )
+        )
+        return
+
+    engine = AutoloopEngine(workspace=obj.workspace)
+
+    if watch:
+        console.print(
+            Panel(
+                f"[bold green]Autoloop Watch Mode[/bold green]\n"
+                f"Workspace: {obj.workspace}\n"
+                f"Check interval: {interval}s\n"
+                f"Press Ctrl+C to stop",
+                title="Watching",
+                border_style="green",
+            )
+        )
+        try:
+            asyncio.run(_watch_loop(engine, console, interval, iterations))
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Watch mode stopped.[/yellow]")
+    else:
+        console.print(
+            Panel(
+                f"[bold green]Autoloop[/bold green]\n"
+                f"Objective: {objective}\n"
+                f"Max iterations: {iterations}",
+                title="Starting",
+                border_style="green",
+            )
+        )
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Running autonomous loop...", total=None)
+            try:
+                result = asyncio.run(engine.run(objective=objective, max_iterations=iterations))
+                progress.update(task, completed=True)
+
+                console.print(
+                    Panel(
+                        f"[bold green]Loop Complete[/bold green]\n"
+                        f"Run ID: {result.run_id}\n"
+                        f"Success: {'Yes' if result.success else 'No'}\n"
+                        f"Total time: {result.total_time_seconds:.1f}s\n"
+                        f"Report: {result.report_path or 'N/A'}",
+                        title="Result",
+                        border_style="green" if result.success else "red",
+                    )
+                )
+
+                # Show phase summary
+                console.print("\n[bold]Phase Summary:[/bold]")
+                for phase in result.phases:
+                    status_color = "green" if phase.status == "completed" else "red" if phase.status == "failed" else "yellow"
+                    duration = (phase.end_time or 0) - (phase.start_time or 0) if phase.start_time and phase.end_time else 0
+                    console.print(
+                        f"  [{status_color}]{phase.status:12}[/{status_color}] "
+                        f"{phase.name:15} ({duration:.1f}s)"
+                        f"{f' [red]{phase.error}[/red]' if phase.error else ''}"
+                    )
+
+            except Exception as e:
+                progress.update(task, completed=True)
+                console.print(f"[red]Autoloop failed: {e}[/red]")
+
+
+async def _watch_loop(
+    engine: AutoloopEngine,
+    console: Console,
+    interval: int,
+    max_iterations: int,
+) -> None:
+    """Continuously watch workspace and trigger loops when changes detected."""
+    import time
+
+    iteration = 0
+    while True:
+        iteration += 1
+        console.print(f"\n[dim]Watch check #{iteration}...[/dim]")
+
+        # Quick perceive check
+        context = engine._perceive()
+        if context:
+            console.print(
+                f"[green]Changes detected:[/green] {len(context.get('changed_files', []))} files"
+            )
+
+            # Infer objective from changes if not provided
+            objective = _infer_objective(context)
+            console.print(f"[blue]Inferred objective:[/blue] {objective}")
+
+            result = await engine.run(objective=objective, max_iterations=max_iterations)
+
+            console.print(
+                f"[green]Loop #{iteration} complete:[/green] "
+                f"success={result.success}, time={result.total_time_seconds:.1f}s"
+            )
+            if result.report_path:
+                console.print(f"  Report: {result.report_path}")
+        else:
+            console.print("[dim]No changes detected.[/dim]")
+
+        await asyncio.sleep(interval)
+
+
+def _infer_objective(context: dict[str, Any]) -> str:
+    """Infer a research objective from the perceived context."""
+    changed = context.get("changed_files", [])
+    errors = context.get("error_patterns", [])
+
+    if errors:
+        return f"Fix errors in {len(errors)} log files and validate changes"
+
+    if changed:
+        # Try to infer from file names
+        code_files = [f for f in changed if any(f.endswith(ext) for ext in [".py", ".rs", ".ts"])]
+        if code_files:
+            return f"Analyze and improve code changes in {len(code_files)} files"
+
+        data_files = [f for f in changed if any(f.endswith(ext) for ext in [".cif", ".poscar", ".vasp", ".json"])]
+        if data_files:
+            return f"Process and validate {len(data_files)} new data files"
+
+    return "Analyze workspace changes and suggest improvements"

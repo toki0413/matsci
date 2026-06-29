@@ -42,6 +42,7 @@ class TestRequireApiKey:
 
     def test_dev_mode_allows_without_key(self, monkeypatch):
         monkeypatch.delenv("HUGINN_API_KEY", raising=False)
+        monkeypatch.setenv("HUGINN_DEV_MODE", "1")
         req = _make_request("/tools")
         assert require_api_key(req, None) == ""
 
@@ -62,6 +63,7 @@ class TestRequireAdminKey:
     def test_dev_mode_allows_without_key(self, monkeypatch):
         monkeypatch.delenv("HUGINN_API_KEY", raising=False)
         monkeypatch.delenv("HUGINN_ADMIN_API_KEY", raising=False)
+        monkeypatch.setenv("HUGINN_DEV_MODE", "1")
         req = _make_request("/config")
         assert require_admin_key(req, None) == ""
 

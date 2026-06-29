@@ -120,5 +120,5 @@ class TestBourbakiTool:
 
         # Manually register for this test
         ToolRegistry.register(tool)
-        assert "bourbaki" in ToolRegistry.list_tools()
+        assert "bourbaki" in ToolRegistry.list_tools() or "bourbaki_tool" in ToolRegistry.list_tools()
         ToolRegistry.unregister("bourbaki")

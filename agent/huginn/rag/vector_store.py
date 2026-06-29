@@ -194,7 +194,32 @@ class VectorStore:
         query_embedding = self._compute_embeddings([query])
 
         if query_embedding:
-            # Try Rust-accelerated exact top-k over stored embeddings.
+            # Primary path: use ChromaDB's native HNSW query (O(log N)).
+            # This avoids fetching all embeddings into memory.
+            try:
+                results = collection.query(
+                    query_embeddings=query_embedding,
+                    n_results=top_k,
+                    where=filter_dict,
+                    include=["documents", "metadatas", "distances"],
+                )
+                if results["ids"] and results["ids"][0]:
+                    output = []
+                    for i in range(len(results["ids"][0])):
+                        output.append(
+                            {
+                                "id": results["ids"][0][i],
+                                "document": results["documents"][0][i],
+                                "metadata": results["metadatas"][0][i],
+                                "distance": results["distances"][0][i],
+                            }
+                        )
+                    return output
+            except Exception:
+                pass
+
+            # Fallback: Rust-accelerated exact top-k over all stored embeddings.
+            # Only used when native query fails (e.g., HNSW index not built yet).
             try:
                 all_data = collection.get(
                     include=["documents", "metadatas", "embeddings"]
@@ -231,25 +256,7 @@ class VectorStore:
             except Exception:
                 pass
 
-            # Fallback to ChromaDB's native ANN query.
-            results = collection.query(
-                query_embeddings=query_embedding,
-                n_results=top_k,
-                where=filter_dict,
-                include=["documents", "metadatas", "distances"],
-            )
-
-            output = []
-            for i in range(len(results["ids"][0])):
-                output.append(
-                    {
-                        "id": results["ids"][0][i],
-                        "document": results["documents"][0][i],
-                        "metadata": results["metadatas"][0][i],
-                        "distance": results["distances"][0][i],
-                    }
-                )
-            return output
+            return []
 
         else:
             all_docs = collection.get(include=["documents", "metadatas"])

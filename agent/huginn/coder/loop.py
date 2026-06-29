@@ -87,7 +87,7 @@ class CoderRunner:
             CodeTool(),
         ]
         return [
-            ToolAdapter.adapt(
+            ToolAdapter().adapt(
                 tool,
                 permission_config=self.permission_config,
                 approval_callback=self.approval_callback,

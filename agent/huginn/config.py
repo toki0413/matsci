@@ -5,9 +5,14 @@ Supports environment variables, .env files, and config files.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pathlib
+import shutil
+import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -32,6 +37,162 @@ def _parse_queue_map(value: str | None) -> dict[str, str]:
             key, val = part.split("=", 1)
             result[key.strip()] = val.strip()
     return result
+
+
+# ---------------------------------------------------------------------------
+# 模块级缓存 & 文件锁
+# ---------------------------------------------------------------------------
+
+# write-through 缓存：首次从磁盘加载后缓存，后续命中直接返回
+_config_cache: HuginnConfig | None = None
+_config_cache_path: pathlib.Path | None = None
+_config_cache_mtime: float = 0.0  # 上次加载时磁盘文件的 mtime
+_config_lock = threading.RLock()
+
+# 备份轮转配置
+_MAX_BACKUPS = 5
+_BACKUP_COOLDOWN_SEC = 60.0
+_last_backup_time: float = 0.0
+
+
+@contextlib.contextmanager
+def _file_lock(path: pathlib.Path):
+    """跨平台文件锁，Windows 用 msvcrt，Unix 用 fcntl。
+
+    对同一文件的并发写入做互斥，避免配置损坏。
+    """
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            # Windows 下用 msvcrt.locking 做独占锁
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+
+def _would_lose_auth_state(cached: HuginnConfig, fresh: HuginnConfig) -> bool:
+    """检测新配置是否会丢失已有的认证状态。
+
+    典型场景：用户之前配了 api_key，结果新配置忘了带，写入后就把 key 丢了。
+    返回 True 表示有丢失风险，save() 应该拒绝并保留备份。
+    """
+    # 缓存有 api_key 但新配置没有
+    if cached.api_key and not fresh.api_key:
+        return True
+    # 缓存有 models 列表但新配置是空的
+    if cached.models and not fresh.models:
+        return True
+    # 逐个检查 models 里的 api_key 是否被清空
+    cached_keys = {m.alias: m.api_key for m in cached.models if m.api_key}
+    for m in fresh.models:
+        if m.alias in cached_keys and not m.api_key:
+            return True
+    # HPC 密码丢失
+    if cached.hpc_password and not fresh.hpc_password:
+        return True
+    return False
+
+
+def _backup_before_save(path: pathlib.Path) -> None:
+    """在写入前创建时间戳备份，保留最近 N 个，60秒内不重复。"""
+    global _last_backup_time
+
+    now = time.time()
+    if now - _last_backup_time < _BACKUP_COOLDOWN_SEC:
+        return
+
+    if not path.exists():
+        return
+
+    # 备份路径: config.toml -> config.toml.bak.1706123456
+    ts = int(now)
+    bak = path.parent / f"{path.name}.bak.{ts}"
+    shutil.copy2(str(path), str(bak))
+    _last_backup_time = now
+
+    # 轮转：只留最近的 _MAX_BACKUPS 个备份
+    backups = sorted(
+        path.parent.glob(f"{path.name}.bak.*"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    for old in backups[:-_MAX_BACKUPS]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def _check_disk_freshness(path: pathlib.Path | None) -> bool:
+    """检查磁盘文件是否被其他进程修改过（mtime 变化）。
+
+    返回 True 表示文件比缓存更新，需要重新加载。
+    """
+    global _config_cache_mtime
+
+    if path is None or not path.exists():
+        return False
+
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return False
+
+    return mtime > _config_cache_mtime
+
+
+def _atomic_write(
+    target: pathlib.Path, data: dict[str, Any], format: str
+) -> None:
+    """原子写入配置文件.
+
+    流程: 序列化 -> 回读校验 -> 写临时文件 -> os.replace 原子替换.
+    os.replace 在 Windows 和 POSIX 上都是原子操作, 不会出现半截文件.
+    临时文件用 pid 后缀, 避免多进程撞车.
+    """
+    # 先序列化 + 回读校验, 拿到 content 字符串再落盘
+    if format == "toml":
+        try:
+            import toml
+        except ImportError as err:
+            raise ImportError("pip install toml") from err
+        content = toml.dumps(data)
+        toml.loads(content)  # 回读校验, 防止序列化产物损坏
+    else:
+        content = json.dumps(data, indent=2)
+        json.loads(content)  # 回读校验
+
+    tmp_path = target.with_name(f"{target.name}.tmp.{os.getpid()}")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        # 同目录 rename, 保证在同一文件系统上 -> 原子
+        os.replace(str(tmp_path), str(target))
+    except Exception:
+        # 写入或替换失败, 清理临时文件, 原文件不受影响
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 @dataclass
@@ -194,6 +355,8 @@ class HuginnConfig:
 
     # MCP server paths
     abaqus_mcp_server: str | None = None
+    # Generic MCP server configurations (name -> {command, args, env, transport})
+    mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Workspace
     workspace: str = "."
@@ -227,6 +390,10 @@ class HuginnConfig:
     # Local-only / no-cloud mode
     local_only_mode: bool = False
 
+    # Allow local bash/code execution without container isolation.
+    # Maps to HUGINN_ALLOW_LOCAL_BASH=1 for the sandbox executor.
+    allow_local_bash: bool = False
+
     # Context/output budgets
     max_tool_output_tokens: int = 25000
     context_budget_tokens: int = 0
@@ -255,6 +422,10 @@ class HuginnConfig:
     # Pet customization
     pet_name: str = "渡鸦"
     pet_personality: Literal["cheerful", "nerdy", "calm", "sassy"] = "cheerful"
+
+    # 统一 opt-out 开关层, 见 huginn/feature_flags.py
+    # 这里只存配置文件里的覆盖值, 运行时 toggle 不写回这里
+    feature_flags: dict[str, bool] = field(default_factory=dict)
 
     def apply_overrides(
         self,
@@ -512,6 +683,8 @@ class HuginnConfig:
             kg_depth=int(os.environ.get("HUGINN_KG_DEPTH", "1")),
             kg_top_k=int(os.environ.get("HUGINN_KG_TOP_K", "10")),
             local_only_mode=os.environ.get("HUGINN_LOCAL_ONLY", "").lower() == "true",
+            allow_local_bash=os.environ.get("HUGINN_ALLOW_LOCAL_BASH", "").lower()
+            in ("1", "true", "yes"),
             encryption_enabled=os.environ.get("HUGINN_ENCRYPTION_ENABLED", "").lower()
             == "true",
             encrypt_config=os.environ.get("HUGINN_ENCRYPT_CONFIG", "").lower()
@@ -744,6 +917,7 @@ class HuginnConfig:
             "max_tokens": self.max_tokens,
             "pet_name": self.pet_name,
             "pet_personality": self.pet_personality,
+            "feature_flags": dict(self.feature_flags),
         }
 
     @classmethod
@@ -806,27 +980,49 @@ class HuginnConfig:
         the file is encrypted with the configured password/key file.
         Otherwise API keys are written in plain text; ensure the file has
         restricted permissions.
+
+        写入流程：
+        1. 加文件锁，防止并发写入互相覆盖；
+        2. auth-loss guard：如果新配置会丢掉已有的 api_key / models，拒绝写入；
+        3. 备份当前文件（带时间戳轮转）；
+        4. 原子写入(tmp + os.replace)：先写临时文件, 回读校验格式,
+           再 rename 替换原文件, 避免写入中断导致配置损坏；
+        5. 同步更新内存缓存。
         """
+        global _config_cache, _config_cache_path, _config_cache_mtime
+
         target = pathlib.Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        data = self.to_dict(mask_key=False)
 
-        if self.encrypt_config or str(target).endswith(".enc"):
-            vault = self._get_vault()
-            ec = EncryptedConfig(config_path=target, vault=vault)
-            ec.save(data)
-            return
+        with _config_lock, _file_lock(target):
+            # auth-loss guard：拿缓存里的旧配置做对比
+            cached = _config_cache
+            if cached is not None and _would_lose_auth_state(cached, self):
+                raise RuntimeError(
+                    "Refusing to save: new config would lose existing "
+                    "api_key / models. Restore them or clear the cache first."
+                )
 
-        if format == "toml":
+            # 写入前备份
+            _backup_before_save(target)
+
+            data = self.to_dict(mask_key=False)
+
+            if self.encrypt_config or str(target).endswith(".enc"):
+                # 加密配置由 EncryptedConfig 自行处理写入, 不走原子写路径
+                vault = self._get_vault()
+                ec = EncryptedConfig(config_path=target, vault=vault)
+                ec.save(data)
+            else:
+                _atomic_write(target, data, format)
+
+            # 写盘成功后同步更新缓存
+            _config_cache = self
+            _config_cache_path = target
             try:
-                import toml
-            except ImportError as err:
-                raise ImportError("pip install toml") from err
-            target.write_text(toml.dumps(data), encoding="utf-8")
-        else:
-            import json
-
-            target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                _config_cache_mtime = target.stat().st_mtime
+            except OSError:
+                _config_cache_mtime = time.time()
 
     def _get_vault(self) -> CryptoVault:
         """Return an unlocked CryptoVault for config encryption."""
@@ -917,3 +1113,63 @@ class Settings:
 def get_settings() -> Settings:
     """Load application settings from environment."""
     return Settings()
+
+
+def get_config(
+    path: str | pathlib.Path | None = None,
+    *,
+    force_reload: bool = False,
+) -> HuginnConfig:
+    """获取配置实例，read-through cache。
+
+    首次调用从磁盘加载（或退回 from_env），之后直接命中内存缓存。
+    如果磁盘文件被其他进程修改过（mtime 变化），自动刷新缓存。
+
+    Args:
+        path: 配置文件路径。None 时退回 from_env()。
+        force_reload: True 时强制重新加载，忽略缓存。
+    """
+    global _config_cache, _config_cache_path, _config_cache_mtime
+
+    with _config_lock:
+        # 没指定路径，走环境变量
+        if path is None:
+            if _config_cache is None or force_reload:
+                _config_cache = HuginnConfig.from_env()
+                _config_cache_path = None
+                _config_cache_mtime = 0.0
+            return _config_cache
+
+        target = pathlib.Path(path)
+
+        # 跨进程新鲜度检测：磁盘文件被改过就刷新
+        disk_changed = _check_disk_freshness(target)
+        same_path = (
+            _config_cache_path is not None
+            and pathlib.Path(_config_cache_path).resolve() == target.resolve()
+        )
+
+        if _config_cache is None or force_reload or disk_changed or not same_path:
+            if target.exists():
+                _config_cache = HuginnConfig.load(target)
+                _config_cache_path = target
+                try:
+                    _config_cache_mtime = target.stat().st_mtime
+                except OSError:
+                    _config_cache_mtime = time.time()
+            else:
+                # 文件不存在，退回环境变量
+                _config_cache = HuginnConfig.from_env()
+                _config_cache_path = None
+                _config_cache_mtime = 0.0
+
+        return _config_cache
+
+
+def clear_config_cache() -> None:
+    """清空配置缓存。下次 get_config() 会重新加载。"""
+    global _config_cache, _config_cache_path, _config_cache_mtime
+    with _config_lock:
+        _config_cache = None
+        _config_cache_path = None
+        _config_cache_mtime = 0.0

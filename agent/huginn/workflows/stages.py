@@ -43,6 +43,13 @@ class ComputationalStage:
     validation: ValidationRule | None = None
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
 
+    # 对话层组件的接入点 — 不填就保持原行为, 填了就把对应组件
+    # 注入到这个 stage 的执行上下文里. 见 WorkflowEngine._apply_stage_context.
+    persona: str | None = None  # 该 stage 走哪个 persona 的 system prompt
+    emotion_state: dict[str, Any] | None = None  # 该 stage 注入的情绪快照
+    memory_scope: str | None = None  # 该 stage 的记忆检索范围 (如 "project:LLZO_defect")
+    skill_context: list[str] | None = None  # 该 stage 允许使用的 skill 名白名单
+
     # Execution state
     status: Literal["pending", "running", "completed", "failed", "skipped"] = "pending"
     result: ToolResult | None = None

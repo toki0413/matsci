@@ -6,6 +6,7 @@ Tries EasyOCR first, then pytesseract, then gives up gracefully.
 from __future__ import annotations
 
 import io
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -84,6 +85,7 @@ def _ocr_pdf(content: bytes, engine: str | None = None) -> str:
         return ""
 
     parts: list[str] = []
+    doc = None
     try:
         doc = fitz.open(stream=content, filetype="pdf")
         for page in doc:
@@ -92,9 +94,12 @@ def _ocr_pdf(content: bytes, engine: str | None = None) -> str:
             text = _ocr_image(image, engine=engine)
             if text:
                 parts.append(text)
-        doc.close()
     except Exception as exc:
         logger.debug("PDF OCR failed: %s", exc)
+    finally:
+        if doc is not None:
+            with contextlib.suppress(Exception):
+                doc.close()
 
     return "\n\n".join(parts)
 

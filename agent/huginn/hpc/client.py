@@ -38,6 +38,46 @@ def _validate_path_component(path: str) -> None:
         raise ValueError(f"Path contains forbidden characters: {path!r}")
 
 
+# Characters/patterns that enable shell injection in job scripts.
+# Newlines let an attacker append arbitrary script lines; backticks and
+# $() enable command substitution; semicolons chain commands.
+_COMMAND_FORBIDDEN = ("\n", "\r", "\0", "`", "$(", "${")
+
+
+def _validate_command(command: str) -> None:
+    """Reject commands containing shell-injection vectors.
+
+    Allows normal program calls with arguments and redirection (>, <, >>)
+    but blocks newline injection, command substitution, and chaining.
+    """
+    if not command or not command.strip():
+        raise ValueError("HPC command must not be empty")
+    if len(command) > 4096:
+        raise ValueError("HPC command too long (max 4096 chars)")
+    for token in _COMMAND_FORBIDDEN:
+        if token in command:
+            raise ValueError(
+                f"HPC command contains forbidden sequence {token!r}"
+            )
+    # Block semicolon chaining — use separate job steps instead
+    if ";" in command:
+        raise ValueError("HPC command must not contain ';' (use separate steps)")
+
+
+def _validate_module_name(module: str) -> None:
+    """Module load names should be plain identifiers (e.g. cuda/12.1)."""
+    if not module or not re.match(r"^[a-zA-Z0-9_./+-]+$", module):
+        raise ValueError(f"Invalid module name: {module!r}")
+
+
+def _validate_env_var(key: str, value: str) -> None:
+    """Env var keys must be valid identifiers; values must not inject newlines."""
+    if not key or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
+        raise ValueError(f"Invalid env var name: {key!r}")
+    if any(c in value for c in ("\n", "\r", "\0")):
+        raise ValueError(f"Env var {key!r} value contains forbidden characters")
+
+
 @dataclass
 class HPCConfig:
     """Configuration for HPC connection and resource selection."""
@@ -175,6 +215,16 @@ class HPCClient:
         gpus_per_node: int | None = None,
     ) -> str:
         """Generate a job script for the configured scheduler."""
+        # Validate all user-controlled inputs before building the script
+        _validate_command(command)
+        job_name = _sanitize_job_name(job_name)
+        if modules:
+            for mod in modules:
+                _validate_module_name(mod)
+        if env_vars:
+            for k, v in env_vars.items():
+                _validate_env_var(k, str(v))
+
         if self.config.scheduler == "slurm":
             return self._generate_slurm_script(
                 command,

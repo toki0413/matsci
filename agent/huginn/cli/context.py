@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,13 @@ class CliContext:
     thinking: str | None = None
     dry_run: bool = False
     console: Console = field(default_factory=Console)
+    # 新增的 flags, 默认值都是关 / None, 不影响现有命令
+    plan_mode: bool = False  # 只读模式, 写工具一律走 ASK
+    yolo: bool = False  # 跳过所有确认, 等价于 auto_approve_all
+    prompt_text: str | None = None  # headless 模式: 跑一次就退出
+    resume_thread_id: str | None = None  # 恢复指定会话
+    allowed_tools: list[str] | None = None  # 工具白名单
+    disallowed_tools: list[str] | None = None  # 工具黑名单
 
     def load_config(self) -> HuginnConfig:
         """Load config from --config or environment, then apply CLI overrides."""
@@ -133,7 +141,11 @@ async def shutdown_mcp() -> None:
         _mcp_manager = None
 
 
-def build_agent_from_ctx(ctx: CliContext, profile_id: str = "lead") -> Any | None:
+def build_agent_from_ctx(
+    ctx: CliContext,
+    profile_id: str = "lead",
+    approval_callback: Callable[[str, str], bool] | None = None,
+) -> Any | None:
     """Build a HuginnAgent from the resolved configuration."""
     from huginn.agent import HuginnAgent
     from huginn.security import AuditLogger, SandboxConfig, SandboxExecutor
@@ -151,13 +163,59 @@ def build_agent_from_ctx(ctx: CliContext, profile_id: str = "lead") -> Any | Non
     sandbox = SandboxExecutor(sandbox_cfg)
     audit = AuditLogger(ctx.workspace / "huginn_audit.jsonl")
 
+    overrides: dict[str, Any] = {}
+    if approval_callback is not None:
+        overrides["approval_callback"] = approval_callback
+
+    # --resume: 把 thread_id 传给 agent, 让 LangGraph 恢复那个会话的状态
+    if ctx.resume_thread_id:
+        overrides["thread_id"] = ctx.resume_thread_id
+
+    # --yolo: auto_approve=True, 跳过所有 ASK 确认
+    # 注意: plan_mode 优先级更高, 同时开 yolo + plan 时写工具仍需确认
+    if ctx.yolo:
+        overrides["auto_approve"] = True
+
+    # 工具白名单: 直接传 tool_filter, agent 注册工具时会按它过滤
+    if ctx.allowed_tools:
+        overrides["tool_filter"] = list(ctx.allowed_tools)
+
+    # 工具黑名单: agent 没有 disallow 参数, 这里折算成白名单
+    # 全量工具减去黑名单, 得到的就是允许注册的工具
+    if ctx.disallowed_tools:
+        disallowed_set = set(ctx.disallowed_tools)
+        try:
+            from huginn.tools.registry import ToolRegistry
+
+            all_tools = set(ToolRegistry.list_tools())
+        except Exception:
+            all_tools = set()
+        allowed = all_tools - disallowed_set
+        # 跟 --allowed-tools 合并: 取交集, 没给白名单就用算出来的这批
+        if overrides.get("tool_filter"):
+            overrides["tool_filter"] = [
+                t for t in overrides["tool_filter"] if t in allowed
+            ]
+        else:
+            overrides["tool_filter"] = sorted(allowed)
+
     try:
-        return HuginnAgent.from_config(
+        agent = HuginnAgent.from_config(
             cfg,
             profile_id=profile_id,
             sandbox=sandbox,
             audit=audit,
+            **overrides,
         )
     except Exception as e:
         ctx.console.print(f"[red]Failed to build agent: {e}[/red]")
         return None
+
+    # plan_mode 不能通过构造器传 (PermissionConfig 是 agent 内部创建的),
+    # 在 agent 建好之后直接改 _permission_config.plan_mode
+    if ctx.plan_mode and agent is not None:
+        perm_cfg = getattr(agent, "_permission_config", None)
+        if perm_cfg is not None:
+            perm_cfg.plan_mode = True
+
+    return agent

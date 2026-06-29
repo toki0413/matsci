@@ -222,22 +222,18 @@ def method_todim(
     W = weights / weights.sum()
     w_ref = W.max()
 
-    dominance = np.zeros((n, n))
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            phi = 0.0
-            for k in range(m):
-                diff = Xn[i, k] - Xn[j, k]
-                if diff > 0:
-                    phi += np.sqrt(W[k] * diff / w_ref)
-                elif diff < 0:
-                    phi -= np.sqrt(W[k] * abs(diff) / w_ref) / theta
-            dominance[i, j] = phi
+    # Vectorized pairwise comparison via broadcasting: shape (n, n, m)
+    diff = Xn[:, np.newaxis, :] - Xn[np.newaxis, :, :]  # (n, n, m)
+    W_b = W[np.newaxis, np.newaxis, :]                   # (1, 1, m)
+
+    # Gain (diff > 0) and loss (diff < 0) terms
+    gain = np.where(diff > 0, np.sqrt(W_b * np.maximum(diff, 0) / w_ref), 0.0)
+    loss = np.where(diff < 0, np.sqrt(W_b * np.maximum(-diff, 0) / w_ref) / theta, 0.0)
+    dominance = (gain - loss).sum(axis=2)  # (n, n)
+    np.fill_diagonal(dominance, 0.0)
 
     # Global dominance
-    delta = np.sum(dominance, axis=1)
+    delta = dominance.sum(axis=1)
     # Normalize to [0, 1]
     delta_min, delta_max = delta.min(), delta.max()
     if delta_max - delta_min < 1e-12:
@@ -260,22 +256,16 @@ def method_promethee(
     Xn = normalize_matrix(X, directions)
     W = weights / weights.sum()
 
-    preference = np.zeros((n, n))
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            pi = 0.0
-            for k in range(m):
-                diff = Xn[i, k] - Xn[j, k]
-                if diff <= q:
-                    pref = 0.0
-                elif diff <= p:
-                    pref = (diff - q) / (p - q)
-                else:
-                    pref = 1.0
-                pi += W[k] * pref
-            preference[i, j] = pi
+    # Vectorized pairwise differences: shape (n, n, m)
+    diff = Xn[:, np.newaxis, :] - Xn[np.newaxis, :, :]  # (n, n, m)
+
+    # Linear preference function (vectorized)
+    pref = np.where(diff <= q, 0.0, np.where(diff <= p, (diff - q) / (p - q), 1.0))
+
+    # Weighted aggregation across criteria
+    W_b = W[np.newaxis, np.newaxis, :]  # (1, 1, m)
+    preference = (pref * W_b).sum(axis=2)  # (n, n)
+    np.fill_diagonal(preference, 0.0)
 
     # Net flow
     positive = preference.sum(axis=1)

@@ -11,8 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.memory.index import build_memory_index, get_topic_file_path
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.session import SessionContext, ToolCallRecord
+from huginn.memory.truncation import truncate_entrypoint
+from huginn.memory.types import MemoryType
 from huginn.types import AgentMessage, ToolResult
 
 
@@ -25,6 +28,8 @@ class MemoryConfig:
     max_session_age_hours: float = 24.0
     enable_semantic_search: bool = True
     memory_md_path: Path | None = None
+    # 主题记忆目录：未设置时回退到 memory_md_path.parent/memory 或 ~/.huginn/memory
+    memory_dir: Path | None = None
 
 
 class MemoryManager:
@@ -271,7 +276,12 @@ class MemoryManager:
             lines.append(f"- {e.get('content', '')}")
             lines.append(f"- source: {e.get('source', '')}")
             lines.append("")
-        path.write_text("\n".join(lines), encoding="utf-8")
+        raw = "\n".join(lines)
+        # 双重截断保护，避免 MEMORY.md 超出 entrypoint 限制
+        truncated, line_cut, byte_cut = truncate_entrypoint(raw)
+        if line_cut or byte_cut:
+            truncated = truncated.rstrip() + "\n\n<!-- truncated to fit entrypoint limits -->\n"
+        path.write_text(truncated, encoding="utf-8")
         return path
 
     def load_memory_md(self) -> list[dict[str, Any]]:
@@ -327,6 +337,90 @@ class MemoryManager:
                     if keyword in text:
                         topics.add(keyword)
         return ", ".join(sorted(topics)) if topics else "general"
+
+    # --- Typed topic-file memory (Claude Code memdir-style) ---
+
+    def _get_memory_dir(self) -> Path:
+        """获取主题记忆目录，按 config 优先级回退。
+
+        优先使用 ``config.memory_dir``；否则用 ``memory_md_path`` 同级的 ``memory``
+        子目录；都没有设置时回退到 ``~/.huginn/memory``。目录会按需创建。
+        """
+        if self.config.memory_dir:
+            path = Path(self.config.memory_dir)
+        elif self.config.memory_md_path:
+            path = self.config.memory_md_path.parent / "memory"
+        else:
+            path = Path.home() / ".huginn" / "memory"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def store_typed_memory(
+        self, memory_type: MemoryType, topic: str, content: str
+    ) -> Path:
+        """按类型和主题把记忆追加到主题文件。
+
+        文件不存在时新建并写入标题；已存在则在末尾追加内容，重复内容会被
+        自动跳过。返回写入的主题文件路径。
+        """
+        memory_dir = self._get_memory_dir()
+        topic_file = get_topic_file_path(memory_type, topic, memory_dir)
+        header = f"# [{memory_type.value}] {topic}\n\n"
+        if not topic_file.exists():
+            topic_file.write_text(header + content + "\n", encoding="utf-8")
+            return topic_file
+        existing = topic_file.read_text(encoding="utf-8")
+        # 跳过重复内容，避免主题文件无限膨胀
+        if content in existing:
+            return topic_file
+        topic_file.write_text(
+            existing.rstrip() + "\n\n" + content + "\n", encoding="utf-8"
+        )
+        return topic_file
+
+    def recall_typed(
+        self, memory_type: MemoryType, topic: str | None = None
+    ) -> list[dict[str, str]]:
+        """按类型（可选指定主题）读取主题文件内容。
+
+        ``topic`` 为空时返回该类型下所有主题文件；每个条目包含 ``topic``、
+        ``path``、``content`` 三个字段。找不到任何文件时返回空列表。
+        """
+        memory_dir = self._get_memory_dir()
+        type_dir = memory_dir / memory_type.value
+        if not type_dir.exists():
+            return []
+        results: list[dict[str, str]] = []
+        if topic:
+            topic_file = get_topic_file_path(memory_type, topic, memory_dir)
+            if topic_file.exists():
+                results.append(
+                    {
+                        "topic": topic,
+                        "path": str(topic_file),
+                        "content": topic_file.read_text(encoding="utf-8"),
+                    }
+                )
+        else:
+            for f in sorted(type_dir.glob("*.md")):
+                results.append(
+                    {
+                        "topic": f.stem,
+                        "path": str(f),
+                        "content": f.read_text(encoding="utf-8"),
+                    }
+                )
+        return results
+
+    def get_memory_index(self) -> str:
+        """构建所有主题文件的索引文本。
+
+        扫描 ``memory_dir`` 下所有 ``*.md`` 文件，调用 :func:`build_memory_index`
+        生成带行/字节截断保护的索引内容，方便注入 entrypoint 或打印给用户。
+        """
+        memory_dir = self._get_memory_dir()
+        topic_files = sorted(memory_dir.rglob("*.md"))
+        return build_memory_index(topic_files, memory_dir)
 
     # --- Utility ---
 

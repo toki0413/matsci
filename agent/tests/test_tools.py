@@ -86,6 +86,6 @@ class TestDiagnoseTool:
 class TestLangChainAdapter:
     def test_adapt_structure_tool(self):
         tool = StructureTool()
-        lc_tool = ToolAdapter.adapt(tool)
+        lc_tool = ToolAdapter().adapt(tool)
         assert lc_tool.name == "structure_tool"
         assert lc_tool.args_schema is not None

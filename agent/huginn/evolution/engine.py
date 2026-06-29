@@ -264,6 +264,97 @@ class EvolutionEngine:
             self._save_rules()
         return new_rules
 
+    def evolve_from_rewards(self) -> dict[str, Any]:
+        """基于数值奖励 (R_phys) 做进化——高奖励提取技能, 低奖励生成提示补丁。
+
+        和 evolve_from_successes/failures 互补: 那两个只看二值成败, 这里看连续
+        奖励值, 能抓到 "成功但物理质量差" (success=True 但 R_phys 低) 的中间态,
+        这是纯二值信号永远看不到的。
+        """
+        rewarded = [r for r in self.logger._tool_calls if r.reward is not None]
+        if not rewarded:
+            return {"high_reward_skills": [], "low_reward_patches": []}
+
+        new_skills: list[SkillTemplate] = []
+        new_rules: list[EvolutionRule] = []
+
+        # 高奖励记录: 提取为可复用技能 (R_phys >= 0.7 视为高质量执行)
+        high = [r for r in rewarded if r.reward >= 0.7 and r.success]
+        from collections import defaultdict
+
+        grouped = defaultdict(list)
+        for r in high:
+            key = f"{r.calculation_type or 'unknown'}_{r.software or 'general'}"
+            grouped[key].append(r)
+        for key, records in grouped.items():
+            if len(records) < 2:
+                continue
+            calc_type, software = key.rsplit("_", 1)
+            existing = [
+                s
+                for s in self.skills
+                if calc_type in s.trigger_keywords or software in s.trigger_keywords
+            ]
+            if existing:
+                continue
+            # 按 reward 降序, 取 top 记录提取 workflow
+            records.sort(key=lambda r: r.reward, reverse=True)
+            tools_used = list({r.tool_name for r in records})
+            avg_reward = sum(r.reward for r in records) / len(records)
+            skill = SkillTemplate(
+                skill_id=f"skill_reward_{key}_{int(time.time() * 1000)}",
+                name=f"{calc_type.title()} High-Reward Workflow ({software})",
+                description=f"Auto-extracted from R_phys>=0.7 executions, avg reward {avg_reward:.2f}",
+                trigger_keywords=[calc_type, software],
+                workflow_steps=[
+                    {
+                        "tool": r.tool_name,
+                        "input_keys": list(r.tool_input.keys()),
+                        "reward": r.reward,
+                    }
+                    for r in records[:5]
+                ],
+                required_tools=tools_used,
+                source_session=records[0].session_id,
+                extraction_confidence=min(0.5 + avg_reward * 0.4, 0.95),
+            )
+            self.skills.append(skill)
+            new_skills.append(skill)
+
+        # 低奖励记录: 生成提示补丁 (R_phys < 0.3 视为需要改进)
+        low = [r for r in rewarded if r.reward < 0.3]
+        tool_low_reward: dict[str, list[float]] = defaultdict(list)
+        for r in low:
+            tool_low_reward[r.tool_name].append(r.reward)
+        for tool, rewards in tool_low_reward.items():
+            avg_r = sum(rewards) / len(rewards)
+            trigger = f"tool_{tool}_low_reward"
+            existing = [r for r in self.rules if r.trigger == trigger]
+            if existing:
+                continue
+            patch = self._generate_reward_patch_for_tool(tool, avg_r)
+            if patch:
+                rule = EvolutionRule(
+                    rule_id=f"reward_patch_{tool}_{int(time.time() * 1000)}",
+                    rule_type="prompt_patch",
+                    trigger=trigger,
+                    action=patch,
+                    source="reward_analysis",
+                    confidence=1.0 - avg_r,
+                    tags=["reward", tool],
+                )
+                self.rules.append(rule)
+                new_rules.append(rule)
+
+        if new_skills:
+            self._save_skills()
+        if new_rules:
+            self._save_rules()
+        return {
+            "high_reward_skills": [self._skill_to_dict(s) for s in new_skills],
+            "low_reward_patches": [self._rule_to_dict(r) for r in new_rules],
+        }
+
     def run_full_evolution_cycle(self) -> dict[str, Any]:
         """Run all evolution mechanisms and return a report."""
         report = {
@@ -271,6 +362,7 @@ class EvolutionEngine:
             "failure_rules": [],
             "success_skills": [],
             "prompt_patches": [],
+            "reward_evolution": {},
             "total_rules": len(self.rules),
             "total_skills": len(self.skills),
         }
@@ -286,6 +378,10 @@ class EvolutionEngine:
         # Phase 3: Prompt optimization
         prompt_patches = self.evolve_prompt_patches()
         report["prompt_patches"] = [self._rule_to_dict(r) for r in prompt_patches]
+
+        # Phase 4: 基于 R_phys 数值奖励的进化 (阶段4 单轨回流)
+        reward_result = self.evolve_from_rewards()
+        report["reward_evolution"] = reward_result
 
         report["total_rules_after"] = len(self.rules)
         report["total_skills_after"] = len(self.skills)
@@ -326,6 +422,12 @@ class EvolutionEngine:
                 "new_failure_rules": len(report.get("failure_rules", [])),
                 "new_success_skills": len(report.get("success_skills", [])),
                 "new_prompt_patches": len(report.get("prompt_patches", [])),
+                "new_reward_skills": len(
+                    report.get("reward_evolution", {}).get("high_reward_skills", [])
+                ),
+                "new_reward_patches": len(
+                    report.get("reward_evolution", {}).get("low_reward_patches", [])
+                ),
             }
         )
 
@@ -430,6 +532,17 @@ class EvolutionEngine:
             "vasp_tool": f"When using VASP, always verify convergence settings. Current success rate: {success_rate:.1%}. Consider adding ALGO=Normal for problematic systems.",
             "gaussian_tool": f"When using Gaussian, verify basis set coverage for all elements. Current success rate: {success_rate:.1%}. Use SCF=XQC for convergence issues.",
             "lammps_tool": f"When using LAMMPS, start with smaller timesteps and gradually increase. Current success rate: {success_rate:.1%}. Check neighbor list settings.",
+        }
+        return patches.get(tool)
+
+    def _generate_reward_patch_for_tool(
+        self, tool: str, avg_reward: float
+    ) -> str | None:
+        """低奖励工具的提示补丁——引导 agent 校验物理合理性而非仅追求执行成功。"""
+        patches = {
+            "vasp_tool": f"VASP 平均 R_phys={avg_reward:.2f}, 物理校验不达标。下次执行前确认: 能量为负、力收敛 <0.01 eV/Å、带隙非负。",
+            "gaussian_tool": f"Gaussian 平均 R_phys={avg_reward:.2f}, 物理校验不达标。下次确认: SCF 收敛、基组完整、几何优化收敛。",
+            "lammps_tool": f"LAMMPS 平均 R_phys={avg_reward:.2f}, 物理校验不达标。下次确认: 能量守恒、温度稳定、无原子丢失。",
         }
         return patches.get(tool)
 

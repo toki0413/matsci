@@ -25,6 +25,8 @@ class ToolCallRecord:
     tags: list[str] = field(default_factory=list)
     software: str | None = None
     calculation_type: str | None = None
+    # 数值奖励通道: 供 evolve_from_rewards 使用, None 表示未评分
+    reward: float | None = None
 
 
 @dataclass
@@ -89,6 +91,7 @@ class ExecutionLogger:
         walltime_ms: float = 0.0,
         software: str | None = None,
         calculation_type: str | None = None,
+        reward: float | None = None,
     ) -> None:
         """Log a tool invocation."""
         success = error is None and result is not None
@@ -110,6 +113,7 @@ class ExecutionLogger:
             software=software,
             calculation_type=calculation_type,
             tags=[],
+            reward=reward,
         )
         self._tool_calls.append(record)
         self._flush_tool_record(record)

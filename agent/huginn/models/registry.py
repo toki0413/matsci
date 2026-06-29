@@ -36,6 +36,18 @@ ProviderT = Literal[
 ]
 
 
+# 单次 LLM API 请求超时 (秒). 不设的话 openai SDK 默认 600s, DeepSeek
+# 长输出推理慢时会把整个 agent invoke timeout 吃完, 早 fail 早 retry 更稳.
+# 用 HUGINN_LLM_REQUEST_TIMEOUT 覆盖, 默认 120s.
+def _llm_request_timeout() -> float:
+    raw = os.environ.get("HUGINN_LLM_REQUEST_TIMEOUT", "120")
+    try:
+        v = float(raw)
+        return v if v > 0 else 120.0
+    except (TypeError, ValueError):
+        return 120.0
+
+
 _INTENSITY_TO_ANTHROPIC_BUDGET: dict[ThinkingIntensity, int] = {
     "low": 4096,
     "medium": 16000,
@@ -96,6 +108,119 @@ def _apply_thinking_kwargs(
         return
 
     # DeepSeek, Google, Ollama, NVIDIA, domestic: no standard mapping yet.
+
+
+@dataclass
+class ModelCaps:
+    """模型能力声明, 4 个槽位.
+
+    参考 claude-code-haha 的能力路由设计, 上层按能力筛选模型
+    (带 vision 的才能看图, 带 tools 的才能调函数, 以此类推).
+    未知名返回全 False (fail-closed), 避免把不支持工具调用的模型
+    当成支持的.
+    """
+
+    vision: bool = False
+    tools: bool = False
+    reasoning: bool = False
+    streaming: bool = False
+
+
+# 已知模型能力表. 维护时按 provider 分组, 新增模型记得补一条.
+# 未列出的模型 get_model_capabilities() 会做前缀模糊匹配, 仍然命中不了
+# 就返回全 False.
+MODEL_CAPABILITIES: dict[str, ModelCaps] = {
+    # ── Anthropic ──────────────────────────────────────────────
+    "claude-sonnet-4-20250514": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "claude-sonnet-4-6": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "claude-3-5-sonnet-20241022": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    "claude-3-5-sonnet": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    "claude-3-opus": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    "claude-3-haiku": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    # ── OpenAI ─────────────────────────────────────────────────
+    "gpt-4o": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
+    "gpt-4o-mini": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
+    "gpt-4-turbo": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
+    "gpt-4": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "gpt-3.5-turbo": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    # o 系列推理模型目前不支持原生 function calling
+    "o1": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
+    "o3": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
+    "o1-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
+    "o3-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
+    # ── DeepSeek ───────────────────────────────────────────────
+    "deepseek-chat": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    "deepseek-coder": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    "deepseek-reasoner": ModelCaps(
+        vision=False, tools=False, reasoning=True, streaming=True
+    ),
+    # ── Google Gemini ──────────────────────────────────────────
+    "gemini-2.5-pro": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "gemini-2.0-flash": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    "gemini-1.5-pro": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    "gemini-1.5-flash": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    # ── Qwen / 通义 ────────────────────────────────────────────
+    "qwen-max": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen2.5:14b": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    # ── Moonshot / Kimi ───────────────────────────────────────
+    "moonshot-v1-8k": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    "moonshot-v1-32k": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    # ── GLM ───────────────────────────────────────────────────
+    "glm-4": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
+    "glm-4-flash": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+}
+
+
+def get_model_capabilities(model_name: str) -> ModelCaps:
+    """查模型能力. 未知模型返回全 False (fail-closed).
+
+    先精确匹配; 命中不了再按前缀模糊匹配, 处理带日期后缀 / 版本号
+    的变体 (比如 "gpt-4o-2024-08-06" 命中 "gpt-4o").
+    """
+    if not model_name:
+        return ModelCaps()
+    name = model_name.strip()
+    if name in MODEL_CAPABILITIES:
+        return MODEL_CAPABILITIES[name]
+    lower = name.lower()
+    for key, caps in MODEL_CAPABILITIES.items():
+        if lower.startswith(key.lower()):
+            return caps
+    return ModelCaps()
 
 
 #: OpenAI-compatible domestic providers with default base URLs and env keys.
@@ -274,6 +399,7 @@ def _create_openai_compatible(
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    kwargs["request_timeout"] = _llm_request_timeout()
     return ChatOpenAI(**kwargs)
 
 
@@ -350,6 +476,7 @@ def create_langchain_model(
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        kwargs["request_timeout"] = _llm_request_timeout()
         return ChatOpenAI(**kwargs)
 
     if provider == "ollama":
@@ -380,6 +507,7 @@ def create_langchain_model(
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        kwargs["request_timeout"] = _llm_request_timeout()
         return ChatOpenAI(**kwargs)
 
     if provider == "google-genai":
@@ -413,6 +541,7 @@ def create_langchain_model(
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        kwargs["request_timeout"] = _llm_request_timeout()
         return ChatOpenAI(**kwargs)
 
     if provider in _DOMESTIC_OPENAI_COMPATIBLE:
@@ -476,7 +605,12 @@ class ModelRegistry:
         local_only_mode: bool = False,
     ):
         self._models: dict[str, ModelConfig] = {}
-        self._cache: dict[str, Any] = {}
+        # LRU cache for instantiated model clients — bounded to prevent
+        # unbounded memory growth in long-running servers.
+        from collections import OrderedDict
+
+        self._cache: OrderedDict[str, Any] = OrderedDict()
+        self._cache_max: int = 32
         self._local_only_mode = local_only_mode
         if models:
             for m in models:
@@ -538,6 +672,8 @@ class ModelRegistry:
         """
         cache_key = self._cache_key(alias, thinking, max_tokens)
         if cache_key in self._cache:
+            # Move to end (most recently used)
+            self._cache.move_to_end(cache_key)
             return self._cache[cache_key]
         cfg = self._models.get(alias)
         if not cfg or not cfg.enabled:
@@ -555,6 +691,9 @@ class ModelRegistry:
             max_tokens=effective_max_tokens,
         )
         self._cache[cache_key] = instance
+        # Evict oldest entries if over capacity
+        while len(self._cache) > self._cache_max:
+            self._cache.popitem(last=False)
         return instance
 
     def resolve(

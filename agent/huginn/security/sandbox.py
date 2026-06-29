@@ -7,6 +7,7 @@ working directories, and enforcing timeouts/output limits.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -239,3 +240,43 @@ class SandboxExecutor:
         if isinstance(data, str):
             data = data.encode("utf-8")
         return hashlib.sha256(data).hexdigest()[:16]
+
+
+def create_sandbox(
+    config: SandboxConfig | None = None,
+    prefer_docker: bool = False,
+    docker_image: str = "python:3.12-slim",
+) -> SandboxExecutor | "DockerSandboxExecutor":  # type: ignore[name-defined]
+    """根据环境自动选择沙箱后端。
+
+    - prefer_docker=True 且 Docker 可用 → DockerSandboxExecutor
+    - 否则 → SandboxExecutor（subprocess 软沙箱）
+
+    也可以通过环境变量 HUGINN_DOCKER_SANDBOX=1 启用 Docker 沙箱，
+    效果等同 prefer_docker=True。
+    """
+    cfg = config or SandboxConfig()
+
+    # 环境变量开关，方便运维侧不改代码就切后端
+    env_enabled = os.environ.get("HUGINN_DOCKER_SANDBOX") == "1"
+    want_docker = prefer_docker or env_enabled
+
+    if want_docker:
+        # 延迟 import，避免 docker SDK 没装时整个 sandbox 模块都加载不了
+        try:
+            from huginn.security.docker_sandbox import DockerSandboxExecutor
+        except Exception:
+            return SandboxExecutor(cfg)
+
+        try:
+            docker_executor = DockerSandboxExecutor(image=docker_image, config=cfg)
+        except Exception:
+            # 构造失败也别让上层挂掉
+            return SandboxExecutor(cfg)
+
+        if docker_executor.is_available():
+            return docker_executor
+        # Docker 不可用就静默回退
+        return SandboxExecutor(cfg)
+
+    return SandboxExecutor(cfg)

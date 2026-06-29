@@ -12,6 +12,7 @@ Phase 4 additions:
 
 from __future__ import annotations
 
+import calendar
 import gzip
 import hashlib
 import hmac as _hmac
@@ -158,6 +159,20 @@ class AuditLogger:
 
         return event
 
+    def record(
+        self,
+        event_type: str,
+        details: dict[str, Any] | None = None,
+    ) -> AuditEvent:
+        """简化版记录接口：只传事件类型和详情 dict。
+
+        内部还是走 log()，actor 默认 system，action 从 details.tool 取，
+        没有就用 event_type。调试时随手记一条用这个最省事。
+        """
+        details = details or {}
+        action = details.get("tool") or details.get("action") or event_type
+        return self.log(event_type, "system", action, details=details)
+
     @staticmethod
     def _hash_data(data: str | bytes) -> str:
         if isinstance(data, str):
@@ -240,15 +255,47 @@ class AuditLogger:
 
     # -- query interface ------------------------------------------------
 
+    @staticmethod
+    def _ts_to_unix(ts: float | str | None) -> float | None:
+        """把 ISO 字符串或 unix float 统一成 unix timestamp。
+
+        None / 解析失败返回 None。unix float 原样返回。
+        """
+        if ts is None:
+            return None
+        if isinstance(ts, (int, float)):
+            return float(ts)
+        try:
+            # 时间戳格式 "2026-06-12T16:22:13Z", Z = UTC
+            return float(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
+        except (ValueError, TypeError):
+            return None
+
+    def _iter_records(self):
+        """读全部记录并 yield dict，跳过空行和坏行。"""
+        if not self.log_path.exists():
+            return
+        with open(self.log_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
     def query(
         self,
         *,
         event_type: str | None = None,
         actor: str | None = None,
         action: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
-        limit: int = 100,
+        session_id: str | None = None,
+        tool: str | None = None,
+        since: float | str | None = None,
+        until: float | str | None = None,
+        limit: int = 1000,
     ) -> list[dict[str, Any]]:
         """Query audit events with filters.
 
@@ -257,41 +304,158 @@ class AuditLogger:
         event_type : filter by event type (exact match)
         actor : filter by actor (exact match)
         action : filter by action (substring match)
-        since : ISO timestamp lower bound (inclusive)
-        until : ISO timestamp upper bound (inclusive)
-        limit : max results (default 100)
+        session_id : 按 session 过滤，从 details.session_id 取
+        tool : 按 tool 过滤，从 details.tool 取
+        since : 下界 (inclusive)，unix float 或 ISO 字符串都行
+        until : 上界 (inclusive)，unix float 或 ISO 字符串都行
+        limit : max results (default 1000)
         """
+        since_unix = self._ts_to_unix(since)
+        until_unix = self._ts_to_unix(until)
         results: list[dict[str, Any]] = []
-        if not self.log_path.exists():
-            return results
 
-        with open(self.log_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
+        for record in self._iter_records():
+            if event_type and record.get("event_type") != event_type:
+                continue
+            if actor and record.get("actor") != actor:
+                continue
+            if action and action.lower() not in record.get("action", "").lower():
+                continue
+
+            details = record.get("details", {})
+            if session_id is not None:
+                rec_session = details.get("session_id") or record.get("session_id")
+                if rec_session != session_id:
                     continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
+            if tool is not None and details.get("tool") != tool:
+                continue
+
+            if since_unix is not None:
+                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
+                if rec_unix is None or rec_unix < since_unix:
+                    continue
+            if until_unix is not None:
+                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
+                if rec_unix is None or rec_unix > until_unix:
                     continue
 
-                if event_type and record.get("event_type") != event_type:
-                    continue
-                if actor and record.get("actor") != actor:
-                    continue
-                if action and action.lower() not in record.get("action", "").lower():
-                    continue
-                ts = record.get("timestamp", "")
-                if since and ts < since:
-                    continue
-                if until and ts > until:
-                    continue
-
-                results.append(record)
-                if len(results) >= limit:
-                    break
+            results.append(record)
+            if len(results) >= limit:
+                break
 
         return results
+
+    def aggregate(
+        self,
+        group_by: str = "tool",
+        session_id: str | None = None,
+        since: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """按维度分组统计。
+
+        group_by 取 "tool" / "event_type" / "session"。
+        返回每组的 count / success_count / fail_count / success_rate
+        以及首末事件时间，按 count 降序排。
+
+        success 从 details.success 取，True 算成功，False 算失败，
+        没有这个字段的不计入 success/fail。
+        """
+        since_unix = self._ts_to_unix(since) if since is not None else None
+        groups: dict[str, list[dict[str, Any]]] = {}
+
+        for record in self._iter_records():
+            details = record.get("details", {})
+            # session_id 过滤
+            if session_id is not None:
+                rec_session = details.get("session_id") or record.get("session_id")
+                if rec_session != session_id:
+                    continue
+            # since 过滤
+            if since_unix is not None:
+                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
+                if rec_unix is None or rec_unix < since_unix:
+                    continue
+
+            # 分组 key
+            if group_by == "tool":
+                key = details.get("tool", "unknown")
+            elif group_by == "event_type":
+                key = record.get("event_type", "unknown")
+            elif group_by == "session":
+                key = (
+                    details.get("session_id")
+                    or record.get("session_id")
+                    or "unknown"
+                )
+            else:
+                key = "unknown"
+
+            groups.setdefault(key, []).append(record)
+
+        results: list[dict[str, Any]] = []
+        for key, recs in groups.items():
+            count = len(recs)
+            success_count = sum(
+                1 for r in recs if r.get("details", {}).get("success") is True
+            )
+            fail_count = sum(
+                1 for r in recs if r.get("details", {}).get("success") is False
+            )
+            success_rate = (success_count / count) if count else 0.0
+            timestamps = [
+                r.get("timestamp", "") for r in recs if r.get("timestamp")
+            ]
+            results.append({
+                group_by: key,
+                "count": count,
+                "success_count": success_count,
+                "fail_count": fail_count,
+                "success_rate": success_rate,
+                "first_event": min(timestamps) if timestamps else None,
+                "last_event": max(timestamps) if timestamps else None,
+            })
+
+        # 按 count 降序，方便先看调用最多的
+        results.sort(key=lambda x: x["count"], reverse=True)
+        return results
+
+    def summary(self, since: float | None = None) -> dict[str, Any]:
+        """总体统计：事件数 / 工具数 / 会话数 / 时间范围 / 按类型计数。"""
+        since_unix = self._ts_to_unix(since) if since is not None else None
+        tools: set[str] = set()
+        sessions: set[str] = set()
+        event_types: dict[str, int] = {}
+        timestamps: list[str] = []
+        total = 0
+
+        for record in self._iter_records():
+            if since_unix is not None:
+                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
+                if rec_unix is None or rec_unix < since_unix:
+                    continue
+            total += 1
+            details = record.get("details", {})
+            if details.get("tool"):
+                tools.add(details["tool"])
+            rec_session = details.get("session_id") or record.get("session_id")
+            if rec_session:
+                sessions.add(rec_session)
+            et = record.get("event_type", "unknown")
+            event_types[et] = event_types.get(et, 0) + 1
+            ts = record.get("timestamp")
+            if ts:
+                timestamps.append(ts)
+
+        return {
+            "total_events": total,
+            "num_tools": len(tools),
+            "num_sessions": len(sessions),
+            "event_types": event_types,
+            "tools": sorted(tools),
+            "time_range": (
+                [min(timestamps), max(timestamps)] if timestamps else [None, None]
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------

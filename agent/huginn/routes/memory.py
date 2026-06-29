@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import traceback
 from typing import Any
 
@@ -130,7 +131,7 @@ async def sync_memory_md() -> dict[str, Any]:
     """Sync curated long-tier memories to MEMORY.md."""
     try:
         mgr = get_memory_manager()
-        path = mgr.sync_memory_md()
+        path = await asyncio.to_thread(mgr.sync_memory_md)
         return {"path": str(path) if path else None}
     except Exception as e:
         return {"error": str(e)}

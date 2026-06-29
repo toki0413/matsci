@@ -105,16 +105,19 @@ class UserStore:
             return user, api_key
 
     def get_user(self, user_id: str) -> User | None:
-        return self._users.get(user_id)
+        with self._lock:
+            return self._users.get(user_id)
 
     def get_user_by_username(self, username: str) -> User | None:
-        uid = self._username_index.get(username)
-        return self._users.get(uid) if uid else None
+        with self._lock:
+            uid = self._username_index.get(username)
+            return self._users.get(uid) if uid else None
 
     def get_user_by_api_key(self, api_key: str) -> User | None:
-        key_hash = hash_api_key(api_key)
-        uid = self._key_index.get(key_hash)
-        return self._users.get(uid) if uid else None
+        with self._lock:
+            key_hash = hash_api_key(api_key)
+            uid = self._key_index.get(key_hash)
+            return self._users.get(uid) if uid else None
 
     def update_role(self, user_id: str, role: Role) -> User:
         with self._lock:

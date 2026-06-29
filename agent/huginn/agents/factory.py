@@ -7,6 +7,8 @@ provider/model instances are cached.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from typing import Any
 
 from huginn.agent import HuginnAgent
@@ -33,6 +35,31 @@ class AgentFactory:
         self._profiles: dict[str, AgentProfileConfig] = {
             a.id: a for a in config.agents if a.enabled
         }
+        # 共享 checkpointer — 同一 thread_id 的对话历史跨请求保留
+        # 配了 checkpointer_path 就走 SqliteSaver (文件锁, 并发安全)
+        # 没配才退回 InMemorySaver (并发长程有竞态, 见问题23)
+        # 注意: persistent_checkpointer 返回 context manager, 必须持有 cm 对象
+        # 否则 GC 回收 cm 会触发 __exit__ 关闭数据库连接
+        from huginn.checkpointer import persistent_checkpointer, create_in_memory_checkpointer
+        if self.config.checkpointer_path:
+            self._checkpointer_cm = persistent_checkpointer(self.config.checkpointer_path)
+            self._shared_checkpointer = self._checkpointer_cm.__enter__()
+        else:
+            self._shared_checkpointer = create_in_memory_checkpointer()
+
+        # PRT Level 0 异常登记表. db 放跟 checkpointer 同目录, 没配就放 workspace 下.
+        # 生命周期跟 factory 一致, 所有 agent 共用一份.
+        from huginn.anomaly_log import AnomalyLogStore
+        anomaly_db = self._anomaly_db_path()
+        self._anomaly_store = AnomalyLogStore(anomaly_db)
+
+    def _anomaly_db_path(self) -> str:
+        """anomalies.db 跟 checkpoints.db 放一个目录."""
+        from pathlib import Path
+        if self.config.checkpointer_path:
+            return str(Path(self.config.checkpointer_path).expanduser().parent / "anomalies.db")
+        # 没配 checkpointer 就退到 workspace
+        return str(Path(self.config.workspace).expanduser() / "anomalies.db")
 
     def get_profile(self, profile_id: str) -> AgentProfileConfig | None:
         return self._profiles.get(profile_id)
@@ -48,6 +75,7 @@ class AgentFactory:
         memory_manager: Any | None = None,
         thinking: ThinkingIntensity | dict[str, Any] | None = None,
         max_tokens: int | None = None,
+        approval_callback: Callable[[str, str], bool] | None = None,
     ) -> HuginnAgent:
         """Create a HuginnAgent for the given profile.
 
@@ -101,6 +129,7 @@ class AgentFactory:
             ),
             profile_id=profile_id,
             thread_id=thread_id,
+            checkpointer=self._shared_checkpointer,
             tool_filter=profile.tools if profile.tools else None,
             agent_factory=self,
             privacy_redact_secrets=self.config.privacy_redact_secrets,
@@ -116,8 +145,49 @@ class AgentFactory:
             memory_decay_prune_threshold=self.config.memory_decay_prune_threshold,
             persona_name=profile.persona,
             emotion_tracker=emotion_tracker,
+            approval_callback=approval_callback,
         )
         agent.register_tools_from_registry()
+
+        # 个人定制: 注入共享 StyleLearner, chat() 里会自动学用户语言偏好.
+        # 共享单例保证同 workspace 下所有 agent 实例用同一份 profile.
+        from huginn.personalization import get_shared_style_learner
+        agent.set_style_learner(get_shared_style_learner())
+
+        # PRT Level 0: 挂上异常检测钩子, 拦截工具输出做登记.
+        # 钩子在工具调用时按 hook_manager 动态读取, 注册时机不敏感.
+        from huginn.hooks import POST_TOOL_USE, AnomalyDetectionHook
+        agent.register_hook(POST_TOOL_USE, AnomalyDetectionHook(self._anomaly_store))
+
+        # PRT Level 1: LLM 异常判定, 默认关. 开启条件 HUGINN_PRT_LEVEL1=1.
+        # 每次被观察工具调用都会打一次小模型(deepseek-chat), 有成本, 所以默认关.
+        if os.environ.get("HUGINN_PRT_LEVEL1", "0") == "1":
+            from huginn.hooks.anomaly_llm_hook import AnomalyLLMHook
+            agent.register_hook(POST_TOOL_USE, AnomalyLLMHook(self._anomaly_store))
+
+        # Prompt 引导钩子: 用户提问里命中"验证/计算/求解"等关键词时,
+        # 强制要求走工具. 纯规则匹配零成本, 默认开, 不需要环境变量.
+        from huginn.hooks import USER_PROMPT_SUBMIT
+        from huginn.hooks.prompt_guidance_hook import PromptGuidanceHook
+        agent.register_hook(USER_PROMPT_SUBMIT, PromptGuidanceHook())
+
+        # Questions 机制: 信息不足时(目标模糊/参数缺失/输出未定/过短)
+        # 生成结构化追问, 降低无效迭代. 每 thread 最多追问一次.
+        from huginn.hooks.clarify_questions_hook import ClarifyQuestionsHook
+        agent.register_hook(USER_PROMPT_SUBMIT, ClarifyQuestionsHook())
+
+        # 工具名校验: 用户消息里点名的工具不在可用列表时, 注入 prompt_guidance
+        # 让 agent 明确告知用户该工具不存在, 别默默调 ls/web_search 探索.
+        from huginn.hooks.tool_name_validation_hook import ToolNameValidationHook
+        agent.register_hook(USER_PROMPT_SUBMIT, ToolNameValidationHook())
+
+        # Design Plan gate: 调用 vasp/lammps 等执行类工具前,
+        # 必须先有用户确认的 plan. 由 PRE_TOOL_USE 钩子强制,
+        # 不依赖 LLM 自觉. 配合 design_plan_tool 使用.
+        from huginn.hooks import PRE_TOOL_USE
+        from huginn.hooks.design_plan_gate_hook import DesignPlanGateHook
+        agent.register_hook(PRE_TOOL_USE, DesignPlanGateHook())
+
         return agent
 
     def create_lead(
@@ -125,6 +195,7 @@ class AgentFactory:
         thread_id: str | None = None,
         thinking: ThinkingIntensity | dict[str, Any] | None = None,
         max_tokens: int | None = None,
+        approval_callback: Callable[[str, str], bool] | None = None,
     ) -> HuginnAgent:
         """Convenience: create the lead/default agent."""
         kwargs: dict[str, Any] = {}
@@ -132,6 +203,8 @@ class AgentFactory:
             kwargs["thinking"] = thinking
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if approval_callback is not None:
+            kwargs["approval_callback"] = approval_callback
         for preferred in ("lead", "default"):
             if preferred in self._profiles:
                 return self.create(preferred, thread_id=thread_id, **kwargs)

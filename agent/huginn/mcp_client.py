@@ -12,9 +12,13 @@ Also provides a registry interface for managing multiple server configurations
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import platform
+import signal
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -75,6 +79,13 @@ class MCPClientManager:
         self._last_health_check: dict[str, float] = {}
         # Registry for server configs (sync interface for tests)
         self._registry: dict[str, dict[str, Any]] = {}
+        # Serializes connect/disconnect to prevent races between
+        # concurrent lifecycle operations on the same server.
+        self._lock = asyncio.Lock()
+        # call_tool_with_retry 的连续错误计数（按服务器名）
+        self._consecutive_errors: dict[str, int] = {}
+        # 连接缓存：cache_key -> server_name，避免重复握手
+        self._connection_cache: dict[str, str] = {}
 
     # ------------------------------------------------------------------ #
     # Registry API (sync, used by tests and CLI)
@@ -108,11 +119,13 @@ class MCPClientManager:
         )
 
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            try:
+                loop = asyncio.get_running_loop()
                 # Schedule in running loop
                 asyncio.create_task(self.connect(config))
-            else:
+            except RuntimeError:
+                # No running loop — create one
+                loop = asyncio.new_event_loop()
                 loop.run_until_complete(self.connect(config))
         except Exception as e:
             logger.warning(f"Failed to connect MCP server '{name}': {e}")
@@ -121,7 +134,10 @@ class MCPClientManager:
     def disconnect_server(self, name: str) -> None:
         """Disconnect a server by name (sync wrapper)."""
         try:
-            loop = asyncio.get_event_loop()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
             if loop.is_running():
                 asyncio.create_task(self.disconnect(name))
             else:
@@ -152,75 +168,98 @@ class MCPClientManager:
     # ------------------------------------------------------------------ #
     async def connect(self, config: MCPServerConfig) -> None:
         """Connect to an MCP server via stdio."""
-        if config.name in self._sessions:
-            logger.warning(f"MCP server '{config.name}' already connected")
-            return
+        async with self._lock:
+            if config.name in self._sessions:
+                logger.warning(f"MCP server '{config.name}' already connected")
+                return
 
-        # Store config for future reconnection attempts
-        self._configs[config.name] = config
+            # Store config for future reconnection attempts
+            self._configs[config.name] = config
 
-        # Clear any stale tools from a previous connection (idempotent)
-        self._tools = [t for t in self._tools if t.server_name != config.name]
-        self._tool_index = {
-            k: v for k, v in self._tool_index.items() if v.server_name != config.name
-        }
+            # Clear any stale tools from a previous connection (idempotent)
+            self._tools = [t for t in self._tools if t.server_name != config.name]
+            self._tool_index = {
+                k: v for k, v in self._tool_index.items() if v.server_name != config.name
+            }
 
-        params = StdioServerParameters(
-            command=config.command,
-            args=config.args,
-            env=config.env,
-        )
-
-        try:
-            client = stdio_client(params)
-            read_stream, write_stream = await client.__aenter__()
-            session = ClientSession(read_stream, write_stream)
-            await session.__aenter__()
-            await session.initialize()
-
-            self._clients[config.name] = client
-            self._sessions[config.name] = session
-            self._initialized.add(config.name)
-            self._consecutive_failures[config.name] = 0
-            self._last_health_check[config.name] = time.monotonic()
-
-            # Discover tools
-            tools_result = await session.list_tools()
-            for tool in tools_result.tools:
-                info = MCPToolInfo(
-                    name=tool.name,
-                    description=tool.description or "",
-                    input_schema=tool.inputSchema
-                    or {"type": "object", "properties": {}},
-                    server_name=config.name,
-                )
-                self._tools.append(info)
-                self._tool_index[tool.name] = info
-
-            logger.info(
-                f"Connected to MCP server '{config.name}' with {len(tools_result.tools)} tools"
+            params = StdioServerParameters(
+                command=config.command,
+                args=config.args,
+                env=config.env,
             )
 
-        except Exception as e:
-            logger.error(f"Failed to connect to MCP server '{config.name}': {e}")
-            raise
+            try:
+                client = stdio_client(params)
+                read_stream, write_stream = await client.__aenter__()
+                session = ClientSession(read_stream, write_stream)
+                await session.__aenter__()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await client.__aexit__(None, None, None)
+                logger.error(f"Failed to connect to MCP server '{config.name}'")
+                raise
+
+            try:
+                await session.initialize()
+
+                self._clients[config.name] = client
+                self._sessions[config.name] = session
+                self._initialized.add(config.name)
+                self._consecutive_failures[config.name] = 0
+                self._last_health_check[config.name] = time.monotonic()
+
+                tools_result = await session.list_tools()
+                for tool in tools_result.tools:
+                    info = MCPToolInfo(
+                        name=tool.name,
+                        description=tool.description or "",
+                        input_schema=tool.inputSchema
+                        or {"type": "object", "properties": {}},
+                        server_name=config.name,
+                    )
+                    self._tools.append(info)
+                    self._tool_index[tool.name] = info
+
+                logger.info(
+                    f"Connected to MCP server '{config.name}' with {len(tools_result.tools)} tools"
+                )
+
+            except Exception as e:
+                with contextlib.suppress(Exception):
+                    await session.__aexit__(None, None, None)
+                with contextlib.suppress(Exception):
+                    await client.__aexit__(None, None, None)
+                logger.error(f"Failed to connect to MCP server '{config.name}': {e}")
+                raise
 
     async def disconnect(self, name: str) -> None:
         """Disconnect a specific MCP server."""
-        session = self._sessions.pop(name, None)
-        client = self._clients.pop(name, None)
-        self._initialized.discard(name)
+        async with self._lock:
+            session = self._sessions.pop(name, None)
+            client = self._clients.pop(name, None)
+            self._initialized.discard(name)
+            # 清理连续错误计数和连接缓存中的条目
+            self._consecutive_errors.pop(name, None)
+            stale_keys = [k for k, v in self._connection_cache.items() if v == name]
+            for k in stale_keys:
+                self._connection_cache.pop(k, None)
 
-        # Remove tools from this server
-        self._tools = [t for t in self._tools if t.server_name != name]
-        self._tool_index = {
-            k: v for k, v in self._tool_index.items() if v.server_name != name
-        }
+            # Remove tools from this server
+            self._tools = [t for t in self._tools if t.server_name != name]
+            self._tool_index = {
+                k: v for k, v in self._tool_index.items() if v.server_name != name
+            }
 
         if session:
-            await session.__aexit__(None, None, None)
+            with contextlib.suppress(Exception):
+                await session.__aexit__(None, None, None)
         if client:
-            await client.__aexit__(None, None, None)
+            # 先用升级序列清理底层进程，再让上下文管理器收尾
+            proc = self._extract_process(client)
+            if proc is not None:
+                await self._terminate_process(proc, timeout=5.0)
+            with contextlib.suppress(Exception):
+                await client.__aexit__(None, None, None)
 
         logger.info(f"Disconnected MCP server '{name}'")
 
@@ -355,14 +394,251 @@ class MCPClientManager:
             }
         return status
 
+    # ------------------------------------------------------------------ #
+    # Session expiry 检测与带重试的工具调用
+    # ------------------------------------------------------------------ #
+
+    def _is_session_expired(self, error: Exception) -> bool:
+        """检测 JSON-RPC -32001 session expired 错误。
+
+        JSON-RPC 协议中 -32001 表示 session 已过期；HTTP 传输层
+        则会返回 404。两者都意味着需要重新建立连接。
+        """
+        # JSON-RPC 错误码 -32001
+        error_code = getattr(error, "code", None)
+        if error_code == -32001:
+            return True
+
+        # 兜底：检查错误消息中的关键词
+        error_str = str(error).lower()
+        if "session" in error_str and "expired" in error_str:
+            return True
+
+        # HTTP 404 表示 session 不存在
+        status_code = getattr(error, "status_code", None)
+        if status_code == 404:
+            return True
+
+        return False
+
+    async def call_tool_with_retry(
+        self, name: str, args: dict[str, Any], max_errors: int = 3
+    ) -> dict[str, Any]:
+        """调用工具，检测 session expiry 自动重连。
+
+        连续失败达到 max_errors 次或检测到 session expired 时触发重连。
+        成功后重置错误计数。
+        """
+        info = self._tool_index.get(name)
+        if not info:
+            raise ValueError(
+                f"MCP tool '{name}' not found. Available: {list(self._tool_index.keys())}"
+            )
+
+        server_name = info.server_name
+        last_error: Exception | None = None
+
+        for attempt in range(max_errors):
+            try:
+                result = await self.call_tool(name, args)
+                # 成功时重置错误计数
+                self._consecutive_errors.pop(server_name, None)
+                return result
+            except Exception as e:
+                last_error = e
+                self._consecutive_errors[server_name] = (
+                    self._consecutive_errors.get(server_name, 0) + 1
+                )
+
+                # 检测到 session expired，立即重连
+                if self._is_session_expired(e):
+                    logger.warning(
+                        f"Session expired for '{server_name}'，尝试重连"
+                    )
+                    reconnected = await self.reconnect(server_name)
+                    if not reconnected:
+                        raise
+                    # 重连成功后重置计数，继续重试
+                    self._consecutive_errors[server_name] = 0
+                    continue
+
+                # 错误计数达到上限，尝试重连
+                if self._consecutive_errors[server_name] >= max_errors:
+                    logger.warning(
+                        f"工具 '{name}' 连续失败 "
+                        f"{self._consecutive_errors[server_name]} 次，"
+                        f"尝试重连 '{server_name}'"
+                    )
+                    reconnected = await self.reconnect(server_name)
+                    if not reconnected:
+                        raise
+                    # 重连成功后重置计数，给一次重试机会
+                    self._consecutive_errors[server_name] = 0
+
+                # 指数退避后重试
+                backoff = min(
+                    _BACKOFF_BASE * (_BACKOFF_FACTOR ** attempt),
+                    _BACKOFF_MAX,
+                )
+                await asyncio.sleep(backoff)
+
+        assert last_error is not None
+        raise last_error
+
+    # ------------------------------------------------------------------ #
+    # Memoized 连接
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def _compute_cache_key(
+        name: str,
+        command: str,
+        args: tuple[str, ...],
+        env: tuple[tuple[str, str], ...],
+    ) -> str:
+        """根据配置计算缓存键，lru_cache 加速重复计算。"""
+        return f"{name}|{command}|{args}|{env}"
+
+    async def connect_memoized(self, config: MCPServerConfig) -> ClientSession:
+        """带缓存的连接，避免重复握手。
+
+        按 (name, command, args, env) 的 hash 做 cache key，
+        如果已有相同配置的活跃连接则直接返回 session。
+        """
+        args_tuple = tuple(config.args)
+        env_tuple = tuple(sorted((config.env or {}).items()))
+        cache_key = self._compute_cache_key(
+            config.name, config.command, args_tuple, env_tuple
+        )
+
+        # 缓存命中：已有相同配置的活跃连接
+        cached_name = self._connection_cache.get(cache_key)
+        if cached_name and cached_name in self._sessions:
+            logger.debug(f"复用已有连接 '{config.name}'（缓存命中）")
+            return self._sessions[cached_name]
+
+        # 缓存未命中：建立新连接
+        await self.connect(config)
+        self._connection_cache[cache_key] = config.name
+        return self._sessions[config.name]
+
+    # ------------------------------------------------------------------ #
+    # 并发批处理连接
+    # ------------------------------------------------------------------ #
+
+    async def connect_batch(
+        self, configs: list[MCPServerConfig], concurrency: int = 4
+    ) -> dict[str, list]:
+        """并发连接多个服务器。
+
+        本地 stdio 服务器建议并发度 4，远程 HTTP/SSE 服务器建议并发度 2。
+        返回 {"success": [names], "failed": [(name, error)]}。
+        """
+        semaphore = asyncio.Semaphore(concurrency)
+        success: list[str] = []
+        failed: list[tuple[str, str]] = []
+
+        async def _connect_one(cfg: MCPServerConfig) -> None:
+            async with semaphore:
+                try:
+                    await self.connect(cfg)
+                    success.append(cfg.name)
+                except Exception as e:
+                    failed.append((cfg.name, str(e)))
+
+        await asyncio.gather(*[_connect_one(c) for c in configs])
+        return {"success": success, "failed": failed}
+
+    # ------------------------------------------------------------------ #
+    # 进程清理升级序列
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _extract_process(client: Any) -> Any:
+        """尝试从 stdio_client 上下文管理器中提取底层进程对象。
+
+        stdio_client 由 contextlib.asynccontextmanager 装饰，其内部
+        异步生成器挂起在 yield 处时，gi_frame.f_locals 中持有 process 变量。
+        如果无法提取则返回 None（不影响后续 __aexit__ 的正常清理）。
+        """
+        if client is None:
+            return None
+        # 不同 Python 版本属性名可能不同，都试一下
+        gen = getattr(client, "gen", None) or getattr(client, "_agen", None)
+        if gen is None:
+            return None
+        frame = getattr(gen, "gi_frame", None)
+        if frame is None:
+            return None
+        return frame.f_locals.get("process")
+
+    async def _terminate_process(self, proc: Any, timeout: float = 5.0) -> None:
+        """SIGINT → SIGTERM → SIGKILL 升级序列清理进程。
+
+        Windows 上没有 SIGINT/SIGTERM 信号概念，使用 terminate() → kill() 两步。
+        Unix 上按 SIGINT → SIGTERM → SIGKILL 逐步升级，每步等待 timeout 秒。
+        """
+        if proc is None:
+            return
+
+        # 进程已退出则无需处理
+        returncode = getattr(proc, "returncode", None)
+        if returncode is not None:
+            return
+
+        system = platform.system()
+
+        try:
+            if system == "Windows":
+                # Windows: terminate() (TerminateProcess) → kill() 升级
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                    return
+                except asyncio.TimeoutError:
+                    pass
+
+                # 升级到 kill
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    proc.kill()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    pass
+            else:
+                # Unix: SIGINT → SIGTERM → SIGKILL
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        proc.send_signal(sig)
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=timeout)
+                        return
+                    except asyncio.TimeoutError:
+                        continue
+                    except ProcessLookupError:
+                        return
+
+                # 最终升级到 SIGKILL
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    proc.kill()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    pass
+        except Exception as e:
+            logger.debug(f"进程清理异常: {e}")
+
     def __del__(self):
         # Best-effort cleanup
         if self._sessions:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
+                try:
+                    loop = asyncio.get_running_loop()
                     loop.create_task(self.disconnect_all())
-                else:
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
                     loop.run_until_complete(self.disconnect_all())
             except Exception:
                 pass

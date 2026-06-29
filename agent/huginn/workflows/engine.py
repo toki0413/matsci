@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.interaction.progress import ProgressTracker, get_progress_tracker
 from huginn.queue import InMemoryTaskBackend, TaskBackend
 from huginn.types import (
     BudgetDecision,
@@ -46,6 +48,10 @@ class WorkflowEngine:
         tool_registry: Any,
         budget_policy: BudgetPolicy | None = None,
         task_backend: TaskBackend | None = None,
+        persona_manager: Any | None = None,
+        long_term_memory: Any | None = None,
+        skill_registry: Any | None = None,
+        progress_tracker: ProgressTracker | None = None,
     ):
         self.registry = tool_registry
         self.budget_policy = budget_policy
@@ -53,6 +59,14 @@ class WorkflowEngine:
         self.task_backend.register_task(
             "huginn.workflow.stage", self._execute_stage_sync
         )
+        # 对话层组件 — 不传就跳过对应注入, 保持老 workflow 行为.
+        # 传了才会在 _apply_stage_context 里被读取, 这样老调用方完全无感.
+        self.persona_manager = persona_manager
+        self.long_term_memory = long_term_memory
+        self.skill_registry = skill_registry
+        # 进度跟踪: 默认走进程级单例, 让 /tasks 路由能汇总所有引擎的进度.
+        # 测试时可以传独立 tracker 隔离. None 时退化为不跟踪 (老行为).
+        self.progress_tracker = progress_tracker
 
     async def execute(
         self,
@@ -78,6 +92,19 @@ class WorkflowEngine:
 
         start_time = datetime.now()
 
+        # 登记进度任务: 用 session_id + uuid 区分, 避免跟其它 workflow 撞
+        tracker = self.progress_tracker or get_progress_tracker()
+        progress_task_id = f"{context.session_id}:workflow:{uuid.uuid4().hex[:8]}"
+        stage_labels = [s.id for s in stages]
+        tracker.start_task(
+            task_id=progress_task_id,
+            description=f"workflow with {len(stages)} stages",
+            total_steps=len(stages),
+            stage_labels=stage_labels,
+            engine_kind="workflow",
+            metadata={"session_id": context.session_id},
+        )
+
         def _maybe_checkpoint() -> None:
             if checkpoint_path is not None:
                 WorkflowCheckpoint(
@@ -100,6 +127,10 @@ class WorkflowEngine:
                     s.id for s in stages if s.id not in completed and s.id not in failed
                 ]
                 _maybe_checkpoint()
+                tracker.fail(
+                    progress_task_id,
+                    f"Workflow blocked: stages {remaining} have unsatisfied dependencies",
+                )
                 return WorkflowResult(
                     success=False,
                     stages=stage_map,
@@ -171,10 +202,26 @@ class WorkflowEngine:
                         failed.add(stage.id)
 
                 _maybe_checkpoint()
+                # 每个 stage 落定后更新进度 (含失败和重试中的)
+                tracker.update(
+                    progress_task_id,
+                    current_step=len(completed) + len(failed),
+                    current_label=f"stage {stage.id}: {stage.status}",
+                    metadata={
+                        "completed": sorted(completed),
+                        "failed": sorted(failed),
+                    },
+                )
 
         _maybe_checkpoint()
         total_time = (datetime.now() - start_time).total_seconds()
         success = len(failed) == 0
+
+        # 标记整个 workflow 完成 / 失败
+        if success:
+            tracker.complete(progress_task_id, result={"outputs": list(outputs.keys())})
+        else:
+            tracker.fail(progress_task_id, f"Stages failed: {sorted(failed)}")
 
         return WorkflowResult(
             success=success,
@@ -329,6 +376,13 @@ class WorkflowEngine:
         # Resolve inputs from dependency outputs
         tool_input = self._resolve_inputs(stage.tool_input, available_outputs)
 
+        # 接入对话层组件 — persona / emotion / memory / skill 白名单.
+        # 这些字段不填 (默认 None) 就完全跳过, 老 workflow 行为不变.
+        tool_input, ctx_error = self._apply_stage_context(stage, tool_input, context)
+        if ctx_error is not None:
+            stage.completed_at = datetime.now()
+            return ToolResult(data=None, success=False, error=ctx_error)
+
         tool = self.registry.get(stage.tool)
         if not tool:
             return ToolResult(
@@ -438,6 +492,89 @@ class WorkflowEngine:
             else:
                 resolved[key] = value
         return resolved
+
+    def _apply_stage_context(
+        self,
+        stage: ComputationalStage,
+        tool_input: dict[str, Any],
+        context: ToolContext,
+    ) -> tuple[dict[str, Any], str | None]:
+        """把 stage 声明的对话层组件注入到 tool_input 里.
+
+        返回 (maybe_modified_tool_input, error). error 非 None 表示该 stage
+        不应该执行 (目前只有 skill 白名单不通过会触发), 调用方直接返回失败即可.
+
+        四个字段全是 opt-in: stage 不设或引擎没装对应组件, 就完全跳过,
+        老 workflow 的执行路径不变.
+        """
+        # skill 白名单: stage.tool 必须在所列 skill 的 required_tools 集合里.
+        # skill 名查不到就忽略 — 不卡 stage, 避免改名后老 workflow 挂掉.
+        if stage.skill_context and self.skill_registry is not None:
+            allowed_tools: set[str] = set()
+            for skill_name in stage.skill_context:
+                skill = self.skill_registry.get(skill_name)
+                if skill is not None:
+                    allowed_tools.update(getattr(skill, "required_tools", []) or [])
+            if allowed_tools and stage.tool not in allowed_tools:
+                return tool_input, (
+                    f"Stage tool '{stage.tool}' not allowed by skill_context "
+                    f"(allowed: {sorted(allowed_tools)})"
+                )
+
+        # persona: 取 system prompt, 作为附加上下文塞进 tool_input.
+        # 工具自己决定要不要消费 (跟 __diagnosis 一个套路).
+        if stage.persona and self.persona_manager is not None:
+            try:
+                persona = self.persona_manager.get(stage.persona)
+                if persona and persona.system_prompt:
+                    tool_input["__persona_prompt"] = persona.system_prompt
+            except Exception:
+                # persona 找不到不要把 stage 整个挂掉, 跟现有诊断钩子的容错一致
+                pass
+
+        # emotion_state: dict 转 EmotionState, 生成情绪片段注入.
+        # 不走持久化, 只用临时 tracker 复用 context_prompt 的逻辑.
+        if stage.emotion_state:
+            snippet = self._emotion_state_to_prompt(stage.emotion_state)
+            if snippet:
+                tool_input["__emotion_context"] = snippet
+
+        # memory_scope: 从 LongTermMemory 检索相关记忆, 摘要注入.
+        # 走 FTS 即可, 不强求语义检索 (语义检索依赖 vector store, 不一定在线).
+        if stage.memory_scope and self.long_term_memory is not None:
+            try:
+                memories = self.long_term_memory.retrieve(
+                    stage.memory_scope, top_k=3, semantic=False
+                )
+                if memories:
+                    tool_input["__memory_context"] = memories
+            except Exception:
+                pass
+
+        return tool_input, None
+
+    @staticmethod
+    def _emotion_state_to_prompt(state_dict: dict[str, Any]) -> str:
+        """把 emotion_state dict 转成可注入的简短情绪片段.
+
+        复用 EmotionTracker.context_prompt 的措辞逻辑, 但不落盘, 也不动
+        用户 workspace 下的 emotion 文件. 拿不到相关模块就直接返回空串.
+        """
+        try:
+            import tempfile
+
+            from huginn.persona_emotion import EmotionState, EmotionTracker
+
+            state = EmotionState.from_dict(state_dict)
+            # 用临时目录当 workspace, 避免在用户项目下创建 .huginn/emotion/
+            tracker = EmotionTracker(
+                persona_name="_workflow_stage",
+                workspace=tempfile.gettempdir(),
+            )
+            tracker._state = state
+            return tracker.context_prompt()
+        except Exception:
+            return ""
 
     async def _diagnose_and_fix(
         self, stage: ComputationalStage, result: ToolResult, context: ToolContext

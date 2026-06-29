@@ -143,7 +143,8 @@ class VaultSecretBackend(SecretBackend):
                 path=path, mount_point=self.mount_point
             )
             return response["data"]["data"].get(key)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Vault get('%s') failed: %s", name, exc)
             return None
 
     def set(self, name: str, value: str) -> None:
@@ -162,8 +163,8 @@ class VaultSecretBackend(SecretBackend):
                 path=path, mount_point=self.mount_point
             )
             existing = response.get("data", {}).get("data", {})
-        except Exception:
-            pass  # Path doesn't exist yet
+        except Exception as exc:
+            logger.debug("Vault path '%s' doesn't exist yet: %s", path, exc)
 
         existing[key] = value
         client.secrets.kv.v2.create_or_update_secret(

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import click
 
+from huginn.cli.api_key_setup import api_keys
 from huginn.cli.commands import (
+    autoloop,
     autoresearch,
+    background,
     bench,
     chat,
     coder,
@@ -24,9 +27,11 @@ from huginn.cli.commands import (
     plot,
     refactor,
     remote,
+    replay,
     scheduler,
     seed_knowledge,
     serve,
+    sessions,
     swarm,
     telemetry,
     tools,
@@ -43,6 +48,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(coder.coder)
     cli.add_command(refactor.refactor)
     cli.add_command(explore.explore)
+    cli.add_command(autoloop.autoloop)
     cli.add_command(serve.serve)
     cli.add_command(tools.tools)
     cli.add_command(version.version)
@@ -59,6 +65,10 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(encrypt_config.encrypt_config)
     cli.add_command(export.export_data)
     cli.add_command(kg.build_kg)
+    # 回放 agent 决策轨迹
+    cli.add_command(replay.replay)
+    # API key 配置入口
+    cli.add_command(api_keys)
 
     # Command groups with subcommands
     cli.add_command(hpc.hpc)
@@ -69,5 +79,9 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(unified.unified)
     cli.add_command(persona.persona)
     cli.add_command(swarm.swarm)
+    cli.add_command(swarm.team)
     cli.add_command(visualize.visualize)
     cli.add_command(kg.kg)
+    cli.add_command(sessions.sessions)
+    # 后台任务管理
+    cli.add_command(background.bg)

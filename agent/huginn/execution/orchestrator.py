@@ -68,7 +68,6 @@ class ExecutionOrchestrator:
              "depends_on": ["relax"]},
         ]
         record = await orch.run(stages)
-        print(record.overall_success)
     """
 
     def __init__(

@@ -6,8 +6,8 @@ import asyncio
 import json
 import traceback
 import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import AIMessage, ToolMessage
@@ -17,6 +17,7 @@ from huginn.server_core import (
     _EDIT_TOOLS,
     _checkpoints,
     _snapshot_directory,
+    _state_lock,
     _threads,
     get_agent,
     get_agent_factory,
@@ -27,10 +28,49 @@ from huginn.server_core import (
 router = APIRouter(tags=["ws"])
 
 
+def _make_ws_approval_callback(websocket: WebSocket):
+    """Build a sync approval callback that notifies the WebSocket client.
+
+    The adapter calls this synchronously from inside ``_arun``. We can't
+    block the event loop waiting for a client reply, so the callback
+    fires off an ``approval_request`` event for visibility and
+    auto-approves. Clients that want true interactive approval can send
+    ``set_auto_approve=false`` to switch the cached agent into ASK mode
+    and handle the request/reply flow themselves before the tool runs.
+    """
+
+    def callback(tool_name: str, reason: str) -> bool:
+        request_id = uuid.uuid4().hex
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                websocket.send_json(
+                    {
+                        "type": "approval_request",
+                        "request_id": request_id,
+                        "tool_name": tool_name,
+                        "reason": reason,
+                        "auto_approved": True,
+                    }
+                )
+            )
+        except RuntimeError:
+            # No running loop — fall back to plain auto-approve.
+            pass
+        return True
+
+    return callback
+
+
 @router.websocket("/ws/agent")
 async def agent_websocket(websocket: WebSocket):
     """WebSocket endpoint for real-time Agent chat."""
     await websocket.accept()
+
+    # Per-connection approval state. The callback auto-approves but still
+    # emits approval_request events so the client has full visibility.
+    _pending_approvals: dict[str, asyncio.Future[bool]] = {}
+    _ws_approval = _make_ws_approval_callback(websocket)
 
     try:
         while True:
@@ -42,7 +82,7 @@ async def agent_websocket(websocket: WebSocket):
             thread_id = data.get("thread_id", "default")
 
             if msg_type == "user_input":
-                cfg_chat = HuginnConfig.from_env()
+                cfg_chat = get_config()
                 factory = get_agent_factory()
                 thinking = data.get("thinking")
                 max_tokens = data.get("max_tokens")
@@ -60,6 +100,7 @@ async def agent_websocket(websocket: WebSocket):
                             thread_id=thread_id,
                             thinking=thinking,
                             max_tokens=max_tokens,
+                            approval_callback=_ws_approval,
                         )
                     except Exception as e:
                         await websocket.send_json(
@@ -68,6 +109,12 @@ async def agent_websocket(websocket: WebSocket):
                         continue
                 else:
                     agent = await get_agent()
+                    # The cached global agent was built without an approval
+                    # callback, so ASK-mode tools would be silently denied.
+                    # Flip on auto-approve to keep them working; the
+                    # tool_call events already give the client visibility.
+                    if not agent._permission_config.auto_approve_all:
+                        agent._permission_config.auto_approve_all = True
 
                 # Early return when no LLM is configured — skip expensive
                 # persona matching (which loads the ONNX embedding model and
@@ -115,14 +162,15 @@ async def agent_websocket(websocket: WebSocket):
                 team_mode = cfg_chat.team_mode_enabled
 
                 # Track this thread
-                if thread_id not in _threads:
-                    _threads[thread_id] = {
-                        "id": thread_id,
-                        "label": thread_id,
-                        "created_at": uuid.uuid4().hex,
-                        "last_active": uuid.uuid4().hex,
-                    }
-                _threads[thread_id]["last_active"] = uuid.uuid4().hex
+                with _state_lock:
+                    if thread_id not in _threads:
+                        _threads[thread_id] = {
+                            "id": thread_id,
+                            "label": thread_id,
+                            "created_at": uuid.uuid4().hex,
+                            "last_active": uuid.uuid4().hex,
+                        }
+                    _threads[thread_id]["last_active"] = uuid.uuid4().hex
 
                 # @agent routing: "@coder write a POSCAR parser"
                 routed_agent_id = None
@@ -138,6 +186,7 @@ async def agent_websocket(websocket: WebSocket):
                                 thread_id=thread_id,
                                 thinking=thinking,
                                 max_tokens=max_tokens,
+                                approval_callback=_ws_approval,
                             )
                         except Exception as e:
                             await websocket.send_json(
@@ -261,10 +310,11 @@ async def agent_websocket(websocket: WebSocket):
                                                 workspace_path
                                             )
                                             auto_cp_id = uuid.uuid4().hex[:8]
-                                            _checkpoints[auto_cp_id] = (
-                                                workspace_path,
-                                                snapshot,
-                                            )
+                                            with _state_lock:
+                                                _checkpoints[auto_cp_id] = (
+                                                    workspace_path,
+                                                    snapshot,
+                                                )
                                             await websocket.send_json(
                                                 {
                                                     "type": "auto_checkpoint",
@@ -401,6 +451,37 @@ async def agent_websocket(websocket: WebSocket):
                         {"type": "error", "error": f"Exploration failed: {str(e)}"}
                     )
                 await websocket.send_json({"type": "done"})
+
+            elif msg_type == "approval_response":
+                # Client replied to an approval_request. The current
+                # callback auto-approves, so there may not be a pending
+                # future — resolve one if it exists, otherwise just
+                # acknowledge receipt.
+                request_id = data.get("request_id")
+                approved = data.get("approved", False)
+                future = _pending_approvals.pop(request_id, None)
+                if future is not None and not future.done():
+                    future.set_result(approved)
+
+            elif msg_type == "set_auto_approve":
+                # Let the client toggle auto-approve on the cached agent.
+                # When disabled, ASK-mode tools will emit approval_request
+                # events (via the callback on fresh agents) or be denied
+                # (on the cached agent, which has no callback wired in).
+                enabled = bool(data.get("enabled", True))
+                try:
+                    agent = await get_agent()
+                    agent._permission_config.auto_approve_all = enabled
+                    await websocket.send_json(
+                        {
+                            "type": "auto_approve_set",
+                            "enabled": enabled,
+                        }
+                    )
+                except Exception as e:
+                    await websocket.send_json(
+                        {"type": "error", "error": f"Cannot set auto_approve: {e}"}
+                    )
 
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})

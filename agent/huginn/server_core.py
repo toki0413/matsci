@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
 from huginn.agent import HuginnAgent
 from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator
-from huginn.config import HuginnConfig
+from huginn.config import HuginnConfig, get_config
 from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.models.registry import ModelRegistry
 from huginn.permissions import PermissionMode
@@ -49,6 +50,10 @@ _context: ServerContext | None = None
 _checkpoints: dict[str, tuple[Path, dict[str, str]]] = {}
 
 _threads: dict[str, dict[str, Any]] = {}
+
+# Protects _checkpoints and _threads against concurrent access from
+# multiple async handlers or thread-pool workers.
+_state_lock = threading.RLock()
 
 _EDIT_TOOLS: set[str] = {"file_write_tool", "file_edit_tool"}
 
@@ -92,7 +97,7 @@ async def get_agent() -> HuginnAgent:
     if get_context().agent is not None:
         return get_context().agent
 
-    cfg = HuginnConfig.from_env()
+    cfg = get_config()
     memory_manager = get_memory_manager()
     factory = get_agent_factory()
 
@@ -157,7 +162,7 @@ def get_orchestrator() -> Orchestrator:
     """Get or create the global multi-agent Orchestrator."""
     if get_context().orchestrator is not None:
         return get_context().orchestrator
-    cfg = HuginnConfig.from_env()
+    cfg = get_config()
     get_context().orchestrator = Orchestrator(
         factory=get_agent_factory(),
         memory_manager=get_memory_manager(),
@@ -187,7 +192,7 @@ def get_planner_agent() -> HuginnAgent:
     if get_context().planner_agent is not None:
         return get_context().planner_agent
 
-    cfg = HuginnConfig.from_env()
+    cfg = get_config()
     persona_manager = PersonaManager(workspace=get_context().config.workspace)
     base_prompt = persona_manager.get(cfg.persona).system_prompt
 
@@ -270,3 +275,56 @@ def _server_allows_tool(tool_name: str, input_data: Any) -> tuple[bool, str | No
         return True, None
 
     return False, reason
+
+
+# ── system snapshot ─────────────────────────────────────────────────
+
+
+def get_system_snapshot() -> dict[str, Any]:
+    """用 HuginnSystem 封装当前 ServerContext 的状态快照。
+
+    HuginnSystem 设计为 ServerContext 的统一替代容器，这里把它作为
+    只读快照暴露给 /system/components 等运维端点，避免每加一个诊断
+    端点都要直接翻 ServerContext 的字段。同时同步到全局单例，让其他
+    模块可以通过 huginn.system.get_system() 拿到最新状态。
+    """
+    from huginn.system import HuginnSystem, set_system
+
+    ctx = get_context()
+
+    # _threads 在 _state_lock 保护下，这里拷一份快照避免后续 mutation
+    with _state_lock:
+        threads_snapshot = dict(_threads)
+
+    system = HuginnSystem(
+        config=ctx.config,
+        tool_registry=ctx.tool_registry,
+        skill_registry=ctx.skill_registry,
+        audit_logger=ctx.audit_logger,
+        memory_backend=ctx.memory_backend,
+        checkpointer_backend=ctx.checkpointer_backend,
+        remote_job_backend=ctx.remote_job_backend,
+        agent_factory=ctx.agent_factory,
+        orchestrator=ctx.orchestrator,
+        memory_manager=ctx.memory_manager,
+        kb=ctx.kb,
+        codebase=ctx.codebase,
+        agent=ctx.agent,
+        planner_agent=ctx.planner_agent,
+        mcp_manager=ctx.mcp_manager,
+        permission_config=ctx.permission_config,
+        active_threads=threads_snapshot,
+        edit_tools=set(_EDIT_TOOLS),
+    )
+    # 同步到全局单例，其他模块可用 get_system() 读取
+    set_system(system)
+
+    components = system.list_components()
+    initialized = sum(1 for v in components.values() if v)
+    return {
+        "configured": system.is_configured,
+        "components": components,
+        "initialized_count": initialized,
+        "total_count": len(components),
+        "active_threads": len(threads_snapshot),
+    }

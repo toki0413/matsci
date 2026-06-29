@@ -200,6 +200,25 @@ class LongTermMemory:
             (datetime.now().isoformat(),),
         )
 
+    @staticmethod
+    def _build_fts_query(query: str) -> str:
+        """Convert a natural-language query into a safe FTS5 MATCH string.
+
+        FTS5 treats unquoted tokens as implicit AND, which is what we want for
+        multi-word recall. Special characters are stripped to avoid syntax errors.
+        Each token gets a '*' suffix for prefix matching (e.g. "silic*" matches
+        "silicon").
+        """
+        import re
+
+        # Strip FTS5 special characters that could break MATCH syntax
+        clean = re.sub(r'["\'\-\*\(\)\:]', " ", query)
+        tokens = [t for t in clean.split() if t]
+        if not tokens:
+            return ""
+        # Quote each token and add prefix wildcard for flexible matching
+        return " ".join(f'"{t}"*' for t in tokens)
+
     def retrieve(
         self,
         query: str,
@@ -208,11 +227,12 @@ class LongTermMemory:
         top_k: int = 5,
         semantic: bool = True,
     ) -> list[dict[str, Any]]:
-        """Retrieve alive memories matching query (keyword + optional semantic)."""
+        """Retrieve alive memories matching query (FTS5 + optional semantic)."""
         results = []
         alive_where, alive_params = self._where_alive()
 
-        # Keyword search via substring (FTS trigger kept in sync; LIKE is simpler for agent recall)
+        # FTS5 tokenized search — handles multi-word queries that LIKE misses.
+        # Falls back to LIKE substring match if FTS5 query syntax errors out.
         with self._connect() as conn:
             sql = "SELECT * FROM memories AS m WHERE " + alive_where
             params: list[Any] = list(alive_params)
@@ -223,11 +243,33 @@ class LongTermMemory:
                 sql += " AND tier = ?"
                 params.append(tier)
             if query:
-                sql += " AND content LIKE ?"
-                params.append(f"%{query}%")
-            sql += " ORDER BY importance DESC, access_count DESC LIMIT ?"
-            params.append(top_k)
-            rows = conn.execute(sql, tuple(params)).fetchall()
+                fts_matched = False
+                # Try FTS5 first for proper tokenized matching
+                fts_query = self._build_fts_query(query)
+                if fts_query:
+                    try:
+                        fts_sql = (
+                            sql
+                            + " AND m.rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?)"
+                        )
+                        fts_params = params + [fts_query]
+                        fts_sql += " ORDER BY importance DESC, access_count DESC LIMIT ?"
+                        fts_params.append(top_k)
+                        rows = conn.execute(fts_sql, tuple(fts_params)).fetchall()
+                        fts_matched = True
+                    except sqlite3.OperationalError:
+                        pass
+                # Fallback to LIKE if FTS5 unavailable or query failed
+                if not fts_matched:
+                    sql += " AND content LIKE ?"
+                    params.append(f"%{query}%")
+                    sql += " ORDER BY importance DESC, access_count DESC LIMIT ?"
+                    params.append(top_k)
+                    rows = conn.execute(sql, tuple(params)).fetchall()
+            else:
+                sql += " ORDER BY importance DESC, access_count DESC LIMIT ?"
+                params.append(top_k)
+                rows = conn.execute(sql, tuple(params)).fetchall()
 
             now = datetime.now().isoformat()
             for row in rows:

@@ -26,7 +26,7 @@ class TestChatCli:
             "messages": [MagicMock(content="hello from agent")]
         }
         monkeypatch.setattr(
-            "huginn.cli.commands.chat.build_agent_from_ctx", lambda ctx: mock_agent
+            "huginn.cli.commands.chat.build_agent_from_ctx", lambda ctx, **kw: mock_agent
         )
         monkeypatch.setattr("huginn.cli.commands.chat.init_mcp", lambda cfg: None)
         monkeypatch.setattr("huginn.cli.commands.chat.shutdown_mcp", lambda: None)

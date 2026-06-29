@@ -16,16 +16,25 @@ class BenchmarkTask:
     id: str
     category: str
     prompt: str
-    evaluator: Callable[[str], tuple[bool, str]]
+    evaluator: Callable[[str], tuple[bool, str] | tuple[bool, str, float]]
     timeout_seconds: float = 120.0
     tags: list[str] = field(default_factory=list)
     requires_api_key: bool = True
 
     def evaluate(self, output: str) -> TaskResult:
-        """Run the evaluator and return a scored result."""
+        """Run the evaluator and return a scored result.
+
+        evaluator 可返回 2 元组 (passed, reason) 或 3 元组 (passed, reason, score),
+        2 元组时 score 留 None, 向后兼容旧 evaluator。
+        """
         start = time.time()
-        passed, reason = self.evaluator(output)
+        result = self.evaluator(output)
         elapsed = time.time() - start
+        if len(result) == 3:
+            passed, reason, score = result
+        else:
+            passed, reason = result
+            score = None
         return TaskResult(
             task_id=self.id,
             category=self.category,
@@ -33,6 +42,7 @@ class BenchmarkTask:
             reason=reason,
             output=output,
             eval_time_seconds=elapsed,
+            score=score,
         )
 
 
@@ -48,6 +58,8 @@ class TaskResult:
     exec_time_seconds: float = 0.0
     eval_time_seconds: float = 0.0
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    # 数值奖励通道: evaluator 返回 3 元组时填充, 2 元组时留 None
+    score: float | None = None
 
 
 def contains_any(keywords: list[str]) -> Callable[[str], tuple[bool, str]]:
