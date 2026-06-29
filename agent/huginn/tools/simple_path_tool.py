@@ -22,8 +22,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from huginn.agents.tool_call_router import HEAVY_TOOLS, LIGHT_TOOLS
 from huginn.tools.base import HuginnTool
+from huginn.tools.scheduling_policy import ToolSchedulingPolicy
 from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,7 @@ class SimplePathTool(HuginnTool):
             path_data = {
                 "recommended_path": ["web_search_tool", "rag_tool"],
                 "rationale": "无法识别任务类型, 默认先查资料再决定下一步",
-                "heavy_tools_avoided": sorted(HEAVY_TOOLS),
+                "heavy_tools_avoided": sorted(ToolSchedulingPolicy.heavy_tool_names()),
                 "step_notes": {},
             }
             match_source = "default"
@@ -186,8 +186,8 @@ class SimplePathTool(HuginnTool):
         path_data["match_source"] = match_source
         # 附上决策树分级, 方便上层做审计
         path_data["decision_tree"] = {
-            "level_1_lookup": sorted(LIGHT_TOOLS),
-            "level_3_heavy": sorted(HEAVY_TOOLS),
+            "level_1_lookup": sorted(ToolSchedulingPolicy.light_tool_names()),
+            "level_3_heavy": sorted(ToolSchedulingPolicy.heavy_tool_names()),
         }
         return ToolResult(data=path_data, success=True)
 
@@ -275,11 +275,11 @@ class SimplePathTool(HuginnTool):
         if not isinstance(data.get("rationale"), str) or not data["rationale"]:
             data["rationale"] = "路径由 simple_path_tool 推荐"
 
-        # heavy_tools_avoided 补默认 + 去掉不在 HEAVY_TOOLS 里的
+        # heavy_tools_avoided 补默认 + 去掉不是重型工具的
         avoided = data.get("heavy_tools_avoided")
         if not isinstance(avoided, list):
             avoided = []
-        avoided = sorted({str(t) for t in avoided if str(t) in HEAVY_TOOLS})
+        avoided = sorted({str(t) for t in avoided if ToolSchedulingPolicy.is_heavy(str(t))})
         data["heavy_tools_avoided"] = avoided
 
         # step_notes 补默认
