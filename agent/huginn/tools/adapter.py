@@ -50,6 +50,7 @@ _TOOL_CONSTRAINT_SCOPES: dict[str, str] = {
     "openfoam_tool": "cfd",
     "comsol_tool": "fea",
     "abaqus_tool": "fea",
+    "structural_analytical_tool": "fea",
 }
 
 ApprovalCallback = Callable[[str, str], bool]

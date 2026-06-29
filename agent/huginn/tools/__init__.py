@@ -122,6 +122,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.abaqus_tool", "AbaqusTool"),
         ("huginn.tools.plasma_tool", "PlasmaTool"),
         ("huginn.tools.neb_tool", "NEBTool"),
+        ("huginn.tools.structural_analytical_tool", "StructuralAnalyticalTool"),
         # ── sci/ ──
         ("huginn.tools.symbolic_regression_tool", "SymbolicRegressionTool"),
         ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),
