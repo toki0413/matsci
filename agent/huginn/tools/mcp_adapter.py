@@ -120,20 +120,29 @@ class MCPToolAdapter(HuginnTool):
 def register_mcp_tools(
     client_manager: MCPClientManager,
     server_name: str | None = None,
+    whitelist: set[str] | None = None,
 ) -> list[HuginnTool]:
     """Discover MCP tools and register them as HuginnTools.
 
     If *server_name* is given, only tools from that server are registered
-    (used during reconnection).  Existing tools with the same name are
-    replaced and a debug message is logged.
+    (used during reconnection).  If *whitelist* is given, only tools whose
+    name appears in the set are registered (used to filter ToolUniverse's
+    350+ biomedical tools down to the materials-science subset).
+
+    Existing tools with the same name are replaced and a debug message is
+    logged.
 
     Returns the list of newly registered (or replaced) adapters.
     """
     from huginn.tools.registry import ToolRegistry
 
     tools: list[HuginnTool] = []
+    skipped_by_whitelist = 0
     for info in client_manager.list_tools():
         if server_name and info.server_name != server_name:
+            continue
+        if whitelist is not None and info.name not in whitelist:
+            skipped_by_whitelist += 1
             continue
 
         existing = ToolRegistry.get(info.name)
@@ -151,5 +160,11 @@ def register_mcp_tools(
         )
         ToolRegistry.register(adapter)
         tools.append(adapter)
+
+    if whitelist is not None and skipped_by_whitelist:
+        logger.info(
+            f"MCP whitelist filtered out {skipped_by_whitelist} tools "
+            f"from server '{server_name or 'all'}' ({len(tools)} kept)"
+        )
 
     return tools

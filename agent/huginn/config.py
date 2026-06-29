@@ -358,6 +358,15 @@ class HuginnConfig:
     # Generic MCP server configurations (name -> {command, args, env, transport})
     mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # ToolUniverse MCP integration (curated: only materials-science tools pass
+    # the whitelist in mcp_adapter.MATERIAL_SCIENCE_TOOL_WHITELIST).
+    # Off by default — user must install `pip install tooluniverse` and set
+    # HUGINN_TOOLUNIVERSE_ENABLED=1 to enable. Avoids startup errors when the
+    # package is not installed.
+    tooluniverse_enabled: bool = False
+    tooluniverse_mcp_command: str = "python"
+    tooluniverse_mcp_args: str = "-m tooluniverse.smcp_server"
+
     # Workspace
     workspace: str = "."
 
