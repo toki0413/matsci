@@ -11,11 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-from huginn.agents.tool_call_router import (
-    HEAVY_TOOLS,
-    LIGHT_ALTERNATIVES,
-    LIGHT_TOOLS,
-)
 from huginn.phases import (
     _CORE_TOOLS,
     PhaseManager,
@@ -95,6 +90,68 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
     ResearchPhase.OPEN: None,
 }
 
+_FROZEN_HEAVY_TOOLS: set[str] = {
+    "vasp_tool",
+    "qe_tool",
+    "cp2k_tool",
+    "lammps_tool",
+    "abaqus_tool",
+    "comsol_tool",
+    "openfoam_tool",
+    "ml_potential_tool",
+}
+
+_FROZEN_LIGHT_TOOLS: set[str] = {
+    "kb_tool",
+    "web_search_tool",
+    "rag_tool",
+    "materials_database_tool",
+    "structure_tool",
+    "symbolic_math_tool",
+    "numerical_tool",
+    "symbolic_regression_tool",
+    "local_structure_db",
+}
+
+_FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {
+    "vasp_tool": [
+        "materials_database_tool",
+        "local_structure_db",
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
+    "qe_tool": [
+        "materials_database_tool",
+        "local_structure_db",
+        "symbolic_math_tool",
+    ],
+    "cp2k_tool": [
+        "materials_database_tool",
+        "local_structure_db",
+        "symbolic_math_tool",
+    ],
+    "lammps_tool": [
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
+    "abaqus_tool": [
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
+    "comsol_tool": [
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
+    "openfoam_tool": [
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
+    "ml_potential_tool": [
+        "materials_database_tool",
+        "numerical_tool",
+    ],
+}
+
 
 # ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -121,7 +178,7 @@ class TestCostTier:
     """cost_tier metadata must match old HEAVY_TOOLS / LIGHT_TOOLS."""
 
     def test_heavy_tools_match(self):
-        old_heavy = {n for n in HEAVY_TOOLS if _registered(n)}
+        old_heavy = {n for n in _FROZEN_HEAVY_TOOLS if _registered(n)}
         derived_heavy = {
             t.name for t in ToolRegistry._tools.values() if t.cost_tier == "heavy"
         }
@@ -131,7 +188,7 @@ class TestCostTier:
         )
 
     def test_light_tools_match(self):
-        old_light = {n for n in LIGHT_TOOLS if _registered(n)}
+        old_light = {n for n in _FROZEN_LIGHT_TOOLS if _registered(n)}
         derived_light = {
             t.name for t in ToolRegistry._tools.values() if t.cost_tier == "light"
         }
@@ -176,7 +233,7 @@ class TestLightAlternatives:
     """light_alternatives must match old LIGHT_ALTERNATIVES."""
 
     def test_alternatives_match(self):
-        for heavy_name, expected_alts in LIGHT_ALTERNATIVES.items():
+        for heavy_name, expected_alts in _FROZEN_LIGHT_ALTERNATIVES.items():
             tool = ToolRegistry.get(heavy_name)
             if tool is None:
                 continue  # skip dead references (e.g. cp2k_tool)

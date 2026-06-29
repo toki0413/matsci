@@ -26,74 +26,50 @@ logger = logging.getLogger(__name__)
 # 重型工具: 单次调用就要烧掉几小时 CPU/GPU 的仿真, 必须先确认无替代
 # ml_potential_tool 只在 "train" 动作算重型, predict 不算 —— 这层判断
 # 由 should_allow 看 tool_input["action"] 实现, 这里 name 先列上
-HEAVY_TOOLS: set[str] = {
-    "vasp_tool",
-    "qe_tool",
-    "cp2k_tool",
-    "lammps_tool",
-    "abaqus_tool",
-    "comsol_tool",
-    "openfoam_tool",
-    "ml_potential_tool",
-}
+# Populated by _rebuild_router_tables() from ToolProfile metadata.
+HEAVY_TOOLS: set[str] = set()
 
 # 轻量工具: 查询/解析/数值计算, 几秒内返回, 调用一律放行, 只记录
-LIGHT_TOOLS: set[str] = {
-    "kb_tool",
-    "web_search_tool",
-    "rag_tool",
-    "materials_database_tool",
-    "structure_tool",
-    "symbolic_math_tool",
-    "numerical_tool",
-    "symbolic_regression_tool",
-    "local_structure_db",
-}
+# Populated by _rebuild_router_tables() from ToolProfile metadata.
+LIGHT_TOOLS: set[str] = set()
 
 # 重型工具 → 推荐先试的轻量替代 (按优先级排序)
-# 列表里只有 LIGHT_TOOLS 里的名字, 保证推荐出去的工具确实存在
-LIGHT_ALTERNATIVES: dict[str, list[str]] = {
-    "vasp_tool": [
-        "materials_database_tool",
-        "local_structure_db",
-        "symbolic_math_tool",
-        "numerical_tool",
-    ],
-    "qe_tool": [
-        "materials_database_tool",
-        "local_structure_db",
-        "symbolic_math_tool",
-    ],
-    "cp2k_tool": [
-        "materials_database_tool",
-        "local_structure_db",
-        "symbolic_math_tool",
-    ],
-    "lammps_tool": [
-        # ml_potential_tool.predict 不在 LIGHT_TOOLS, 这里只列纯轻量
-        "symbolic_math_tool",
-        "numerical_tool",
-    ],
-    "abaqus_tool": [
-        "symbolic_math_tool",  # 解析弹性力学
-        "numerical_tool",
-    ],
-    "comsol_tool": [
-        "symbolic_math_tool",
-        "numerical_tool",
-    ],
-    "openfoam_tool": [
-        "symbolic_math_tool",
-        "numerical_tool",
-    ],
-    "ml_potential_tool": [
-        "materials_database_tool",
-        "numerical_tool",
-    ],
-}
+# Populated by _rebuild_router_tables() from ToolProfile metadata.
+LIGHT_ALTERNATIVES: dict[str, list[str]] = {}
 
 # ml_potential_tool 的 predict 动作不算重型, 只有 train 才拦
-_MLP_HEAVY_ACTIONS: set[str] = {"train", "fit", "training"}
+# Populated by _rebuild_router_tables() from ml_potential_tool.heavy_actions.
+_MLP_HEAVY_ACTIONS: set[str] = set()
+
+
+def _rebuild_router_tables() -> None:
+    """Rebuild HEAVY_TOOLS / LIGHT_TOOLS / LIGHT_ALTERNATIVES /
+    _MLP_HEAVY_ACTIONS in place from ToolProfile metadata.
+
+    Called at the end of register_all_tools() so the router tracks the
+    registered tools' declared cost tiers instead of a hand-maintained dict.
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    heavy = {t.name for t in ToolRegistry._tools.values() if t.cost_tier == "heavy"}
+    light = {t.name for t in ToolRegistry._tools.values() if t.cost_tier == "light"}
+    alternatives = {
+        t.name: list(t.light_alternatives)
+        for t in ToolRegistry._tools.values()
+        if t.light_alternatives
+    }
+
+    mlp = ToolRegistry.get("ml_potential_tool")
+    mlp_actions = set(mlp.heavy_actions) if mlp and mlp.heavy_actions else set()
+
+    HEAVY_TOOLS.clear()
+    HEAVY_TOOLS.update(heavy)
+    LIGHT_TOOLS.clear()
+    LIGHT_TOOLS.update(light)
+    LIGHT_ALTERNATIVES.clear()
+    LIGHT_ALTERNATIVES.update(alternatives)
+    _MLP_HEAVY_ACTIONS.clear()
+    _MLP_HEAVY_ACTIONS.update(mlp_actions)
 
 
 class ToolCallRouter:
