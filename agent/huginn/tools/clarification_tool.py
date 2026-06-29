@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from huginn.interaction.clarification import (
     ClarificationManager,
@@ -25,12 +25,21 @@ from huginn.types import ToolContext, ToolResult
 class ClarificationInput(BaseModel):
     """工具输入. action=ask 时 question 必填, 其它 action 自动生成."""
 
-    action: Literal["ask", "confirm_destructive", "confirm_plan", "confirm_cost"] = Field(
+    action: Literal[
+        "ask",
+        "confirm_destructive",
+        "confirm_plan",
+        "confirm_cost",
+        "socratic_probes",
+        "decision_tree",
+    ] = Field(
         default="ask",
         description=(
             "提问类型. ask=普通提问; confirm_destructive=破坏性操作确认"
             "(安全默认=取消); confirm_plan=多步计划审批; "
-            "confirm_cost=高成本操作确认(安全默认=取消)."
+            "confirm_cost=高成本操作确认(安全默认=取消); "
+            "socratic_probes=按预设探针列表逐个追问, 收集所有答案; "
+            "decision_tree=按决策树遍历, 每节点问一次, 跟着答案走到叶子."
         ),
     )
     question: str = Field(
@@ -68,6 +77,53 @@ class ClarificationInput(BaseModel):
         default_factory=list,
         description="confirm_plan 专用: 要展示给用户审批的步骤列表.",
     )
+    probes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "socratic_probes 专用: 预设的探针问题列表 (按顺序逐个问). "
+            "最多 5 个, 避免疲劳轰炸. 每个必须是完整句子."
+        ),
+    )
+    tree_nodes: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "decision_tree 专用: 节点表. key=node_id, value={"
+            "'question': str, 'options': {option_text: next_node_id}, "
+            "'leaf': bool, 'result': str (leaf 时必填)}."
+        ),
+    )
+    start_node: str = Field(
+        default="",
+        description="decision_tree 专用: 起始节点 id, 必须在 tree_nodes 里.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_action_fields(self):
+        # socratic_probes / decision_tree 的必填字段校验,
+        # 避免运行到一半才发现参数缺了
+        if self.action == "socratic_probes":
+            if not self.probes:
+                raise ValueError(
+                    "action=socratic_probes 需要 probes 字段 (非空列表)"
+                )
+            if len(self.probes) > 5:
+                raise ValueError(
+                    "socratic_probes 最多 5 个探针, 避免疲劳轰炸"
+                )
+        elif self.action == "decision_tree":
+            if not self.tree_nodes:
+                raise ValueError(
+                    "action=decision_tree 需要 tree_nodes 字段 (非空)"
+                )
+            if not self.start_node:
+                raise ValueError(
+                    "action=decision_tree 需要 start_node 字段"
+                )
+            if self.start_node not in self.tree_nodes:
+                raise ValueError(
+                    f"start_node '{self.start_node}' 不在 tree_nodes 里"
+                )
+        return self
 
 
 class ClarificationOutput(BaseModel):
@@ -76,6 +132,20 @@ class ClarificationOutput(BaseModel):
     answer: str
     question_id: str
     timed_out: bool = False
+    # socratic_probes: {probe_text: user_answer}
+    answers: dict[str, str] = Field(
+        default_factory=dict,
+        description="socratic_probes 的 {probe: answer} 映射",
+    )
+    # decision_tree: 经过的节点 id 序列 + 叶子结果
+    tree_path: list[str] = Field(
+        default_factory=list,
+        description="decision_tree 经过的节点 id 序列",
+    )
+    final_result: str = Field(
+        default="",
+        description="decision_tree 叶子节点的 result",
+    )
 
 
 class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
@@ -98,7 +168,11 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
         "Actions: 'ask' (open question, blocks until answer/timeout), "
         "'confirm_destructive' (irreversible op, safe default=cancel), "
         "'confirm_cost' (high-cost compute, safe default=cancel), "
-        "'confirm_plan' (present multi-step plan for approval). "
+        "'confirm_plan' (present multi-step plan for approval), "
+        "'socratic_probes' (ask 1-5 layered probes in sequence, returns "
+        "{probe: answer} map — use when one ask would need 3+ rounds), "
+        "'decision_tree' (walk a pre-mapped decision graph node by node, "
+        "returns leaf result + path — use for nested branching choices). "
         "Use sparingly — only when a wrong guess wastes significant "
         "compute or time, or before irreversible operations."
     )
@@ -139,6 +213,12 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
             pass
 
         thread_id = getattr(context, "session_id", None) or "default"
+
+        # socratic_probes / decision_tree 走专用路径, 不用 _prepare 模板
+        if args.action == "socratic_probes":
+            return await self._run_socratic_probes(args, thread_id)
+        if args.action == "decision_tree":
+            return await self._run_decision_tree(args, thread_id)
 
         # 按 action 准备提问参数
         question, options, default_answer = self._prepare(args)
@@ -229,3 +309,145 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
             return question, ["确认执行此计划", "修改计划", "取消"], "取消"
 
         return args.question, args.options, args.default_answer
+
+    async def _run_socratic_probes(
+        self, args: ClarificationInput, thread_id: str
+    ) -> ToolResult:
+        """按 probes 列表逐个问, 收集所有答案. 超时用 default_answer 填."""
+        answers: dict[str, str] = {}
+        timed_out_any = False
+        for probe in args.probes:
+            # 队列满了就不再问, 直接用默认值填
+            if not self.manager.should_ask(
+                "socratic_probe", context={"thread_id": thread_id}
+            ):
+                answers[probe] = args.default_answer
+                timed_out_any = True
+                continue
+            try:
+                ans = await self.manager.ask(
+                    thread_id=thread_id,
+                    question=probe,
+                    options=args.options,
+                    context=args.context,
+                    default_answer=args.default_answer,
+                    timeout=args.timeout_seconds,
+                    metadata={
+                        "engine_kind": "clarification_tool",
+                        "action": "socratic_probes",
+                        "session_id": thread_id,
+                    },
+                )
+                answers[probe] = ans
+                # 超时退回默认值时标记一下
+                if ans == args.default_answer and args.default_answer:
+                    timed_out_any = True
+            except Exception:
+                answers[probe] = args.default_answer
+                timed_out_any = True
+        return ToolResult(
+            data=ClarificationOutput(
+                answer=answers.get(args.probes[-1], ""),
+                question_id="",
+                timed_out=timed_out_any,
+                answers=answers,
+            ).model_dump(),
+            success=True,
+            side_effects=[
+                f"socratic_probes: asked {len(answers)} probes",
+            ],
+        )
+
+    async def _run_decision_tree(
+        self, args: ClarificationInput, thread_id: str
+    ) -> ToolResult:
+        """从 start_node 遍历, 每节点问一次, 跟答案走到叶子.
+
+        防环: visited set + max_depth=20 兜底. 断链 (选项指向不存在的节点)
+        或用户给了一个不在 options 里的答案时, 走 default_answer 对应的边.
+        """
+        path: list[str] = []
+        current = args.start_node
+        visited: set[str] = set()
+        max_depth = 20
+
+        for _ in range(max_depth):
+            if current in visited:
+                break  # 检测到环, 退出
+            visited.add(current)
+            path.append(current)
+
+            node = args.tree_nodes.get(current)
+            if node is None:
+                break  # 断链: 指向不存在的节点
+
+            if node.get("leaf", False):
+                final = node.get("result", "")
+                return ToolResult(
+                    data=ClarificationOutput(
+                        answer=final,
+                        question_id="",
+                        timed_out=False,
+                        tree_path=path,
+                        final_result=final,
+                    ).model_dump(),
+                    success=True,
+                    side_effects=[
+                        f"decision_tree: reached leaf '{current}'",
+                    ],
+                )
+
+            question = node.get("question", "")
+            options = list(node.get("options", {}).keys())
+            if not question or not options:
+                break  # 节点结构不完整
+
+            if not self.manager.should_ask(
+                "decision_tree", context={"thread_id": thread_id}
+            ):
+                break
+
+            try:
+                ans = await self.manager.ask(
+                    thread_id=thread_id,
+                    question=question,
+                    options=options,
+                    context=args.context,
+                    default_answer=args.default_answer or options[0],
+                    timeout=args.timeout_seconds,
+                    metadata={
+                        "engine_kind": "clarification_tool",
+                        "action": "decision_tree",
+                        "session_id": thread_id,
+                        "node": current,
+                    },
+                )
+            except Exception:
+                break
+
+            # 用户答案不在 options 里 -> 走 default_answer 对应的边, 再不行取第一个
+            next_node = node["options"].get(ans)
+            if next_node is None:
+                next_node = node["options"].get(
+                    args.default_answer, options[0]
+                )
+            if next_node is None:
+                break
+            current = next_node
+
+        # 走到上限或断链: 用当前节点的 result 或 default 兜底
+        node = args.tree_nodes.get(current, {})
+        final = node.get("result", args.default_answer)
+        return ToolResult(
+            data=ClarificationOutput(
+                answer=final,
+                question_id="",
+                timed_out=True,
+                tree_path=path,
+                final_result=final,
+            ).model_dump(),
+            success=True,
+            side_effects=[
+                f"decision_tree: stopped at '{current}' (max depth or broken link)",
+            ],
+        )
