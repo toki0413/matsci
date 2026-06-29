@@ -176,11 +176,17 @@ class TestHuginnAgentPromptCache:
             assert "1.1 eV" not in text
 
     def test_no_memory_message_when_recall_empty(self):
-        agent = _make_agent(begin_dialogs=[("assistant", "hi")])
-        msgs = agent._build_input_messages("q")
-        assert len(msgs) == 2
-        assert isinstance(msgs[0], AIMessage)
-        assert isinstance(msgs[1], HumanMessage)
+        with tempfile.TemporaryDirectory() as tmp:
+            longterm = LongTermMemory(db_path=Path(tmp) / "memory.db")
+            memory = MemoryManager(longterm=longterm)
+            agent = _make_agent(
+                begin_dialogs=[("assistant", "hi")],
+                memory_manager=memory,
+            )
+            msgs = agent._build_input_messages("q")
+            assert len(msgs) == 2
+            assert isinstance(msgs[0], AIMessage)
+            assert isinstance(msgs[1], HumanMessage)
 
     def test_cache_control_env_default(self, monkeypatch):
         monkeypatch.setenv("HUGINN_PROMPT_CACHE_CONTROL", "0")
@@ -196,10 +202,14 @@ class TestHuginnAgentPromptCache:
         agent = _make_agent()
         assert agent._get_tool_description_text() == ""
         agent.register_tool(_FakeTool())
-        assert agent._get_tool_description_text() == "fake tool"
-        # Re-registering should invalidate and rebuild correctly.
+        # _get_tool_description_text serializes full JSON schema (name +
+        # description + parameters) for accurate token estimation; the cache
+        # must be invalidated and rebuilt on re-registration.
+        text1 = agent._get_tool_description_text()
+        assert "fake tool" in text1
         agent.register_tool(_FakeTool())
-        assert agent._get_tool_description_text() == "fake tool fake tool"
+        text2 = agent._get_tool_description_text()
+        assert text2.count("fake tool") == 2
 
     def test_extract_cache_stats_from_response_metadata(self):
         agent = _make_agent()
