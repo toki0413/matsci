@@ -97,71 +97,39 @@ _CORE_TOOLS: set[str] = {
     "skill",
 }
 
-PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
-    ResearchPhase.LITERATURE: _CORE_TOOLS | {
-        "browser_tool",
-        "database_tool",
-        "materials_database_tool",
-        "extract_tool",
-        "symbolic_math_tool",
-    },
-    ResearchPhase.HYPOTHESIS: _CORE_TOOLS | {
-        "symbolic_math_tool",
-        "symbolic_regression_tool",
-        "descriptor_tool",
-        "database_tool",
-        "materials_database_tool",
-        "autodiff_tool",
-    },
-    ResearchPhase.PLANNING: _CORE_TOOLS | {
-        "structure_tool",
-        "symmetry_tool",
-        "descriptor_tool",
-        "symbolic_math_tool",
-        "parameters",
-        "packing_tool",
-        "tda",
-    },
-    ResearchPhase.EXECUTION: _CORE_TOOLS | {
-        "vasp_tool",
-        "qe_tool",
-        "cp2k_tool",
-        "lammps_tool",
-        "openfoam_tool",
-        "comsol_tool",
-        "abaqus_tool",
-        "job_tool",
-        "orchestrate",
-        "high_throughput_tool",
-        "ml_potential_tool",
-        "structure_tool",
-        "packing_tool",
-    },
-    ResearchPhase.VALIDATION: _CORE_TOOLS | {
-        "validate_tool",
-        "uq_tool",
-        "gp_tool",
-        "symbolic_math_tool",
-        "autodiff_tool",
-        "diagnose_tool",
-        "characterization_tool",
-        "experimental_data_tool",
-        "diff_tool",
-        "active_learning_tool",
-        "symbolic_regression_tool",
-        "symmetry_tool",
-        "evidence_fusion_tool",
-        "tda",
-    },
-    ResearchPhase.REPORTING: _CORE_TOOLS | {
-        "report_tool",
-        "visualize_tool",
-        "diff_tool",
-        "symbolic_math_tool",
-        "extract_tool",
-    },
-    ResearchPhase.OPEN: None,  # All tools available
-}
+PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {}
+"""Per-phase tool filters, derived from ToolProfile metadata after
+registration. OPEN maps to None (all tools). Other phases map to
+_CORE_TOOLS plus every tool whose profile.phases includes that phase
+(or whose profile.phases is None, meaning all phases).
+
+Populated by _rebuild_phase_tools(), called from register_all_tools().
+Empty before registration — PhaseManager.tool_filter() returns None
+for missing keys, which safely degrades to "all tools available"."""
+
+
+def _rebuild_phase_tools() -> None:
+    """Rebuild PHASE_TOOLS in place from ToolProfile metadata.
+
+    Called at the end of register_all_tools() so the phase filters track
+    the registered tools' declared phases instead of a hand-maintained dict.
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    new: dict[ResearchPhase, set[str] | None] = {ResearchPhase.OPEN: None}
+    for phase in ResearchPhase:
+        if phase is ResearchPhase.OPEN:
+            continue
+        tools = set(_CORE_TOOLS)
+        for tool in ToolRegistry._tools.values():
+            phases = tool.phases
+            if phases is None or phase in phases:
+                tools.add(tool.name)
+        new[phase] = tools
+
+    PHASE_TOOLS.clear()
+    PHASE_TOOLS.update(new)
+
 
 # Allowed phase transitions. Keys are source phases, values are sets of
 # valid destination phases.
