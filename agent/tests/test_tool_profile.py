@@ -16,7 +16,6 @@ from huginn.phases import (
     PhaseManager,
     ResearchPhase,
 )
-from huginn.tools.adapter import _TOOL_CONSTRAINT_SCOPES
 from huginn.tools.registry import ToolRegistry
 
 
@@ -152,6 +151,19 @@ _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {
     ],
 }
 
+_FROZEN_CONSTRAINT_SCOPES: dict[str, str] = {
+    "vasp_tool": "dft",
+    "qe_tool": "dft",
+    "cp2k_tool": "dft",
+    "lammps_tool": "md",
+    "openfoam_tool": "cfd",
+    "comsol_tool": "fea",
+    "abaqus_tool": "fea",
+    "structural_analytical_tool": "fea",
+    "specialty_analysis_tool": "fea",
+    "fem_tool": "fea",
+}
+
 
 # ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -213,7 +225,7 @@ class TestConstraintScope:
 
     def test_scopes_match(self):
         old_scopes = {
-            n: s for n, s in _TOOL_CONSTRAINT_SCOPES.items() if _registered(n)
+            n: s for n, s in _FROZEN_CONSTRAINT_SCOPES.items() if _registered(n)
         }
         derived_scopes = {
             t.name: t.constraint_scope

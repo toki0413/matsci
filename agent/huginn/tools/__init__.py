@@ -192,11 +192,14 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         logger.warning(f"Science-skills bridge registration failed: {exc}")
 
     # Rebuild dispatch tables from ToolProfile metadata so the phase
-    # filters and router track the registered tools' declared profiles.
+    # filters, router, and constraint scopes track the registered tools'
+    # declared profiles instead of hand-maintained dicts.
     from huginn.agents.tool_call_router import _rebuild_router_tables
     from huginn.phases import _rebuild_phase_tools
+    from huginn.tools.adapter import _rebuild_constraint_scopes
 
     _rebuild_phase_tools()
     _rebuild_router_tables()
+    _rebuild_constraint_scopes()
 
     return ToolRegistry.list_tools()

@@ -42,18 +42,28 @@ from huginn.utils.tokens import count_tokens
 logger = logging.getLogger(__name__)
 
 # Map tool names to the constraint scope used for post-call validation.
-_TOOL_CONSTRAINT_SCOPES: dict[str, str] = {
-    "vasp_tool": "dft",
-    "qe_tool": "dft",
-    "cp2k_tool": "dft",
-    "lammps_tool": "md",
-    "openfoam_tool": "cfd",
-    "comsol_tool": "fea",
-    "abaqus_tool": "fea",
-    "structural_analytical_tool": "fea",
-    "specialty_analysis_tool": "fea",
-    "fem_tool": "fea",
-}
+# Populated by _rebuild_constraint_scopes() from ToolProfile metadata.
+# Internal callers should prefer tool.constraint_scope directly; this dict
+# is kept as a backward-compat shim for external consumers.
+_TOOL_CONSTRAINT_SCOPES: dict[str, str] = {}
+
+
+def _rebuild_constraint_scopes() -> None:
+    """Rebuild _TOOL_CONSTRAINT_SCOPES in place from ToolProfile metadata.
+
+    Called at the end of register_all_tools() so the scope map tracks the
+    registered tools' declared constraint_scope instead of a hand-maintained
+    dict.
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    new = {
+        t.name: t.constraint_scope
+        for t in ToolRegistry._tools.values()
+        if t.constraint_scope is not None
+    }
+    _TOOL_CONSTRAINT_SCOPES.clear()
+    _TOOL_CONSTRAINT_SCOPES.update(new)
 
 ApprovalCallback = Callable[[str, str], bool]
 """Callback signature: (tool_name, reason) -> approved."""
@@ -259,7 +269,7 @@ class ToolAdapter:
             """Return (approved, reason_or_none)."""
             name = tool.name
             mode = permission_config.get_mode(name)
-            scope = _TOOL_CONSTRAINT_SCOPES.get(name)
+            scope = tool.constraint_scope
 
             if boundary_state is not None:
                 if name in boundary_state.blocked_tools:
@@ -372,7 +382,7 @@ class ToolAdapter:
             """Run domain constraints on successful tool outputs."""
             if not result.success:
                 return result
-            scope = _TOOL_CONSTRAINT_SCOPES.get(tool.name)
+            scope = tool.constraint_scope
             if scope is None or not isinstance(result.data, dict):
                 return result
 
