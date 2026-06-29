@@ -91,6 +91,7 @@ agent/lean/HuginnLean/
 *.pid
 *.seed
 *.bak
+*.bak.*
 
 # Local runtime data
 agent/.huginn_kb/

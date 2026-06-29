@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from huginn.constraints import BoundaryState
 from huginn.permissions import PermissionConfig
 from huginn.tools.adapter import ToolAdapter
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -19,6 +19,7 @@ class _FakeDftTool(HuginnTool):
     name = "vasp_tool"
     description = "Fake DFT tool for testing constraints"
     input_schema = _FakeDftInput
+    profile = ToolProfile(constraint_scope="dft")
 
     async def call(self, args: _FakeDftInput, context: ToolContext) -> ToolResult:
         return ToolResult(data={"energy": 50.0, "max_force": 0.1, "band_gap": -0.5})
@@ -28,6 +29,7 @@ class _FakeMdTool(HuginnTool):
     name = "lammps_tool"
     description = "Fake MD tool for testing constraints"
     input_schema = _FakeDftInput
+    profile = ToolProfile(constraint_scope="md")
 
     async def call(self, args: _FakeDftInput, context: ToolContext) -> ToolResult:
         return ToolResult(
@@ -58,6 +60,7 @@ class TestAdapterConstraints:
             name = "vasp_tool"
             description = "Fake DFT tool with invalid volume"
             input_schema = _FakeDftInput
+            profile = ToolProfile(constraint_scope="dft")
 
             async def call(self, args, context):
                 return ToolResult(
@@ -83,6 +86,7 @@ class TestAdapterConstraints:
             name = "vasp_tool"
             description = "Fake DFT tool with only warning-level issues"
             input_schema = _FakeDftInput
+            profile = ToolProfile(constraint_scope="dft")
 
             async def call(self, args, context):
                 # energy sign OK, force slightly high (warn), band gap OK
@@ -122,6 +126,7 @@ class TestBoundaryEvolution:
             name = "vasp_tool"
             description = "Bad DFT"
             input_schema = _FakeDftInput
+            profile = ToolProfile(constraint_scope="dft")
 
             async def call(self, args, context):
                 return ToolResult(
@@ -149,6 +154,7 @@ class TestBoundaryEvolution:
             name = "vasp_tool"
             description = "Bad DFT"
             input_schema = _FakeDftInput
+            profile = ToolProfile(constraint_scope="dft")
 
             async def call(self, args, context):
                 return ToolResult(
@@ -164,6 +170,7 @@ class TestBoundaryEvolution:
             name = "qe_tool"
             description = "Another DFT"
             input_schema = _FakeDftInput
+            profile = ToolProfile(constraint_scope="dft")
 
             async def call(self, args, context):
                 return ToolResult(data={"energy": -10.0})
