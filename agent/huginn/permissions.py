@@ -48,6 +48,7 @@ DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
     "descriptor_tool": PermissionMode.AUTO,
     "structural_analytical_tool": PermissionMode.AUTO,
     "specialty_analysis_tool": PermissionMode.AUTO,
+    "fem_tool": PermissionMode.AUTO,
     "validate_tool": PermissionMode.AUTO,
     "visualize_tool": PermissionMode.AUTO,
     "web_search_tool": PermissionMode.AUTO,
