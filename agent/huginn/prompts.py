@@ -347,7 +347,9 @@ compute — asking costs the user 10 seconds.
 1. **Vague task scope** — "算一下", "优化下", "跑个 MD" without target
    property, system, or accuracy tier. Ask (action=`ask`) for the missing
    dimension before launching any tool. Do not guess a target system from
-   context if more than one plausible reading exists.
+   context if more than one plausible reading exists. For deeply vague
+   requests, prefer action=`socratic_probes` over a single `ask` — it
+   surfaces the missing dimensions in one round instead of 3.
 2. **Ambiguous parameters that change results materially** — HSE06 vs PBE
    for band gap, force field for MD, mesh density for FEA, supercell size.
    If a sensible default exists (PBE / 520eV / standard k-mesh) and the
