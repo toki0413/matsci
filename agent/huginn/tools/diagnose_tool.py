@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -42,6 +42,7 @@ class DiagnoseTool(HuginnTool):
 
     name = "diagnose_tool"
     category = "core"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Diagnose errors in quantum chemistry or MD calculations using "
         "authoritative computational chemistry knowledge. Provide the error message, "

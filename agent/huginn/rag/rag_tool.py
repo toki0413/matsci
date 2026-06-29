@@ -11,7 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -41,6 +41,7 @@ class RAGTool(HuginnTool):
 
     name = "rag_tool"
     category = "search"
+    profile = ToolProfile(cost_tier="light")
     description = "Search and ingest material science documents into a local knowledge base for RAG"
     input_schema = RAGToolInput
 

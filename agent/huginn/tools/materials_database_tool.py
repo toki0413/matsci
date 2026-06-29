@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.local_structure_db import LocalStructureDB
 from huginn.tools.tool_cache import EXTERNAL_API_TTL, cacheable
 from huginn.types import ToolContext, ToolResult
@@ -91,6 +91,10 @@ class MaterialsDatabaseTool(HuginnTool):
 
     name = "materials_database_tool"
     category = "materials"
+    profile = ToolProfile(
+        cost_tier="light",
+        phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.HYPOTHESIS}),
+    )
     description = (
         "Query Materials Project or OQMD for structures, energies, band gaps, "
         "and thermodynamic data. Provide an API key or set MP_API_KEY / OQMD_API_KEY."

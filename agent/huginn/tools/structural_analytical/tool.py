@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -200,6 +200,7 @@ class StructuralAnalyticalTool(HuginnTool):
 
     name = "structural_analytical_tool"
     category = "sim"
+    profile = ToolProfile(constraint_scope="fea")
     description = (
         "Analytical solvers for beam (Euler-Bernoulli/Timoshenko), plate "
         "(Kirchhoff/Mindlin), shell (Donnell/Flügge), and stress "

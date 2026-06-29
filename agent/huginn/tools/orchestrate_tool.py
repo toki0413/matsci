@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolResult
 
 
@@ -40,6 +40,7 @@ class OrchestrateOutput(BaseModel):
 class OrchestrateTool(HuginnTool[OrchestrateInput, OrchestrateOutput]):
     name = "orchestrate"
     category = "meta"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.EXECUTION}))
     description = (
         "Decompose a complex objective into parallel subtasks and run them with "
         "specialist sub-agents (potentially using different LLM providers/models). "

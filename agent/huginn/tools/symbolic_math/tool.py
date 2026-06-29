@@ -7,7 +7,7 @@ from typing import Any
 import sympy as sp
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -89,6 +89,16 @@ class SymbolicMathTool(HuginnTool):
 
     name = "symbolic_math_tool"
     category = "sci"
+    profile = ToolProfile(
+        cost_tier="light",
+        phases=frozenset({
+            ResearchPhase.LITERATURE,
+            ResearchPhase.HYPOTHESIS,
+            ResearchPhase.PLANNING,
+            ResearchPhase.VALIDATION,
+            ResearchPhase.REPORTING,
+        }),
+    )
     description = (
         "Perform symbolic mathematics using SymPy: differentiation, integration, "
         "equation solving, matrix operations, constitutive relation derivation, "

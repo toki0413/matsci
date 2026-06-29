@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 
 
@@ -88,6 +88,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
 
     name = "tda"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.VALIDATION}))
     description = (
         "Topological data analysis: persistent homology, persistence diagrams, "
         "Betti numbers, and energy landscape topology for materials science."

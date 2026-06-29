@@ -19,7 +19,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from huginn.security import SafeEvalError, safe_math_eval
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -69,6 +69,10 @@ class SymbolicRegressionTool(HuginnTool):
 
     name = "symbolic_regression_tool"
     category = "sci"
+    profile = ToolProfile(
+        cost_tier="light",
+        phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.VALIDATION}),
+    )
     description = (
         "Discover analytical mathematical expressions from data using "
         "Parallel Symbolic Regression (PSE/PSRN). Returns a Pareto frontier "

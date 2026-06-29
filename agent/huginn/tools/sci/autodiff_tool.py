@@ -19,7 +19,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -71,6 +71,7 @@ class AutoDiffTool(HuginnTool):
 
     name = "autodiff_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.VALIDATION}))
     description = (
         "Compute gradients, Hessians, and Jacobians using automatic differentiation. "
         "Supports built-in material models (EOS, elastic, potential) and custom functions."

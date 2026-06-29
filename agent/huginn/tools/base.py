@@ -15,6 +15,8 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
+from huginn.phases import ResearchPhase
+from huginn.tools.profile import CostTier, ToolProfile
 from huginn.types import (
     PermissionMode,
     PermissionResult,
@@ -52,11 +54,58 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     # register_all_tools() 会读这个 map 自动填充 kwargs, 避免类名 if 分支
     _init_kwargs_map: dict[str, str] = {}
 
+    # 调度元数据: 工具自声明 cost tier / phase 适用性 / constraint scope /
+    # light alternatives / heavy actions. None 时走默认值 (见 _default_profile).
+    # 详见 huginn/tools/profile.py
+    profile: ToolProfile | None = None
+
+    @staticmethod
+    def _default_profile() -> ToolProfile:
+        """profile=None 时的回落值, 保持重构前的行为:
+        非重型非轻量, 仅 OPEN 阶段可用, 无约束检查.
+        """
+        return ToolProfile(
+            cost_tier="none",
+            phases=frozenset(),
+            constraint_scope=None,
+            light_alternatives=(),
+            heavy_actions=None,
+        )
+
     @property
     def input_json_schema(self) -> dict[str, Any] | None:
         if self.input_schema:
             return self.input_schema.model_json_schema()
         return None
+
+    # ── 调度元数据便利属性 ──────────────────────────────────────────
+    # 透传到 profile, profile=None 时回落到默认值, 保证未声明 profile 的
+    # 工具行为与重构前一致.
+
+    @property
+    def cost_tier(self) -> CostTier:
+        p = self.profile if self.profile is not None else self._default_profile()
+        return p.cost_tier
+
+    @property
+    def phases(self) -> frozenset[ResearchPhase] | None:
+        p = self.profile if self.profile is not None else self._default_profile()
+        return p.phases
+
+    @property
+    def constraint_scope(self) -> str | None:
+        p = self.profile if self.profile is not None else self._default_profile()
+        return p.constraint_scope
+
+    @property
+    def light_alternatives(self) -> tuple[str, ...]:
+        p = self.profile if self.profile is not None else self._default_profile()
+        return p.light_alternatives
+
+    @property
+    def heavy_actions(self) -> frozenset[str] | None:
+        p = self.profile if self.profile is not None else self._default_profile()
+        return p.heavy_actions
 
     @abstractmethod
     async def call(self, args: InputT, context: ToolContext) -> ToolResult:

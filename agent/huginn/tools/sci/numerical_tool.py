@@ -17,7 +17,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from huginn.security.math_eval import safe_math_eval
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 
 
@@ -182,6 +182,7 @@ class NumericalTool(HuginnTool):
 
     name = "numerical_tool"
     category = "sci"
+    profile = ToolProfile(cost_tier="light")
     description = (
         "Solve numerical problems: integrate ODEs, minimize functions, find roots, "
         "fit curves, integrate functions, solve linear systems, compute eigenvalues, "

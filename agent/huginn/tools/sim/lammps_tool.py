@@ -18,7 +18,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.security import SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
 
@@ -111,6 +111,12 @@ class LammpsTool(HuginnTool):
 
     name = "lammps_tool"
     category = "sim"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="md",
+        light_alternatives=("symbolic_math_tool", "numerical_tool"),
+    )
     description = (
         "Run LAMMPS molecular dynamics simulations (minimization, equilibration, production). "
         "Supports async submission via submit_async / poll_job / wait_job for long-running jobs."

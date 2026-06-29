@@ -16,7 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.security import SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
 
@@ -104,6 +104,17 @@ class VaspTool(HuginnTool):
 
     name = "vasp_tool"
     category = "sim"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="dft",
+        light_alternatives=(
+            "materials_database_tool",
+            "local_structure_db",
+            "symbolic_math_tool",
+            "numerical_tool",
+        ),
+    )
     description = (
         "Run VASP DFT calculations (relaxation, SCF, band structure, DOS, MD, phonons). "
         "Supports async submission via submit_async / poll_job / wait_job for long-running jobs."

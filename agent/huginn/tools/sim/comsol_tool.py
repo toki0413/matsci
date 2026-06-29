@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.security import SandboxConfig, SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -81,6 +81,12 @@ class ComsolTool(HuginnTool):
 
     name = "comsol_tool"
     category = "sim"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="fea",
+        light_alternatives=("symbolic_math_tool", "numerical_tool"),
+    )
     description = (
         "Generate and run COMSOL Multiphysics finite element models. "
         "Falls back to exporting the generated Java script when COMSOL is not installed."

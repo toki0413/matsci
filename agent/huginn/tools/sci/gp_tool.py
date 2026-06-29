@@ -14,7 +14,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -167,6 +167,7 @@ class GPTool(HuginnTool):
 
     name = "gp_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Fit a Gaussian process surrogate to data, predict with uncertainty, "
         "and compute expected improvement for Bayesian optimization."

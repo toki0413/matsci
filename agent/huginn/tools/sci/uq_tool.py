@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -58,6 +58,7 @@ class UQTool(HuginnTool):
 
     name = "uq_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Uncertainty quantification and sensitivity analysis for symbolic "
         "material-science models. Supports Monte Carlo propagation, local "

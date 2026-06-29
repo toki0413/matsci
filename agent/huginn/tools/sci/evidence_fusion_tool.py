@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 
 # Sources rarely sum to exactly 1.0; give them a little slack.
@@ -72,6 +72,7 @@ class EvidenceFusionTool(HuginnTool):
 
     name = "evidence_fusion_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Combine evidence from multiple sources using Dempster-Shafer theory. "
         "Supports Dempster's combination rule, belief/plausibility intervals, "
