@@ -72,6 +72,20 @@ async def _init_mcp_tools():
                 ("math-anything", MCPServerConfig(name="math-anything", command="python", args=[str(math_path)]))
             )
 
+        # ToolUniverse (curated: only materials-science tools pass the whitelist
+        # in mcp_adapter.MATERIAL_SCIENCE_TOOL_WHITELIST). Off by default — user
+        # must set HUGINN_TOOLUNIVERSE_ENABLED=1 and `pip install tooluniverse`.
+        tu_enabled = os.environ.get("HUGINN_TOOLUNIVERSE_ENABLED", "0") == "1"
+        if tu_enabled:
+            servers.append(
+                ("tooluniverse", MCPServerConfig(
+                    name="tooluniverse",
+                    command="python",
+                    args=["-m", "tooluniverse.smcp_server"],
+                    env={},
+                ))
+            )
+
         for name, cfg in servers:
             task = asyncio.create_task(
                 _connect_mcp_server(get_context().mcp_manager, name, cfg)
@@ -79,8 +93,31 @@ async def _init_mcp_tools():
             task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             await task
 
-        registered = register_mcp_tools(get_context().mcp_manager)
-        print(f"[MCP] Registered {len(registered)} tools from MCP servers")
+        # ToolUniverse 单独走白名单 (只注册 7 个材料相关工具, 过滤 350+ 生物医学工具).
+        # 不能先做一次无过滤的 generic 注册 —— 那会把 343 个非白名单 tooluniverse 工具
+        # 也灌进 registry, 白名单就形同虚设了. 所以 tu_enabled 时按 server 分别注册.
+        if tu_enabled:
+            from huginn.tools.mcp_adapter import MATERIAL_SCIENCE_TOOL_WHITELIST
+
+            registered: list = []
+            for srv in list(get_context().mcp_manager._configs.keys()):
+                if srv == "tooluniverse":
+                    registered.extend(register_mcp_tools(
+                        get_context().mcp_manager,
+                        server_name="tooluniverse",
+                        whitelist=MATERIAL_SCIENCE_TOOL_WHITELIST,
+                    ))
+                else:
+                    registered.extend(
+                        register_mcp_tools(get_context().mcp_manager, server_name=srv)
+                    )
+            print(
+                f"[MCP] Registered {len(registered)} tools "
+                f"(ToolUniverse curated by whitelist)"
+            )
+        else:
+            registered = register_mcp_tools(get_context().mcp_manager)
+            print(f"[MCP] Registered {len(registered)} tools from MCP servers")
     except Exception as e:
         print(f"[MCP] Warning: Could not initialize MCP tools: {e}")
 
