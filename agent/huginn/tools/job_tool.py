@@ -83,6 +83,7 @@ class JobTool(HuginnTool):
     """Submit and manage HPC jobs locally or remotely."""
 
     name = "job_tool"
+    category = "core"
     description = "Submit, monitor, and cancel computational jobs on HPC clusters (Slurm/PBS). Supports remote SSH submission."
     input_schema = JobToolInput
 

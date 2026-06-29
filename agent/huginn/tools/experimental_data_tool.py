@@ -54,6 +54,7 @@ class ExperimentalDataTool(HuginnTool):
     """Parse and analyze experimental materials characterization data."""
 
     name = "experimental_data_tool"
+    category = "materials"
     description = (
         "Load XRD patterns, detect peaks, compute d-spacings, "
         "and read SEM/TEM image metadata."

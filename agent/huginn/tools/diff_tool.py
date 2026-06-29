@@ -83,6 +83,7 @@ class DiffTool(HuginnTool):
     """Compare two calculations semantically (not just text diff)."""
 
     name = "diff_tool"
+    category = "core"
     description = "Semantically compare two calculations: parameter changes, mathematical structure differences, and physical implications"
     input_schema = DiffToolInput
 

@@ -39,6 +39,7 @@ class OrchestrateOutput(BaseModel):
 
 class OrchestrateTool(HuginnTool[OrchestrateInput, OrchestrateOutput]):
     name = "orchestrate"
+    category = "meta"
     description = (
         "Decompose a complex objective into parallel subtasks and run them with "
         "specialist sub-agents (potentially using different LLM providers/models). "

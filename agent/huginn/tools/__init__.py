@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
 
@@ -33,11 +34,21 @@ def register_all_tools(config: Any | None = None) -> list[str]:
     from huginn.execution.remote_executor import build_executor
 
     resolved_config = config if config is not None else HuginnConfig.from_env()
+
+    # Sync allow_local_bash from config to env so SandboxExecutor and
+    # get_executor() pick it up. This lets users set it in huginn.toml
+    # instead of only via environment variables.
+    if getattr(resolved_config, "allow_local_bash", False):
+        os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
+
     executor = build_executor(resolved_config)
 
-    # Ensure Bourbaki (math_anything) is discoverable if installed externally
-    _bourbaki_path = r"C:\Users\wanzh\Desktop\math-anything\math-anything"
-    if _bourbaki_path not in sys.path:
+    # Ensure Bourbaki (math_anything) is discoverable if installed externally.
+    # Path is configurable via HUGINN_BOURBAKI_PATH env var.
+    _bourbaki_path = os.environ.get(
+        "HUGINN_BOURBAKI_PATH", ""
+    )
+    if _bourbaki_path and _bourbaki_path not in sys.path:
         sys.path.insert(0, _bourbaki_path)
 
     def _tool_kwargs(cls: type) -> dict[str, Any]:
@@ -48,23 +59,19 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         params = sig.parameters
         kwargs: dict[str, Any] = {}
 
-        if cls.__name__ == "VaspTool" and "vasp_executable" in params:
-            kwargs["vasp_executable"] = resolved_config.vasp_executable
-        if cls.__name__ == "LammpsTool" and "lammps_executable" in params:
-            kwargs["lammps_executable"] = resolved_config.lammps_executable
-
-        if cls.__name__ == "MaterialsDatabaseTool":
-            if "mp_api_key" in params:
-                kwargs["mp_api_key"] = resolved_config.mp_api_key
-            if "oqmd_api_key" in params:
-                kwargs["oqmd_api_key"] = resolved_config.oqmd_api_key
+        # 声明式注入: 子类用 _init_kwargs_map = {param: config_field} 声明需求
+        for param_name, config_field in cls._init_kwargs_map.items():
+            if param_name in params:
+                kwargs[param_name] = getattr(resolved_config, config_field, None)
 
         if "sandbox" in params:
             kwargs["sandbox"] = executor
         return kwargs
 
     # Core tools (always expected to be available)
+    # 分组注释对应阶段 4 子包划分: core/ search/ meta/ + 外部包
     core_modules = [
+        # ── core/ ──
         ("huginn.tools.bash_tool", "BashTool"),
         ("huginn.tools.code_tool", "CodeTool"),
         ("huginn.tools.file_edit_tool", "FileEditTool"),
@@ -78,40 +85,81 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.extract_tool", "ExtractTool"),
         ("huginn.tools.job_tool", "JobTool"),
         ("huginn.tools.database_tool", "DatabaseTool"),
+        ("huginn.tools.report_tool", "ReportTool"),
+        ("huginn.tools.lean_tool", "LeanTool"),
         ("huginn.tools.potential_tool", "PotentialTool"),
         ("huginn.tools.structure_tool", "StructureTool"),
-        ("huginn.tools.report_tool", "ReportTool"),
+        # ── search/ ──
+        ("huginn.tools.web_search_tool", "WebSearchTool"),
+        ("huginn.tools.literature_tool", "LiteratureTool"),
+        # ── meta/ ──
         ("huginn.tools.orchestrate_tool", "OrchestrateTool"),
+        ("huginn.tools.skill_tool", "SkillTool"),
         ("huginn.tools.memory_tool", "RememberTool"),
         ("huginn.tools.memory_tool", "RecallTool"),
-        ("huginn.tools.lean_tool", "LeanTool"),
+        ("huginn.tools.scenario_tool", "ScenarioTool"),
+        ("huginn.tools.simple_path_tool", "SimplePathTool"),
+        ("huginn.tools.personalization_tool", "PersonalizationTool"),
+        ("huginn.tools.config_wizard_tool", "ConfigWizardTool"),
+        ("huginn.tools.clarification_tool", "ClarificationTool"),
+        # ── 外部包 (evaluation/rag/plugins, 不在 tools/ 下) ──
         ("huginn.evaluation.evaluation_tool", "EvaluationTool"),
         ("huginn.rag.rag_tool", "RAGTool"),
         ("huginn.plugins.autoresearch", "AutoresearchTool"),
     ]
 
     # Optional simulation / science tools (skip if deps missing)
+    # 分组注释对应阶段 4 子包划分: sim/ sci/ design/ cv/ search/ meta/ materials/
     optional_modules = [
+        # ── sim/ ──
         ("huginn.tools.vasp_tool", "VaspTool"),
         ("huginn.tools.lammps_tool", "LammpsTool"),
-        ("huginn.tools.symbolic_regression_tool", "SymbolicRegressionTool"),
-        ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),
-        ("huginn.tools.autodiff_tool", "AutoDiffTool"),
         ("huginn.tools.comsol_tool", "ComsolTool"),
         ("huginn.tools.qe_tool", "QuantumEspressoTool"),
         ("huginn.tools.cp2k_tool", "Cp2kTool"),
         ("huginn.tools.openfoam_tool", "OpenFoamTool"),
         ("huginn.tools.packing_tool", "PackingTool"),
         ("huginn.tools.abaqus_tool", "AbaqusTool"),
+        ("huginn.tools.plasma_tool", "PlasmaTool"),
+        ("huginn.tools.neb_tool", "NEBTool"),
+        # ── sci/ ──
+        ("huginn.tools.symbolic_regression_tool", "SymbolicRegressionTool"),
+        ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),
+        ("huginn.tools.autodiff_tool", "AutoDiffTool"),
+        ("huginn.tools.numerical_tool", "NumericalTool"),
+        ("huginn.tools.unit_tool", "UnitTool"),
+        ("huginn.tools.symmetry_tool", "SymmetryTool"),
+        ("huginn.tools.tda_tool", "TDATool"),
         ("huginn.tools.uq_tool", "UQTool"),
         ("huginn.tools.gp_tool", "GPTool"),
-        ("huginn.tools.materials_database_tool", "MaterialsDatabaseTool"),
-        ("huginn.tools.experimental_data_tool", "ExperimentalDataTool"),
         ("huginn.tools.descriptor_tool", "DescriptorTool"),
-        ("huginn.tools.visualize_tool", "VisualizeTool"),
+        ("huginn.tools.evidence_fusion_tool", "EvidenceFusionTool"),
         ("huginn.tools.active_learning_tool", "ActiveLearningTool"),
         ("huginn.tools.ml_potential_tool", "MLPotentialTool"),
+        ("huginn.tools.high_throughput_tool", "HighThroughputTool"),
+        # ── design/ ──
+        ("huginn.tools.gap_analysis_tool", "GapAnalysisTool"),
+        ("huginn.tools.doe_tool", "DOETool"),
+        ("huginn.tools.debugger_tool", "DebuggerTool"),
+        ("huginn.tools.design_plan_tool", "DesignPlanTool"),
+        ("huginn.tools.nudge_tool", "NudgeTool"),
+        ("huginn.tools.design_atom_tool", "DesignAtomTool"),
+        ("huginn.tools.generative_design_tool", "GenerativeDesignTool"),
+        # ── cv/ ──
+        ("huginn.tools.image_analysis_tool", "ImageAnalysisTool"),
+        ("huginn.tools.image_design_tool", "ImageDesignTool"),
+        ("huginn.tools.visualize_tool", "VisualizeTool"),
         ("huginn.tools.characterization_tool", "CharacterizationTool"),
+        # ── search/ (可选检索类) ──
+        ("huginn.tools.browser_tool", "BrowserTool"),
+        ("huginn.tools.review_committee_tool", "ReviewCommitteeTool"),
+        ("huginn.tools.hypothesis_generator_tool", "HypothesisGeneratorTool"),
+        ("huginn.tools.materials_autoresearch_tool", "MaterialsAutoResearchTool"),
+        # ── meta/ (可选) ──
+        ("huginn.tools.nuwa_persona_tool", "NuwaPersonaTool"),
+        # ── materials/ ──
+        ("huginn.tools.materials_database_tool", "MaterialsDatabaseTool"),
+        ("huginn.tools.experimental_data_tool", "ExperimentalDataTool"),
     ]
 
     registered: list[str] = []

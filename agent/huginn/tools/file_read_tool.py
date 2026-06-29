@@ -41,13 +41,14 @@ class FileReadTool(HuginnTool):
     """Read text files."""
 
     name = "file_read_tool"
+    category = "core"
     description = "Read the contents of a text file, optionally with a line range."
     input_schema = FileReadToolInput
 
     def is_read_only(self, args: FileReadToolInput) -> bool:
         return True
 
-    def call(
+    async def call(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = FileReadToolInput(**args)
@@ -57,6 +58,26 @@ class FileReadTool(HuginnTool):
         path = work_dir / input_data.file_path
         if not path.is_absolute():
             path = path.resolve()
+
+        # Path traversal protection: restrict reads to the workspace directory.
+        # Allow explicit opt-out via HUGINN_ALLOW_UNRESTRICTED_READ for power users.
+        allow_unrestricted = os.environ.get(
+            "HUGINN_ALLOW_UNRESTRICTED_READ", ""
+        ).lower() in ("1", "true", "yes")
+        if not allow_unrestricted:
+            try:
+                work_dir_resolved = work_dir.resolve()
+                path.relative_to(work_dir_resolved)
+            except ValueError:
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=(
+                        f"Access denied: {path} is outside the workspace "
+                        f"({work_dir_resolved}). Set HUGINN_ALLOW_UNRESTRICTED_READ=1 "
+                        "to override."
+                    ),
+                )
 
         if not path.exists():
             return ToolResult(data=None, success=False, error=f"File not found: {path}")

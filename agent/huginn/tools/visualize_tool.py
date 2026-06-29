@@ -37,6 +37,7 @@ class VisualizeTool(HuginnTool):
     """Generate figures from structured reports."""
 
     name = "visualize_tool"
+    category = "cv"
     description = (
         "Create matplotlib figures from benchmark, evolution, or exploration reports"
     )
