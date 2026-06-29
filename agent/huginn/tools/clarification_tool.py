@@ -10,7 +10,7 @@ LLM 在执行过程中遇到不确定的情况 (参数缺失 / 多路径选择 /
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,43 +23,50 @@ from huginn.types import ToolContext, ToolResult
 
 
 class ClarificationInput(BaseModel):
-    """工具输入. question 必填, 其它都可选."""
+    """工具输入. action=ask 时 question 必填, 其它 action 自动生成."""
 
-    question: str = Field(
+    action: Literal["ask", "confirm_destructive", "confirm_plan", "confirm_cost"] = Field(
+        default="ask",
         description=(
-            "要问用户的具体问题. 必须是完整句子, 让用户能直接回答. "
-            "例如: 'ENCUT 取 400 还是 520 eV?' 而不是 'ENCUT?'."
-        )
+            "提问类型. ask=普通提问; confirm_destructive=破坏性操作确认"
+            "(安全默认=取消); confirm_plan=多步计划审批; "
+            "confirm_cost=高成本操作确认(安全默认=取消)."
+        ),
+    )
+    question: str = Field(
+        default="",
+        description=(
+            "要问用户的具体问题. action=ask 时必填, 必须是完整句子. "
+            "其它 action 时可留空, 工具会自动生成确认语."
+        ),
     )
     options: list[str] = Field(
         default_factory=list,
         description=(
-            "可选的候选答案列表. 用户可以选其中一个, 也可以自己输入. "
-            "为空表示开放性问题, 用户自由作答."
+            "可选的候选答案列表. 为空表示开放性问题. "
+            "confirm_* action 会自动覆盖为 [确认, 取消]."
         ),
     )
     context: str = Field(
         default="",
-        description=(
-            "提问背景说明, 帮助用户理解为什么要问. 例如: "
-            "'需要确定基组截断能, 影响计算精度和成本'."
-        ),
+        description="提问背景说明, 帮助用户理解为什么要问.",
     )
     default_answer: str = Field(
         default="",
         description=(
-            "用户超时未回答时用的默认值. 必须给一个合理的默认, "
-            "避免 agent 永远等下去. 例如: '520'."
+            "用户超时未回答时用的默认值. confirm_destructive/confirm_cost "
+            "自动设为 '取消' (安全默认)."
         ),
     )
     timeout_seconds: float = Field(
         default=300.0,
         ge=10.0,
         le=3600.0,
-        description=(
-            "等待用户回答的超时时间(秒). 默认 300 (5 分钟), "
-            "长任务确认可以设大一点."
-        ),
+        description="等待用户回答的超时时间(秒). 默认 300.",
+    )
+    plan_steps: list[str] = Field(
+        default_factory=list,
+        description="confirm_plan 专用: 要展示给用户审批的步骤列表.",
     )
 
 
@@ -87,10 +94,13 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
     name = "clarification_tool"
     category = "meta"
     description = (
-        "Ask the user a clarifying question when you are uncertain about "
-        "task scope, parameters, or which approach to take. Blocks until "
-        "the user answers or the timeout expires. Use sparingly — only "
-        "when a wrong guess would waste significant compute or time."
+        "Ask the user a clarifying question or request confirmation. "
+        "Actions: 'ask' (open question, blocks until answer/timeout), "
+        "'confirm_destructive' (irreversible op, safe default=cancel), "
+        "'confirm_cost' (high-cost compute, safe default=cancel), "
+        "'confirm_plan' (present multi-step plan for approval). "
+        "Use sparingly — only when a wrong guess wastes significant "
+        "compute or time, or before irreversible operations."
     )
     destructive = False
     read_only = True  # 只问问题, 不改任何状态
@@ -111,11 +121,7 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
     async def call(
         self, args: ClarificationInput, context: ToolContext
     ) -> ToolResult:
-        """提问并等回答.
-
-        thread_id 从 ToolContext.session_id 拿, 这样问题跟当前会话绑定.
-        没有 session_id 时退化为 "default", 跟 chat 默认 thread 一致.
-        """
+        """提问并等回答. 按 action 自动生成提问模板."""
         # flag 关掉时不问, 直接走默认行为
         try:
             from huginn.feature_flags import FeatureFlags
@@ -130,70 +136,96 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
                     side_effects=["clarification disabled by feature flag"],
                 )
         except Exception:
-            # flag 层挂了不能带挂业务, 继续走原逻辑
             pass
 
         thread_id = getattr(context, "session_id", None) or "default"
 
-        # 先判断要不要问 (避免在已有 3 个未答问题时还堆新的)
+        # 按 action 准备提问参数
+        question, options, default_answer = self._prepare(args)
+        if question is None:
+            return ToolResult(
+                data=ClarificationOutput(
+                    answer=default_answer, question_id="", timed_out=True,
+                ).model_dump(),
+                success=False,
+                error="action=ask 需要 question 字段",
+            )
+
+        # 队列满了直接走默认值
         if not self.manager.should_ask(
             "agent_initiated",
             context={"thread_id": thread_id},
         ):
-            # 队列满了, 直接走默认值, 别再问
             return ToolResult(
                 data=ClarificationOutput(
-                    answer=args.default_answer or "",
-                    question_id="",
-                    timed_out=True,
+                    answer=default_answer, question_id="", timed_out=True,
                 ).model_dump(),
                 success=True,
                 side_effects=["clarification skipped: too many pending"],
             )
 
         try:
-            # 调 manager.ask 阻塞等回答
-            # 这里没法精确知道是不是超时, manager 内部已经处理了,
-            # 我们通过比对返回值跟 default_answer 来粗略判断
             answer = await self.manager.ask(
                 thread_id=thread_id,
-                question=args.question,
-                options=args.options,
+                question=question,
+                options=options,
                 context=args.context,
-                default_answer=args.default_answer,
+                default_answer=default_answer,
                 timeout=args.timeout_seconds,
                 metadata={
                     "engine_kind": "clarification_tool",
                     "session_id": thread_id,
+                    "action": args.action,
                 },
             )
-            timed_out = (
-                answer == args.default_answer
-                and args.default_answer != ""
-            )
-            # 拿 question_id: 列 pending 取第一个, 应该就是我们刚问的
-            # (ask 返回后问题已从 pending 列表移除, 这里取不到也无所谓)
-            qid = ""
+            timed_out = answer == default_answer and default_answer != ""
             return ToolResult(
                 data=ClarificationOutput(
-                    answer=answer,
-                    question_id=qid,
-                    timed_out=timed_out,
+                    answer=answer, question_id="", timed_out=timed_out,
                 ).model_dump(),
                 success=True,
                 side_effects=[
-                    f"asked user: {args.question[:80]}",
+                    f"asked user ({args.action}): {question[:80]}",
                     f"got answer: {answer[:80]}",
                 ],
             )
         except Exception as exc:
-            # 异常时退回 default_answer, 不让 agent 卡死
             return ToolResult(
                 data=ClarificationOutput(
-                    answer=args.default_answer or "",
-                    question_id="",
-                    timed_out=True,
+                    answer=default_answer, question_id="", timed_out=True,
                 ).model_dump(),
                 success=False,
                 error=f"clarification failed: {exc}",
             )
+
+    def _prepare(
+        self, args: ClarificationInput
+    ) -> tuple[str | None, list[str], str]:
+        """按 action 生成提问文案/选项/默认值. 返回 (question, options, default)."""
+        if args.action == "ask":
+            if not args.question:
+                return None, [], args.default_answer or ""
+            return args.question, args.options, args.default_answer
+
+        if args.action == "confirm_destructive":
+            q = args.question or "即将执行破坏性操作"
+            question = f"⚠️ 破坏性操作确认: {q}. 此操作不可逆, 确认执行？"
+            return question, ["确认执行", "取消"], "取消"
+
+        if args.action == "confirm_cost":
+            q = args.question or "即将执行高成本计算"
+            question = f"⏱ 高成本操作确认: {q}. 确认执行？"
+            return question, ["确认执行", "取消"], "取消"
+
+        if args.action == "confirm_plan":
+            steps = args.plan_steps or []
+            if steps:
+                numbered = "\n".join(
+                    f"  {i}. {s}" for i, s in enumerate(steps, 1)
+                )
+                question = f"📋 执行计划审批:\n{numbered}\n\n确认执行此计划？"
+            else:
+                question = "📋 执行计划审批: 确认执行？"
+            return question, ["确认执行此计划", "修改计划", "取消"], "取消"
+
+        return args.question, args.options, args.default_answer
