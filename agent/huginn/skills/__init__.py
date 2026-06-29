@@ -8,7 +8,6 @@ from huginn.skills.base import (
     SkillStep,
 )
 from huginn.skills.presets import (
-    ACTIVE_LEARNING_SAMPLING,
     AIMD_WORKFLOW,
     AUTORESEARCH_WORKFLOW,
     BAND_GAP_ANALYSIS,
@@ -18,7 +17,6 @@ from huginn.skills.presets import (
     HPC_REMOTE_RUN,
     HT_SCREENING,
     LAMMPS_MELT_QUENCH,
-    ML_POTENTIAL_TRAINING,
     PHONON_CALCULATION,
     STANDARD_DFT,
     SURFACE_CALCULATION,
@@ -40,7 +38,6 @@ __all__ = [
     "DEFECT_CALCULATION",
     "SURFACE_CALCULATION",
     "LAMMPS_MELT_QUENCH",
-    "ML_POTENTIAL_TRAINING",
     "BAND_GAP_ANALYSIS",
     "ELASTIC_CONSTANTS",
     "PHONON_CALCULATION",
@@ -48,6 +45,5 @@ __all__ = [
     "HT_SCREENING",
     "SYMBOLIC_REGRESSION",
     "HPC_REMOTE_RUN",
-    "ACTIVE_LEARNING_SAMPLING",
     "AUTORESEARCH_WORKFLOW",
 ]

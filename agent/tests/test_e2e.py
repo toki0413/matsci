@@ -315,7 +315,6 @@ class TestToolRegistryIntegration:
         from huginn.tools.extract_tool import ExtractTool
         from huginn.tools.job_tool import JobTool
         from huginn.tools.lammps_tool import LammpsTool
-        from huginn.tools.potential_tool import PotentialTool
         from huginn.tools.report_tool import ReportTool
         from huginn.tools.structure_tool import StructureTool
         from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
@@ -330,7 +329,6 @@ class TestToolRegistryIntegration:
             ExtractTool,
             JobTool,
             DatabaseTool,
-            PotentialTool,
             DiffTool,
             ValidateTool,
             DiagnoseTool,

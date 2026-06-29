@@ -55,7 +55,6 @@ TOOL_TIMEOUT_MAP = {
     "bash_tool": "slow",
     "code_tool": "slow",
     "ml_potential_tool": "slow",
-    "potential_tool": "slow",
     "packing_tool": "slow",
     "numerical_tool": "slow",
     "symbolic_math_tool": "slow",

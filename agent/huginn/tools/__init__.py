@@ -87,7 +87,6 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.database_tool", "DatabaseTool"),
         ("huginn.tools.report_tool", "ReportTool"),
         ("huginn.tools.lean_tool", "LeanTool"),
-        ("huginn.tools.potential_tool", "PotentialTool"),
         ("huginn.tools.structure_tool", "StructureTool"),
         # ── search/ ──
         ("huginn.tools.web_search_tool", "WebSearchTool"),

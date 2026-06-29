@@ -116,7 +116,6 @@ PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
     ResearchPhase.PLANNING: _CORE_TOOLS | {
         "structure_tool",
         "symmetry_tool",
-        "potential_tool",
         "descriptor_tool",
         "symbolic_math_tool",
         "parameters",
@@ -136,7 +135,6 @@ PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "high_throughput_tool",
         "ml_potential_tool",
         "structure_tool",
-        "potential_tool",
         "packing_tool",
     },
     ResearchPhase.VALIDATION: _CORE_TOOLS | {
