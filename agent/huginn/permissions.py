@@ -78,7 +78,6 @@ DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
     "code_tool": PermissionMode.ASK,
     "gromacs_tool": PermissionMode.ASK,
     "job_tool": PermissionMode.ASK,
-    "potential_tool": PermissionMode.ASK,
     "batch_tool": PermissionMode.ASK,
     "container_tool": PermissionMode.ASK,
     # Destructive — always ask

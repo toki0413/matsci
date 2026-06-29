@@ -310,54 +310,6 @@ LAMMPS_MELT_QUENCH = register_skill(
     )
 )
 
-ML_POTENTIAL_TRAINING = register_skill(
-    SkillDefinition(
-        name="ml_potential_training",
-        description="Train a machine-learning potential: sampling → training → validation",
-        category="computation",
-        parameters=[
-            SkillParameter(
-                "training_structures",
-                "list",
-                "List of training structure files",
-                required=True,
-            ),
-            SkillParameter(
-                "potential_type", "str", "NEP | SNAP | GAP | ACE", default="NEP"
-            ),
-            SkillParameter("test_split", "float", "Fraction for test set", default=0.2),
-            SkillParameter(
-                "max_iterations", "int", "Training iterations", default=10000
-            ),
-        ],
-        steps=[
-            SkillStep(
-                name="train_potential",
-                tool="potential_tool",
-                input_mapping={
-                    "action": "'train'",
-                    "structures": "$training_structures",
-                    "potential_type": "$potential_type",
-                    "test_split": "$test_split",
-                    "max_iterations": "$max_iterations",
-                },
-                output_key="potential",
-            ),
-            SkillStep(
-                name="validate_potential",
-                tool="validate_tool",
-                input_mapping={
-                    "check_type": "'potential'",
-                    "data": "$potential",
-                },
-                output_key="validation",
-            ),
-        ],
-        required_tools=["potential_tool", "validate_tool"],
-        tags=["ml_potential", "nep", "snap", "gap", "ace"],
-    )
-)
-
 # --- Analysis Skills ---
 
 BAND_GAP_ANALYSIS = register_skill(
@@ -1258,72 +1210,6 @@ HPC_REMOTE_RUN = register_skill(
         ],
         required_tools=["job_tool"],
         tags=["hpc", "remote", "slurm", "pbs"],
-    )
-)
-
-ACTIVE_LEARNING_SAMPLING = register_skill(
-    SkillDefinition(
-        name="active_learning_sampling",
-        description="Iteratively expand a training set for ML potentials using uncertainty sampling",
-        category="computation",
-        parameters=[
-            SkillParameter(
-                "initial_structures",
-                "list",
-                "Starting training structure files",
-                required=True,
-            ),
-            SkillParameter(
-                "potential_type", "str", "NEP | SNAP | GAP | ACE | MACE", default="NEP"
-            ),
-            SkillParameter(
-                "md_temperature", "float", "Exploration temperature (K)", default=300.0
-            ),
-            SkillParameter(
-                "max_iterations", "int", "Active-learning iterations", default=5
-            ),
-            SkillParameter(
-                "uncertainty_threshold",
-                "float",
-                "Force uncertainty threshold for re-labeling",
-                default=0.5,
-            ),
-        ],
-        steps=[
-            SkillStep(
-                name="train_initial",
-                tool="potential_tool",
-                input_mapping={
-                    "action": "'train'",
-                    "structures": "$initial_structures",
-                    "potential_type": "$potential_type",
-                },
-                output_key="potential",
-            ),
-            SkillStep(
-                name="run_exploratory_md",
-                tool="lammps_tool",
-                input_mapping={
-                    "action": "'md'",
-                    "structure_file": "$initial_structures[0]",
-                    "potential": "$potential.file",
-                    "temperature": "$md_temperature",
-                },
-                output_key="trajectory",
-            ),
-            SkillStep(
-                name="identify_uncertain_frames",
-                tool="validate_tool",
-                input_mapping={
-                    "check_type": "'uncertainty'",
-                    "data": "$trajectory.frames",
-                    "threshold": "$uncertainty_threshold",
-                },
-                output_key="uncertain_frames",
-            ),
-        ],
-        required_tools=["potential_tool", "lammps_tool", "validate_tool"],
-        tags=["ml_potential", "active_learning", "sampling"],
     )
 )
 

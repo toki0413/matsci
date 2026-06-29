@@ -888,7 +888,6 @@ WORKFLOW_TEMPLATES = {
     "aimd": aimd_workflow,
     "defect": defect_workflow,
     "surface": surface_workflow,
-    "ml_potential": ml_potential_workflow,
     "symbolic_verify": symbolic_verify_workflow,
     "tensor_calculus_verify": tensor_calculus_verify_workflow,
     "fem_verify": fem_verify_workflow,
