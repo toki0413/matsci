@@ -18,12 +18,82 @@ from huginn.agents.tool_call_router import (
 )
 from huginn.phases import (
     _CORE_TOOLS,
-    PHASE_TOOLS,
     PhaseManager,
     ResearchPhase,
 )
 from huginn.tools.adapter import _TOOL_CONSTRAINT_SCOPES
 from huginn.tools.registry import ToolRegistry
+
+
+# ── Frozen snapshots of pre-migration dispatch values ──────────────────
+# These capture the old hardcoded PHASE_TOOLS dict so the regression test
+# compares metadata-derived values against the historical baseline, not
+# against the live (now also derived) PHASE_TOOLS dict.
+_FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
+    ResearchPhase.LITERATURE: _CORE_TOOLS | {
+        "browser_tool",
+        "database_tool",
+        "materials_database_tool",
+        "extract_tool",
+        "symbolic_math_tool",
+    },
+    ResearchPhase.HYPOTHESIS: _CORE_TOOLS | {
+        "symbolic_math_tool",
+        "symbolic_regression_tool",
+        "descriptor_tool",
+        "database_tool",
+        "materials_database_tool",
+        "autodiff_tool",
+    },
+    ResearchPhase.PLANNING: _CORE_TOOLS | {
+        "structure_tool",
+        "symmetry_tool",
+        "descriptor_tool",
+        "symbolic_math_tool",
+        "parameters",
+        "packing_tool",
+        "tda",
+    },
+    ResearchPhase.EXECUTION: _CORE_TOOLS | {
+        "vasp_tool",
+        "qe_tool",
+        "cp2k_tool",
+        "lammps_tool",
+        "openfoam_tool",
+        "comsol_tool",
+        "abaqus_tool",
+        "job_tool",
+        "orchestrate",
+        "high_throughput_tool",
+        "ml_potential_tool",
+        "structure_tool",
+        "packing_tool",
+    },
+    ResearchPhase.VALIDATION: _CORE_TOOLS | {
+        "validate_tool",
+        "uq_tool",
+        "gp_tool",
+        "symbolic_math_tool",
+        "autodiff_tool",
+        "diagnose_tool",
+        "characterization_tool",
+        "experimental_data_tool",
+        "diff_tool",
+        "active_learning_tool",
+        "symbolic_regression_tool",
+        "symmetry_tool",
+        "evidence_fusion_tool",
+        "tda",
+    },
+    ResearchPhase.REPORTING: _CORE_TOOLS | {
+        "report_tool",
+        "visualize_tool",
+        "diff_tool",
+        "symbolic_math_tool",
+        "extract_tool",
+    },
+    ResearchPhase.OPEN: None,
+}
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -144,7 +214,7 @@ class TestPhaseDerivation:
         ],
     )
     def test_phase_tools_match(self, phase: ResearchPhase):
-        old_set = PHASE_TOOLS[phase]
+        old_set = _FROZEN_PHASE_TOOLS[phase]
         if old_set is None:
             pytest.skip("OPEN phase has no filter")
         derived = self._derived_for_phase(phase)

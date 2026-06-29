@@ -191,4 +191,10 @@ def register_all_tools(config: Any | None = None) -> list[str]:
     except Exception as exc:
         logger.warning(f"Science-skills bridge registration failed: {exc}")
 
+    # Rebuild dispatch tables from ToolProfile metadata so the phase
+    # filters track the registered tools' declared phases.
+    from huginn.phases import _rebuild_phase_tools
+
+    _rebuild_phase_tools()
+
     return ToolRegistry.list_tools()
