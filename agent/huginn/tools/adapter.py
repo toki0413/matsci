@@ -306,6 +306,47 @@ class ToolAdapter:
 
             return False, reason
 
+        def _needs_confirmation(input_data: BaseModel) -> str | None:
+            """破坏性/高成本操作要用户确认, 返回提问文案; 不需要则 None."""
+            try:
+                if tool.is_destructive(input_data):
+                    return f"工具 {tool.name} 将执行破坏性操作"
+            except Exception:
+                pass
+            try:
+                cost = tool.estimate_cost(input_data)
+                if cost:
+                    wt = cost.get("walltime_hours", 0)
+                    cpu = cost.get("cpu_hours", 0)
+                    if wt > 0.5 or cpu > 2:
+                        return f"工具 {tool.name} 预计耗时 {wt:.1f}h ({cpu:.1f} CPU核时)"
+            except Exception:
+                pass
+            return None
+
+        async def _ask_confirmation(
+            context: ToolContext, question: str
+        ) -> bool:
+            """通过 ClarificationManager 问用户, 返回是否确认."""
+            try:
+                from huginn.interaction.clarification import (
+                    get_clarification_manager,
+                )
+                mgr = get_clarification_manager()
+                tid = getattr(context, "session_id", None) or "default"
+                answer = await mgr.ask(
+                    thread_id=tid,
+                    question=f"⚠️ {question}. 确认执行？",
+                    options=["确认执行", "取消"],
+                    context=f"工具 {tool.name} 调用前确认",
+                    default_answer="取消",
+                    timeout=120.0,
+                )
+                return answer == "确认执行"
+            except Exception:
+                # ClarificationManager 不可用时不阻断
+                return True
+
         def _build_inputs(
             **kwargs: Any,
         ) -> tuple[BaseModel | dict[str, Any], ToolContext]:
@@ -500,6 +541,30 @@ class ToolAdapter:
                 _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
                 return output
 
+            # 硬确认门: 破坏性/高成本操作必须用户先点头, 不让 LLM 自己拍板.
+            # HUGINN_AUTO_APPROVE=1 时跳过 (CI / benchmark 场景).
+            if os.environ.get("HUGINN_AUTO_APPROVE") != "1":
+                confirm_q = _needs_confirmation(input_data)
+                if confirm_q:
+                    confirmed = await _ask_confirmation(context, confirm_q)
+                    if not confirmed:
+                        output = {
+                            "error": f"用户取消了 {tool.name} 调用",
+                            "_user_cancelled": True,
+                        }
+                        _audit(
+                            input_data,
+                            output,
+                            approved=False,
+                            reason="user_cancelled",
+                        )
+                        _publish(
+                            PetMood.ERROR,
+                            f"{tool.name} cancelled by user",
+                            {"reason": confirm_q},
+                        )
+                        return output
+
             validation = await tool.validate_input(input_data, context)
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
@@ -654,6 +719,47 @@ class ToolAdapter:
                 _audit(input_data, output, approved=False, reason=reason)
                 _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
                 return output
+
+            # 硬确认门 (同步版): 把 async _ask_confirmation 套进 event loop.
+            # 跟上面 _smart_compress_output 同款套路: 先试 asyncio.run, 撞上
+            # 已有 loop 就新开一个跑.
+            if os.environ.get("HUGINN_AUTO_APPROVE") != "1":
+                confirm_q = _needs_confirmation(input_data)
+                if confirm_q:
+                    try:
+                        try:
+                            asyncio.get_running_loop()
+                            loop = asyncio.new_event_loop()
+                            try:
+                                confirmed = loop.run_until_complete(
+                                    _ask_confirmation(context, confirm_q)
+                                )
+                            finally:
+                                loop.close()
+                        except RuntimeError:
+                            confirmed = asyncio.run(
+                                _ask_confirmation(context, confirm_q)
+                            )
+                    except Exception:
+                        # ClarificationManager 不可用时安全放行, 不阻断
+                        confirmed = True
+                    if not confirmed:
+                        output = {
+                            "error": f"用户取消了 {tool.name} 调用",
+                            "_user_cancelled": True,
+                        }
+                        _audit(
+                            input_data,
+                            output,
+                            approved=False,
+                            reason="user_cancelled",
+                        )
+                        _publish(
+                            PetMood.ERROR,
+                            f"{tool.name} cancelled by user",
+                            {"reason": confirm_q},
+                        )
+                        return output
 
             validation_result = tool.validate_input(input_data, context)
             if asyncio.iscoroutine(validation_result):
