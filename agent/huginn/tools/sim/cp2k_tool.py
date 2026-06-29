@@ -13,8 +13,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.phases import ResearchPhase
 from huginn.security import SandboxConfig, SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -55,6 +56,16 @@ class Cp2kTool(HuginnTool):
         "Falls back to exporting the input file when CP2K is not installed."
     )
     input_schema = Cp2kToolInput
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="dft",
+        light_alternatives=(
+            "materials_database_tool",
+            "local_structure_db",
+            "symbolic_math_tool",
+        ),
+    )
 
     def __init__(
         self, cp2k_executable: str | None = None, sandbox: SandboxExecutor | None = None

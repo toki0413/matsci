@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.security import SandboxConfig, SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -55,6 +55,16 @@ class QuantumEspressoTool(HuginnTool):
 
     name = "qe_tool"
     category = "sim"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="dft",
+        light_alternatives=(
+            "materials_database_tool",
+            "local_structure_db",
+            "symbolic_math_tool",
+        ),
+    )
     description = (
         "Generate and run Quantum ESPRESSO DFT calculations. "
         "Falls back to exporting the input file when pw.x is not installed."

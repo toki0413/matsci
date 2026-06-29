@@ -17,7 +17,7 @@ import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.security.sandbox import SandboxConfig, SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 _ELEMENT_COLORS: dict[str, str] = {
@@ -83,6 +83,7 @@ class PackingTool(HuginnTool):
 
     name = "packing_tool"
     category = "sim"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.EXECUTION}))
     description = (
         "Pack molecules or particles into a simulation box and render 3D previews. "
         "Outputs XYZ/PDB/LAMMPS-data and can export a Packmol input file."

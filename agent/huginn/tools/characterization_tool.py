@@ -15,7 +15,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -42,6 +42,7 @@ class CharacterizationTool(HuginnTool):
 
     name = "characterization_tool"
     category = "cv"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Detect peaks in XRD/spectroscopy data, fit PDFs, and analyze "
         "microscopy / XPS data."

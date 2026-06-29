@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -28,6 +28,7 @@ class ExtractTool(HuginnTool):
 
     name = "extract_tool"
     category = "core"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.REPORTING}))
     description = "Extract mathematical semantics (equations, constraints, approximations) from simulation input files using math-anything"
     input_schema = ExtractToolInput
 

@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -36,6 +36,7 @@ class DatabaseTool(HuginnTool):
 
     name = "database_tool"
     category = "core"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.HYPOTHESIS}))
     description = "Search materials databases (Materials Project, AFLOW, NOMAD, OQMD) for structures, properties, and literature data"
     input_schema = DatabaseToolInput
 

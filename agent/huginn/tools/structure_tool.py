@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.local_structure_db import LocalStructureDB
 from huginn.tools.tool_cache import cacheable
 from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
@@ -78,6 +78,10 @@ class StructureTool(HuginnTool):
 
     name = "structure_tool"
     category = "core"
+    profile = ToolProfile(
+        cost_tier="light",
+        phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.EXECUTION}),
+    )
     description = (
         "Read, analyze, and convert crystal structure files (POSCAR, CIF, XYZ)"
     )

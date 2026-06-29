@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -382,6 +382,7 @@ class ReportTool(HuginnTool):
 
     name = "report_tool"
     category = "core"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.REPORTING}))
     description = (
         "Automatically generate computational reports (Markdown/LaTeX/HTML/JSON) "
         "from DFT/MD simulation results, including methods, structures, convergence, "

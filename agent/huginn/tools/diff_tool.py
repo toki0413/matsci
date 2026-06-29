@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -84,6 +84,7 @@ class DiffTool(HuginnTool):
 
     name = "diff_tool"
     category = "core"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION, ResearchPhase.REPORTING}))
     description = "Semantically compare two calculations: parameter changes, mathematical structure differences, and physical implications"
     input_schema = DiffToolInput
 

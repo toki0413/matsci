@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 
 # Rough spin-only magnetic moment estimates for common transition metals
@@ -87,6 +87,7 @@ class SymmetryTool(HuginnTool):
 
     name = "symmetry_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.VALIDATION}))
     description = (
         "Analyze crystal symmetry: space group, point group, Wyckoff positions, "
         "symmetry operations, primitive/conventional cells, and high-symmetry "

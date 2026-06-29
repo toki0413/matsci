@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -111,6 +111,7 @@ class SpecialtyAnalysisTool(HuginnTool):
 
     name = "specialty_analysis_tool"
     category = "sim"
+    profile = ToolProfile(constraint_scope="fea")
     description = (
         "Specialty structural analyses: eigenvalue buckling (K_G φ = λ K φ), "
         "modal analysis (Lanczos shift-invert), fatigue (Basquin S-N + Paris "

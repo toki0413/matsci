@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from huginn.hpc.client import HPCConfig
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
 
@@ -84,6 +84,7 @@ class JobTool(HuginnTool):
 
     name = "job_tool"
     category = "core"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.EXECUTION}))
     description = "Submit, monitor, and cancel computational jobs on HPC clusters (Slurm/PBS). Supports remote SSH submission."
     input_schema = JobToolInput
 

@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -61,6 +61,12 @@ class MLPotentialTool(HuginnTool):
 
     name = "ml_potential_tool"
     category = "sci"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        heavy_actions=frozenset({"train", "fit", "training"}),
+        light_alternatives=("materials_database_tool", "numerical_tool"),
+    )
     description = (
         "Predict energy/forces/stress with MACE, CHGNet, or NEP ML potentials "
         "and optionally relax or fine-tune structures."

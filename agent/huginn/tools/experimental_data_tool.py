@@ -12,7 +12,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -55,6 +55,7 @@ class ExperimentalDataTool(HuginnTool):
 
     name = "experimental_data_tool"
     category = "materials"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Load XRD patterns, detect peaks, compute d-spacings, "
         "and read SEM/TEM image metadata."

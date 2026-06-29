@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
 from pydantic import BaseModel, Field
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
 
@@ -57,6 +57,7 @@ class BrowserTool(HuginnTool):
 
     name = "browser_tool"
     category = "search"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.LITERATURE}))
     description = "Simulate human browser interactions — login, click, scroll, input, fill forms, and extract information from web pages"
     input_schema = BrowserToolInput
 

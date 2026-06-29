@@ -16,7 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.security import SandboxConfig, SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -143,6 +143,12 @@ class AbaqusTool(HuginnTool):
 
     name = "abaqus_tool"
     category = "sim"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="fea",
+        light_alternatives=("symbolic_math_tool", "numerical_tool"),
+    )
     description = (
         "Generate Abaqus Python scripts, e.g. to import packed particles as "
         "reference points or spherical inclusions, and run them via the Abaqus "

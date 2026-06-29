@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -38,6 +38,7 @@ class VisualizeTool(HuginnTool):
 
     name = "visualize_tool"
     category = "cv"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.REPORTING}))
     description = (
         "Create matplotlib figures from benchmark, evolution, or exploration reports"
     )

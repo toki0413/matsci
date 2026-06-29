@@ -10,7 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.constraints import ConstraintAdapter
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 from huginn.validation.physics import PhysicsValidator
 
@@ -114,6 +114,7 @@ class ValidateTool(HuginnTool):
 
     name = "validate_tool"
     category = "core"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Run physical validation checks on calculation results: energy signs, "
         "convergence, band gaps, force thresholds, etc."

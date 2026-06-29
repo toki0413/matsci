@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 # scikit-fem 在 tool.py 顶部导入 — 缺失时 ImportError 让 optional_modules 跳过注册
@@ -70,6 +70,7 @@ class FEMTool(HuginnTool):
 
     name = "fem_tool"
     category = "sim"
+    profile = ToolProfile(constraint_scope="fea")
     description = (
         "Lightweight FEM via scikit-fem: 2D linear static/modal/buckling "
         "for plane stress/strain. Generates mesh from geometry, assembles "

@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 from huginn.workflows.high_throughput import (
     GridSpace,
@@ -59,6 +59,7 @@ class HighThroughputTool(HuginnTool):
 
     name = "high_throughput_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.EXECUTION}))
     description = (
         "Run a parameter sweep or screening campaign over a registered tool. "
         "Supports grid, random, and Latin hypercube sampling. Returns aggregated "

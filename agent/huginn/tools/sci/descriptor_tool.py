@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -107,6 +107,7 @@ class DescriptorTool(HuginnTool):
 
     name = "descriptor_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.PLANNING}))
     description = (
         "Compute composition and structure descriptors for machine-learning "
         "materials screening."

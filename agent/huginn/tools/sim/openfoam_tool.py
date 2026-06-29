@@ -16,7 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.security import SandboxExecutor
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
@@ -66,6 +66,12 @@ class OpenFoamTool(HuginnTool):
 
     name = "openfoam_tool"
     category = "sim"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="cfd",
+        light_alternatives=("symbolic_math_tool", "numerical_tool"),
+    )
     description = (
         "Generate and run OpenFOAM CFD cases. "
         "Falls back to exporting case files when OpenFOAM is not installed."

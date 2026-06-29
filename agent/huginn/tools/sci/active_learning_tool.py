@@ -15,7 +15,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.gp_tool import NumPyGP
 from huginn.types import ToolContext, ToolResult
 
@@ -68,6 +68,7 @@ class ActiveLearningTool(HuginnTool):
 
     name = "active_learning_tool"
     category = "sci"
+    profile = ToolProfile(phases=frozenset({ResearchPhase.VALIDATION}))
     description = (
         "Load experimental data, fit a GP surrogate, and recommend the next "
         "synthesis conditions to optimize a target property."
