@@ -88,6 +88,26 @@ class TestParsePattern:
         )
         assert not result.success
 
+    async def test_parse_pattern_empty_csv(self, tool, context, tmp_path):
+        """空 CSV 或只有注释行时应返回友好错误。"""
+        csv = tmp_path / "empty.csv"
+        csv.write_text("# only comments\n# nothing else\n", encoding="utf-8")
+        result = await tool.call(
+            {"action": "parse_pattern", "file_path": str(csv)}, context
+        )
+        assert not result.success
+        assert "empty" in result.error.lower()
+
+    async def test_parse_pattern_single_column(self, tool, context, tmp_path):
+        """单列 CSV 应返回列数不足错误。"""
+        csv = tmp_path / "single.csv"
+        csv.write_text("10.0\n20.0\n30.0\n", encoding="utf-8")
+        result = await tool.call(
+            {"action": "parse_pattern", "file_path": str(csv)}, context
+        )
+        assert not result.success
+        assert "column" in result.error.lower()
+
 
 @pytest.mark.asyncio
 class TestComparePatterns:
@@ -113,6 +133,41 @@ class TestComparePatterns:
         assert result.data["n_matched"] == 3
         assert len(result.data["unmatched_experimental"]) == 1
         assert pytest.approx(result.data["overlap_ratio"], rel=1e-3) == (2 * 3) / (4 + 3)
+
+    async def test_compare_patterns_with_experimental_file(self, tool, context, tmp_path):
+        """compare_patterns should parse experimental_file (not file_path) for peaks."""
+        pytest.importorskip("scipy", reason="scipy not installed")
+        import numpy as np
+
+        # 写一个简单的实验 CSV：两个峰
+        two_theta = np.linspace(10.0, 90.0, 801)
+        intensity = (
+            10.0
+            + 100.0 * np.exp(-((two_theta - 28.4) ** 2) / 0.5)
+            + 60.0 * np.exp(-((two_theta - 47.3) ** 2) / 0.5)
+        )
+        csv = tmp_path / "experimental.csv"
+        lines = ["# two_theta,intensity"]
+        for t, y in zip(two_theta, intensity):
+            lines.append(f"{t:.3f},{y:.3f}")
+        csv.write_text("\n".join(lines), encoding="utf-8")
+
+        sim_peaks = [
+            {"two_theta": 28.4, "intensity": 100.0, "hkls": [(1, 1, 1)]},
+            {"two_theta": 47.3, "intensity": 60.0, "hkls": [(2, 2, 0)]},
+        ]
+        result = await tool.call(
+            {
+                "action": "compare_patterns",
+                "simulated_peaks": sim_peaks,
+                "experimental_file": str(csv),
+                "tolerance": 0.5,
+            },
+            context,
+        )
+        assert result.success, f"compare_patterns failed: {result.error}"
+        assert result.data["n_matched"] >= 2
+        assert result.data["n_experimental"] >= 2
 
 
 @pytest.mark.asyncio
