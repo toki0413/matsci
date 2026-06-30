@@ -184,7 +184,11 @@ class SymmetryTool(HuginnTool):
             spg_symbol = sga.get_space_group_symbol()
             pg_symbol = sga.get_point_group_symbol()
             crystal_system = sga.get_crystal_system()
-            laue = sga.get_laue()
+            # get_laue() was dropped in newer pymatgen; is_laue() returns a bool
+            if hasattr(sga, "get_laue"):
+                laue = sga.get_laue()
+            else:
+                laue = "centrosymmetric" if sga.is_laue() else "non-centrosymmetric"
             wyckoff = sga.get_symmetry_dataset().get("wyckoffs", [])
             equivalents = sga.get_symmetry_dataset().get("equivalent_atoms", [])
 
@@ -301,10 +305,14 @@ class SymmetryTool(HuginnTool):
     def _kpath(self, sga, structure, density: int) -> ToolResult:
         """Generate high-symmetry k-point path for band structure calculations."""
         try:
-            # pymatgen's HighSymmPath gives the standard k-path per crystal system
-            from pymatgen.symmetry.bandstructure import HighSymmPath
+            # pymatgen's HighSymmKpath gives the standard k-path per crystal system
+            # (renamed from HighSymmPath in newer versions)
+            try:
+                from pymatgen.symmetry.bandstructure import HighSymmKpath as _KpathCls
+            except ImportError:
+                from pymatgen.symmetry.bandstructure import HighSymmPath as _KpathCls
 
-            hsp = HighSymmPath(structure)
+            hsp = _KpathCls(structure)
             kpath = hsp.get_kpoints(
                 line_density=density,
                 coords_are_cartesian=False,
