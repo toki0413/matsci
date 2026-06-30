@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from huginn.config import HuginnConfig
+from huginn.config import HuginnConfig, get_config
 from huginn.project_context import (
     context_source,
     load_project_context,
