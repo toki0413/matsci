@@ -139,6 +139,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.active_learning_tool", "ActiveLearningTool"),
         ("huginn.tools.ml_potential_tool", "MLPotentialTool"),
         ("huginn.tools.high_throughput_tool", "HighThroughputTool"),
+        ("huginn.tools.xrd_sim_tool", "XrdSimTool"),
         # ── design/ ──
         ("huginn.tools.gap_analysis_tool", "GapAnalysisTool"),
         ("huginn.tools.doe_tool", "DOETool"),
