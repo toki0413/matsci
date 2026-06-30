@@ -2,7 +2,15 @@
 
 from pathlib import Path
 
+import pytest
+
 from huginn.tools.abaqus_tool import AbaqusTool, AbaqusToolInput
+
+
+@pytest.fixture(autouse=True)
+def _skip_abaqus_execution(monkeypatch):
+    # 这些用例只校验脚本生成，不要真的去跑 abaqus cae
+    monkeypatch.setattr(AbaqusTool, "_find_abaqus", lambda self: None)
 
 
 def test_abaqus_tool_import_packing_reference_points(tmp_path: Path) -> None:

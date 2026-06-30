@@ -106,7 +106,8 @@ def _default_audit_logger() -> AuditLogger:
     """Return a default audit logger for tool invocations."""
     from pathlib import Path
 
-    log_path = Path.home() / ".huginn" / "audit.jsonl"
+    base = os.environ.get("HUGINN_CACHE_DIR")
+    log_path = Path(base) / "audit.jsonl" if base else Path.home() / ".huginn" / "audit.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return AuditLogger(log_path)
 
