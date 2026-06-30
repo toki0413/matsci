@@ -47,11 +47,13 @@ class TestRequireApiKey:
         assert require_api_key(req, None) == ""
 
     def test_valid_key(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
         monkeypatch.setenv("HUGINN_API_KEY", "secret")
         req = _make_request("/tools", {"X-HUGINN-API-KEY": "secret"})
         assert require_api_key(req, None) == "secret"
 
     def test_invalid_key(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
         monkeypatch.setenv("HUGINN_API_KEY", "secret")
         req = _make_request("/tools", {"X-HUGINN-API-KEY": "wrong"})
         with pytest.raises(HTTPException) as exc:
@@ -68,11 +70,13 @@ class TestRequireAdminKey:
         assert require_admin_key(req, None) == ""
 
     def test_admin_key_required(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
         monkeypatch.setenv("HUGINN_ADMIN_API_KEY", "admin-secret")
         req = _make_request("/config", {"X-HUGINN-ADMIN-API-KEY": "admin-secret"})
         assert require_admin_key(req, None) == "admin-secret"
 
     def test_invalid_admin_key(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
         monkeypatch.setenv("HUGINN_ADMIN_API_KEY", "admin-secret")
         req = _make_request("/config", {"X-HUGINN-ADMIN-API-KEY": "wrong"})
         with pytest.raises(HTTPException) as exc:
