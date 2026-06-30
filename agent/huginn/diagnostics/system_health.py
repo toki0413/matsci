@@ -387,7 +387,7 @@ class SystemHealthMonitor:
             severity=severity,
             value=m.cpu_percent,
             threshold=self._policy.cpu_percent,
-            message=f"CPU usage {m.cpu_percent:.1f}% sustained above {self._policy.cpu_percent:.0f}%",
+            message=f"CPU usage {m.cpu_percent:.1f}% above {self._policy.cpu_percent:.0f}%",
             evidence={"top_processes": top, "load_avg": m.load_avg},
             recommendations=[
                 "降低并行工具数 (HUGINN_MAX_PARALLEL_TOOLS)",

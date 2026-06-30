@@ -204,4 +204,15 @@ def register_all_tools(config: Any | None = None) -> list[str]:
     _rebuild_router_tables()
     _rebuild_constraint_scopes()
 
+    # 启动系统资源监控后台线程 (feature flag 关了就跳过)
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        if FeatureFlags.shared().is_enabled("system_health_monitor"):
+            from huginn.diagnostics.system_health import SystemHealthMonitor
+
+            SystemHealthMonitor.shared().start()
+    except Exception as exc:
+        logger.warning(f"System health monitor failed to start: {exc}")
+
     return ToolRegistry.list_tools()
