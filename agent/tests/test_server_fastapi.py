@@ -98,7 +98,8 @@ class TestHealthEndpoints:
 
 
 class TestConfigEndpoints:
-    def test_get_config_requires_admin(self, client):
+    def test_get_config_requires_admin(self, client, monkeypatch):
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
         response = client.get("/config")
         assert response.status_code == 401
 
