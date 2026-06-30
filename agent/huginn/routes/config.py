@@ -32,12 +32,18 @@ from huginn.server_core import get_context
 
 router = APIRouter(tags=["config"])
 
+# Runtime override for the config file path, set by encrypt/decrypt endpoints.
+# Kept separate from os.environ so tests don't leak state across requests.
+_config_path_override: Path | None = None
+
 
 # ── 内部工具 ────────────────────────────────────────────────────
 
 
 def _config_path() -> Path:
-    """配置文件路径: 优先 HUGINN_CONFIG_FILE, 否则工作目录下 huginn.toml."""
+    """配置文件路径: 优先运行时覆盖, 其次 HUGINN_CONFIG_FILE, 否则工作目录下 huginn.toml."""
+    if _config_path_override is not None:
+        return _config_path_override
     raw = os.environ.get("HUGINN_CONFIG_FILE")
     if raw:
         return Path(raw)
@@ -488,7 +494,8 @@ async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
     try:
         cfg.save(enc_path, format="json")
         # 切到加密文件后, 后续 load 都走这个路径
-        os.environ["HUGINN_CONFIG_FILE"] = str(enc_path)
+        global _config_path_override
+        _config_path_override = enc_path
     except Exception as e:
         traceback.print_exc()
         return {"success": False, "error": str(e)}
@@ -529,7 +536,8 @@ async def decrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         plain_path = plain_path.with_suffix(".toml")
     try:
         cfg.save(plain_path, format="toml")
-        os.environ["HUGINN_CONFIG_FILE"] = str(plain_path)
+        global _config_path_override
+        _config_path_override = plain_path
         # 解密成功后删掉 .enc, 避免下次又走加密路径
         try:
             enc_path.unlink()
