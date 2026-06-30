@@ -149,7 +149,7 @@ def test_uq_tool() -> None:
         return
 
     ctx = make_context()
-    result = tool.call(
+    result = asyncio.run(tool.call(
         {
             "action": "monte_carlo",
             "expression": "E * epsilon",
@@ -160,7 +160,7 @@ def test_uq_tool() -> None:
             "n_samples": 5000,
         },
         ctx,
-    )
+    ))
     print(f"  success: {result.success}")
     if result.success and result.data:
         d = result.data

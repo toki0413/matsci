@@ -556,7 +556,11 @@ class ToolAdapter:
 
             # 硬确认门: 破坏性/高成本操作必须用户先点头, 不让 LLM 自己拍板.
             # HUGINN_AUTO_APPROVE=1 时跳过 (CI / benchmark 场景).
-            if os.environ.get("HUGINN_AUTO_APPROVE") != "1":
+            if (
+                os.environ.get("HUGINN_AUTO_APPROVE") != "1"
+                and not permission_config.auto_approve_all
+                and approval_callback is None
+            ):
                 confirm_q = _needs_confirmation(input_data)
                 if confirm_q:
                     confirmed = await _ask_confirmation(context, confirm_q)
@@ -736,7 +740,11 @@ class ToolAdapter:
             # 硬确认门 (同步版): 把 async _ask_confirmation 套进 event loop.
             # 跟上面 _smart_compress_output 同款套路: 先试 asyncio.run, 撞上
             # 已有 loop 就新开一个跑.
-            if os.environ.get("HUGINN_AUTO_APPROVE") != "1":
+            if (
+                os.environ.get("HUGINN_AUTO_APPROVE") != "1"
+                and not permission_config.auto_approve_all
+                and approval_callback is None
+            ):
                 confirm_q = _needs_confirmation(input_data)
                 if confirm_q:
                     try:

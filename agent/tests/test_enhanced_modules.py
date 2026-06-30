@@ -306,7 +306,7 @@ class TestUQTool:
 
     def test_pce_linear_function(self, tool):
         """PCE on y=a+b with uniform[0,1] variables should recover mean≈1."""
-        result = tool.call(
+        result = asyncio.run(tool.call(
             {
                 "action": "pce",
                 "expression": "a + b",
@@ -317,7 +317,7 @@ class TestUQTool:
                 "order": 3,
                 "seed": 42,
             }
-        )
+        ))
         assert result.success, result.error
         data = result.data
         assert data["method"] == "pce"
@@ -328,7 +328,7 @@ class TestUQTool:
 
     def test_morris_elementary_effects(self, tool):
         """Morris on y=x0+2*x1 should give mu_star ≈ [1, 2]."""
-        result = tool.call(
+        result = asyncio.run(tool.call(
             {
                 "action": "morris",
                 "expression": "x0 + 2*x1",
@@ -340,7 +340,7 @@ class TestUQTool:
                 "levels": 4,
                 "seed": 123,
             }
-        )
+        ))
         assert result.success, result.error
         ee = result.data["elementary_effects"]
         # Linear function → elementary effects are exactly the coefficients.

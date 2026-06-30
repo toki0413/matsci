@@ -20,6 +20,7 @@ class _StubRecord:
     error_message: str | None = None
     software: str | None = None
     calculation_type: str | None = None
+    reward: float | None = None
 
 
 class _StubLogger:
