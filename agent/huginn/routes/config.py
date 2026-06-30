@@ -599,17 +599,38 @@ async def toggle_feature_flag(feature: str, params: dict[str, Any]) -> dict[str,
 
 @router.get("/config/health", dependencies=[Depends(require_admin_key)])
 async def tool_health_endpoint() -> dict[str, Any]:
-    """所有工具的健康报告 + 总体统计.
+    """所有工具的健康报告 + 总体统计 + 系统资源指标.
 
-    返回 {tools: [...], summary: {...}}. tools 只包含有调用记录的工具,
-    summary 给整体成功率/工具数, 前端顶部条用.
+    返回 {tools: [...], summary: {...}, system: {...}}. tools 只包含有调用
+    记录的工具, summary 给整体成功率/工具数, system 给当前 CPU/内存/磁盘
+    负载和最近异常事件. 前端顶部条用.
     """
     from huginn.agents.health_dashboard import HealthDashboard
+    from huginn.diagnostics.system_health import SystemHealthMonitor
+    from huginn.feature_flags import FeatureFlags
 
     dash = HealthDashboard.shared()
     tools = dash.get_all()
     summary = dash.summary()
-    return {"tools": tools, "summary": summary, "count": len(tools)}
+
+    system: dict[str, Any] = {"enabled": False}
+    if FeatureFlags.shared().is_enabled("system_health_monitor"):
+        monitor = SystemHealthMonitor.shared()
+        system = {
+            "enabled": True,
+            "metrics": monitor.snapshot().to_dict(),
+            "running": monitor.is_running(),
+            "recent_anomalies": [
+                ev.to_dict() for ev in monitor.recent_anomalies(limit=5)
+            ],
+        }
+
+    return {
+        "tools": tools,
+        "summary": summary,
+        "count": len(tools),
+        "system": system,
+    }
 
 
 # ── /config/circuit ─────────────────────────────────────────────

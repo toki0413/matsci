@@ -168,6 +168,20 @@ class CircuitBreaker:
         with self._lock:
             return [self.get_stats(name) for name in self._states]
 
+    def force_open(self, tool_name: str, reason: str = "") -> None:
+        """强制熔断某个工具，不走失败累计逻辑。
+
+        系统健康监控发现某个工具在疯狂吃 CPU/内存时，直接把它拉到 open
+        状态，免得还要等 5 次失败才熔断。reason 会写进 last_error 方便排查。
+        """
+        with self._lock:
+            st = self._get_state(tool_name)
+            st.state = "open"
+            st.last_failure_time = time.time()
+            st.half_open_trials = 0
+            if reason:
+                st.last_error = reason
+
     def reset(self, tool_name: str | None = None) -> None:
         """手动重置。传 None 重置全部，传 tool_name 只重置一个。"""
         with self._lock:
