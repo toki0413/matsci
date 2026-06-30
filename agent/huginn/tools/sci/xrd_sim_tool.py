@@ -7,6 +7,8 @@ Complementary to characterization_tool (which only processes experimental data).
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
@@ -105,16 +107,44 @@ class XrdSimTool(HuginnTool):
         input_data = XrdSimToolInput(**args)
 
         if input_data.action == "simulate_xrd":
-            return self._simulate_xrd(input_data)
+            return self._simulate_xrd(input_data, context)
         elif input_data.action == "parse_pattern":
-            return self._parse_pattern(input_data)
+            return self._parse_pattern(input_data, context)
         elif input_data.action == "compare_patterns":
-            return self._compare_patterns(input_data)
+            return self._compare_patterns(input_data, context)
         elif input_data.action == "index_peaks":
-            return self._index_peaks(input_data)
+            return self._index_peaks(input_data, context)
         return ToolResult(data=None, success=False, error=f"Unknown action: {input_data.action}")
 
-    def _load_structure(self, input_data: XrdSimToolInput):
+    def _check_path(self, file_path: str | None, context: ToolContext | None) -> ToolResult | None:
+        """拒绝 workspace 外的路径，和 file_read_tool 保持一致的围栏逻辑。"""
+        if file_path is None:
+            return ToolResult(
+                data=None, success=False, error="file_path is required.",
+            )
+        allow_unrestricted = os.environ.get(
+            "HUGINN_ALLOW_UNRESTRICTED_READ", ""
+        ).lower() in ("1", "true", "yes")
+        if allow_unrestricted:
+            return None
+        work_dir = Path(context.workspace) if context and context.workspace else Path.cwd()
+        work_dir_resolved = work_dir.resolve()
+        target = (work_dir / file_path).resolve() if not Path(file_path).is_absolute() else Path(file_path).resolve()
+        try:
+            target.relative_to(work_dir_resolved)
+        except ValueError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    f"Access denied: {target} is outside the workspace "
+                    f"({work_dir_resolved}). Set HUGINN_ALLOW_UNRESTRICTED_READ=1 "
+                    "to override."
+                ),
+            )
+        return None
+
+    def _load_structure(self, input_data: XrdSimToolInput, context: ToolContext | None = None):
         """Load pymatgen Structure from file or string."""
         try:
             from pymatgen.core import Structure
@@ -128,6 +158,9 @@ class XrdSimTool(HuginnTool):
             if input_data.structure_str:
                 from io import StringIO
                 return Structure.from_file(StringIO(input_data.structure_str)), None
+            blocked = self._check_path(input_data.file_path, context)
+            if blocked is not None:
+                return None, blocked
             return Structure.from_file(input_data.file_path), None
         except Exception as e:
             return None, ToolResult(
@@ -136,7 +169,7 @@ class XrdSimTool(HuginnTool):
                 error=f"Failed to load structure: {e}",
             )
 
-    def _simulate_xrd(self, input_data: XrdSimToolInput) -> ToolResult:
+    def _simulate_xrd(self, input_data: XrdSimToolInput, context: ToolContext | None = None) -> ToolResult:
         try:
             from pymatgen.analysis.diffraction.xrd import XRDCalculator
         except ImportError:
@@ -146,7 +179,7 @@ class XrdSimTool(HuginnTool):
                 error="pymatgen is required for XRD simulation. Install with: pip install pymatgen",
             )
 
-        struct, err = self._load_structure(input_data)
+        struct, err = self._load_structure(input_data, context)
         if err is not None:
             return err
 
@@ -185,7 +218,7 @@ class XrdSimTool(HuginnTool):
             success=True,
         )
 
-    def _parse_pattern(self, input_data: XrdSimToolInput) -> ToolResult:
+    def _parse_pattern(self, input_data: XrdSimToolInput, context: ToolContext | None = None) -> ToolResult:
         try:
             from scipy.signal import find_peaks
         except ImportError:
@@ -194,6 +227,10 @@ class XrdSimTool(HuginnTool):
                 success=False,
                 error="scipy is required for peak detection. Install with: pip install scipy",
             )
+
+        blocked = self._check_path(input_data.file_path, context)
+        if blocked is not None:
+            return blocked
 
         try:
             data = np.loadtxt(input_data.file_path, delimiter=",", comments="#")
@@ -204,8 +241,24 @@ class XrdSimTool(HuginnTool):
                 error=f"Failed to parse XRD data file: {e}",
             )
 
+        if data.size == 0:
+            return ToolResult(
+                data=None, success=False,
+                error="XRD data file is empty or contains only comments.",
+            )
         if data.ndim == 1:
-            data = data.reshape(-1, 2)
+            # 1D 只允许单行两列的情况，多行单列无法和两列区分
+            if data.shape[0] != 2:
+                return ToolResult(
+                    data=None, success=False,
+                    error="XRD data file must have at least 2 columns (two_theta, intensity).",
+                )
+            data = data.reshape(1, 2)
+        if data.shape[1] < 2:
+            return ToolResult(
+                data=None, success=False,
+                error="XRD data file must have at least 2 columns (two_theta, intensity).",
+            )
         two_theta = data[:, 0]
         intensity = data[:, 1]
 
@@ -225,14 +278,16 @@ class XrdSimTool(HuginnTool):
         )
 
     def _compare_patterns(
-        self, input_data: XrdSimToolInput
+        self, input_data: XrdSimToolInput, context: ToolContext | None = None
     ) -> ToolResult:
         sim_peaks = input_data.simulated_peaks or []
         sim_positions = [p["two_theta"] for p in sim_peaks]
 
         # Get experimental peak positions
         if input_data.experimental_file:
-            exp_result = self._parse_pattern(input_data)
+            # _parse_pattern reads file_path, so point it at the experimental file
+            exp_input = input_data.model_copy(update={"file_path": input_data.experimental_file})
+            exp_result = self._parse_pattern(exp_input, context)
             if not exp_result.success:
                 return exp_result
             exp_positions = exp_result.data["peaks"]
@@ -284,7 +339,7 @@ class XrdSimTool(HuginnTool):
             success=True,
         )
 
-    def _index_peaks(self, input_data: XrdSimToolInput) -> ToolResult:
+    def _index_peaks(self, input_data: XrdSimToolInput, context: ToolContext | None = None) -> ToolResult:
         """Assign Miller indices to observed peaks by matching against simulated pattern."""
         try:
             from pymatgen.analysis.diffraction.xrd import XRDCalculator
@@ -295,7 +350,7 @@ class XrdSimTool(HuginnTool):
                 error="pymatgen is required for peak indexing. Install with: pip install pymatgen",
             )
 
-        struct, err = self._load_structure(input_data)
+        struct, err = self._load_structure(input_data, context)
         if err is not None:
             return err
 

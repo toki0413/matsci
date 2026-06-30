@@ -14,6 +14,21 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 
+# 点群 → Laue 类映射，get_laue() 被移除后用它来还原符号
+_POINT_GROUP_TO_LAUE: dict[str, str] = {
+    "1": "-1", "-1": "-1",
+    "2": "2/m", "m": "2/m", "2/m": "2/m",
+    "222": "mmm", "mm2": "mmm", "mmm": "mmm",
+    "4": "4/m", "-4": "4/m", "4/m": "4/m",
+    "422": "4/mmm", "4mm": "4/mmm", "-42m": "4/mmm", "4/mmm": "4/mmm",
+    "3": "-3", "-3": "-3",
+    "32": "-3m", "3m": "-3m", "-3m": "-3m",
+    "6": "6/m", "-6": "6/m", "6/m": "6/m",
+    "622": "6/mmm", "6mm": "6/mmm", "-6m2": "6/mmm", "6/mmm": "6/mmm",
+    "23": "m-3", "m-3": "m-3",
+    "432": "m-3m", "-43m": "m-3m", "m-3m": "m-3m",
+}
+
 # Rough spin-only magnetic moment estimates for common transition metals
 # and lanthanides, in Bohr magnetons.  These are typical values for common
 # oxidation states — actual moments depend on the local environment.
@@ -184,11 +199,12 @@ class SymmetryTool(HuginnTool):
             spg_symbol = sga.get_space_group_symbol()
             pg_symbol = sga.get_point_group_symbol()
             crystal_system = sga.get_crystal_system()
-            # get_laue() was dropped in newer pymatgen; is_laue() returns a bool
+            # get_laue() was dropped in newer pymatgen; 用点群符号还原 Laue 类
             if hasattr(sga, "get_laue"):
                 laue = sga.get_laue()
             else:
-                laue = "centrosymmetric" if sga.is_laue() else "non-centrosymmetric"
+                pg = str(sga.get_point_group_symbol())
+                laue = _POINT_GROUP_TO_LAUE.get(pg, pg)
             wyckoff = sga.get_symmetry_dataset().get("wyckoffs", [])
             equivalents = sga.get_symmetry_dataset().get("equivalent_atoms", [])
 
