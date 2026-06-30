@@ -179,9 +179,10 @@ class TestConfigWhitelist:
         assert data["success"] is False
         assert "Unknown config keys" in data["error"]
 
-    def test_valid_key_accepted(self, monkeypatch):
+    def test_valid_key_accepted(self, monkeypatch, tmp_path):
         # Ensure no side effects
         monkeypatch.delenv("HUGINN_PET_NAME", raising=False)
+        monkeypatch.setenv("HUGINN_CONFIG_FILE", str(tmp_path / "test_config.toml"))
         r = client.post("/config", json={"pet_name": "TestBot"})
         data = r.json()
         assert data["success"] is True

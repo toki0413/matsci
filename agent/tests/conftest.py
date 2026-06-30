@@ -25,14 +25,21 @@ os.environ.setdefault("HUGINN_CACHE_DIR", _TEST_CACHE_DIR)
 
 
 @pytest.fixture(autouse=True)
-def _clear_config_cache_between_tests():
-    """Clear the module-level config cache before and after each test.
+def _clear_config_cache_between_tests(monkeypatch):
+    """Clear config cache + config-path overrides before and after each test.
 
     Prevents one test's config (with models/api_key) from leaking into the
     next via _would_lose_auth_state, which compares against the cache.
+    Also resets the encrypt/decrypt runtime override so tests are isolated.
     """
     from huginn.config import clear_config_cache
 
+    monkeypatch.delenv("HUGINN_CONFIG_FILE", raising=False)
+    try:
+        from huginn.routes import config as _routes_config
+        _routes_config._config_path_override = None
+    except ImportError:
+        pass
     clear_config_cache()
     yield
     clear_config_cache()
