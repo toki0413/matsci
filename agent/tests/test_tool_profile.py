@@ -78,6 +78,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "symmetry_tool",
         "evidence_fusion_tool",
         "tda",
+        "xrd_sim_tool",
     },
     ResearchPhase.REPORTING: _CORE_TOOLS | {
         "report_tool",
@@ -85,6 +86,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "diff_tool",
         "symbolic_math_tool",
         "extract_tool",
+        "xrd_sim_tool",
     },
     ResearchPhase.OPEN: None,
 }
@@ -110,6 +112,7 @@ _FROZEN_LIGHT_TOOLS: set[str] = {
     "numerical_tool",
     "symbolic_regression_tool",
     "local_structure_db",
+    "xrd_sim_tool",
 }
 
 _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {
