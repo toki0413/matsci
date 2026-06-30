@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -56,7 +57,9 @@ class LongTermMemory:
         enable_semantic: bool = True,
     ):
         self.db_path = (
-            Path(db_path) if db_path else Path.home() / ".huginn" / "memory.db"
+            Path(db_path)
+            if db_path
+            else Path(os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")) / "memory.db"
         )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._vector_store = vector_store
