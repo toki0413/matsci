@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,10 @@ os.environ.setdefault("HUGINN_DEV_MODE", "1")
 # Tests that verify auth behavior override these via monkeypatch.
 os.environ.setdefault("HUGINN_API_KEY", "test-key")
 os.environ.setdefault("HUGINN_HPC_HOST", "testhost")
+# Redirect ~/.huginn writes to a test-local dir so tool_cache.sqlite and
+# memory.db don't fail with "unable to open database file" in sandboxed envs.
+_TEST_CACHE_DIR = str(Path(__file__).parent / ".test_cache")
+os.environ.setdefault("HUGINN_CACHE_DIR", _TEST_CACHE_DIR)
 
 
 @pytest.fixture(autouse=True)
