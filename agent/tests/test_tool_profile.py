@@ -70,6 +70,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "symbolic_math_tool",
         "autodiff_tool",
         "diagnose_tool",
+        "system_diagnostic_tool",
         "characterization_tool",
         "experimental_data_tool",
         "diff_tool",
@@ -113,6 +114,7 @@ _FROZEN_LIGHT_TOOLS: set[str] = {
     "symbolic_regression_tool",
     "local_structure_db",
     "xrd_sim_tool",
+    "system_diagnostic_tool",
 }
 
 _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {

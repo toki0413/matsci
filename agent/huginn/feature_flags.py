@@ -43,6 +43,8 @@ class FeatureFlags:
         "uq_propagate": True,          # 误差传播 GUM
         "circuit_breaker": True,       # 熔断器
         "health_dashboard": True,      # 健康仪表盘
+        "system_health_monitor": True,  # 系统资源监控 (CPU/内存/磁盘)
+        "system_health_auto_fix": False,  # 监控发现异常后自动熔断 (默认关, 只报告)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         "privacy_off": True,           # 不脱敏 (默认)
         "privacy_redact": False,       # 脱敏后发云端
@@ -66,6 +68,8 @@ class FeatureFlags:
         "uq_propagate": "误差传播 (GUM)",
         "circuit_breaker": "熔断器",
         "health_dashboard": "健康仪表盘",
+        "system_health_monitor": "系统资源监控 (CPU/内存/磁盘)",
+        "system_health_auto_fix": "监控异常后自动熔断工具 (默认关)",
         "privacy_off": "隐私级别: off (不脱敏, 默认)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
