@@ -86,25 +86,62 @@ class TestDatabaseToolMockFallback:
 
     @pytest.mark.asyncio
     async def test_aflow_no_key(self):
+        # AFLOW is a public API — no key needed. Mock aiohttp so we test
+        # the real path without hitting the network.
         args = DatabaseToolInput(
             database="aflow",
             query_type="search",
             formula="Si",
         )
-        result = await self.tool.call(args, self.ctx)
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=[
+            {"compound": "Si", "auid": "aflow:1", "Egap": 1.1}
+        ])
+        mock_session = AsyncMock()
+        mock_session.get = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_resp),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+        with patch("aiohttp.ClientSession", return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_session),
+            __aexit__=AsyncMock(return_value=False),
+        )):
+            result = await self.tool.call(args, self.ctx)
         assert result.success
-        assert result.data["mock"] is True
+        assert result.data["database"] == "aflow"
 
     @pytest.mark.asyncio
     async def test_nomad_no_key(self):
+        # NOMAD public data — no key needed. Mock aiohttp for offline test.
         args = DatabaseToolInput(
             database="nomad",
             query_type="search",
             formula="TiO2",
         )
-        result = await self.tool.call(args, self.ctx)
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={
+            "data": [{
+                "entry_id": "nomad-1",
+                "results": {
+                    "material": [{"chemical_formula_descriptive": "TiO2"}],
+                    "properties": {},
+                },
+            }]
+        })
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_resp),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+        with patch("aiohttp.ClientSession", return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_session),
+            __aexit__=AsyncMock(return_value=False),
+        )):
+            result = await self.tool.call(args, self.ctx)
         assert result.success
-        assert result.data["mock"] is True
+        assert result.data["database"] == "nomad"
 
     @pytest.mark.asyncio
     async def test_compare_no_keys(self):

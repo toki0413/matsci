@@ -56,6 +56,15 @@ def context(tmp_path):
     return ToolContext(session_id="test", workspace=str(tmp_path))
 
 
+@pytest.fixture(autouse=True)
+def _clear_tool_cache():
+    # @cacheable decorator uses a process-wide shared cache; prior tests
+    # may have cached local_db results that bypass our monkeypatches.
+    from huginn.tools.tool_cache import ToolCache
+    ToolCache.shared().clear()
+    yield
+
+
 @pytest.mark.asyncio
 async def test_mp_summary(tool, context, monkeypatch):
     async def _fake_get_json(session, url):
@@ -73,6 +82,8 @@ async def test_mp_summary(tool, context, monkeypatch):
         }
 
     monkeypatch.setattr(tool, "_get_json", _fake_get_json)
+    # Bypass local structure cache so the mocked API path is exercised
+    monkeypatch.setattr(tool, "_local_lookup", lambda *a, **kw: None)
 
     result = await tool.call(
         tool.input_schema(action="mp_summary", query="Si", limit=1), context
@@ -98,6 +109,7 @@ async def test_mp_structure_saves_json(tool, context, monkeypatch):
         }
 
     monkeypatch.setattr(tool, "_get_json", _fake_get_json)
+    monkeypatch.setattr(tool, "_local_lookup", lambda *a, **kw: None)
 
     result = await tool.call(
         tool.input_schema(action="mp_structure", query="mp-149", output_format="json"),
@@ -132,6 +144,8 @@ async def test_oqmd_query(tool, context, monkeypatch):
 async def test_mp_key_from_env(context, monkeypatch):
     monkeypatch.delenv("MP_API_KEY", raising=False)
     tool = MaterialsDatabaseTool()
+    # Bypass local cache so the missing-key error path is exercised
+    monkeypatch.setattr(tool, "_local_lookup", lambda *a, **kw: None)
     result = await tool.call(
         tool.input_schema(action="mp_summary", query="Si"), context
     )
@@ -154,6 +168,7 @@ async def test_http_error(tool, context, monkeypatch):
         raise RuntimeError("Database request failed (500): boom")
 
     monkeypatch.setattr(tool, "_get_json", _fake_get_json)
+    monkeypatch.setattr(tool, "_local_lookup", lambda *a, **kw: None)
 
     result = await tool.call(
         tool.input_schema(action="mp_summary", query="Si"), context

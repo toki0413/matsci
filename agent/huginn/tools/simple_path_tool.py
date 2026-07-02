@@ -275,11 +275,11 @@ class SimplePathTool(HuginnTool):
         if not isinstance(data.get("rationale"), str) or not data["rationale"]:
             data["rationale"] = "路径由 simple_path_tool 推荐"
 
-        # heavy_tools_avoided 补默认 + 去掉不是重型工具的
+        # heavy_tools_avoided: keep heavy + unknown tools, drop known-light ones
         avoided = data.get("heavy_tools_avoided")
         if not isinstance(avoided, list):
             avoided = []
-        avoided = sorted({str(t) for t in avoided if ToolSchedulingPolicy.is_heavy(str(t))})
+        avoided = sorted({str(t) for t in avoided if not ToolSchedulingPolicy.is_light(str(t))})
         data["heavy_tools_avoided"] = avoided
 
         # step_notes 补默认

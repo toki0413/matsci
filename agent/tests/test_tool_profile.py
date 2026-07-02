@@ -68,6 +68,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "structure_tool",
         "packing_tool",
         "workflow_tool",
+        "wetlab_rpc_tool",
     },
     ResearchPhase.VALIDATION: _CORE_TOOLS | {
         "validate_tool",

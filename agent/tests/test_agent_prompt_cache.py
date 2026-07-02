@@ -44,6 +44,7 @@ def _make_agent(
         begin_dialogs=begin_dialogs,
         memory_manager=memory_manager,
         prompt_cache_control=cache_control,
+        kb_enabled=False,
     )
 
 

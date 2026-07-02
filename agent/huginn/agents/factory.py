@@ -226,6 +226,7 @@ class AgentFactory:
         thinking: ThinkingIntensity | dict[str, Any] | None = None,
         max_tokens: int | None = None,
         approval_callback: Callable[[str, str], bool] | None = None,
+        system_prompt_override: str | None = None,
     ) -> HuginnAgent:
         """Convenience: create the lead/default agent."""
         kwargs: dict[str, Any] = {}
@@ -235,6 +236,8 @@ class AgentFactory:
             kwargs["max_tokens"] = max_tokens
         if approval_callback is not None:
             kwargs["approval_callback"] = approval_callback
+        if system_prompt_override is not None:
+            kwargs["system_prompt_override"] = system_prompt_override
         for preferred in ("lead", "default"):
             if preferred in self._profiles:
                 return self.create(preferred, thread_id=thread_id, **kwargs)

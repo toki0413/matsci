@@ -199,3 +199,16 @@ co_ox_results.md
 # Test artifacts
 agent/tests/.test_cache/
 agent/test_band.png
+
+# Local presentation / diagram / stress-test scratch (not part of source)
+_make_ppt*.py
+_gen_diagrams.py
+_diagrams/
+_serve_frontend.py
+_start_backend.py
+_start_dev.py
+_start_frontend.py
+_stress_test.py
+_ultra_stress_test.py
+_ultra_stress_results.txt
+Huginn_Agent_Overview.pptx
