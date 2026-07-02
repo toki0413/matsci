@@ -225,6 +225,11 @@ def curvature(args: "SymbolicMathInput") -> ToolResult:
 
     n_vec = cross(r_u, r_v)
     n_norm_sq = sum(c * c for c in n_vec)
+    if n_norm_sq == 0:
+        return ToolResult(
+            success=False,
+            error="退化曲面: r_u × r_v = 0, 法向量不存在",
+        )
     n_norm = sp.sqrt(n_norm_sq)
 
     # L = r_uu · n, M = r_uv · n, N = r_vv · n (用未归一化法向)
@@ -235,6 +240,11 @@ def curvature(args: "SymbolicMathInput") -> ToolResult:
     # 高斯曲率 K = (LN - M²) / (EG - F²)
     # 平均曲率 H = (EN - 2FM + GL) / (2(EG - F²))
     denom = sp.simplify(E * G - F**2)
+    if denom == 0:
+        return ToolResult(
+            success=False,
+            error="退化第一基本形式: EG - F² = 0, 曲率未定义",
+        )
     K = sp.simplify((L * N - M**2) / denom)
     H = sp.simplify((E * N - 2 * F * M + G * L) / (2 * denom))
 

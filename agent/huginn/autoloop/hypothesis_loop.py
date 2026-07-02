@@ -353,12 +353,9 @@ class HypothesisGraph:
             import asyncio
 
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 已有 loop 时不能 asyncio.run, 同步拿不了
-                    resp = model.invoke(messages)
-                else:
-                    raise RuntimeError("no running loop")
+                asyncio.get_running_loop()
+                # 已有 loop 时不能 asyncio.run, 同步拿不了
+                resp = model.invoke(messages)
             except RuntimeError:
                 resp = asyncio.run(model.ainvoke(messages))
             return str(resp.content).strip()
