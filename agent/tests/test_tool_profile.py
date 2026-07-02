@@ -30,6 +30,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "materials_database_tool",
         "extract_tool",
         "symbolic_math_tool",
+        "agentic_search_tool",
     },
     ResearchPhase.HYPOTHESIS: _CORE_TOOLS | {
         "symbolic_math_tool",
@@ -47,6 +48,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "parameters",
         "packing_tool",
         "tda",
+        "multi_fidelity_tool",
     },
     ResearchPhase.EXECUTION: _CORE_TOOLS | {
         "vasp_tool",
@@ -56,12 +58,16 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "openfoam_tool",
         "comsol_tool",
         "abaqus_tool",
+        "fenics_tool",
+        "elmer_tool",
+        "gromacs_tool",
         "job_tool",
         "orchestrate",
         "high_throughput_tool",
         "ml_potential_tool",
         "structure_tool",
         "packing_tool",
+        "workflow_tool",
     },
     ResearchPhase.VALIDATION: _CORE_TOOLS | {
         "validate_tool",
@@ -80,6 +86,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "evidence_fusion_tool",
         "tda",
         "xrd_sim_tool",
+        "multi_fidelity_tool",
     },
     ResearchPhase.REPORTING: _CORE_TOOLS | {
         "report_tool",
@@ -101,6 +108,7 @@ _FROZEN_HEAVY_TOOLS: set[str] = {
     "comsol_tool",
     "openfoam_tool",
     "ml_potential_tool",
+    "gromacs_tool",
 }
 
 _FROZEN_LIGHT_TOOLS: set[str] = {
@@ -115,6 +123,13 @@ _FROZEN_LIGHT_TOOLS: set[str] = {
     "local_structure_db",
     "xrd_sim_tool",
     "system_diagnostic_tool",
+    "git_tool",
+    "github_tool",
+    "multi_edit_tool",
+    "onboarding_tool",
+    "phase_tool",
+    "workflow_tool",
+    "multi_fidelity_tool",
 }
 
 _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {
@@ -154,6 +169,10 @@ _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {
         "materials_database_tool",
         "numerical_tool",
     ],
+    "gromacs_tool": [
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
 }
 
 _FROZEN_CONSTRAINT_SCOPES: dict[str, str] = {
@@ -167,6 +186,9 @@ _FROZEN_CONSTRAINT_SCOPES: dict[str, str] = {
     "structural_analytical_tool": "fea",
     "specialty_analysis_tool": "fea",
     "fem_tool": "fea",
+    "fenics_tool": "fem",
+    "elmer_tool": "fem",
+    "gromacs_tool": "md",
 }
 
 

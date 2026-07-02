@@ -119,11 +119,12 @@ class LiteratureInput(BaseModel):
     action: Literal[
         "search", "summarize", "benchmark_lookup",
         "fetch_pdf", "citations", "ingest_to_rag",
-        "crawl_web",
+        "crawl_web", "citation_graph",
     ] = Field(
         ..., description="search/summarize/benchmark_lookup (第一期) + "
                          "fetch_pdf/citations/ingest_to_rag (第二期) + "
-                         "crawl_web (第四期, 爬虫补无API的源)"
+                         "crawl_web (第四期, 爬虫补无API的源) + "
+                         "citation_graph (BFS 引文图)"
     )
     query: str = Field(default="", description="搜索/综述 query")
     max_results: int = Field(
@@ -183,6 +184,16 @@ class LiteratureInput(BaseModel):
     )
     max_citations: int = Field(
         default=20, ge=1, le=100, description="每个方向最多取几条引用"
+    )
+
+    # citation_graph 专用: BFS 深度 + 节点上限
+    max_depth: int = Field(
+        default=2, ge=1, le=3,
+        description="citation_graph BFS 深度 (1=只取直接引用, 2/3=多跳)",
+    )
+    max_nodes: int = Field(
+        default=50, ge=5, le=200,
+        description="citation_graph 最多收集多少个节点, 防止跑飞",
     )
 
     # 第四期: crawl_web 专用
@@ -248,6 +259,8 @@ class LiteratureTool(HuginnTool):
                 return await self._do_fetch_pdf(args)
             if args.action == "citations":
                 return await self._do_citations(args)
+            if args.action == "citation_graph":
+                return await self._do_citation_graph(args)
             if args.action == "ingest_to_rag":
                 return await self._do_ingest_to_rag(args, context)
             if args.action == "crawl_web":
@@ -821,6 +834,99 @@ class LiteratureTool(HuginnTool):
             "paperId": p.get("paperId"),
             "doi": (p.get("externalIds") or {}).get("DOI"),
         }
+
+    # ── citation_graph ─────────────────────────────────────
+
+    async def _do_citation_graph(self, args: LiteratureInput) -> ToolResult:
+        """BFS 引文图: 从种子 paper 出发, 沿 backward references 往上挖.
+
+        每层调 S2 references API, 收集 nodes + edges. 触顶 max_nodes 或 max_depth
+        就停. S2 API 失败不抛, 记 error 返回已收集的部分图, agent 能用部分结果.
+        """
+        seed_id = self._resolve_s2_paper_id(args)
+        if not seed_id:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="无法解析 paper_id, 需要 doi/arxiv_id 或 paper dict (含 doi/url)",
+            )
+
+        # 用 paperId 做去重 key (S2 内部 ID), 拿不到就用 title 退化
+        visited: set[str] = set()
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, str]] = []
+        errors: list[str] = []
+
+        # 种子节点
+        seed_node = {
+            "paper_id": seed_id,
+            "title": (args.paper or {}).get("title", "") if args.paper else "",
+            "year": (args.paper or {}).get("year") if args.paper else None,
+            "doi": args.doi,
+            "depth": 0,
+        }
+        nodes.append(seed_node)
+        visited.add(seed_id)
+
+        # BFS: 当前层的 paper_id 列表
+        current_layer: list[str] = [seed_id]
+        depth_reached = 0
+
+        for depth in range(1, args.max_depth + 1):
+            if len(nodes) >= args.max_nodes or not current_layer:
+                break
+            next_layer: list[str] = []
+            for parent_id in current_layer:
+                if len(nodes) >= args.max_nodes:
+                    break
+                # 调 S2 references API 拿 parent 引了谁
+                try:
+                    pid_enc = urllib.parse.quote(parent_id, safe="")
+                    data = await _http_get_json(
+                        f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
+                        f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
+                    )
+                except Exception as exc:
+                    errors.append(f"depth={depth} parent={parent_id}: {exc}"[:200])
+                    continue
+
+                for ref in data.get("data", []) or []:
+                    cp = ref.get("citedPaper", {}) or {}
+                    child_id = cp.get("paperId") or ""
+                    if not child_id:
+                        continue
+                    # 加边
+                    edges.append({"from": parent_id, "to": child_id})
+                    # 没访问过就加节点
+                    if child_id not in visited:
+                        if len(nodes) >= args.max_nodes:
+                            break
+                        nodes.append({
+                            "paper_id": child_id,
+                            "title": cp.get("title", "") or "",
+                            "year": cp.get("year"),
+                            "doi": (cp.get("externalIds") or {}).get("DOI"),
+                            "depth": depth,
+                        })
+                        visited.add(child_id)
+                        next_layer.append(child_id)
+                depth_reached = depth
+            current_layer = next_layer
+
+        return ToolResult(
+            data={
+                "action": "citation_graph",
+                "seed_paper_id": seed_id,
+                "depth_reached": depth_reached,
+                "n_unique_papers": len(nodes),
+                "n_edges": len(edges),
+                "nodes": nodes,
+                "edges": edges,
+                "errors": errors,
+                "truncated": len(nodes) >= args.max_nodes,
+            },
+            success=True,
+        )
 
     # ── ingest_to_rag ───────────────────────────────────────
 

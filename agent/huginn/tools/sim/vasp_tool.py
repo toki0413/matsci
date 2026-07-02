@@ -72,6 +72,13 @@ class VaspToolInput(BaseModel):
         ge=1.0,
         description="For wait_job: max seconds to wait before returning (default 3600)",
     )
+    # 计算失败时自动诊断 + 改 INCAR 重试的次数. 0 = 关闭自愈.
+    max_auto_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="On failure, auto-diagnose + patch INCAR and retry up to N times",
+    )
 
     @model_validator(mode="after")
     def _check_action_fields(self) -> "VaspToolInput":
@@ -229,17 +236,39 @@ class VaspTool(HuginnTool):
         return self._mock_result(args, work_dir)
 
     async def _run_vasp(self, args: VaspToolInput, work_dir: Path) -> ToolResult:
-        """Execute real VASP calculation."""
+        """Execute real VASP calculation, 自动诊断+改 INCAR 重试."""
+        autoheal_log: list[dict[str, Any]] = []
         try:
             cmd = [self.vasp_executable]
-            sb_result = self.sandbox.run(
-                cmd,
-                cwd=str(work_dir),
-                timeout=args.walltime_hours * 3600,
-                queue=args.queue,
-                walltime=f"{args.walltime_hours}:00:00",
-            )
-            result = sb_result
+            result: Any = None
+            max_retries = args.max_auto_retries
+
+            for attempt in range(max_retries + 1):
+                sb_result = self.sandbox.run(
+                    cmd,
+                    cwd=str(work_dir),
+                    timeout=args.walltime_hours * 3600,
+                    queue=args.queue,
+                    walltime=f"{args.walltime_hours}:00:00",
+                )
+                result = sb_result
+
+                if result.returncode == 0:
+                    break
+                # 失败了, 看还有没有重试额度 + 能不能自动修
+                if attempt < max_retries:
+                    fixed = self._try_autofix(work_dir, result.stderr or "")
+                    if fixed:
+                        autoheal_log.append(
+                            {
+                                "attempt": attempt + 1,
+                                "error": (result.stderr or "")[:300],
+                                "fixes_applied": fixed["fixes"],
+                                "reasoning": fixed["reasoning"],
+                            }
+                        )
+                        continue
+                break  # 没修动或重试耗尽
 
             # Parse OUTCAR for comprehensive results
             outcar = work_dir / "OUTCAR"
@@ -264,6 +293,8 @@ class VaspTool(HuginnTool):
             # Include parsed details in result
             data = output.model_dump()
             data["parsed"] = parsed
+            if autoheal_log:
+                data["autoheal_attempts"] = autoheal_log
 
             # 带上 provenance 快照, 事后能追溯参数/版本/环境
             try:
@@ -291,6 +322,55 @@ class VaspTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error=f"VASP execution failed: {e}"
             )
+
+    def _read_incar_params(self, work_dir: Path) -> dict[str, Any]:
+        """读 INCAR 解析成 dict, 给 AutoFixLoop 判断当前参数用."""
+        incar = work_dir / "INCAR"
+        if not incar.exists():
+            return {}
+        params: dict[str, Any] = {}
+        try:
+            for line in incar.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if "=" not in s:
+                    continue
+                k, v = s.split("=", 1)
+                k = k.strip().upper()
+                v = v.strip()
+                # 数字尽量转成数字, 方便 halve/double 规则
+                try:
+                    num = float(v)
+                    v = int(num) if num == int(num) else num  # type: ignore[assignment]
+                except ValueError:
+                    pass
+                params[k] = v
+        except Exception:
+            pass
+        return params
+
+    def _try_autofix(self, work_dir: Path, stderr: str) -> dict[str, Any] | None:
+        """跑一次 AutoFixLoop, 命中规则就改 INCAR 返回修了啥. 没命中返回 None."""
+        incar = work_dir / "INCAR"
+        if not incar.exists():
+            return None
+        try:
+            from huginn.execution.autofix import AutoFixLoop
+
+            current = self._read_incar_params(work_dir)
+            fixed = AutoFixLoop().apply_fix("vasp_tool", stderr, current)
+            if not fixed:
+                return None
+            reasoning = fixed.pop("__auto_fix", None)
+            fixed.pop("__auto_fix_patterns_matched", None)
+            # 剩下的才是真正要改的 INCAR tag
+            if not fixed:
+                return None
+            self._modify_incar(incar, fixed)
+            return {"fixes": fixed, "reasoning": reasoning}
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------ async job API
 
@@ -477,16 +557,37 @@ class VaspTool(HuginnTool):
             "ispin": None,
         }
 
+        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底
+        try:
+            from pymatgen.io.vasp import Outcar
+
+            oc = Outcar(str(outcar_path))
+            if oc.final_energy is not None:
+                result["energy"] = float(oc.final_energy)
+            if oc.forces:
+                result["forces"] = [
+                    {"position": [0.0, 0.0, 0.0], "force": list(f)}
+                    for f in oc.forces[-1]
+                ]
+            if oc.magnetizations:
+                result["magnetic_moments"] = list(oc.magnetizations[-1])
+            result["converged"] = bool(oc.converged)
+            result["parse_source"] = "pymatgen"
+        except Exception:
+            pass  # pymatgen 没装或解析失败, 走下面的 regex
+
         try:
             content = outcar_path.read_text(encoding="utf-8", errors="ignore")
 
-            # Energy
-            energy_matches = re.findall(r"free  energy   TOTEN  =\s+([-\d.]+)", content)
-            if energy_matches:
-                result["energy"] = float(energy_matches[-1])
+            # Energy — pymatgen 已经填了就不覆盖
+            if result["energy"] is None:
+                energy_matches = re.findall(r"free  energy   TOTEN  =\s+([-\d.]+)", content)
+                if energy_matches:
+                    result["energy"] = float(energy_matches[-1])
 
-            # Convergence
-            result["converged"] = "reached required accuracy" in content
+            # Convergence — pymatgen 的更可靠, 没填才用启发式
+            if not result["converged"]:
+                result["converged"] = "reached required accuracy" in content
 
             # ENCUT
             encut_match = re.search(r"ENCUT\s*=\s*([\d.]+)", content)
@@ -529,50 +630,49 @@ class VaspTool(HuginnTool):
             if vol_match:
                 result["volume"] = float(vol_match[-1])
 
-            # Final forces
-            force_section = re.findall(
-                r"TOTAL-FORCE.*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
-            )
-            if force_section:
-                forces = []
-                for line in force_section[-1].strip().split("\n"):
-                    parts = line.split()
-                    if len(parts) >= 6 and all(self._is_float(p) for p in parts[:6]):
-                        forces.append(
-                            {
-                                "position": [
-                                    float(parts[0]),
-                                    float(parts[1]),
-                                    float(parts[2]),
-                                ],
-                                "force": [
-                                    float(parts[3]),
-                                    float(parts[4]),
-                                    float(parts[5]),
-                                ],
-                            }
-                        )
-                result["forces"] = forces
+            # Final forces — pymatgen 已填就不覆盖
+            if not result["forces"]:
+                force_section = re.findall(
+                    r"TOTAL-FORCE.*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+                )
+                if force_section:
+                    forces = []
+                    for line in force_section[-1].strip().split("\n"):
+                        parts = line.split()
+                        if len(parts) >= 6 and all(self._is_float(p) for p in parts[:6]):
+                            forces.append(
+                                {
+                                    "position": [
+                                        float(parts[0]),
+                                        float(parts[1]),
+                                        float(parts[2]),
+                                    ],
+                                    "force": [
+                                        float(parts[3]),
+                                        float(parts[4]),
+                                        float(parts[5]),
+                                    ],
+                                }
+                            )
+                    result["forces"] = forces
 
-            # Magnetic moments
-            mag_matches = re.findall(
-                r"magnetization \(x\).*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
-            )
-            if mag_matches:
-                mag_moments = []
-                for line in mag_matches[-1].strip().split("\n"):
-                    parts = line.split()
-                    if len(parts) >= 5 and self._is_float(parts[-1]):
-                        mag_moments.append(float(parts[-1]))
-                result["magnetic_moments"] = mag_moments
+            # Magnetic moments — pymatgen 已填就不覆盖
+            if not result["magnetic_moments"]:
+                mag_matches = re.findall(
+                    r"magnetization \(x\).*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+                )
+                if mag_matches:
+                    mag_moments = []
+                    for line in mag_matches[-1].strip().split("\n"):
+                        parts = line.split()
+                        if len(parts) >= 5 and self._is_float(parts[-1]):
+                            mag_moments.append(float(parts[-1]))
+                    result["magnetic_moments"] = mag_moments
 
-            # Band gap (from E-fermi and band occupancies)
+            # Band gap — OUTCAR 里没有直接值, 只记 efermi, 真值靠 vasprun.xml
             efermi_match = re.search(r"E-fermi\s*:\s*([-\d.]+)", content)
             if efermi_match:
                 result["efermi"] = float(efermi_match.group(1))
-                # Simplified: just note if gap was calculated
-                if "band No." in content:
-                    result["band_gap"] = "see vasprun.xml or use py4vasp"
 
         except Exception as e:
             result["parse_error"] = str(e)
@@ -584,6 +684,24 @@ class VaspTool(HuginnTool):
         import xml.etree.ElementTree as ET
 
         result = {"parse_source": "vasprun.xml"}
+
+        # 优先用 pymatgen 拿 band gap / efermi, 失败落回 ElementTree
+        try:
+            from pymatgen.io.vasp import Vasprun
+
+            vr = Vasprun(str(vasprun_path))
+            try:
+                gap, cbm, vbm = vr.eigenvalue_band_properties
+                result["band_gap"] = float(gap) if gap is not None else None
+                result["cbm"] = float(cbm) if cbm is not None else None
+                result["vbm"] = float(vbm) if vbm is not None else None
+            except Exception:
+                pass
+            result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
+            result["parse_source"] = "pymatgen_vasprun"
+            return result
+        except Exception:
+            pass  # pymatgen 没装或解析失败, 走 ElementTree
 
         try:
             tree = ET.parse(vasprun_path)

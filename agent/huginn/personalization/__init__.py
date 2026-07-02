@@ -8,6 +8,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from huginn.personalization.taste_profile import (
+    Imagination,
+    OnboardingQuestionnaire,
+    ResearchStyle,
+    TasteProfile,
+    ThinkingMode,
+    load_profile,
+)
 from huginn.personalization.user_style import StyleLearner, UserStyleProfile
 
 __all__ = [
@@ -15,6 +23,12 @@ __all__ = [
     "UserStyleProfile",
     "get_shared_style_learner",
     "set_shared_style_learner",
+    "TasteProfile",
+    "OnboardingQuestionnaire",
+    "ThinkingMode",
+    "Imagination",
+    "ResearchStyle",
+    "get_taste_directive",
 ]
 
 _shared_learner: StyleLearner | None = None
@@ -55,3 +69,19 @@ def _default_storage_path() -> str:
     except Exception:
         pass
     return ":memory:"
+
+
+def get_taste_directive() -> str:
+    """加载持久化的 TasteProfile, 返回注入 system prompt 的指令片段.
+
+    没填过问卷 / 跳过了 / 加载失败 → 返回空串, 不影响 agent 默认行为.
+    agent._effective_system_prompt() 每轮调一次, 读 JSON 很轻, 不缓存.
+    """
+    try:
+        profile = load_profile()
+    except Exception:
+        # 读取失败不拖垮 agent, 当作没填过
+        return ""
+    if profile is None:
+        return ""
+    return profile.to_directive()

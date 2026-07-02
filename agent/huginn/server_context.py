@@ -14,6 +14,7 @@ from typing import Any
 
 from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator
+from huginn.autoloop.plan_store import PlanStore
 from huginn.config import HuginnConfig
 from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.permissions import PermissionConfig
@@ -64,6 +65,7 @@ class ServerContext:
     codebase: Any | None = None
     agent: Any | None = None
     planner_agent: Any | None = None
+    plan_store: PlanStore | None = None
     mcp_manager: Any | None = None
 
 
@@ -90,10 +92,13 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
         memory_manager=memory_manager,
     )
 
+    plan_store = PlanStore()
     orchestrator = Orchestrator(
         factory=agent_factory,
         memory_manager=memory_manager,
         max_concurrent=cfg.max_concurrent_subagents,
+        plan_store=plan_store,
+        auto_confirm=cfg.plan_auto_confirm,
     )
 
     return ServerContext(
@@ -103,6 +108,7 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
         memory_manager=memory_manager,
         agent_factory=agent_factory,
         orchestrator=orchestrator,
+        plan_store=plan_store,
     )
 
 

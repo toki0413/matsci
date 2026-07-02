@@ -308,3 +308,210 @@ def default_snapshot_dir(workspace: str | Path | None = None) -> Path:
     """返回默认快照目录. workspace 不传就用 cwd."""
     base = Path(workspace) if workspace else Path.cwd()
     return base / ".huginn" / "provenance"
+
+
+# ---------------------------------------------------------------------------
+# M4 (W4): per-run provenance records + JSONL 持久化 + FAIR crate 导出
+#
+# ProvenanceSnapshot 是单次 tool-call 级别的; ProvenanceRecord 是 run 级别,
+# 把一次 autoloop / campaign 跑的所有 snapshot 串成 tool_chain, 加上 run 级
+# 的 inputs/outputs/DOIs/时间戳, 落到 provenance.jsonl (append-only).
+# audit.jsonl 是安全审计 (谁在什么时候碰了什么), provenance.jsonl 是科研
+# 溯源 (这个结果是怎么一步步算出来的), 两者用途不同不混用.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProvenanceRecord:
+    """一次研究 run 的完整溯源记录.
+
+    tool_chain 里每个 ProvenanceSnapshot 对应一次 tool call, 按调用顺序排.
+    inputs 是 run 级输入 (文件路径 + hash, 全局参数), outputs 是 run 级产出
+    (结果文件 + 关键数值). dois 是引用或产出的 DOI 列表.
+    """
+
+    run_id: str
+    objective: str = ""
+    inputs: dict[str, Any] = field(default_factory=dict)
+    outputs: dict[str, Any] = field(default_factory=dict)
+    tool_chain: list[dict[str, Any]] = field(default_factory=list)
+    timestamps: dict[str, str] = field(default_factory=dict)
+    dois: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+
+    def add_snapshot(self, snap: ProvenanceSnapshot) -> None:
+        """把一次 tool-call 快照追加到 tool_chain."""
+        self.tool_chain.append(snap.to_dict())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "objective": self.objective,
+            "inputs": self.inputs,
+            "outputs": self.outputs,
+            "tool_chain": list(self.tool_chain),
+            "timestamps": dict(self.timestamps),
+            "dois": list(self.dois),
+            "tags": list(self.tags),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ProvenanceRecord":
+        known = {
+            "run_id", "objective", "inputs", "outputs",
+            "tool_chain", "timestamps", "dois", "tags",
+        }
+        kwargs = {k: v for k, v in d.items() if k in known}
+        return cls(**kwargs)
+
+
+def _hash_file(path: str | Path) -> str:
+    """算文件 sha256 前 12 位. 文件不存在返回空串."""
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return ""
+    h = hashlib.sha256()
+    with p.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()[:12]
+
+
+def capture_run_inputs(files: list[str | Path] | None = None,
+                        params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """收集 run 级输入: 文件 hash + 参数快照."""
+    inputs: dict[str, Any] = {"params": dict(params or {})}
+    file_hashes: dict[str, str] = {}
+    for f in (files or []):
+        fp = Path(f)
+        file_hashes[fp.name] = _hash_file(fp)
+    inputs["files"] = file_hashes
+    return inputs
+
+
+class ProvenanceLogger:
+    """append-only JSONL 持久化, 落到 $HUGINN_CACHE_DIR/provenance.jsonl.
+
+    跟 audit.jsonl 分开: audit 记安全事件 (谁碰了什么), provenance 记科研
+    溯源 (结果怎么算出来的). 测试可注入临时 path 隔离.
+    """
+
+    def __init__(self, path: str | Path | None = None) -> None:
+        self._path = Path(path) if path else self._default_path()
+
+    @staticmethod
+    def _default_path() -> Path:
+        base = os.environ.get("HUGINN_CACHE_DIR")
+        if base:
+            return Path(base) / "provenance.jsonl"
+        return Path(".huginn") / "provenance.jsonl"
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def log(self, record: ProvenanceRecord) -> None:
+        """追加一条记录. 目录不存在自动建."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(record.to_dict(), ensure_ascii=False, default=str)
+        with self._path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+    def read_all(self) -> list[ProvenanceRecord]:
+        """读全部记录. 文件不存在或损坏返回空列表."""
+        if not self._path.exists():
+            return []
+        records: list[ProvenanceRecord] = []
+        for line in self._path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(ProvenanceRecord.from_dict(json.loads(line)))
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
+        return records
+
+    def read_run(self, run_id: str) -> list[ProvenanceRecord]:
+        """读单个 run 的全部记录 (一个 run 可能分多条记)."""
+        return [r for r in self.read_all() if r.run_id == run_id]
+
+
+def export_crate(record: ProvenanceRecord) -> dict[str, Any]:
+    """把一条 ProvenanceRecord 导成 ROCrate 兼容的 JSON dict.
+
+    ROCrate (Research Object Crate) 是 FAIR 数据打包规范, 核心是 @context +
+    @graph. 这里产出最小可用的 crate: 一个 root entity (本次 run) + 每个
+    tool_chain 节点作为一个 entity, inputs/outputs 作为 file entity.
+    DOMAP / FAIR-Ware 这类工具能直接吃这个结构.
+    """
+    # 预计算每个 tool-call 的 @id, root instrument 引用和 tool entity 共用一套.
+    # 同名工具多次调用用 _1 / _2 区分, 保证 @id 唯一且引用一致.
+    seen_tools: dict[str, int] = {}
+    tool_ids: list[str] = []
+    for snap in record.tool_chain:
+        tname = snap.get("tool_name", "unknown")
+        count = seen_tools.get(tname, 0)
+        seen_tools[tname] = count + 1
+        suffix = f"_{count}" if count > 0 else ""
+        tool_ids.append(f"tool:{tname}{suffix}")
+
+    graph: list[dict[str, Any]] = []
+    # root: 本次 run
+    graph.append({
+        "@id": f"run:{record.run_id}",
+        "@type": ["CreateAction", "ResearchAction"],
+        "name": record.objective or f"Run {record.run_id}",
+        "startTime": record.timestamps.get("start", ""),
+        "endTime": record.timestamps.get("end", ""),
+        "instrument": [{"@id": tid} for tid in tool_ids],
+        "object": [
+            {"@id": f"input:{k}"}
+            for k in (record.inputs.get("files", {}).keys()
+                      if isinstance(record.inputs, dict) else [])
+        ],
+        "result": [
+            {"@id": f"output:{k}"}
+            for k in (record.outputs.keys()
+                      if isinstance(record.outputs, dict) else [])
+        ],
+    })
+    # 每个 tool-call 一个 entity, @id 与 root instrument 引用一致
+    for i, snap in enumerate(record.tool_chain):
+        tname = snap.get("tool_name", "unknown")
+        graph.append({
+            "@id": tool_ids[i],
+            "@type": "SoftwareApplication",
+            "name": tname,
+            "softwareVersion": snap.get("tool_version", "unknown"),
+            "url": f"huginn://tools/{tname}",
+            "position": i,
+        })
+    # input file entities
+    files = record.inputs.get("files", {}) if isinstance(record.inputs, dict) else {}
+    for fname, fhash in files.items():
+        graph.append({
+            "@id": f"input:{fname}",
+            "@type": "File",
+            "name": fname,
+            "sha256": fhash,
+        })
+    # output entities
+    for oname, ovalue in record.outputs.items() if isinstance(record.outputs, dict) else []:
+        graph.append({
+            "@id": f"output:{oname}",
+            "@type": "PropertyValue",
+            "name": oname,
+            "value": ovalue,
+        })
+    # DOI entities
+    for doi in record.dois:
+        graph.append({
+            "@id": doi,
+            "@type": "ScholarlyArticle",
+            "identifier": doi,
+        })
+    return {
+        "@context": "https://w3id.org/ro/crate/1.1/context",
+        "@graph": graph,
+    }

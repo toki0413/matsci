@@ -34,6 +34,7 @@ from huginn.routes.data_dict import router as data_dict_router
 from huginn.routes.ws import router as ws_router
 from huginn.routes.live_script import router as live_script_router
 from huginn.routes.parameters import router as parameters_router
+from huginn.routes.side import router as side_router
 
 ALL_ROUTERS = [
     advisor_router,
@@ -67,4 +68,6 @@ ALL_ROUTERS = [
     parameters_router,
     # 互动层: SSE chat / 中途干预 / 主动提问 / 进度展示
     interaction_router,
+    # 侧边对话: 不打断主任务的并行 Q&A
+    side_router,
 ]

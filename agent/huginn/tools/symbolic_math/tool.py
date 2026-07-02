@@ -16,7 +16,10 @@ class SymbolicMathInput(BaseModel):
         ...,
         description="derive | solve | integrate | differentiate | taylor | eigenvalue | "
         "constitutive | weak_form | simplify | series | tensor_ops | tensor_calculus | "
-        "dimensional_analysis | linear_algebra | dft | thermodynamics | probability | unified",
+        "dimensional_analysis | linear_algebra | dft | thermodynamics | probability | unified | "
+        "pde_classify | pde_separation | pde_characteristics | pde_discretize | "
+        "euler_lagrange | functional_derivative | isoperimetric | noether | "
+        "diffgeo_metric | diffgeo_geodesic | diffgeo_curvature | diffgeo_lie_derivative | diffgeo_connection",
     )
     expression: str | None = Field(
         default=None, description="Mathematical expression as string"
@@ -154,16 +157,61 @@ class SymbolicMathTool(HuginnTool):
                 return linear_algebra(args)
             if action == "dft":
                 from .physics import dft
-                return dft(args)
+                result = dft(args)
+                return self._augment_with_kb_constants(result, context, "dft")
             if action == "thermodynamics":
                 from .physics import thermodynamics
-                return thermodynamics(args)
+                result = thermodynamics(args)
+                return self._augment_with_kb_constants(result, context, "thermodynamics")
             if action == "probability":
                 from .physics import probability
                 return probability(args)
             if action == "unified":
                 from .physics import unified
                 return unified(args)
+            if action == "pde_classify":
+                from .pde import classify
+                return classify(args)
+            if action == "pde_separation":
+                from .pde import separation
+                return separation(args)
+            if action == "pde_characteristics":
+                from .pde import characteristics
+                return characteristics(args)
+            if action == "pde_discretize":
+                from .pde import discretize
+                return discretize(args)
+            if action == "euler_lagrange":
+                from .variational import euler_lagrange
+                return euler_lagrange(args)
+            if action == "functional_derivative":
+                from .variational import functional_derivative
+                return functional_derivative(args)
+            if action == "isoperimetric":
+                from .variational import isoperimetric
+                return isoperimetric(args)
+            if action == "noether":
+                from .variational import noether
+                return noether(args)
+            if action == "diffgeo_metric":
+                from .diffgeo import metric
+                return metric(args)
+            if action == "diffgeo_geodesic":
+                from .diffgeo import geodesic
+                return geodesic(args)
+            if action == "diffgeo_curvature":
+                from .diffgeo import curvature
+                return curvature(args)
+            if action == "diffgeo_lie_derivative":
+                from .diffgeo import lie_derivative
+                return lie_derivative(args)
+            if action == "diffgeo_connection":
+                from .diffgeo import connection
+                return connection(args)
+            if action == "derive":
+                # derive 是 EL 方程的别名: 从拉氏量推导运动方程
+                from .variational import euler_lagrange
+                return euler_lagrange(args)
 
             return ToolResult(
                 data=None,
@@ -176,3 +224,36 @@ class SymbolicMathTool(HuginnTool):
                 success=False,
                 error=f"Symbolic computation error: {str(e)}",
             )
+
+    @staticmethod
+    def _augment_with_kb_constants(
+        result: ToolResult, context: ToolContext, domain: str
+    ) -> ToolResult:
+        """A6: dft/thermodynamics 返回后查 KB 校验物理常数 (ℏ, k_B, R 等).
+        命中就把 reference 文本写进 data["kb_verified_constants"], 不改计算结果.
+        KB 不可用/空/查询失败都静默跳过."""
+        if not result.success or not isinstance(result.data, dict):
+            return result
+        try:
+            workspace = getattr(context, "workspace", None) or "."
+            from huginn.knowledge.store import get_knowledge_base
+
+            kb = get_knowledge_base(str(workspace))
+            if kb.count() == 0:
+                return result
+            # 按 domain 拿不同常数集合的 KB 参考
+            query_map = {
+                "dft": "physical constants hbar electron mass planck",
+                "thermodynamics": "physical constants gas constant boltzmann R",
+            }
+            chunks = kb.query(query_map.get(domain, "physical constants"), top_k=2)
+            refs = [
+                {"text": (c.get("text") or "")[:200], "source": c.get("source", "")}
+                for c in chunks
+                if c.get("text")
+            ]
+            if refs:
+                result.data["kb_verified_constants"] = refs
+        except Exception:
+            pass
+        return result

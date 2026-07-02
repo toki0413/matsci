@@ -317,6 +317,9 @@ class HuginnConfig:
     agents: list[AgentProfileConfig] = field(default_factory=list)
     team_mode_enabled: bool = False
     max_concurrent_subagents: int = 3
+    # Planner/executor 分离: auto_confirm=True 时跳过用户确认, 直接执行 plan.
+    # 默认 False 走 human-in-the-loop, 对齐 Claude Code plan-mode UX.
+    plan_auto_confirm: bool = False
 
     # Ollama specific
     ollama_host: str = "http://localhost:11434"
@@ -639,6 +642,7 @@ class HuginnConfig:
             max_concurrent_subagents=int(
                 os.environ.get("HUGINN_MAX_CONCURRENT_SUBAGENTS", "3")
             ),
+            plan_auto_confirm=os.environ.get("HUGINN_PLAN_AUTO_CONFIRM", "0") == "1",
             ollama_host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
             vasp_executable=os.environ.get("VASP_EXECUTABLE"),
             lammps_executable=os.environ.get("LAMMPS_EXECUTABLE"),
@@ -870,6 +874,7 @@ class HuginnConfig:
             ],
             "team_mode_enabled": self.team_mode_enabled,
             "max_concurrent_subagents": self.max_concurrent_subagents,
+            "plan_auto_confirm": self.plan_auto_confirm,
             "ollama_host": self.ollama_host,
             "mp_api_key": mask(self.mp_api_key),
             "oqmd_api_key": mask(self.oqmd_api_key),

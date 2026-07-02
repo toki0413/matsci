@@ -33,6 +33,7 @@ class GPToolInput(BaseModel):
         "natural_gradient",
         "fisher_information",
         "kl_divergence",
+        "pareto_suggest",
     ] = Field(default="fit")
     X: list[list[float]] = Field(default_factory=list, description="Training inputs")
     y: list[float] = Field(default_factory=list, description="Training targets")
@@ -98,6 +99,19 @@ class GPToolInput(BaseModel):
     )
     tool_working_dir: str | None = Field(default=None)
     working_dir: str | None = Field(default=None)
+    # Pareto multi-objective BO (pareto_suggest)
+    y_multi: list[list[float]] | None = Field(
+        default=None,
+        description="Multi-objective observations (one row per sample, one col per objective)",
+    )
+    reference_point: list[float] | None = Field(
+        default=None,
+        description="Reference point for hypervolume (must be worse than all Pareto points)",
+    )
+    population_x: list[list[float]] | None = Field(
+        default=None,
+        description="Candidate sample pool (X coordinates) for Pareto suggestion",
+    )
 
 
 class NumPyGP:
@@ -209,6 +223,8 @@ class GPTool(HuginnTool):
                 return self._fisher_information(input_data)
             if input_data.action == "kl_divergence":
                 return self._kl_divergence(input_data)
+            if input_data.action == "pareto_suggest":
+                return self._pareto_suggest(input_data)
             return self._fit(input_data)
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"GP tool failed: {e}")
@@ -590,6 +606,67 @@ class GPTool(HuginnTool):
             success=True,
         )
 
+    def _pareto_suggest(self, args: GPToolInput) -> ToolResult:
+        """Pareto 多目标 BO: NSGA-II 前沿分层 + 拥挤度 + hypervolume.
+
+        所有目标默认最小化. 没给 y_multi 就退回单目标 suggest.
+        """
+        if not args.y_multi:
+            return self._suggest(args)
+
+        y_multi = np.asarray(args.y_multi, dtype=float)
+        if y_multi.ndim != 2:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="y_multi must be a 2D list (samples x objectives).",
+            )
+
+        fronts = fast_non_dominated_sort(y_multi)
+        if not fronts:
+            return ToolResult(
+                data=None, success=False, error="fast_non_dominated_sort returned empty."
+            )
+
+        first_front_idx = fronts[0]
+        first_front_y = y_multi[first_front_idx]
+        cd = crowding_distance(first_front_y)
+
+        # hypervolume (需要 reference_point)
+        hv = None
+        if args.reference_point:
+            ref = np.asarray(args.reference_point, dtype=float)
+            hv = hypervolume(first_front_y, ref)
+
+        # 选拥挤度最大的点作为 suggested_point
+        best_local = int(np.argmax(cd)) if len(cd) > 0 else 0
+        best_global = int(first_front_idx[best_local])
+
+        # 如果有 population_x, 返回对应的 X 坐标
+        suggested_x = None
+        if args.population_x and best_global < len(args.population_x):
+            suggested_x = args.population_x[best_global]
+
+        pareto_list = first_front_y.tolist()
+        return ToolResult(
+            data={
+                "pareto_front": pareto_list,
+                "pareto_indices": first_front_idx.tolist(),
+                "n_fronts": len(fronts),
+                "hypervolume": hv,
+                "crowding_distances": cd.tolist(),
+                "suggested_point": suggested_x,
+                "suggested_index": best_global,
+                "message": (
+                    f"Pareto suggest: {len(first_front_idx)} points on first front, "
+                    f"{len(fronts)} fronts total"
+                    + (f", HV={hv:.6f}" if hv is not None else "")
+                    + "."
+                ),
+            },
+            success=True,
+        )
+
     def _create_gp(self, args: GPToolInput):
         if self._sklearn_available:
             from sklearn.gaussian_process import GaussianProcessRegressor
@@ -854,6 +931,124 @@ class _SklearnGPAdapter:
     def predict(self, X_new: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         mu, sigma = self.gpr.predict(X_new, return_std=True)
         return mu, sigma
+
+
+# ── Pareto / NSGA-II helpers (pure NumPy) ──────────────────────────
+
+
+def fast_non_dominated_sort(population_y: np.ndarray) -> list[np.ndarray]:
+    """NSGA-II 前沿分层. 所有目标默认最小化.
+
+    返回 list[np.ndarray], 每个元素是当前前沿里样本的索引数组.
+    """
+    n = len(population_y)
+    if n == 0:
+        return []
+    dominated_by: list[set[int]] = [set() for _ in range(n)]
+    domination_count = np.zeros(n, dtype=int)
+    fronts: list[list[int]] = [[]]
+
+    for p in range(n):
+        for q in range(n):
+            if p == q:
+                continue
+            # p 支配 q: p 所有目标 <= q 且至少一个 <
+            if np.all(population_y[p] <= population_y[q]) and np.any(
+                population_y[p] < population_y[q]
+            ):
+                dominated_by[p].add(q)
+            elif np.all(population_y[q] <= population_y[p]) and np.any(
+                population_y[q] < population_y[p]
+            ):
+                domination_count[p] += 1
+        if domination_count[p] == 0:
+            fronts[0].append(p)
+
+    i = 0
+    while fronts[i]:
+        next_front: list[int] = []
+        for p in fronts[i]:
+            for q in dominated_by[p]:
+                domination_count[q] -= 1
+                if domination_count[q] == 0:
+                    next_front.append(q)
+        i += 1
+        fronts.append(next_front)
+    # 最后一个空 front 不返回
+    return [np.array(f, dtype=int) for f in fronts if f]
+
+
+def crowding_distance(front_y: np.ndarray) -> np.ndarray:
+    """NSGA-II 拥挤度. 边界点 inf, 中间点按各目标归一化距离之和."""
+    n, n_obj = front_y.shape
+    if n == 0:
+        return np.array([])
+    if n <= 2:
+        return np.full(n, np.inf)
+
+    dist = np.zeros(n)
+    for m in range(n_obj):
+        order = np.argsort(front_y[:, m])
+        dist[order[0]] = np.inf
+        dist[order[-1]] = np.inf
+        col = front_y[:, m]
+        rng = col[order[-1]] - col[order[0]]
+        if rng == 0:
+            continue
+        for k in range(1, n - 1):
+            dist[order[k]] += (col[order[k + 1]] - col[order[k - 1]]) / rng
+    return dist
+
+
+def hypervolume(pareto_y: np.ndarray, ref: np.ndarray) -> float:
+    """WFG hypervolume. 所有目标最小化, ref 是最劣参考点.
+
+    2D 用 O(n log n) 扫描; 高维退回到 inclusion-exclusion (对小前沿够用).
+    """
+    # 过滤掉比 ref 差的点
+    mask = np.all(pareto_y <= ref, axis=1)
+    pts = pareto_y[mask]
+    if len(pts) == 0:
+        return 0.0
+
+    n_obj = pts.shape[1]
+    if n_obj == 2:
+        # 2D: 按 f0 升序, 累加 (f0_diff * (ref1 - f1))
+        order = np.argsort(pts[:, 0])
+        pts = pts[order]
+        hv = 0.0
+        prev_f0 = pts[0, 0]
+        for i in range(len(pts)):
+            # 当前点的 f1 决定这一列的高度
+            if i < len(pts) - 1:
+                width = pts[i + 1, 0] - pts[i, 0]
+            else:
+                width = ref[0] - pts[i, 0]
+            height = max(0.0, ref[1] - pts[i, 1])
+            hv += width * height
+        return float(hv)
+
+    # 高维: 递归 slicing (WFG 思路, 简化版)
+    # 对最后一个目标排序, 逐点 slice
+    order = np.argsort(pts[:, -1])
+    pts = pts[order]
+    hv = 0.0
+    for i in range(len(pts)):
+        if i == 0:
+            delta = ref[-1] - pts[i, -1]
+        else:
+            delta = pts[i, -1] - pts[i - 1, -1]
+        if delta <= 0:
+            continue
+        # slice: 去掉最后一个目标, 递归算子空间 hypervolume
+        sub = pts[:i, :-1]
+        sub_ref = ref[:-1]
+        if len(sub) == 0:
+            sub_hv = float(np.prod(np.maximum(sub_ref - pts[i, :-1], 0)))
+        else:
+            sub_hv = hypervolume(sub, sub_ref)
+        hv += delta * sub_hv
+    return float(hv)
 
 
 def _phi_cdf(z: np.ndarray) -> np.ndarray:

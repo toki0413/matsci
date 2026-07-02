@@ -23,9 +23,9 @@ from huginn.cli.context import CliContext
 @click.option(
     "--iterations",
     "-i",
-    default=5,
+    default=20,
     type=int,
-    help="Maximum autonomous loop iterations",
+    help="Maximum autonomous loop iterations (default: 20)",
 )
 @click.option(
     "--watch",
@@ -39,6 +39,25 @@ from huginn.cli.context import CliContext
     type=int,
     help="Watch mode: check interval in seconds (default: 30)",
 )
+@click.option(
+    "--no-progressive-budget",
+    "no_progressive_budget",
+    is_flag=True,
+    help="Disable progressive budget tiering (allow all plan modes at every iteration)",
+)
+@click.option(
+    "--goal",
+    "goal_id",
+    default=None,
+    help="Resume a persisted goal by ID (from goals.json) instead of creating a new one",
+)
+@click.option(
+    "--success-criteria",
+    "-s",
+    "success_criteria",
+    multiple=True,
+    help="Success criterion (keyword that must appear in validation output). Repeatable: -s foo -s bar",
+)
 @click.pass_obj
 def autoloop(
     obj: CliContext,
@@ -46,6 +65,9 @@ def autoloop(
     iterations: int,
     watch: bool,
     interval: int,
+    no_progressive_budget: bool,
+    goal_id: str | None,
+    success_criteria: tuple[str, ...],
 ) -> None:
     """Run the autonomous closed-loop engine.
 
@@ -54,7 +76,9 @@ def autoloop(
 
     Examples:
         huginn autoloop "Optimize C-S-H defect kinetics"
+        huginn autoloop "Find stable phase" -s tests_passed -s r_phys
         huginn autoloop --watch --interval 60
+        huginn autoloop --goal goal_abc12345
     """
     console = obj.console
 
@@ -75,6 +99,32 @@ def autoloop(
 
     engine = AutoloopEngine(workspace=obj.workspace)
 
+    # Goal resolution: --goal resumes a persisted goal; --success-criteria
+    # creates a new one. Neither → no goal, run() behaves as before.
+    goal = None
+    from huginn.autoloop.goal_scheduler import GoalScheduler
+
+    scheduler = GoalScheduler()
+    if goal_id:
+        goal = scheduler.get_goal(goal_id)
+        if goal is None:
+            console.print(f"[red]Goal not found: {goal_id}[/red]")
+            return
+        if not objective:
+            objective = goal.objective
+        console.print(f"[blue]Resuming goal:[/blue] {goal.id} ({goal.objective})")
+    elif success_criteria and objective:
+        goal = scheduler.create_goal(
+            objective=objective,
+            success_criteria=list(success_criteria),
+            max_iterations=iterations,
+        )
+        console.print(
+            f"[blue]Created goal:[/blue] {goal.id}\n"
+            f"  criteria: {list(success_criteria)}"
+        )
+    engine._goal_scheduler = scheduler
+
     if watch:
         console.print(
             Panel(
@@ -87,7 +137,10 @@ def autoloop(
             )
         )
         try:
-            asyncio.run(_watch_loop(engine, console, interval, iterations))
+            asyncio.run(_watch_loop(
+                engine, console, interval, iterations,
+                progressive_budget=not no_progressive_budget,
+            ))
         except KeyboardInterrupt:
             console.print("\n[yellow]Watch mode stopped.[/yellow]")
     else:
@@ -108,7 +161,12 @@ def autoloop(
         ) as progress:
             task = progress.add_task("Running autonomous loop...", total=None)
             try:
-                result = asyncio.run(engine.run(objective=objective, max_iterations=iterations))
+                result = asyncio.run(engine.run(
+                    objective=objective,
+                    max_iterations=iterations,
+                    progressive_budget=not no_progressive_budget,
+                    goal=goal,
+                ))
                 progress.update(task, completed=True)
 
                 console.print(
@@ -144,6 +202,7 @@ async def _watch_loop(
     console: Console,
     interval: int,
     max_iterations: int,
+    progressive_budget: bool = True,
 ) -> None:
     """Continuously watch workspace and trigger loops when changes detected."""
     import time
@@ -164,7 +223,11 @@ async def _watch_loop(
             objective = _infer_objective(context)
             console.print(f"[blue]Inferred objective:[/blue] {objective}")
 
-            result = await engine.run(objective=objective, max_iterations=max_iterations)
+            result = await engine.run(
+                objective=objective,
+                max_iterations=max_iterations,
+                progressive_budget=progressive_budget,
+            )
 
             console.print(
                 f"[green]Loop #{iteration} complete:[/green] "

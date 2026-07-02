@@ -212,6 +212,7 @@ class HuginnAgent:
         kg_enabled: Any = _UNSET_SENTINEL,
         kg_depth: Any = _UNSET_SENTINEL,
         kg_top_k: Any = _UNSET_SENTINEL,
+        kb_enabled: Any = _UNSET_SENTINEL,
         auto_approve: bool | None = None,
         compression_max_tokens: int | None = None,
         telemetry_enabled: bool | None = None,
@@ -222,6 +223,7 @@ class HuginnAgent:
         max_tool_calls: int | None = None,
         max_tool_calls_per_tool: int | None = None,
         style_learner: Any | None = None,
+        scheduler: Any | None = None,
         *,
         config: AgentConfig | None = None,
     ):
@@ -382,6 +384,19 @@ class HuginnAgent:
         self.thread_id = core.thread_id
         self.tool_filter = set(t.tool_filter) if t.tool_filter else None
         self.agent_factory = core.agent_factory
+        # Central tool scheduler — shared across parent + sub-agents when injected
+        # by AgentFactory. None here means the caller didn't wire one; we fall back
+        # to a per-instance in-process scheduler so old callers keep working and
+        # at least get the heavy/light concurrency caps locally.
+        self.scheduler = scheduler
+        if self.scheduler is None:
+            try:
+                from huginn.scheduling import AdmissionPolicy, ToolScheduler
+                self.scheduler = ToolScheduler(policy=AdmissionPolicy.from_env())
+            except Exception:
+                # Scheduling package unavailable (import error) — degrade to no
+                # admission control. _invoke_with_hooks checks for None.
+                self.scheduler = None
         self._agent_graph: Any | None = None
         self._tool_description_text: str | None = None
         self._last_cache_stats: dict[str, Any] = {}
@@ -460,6 +475,10 @@ class HuginnAgent:
         self.kg_depth = kg.kg_depth
         self.kg_top_k = kg.kg_top_k
         self._kg: Any | None = None
+        # Domain knowledge base (first-principles seed docs). 默认开,
+        # 可由构造器显式关掉. 懒加载避免实例化时就拉 ChromaDB.
+        self.kb_enabled = True if kb_enabled is _UNSET_SENTINEL else bool(kb_enabled)
+        self._kb: Any | None = None
         # 新实例清空系统上下文缓存, 避免 workspace 切换后拿到旧的 git 状态
         reset_context_cache()
 
@@ -827,6 +846,22 @@ class HuginnAgent:
                 }
             if isinstance(modified, dict):
                 input_data = modified
+            # Scheduler admission: gate every tool call by cost_tier so the
+            # heavy/light semaphores arbitrate concurrency across tools and
+            # across agents sharing this scheduler. ResourceExhausted (cpu/gpu
+            # budget) is surfaced like a pre_tool_use block so the LLM switches
+            # to a light alternative instead of bare-retrying.
+            admission = None
+            sched = getattr(self, "scheduler", None)
+            if sched is not None:
+                cost_tier, cost = self._scheduler_cost(tool_name, input_data)
+                try:
+                    admission = await sched.acquire(tool_name, cost_tier, cost)
+                except Exception as exc:
+                    return {
+                        "error": "resource_exhausted",
+                        "block_reason": str(exc),
+                    }
             start = time.time()
             error: BaseException | None = None
             result: Any = None
@@ -837,6 +872,12 @@ class HuginnAgent:
                 error = exc
                 raise
             finally:
+                if admission is not None and sched is not None:
+                    try:
+                        sched.release(admission)
+                    except Exception:
+                        # Release failure must not mask the real result/error.
+                        logger.warning("scheduler release failed for %s", tool_name)
                 duration_ms = (time.time() - start) * 1000
                 await hm.run_post(
                     tool_name, input_data, result, error, duration_ms,
@@ -864,6 +905,31 @@ class HuginnAgent:
             func=hooked_func,
             return_direct=getattr(original, "return_direct", False),
         )
+
+    def _scheduler_cost(
+        self, tool_name: str, input_data: dict
+    ) -> tuple[str, dict[str, float] | None]:
+        """Best-effort (cost_tier, estimate_cost) for scheduler admission.
+
+        Looks the tool up in the live ToolRegistry. If the tool isn't registered
+        or estimate_cost raises, returns ("none", None) so the call is admitted
+        without gating — the scheduler degrades gracefully rather than blocking
+        on unknown tools.
+        """
+        try:
+            from huginn.tools.registry import ToolRegistry
+
+            t = ToolRegistry.get(tool_name)
+            if t is None:
+                return "none", None
+            cost_tier = t.cost_tier
+            try:
+                cost = t.estimate_cost(input_data)
+            except Exception:
+                cost = None
+            return cost_tier, cost
+        except Exception:
+            return "none", None
 
     def select_model(self, task: str = "agent") -> Any:
         """Select the active model for a task.
@@ -969,6 +1035,44 @@ class HuginnAgent:
         except Exception:
             return ""
 
+    def _build_kb_text(self, query: str) -> str:
+        """Query the domain knowledge base (first-principles seed docs) and
+        format the retrieved chunks for the prompt. 镜像 _build_kg_text, 但走
+        ChromaDB 向量检索. 任何异常都吞掉返回空串, 不影响主对话."""
+        if not self.kb_enabled:
+            return ""
+        try:
+            if self._kb is None:
+                from huginn.knowledge.store import get_knowledge_base
+
+                self._kb = get_knowledge_base(str(self.workspace))
+            if self._kb.count() == 0:
+                return ""
+            chunks = self._kb.query(query, top_k=5)
+            if not chunks:
+                return ""
+            lines = []
+            for i, c in enumerate(chunks, 1):
+                # 截断超长 chunk, 避免单条把上下文撑爆
+                text = (c.get("text") or "").strip()
+                if not text:
+                    continue
+                if len(text) > 800:
+                    text = text[:800] + "…"
+                lines.append(f"[{i}] {text}")
+            if not lines:
+                return ""
+            body = "\n".join(lines)
+            return (
+                "### Domain Knowledge Context\n"
+                "The following first-principles reference chunks may ground your answer. "
+                "Cite the source numbers when relevant.\n"
+                f"{body}\n"
+                "### End Domain Knowledge Context"
+            )
+        except Exception:
+            return ""
+
     def _build_state_modifier(self) -> list[SystemMessage]:
         """Static system message used as the graph state modifier."""
         return self._cache_builder.build_state_modifier()
@@ -979,19 +1083,26 @@ class HuginnAgent:
         memory_text: str | None = None,
         kg_text: str | None = None,
         include_history: bool = True,
+        kb_text: str | None = None,
     ) -> list[Any]:
-        """Dynamic input messages: conversation history + memory + KG + current user."""
+        """Dynamic input messages: conversation history + memory + KG + KB + current user."""
         if memory_text is None:
             memory_text = self._build_memory_text(query=message)
         if kg_text is None:
             kg_text = self._build_kg_text(query=message)
+        if kb_text is None:
+            kb_text = self._build_kb_text(query=message)
 
         history_messages: list[Any] | None = None
         if include_history:
             history_messages = self._conversation_tree_history_to_messages()
 
         messages = self._cache_builder.build_input_messages(
-            memory_text, message, kg_text=kg_text, history_messages=history_messages
+            memory_text,
+            message,
+            kg_text=kg_text,
+            history_messages=history_messages,
+            kb_text=kb_text,
         )
         emotion_text = self._build_emotion_text(message)
         if emotion_text:
@@ -1201,6 +1312,16 @@ class HuginnAgent:
                 base = f"{base}\n\n# Project Memory\n{agents_md}"
         except Exception:
             # 上下文注入失败不影响主流程
+            pass
+        # 用户 taste profile — 问卷填完后持久化到 taste_profile.json,
+        # 每轮注入让 agent 按用户思维偏好调整回答风格. 没填过返回空串.
+        try:
+            from huginn.personalization import get_taste_directive
+
+            taste = get_taste_directive()
+            if taste:
+                base = f"{base}\n\n# User Taste Profile\n{taste}"
+        except Exception:
             pass
         return base
 
@@ -1663,7 +1784,10 @@ class HuginnAgent:
             # lives in the graph state modifier so the provider can cache the
             # prefix even when memory changes.
             memory_text = self._build_memory_text(query=message)
-            messages = self._build_input_messages(message, memory_text=memory_text)
+            kb_text = self._build_kb_text(query=message)
+            messages = self._build_input_messages(
+                message, memory_text=memory_text, kb_text=kb_text
+            )
 
             # 引导词作为 SystemMessage 插在用户消息前. 多个钩子可能往
             # metadata 里塞多段, list 就用换行拼起来. 位置跟 emotion_text

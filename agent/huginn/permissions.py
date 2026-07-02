@@ -52,6 +52,12 @@ DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
     "validate_tool": PermissionMode.AUTO,
     "visualize_tool": PermissionMode.AUTO,
     "web_search_tool": PermissionMode.AUTO,
+    # agentic_search_tool: 只读多跳检索, 无副作用, 放行
+    "agentic_search_tool": PermissionMode.AUTO,
+    # onboarding_tool: 只读写本地 taste_profile.json, 无副作用, 放行
+    "onboarding_tool": PermissionMode.AUTO,
+    # phase_tool: 读门状态/补证据/请求评审 无副作用, 放行; override 内部过 ASK
+    "phase_tool": PermissionMode.AUTO,
     # 短期补强: 只读分析类
     "gap_analysis_tool": PermissionMode.AUTO,
     "doe_tool": PermissionMode.AUTO,
@@ -75,6 +81,8 @@ DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
     "openfoam_tool": PermissionMode.ASK,
     "packing_tool": PermissionMode.ASK,
     "abaqus_tool": PermissionMode.ASK,
+    "fenics_tool": PermissionMode.ASK,
+    "elmer_tool": PermissionMode.ASK,
     "code_tool": PermissionMode.ASK,
     "gromacs_tool": PermissionMode.ASK,
     "job_tool": PermissionMode.ASK,
@@ -89,6 +97,8 @@ DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
     # Coder tools
     "file_read_tool": PermissionMode.AUTO,
     "git_tool": PermissionMode.AUTO,
+    # github_tool: 读动作在 tool 内部跳过权限检查直接执行, 写动作在 call() 里过权限
+    "github_tool": PermissionMode.ASK,
     "file_write_tool": PermissionMode.ASK,
     "file_edit_tool": PermissionMode.ASK,
     "bash_tool": PermissionMode.ASK,

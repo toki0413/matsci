@@ -94,7 +94,7 @@ class GapAnalysisTool(HuginnTool):
         try:
             input_data = GapAnalysisInput(**args)
             if input_data.action == "analyze_gaps":
-                return self._analyze_gaps(input_data)
+                return self._analyze_gaps(input_data, context)
             if input_data.action == "compare_methods":
                 return self._compare_methods(input_data)
             if input_data.action == "generate_hypothesis":
@@ -108,6 +108,31 @@ class GapAnalysisTool(HuginnTool):
             )
         except Exception as exc:
             return ToolResult(data=None, success=False, error=str(exc))
+
+    @staticmethod
+    def _query_kb_coverage(gap_description: str, context: ToolContext | None) -> list[dict]:
+        """查领域 KB 看这个 gap 是否已被已知结论覆盖. 命中返回 [{text, source}],
+        KB 不可用/空/查询失败都返回 [], 不阻断 gap 分析."""
+        if context is None:
+            return []
+        try:
+            workspace = getattr(context, "workspace", None) or "."
+            from huginn.knowledge.store import get_knowledge_base
+
+            kb = get_knowledge_base(str(workspace))
+            if kb.count() == 0:
+                return []
+            chunks = kb.query(gap_description, top_k=2)
+            return [
+                {
+                    "text": (c.get("text") or "")[:200],
+                    "source": c.get("source", ""),
+                }
+                for c in chunks
+                if c.get("text")
+            ]
+        except Exception:
+            return []
 
     # ── 字段抽取的小工具 ────────────────────────────────────────────
 
@@ -176,7 +201,9 @@ class GapAnalysisTool(HuginnTool):
 
     # ── action: analyze_gaps ───────────────────────────────────────
 
-    def _analyze_gaps(self, args: GapAnalysisInput) -> ToolResult:
+    def _analyze_gaps(
+        self, args: GapAnalysisInput, context: ToolContext | None = None
+    ) -> ToolResult:
         papers = args.papers or []
         n_total = len(papers)
         if n_total == 0:
@@ -280,6 +307,18 @@ class GapAnalysisTool(HuginnTool):
                     }
                 )
 
+        # A5: KB 覆盖检查 — 每个 gap 查 KB, 命中的标注 kb_covered=True,
+        # 防止 agent 把已知结论当新发现. KB 不可用时跳过.
+        n_kb_covered = 0
+        for g in gaps:
+            kb_hits = self._query_kb_coverage(g.get("description", ""), context)
+            if kb_hits:
+                g["kb_covered"] = True
+                g["kb_references"] = kb_hits
+                n_kb_covered += 1
+            else:
+                g["kb_covered"] = False
+
         n_under = sum(1 for g in gaps if g["type"] == "under_studied_method")
         n_missing = sum(1 for g in gaps if g["type"] == "missing_combination")
         n_contra = sum(1 for g in gaps if g["type"] == "contradiction")
@@ -287,6 +326,7 @@ class GapAnalysisTool(HuginnTool):
             f"在主题 '{args.topic}' 下分析了 {n_total} 篇论文，"
             f"识别出 {len(gaps)} 处潜在研究空白"
             f"（少被研究方法 {n_under}，未出现组合 {n_missing}，矛盾结果 {n_contra}）。"
+            f"其中 {n_kb_covered} 处已被领域 KB 覆盖，建议验证而非重新假设。"
         )
 
         data = {
@@ -296,6 +336,7 @@ class GapAnalysisTool(HuginnTool):
             "method_frequency": dict(method_counter.most_common()),
             "tag_frequency": dict(tag_counter.most_common()),
             "gaps": gaps,
+            "n_kb_covered": n_kb_covered,
             "summary": summary,
         }
         return ToolResult(data=data, success=True)

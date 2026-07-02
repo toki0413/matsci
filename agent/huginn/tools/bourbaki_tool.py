@@ -227,10 +227,44 @@ end
         )
 
     def _fallback_check_conservation(self, domain: str, equations: str) -> BourbakiResult:
-        """Simple heuristic conservation check."""
-        # Check if equations contain divergence or time derivative terms
+        """守恒律校验. 先用 SymPy 做代数一致性 (lhs - rhs == 0); 含 unicode
+        物理算子 (∇/∂/·) 的方程 SymPy 会瞎解析成无意义符号, 这类直接走子串
+        启发式 (它本来就是为连续性方程记号设计的)."""
+        # 含 unicode 物理算子 → SymPy 路径不可信, 直接启发式
+        has_unicode_ops = any(g in equations for g in ("∇", "∂", "·", "∇·"))
+
+        if not has_unicode_ops:
+            # SymPy 路径: 按 = 拆, 化简残差
+            try:
+                import sympy
+
+                eq = equations.strip()
+                if "=" in eq:
+                    lhs_str, rhs_str = eq.split("=", 1)
+                    lhs = sympy.sympify(lhs_str)
+                    rhs = sympy.sympify(rhs_str)
+                    residual = sympy.simplify(lhs - rhs)
+                    verified = residual == 0
+                    return BourbakiResult(
+                        success=True,
+                        task="check_conservation",
+                        domain=domain,
+                        verified=verified,
+                        fallback=True,
+                        message=(
+                            f"SymPy conservation check: residual simplified to 0 -> {verified}"
+                        ),
+                    )
+            except Exception:
+                # sympify 失败 → 走启发式
+                pass
+
+        # 启发式: 子串匹配散度项 + 时间导数项
+        # 时间导数匹配 ∂/∂t, ∂ρ/∂t, d/dt, dρ/dt — 变量可能夹在中间
+        import re
+
         has_divergence = "∇·" in equations or "div" in equations.lower()
-        has_time_derivative = "∂/∂t" in equations or "d/dt" in equations
+        has_time_derivative = bool(re.search(r"[∂d][^/\s]*/[∂d]t", equations))
         looks_conserved = has_divergence and has_time_derivative
 
         return BourbakiResult(

@@ -15,6 +15,7 @@ from typing import Any
 from huginn.agent import HuginnAgent
 from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator
+from huginn.autoloop.plan_store import PlanStore
 from huginn.config import HuginnConfig, get_config
 from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.models.registry import ModelRegistry
@@ -167,8 +168,18 @@ def get_orchestrator() -> Orchestrator:
         factory=get_agent_factory(),
         memory_manager=get_memory_manager(),
         max_concurrent=cfg.max_concurrent_subagents,
+        plan_store=get_plan_store(),
+        auto_confirm=cfg.plan_auto_confirm,
     )
     return get_context().orchestrator
+
+
+def get_plan_store() -> PlanStore:
+    """Get or create the global PlanStore."""
+    if get_context().plan_store is not None:
+        return get_context().plan_store
+    get_context().plan_store = PlanStore()
+    return get_context().plan_store
 
 
 # ── planner ─────────────────────────────────────────────────────────
@@ -312,6 +323,7 @@ def get_system_snapshot() -> dict[str, Any]:
         agent=ctx.agent,
         planner_agent=ctx.planner_agent,
         mcp_manager=ctx.mcp_manager,
+        plan_store=ctx.plan_store,
         permission_config=ctx.permission_config,
         active_threads=threads_snapshot,
         edit_tools=set(_EDIT_TOOLS),

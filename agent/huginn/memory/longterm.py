@@ -29,6 +29,14 @@ TIER_TTL_HOURS = {
     "long": None,  # permanent
 }
 
+MATERIAL_CATEGORIES = {
+    "structure",
+    "property",
+    "synthesis",
+    "characterization",
+    "simulation",
+}
+
 
 @dataclass
 class MemoryEntry:
@@ -98,13 +106,17 @@ class LongTermMemory:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_tags ON memories(tags)
             """)
-            # Migrate old databases without tier/expires_at before indexing them
+            # Migrate old databases without tier/expires_at/formula before indexing them
             for _col, ddl in [
                 ("tier", "ALTER TABLE memories ADD COLUMN tier TEXT DEFAULT 'mid'"),
                 ("expires_at", "ALTER TABLE memories ADD COLUMN expires_at TEXT"),
+                ("formula", "ALTER TABLE memories ADD COLUMN formula TEXT"),
             ]:
                 with contextlib.suppress(sqlite3.OperationalError):
                     conn.execute(ddl)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_formula ON memories(formula)
+            """)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_tier ON memories(tier)
             """)
@@ -129,10 +141,12 @@ class LongTermMemory:
         importance: float = 0.5,
         tier: str = "mid",
         ttl_hours: float | None = None,
+        formula: str | None = None,
     ) -> str:
         """Store a new memory entry. Returns the entry ID.
 
         tier: short (6h), mid (7d), long (permanent). ttl_hours overrides default TTL.
+        formula: optional material formula (e.g. "GaN") for material entries.
         """
         if tier not in TIER_TTL_HOURS:
             raise ValueError(f"Invalid tier {tier}; choose from {list(TIER_TTL_HOURS)}")
@@ -151,8 +165,8 @@ class LongTermMemory:
             conn.execute(
                 """
                 INSERT INTO memories
-                (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_id,
@@ -165,14 +179,17 @@ class LongTermMemory:
                     now.isoformat(),
                     now.isoformat(),
                     expires,
+                    formula,
                 ),
             )
+            # formula 进 tags 让 FTS5 也能搜到
+            fts_tags = " ".join(tags + ([formula] if formula else []))
             conn.execute(
                 "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
                 (
                     conn.execute("SELECT last_insert_rowid()").fetchone()[0],
                     content,
-                    " ".join(tags),
+                    fts_tags,
                     source,
                 ),
             )
@@ -185,16 +202,46 @@ class LongTermMemory:
                     {
                         "memory_id": entry_id,
                         "category": category,
-                        "tags": ",".join(tags),
+                        "tags": fts_tags,
                         "source": source,
                         "importance": str(importance),
                         "tier": tier,
+                        "formula": formula or "",
                     }
                 ],
                 ids=[entry_id],
             )
 
         return entry_id
+
+    def store_material(
+        self,
+        formula: str,
+        category: str,
+        payload: dict[str, Any],
+        tier: str = "long",
+        source: str = "",
+        importance: float = 0.7,
+    ) -> str:
+        """存一条材料记忆. category 必须在 MATERIAL_CATEGORIES 里.
+
+        formula: 化学式, 如 "GaN"
+        category: structure | property | synthesis | characterization | simulation
+        payload: 任意 dict, json 序列化后存 content
+        """
+        if category not in MATERIAL_CATEGORIES:
+            raise ValueError(
+                f"Invalid material category {category}; choose from {sorted(MATERIAL_CATEGORIES)}"
+            )
+        return self.store(
+            content=json.dumps(payload, ensure_ascii=False, default=str),
+            category=f"material_{category}",
+            tags=[formula, category],
+            source=source or f"material:{formula}",
+            importance=importance,
+            tier=tier,
+            formula=formula,
+        )
 
     def _where_alive(self, alias: str = "m") -> tuple[str, tuple]:
         """Return WHERE clause and params filtering out expired short/mid memories."""
@@ -229,6 +276,7 @@ class LongTermMemory:
         tier: str | None = None,
         top_k: int = 5,
         semantic: bool = True,
+        formula: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve alive memories matching query (FTS5 + optional semantic)."""
         results = []
@@ -245,6 +293,9 @@ class LongTermMemory:
             if tier:
                 sql += " AND tier = ?"
                 params.append(tier)
+            if formula:
+                sql += " AND m.formula = ?"
+                params.append(formula)
             if query:
                 fts_matched = False
                 # Try FTS5 first for proper tokenized matching

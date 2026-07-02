@@ -7,6 +7,7 @@ falls back to structured mock data for AFLOW/NOMAD or when keys are missing.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any, Literal
 from urllib.parse import urlencode
@@ -15,6 +16,15 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+
+def _formula_to_elements(formula: str) -> list[str]:
+    """粗略从化学式抽元素符号, 给 NOMAD query DSL 用. 'SiO2' -> ['Si','O']."""
+    import re
+
+    # 匹配大写开头 + 可选小写的元素符号
+    symbols = re.findall(r"[A-Z][a-z]?", formula)
+    return symbols
 
 
 class DatabaseToolInput(BaseModel):
@@ -242,85 +252,211 @@ class DatabaseTool(HuginnTool):
             success=True,
         )
 
-    # ── AFLOW (structured fallback) ────────────────────────────────
+    # ── AFLOW ───────────────────────────────────────────────────────
+    # AFLOW REST (aflowlib.duke.edu) 是公开的, 不需要 key.
 
     async def _query_aflow(
         self, args: DatabaseToolInput, api_key: str | None
     ) -> ToolResult:
-        # AFLOW REST API is limited; use aiohttp if key available, else mock
-        if api_key:
-            try:
-                import aiohttp
+        try:
+            import aiohttp
+        except ImportError:
+            return self._mock_result(args, "aiohttp not installed")
 
-                base = "https://aflow.org/API/aflow.shtml"
-                params: dict[str, Any] = {
-                    "keywords": args.formula or args.material_id or "*",
-                    "limit": args.limit,
-                }
-                url = f"{base}?{urlencode(params)}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
-                        if resp.status == 200:
-                            text = await resp.text()
-                            return ToolResult(
-                                data={
-                                    "database": "aflow",
-                                    "query_type": args.query_type,
-                                    "raw_response_preview": text[:500],
-                                    "note": "AFLOW response parsed as raw text",
-                                },
-                                success=True,
-                            )
+        # AFLOW 的 query 语法: composition(化学式) 或 catalog(材料 id)
+        target = args.formula or args.material_id
+        if not target:
+            return ToolResult(
+                data=None, success=False, error="formula or material_id required for AFLOW"
+            )
+
+        # 公开端点, 不需要 key
+        base = "http://aflowlib.duke.edu/aflowlib"
+        params: dict[str, Any] = {"limit": args.limit}
+        if target.lower().startswith("aflow:"):
+            params["aflow"] = target
+        else:
+            params["composition"] = target
+        url = f"{base}?{urlencode(params, doseq=True)}"
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
                         return ToolResult(
-                            data=None, success=False,
-                            error=f"AFLOW API error {resp.status}",
+                            data=None,
+                            success=False,
+                            error=f"AFLOW API error {resp.status}: {text[:200]}",
                         )
-            except ImportError:
-                pass
-        return self._mock_result(args, "AFLOW API key not set or aiohttp unavailable")
+                    # AFLOW 返回 JSON (新版本) 或 AFLUX 文本 (老版本), 都试一下
+                    try:
+                        raw = await resp.json(content_type=None)
+                    except Exception:
+                        raw = await resp.text()
+        except asyncio.TimeoutError:
+            return ToolResult(
+                data=None, success=False, error="AFLOW request timed out (30s)"
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"AFLOW request failed: {e}")
 
-    # ── NOMAD (structured fallback) ────────────────────────────────
+        records = self._normalize_aflow(raw)
+        return ToolResult(
+            data={
+                "database": "aflow",
+                "query_type": args.query_type,
+                "count": len(records),
+                "records": records,
+                "source": "aflow",
+            },
+            success=True,
+        )
+
+    def _normalize_aflow(self, raw: Any) -> list[dict[str, Any]]:
+        """把 AFLOW 异构响应归一成 records. AFLOW 可能返回 list/dict/text."""
+        records: list[dict[str, Any]] = []
+        if isinstance(raw, str):
+            # 老版 AFLUX 文本: 逐行解析 "key=value"
+            for block in raw.split(">>>"):
+                rec: dict[str, Any] = {}
+                for line in block.strip().splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if k in ("compound", "formula"):
+                            rec["formula"] = v
+                        elif k in ("aflow_id", "auid"):
+                            rec["entry_id"] = v
+                        elif k in ("spacegroup", "sg"):
+                            rec["spacegroup"] = v
+                        elif k == "Egap":
+                            try:
+                                rec["band_gap"] = float(v)
+                            except ValueError:
+                                rec["band_gap"] = v
+                        elif k in ("enthalpy", "enthalpy_atom"):
+                            try:
+                                rec["energy"] = float(v)
+                            except ValueError:
+                                rec["energy"] = v
+                if rec:
+                    rec["source"] = "aflow"
+                    records.append(rec)
+        elif isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                records.append({
+                    "formula": item.get("compound") or item.get("formula"),
+                    "entry_id": item.get("aflow_id") or item.get("auid"),
+                    "spacegroup": item.get("spacegroup") or item.get("sg"),
+                    "band_gap": item.get("Egap"),
+                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
+                    "source": "aflow",
+                })
+        elif isinstance(raw, dict) and "data" in raw:
+            for item in raw["data"]:
+                records.append({
+                    "formula": item.get("compound") or item.get("formula"),
+                    "entry_id": item.get("aflow_id") or item.get("auid"),
+                    "spacegroup": item.get("spacegroup") or item.get("sg"),
+                    "band_gap": item.get("Egap"),
+                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
+                    "source": "aflow",
+                })
+        return records[:50]  # 防爆
+
+    # ── NOMAD ───────────────────────────────────────────────────────
+    # NOMAD 公开数据不需要 key, key 只用于私有上传.
 
     async def _query_nomad(
         self, args: DatabaseToolInput, api_key: str | None
     ) -> ToolResult:
-        if api_key:
-            try:
-                import aiohttp
+        try:
+            import aiohttp
+        except ImportError:
+            return self._mock_result(args, "aiohttp not installed")
 
-                base = "https://nomad-lab.eu/prod/v1/api/v1"
-                headers = {"Authorization": f"Bearer {api_key}"}
-                query: dict[str, Any] = {}
-                if args.formula:
-                    query["formula"] = args.formula
-                params = {"page_size": args.limit}
-                url = f"{base}/entries?{urlencode(params)}"
-                async with aiohttp.ClientSession(headers=headers) as session:
-                    async with session.post(url, json=query) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            records = []
-                            for item in data.get("data", []):
-                                records.append({
-                                    "entry_id": item.get("entry_id"),
-                                    "formula": item.get("formula"),
-                                })
-                            return ToolResult(
-                                data={
-                                    "database": "nomad",
-                                    "query_type": args.query_type,
-                                    "count": len(records),
-                                    "records": records,
-                                },
-                                success=True,
-                            )
+        target = args.formula or args.material_id
+        if not target:
+            return ToolResult(
+                data=None, success=False, error="formula or material_id required for NOMAD"
+            )
+
+        base = "https://nomad-lab.eu/prod-1/api/v1/entries/query"
+        headers: dict[str, str] = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        # NOMAD 用 ES query DSL, 公开数据 owner="public"
+        body: dict[str, Any] = {
+            "owner": "public",
+            "pagination": {"page_size": min(args.limit, 50)},
+            "query": {
+                "results.material.elements:all": _formula_to_elements(target),
+            },
+        }
+        # 也按化学式模糊匹配
+        body["query"]["results.material.chemical_formula_descriptive:contains"] = target
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.post(base, json=body) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
                         return ToolResult(
-                            data=None, success=False,
-                            error=f"NOMAD API error {resp.status}",
+                            data=None,
+                            success=False,
+                            error=f"NOMAD API error {resp.status}: {text[:200]}",
                         )
-            except ImportError:
-                pass
-        return self._mock_result(args, "NOMAD API key not set or aiohttp unavailable")
+                    raw = await resp.json()
+        except asyncio.TimeoutError:
+            return ToolResult(
+                data=None, success=False, error="NOMAD request timed out (30s)"
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"NOMAD request failed: {e}")
+
+        records = self._normalize_nomad(raw)
+        return ToolResult(
+            data={
+                "database": "nomad",
+                "query_type": args.query_type,
+                "count": len(records),
+                "records": records,
+                "source": "nomad",
+            },
+            success=True,
+        )
+
+    def _normalize_nomad(self, raw: Any) -> list[dict[str, Any]]:
+        """把 NOMAD /entries/query 响应归一成 records."""
+        records: list[dict[str, Any]] = []
+        if not isinstance(raw, dict):
+            return records
+        for item in raw.get("data", []):
+            entry_id = item.get("entry_id") or item.get("upload_id")
+            results = item.get("results", {})
+            material = (results.get("material") or [{}])
+            mat = material[0] if isinstance(material, list) and material else material
+            formula = (
+                mat.get("chemical_formula_descriptive")
+                or mat.get("chemical_formula_reduced")
+            )
+            props = results.get("properties", {})
+            records.append({
+                "entry_id": entry_id,
+                "formula": formula,
+                "spacegroup": (mat.get("structure") or {}).get("space_group"),
+                "band_gap": props.get("electronic", {}).get("band_gap"),
+                "energy": props.get("energetic", {}).get("total_energy"),
+                "source": "nomad",
+            })
+        return records[:50]
 
     # ── Compare ─────────────────────────────────────────────────────
 
