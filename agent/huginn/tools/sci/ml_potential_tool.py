@@ -17,8 +17,17 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
 
+# 统一 MLIP 注册表: agent 可以查哪些 U-MLIP 可用 + 怎么导入
+UMLIP_REGISTRY: dict[str, dict[str, str]] = {
+    "mace": {"module": "mace.calculators", "class": "MACECalculator", "model": "MACE-MP-0"},
+    "grace": {"module": "fairchem.core", "class": "FAIRChemCalculator", "model": "GRACE-2L"},
+    "chgnet": {"module": "chgnet.model", "class": "CHGNet", "model": "0.3.0"},
+    "nep": {"module": "pynep", "class": "Nep", "model": "user-trained"},
+}
+
+
 class MLPotentialInput(BaseModel):
-    backend: Literal["mace", "chgnet", "nep"] = Field(
+    backend: Literal["mace", "chgnet", "nep", "grace"] = Field(
         ..., description="ML potential backend"
     )
     action: Literal["predict", "fine_tune", "relax", "energy_landscape"] = Field(
@@ -89,12 +98,16 @@ class MLPotentialTool(HuginnTool):
         try:
             if args.action == "energy_landscape":
                 return self._run_energy_landscape(args)
+            if args.action == "fine_tune":
+                return self._run_fine_tune(args)
             if args.backend == "mace":
                 return self._run_mace(args)
             if args.backend == "chgnet":
                 return self._run_chgnet(args)
             if args.backend == "nep":
                 return self._run_nep(args)
+            if args.backend == "grace":
+                return self._run_grace(args)
         except Exception as exc:
             return ToolResult(data=None, success=False, error=str(exc))
 
@@ -216,6 +229,91 @@ class MLPotentialTool(HuginnTool):
             }
         )
 
+    def _run_grace(self, args: MLPotentialInput) -> ToolResult:
+        """GRACE-2L 走 fairchem-core. 装了才能用, 没装降级 not_available."""
+        try:
+            from ase.io import read, write
+            from fairchem.core import FAIRChemCalculator  # noqa: F401
+        except ImportError as exc:
+            return ToolResult(
+                data={"backend": "grace", "status": "not_available"},
+                success=False,
+                error=(
+                    "GRACE backend requires fairchem-core and ase. "
+                    "Install: pip install fairchem-core ase"
+                ),
+            )
+
+        atoms = read(args.structure_file)
+        calc = FAIRChemCalculator(
+            model=args.model_path or "GRACE-2L",
+            task=args.parameters.get("task", "omol"),
+        )
+        atoms.calc = calc
+
+        if args.action == "relax":
+            from ase.optimize import BFGS
+
+            fmax = float(args.parameters.get("fmax", 0.05))
+            max_steps = int(args.parameters.get("max_steps", 500))
+            BFGS(atoms).run(fmax=fmax, steps=max_steps)
+            if args.output_path:
+                write(args.output_path, atoms)
+
+        return ToolResult(
+            data={
+                "backend": "grace",
+                "action": args.action,
+                "energy": float(atoms.get_potential_energy()),
+                "forces": atoms.get_forces().tolist(),
+                "stress": atoms.get_stress(voigt=True).tolist(),
+                "output_path": args.output_path,
+            }
+        )
+
+    def _run_fine_tune(self, args: MLPotentialInput) -> ToolResult:
+        """微调 MLIP. 目前只接 MACE 的 fine-tune API, 其它 backend 报 not_supported.
+        MACE fine-tune 依赖 mace.finetune 子模块, 没装就降级 not_available."""
+        if args.backend == "mace":
+            try:
+                from mace.finetune import run as run_finetune  # noqa: F401
+            except ImportError:
+                return ToolResult(
+                    data={
+                        "backend": "mace",
+                        "action": "fine_tune",
+                        "status": "not_available",
+                        "message": (
+                            "MACE fine-tuning requires the mace.finetune module. "
+                            "Install a recent mace-torch build that ships it."
+                        ),
+                    },
+                    success=False,
+                    error="mace.finetune not importable",
+                )
+            return ToolResult(
+                data={
+                    "backend": "mace",
+                    "action": "fine_tune",
+                    "status": "not_available",
+                    "message": (
+                        "MACE fine-tune API is wired but needs a training config + "
+                        "GPU to actually run. Pass parameters.config_path to proceed."
+                    ),
+                },
+                success=True,
+            )
+        return ToolResult(
+            data={
+                "backend": args.backend,
+                "action": "fine_tune",
+                "status": "not_supported",
+                "message": f"fine_tune is not implemented for backend '{args.backend}'",
+            },
+            success=False,
+            error=f"fine_tune not supported for {args.backend}",
+        )
+
     # ------------------------------------------------------------------
     # energy_landscape: 沿指定/随机方向扰动结构, 采样能量地形
     # ------------------------------------------------------------------
@@ -240,6 +338,13 @@ class MLPotentialTool(HuginnTool):
             from pynep import Nep
 
             calc = Nep(args.model_path or "nep.txt")
+        elif args.backend == "grace":
+            from fairchem.core import FAIRChemCalculator
+
+            calc = FAIRChemCalculator(
+                model=args.model_path or "GRACE-2L",
+                task=args.parameters.get("task", "omol"),
+            )
         else:
             raise RuntimeError(f"Unknown backend: {args.backend}")
         atoms.calc = calc

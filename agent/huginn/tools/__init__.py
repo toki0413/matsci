@@ -75,9 +75,11 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.bash_tool", "BashTool"),
         ("huginn.tools.code_tool", "CodeTool"),
         ("huginn.tools.file_edit_tool", "FileEditTool"),
+        ("huginn.tools.multi_edit_tool", "MultiEditTool"),
         ("huginn.tools.file_read_tool", "FileReadTool"),
         ("huginn.tools.file_write_tool", "FileWriteTool"),
         ("huginn.tools.git_tool", "GitTool"),
+        ("huginn.tools.github_tool", "GithubTool"),
         ("huginn.tools.bourbaki_tool", "BourbakiTool"),
         ("huginn.tools.diff_tool", "DiffTool"),
         ("huginn.tools.validate_tool", "ValidateTool"),
@@ -91,6 +93,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.structure_tool", "StructureTool"),
         # ── search/ ──
         ("huginn.tools.web_search_tool", "WebSearchTool"),
+        ("huginn.tools.agentic_search_tool", "AgenticSearchTool"),
         ("huginn.tools.literature_tool", "LiteratureTool"),
         # ── meta/ ──
         ("huginn.tools.orchestrate_tool", "OrchestrateTool"),
@@ -100,6 +103,9 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.scenario_tool", "ScenarioTool"),
         ("huginn.tools.simple_path_tool", "SimplePathTool"),
         ("huginn.tools.personalization_tool", "PersonalizationTool"),
+        ("huginn.tools.onboarding_tool", "OnboardingTool"),
+        ("huginn.tools.phase_tool", "PhaseTool"),
+        ("huginn.tools.workflow_tool", "WorkflowTool"),
         ("huginn.tools.config_wizard_tool", "ConfigWizardTool"),
         ("huginn.tools.clarification_tool", "ClarificationTool"),
         # ── 外部包 (evaluation/rag/plugins, 不在 tools/ 下) ──
@@ -120,6 +126,9 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.openfoam_tool", "OpenFoamTool"),
         ("huginn.tools.packing_tool", "PackingTool"),
         ("huginn.tools.abaqus_tool", "AbaqusTool"),
+        ("huginn.tools.fenics_tool", "FenicsTool"),
+        ("huginn.tools.elmer_tool", "ElmerTool"),
+        ("huginn.tools.gromacs_tool", "GromacsTool"),
         ("huginn.tools.plasma_tool", "PlasmaTool"),
         ("huginn.tools.neb_tool", "NEBTool"),
         ("huginn.tools.structural_analytical_tool", "StructuralAnalyticalTool"),
@@ -140,6 +149,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.active_learning_tool", "ActiveLearningTool"),
         ("huginn.tools.ml_potential_tool", "MLPotentialTool"),
         ("huginn.tools.high_throughput_tool", "HighThroughputTool"),
+        ("huginn.tools.multi_fidelity_tool", "MultiFidelityTool"),
         ("huginn.tools.xrd_sim_tool", "XrdSimTool"),
         # ── design/ ──
         ("huginn.tools.gap_analysis_tool", "GapAnalysisTool"),
@@ -149,6 +159,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.nudge_tool", "NudgeTool"),
         ("huginn.tools.design_atom_tool", "DesignAtomTool"),
         ("huginn.tools.generative_design_tool", "GenerativeDesignTool"),
+        ("huginn.tools.plan_store_tool", "PlanStoreTool"),
         # ── cv/ ──
         ("huginn.tools.image_analysis_tool", "ImageAnalysisTool"),
         ("huginn.tools.image_design_tool", "ImageDesignTool"),
@@ -164,6 +175,8 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         # ── materials/ ──
         ("huginn.tools.materials_database_tool", "MaterialsDatabaseTool"),
         ("huginn.tools.experimental_data_tool", "ExperimentalDataTool"),
+        # ── wetlab/ ──
+        ("huginn.tools.wetlab_rpc_tool", "WetlabRpcTool"),
     ]
 
     registered: list[str] = []

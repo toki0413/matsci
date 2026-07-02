@@ -195,3 +195,7 @@ graphene_*.png
 # Result dumps
 co_ox_results.md
 *_results.md
+
+# Test artifacts
+agent/tests/.test_cache/
+agent/test_band.png

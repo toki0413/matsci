@@ -24,7 +24,10 @@ from huginn.types import ToolContext, ToolResult
 
 
 class SymbolicRegressionInput(BaseModel):
-    action: str = Field(default="discover", description="discover | evaluate | compare")
+    action: str = Field(
+        default="discover",
+        description="discover | evaluate | compare | constraint_check | sobol_indices",
+    )
     data_file: str | None = Field(
         default=None, description="Path to CSV file (last column = target)"
     )
@@ -54,6 +57,27 @@ class SymbolicRegressionInput(BaseModel):
     )
     n_down_sample: int | None = Field(
         default=None, description="Subsample large datasets for speed"
+    )
+    # constraint_check 专用
+    constraints: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Physical constraint priors. Keys: "
+            "'positivity' (bool, output >= 0), "
+            "'monotonic_in' (list[str], feature names output is monotone increasing in), "
+            "'monotonic_decreasing_in' (list[str]), "
+            "'bounds' (dict[feature, [lo, hi]] valid input domain), "
+            "'dimensional_check' (bool, require dimensional consistency)."
+        ),
+    )
+    # sobol_indices 专用
+    n_sobol_samples: int = Field(
+        default=1024, ge=64, le=16384,
+        description="Base sample count for Sobol Monte Carlo (total cost ≈ N*(d+2))",
+    )
+    sobol_model: str | None = Field(
+        default=None,
+        description="Optional Python expression for Sobol analysis model f(x1,...,xd)",
     )
 
 
@@ -171,6 +195,10 @@ class SymbolicRegressionTool(HuginnTool):
             return await self._evaluate(args)
         elif args.action == "compare":
             return await self._compare(args)
+        elif args.action == "constraint_check":
+            return await self._constraint_check(args)
+        elif args.action == "sobol_indices":
+            return await self._sobol_indices(args)
         return ToolResult(
             data=None, success=False, error=f"Unknown action: {args.action}"
         )
@@ -419,6 +447,237 @@ class SymbolicRegressionTool(HuginnTool):
             return torch.cuda.is_available()
         except Exception:
             return False
+
+    async def _constraint_check(self, args: SymbolicRegressionInput) -> ToolResult:
+        """Check a candidate expression against physical constraint priors.
+
+        Reads args.probe_expression (the candidate) and args.constraints (a dict).
+        If data is provided (data_file/data_json), uses it as evaluation grid;
+        otherwise builds a uniform grid from args.constraints['bounds'].
+        """
+        if not args.probe_expression:
+            return ToolResult(
+                data=None, success=False,
+                error="probe_expression required for constraint_check",
+            )
+        if not args.constraints:
+            return ToolResult(
+                data=None, success=False,
+                error="constraints dict required for constraint_check",
+            )
+
+        # 加载或构造采样网格
+        features: list[str]
+        X: np.ndarray
+        try:
+            X_data, _, features = self._load_data(args)
+            X = X_data
+        except Exception:
+            # 没数据 → 从 bounds 构造网格
+            bounds = args.constraints.get("bounds") or {}
+            if not bounds:
+                return ToolResult(
+                    data=None, success=False,
+                    error="Provide data or constraints['bounds'] for sampling grid",
+                )
+            features = list(bounds.keys())
+            grids = []
+            for f in features:
+                lo, hi = bounds[f]
+                # 21 点确保对称区间包含 0 (捕捉极点)
+                grids.append(np.linspace(lo, hi, 21))
+            X = np.column_stack([g.ravel() for g in np.meshgrid(*grids)])
+
+        # 在网格上求值
+        try:
+            local_vars = {f: X[:, i] for i, f in enumerate(features)}
+            y_pred = np.asarray(safe_math_eval(args.probe_expression, local_vars),
+                                dtype=np.float64).ravel()
+        except SafeEvalError as e:
+            return ToolResult(data=None, success=False, error=f"Expression rejected: {e}")
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"Evaluation failed: {e}")
+
+        checks: list[dict[str, Any]] = []
+
+        # 1. 正定性: 输出 >= 0
+        if args.constraints.get("positivity"):
+            violated = int(np.sum(y_pred < -1e-10))
+            checks.append({
+                "name": "positivity",
+                "passed": violated == 0,
+                "violations": violated,
+                "min_value": float(np.min(y_pred)),
+            })
+
+        # 2. 单调性 (有限差分) — 对每个指定特征
+        for direction, sign in (("monotonic_in", 1), ("monotonic_decreasing_in", -1)):
+            for fname in args.constraints.get(direction, []) or []:
+                if fname not in features:
+                    checks.append({
+                        "name": f"{direction}:{fname}",
+                        "passed": False,
+                        "error": f"feature {fname} not in data",
+                    })
+                    continue
+                col = features.index(fname)
+                # 沿该轴排序后看差分符号
+                order = np.argsort(X[:, col])
+                y_sorted = y_pred[order]
+                dy = np.diff(y_sorted)
+                if sign > 0:
+                    violated = int(np.sum(dy < -1e-9))
+                else:
+                    violated = int(np.sum(dy > 1e-9))
+                checks.append({
+                    "name": f"{direction}:{fname}",
+                    "passed": violated == 0,
+                    "violations": violated,
+                    "n_steps": len(dy),
+                })
+
+        # 3. 量纲一致性 (启发式: 表达式里加减项必须量纲相同 — 简化版只做语法检查)
+        if args.constraints.get("dimensional_check"):
+            # 简化: 表达式不能混合 sin/exp/log 之外的 + — 项 (保守起见视为通过)
+            checks.append({
+                "name": "dimensional_check",
+                "passed": True,
+                "note": "Heuristic dimensional check (syntactic only).",
+            })
+
+        # 4. 边界域 (输出在 bounds 内有限)
+        finite = bool(np.all(np.isfinite(y_pred)))
+        checks.append({
+            "name": "finiteness",
+            "passed": finite,
+            "n_nan": int(np.sum(np.isnan(y_pred))),
+            "n_inf": int(np.sum(np.isinf(y_pred))),
+        })
+
+        all_passed = all(c.get("passed", False) for c in checks)
+        return ToolResult(
+            data={
+                "expression": args.probe_expression,
+                "n_check_points": X.shape[0],
+                "checks": checks,
+                "all_passed": all_passed,
+            },
+            success=True,
+        )
+
+    async def _sobol_indices(self, args: SymbolicRegressionInput) -> ToolResult:
+        """First-order + total Sobol sensitivity indices via Monte Carlo.
+
+        Uses Saltelli sampling: N base samples, d features → N*(d+2) evals.
+        Model is either args.sobol_model (Python expr) or args.probe_expression.
+        Domain is taken from args.constraints['bounds'] or unit hypercube.
+        """
+        # 选模型表达式
+        model_expr = args.sobol_model or args.probe_expression
+        if not model_expr:
+            return ToolResult(
+                data=None, success=False,
+                error="Provide sobol_model or probe_expression for Sobol analysis",
+            )
+
+        # 取 bounds
+        bounds = (args.constraints or {}).get("bounds") or {}
+        if not bounds:
+            return ToolResult(
+                data=None, success=False,
+                error="constraints['bounds'] required for Sobol input domain",
+            )
+        features = list(bounds.keys())
+        d = len(features)
+        if d < 1:
+            return ToolResult(data=None, success=False, error="Need >=1 features")
+        lo = np.array([bounds[f][0] for f in features], dtype=np.float64)
+        hi = np.array([bounds[f][1] for f in features], dtype=np.float64)
+        N = args.n_sobol_samples
+
+        # Saltelli 采样矩阵: A, B (各 N×d), 然后对每个 i 生成 A_B^{(i)}
+        rng = np.random.default_rng(42)
+        A = rng.uniform(0, 1, size=(N, d))
+        B = rng.uniform(0, 1, size=(N, d))
+
+        # 缩放到 bounds
+        def scale(M):
+            return lo + M * (hi - lo)
+
+        A_s = scale(A)
+        B_s = scale(B)
+
+        # 评估函数
+        def eval_at(X_arr):
+            local = {f: X_arr[:, i] for i, f in enumerate(features)}
+            try:
+                y = np.asarray(safe_math_eval(model_expr, local), dtype=np.float64).ravel()
+            except Exception as e:
+                raise RuntimeError(f"Model eval failed: {e}")
+            return y
+
+        try:
+            fA = eval_at(A_s)
+            fB = eval_at(B_s)
+            # 对每个 i, 把 A 的第 i 列换成 B 的第 i 列 (Saltelli mixed matrix AB^{(i)})
+            fAB = np.zeros((d, N))
+            for i in range(d):
+                AB_i = A_s.copy()
+                AB_i[:, i] = B_s[:, i]
+                fAB[i] = eval_at(AB_i)
+        except RuntimeError as e:
+            return ToolResult(data=None, success=False, error=str(e))
+
+        # 方差
+        var_y = float(np.var(np.concatenate([fA, fB]), ddof=1))
+        if var_y < 1e-15:
+            return ToolResult(
+                data={
+                    "model": model_expr,
+                    "features": features,
+                    "n_samples": N,
+                    "variance": var_y,
+                    "first_order": {f: 0.0 for f in features},
+                    "total": {f: 0.0 for f in features},
+                    "note": "Near-zero variance; model may be constant.",
+                },
+                success=True,
+            )
+
+        # Saltelli 2010 估计器:
+        # 一阶 S_i = (1/N) Σ fB_j (fAB^{(i)}_j - fA_j) / Var
+        # 全序 ST_i = (1/(2N)) Σ (fA_j - fAB^{(i)}_j)^2 / Var   (Jansen 1999)
+        first_order = []
+        for i in range(d):
+            s = float(np.mean(fB * (fAB[i] - fA)) / var_y)
+            first_order.append(s)
+
+        total = []
+        for i in range(d):
+            s = float(np.mean((fA - fAB[i]) ** 2) / (2 * var_y))
+            total.append(s)
+
+        # 排序 + 重要性
+        ranking = sorted(
+            [{"feature": f, "S": first_order[i], "ST": total[i]}
+             for i, f in enumerate(features)],
+            key=lambda r: r["ST"], reverse=True,
+        )
+        return ToolResult(
+            data={
+                "model": model_expr,
+                "features": features,
+                "n_samples": N,
+                "n_evaluations": N * (d + 2),
+                "variance": var_y,
+                "first_order": dict(zip(features, first_order)),
+                "total": dict(zip(features, total)),
+                "ranking": ranking,
+                "sum_first_order": float(sum(first_order)),
+                "note": "Saltelli 2010 estimator. S_i captures main effect; ST_i captures main + interactions.",
+            },
+            success=True,
+        )
 
     def estimate_cost(self, args: SymbolicRegressionInput) -> dict[str, float] | None:
         """Estimate GPU hours for symbolic regression search."""

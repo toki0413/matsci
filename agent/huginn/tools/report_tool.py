@@ -26,7 +26,9 @@ from huginn.types import ToolContext, ToolResult
 
 
 class ReportToolInput(BaseModel):
-    action: Literal["generate", "compare", "export"] = Field(default="generate")
+    action: Literal["generate", "compare", "export", "compile_pdf"] = Field(
+        default="generate"
+    )
     workflow_results: dict[str, Any] | None = Field(
         default=None, description="Results from a workflow execution"
     )
@@ -44,6 +46,13 @@ class ReportToolInput(BaseModel):
     comparison_datasets: dict[str, dict[str, Any]] | None = Field(
         default=None,
         description="Named datasets for comparison, e.g. {'run_A': {...}, 'run_B': {...}}",
+    )
+    # compile_pdf 专用
+    tex_source: str | None = Field(
+        default=None, description="完整 LaTeX 源码 (compile_pdf 时必填)"
+    )
+    engine: Literal["pdflatex", "xelatex", "lualatex"] = Field(
+        default="pdflatex", description="TeX 编译引擎"
     )
 
 
@@ -400,9 +409,104 @@ class ReportTool(HuginnTool):
             return self._compare(args)
         elif args.action == "export":
             return self._export(args)
+        elif args.action == "compile_pdf":
+            return self._do_compile_pdf(args)
         return ToolResult(
             data=None, success=False, error=f"Unknown action: {args.action}"
         )
+
+    def _do_compile_pdf(self, args: ReportToolInput) -> ToolResult:
+        """把 tex_source 编译成 PDF, 返回 base64 + log.
+
+        engine 不存在时返回 success=False + 安装提示, 不抛异常.
+        """
+        import base64
+        import shutil
+        import subprocess
+        import tempfile
+
+        if not args.tex_source:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="compile_pdf requires tex_source.",
+            )
+
+        engine = args.engine
+        if shutil.which(engine) is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    f"LaTeX engine '{engine}' not found on PATH. "
+                    f"Install TeX Live or MiKTeX and ensure {engine} is available."
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tex_file = Path(tmp) / "report.tex"
+            tex_file.write_text(args.tex_source, encoding="utf-8")
+
+            errors: list[str] = []
+            log_text = ""
+            for pass_num in (1, 2):
+                try:
+                    proc = subprocess.run(
+                        [
+                            engine,
+                            "-interaction=nonstopmode",
+                            "-halt-on-error",
+                            str(tex_file),
+                        ],
+                        cwd=tmp,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                except subprocess.TimeoutExpired:
+                    return ToolResult(
+                        data=None,
+                        success=False,
+                        error=f"{engine} timed out on pass {pass_num}.",
+                    )
+                if proc.returncode != 0:
+                    errors.append(
+                        f"Pass {pass_num} failed (exit {proc.returncode}): "
+                        f"{proc.stderr[:500] if proc.stderr else proc.stdout[:500]}"
+                    )
+                    break
+
+            log_file = Path(tmp) / "report.log"
+            if log_file.exists():
+                log_text = log_file.read_text(errors="ignore")[:5000]
+
+            pdf_file = Path(tmp) / "report.pdf"
+            if not pdf_file.exists() or errors:
+                return ToolResult(
+                    data={
+                        "engine": engine,
+                        "success": False,
+                        "log": log_text,
+                        "errors": errors,
+                    },
+                    success=False,
+                    error="; ".join(errors) if errors else "PDF not generated.",
+                )
+
+            pdf_bytes = pdf_file.read_bytes()
+            pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+            return ToolResult(
+                data={
+                    "pdf_base64": pdf_b64,
+                    "pdf_size_bytes": len(pdf_bytes),
+                    "log": log_text,
+                    "engine": engine,
+                    "success": True,
+                    "errors": [],
+                    "message": f"PDF compiled with {engine}, {len(pdf_bytes)} bytes.",
+                },
+                success=True,
+            )
 
     def _generate(self, args: ReportToolInput) -> ToolResult:
         data = args.workflow_results or {}

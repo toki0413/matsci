@@ -1,0 +1,366 @@
+"""Hypothesis 闭环 — 假设图 + 失败实验驱动的假设修正.
+
+R5 (W4): 把研究假设组织成图, 节点是假设, 边是 support / refute / derive
+三种关系. 实验失败 (refute) 时调 RedTeamReviewer 审查失败原因, 生成修正假设
+入队, 形成"假设-实验-修正"闭环.
+
+跟 CampaignManager 协同: campaign 里每个 Experiment 绑定一个 hypothesis_id,
+实验跑完调 support/refute 更新图状态, refute 触发 refine_failed 产出新假设.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+
+HypothesisStatus = Literal["untested", "supported", "refuted", "superseded"]
+EdgeType = Literal["support", "refute", "derive"]
+
+
+# ── data structures ──────────────────────────────────────────────────────────
+
+
+@dataclass
+class HypothesisNode:
+    """图中的一个假设节点."""
+
+    id: str
+    statement: str
+    rationale: str = ""
+    testable_prediction: str = ""
+    status: HypothesisStatus = "untested"
+    parent_id: str | None = None  # derive 边的源
+    evidence: dict[str, Any] = field(default_factory=dict)
+    created_at: str = ""
+    # refine_failed 时记录 red-team findings, 方便回溯
+    refinement_basis: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "statement": self.statement,
+            "rationale": self.rationale,
+            "testable_prediction": self.testable_prediction,
+            "status": self.status,
+            "parent_id": self.parent_id,
+            "evidence": dict(self.evidence),
+            "created_at": self.created_at,
+            "refinement_basis": list(self.refinement_basis),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "HypothesisNode":
+        return cls(
+            id=d["id"],
+            statement=d.get("statement", ""),
+            rationale=d.get("rationale", ""),
+            testable_prediction=d.get("testable_prediction", ""),
+            status=d.get("status", "untested"),
+            parent_id=d.get("parent_id"),
+            evidence=d.get("evidence", {}),
+            created_at=d.get("created_at", ""),
+            refinement_basis=d.get("refinement_basis", []),
+        )
+
+
+@dataclass
+class HypothesisEdge:
+    """节点间的关系边."""
+
+    from_id: str
+    to_id: str
+    edge_type: EdgeType
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "from_id": self.from_id,
+            "to_id": self.to_id,
+            "edge_type": self.edge_type,
+            "evidence": dict(self.evidence),
+        }
+
+
+# ── 异常 ────────────────────────────────────────────────────────────────────
+
+
+class HypothesisGraphError(Exception):
+    """图操作错误: 节点不存在 / 重复 / 非法状态转移."""
+
+
+# ── graph ────────────────────────────────────────────────────────────────────
+
+
+class HypothesisGraph:
+    """假设图: 节点 + 边 + 失败驱动的假设修正.
+
+    典型流程:
+        graph = HypothesisGraph()
+        h1 = graph.add_hypothesis("如果掺杂增加, 带隙减小", prediction="...")
+        # 实验跑完, 结果不支持
+        graph.refute(h1, evidence={"result": "带隙反而增加"})
+        # 触发修正
+        h2 = graph.refine_failed(h1, evidence={"result": "带隙反而增加"})
+        # h2 是新假设, parent=h1, status=untested, 进 campaign 队列
+    """
+
+    def __init__(self) -> None:
+        self._nodes: dict[str, HypothesisNode] = {}
+        self._edges: list[HypothesisEdge] = []
+
+    # ── 节点 ─────────────────────────────────────────────────────────
+
+    def add_hypothesis(
+        self,
+        statement: str,
+        rationale: str = "",
+        testable_prediction: str = "",
+        parent_id: str | None = None,
+    ) -> str:
+        """新增假设节点, 返回 node id. parent_id 非空时自动加 derive 边."""
+        if not statement.strip():
+            raise HypothesisGraphError("假设陈述不能为空")
+        # 先查 parent 再加节点, 避免失败时留下孤儿节点
+        if parent_id is not None:
+            self._check_node(parent_id)
+        node_id = f"h_{uuid.uuid4().hex[:8]}"
+        node = HypothesisNode(
+            id=node_id,
+            statement=statement,
+            rationale=rationale,
+            testable_prediction=testable_prediction,
+            parent_id=parent_id,
+            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        self._nodes[node_id] = node
+        if parent_id is not None:
+            self._edges.append(HypothesisEdge(
+                from_id=parent_id, to_id=node_id, edge_type="derive",
+            ))
+        return node_id
+
+    def get(self, node_id: str) -> HypothesisNode:
+        self._check_node(node_id)
+        return self._nodes[node_id]
+
+    def all_nodes(self) -> list[HypothesisNode]:
+        return list(self._nodes.values())
+
+    def frontier(self) -> list[HypothesisNode]:
+        """未测试的假设 (campaign 该排队的)."""
+        return [n for n in self._nodes.values() if n.status == "untested"]
+
+    def supported(self) -> list[HypothesisNode]:
+        return [n for n in self._nodes.values() if n.status == "supported"]
+
+    def refuted(self) -> list[HypothesisNode]:
+        return [n for n in self._nodes.values() if n.status == "refuted"]
+
+    # ── 状态转移 ─────────────────────────────────────────────────────
+
+    def support(self, node_id: str, evidence: dict[str, Any]) -> None:
+        """标记假设被实验支持."""
+        self._check_node(node_id)
+        node = self._nodes[node_id]
+        if node.status == "refuted":
+            raise HypothesisGraphError(
+                f"节点 {node_id} 已被反驳, 不能再标记为 supported"
+            )
+        node.status = "supported"
+        node.evidence = {**node.evidence, **evidence}
+        self._edges.append(HypothesisEdge(
+            from_id=node_id, to_id=node_id, edge_type="support", evidence=evidence,
+        ))
+
+    def refute(self, node_id: str, evidence: dict[str, Any]) -> None:
+        """标记假设被实验反驳. 不自动生成修正假设 — 调 refine_failed 才生成."""
+        self._check_node(node_id)
+        node = self._nodes[node_id]
+        if node.status == "supported":
+            raise HypothesisGraphError(
+                f"节点 {node_id} 已被支持, 不能再标记为 refuted"
+            )
+        node.status = "refuted"
+        node.evidence = {**node.evidence, **evidence}
+        self._edges.append(HypothesisEdge(
+            from_id=node_id, to_id=node_id, edge_type="refute", evidence=evidence,
+        ))
+
+    def supersede(self, node_id: str) -> None:
+        """标记假设被衍生假设取代 (refine_failed 后旧假设变 superseded)."""
+        self._check_node(node_id)
+        self._nodes[node_id].status = "superseded"
+
+    # ── 失败驱动的假设修正 ───────────────────────────────────────────
+
+    def refine_failed(
+        self,
+        node_id: str,
+        evidence: dict[str, Any],
+        model: Any | None = None,
+    ) -> str:
+        """对失败的假设生成修正假设, 返回新 node id.
+
+        流程:
+        1. 调 RedTeamReviewer 审查原假设 + 失败证据, 拿 findings
+        2. 基于 findings 生成修正假设陈述
+           - model 可用时调 LLM 生成
+           - 不可用时用 findings 的 mitigation 做模板拼接
+        3. 新假设 parent_id = 失败节点, 旧节点标 superseded
+        4. 返回新 node id, 调用方 (CampaignManager) 把它进队列
+        """
+        self._check_node(node_id)
+        node = self._nodes[node_id]
+        if node.status != "refuted":
+            raise HypothesisGraphError(
+                f"节点 {node_id} 状态为 {node.status}, 只有 refuted 才能 refine"
+            )
+
+        # 1. red-team 审查
+        from huginn.autoloop.red_team import RedTeamReviewer
+
+        reviewer = RedTeamReviewer(model=model)
+        report = reviewer.review(
+            "hypothesize", "plan",
+            {"hypothesis": node.statement, "evidence": evidence},
+        )
+        findings = [f.to_dict() for f in report.findings]
+
+        # 2. 生成修正假设
+        if model is not None and self._is_real_model(model):
+            new_statement = self._llm_refine(node.statement, findings, evidence, model)
+        else:
+            new_statement = self._template_refine(node.statement, findings)
+
+        # 3. 加节点 + 标旧节点 superseded
+        new_id = self.add_hypothesis(
+            statement=new_statement,
+            rationale=f"修正自 {node_id}: {node.statement}",
+            testable_prediction=node.testable_prediction,
+            parent_id=node_id,
+        )
+        self._nodes[new_id].refinement_basis = findings
+        self.supersede(node_id)
+        return new_id
+
+    # ── 边查询 ───────────────────────────────────────────────────────
+
+    def edges(self) -> list[HypothesisEdge]:
+        return list(self._edges)
+
+    def children(self, node_id: str) -> list[HypothesisNode]:
+        """直接衍生子节点."""
+        self._check_node(node_id)
+        child_ids = {
+            e.to_id for e in self._edges
+            if e.from_id == node_id and e.edge_type == "derive"
+        }
+        return [self._nodes[c] for c in child_ids if c in self._nodes]
+
+    def derivation_chain(self, node_id: str) -> list[HypothesisNode]:
+        """从根到指定节点的衍生链."""
+        self._check_node(node_id)
+        chain: list[HypothesisNode] = []
+        current: str | None = node_id
+        seen: set[str] = set()
+        while current is not None and current not in seen:
+            seen.add(current)
+            chain.append(self._nodes[current])
+            current = self._nodes[current].parent_id
+        chain.reverse()
+        return chain
+
+    # ── 序列化 ───────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "nodes": [n.to_dict() for n in self._nodes.values()],
+            "edges": [e.to_dict() for e in self._edges],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "HypothesisGraph":
+        graph = cls()
+        for nd in d.get("nodes", []):
+            node = HypothesisNode.from_dict(nd)
+            graph._nodes[node.id] = node
+        for ed in d.get("edges", []):
+            graph._edges.append(HypothesisEdge(
+                from_id=ed["from_id"],
+                to_id=ed["to_id"],
+                edge_type=ed["edge_type"],
+                evidence=ed.get("evidence", {}),
+            ))
+        return graph
+
+    # ── 内部 ─────────────────────────────────────────────────────────
+
+    def _check_node(self, node_id: str) -> None:
+        if node_id not in self._nodes:
+            raise HypothesisGraphError(f"节点 {node_id} 不存在")
+
+    @staticmethod
+    def _is_real_model(model: Any) -> bool:
+        return not hasattr(model, "_mock_name")
+
+    def _template_refine(
+        self, original: str, findings: list[dict[str, Any]]
+    ) -> str:
+        """无 LLM 时用 findings 的 mitigation 做模板拼接."""
+        if not findings:
+            return f"修正假设: {original} (考虑未覆盖的边界条件后重新表述)"
+        mitigations = [f["mitigation"] for f in findings if f.get("mitigation")]
+        if not mitigations:
+            return f"修正假设: {original} (根据失败证据调整预期关系)"
+        basis = "; ".join(mitigations[:3])
+        return f"修正假设: {original} — 已纳入修正: {basis}"
+
+    def _llm_refine(
+        self,
+        original: str,
+        findings: list[dict[str, Any]],
+        evidence: dict[str, Any],
+        model: Any,
+    ) -> str:
+        """调 LLM 生成修正假设. 失败时降级到模板."""
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            findings_text = "\n".join(
+                f"- [{f.get('severity', '?')}] {f.get('description', '')}"
+                f" → {f.get('mitigation', '')}"
+                for f in findings
+            )
+            evidence_text = str(evidence)[:500]
+            messages = [
+                SystemMessage(content=(
+                    "You are a research hypothesis refiner. Given a refuted "
+                    "hypothesis, the red-team findings, and the experimental "
+                    "evidence, produce ONE revised hypothesis statement that "
+                    "addresses the identified weaknesses. Output only the "
+                    "statement, no preamble."
+                )),
+                HumanMessage(content=(
+                    f"原假设: {original}\n"
+                    f"Red-team 发现:\n{findings_text}\n"
+                    f"实验证据: {evidence_text}\n"
+                    f"修正假设:"
+                )),
+            ]
+            import asyncio
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 已有 loop 时不能 asyncio.run, 同步拿不了
+                    resp = model.invoke(messages)
+                else:
+                    raise RuntimeError("no running loop")
+            except RuntimeError:
+                resp = asyncio.run(model.ainvoke(messages))
+            return str(resp.content).strip()
+        except Exception:
+            return self._template_refine(original, findings)

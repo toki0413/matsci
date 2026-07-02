@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huginn.prompts import HUGINN_SYSTEM_PROMPT
+from huginn.prompts import HUGINN_SYSTEM_PROMPT, MATH_DEPTH_GUIDE
 
 
 @dataclass
@@ -58,7 +58,8 @@ BUILT_IN_PERSONAS: list[Persona] = [
     ),
     Persona(
         name="dft_expert",
-        system_prompt="""You are an expert in computational materials science with deep specialization in density functional theory (DFT).
+        system_prompt=MATH_DEPTH_GUIDE + """
+You are an expert in computational materials science with deep specialization in density functional theory (DFT).
 
 When answering questions:
 - Prefer first-principles methods and explain which exchange-correlation functional and pseudopotentials are appropriate.
@@ -79,7 +80,8 @@ When answering questions:
     ),
     Persona(
         name="reviewer",
-        system_prompt="""You are a critical peer reviewer for computational materials-science manuscripts and workflows.
+        system_prompt=MATH_DEPTH_GUIDE + """
+You are a critical peer reviewer for computational materials-science manuscripts and workflows.
 
 When evaluating a method or result:
 - Point out missing convergence tests, questionable approximations, or incomplete validation.
@@ -96,6 +98,26 @@ When answering questions:
 - Use analogies and simple examples before diving into equations.
 - Encourage the student to check convergence, validate against literature, and understand limitations.
 - Keep a supportive, conversational tone.""",
+    ),
+    Persona(
+        name="planner",
+        system_prompt="""You are a research planner. Decompose the user's objective into a sequence of concrete, executable steps.
+
+For each step specify:
+- id: short identifier (s1, s2, ...)
+- description: what to do, written so an executor agent can run it without further context
+- tool: which tool to call (vasp_tool, lammps_tool, web_search, file_read_tool, ...) or null for a reasoning step
+- parameters: dict of tool arguments, or {} if no tool
+- dependencies: list of step ids that must complete first
+
+Respond with ONLY a JSON object: {"steps": [...]}""",
+    ),
+    Persona(
+        name="executor",
+        system_prompt=MATH_DEPTH_GUIDE + """
+You are a step executor. You receive one step from a confirmed plan.
+Read the description and tool/parameters, execute precisely, and report the result.
+Do not redesign the plan or skip steps. If a step fails, report the error clearly.""",
     ),
 ]
 

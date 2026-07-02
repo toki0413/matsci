@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,10 @@ from huginn.types import ToolContext, ToolResult
 
 
 class DiagnoseInput(BaseModel):
+    action: Literal["diagnose", "recommend_fixes"] = Field(
+        default="diagnose",
+        description="diagnose: KB 查错; recommend_fixes: 跑 AutoFixLoop 出 INCAR 修改建议",
+    )
     error_message: str = Field(
         ..., description="Error message or symptom from the calculation"
     )
@@ -34,6 +38,10 @@ class DiagnoseInput(BaseModel):
     )
     context: str | None = Field(
         default=None, description="Additional context about the calculation setup"
+    )
+    current_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="For recommend_fixes: current INCAR/input params to base fixes on",
     )
 
 
@@ -77,6 +85,9 @@ class DiagnoseTool(HuginnTool):
         return True
 
     async def call(self, args: DiagnoseInput, context: ToolContext) -> ToolResult:
+        if args.action == "recommend_fixes":
+            return self._recommend_fixes(args)
+
         error_lower = args.error_message.lower()
         software = (args.software or "").lower()
 
@@ -155,6 +166,46 @@ class DiagnoseTool(HuginnTool):
             },
             success=True,
         )
+
+    def _recommend_fixes(self, args: DiagnoseInput) -> ToolResult:
+        """薄封装 AutoFixLoop, 只返回建议不改文件. agent 拿到建议后自己决定要不要落盘."""
+        try:
+            from huginn.execution.autofix import AutoFixLoop
+
+            tool_name = (args.software or "vasp").lower()
+            # AutoFixLoop 的 tool 名带 _tool 后缀, 这里补一下
+            if not tool_name.endswith("_tool"):
+                tool_name = tool_name + "_tool"
+            fixed = AutoFixLoop().apply_fix(
+                tool_name, args.error_message, args.current_params
+            )
+            if not fixed:
+                return ToolResult(
+                    data={
+                        "recommended_fixes": {},
+                        "reasoning": None,
+                        "matched": False,
+                        "message": "No fix rule matched this error",
+                    },
+                    success=True,
+                )
+            reasoning = fixed.pop("__auto_fix", None)
+            patterns_matched = fixed.pop("__auto_fix_patterns_matched", None)
+            return ToolResult(
+                data={
+                    "recommended_fixes": fixed,
+                    "reasoning": reasoning,
+                    "patterns_matched": patterns_matched,
+                    "matched": True,
+                },
+                success=True,
+            )
+        except Exception as e:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"recommend_fixes failed: {e}",
+            )
 
     def _general_advice(self, args: DiagnoseInput) -> list[str]:
         """Provide general troubleshooting advice based on calculation type."""

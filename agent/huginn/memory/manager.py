@@ -113,19 +113,33 @@ class MemoryManager:
         category: str | None = None,
         tier: str | None = None,
         top_k: int = 5,
+        material_filter: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Search long-term memory."""
+        """Search long-term memory. material_filter 可按 formula/category 过滤材料记忆."""
+        formula = None
+        cat = category
+        if material_filter:
+            formula = material_filter.get("formula")
+            mcat = material_filter.get("category")
+            if mcat:
+                cat = f"material_{mcat}"
         return self.longterm.retrieve(
             query=query,
-            category=category,
+            category=cat,
             tier=tier,
             top_k=top_k,
             semantic=self.config.enable_semantic_search,
+            formula=formula,
         )
 
-    def recall_for_prompt(self, query: str, max_entries: int = 3) -> str:
+    def recall_for_prompt(
+        self,
+        query: str,
+        max_entries: int = 3,
+        material_filter: dict[str, str] | None = None,
+    ) -> str:
         """Format recalled memories for injection into LLM prompt."""
-        results = self.recall(query, top_k=max_entries)
+        results = self.recall(query, top_k=max_entries, material_filter=material_filter)
         if not results:
             return ""
         lines = ["## Relevant past knowledge:"]

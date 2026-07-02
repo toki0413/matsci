@@ -85,7 +85,7 @@ class TestHuginnSystemProperties:
             "config", "tool_registry", "skill_registry", "audit_logger",
             "memory_backend", "checkpointer_backend", "remote_job_backend",
             "agent_factory", "orchestrator", "memory_manager", "kb",
-            "codebase", "agent", "planner_agent", "mcp_manager",
+            "codebase", "agent", "planner_agent", "mcp_manager", "plan_store",
         }
         assert set(components.keys()) == expected_keys
 
@@ -167,8 +167,10 @@ class TestFromServerContext:
             agent="agent",
             planner_agent="planner",
             mcp_manager="mcp",
+            plan_store="ps",
             permission_config="perm",
         )
         components = sys.list_components()
         assert all(v is True for v in components.values())
         assert sys.permission_config == "perm"
+        assert sys.plan_store == "ps"

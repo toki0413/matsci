@@ -106,12 +106,14 @@ class PromptCacheBuilder:
         user_message: str,
         kg_text: str = "",
         history_messages: list[BaseMessage] | None = None,
+        kb_text: str = "",
     ) -> list[BaseMessage]:
         """Messages placed after the system prompt.
 
         Order: begin-dialogs (static), conversation history (dynamic),
         optional memory context (dynamic),
         optional project knowledge graph context (dynamic),
+        optional domain knowledge base context (dynamic),
         current user message (dynamic).
         """
         prefix = self._static_prefix()
@@ -126,6 +128,9 @@ class PromptCacheBuilder:
         if kg_text:
             messages.append(SystemMessage(content=kg_text))
 
+        if kb_text:
+            messages.append(SystemMessage(content=kb_text))
+
         messages.append(HumanMessage(content=user_message))
         return messages
 
@@ -134,8 +139,9 @@ class PromptCacheBuilder:
         memory_text: str,
         user_message: str,
         kg_text: str = "",
+        kb_text: str = "",
     ) -> list[BaseMessage]:
         """Convenience: full message list for one-shot callers."""
         return self.build_state_modifier() + self.build_input_messages(
-            memory_text, user_message, kg_text=kg_text
+            memory_text, user_message, kg_text=kg_text, kb_text=kb_text
         )

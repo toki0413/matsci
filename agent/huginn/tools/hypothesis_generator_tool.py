@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -97,6 +98,11 @@ class HypothesisGeneratorInput(BaseModel):
         default=None,
         description="指定 workflow 模板名, 不指定则由 LLM 自动选",
     )
+    # 排序开关: 关掉就按 LLM 输出顺序返回
+    rank: bool = Field(
+        default=True,
+        description="Score hypotheses by novelty+feasibility+kb_relevance",
+    )
 
 
 class HypothesisGeneratorTool(HuginnTool):
@@ -149,6 +155,12 @@ class HypothesisGeneratorTool(HuginnTool):
             model,
         )
 
+        # 4b. 排序: novelty + feasibility + kb_relevance 三维打分
+        ranked = False
+        if args.rank and hypotheses:
+            hypotheses = await self._rank_hypotheses(hypotheses, context)
+            ranked = True
+
         # 5. LLM 映射到 workflow 模板
         workflow_proposals = await self._map_to_workflow(
             hypotheses, args.target_workflow, model
@@ -161,6 +173,7 @@ class HypothesisGeneratorTool(HuginnTool):
             "hypotheses": hypotheses,
             "workflow_proposals": workflow_proposals,
             "n_hypotheses": len(hypotheses),
+            "ranked": ranked,
         }
         return ToolResult(data=data, success=True)
 
@@ -172,6 +185,124 @@ class HypothesisGeneratorTool(HuginnTool):
 
         config = getattr(context, "config", None)
         return get_model(config=config, temperature=0.4, max_tokens=6000)
+
+    # ------------------------------------------------------------------ ranking
+
+    async def _rank_hypotheses(
+        self, candidates: list[dict[str, Any]], context: ToolContext
+    ) -> list[dict[str, Any]]:
+        """给每个候选假设打三个分再按加权 score 降序排.
+
+        novelty: 查 LongTermMemory 看历史上有没有类似的, 没见过=新颖=高分.
+        feasibility: 看假设需要的工具/模板在不在 ToolRegistry 里, 凑齐=高分.
+        kb_relevance: 查领域 KB, 命中越多=越接地气=高分.
+
+        任一子项失败给 0.5 中性分, 不阻断排序. 排完把分数写回每个 hypothesis dict.
+        """
+        scored: list[dict[str, Any]] = []
+        for h in candidates:
+            novelty = await self._score_novelty(h, context)
+            feasibility = self._score_feasibility(h)
+            kb_rel = await self._score_kb_relevance(h, context)
+            score = 0.4 * novelty + 0.4 * feasibility + 0.2 * kb_rel
+            enriched = dict(h)
+            enriched["score"] = round(score, 4)
+            enriched["novelty"] = round(novelty, 4)
+            enriched["feasibility"] = round(feasibility, 4)
+            enriched["kb_relevance"] = round(kb_rel, 4)
+            scored.append(enriched)
+        # 降序排, score 相同就保留原顺序 (stable sort)
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored
+
+    async def _score_novelty(
+        self, hypothesis: dict[str, Any], context: ToolContext
+    ) -> float:
+        """查长期记忆里有没有类似假设. 没命中=1.0, 命中≥3=0.2, 中间线性插值."""
+        statement = (hypothesis.get("statement") or "").strip()
+        if not statement:
+            return 0.5
+        try:
+            from huginn.memory.longterm import LongTermMemory
+
+            # 用 context.workspace 当 cache dir, 跟 agent 主进程对齐
+            cache_dir = getattr(context, "workspace", None) or "."
+            mem = LongTermMemory(db_path=str(Path(cache_dir) / "memory.db"))
+            hits = mem.retrieve(
+                query=statement, category="hypothesis", top_k=3, semantic=False
+            )
+            n = len(hits)
+            if n == 0:
+                return 1.0
+            if n >= 3:
+                return 0.2
+            # 1 hit -> 0.73, 2 hits -> 0.47, 3 hits -> 0.2
+            return 1.0 - 0.27 * n
+        except Exception:
+            return 0.5
+
+    def _score_feasibility(self, hypothesis: dict[str, Any]) -> float:
+        """看假设需要的工具在不在 ToolRegistry 里. 全有=1.0, 缺一个=0.5, 缺多=0.2."""
+        try:
+            from huginn.tools.registry import ToolRegistry
+
+            available = set(ToolRegistry.list_tools())
+            if not available:
+                # 注册表为空 (测试环境/早期启动) 给中性分, 不冤枉
+                return 0.5
+            # 从 required_data 字段抠工具名, LLM 一般会列 vasp_tool/lammps_tool 之类
+            required_text = (hypothesis.get("required_data") or "").lower()
+            # 常见计算工具关键词 → tool name 映射
+            tool_hints = {
+                "vasp": "vasp_tool",
+                "dft": "vasp_tool",
+                "lammps": "lammps_tool",
+                "md": "lammps_tool",
+                "molecular dynamics": "lammps_tool",
+                "phonon": "vasp_tool",
+                "band": "vasp_tool",
+                "ml_potential": "ml_potential_tool",
+                "mace": "ml_potential_tool",
+                "gpaw": "gpaw_tool",
+                "quantum espresso": "qe_tool",
+                "qespresso": "qe_tool",
+                "database": "database_tool",
+                "materials project": "database_tool",
+            }
+            required_tools: set[str] = set()
+            for kw, tool_name in tool_hints.items():
+                if kw in required_text:
+                    required_tools.add(tool_name)
+            if not required_tools:
+                # 没抠到工具需求, 假设可行, 给中性偏高的分
+                return 0.8
+            missing = required_tools - available
+            if not missing:
+                return 1.0
+            if len(missing) == 1:
+                return 0.5
+            return 0.2
+        except Exception:
+            return 0.5
+
+    async def _score_kb_relevance(
+        self, hypothesis: dict[str, Any], context: ToolContext
+    ) -> float:
+        """查领域 KB, 命中 chunk 数 / 3 当分数. KB 不可用给中性分 0.5."""
+        statement = (hypothesis.get("statement") or "").strip()
+        if not statement:
+            return 0.5
+        try:
+            from huginn.knowledge.store import get_knowledge_base
+
+            cache_dir = getattr(context, "workspace", None) or "."
+            kb = get_knowledge_base(str(cache_dir))
+            if kb.count() == 0:
+                return 0.5
+            chunks = kb.query(statement, top_k=3)
+            return min(len(chunks) / 3.0, 1.0)
+        except Exception:
+            return 0.5
 
     async def _search_literature(
         self, query: str, context: ToolContext

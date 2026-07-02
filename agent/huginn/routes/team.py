@@ -15,7 +15,7 @@ from fastapi import APIRouter
 
 from huginn.config import get_config
 from huginn.pet import PetMood, get_pet_bus
-from huginn.server_core import get_agent_factory, get_orchestrator
+from huginn.server_core import get_agent_factory, get_orchestrator, get_plan_store
 
 router = APIRouter(tags=["team"])
 
@@ -144,6 +144,129 @@ async def team_v2_run(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": True, **result}
     except Exception as e:
         _publish(PetMood.ERROR, f"团队执行失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ── 持久化计划接口: PlanStore lifecycle ─────────────────────────
+
+
+@router.post("/team/v2/plans")
+async def create_plan(params: dict[str, Any]) -> dict[str, Any]:
+    """用 planner 角色分解目标, 持久化到 PlanStore.
+
+    auto_confirm=True 时直接进入 confirmed 状态可执行;
+    默认 False 返回 draft, 需要用户走 /confirm 确认后再执行.
+    """
+    objective = params.get("objective", "")
+    if not objective:
+        return {"success": False, "error": "objective is required"}
+    auto_confirm = bool(params.get("auto_confirm", False))
+    try:
+        orch = get_orchestrator()
+        if orch.plan_store is None:
+            return {"success": False, "error": "plan_store not configured"}
+        plan = await orch.plan(objective, auto_confirm=auto_confirm)
+        return {"success": True, "plan": plan.to_dict()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/team/v2/plans")
+async def list_plans(status: str | None = None) -> dict[str, Any]:
+    """列出所有计划, 可选按 status 过滤 (draft/confirmed/executing/completed/failed/abandoned)."""
+    try:
+        store = get_plan_store()
+        plans = store.list_plans(status=status)
+        return {"success": True, "plans": [p.to_dict() for p in plans]}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/team/v2/plans/{plan_id}")
+async def get_plan(plan_id: str) -> dict[str, Any]:
+    """按 id 取单个计划."""
+    try:
+        store = get_plan_store()
+        plan = store.get_plan(plan_id)
+        if plan is None:
+            return {"success": False, "error": "plan not found"}
+        return {"success": True, "plan": plan.to_dict()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/team/v2/plans/{plan_id}/confirm")
+async def confirm_plan(plan_id: str) -> dict[str, Any]:
+    """把 draft 计划确认成 confirmed, 之后才能执行."""
+    try:
+        store = get_plan_store()
+        plan = store.get_plan(plan_id)
+        if plan is None:
+            return {"success": False, "error": "plan not found"}
+        plan = store.confirm_plan(plan_id)
+        return {"success": True, "plan": plan.to_dict()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/team/v2/plans/{plan_id}/reject")
+async def reject_plan(plan_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """拒绝 draft 计划, 标记为 abandoned. 可带 reason."""
+    try:
+        store = get_plan_store()
+        plan = store.get_plan(plan_id)
+        if plan is None:
+            return {"success": False, "error": "plan not found"}
+        reason = (params or {}).get("reason")
+        plan = store.reject_plan(plan_id, reason=reason)
+        return {"success": True, "plan": plan.to_dict()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/team/v2/plans/{plan_id}/execute")
+async def execute_plan(plan_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """执行已确认的计划. 走 Orchestrator.execute(plan_id).
+
+    执行完成后返回最终 plan 状态 + result 摘要.
+    """
+    try:
+        store = get_plan_store()
+        orch = get_orchestrator()
+        if orch.plan_store is None:
+            return {"success": False, "error": "plan_store not configured"}
+
+        result = await orch.execute(plan_id)
+        plan = store.get_plan(plan_id)
+        return {
+            "success": True,
+            "plan": plan.to_dict() if plan else None,
+            "result": {
+                "summary": result.summary,
+                "outputs": result.outputs,
+                "success": result.success,
+                "error": result.error,
+            },
+        }
+    except Exception as e:
+        # 执行可能抛错 (plan 不存在 / 状态不对), 顺带返回当前 plan 状态
+        try:
+            plan = get_plan_store().get_plan(plan_id)
+            return {"success": False, "error": str(e), "plan": plan.to_dict() if plan else None}
+        except Exception:
+            return {"success": False, "error": str(e)}
+
+
+@router.delete("/team/v2/plans/{plan_id}")
+async def delete_plan(plan_id: str) -> dict[str, Any]:
+    """删除计划."""
+    try:
+        store = get_plan_store()
+        deleted = store.delete_plan(plan_id)
+        if not deleted:
+            return {"success": False, "error": "plan not found"}
+        return {"success": True, "deleted": plan_id}
+    except Exception as e:
         return {"success": False, "error": str(e)}
 
 

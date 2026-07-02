@@ -27,6 +27,7 @@ class HuginnSystem:
     agent: Any | None = None
     planner_agent: Any | None = None
     mcp_manager: Any | None = None
+    plan_store: Any | None = None
 
     # Thread/execution tracking
     active_threads: dict[str, Any] = field(default_factory=dict)
@@ -63,6 +64,7 @@ class HuginnSystem:
             "agent",
             "planner_agent",
             "mcp_manager",
+            "plan_store",
         ]:
             components[attr] = getattr(self, attr, None) is not None
         return components

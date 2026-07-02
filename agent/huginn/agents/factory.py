@@ -53,6 +53,35 @@ class AgentFactory:
         anomaly_db = self._anomaly_db_path()
         self._anomaly_store = AnomalyLogStore(anomaly_db)
 
+        # 共享工具调度器 — 同一 factory 下所有 agent (含 orchestrator/team/swarm
+        # 派生的子 agent) 共用同一份 heavy/light 信号量 + 资源预算, 父子 agent
+        # 提交重作业时由它仲裁并发. 持久后端用 SqliteCampaignStore (jobs 表),
+        # 跟 anomalies.db 同目录; 构造失败退回 NullCampaignStore 纯内存模式.
+        self._shared_scheduler = self._build_shared_scheduler()
+
+    def _build_shared_scheduler(self) -> Any:
+        from huginn.persistence.campaign import (
+            NullCampaignStore,
+            SqliteCampaignStore,
+        )
+        from huginn.scheduling import AdmissionPolicy, ToolScheduler
+
+        try:
+            store = SqliteCampaignStore(self._campaign_db_path())
+        except Exception:
+            store = NullCampaignStore()
+        try:
+            return ToolScheduler(store=store, policy=AdmissionPolicy.from_env())
+        except Exception:
+            return None
+
+    def _campaign_db_path(self) -> str:
+        from pathlib import Path
+
+        if self.config.checkpointer_path:
+            return str(Path(self.config.checkpointer_path).expanduser().parent / "campaigns.sqlite")
+        return str(Path(self.config.workspace).expanduser() / "campaigns.sqlite")
+
     def _anomaly_db_path(self) -> str:
         """anomalies.db 跟 checkpoints.db 放一个目录."""
         from pathlib import Path
@@ -146,6 +175,7 @@ class AgentFactory:
             persona_name=profile.persona,
             emotion_tracker=emotion_tracker,
             approval_callback=approval_callback,
+            scheduler=self._shared_scheduler,
         )
         agent.register_tools_from_registry()
 
