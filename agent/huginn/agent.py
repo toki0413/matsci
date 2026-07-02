@@ -323,9 +323,11 @@ class HuginnAgent:
             t.break_after_tool = break_after_tool
 
         # 3) 统一从 config 初始化
-        self._init_from_config(config)
+        self._init_from_config(config, scheduler=scheduler, kb_enabled=kb_enabled)
 
-    def _init_from_config(self, config: AgentConfig) -> None:
+    def _init_from_config(
+        self, config: AgentConfig, scheduler: Any = None, kb_enabled: Any = _UNSET_SENTINEL
+    ) -> None:
         """从已解析的 AgentConfig 初始化所有实例状态.
 
         环境变量默认值已在 AgentConfig.from_env() 集中处理, 这里只做

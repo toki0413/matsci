@@ -152,6 +152,132 @@ class AutoFixLoop:
                 },
                 "description": "Reduce under-relaxation and add non-orthogonal correctors",
             },
+            # Quantum ESPRESSO rules
+            {
+                "tools": ["qe_tool"],
+                "patterns": ["convergence not achieved", "scf convergence", "electron"],
+                "fixes": {"conv_thr": 1e-8, "mixing_beta": 0.4, "mixing_type": "pulay"},
+                "description": "Reduce mixing beta and switch to Pulay mixing for SCF",
+            },
+            {
+                "tools": ["qe_tool"],
+                "patterns": ["bravais", "k-point", "k point", "mesh"],
+                "fixes": {"k_points": "automatic", "k_spacing": "increase"},
+                "description": "Switch to automatic k-point generation with coarser spacing",
+            },
+            {
+                "tools": ["qe_tool"],
+                "patterns": ["too many bands", "highest band", "occupation"],
+                "fixes": {"nbnd": "increase_20pct", "smearing": "gauss", "degauss": 0.01},
+                "description": "Add more bands and apply Gaussian smearing",
+            },
+            {
+                "tools": ["qe_tool"],
+                "patterns": ["memory", "allocation", "out of memory"],
+                "fixes": {"nproc_image": "increase", "nplane": "increase", "ntask_groups": 2},
+                "description": "Increase parallel image / plane / task group distribution",
+            },
+            # CP2K rules
+            {
+                "tools": ["cp2k_tool"],
+                "patterns": ["SCF", "convergence", "not converged", "OT"],
+                "fixes": {"OT_MINIMIZER": "DIIS", "OT_N_DIIS": 7, "EPS_SCF": 1e-6},
+                "description": "Switch OT minimizer to DIIS with larger history",
+            },
+            {
+                "tools": ["cp2k_tool"],
+                "patterns": [" preconditioner", "cholesky", "inverse"],
+                "fixes": {"OT_PRECONDITIONER": "FULL_SINGLE_INVERSE", "OT_SCALING": 100},
+                "description": "Use full single inverse preconditioner with larger scaling",
+            },
+            {
+                "tools": ["cp2k_tool"],
+                "patterns": ["force_eval", "energy", "imaginary frequency"],
+                "fixes": {"FORCE_EVAL_METHOD": "FIST", "INTERFACE": "CHARMM"},
+                "description": "Fall back to classical force field evaluation",
+            },
+            # GROMACS rules
+            {
+                "tools": ["gromacs_tool"],
+                "patterns": ["LINCS warning", "constraint", "shake"],
+                "fixes": {"dt": "halve", "constraints": "h-bonds", "lincs_iter": 2},
+                "description": "Halve timestep, constrain H-bonds, increase LINCS iterations",
+            },
+            {
+                "tools": ["gromacs_tool"],
+                "patterns": ["segmentation fault", "crash", "bond"],
+                "fixes": {"dt": "halve", "nsteps": "halve", "em_steps": 1000},
+                "description": "Halve timestep and run energy minimization first",
+            },
+            {
+                "tools": ["gromacs_tool"],
+                "patterns": ["temperature", "thermostat", "NVT", "NPT"],
+                "fixes": {"tcoupl": "V-rescale", "tau_t": 0.5, "ref_t": "verify"},
+                "description": "Switch to V-rescale thermostat with larger coupling time",
+            },
+            {
+                "tools": ["gromacs_tool"],
+                "patterns": ["pressure", "barostat", "density"],
+                "fixes": {"pcoupl": "C-rescale", "tau_p": 2.0, "compressibility": 4.5e-5},
+                "description": "Use C-rescale barostat with standard water compressibility",
+            },
+            # FEniCS rules
+            {
+                "tools": ["fenics_tool"],
+                "patterns": ["unable to solve linear system", "singular", "condition number"],
+                "fixes": {"linear_solver": "mumps", "lu_solver": True, "mesh_refine": True},
+                "description": "Switch to MUMPS direct solver and refine mesh",
+            },
+            {
+                "tools": ["fenics_tool"],
+                "patterns": ["Newton", "not converge", "nonlinear"],
+                "fixes": {"newton_relaxation": 0.7, "newton_max_iter": 50, "newton_tol": 1e-8},
+                "description": "Apply Newton relaxation and increase max iterations",
+            },
+            {
+                "tools": ["fenics_tool"],
+                "patterns": ["diverged", "nan", "inf in solution"],
+                "fixes": {"mesh_refine": True, "element_order": "increase", "stabilization": "SUPG"},
+                "description": "Refine mesh, increase element order, add SUPG stabilization",
+            },
+            # Elmer rules
+            {
+                "tools": ["elmer_tool"],
+                "patterns": ["Iteration", "not converge", "linear system"],
+                "fixes": {"linear_solver": "BiCGStab", "max_iterations": 1000, "tolerance": 1e-8},
+                "description": "Switch to BiCGStab with more iterations and tighter tolerance",
+            },
+            {
+                "tools": ["elmer_tool"],
+                "patterns": ["mesh", "element", "Jacobian", "negative"],
+                "fixes": {"mesh_quality": "improve", "element_type": "tetra", "refine": True},
+                "description": "Improve mesh quality and switch to tetrahedral elements",
+            },
+            {
+                "tools": ["elmer_tool"],
+                "patterns": ["coupled", "multi-physics", "interface"],
+                "fixes": {"relaxation_factor": 0.5, "max_coupling_iter": 50, "stabilization": True},
+                "description": "Add relaxation for coupled multi-physics iterations",
+            },
+            # COMSOL rules
+            {
+                "tools": ["comsol_tool"],
+                "patterns": ["not converge", "nonlinear", "segregated"],
+                "fixes": {"solver_type": "segregated", "relaxation_factor": 0.5, "max_iter": 100},
+                "description": "Switch to segregated solver with relaxation",
+            },
+            {
+                "tools": ["comsol_tool"],
+                "patterns": ["mesh", "element", "Jacobian", "singular"],
+                "fixes": {"mesh_refinement": "increase", "element_type": "quadratic", "quality_threshold": 0.1},
+                "description": "Refine mesh and use quadratic elements",
+            },
+            {
+                "tools": ["comsol_tool"],
+                "patterns": ["memory", "out of", "allocation"],
+                "fixes": {"solver_type": "iterative", "memory_saving": True, "mesh_coarsen": "far_field"},
+                "description": "Switch to iterative solver and coarsen far-field mesh",
+            },
             # Generic rules
             {
                 "tools": ["*"],

@@ -14,9 +14,15 @@ from huginn.tools.memory_tool import RecallTool, RememberTool
 from huginn.tools.orchestrate_tool import OrchestrateTool
 from huginn.tools.registry import ToolRegistry
 
-ToolRegistry.register(RememberTool())
-ToolRegistry.register(RecallTool())
-ToolRegistry.register(OrchestrateTool())
+
+@pytest.fixture(autouse=True)
+def _ensure_memory_tools_registered():
+    """其他测试会 ToolRegistry.clear() 但不恢复, 模块级注册不可靠,
+    所以每次跑前都补一次注册."""
+    for cls in (RememberTool, RecallTool, OrchestrateTool):
+        if ToolRegistry.get(cls.name) is None:
+            ToolRegistry.register(cls())
+    yield
 
 
 def test_model_registry_list_and_default():

@@ -112,7 +112,11 @@ class GitTool(HuginnTool):
             output_lines = (result.stdout + result.stderr).splitlines()
             truncated = len(output_lines) > input_data.max_lines
             output = "\n".join(output_lines[: input_data.max_lines])
-            success = result.returncode == 0
+            # Read actions always succeed at the tool level — git's non-zero
+            # exit (e.g. "not a git repository") is captured output, not a
+            # tool failure. Write actions propagate the exit code as success.
+            is_read = input_data.action in _READ_ACTIONS
+            success = True if is_read else result.returncode == 0
             return ToolResult(
                 data={
                     "action": input_data.action,
@@ -120,7 +124,7 @@ class GitTool(HuginnTool):
                     "output": output,
                     "truncated": truncated,
                     "returncode": result.returncode,
-                    "message": f"Git {input_data.action} {'completed' if success else 'failed'}.",
+                    "message": f"Git {input_data.action} {'completed' if result.returncode == 0 else 'failed'}.",
                 },
                 success=success,
                 error=None if success else f"Git {input_data.action} failed (exit {result.returncode}): {result.stderr.strip()[:200]}",

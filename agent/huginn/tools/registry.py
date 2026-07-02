@@ -18,6 +18,7 @@ class ToolRegistry:
     """Registry for all available tools."""
 
     _tools: dict[str, HuginnTool] = {}
+    _schemas_cache: list[dict] | None = None
 
     @classmethod
     def register(cls, tool: HuginnTool) -> HuginnTool:
@@ -25,6 +26,7 @@ class ToolRegistry:
         if not tool.name:
             raise ValueError("Tool must have a name")
         cls._tools[tool.name] = tool
+        cls._schemas_cache = None  # invalidate cache on register
         return tool
 
     @classmethod
@@ -38,6 +40,12 @@ class ToolRegistry:
     @classmethod
     def get_all_schemas(cls) -> list[dict]:
         """Get JSON schemas for all registered tools (for LLM function calling)."""
+        # Tools are registered at startup and don't change at runtime,
+        # so we cache the serialized schemas to avoid re-serializing 132
+        # tools on every /tools request.
+        if cls._schemas_cache is not None:
+            return cls._schemas_cache
+
         schemas = []
         for name, tool in cls._tools.items():
             schema = {
@@ -58,6 +66,7 @@ class ToolRegistry:
                 ),
             }
             schemas.append(schema)
+        cls._schemas_cache = schemas
         return schemas
 
     @classmethod
@@ -82,11 +91,15 @@ class ToolRegistry:
     @classmethod
     def unregister(cls, name: str) -> bool:
         """Remove a tool from the registry."""
-        return cls._tools.pop(name, None) is not None
+        removed = cls._tools.pop(name, None) is not None
+        if removed:
+            cls._schemas_cache = None
+        return removed
 
     @classmethod
     def clear(cls) -> None:
         cls._tools.clear()
+        cls._schemas_cache = None
 
 
 def register_tool(tool: HuginnTool) -> HuginnTool:

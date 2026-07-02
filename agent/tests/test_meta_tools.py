@@ -31,6 +31,12 @@ from huginn.tools.skill_tool import SkillTool, SkillToolInput
 def _reset_meta_singletons():
     """每个测试前注入干净的 StyleLearner, 防止 profile 跨测试污染."""
     set_shared_style_learner(StyleLearner(":memory:"))
+    # 其他测试会 ToolRegistry.clear() 但不恢复, 导致 heavy_tool_names() 返空.
+    # simple_path_tool 的默认路径依赖重型工具列表, 所以这里补注册.
+    from huginn.tools import register_all_tools
+    from huginn.tools.registry import ToolRegistry
+    if not ToolRegistry.list_tools():
+        register_all_tools()
     yield
     set_shared_style_learner(None)
 
