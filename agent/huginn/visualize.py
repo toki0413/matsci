@@ -413,3 +413,205 @@ def plot_from_file(
     if kind == "explore":
         return plot_exploration_result(data, output_path, plot_type=plot_type or "auto")
     raise ValueError(f"Unknown visualization kind: {kind}")
+
+
+# ── Materials-science plots (Phase 4c) ────────────────────────────
+
+
+def apply_arial_style() -> None:
+    """统一 Arial 字体 + 20pt 加粗. 用户硬性要求, 所有 materials 图都用这套."""
+    import matplotlib.pyplot as plt
+
+    plt.rcParams["font.family"] = "Arial"
+    plt.rcParams["font.size"] = 20
+    plt.rcParams["axes.labelweight"] = "bold"
+    plt.rcParams["axes.titleweight"] = "bold"
+    plt.rcParams["figure.titlesize"] = 22
+    plt.rcParams["figure.titleweight"] = "bold"
+
+
+def plot_band_structure(
+    bands_data: list[dict[str, Any]],
+    kpath: list[str],
+    fermi: float = 0.0,
+    output_path: str | Path | None = None,
+) -> Path | None:
+    """画能带结构. e-vs-k 折线, 高对称点竖线标注.
+
+    bands_data: 每个 dict 含 "kpoints" (list[float]) + "energies" (list[float])
+    kpath: 高对称点标签列表, 如 ["Γ", "X", "M", "Γ"]
+    fermi: 费米能级 (eV), 画虚线
+    """
+    import matplotlib.pyplot as plt
+
+    apply_arial_style()
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for band in bands_data:
+        kpoints = band.get("kpoints", [])
+        energies = band.get("energies", [])
+        if kpoints and energies:
+            ax.plot(kpoints, energies, "-", color="steelblue", linewidth=1.5)
+
+    # 费米能级虚线
+    ax.axhline(y=fermi, color="red", linestyle="--", linewidth=1.5, label=f"E_f = {fermi:.2f}")
+
+    # 高对称点竖线 (假设 kpoints 范围 0..len(kpath)-1, 等间距)
+    n_ticks = len(kpath)
+    if n_ticks > 1:
+        tick_positions = [i * (len(bands_data[0].get("kpoints", [1])) - 1) / (n_ticks - 1) for i in range(n_ticks)] if bands_data else []
+        for x in tick_positions:
+            ax.axvline(x=x, color="gray", linestyle=":", linewidth=0.8)
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(kpath)
+
+    ax.set_xlabel("Wave Vector")
+    ax.set_ylabel("Energy (eV)")
+    ax.set_title("Band Structure")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return _save_or_show(fig, output_path)
+
+
+def plot_dos(
+    dos_data: dict[str, Any],
+    energy: list[float] | None = None,
+    fermi: float = 0.0,
+    output_path: str | Path | None = None,
+) -> Path | None:
+    """画态密度 (DOS). 主 DOS 曲线 + 可选投影 DOS.
+
+    dos_data: {"total": [floats], "orbital_s": [floats], "orbital_p": [floats], ...}
+    energy: 能量轴 (eV), 不给就用 range
+    fermi: 费米能级, 画虚线
+    """
+    import matplotlib.pyplot as plt
+
+    apply_arial_style()
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    total = dos_data.get("total", [])
+    if not total:
+        raise ValueError("dos_data must contain 'total' key with list of floats")
+    if energy is None:
+        energy = list(range(len(total)))
+
+    ax.plot(total, energy, "-", color="steelblue", linewidth=2, label="Total DOS")
+
+    # 投影 DOS
+    for key, vals in dos_data.items():
+        if key == "total" or not isinstance(vals, list):
+            continue
+        if len(vals) == len(energy):
+            ax.plot(vals, energy, "-", linewidth=1.2, label=key)
+
+    ax.axhline(y=fermi, color="red", linestyle="--", linewidth=1.5, label=f"E_f = {fermi:.2f}")
+    ax.set_xlabel("DOS (states/eV)")
+    ax.set_ylabel("Energy (eV)")
+    ax.set_title("Density of States")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return _save_or_show(fig, output_path)
+
+
+def plot_phonon_dispersion(
+    branches: list[dict[str, Any]],
+    qpath: list[str] | None = None,
+    output_path: str | Path | None = None,
+) -> Path | None:
+    """画声子色散. 每条 branch 一条曲线.
+
+    branches: 每个 dict 含 "qpoints" (list[float]) + "frequencies" (list[float])
+    qpath: 高对称点标签
+    """
+    import matplotlib.pyplot as plt
+
+    apply_arial_style()
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for i, branch in enumerate(branches):
+        qpoints = branch.get("qpoints", [])
+        freqs = branch.get("frequencies", [])
+        if qpoints and freqs:
+            ax.plot(qpoints, freqs, "-", color="steelblue", linewidth=1.2)
+
+    # 零频线 (声学声子参考)
+    ax.axhline(y=0, color="gray", linestyle=":", linewidth=0.8)
+
+    if qpath and len(qpath) > 1 and branches:
+        n_q = len(branches[0].get("qpoints", [1]))
+        tick_positions = [i * (n_q - 1) / (len(qpath) - 1) for i in range(len(qpath))]
+        for x in tick_positions:
+            ax.axvline(x=x, color="gray", linestyle=":", linewidth=0.8)
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(qpath)
+
+    ax.set_xlabel("Wave Vector")
+    ax.set_ylabel("Frequency (THz)")
+    ax.set_title("Phonon Dispersion")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return _save_or_show(fig, output_path)
+
+
+def plot_structure_3d(
+    structure: dict[str, Any],
+    output_path: str | Path | None = None,
+) -> Path | None:
+    """画晶体结构 3D 球棍模型.
+
+    structure: {"lattice": [[a1],[a2],[a3]], "species": ["Si","Si"],
+                "coords": [[x,y,z], ...], "bonds": [[i,j], ...] (可选)}
+    """
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+    apply_arial_style()
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_subplot(111, projection="3d")
+
+    species = structure.get("species", [])
+    coords = structure.get("coords", [])
+    bonds = structure.get("bonds", [])
+
+    # 原子颜色映射 (常见元素)
+    color_map = {
+        "Si": "goldenrod", "O": "red", "C": "black", "N": "blue",
+        "H": "lightgray", "Fe": "darkred", "Cu": "orange", "Al": "gray",
+        "Ti": "lightblue", "Ga": "green", "As": "purple", "Na": "violet",
+        "Cl": "green", "Mg": "darkgreen", "Ca": "darkorange",
+    }
+
+    # 画原子
+    for i, (sp, coord) in enumerate(zip(species, coords)):
+        color = color_map.get(sp, "steelblue")
+        ax.scatter(
+            coord[0], coord[1], coord[2],
+            c=color, s=300, edgecolors="black", linewidths=1.5, label=sp if i == 0 else ""
+        )
+
+    # 画键 (如果给了 bonds)
+    for bond in bonds:
+        if len(bond) >= 2 and bond[0] < len(coords) and bond[1] < len(coords):
+            c1 = coords[bond[0]]
+            c2 = coords[bond[1]]
+            ax.plot(
+                [c1[0], c2[0]], [c1[1], c2[1]], [c1[2], c2[2]],
+                "k-", linewidth=2
+            )
+
+    ax.set_xlabel("x (Å)", fontweight="bold")
+    ax.set_ylabel("y (Å)", fontweight="bold")
+    ax.set_zlabel("z (Å)", fontweight="bold")
+    ax.set_title("Crystal Structure")
+
+    # 去重 legend
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
+        ax.legend([u[0] for u in unique], [u[1] for u in unique])
+
+    fig.tight_layout()
+    return _save_or_show(fig, output_path)
