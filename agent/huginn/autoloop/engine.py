@@ -21,6 +21,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.autoloop.budget import IterationBudget, ProgressiveBudget
+from huginn.autoloop.goal_scheduler import Goal, GoalScheduler
+from huginn.autoloop.phase_gate import (
+    PhaseGate,
+    PhaseGateHook,
+    get_shared_phase_gate_state,
+)
 from huginn.bench.runner import BenchmarkRunner
 from huginn.coder.loop import CoderRunner
 from huginn.config import get_settings
@@ -49,6 +56,26 @@ _PHASE_PERSONAS: dict[str, str | None] = {
     "learn": "default",
     "report": "tutor",  # 教学风格输出
 }
+
+
+def _extract_tests_passed(validation: Any) -> bool:
+    """从 validation 结果里抽 tests_passed 布尔, 给 validate→learn 门用.
+
+    validation 形状不固定 (dict / str / None), 抽不出明确失败就默认 True,
+    避免门控把现有 happy path 误阻断. 只有明确说 fail / passed=False 才拦.
+    """
+    if isinstance(validation, dict):
+        for key in ("tests_passed", "passed", "success", "ok"):
+            if key in validation:
+                return bool(validation[key])
+        return True
+    if isinstance(validation, str):
+        low = validation.lower()
+        if "fail" in low:
+            return False
+        return True
+    # None 或其它: 没有明确失败信号, 放行
+    return True
 
 
 @dataclass
@@ -82,7 +109,7 @@ class AutoloopEngine:
     validation, learning, and reporting into a single cohesive loop.
     """
 
-    def __init__(self, workspace: str | Path | None = None):
+    def __init__(self, workspace: str | Path | None = None, goal_scheduler: GoalScheduler | None = None):
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
         self.model = get_model(self.settings)
@@ -106,11 +133,33 @@ class AutoloopEngine:
         self._evolution = None
         # PersonaManager 懒加载 — 避免实例化时就扫描 .huginn/personas 目录
         self._persona_manager = None
+        # 领域知识库 (first-principles seed docs) 懒加载 — 避免实例化时拉 ChromaDB
+        self._kb = None
         # 进度跟踪: 默认走进程级单例, 跟 WorkflowEngine 共享, 让 /tasks
         # 路由能汇总所有引擎的进度. 测试时可注入独立 tracker 隔离.
         self.progress_tracker: ProgressTracker | None = None
         # 投机执行 hint: on_turn_start 写入, _build_*_prompt 读出注入 LLM
         self._speculator_hint: str = ""
+        # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
+        # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
+        # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
+        # 在 validate→learn 做 adversarial 审查, 有 high 发现则阻断.
+        from huginn.autoloop.red_team import RedTeamReviewer
+        from huginn.autoloop.phase_gate import MathEvidenceChecker
+
+        self.phase_gate_hook = PhaseGateHook(
+            reviewer_fn=RedTeamReviewer(model=self.model),
+            math_checker=MathEvidenceChecker(),
+        )
+        # Goal scheduler: 持久化目标到 $HUGINN_CACHE_DIR/goals.json.
+        # engine.run(goal=...) 时每轮 learn 后查 completion, 满足则提前停.
+        # None → 懒加载, 避免实例化时就碰磁盘 (测试隔离用).
+        self._goal_scheduler = goal_scheduler
+        # 侧边对话 channel: 轮空时 drain 待答问题. 默认走进程级单例,
+        # 跟 HTTP /side 路由共享. None 时用 get_shared_side_channel() 懒拿.
+        self._side_channel = None
+        # 侧边对话开关: 测试或不需要侧边对话时关掉, 避免 idle 时碰 LLM.
+        self._side_channel_enabled = True
 
     def _get_evolution(self):
         """懒加载 EvolutionEngine, 避免实例化时就拉起日志和规则文件。"""
@@ -129,6 +178,53 @@ class AutoloopEngine:
             self._persona_manager = PersonaManager(workspace=self.workspace)
         return self._persona_manager
 
+    def _get_kb(self):
+        """懒加载领域知识库. ChromaDB 或 seed 文件不可用时返回 None,
+        调用方需自行判空."""
+        if self._kb is None:
+            try:
+                from huginn.knowledge.store import get_knowledge_base
+
+                self._kb = get_knowledge_base(str(self.workspace))
+            except Exception:
+                return None
+        return self._kb
+
+    def _build_kb_text(self, query: str) -> str:
+        """检索领域知识库, 把命中 chunk 拼成 prompt 上下文块. KB 没装、
+        空、查询失败都返回空串, 不影响 loop."""
+        if not query:
+            return ""
+        kb = self._get_kb()
+        if kb is None:
+            return ""
+        try:
+            if kb.count() == 0:
+                return ""
+            chunks = kb.query(query, top_k=5)
+            if not chunks:
+                return ""
+            lines = []
+            for i, c in enumerate(chunks, 1):
+                text = (c.get("text") or "").strip()
+                if not text:
+                    continue
+                if len(text) > 800:
+                    text = text[:800] + "…"
+                lines.append(f"[{i}] {text}")
+            if not lines:
+                return ""
+            body = "\n".join(lines)
+            return (
+                "### Domain Knowledge Context\n"
+                "The following first-principles reference chunks may ground your "
+                "hypothesis and plan. Cite source numbers when relevant.\n"
+                f"{body}\n"
+                "### End Domain Knowledge Context"
+            )
+        except Exception:
+            return ""
+
     def _persona_system_prompt(self, persona_name: str | None) -> str:
         """取 persona 的 system prompt. 找不到就返回空串, 不报错."""
         if not persona_name:
@@ -145,17 +241,182 @@ class AutoloopEngine:
         return _PHASE_PERSONAS.get(phase_name)
 
     # ──────────────────────────────────────────────────────────────
+    # Phase-gate
+    # ──────────────────────────────────────────────────────────────
+
+    def _check_gate(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> bool:
+        """评估阶段转移门. 通过/已 override 返回 True; 阻断时把 feedback
+        拼进 _speculator_hint (下轮 prompt 用) 并返回 False, caller 应
+        continue 到下一轮迭代, 不推进到 to_phase.
+
+        共享状态写一条记录进 history, 让 phase_tool 能查到最新门决策.
+        """
+        state = get_shared_phase_gate_state()
+        # override 优先: 已强制放行的转移直接记一条 approved, 不再评估
+        if (from_phase, to_phase) in state.overrides:
+            state.history.append(
+                PhaseGate(
+                    from_phase=from_phase,
+                    to_phase=to_phase,
+                    status="approved",
+                    required_evidence=self.phase_gate_hook.config.required_for(
+                        from_phase, to_phase
+                    ),
+                    feedback="override 放行",
+                )
+            )
+            state.pending_transition = (from_phase, to_phase)
+            return True
+
+        gate = self.phase_gate_hook.evaluate(from_phase, to_phase, evidence)
+        state.history.append(gate)
+        state.pending_transition = (from_phase, to_phase)
+
+        if gate.is_blocked:
+            fb = gate.feedback or (
+                f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺 {gate.missing_evidence}"
+            )
+            self._speculator_hint = (
+                (self._speculator_hint + "\n" + fb).strip() if self._speculator_hint else fb
+            )
+            print(
+                f"  → Gate blocked {from_phase}→{to_phase}: "
+                f"missing {gate.missing_evidence}"
+            )
+            return False
+        return True
+
+    # ──────────────────────────────────────────────────────────────
+    # Progressive budget
+    # ──────────────────────────────────────────────────────────────
+
+    def _check_budget(self, iteration: int, plan: dict[str, Any]) -> bool:
+        """检查 plan 的 mode 是否在当前迭代预算允许范围内.
+
+        通过返回 True (含 budget 未启用 / 已降级放行 / mode 允许三种情况).
+        不通过时把"用哪个 mode 代替"的提示拼进 _speculator_hint, 下轮 prompt
+        能看到, 返回 False 让 caller continue 到下一轮迭代.
+
+        每个档位有 max_calls 次拒绝额度, 用尽后整条预算降级为放行, 避免
+        LLM 反复提同样的 mode 把循环卡死.
+        """
+        if self._budget is None or self._budget_degraded:
+            return True
+        tier = self._budget.for_iteration(iteration)
+        mode = plan.get("mode")
+        if tier.allows(mode):
+            # 这轮通过了就清掉该档位的拒绝计数, 下次重新数
+            self._budget_rejects.pop(tier.label, None)
+            return True
+
+        rejects = self._budget_rejects.get(tier.label, 0) + 1
+        self._budget_rejects[tier.label] = rejects
+        if tier.max_calls is not None and rejects > tier.max_calls:
+            # 拒绝额度用尽, 降级放行剩下的所有 mode, 不再卡
+            self._budget_degraded = True
+            print(
+                f"  → Budget degraded at iter {iteration}: "
+                f"{tier.label} reject cap {tier.max_calls} hit, allowing all modes"
+            )
+            return True
+
+        allowed = ", ".join(tier.allowed_modes) if tier.allowed_modes else "any"
+        fb = (
+            f"迭代 {iteration} 预算档位 {tier.label}: mode={mode} 不被允许, "
+            f"可用: {allowed}. 请改用允许的 mode 重新规划."
+        )
+        self._speculator_hint = (
+            (self._speculator_hint + "\n" + fb).strip() if self._speculator_hint else fb
+        )
+        print(
+            f"  → Budget rejected mode={mode} at iter {iteration} "
+            f"(tier {tier.label}, reject {rejects}/{tier.max_calls})"
+        )
+        return False
+
+    async def _drain_side_questions(self) -> int:
+        """轮空时把 pending 侧边问题答掉. 返回答了几个.
+
+        拿 shared SideChannel 的 pending 快照, 逐条调 model.ainvoke 出答案,
+        再 channel.respond() 写回. 单条失败不阻塞其他条, 也不抛异常 ——
+        侧边对话是次要任务, 不能影响主 loop.
+        """
+        if not self._side_channel_enabled:
+            return 0
+        from huginn.side_conversation import get_shared_side_channel
+
+        channel = self._side_channel or get_shared_side_channel()
+        pending = channel.drain()
+        if not pending:
+            return 0
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        answered = 0
+        for sq in pending:
+            try:
+                messages = [
+                    SystemMessage(
+                        content=(
+                            "You are answering a side question while the main "
+                            "research loop is idle. Keep it concise and direct."
+                        )
+                    ),
+                    HumanMessage(content=sq.question),
+                ]
+                response = await self.model.ainvoke(messages)
+                answer = str(response.content).strip()
+                if answer:
+                    channel.respond(sq.id, answer)
+                    answered += 1
+                    print(f"  → [side] answered {sq.id}: {answer[:80]}")
+            except Exception as exc:
+                # 单条失败不影响其他, 也不影响主 loop
+                print(f"  → [side] failed to answer {sq.id}: {exc}")
+        return answered
+
+    # ──────────────────────────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────────────────────────
 
-    async def run(self, objective: str, max_iterations: int = 5) -> AutoloopResult:
-        """Run the full autonomous loop for the given objective."""
+    async def run(
+        self,
+        objective: str,
+        max_iterations: int = 20,
+        progressive_budget: bool = True,
+        goal: Goal | None = None,
+    ) -> AutoloopResult:
+        """Run the full autonomous loop for the given objective.
+
+        max_iterations 默认 20 (W2 R1 从 5 提到 20), 给阶段门重试和 agentic
+        search / goal scheduling 留迭代额度. progressive_budget=True 时按
+        迭代数收紧允许的 plan mode (见 ProgressiveBudget.default), False
+        则全程放行, 行为跟提预算之前一致.
+
+        goal 不为空时, 每轮 learn 后用 GoalScheduler.check_completion 查
+        success_criteria 是否满足, 满足则提前停循环并在 scheduler 里标记
+        completed. 没传 goal 行为不变.
+        """
         run_id = f"loop_{uuid.uuid4().hex[:8]}"
         start_time = time.time()
         phases: list[LoopPhase] = []
 
         self._iteration = 0
         self._should_stop = False
+
+        # Goal: 激活后每轮 learn 查 completion, 满足则提前停.
+        # scheduler 可能为 None (测试不传), 这时只做内存检查不持久化.
+        if goal is not None and goal.status == "pending":
+            goal.status = "active"
+            if self._goal_scheduler is not None:
+                self._goal_scheduler.update_goal(goal.id, status="active")
+
+        # 渐进预算: 后期迭代限制昂贵 mode (workflow=DFT). 每档有拒绝额度,
+        # 用尽后 _budget_degraded=True 全程放行, 避免卡死.
+        self._budget = ProgressiveBudget.default() if progressive_budget else None
+        self._budget_rejects: dict[str, int] = {}
+        self._budget_degraded = False
 
         # 投机执行: 拿 top-3 意图, 高置信度时预热工具缓存
         # 预测只是 hint, 不强制, LLM 可以无视
@@ -196,6 +457,8 @@ class AutoloopEngine:
                            current_label=f"iter {self._iteration}: perceive ({phase.status})")
             if not phase.result:
                 print("  → No changes detected, waiting...")
+                # 轮空时 drain 侧边对话: 有 pending 问题就顺手答掉, 不白等.
+                await self._drain_side_questions()
                 await asyncio.sleep(2)
                 continue
 
@@ -225,6 +488,18 @@ class AutoloopEngine:
                 continue
             print(f"  → Plan: {plan['mode']} | {plan['description']}")
 
+            # 预算: 后期迭代限制昂贵 mode. 拒绝时把可用 mode 写进 hint,
+            # continue 到下一轮让 LLM 改提 plan. 降级后全程放行.
+            if not self._check_budget(self._iteration, plan):
+                continue
+
+            # gate: plan→execute — 必须有 mode + description 才放行
+            if not self._check_gate(
+                "plan", "execute",
+                {"mode": plan.get("mode"), "description": plan.get("description")},
+            ):
+                continue
+
             # 4. Execute
             phase = await self._run_phase_async("execute", self._execute, plan, context)
             phases.append(phase)
@@ -237,6 +512,13 @@ class AutoloopEngine:
                 continue
             print(f"  → Execution complete: {execution_result}")
 
+            # gate: execute→validate — 必须有 mode (执行模式) 才放行
+            if not self._check_gate(
+                "execute", "validate",
+                {"mode": plan.get("mode")},
+            ):
+                continue
+
             # 5. Validate
             phase = await self._run_phase_async("validate", self._validate, execution_result)
             phases.append(phase)
@@ -246,6 +528,29 @@ class AutoloopEngine:
             validation = phase.result
             print(f"  → Validation: {validation}")
 
+            # gate: validate→learn — 要有 tests_passed 证据才放行.
+            # tests 没过 = 没有"测试通过"的证据, 传空 dict 让门阻断,
+            # 而不是传 tests_passed=False (hook 只查 key 存在性, False 会被当成有值)
+            _tests_ok = _extract_tests_passed(validation)
+            _gate_evidence: dict[str, Any] = (
+                {"tests_passed": True} if _tests_ok else {}
+            )
+            # 透传数学证据 key (由 _validate 从 execution_result 收集):
+            # conservation_law / dimensional_consistent / pde_classification /
+            # sobol_top_features / constraint_check. math_checker 用 Dempster-
+            # Shafer 合成这些 source, belief(pass) <= threshold 时阻断.
+            for _mk in (
+                "conservation_law",
+                "dimensional_consistent",
+                "pde_classification",
+                "sobol_top_features",
+                "constraint_check",
+            ):
+                if _mk in validation:
+                    _gate_evidence[_mk] = validation[_mk]
+            if not self._check_gate("validate", "learn", _gate_evidence):
+                continue
+
             # 6. Learn
             phase = await self._run_phase_async("learn", self._learn, hypothesis, plan, validation)
             phases.append(phase)
@@ -253,6 +558,15 @@ class AutoloopEngine:
             tracker.update(progress_task_id, current_step=completed_steps,
                            current_label=f"iter {self._iteration}: learn ({phase.status})")
             print(f"  → Learning complete")
+
+            # Goal completion: success_criteria 全命中 → 提前停循环.
+            # 没 goal 或 criteria 为空时 check_completion 返回 False, 不影响.
+            if goal is not None and GoalScheduler.check_completion(goal, validation):
+                print(f"  → Goal completed: {goal.objective}")
+                goal.status = "completed"
+                if self._goal_scheduler is not None:
+                    self._goal_scheduler.complete_goal(goal.id)
+                self._should_stop = True
 
         # 7. Report
         total_time = time.time() - start_time
@@ -339,7 +653,12 @@ class AutoloopEngine:
     async def _hypothesize(self, context: dict[str, Any]) -> str | None:
         """Generate a hypothesis from perceived context."""
         # Use knowledge graph + LLM to generate hypothesis
+        # 先试一把符号回归: 若 context 带 observation_data, 发现的解析表达式
+        # 作为 data-driven candidate law 拼进 prompt, 让假设接地数据
+        symreg_hint = await self._symreg_hint(context)
         prompt = self._build_hypothesis_prompt(context)
+        if symreg_hint:
+            prompt = f"{symreg_hint}\n{prompt}"
         # 按研究类型选 persona: MD 类用 md_expert, 默认走 dft_expert.
         # 这俩 persona 在 personas.py 内置, 直接取就行.
         persona_name = self._pick_hypothesis_persona(context)
@@ -348,6 +667,98 @@ class AutoloopEngine:
             return response.strip()
         except Exception:
             return None
+
+    async def _symreg_hint(self, context: dict[str, Any]) -> str:
+        """从 observation_data 跑符号回归, 把最优解析表达式作为 hint 返回.
+
+        PSE/PSRN 不可用、数据不全、搜索失败都返回空串, 不影响 hypothesize.
+        time_limit 压到 60s 避免 hypothesize 阶段被符号回归卡死.
+
+        A3: 同时查 KB 拿已知公式形式 (Arrhenius / Brillouin / Langmuir 等) 作为
+        kb_candidate_forms 前缀, 跟 symreg 数据驱动候选一起注入 hypothesize prompt.
+        KB 给先验形式, symreg 给数据拟合, 两边互补."""
+        data = context.get("observation_data")
+        if not isinstance(data, dict) or not data:
+            return ""
+        # A3: 先查 KB 拿已知公式形式, symreg 失败时 KB 候选仍能注入
+        kb_forms = self._query_kb_known_forms(data)
+        try:
+            from huginn.tools.sci.symbolic_regression_tool import (
+                SymbolicRegressionInput,
+                SymbolicRegressionTool,
+            )
+            from huginn.types import ToolContext
+
+            target = data.get("target_column") or data.get("target") or "y"
+            if target not in data:
+                return kb_forms
+            tool = SymbolicRegressionTool()
+            args = SymbolicRegressionInput(
+                action="discover",
+                data_json=data,
+                target_column=target,
+                time_limit=60,
+                top_k=3,
+            )
+            ctx = ToolContext(
+                session_id=f"symreg_{uuid.uuid4().hex[:8]}",
+                workspace=str(self.workspace),
+                config=self.settings,
+            )
+            vr = await tool.call(args, ctx)
+            symreg_block = ""
+            if vr.success and vr.data:
+                cands = (
+                    vr.data.get("candidates")
+                    or vr.data.get("expressions")
+                    or vr.data.get("pareto_front")
+                    or []
+                )
+                if cands:
+                    top = cands[0] if isinstance(cands, list) else cands
+                    expr = top.get("expression") if isinstance(top, dict) else str(top)
+                    if expr:
+                        symreg_block = (
+                            "### Data-driven candidate law (symbolic regression)\n"
+                            f"Top recovered expression: {expr}\n"
+                            "Use this as a data-driven candidate when forming the hypothesis.\n"
+                            "### End candidate law"
+                        )
+            if symreg_block and kb_forms:
+                return f"{kb_forms}\n{symreg_block}"
+            return symreg_block or kb_forms
+        except Exception:
+            return kb_forms
+
+    def _query_kb_known_forms(self, data: dict[str, Any]) -> str:
+        """查 KB 拿已知公式形式 (Arrhenius / Brillouin / Langmuir 等) 作为
+        symreg 先验. 失败/空都返回空串."""
+        try:
+            target = data.get("target_column") or data.get("target") or "y"
+            feature_keys = [k for k in data.keys() if k != target and isinstance(data[k], list)]
+            query = f"symbolic expression formula {target} {' '.join(feature_keys[:3])}"
+            kb = self._get_kb()
+            if kb is None or kb.count() == 0:
+                return ""
+            chunks = kb.query(query, top_k=2)
+            if not chunks:
+                return ""
+            lines = []
+            for i, c in enumerate(chunks, 1):
+                text = (c.get("text") or "").strip()
+                if text:
+                    lines.append(f"[{i}] {text[:300]}")
+            if not lines:
+                return ""
+            return (
+                "### KB candidate forms (known first-principles expressions)\n"
+                "The knowledge base suggests these known formula forms. Compare "
+                "your data-driven candidate against them.\n"
+                + "\n".join(lines)
+                + "\n### End KB candidate forms"
+            )
+        except Exception:
+            return ""
 
     @staticmethod
     def _pick_hypothesis_persona(context: dict[str, Any]) -> str:
@@ -380,11 +791,63 @@ class AutoloopEngine:
         elif mode == "workflow":
             # Use WorkflowEngine to run computational pipeline
             return await self._execute_workflow(description, context)
+        elif mode == "dynamic_workflow":
+            # A5: agent 写的并行 subtask 脚本, orchestrator 并发跑
+            return await self._execute_dynamic_workflow(plan, context)
         elif mode == "explore":
             # Use ExplorationOrchestrator to search design space
             return await self._execute_explore(description, context)
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
+
+    async def _execute_dynamic_workflow(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """A5: 跑 agent 提交的并行工作流脚本.
+
+        plan 里带 "script" 字段 (WorkflowScript.from_dict 的输入), 直接走
+        WorkflowOrchestrator.run() 同步等完. 失败的 subtask 不炸整体,
+        返回聚合结果让 validate/learn 阶段看.
+        """
+        from huginn.autoloop.dynamic_workflow import (
+            WorkflowOrchestrator,
+            WorkflowScript,
+        )
+        from huginn.types import ToolContext
+
+        raw_script = plan.get("script") or {}
+        if isinstance(raw_script, str):
+            # agent 可能传 JSON 字符串
+            import json
+            try:
+                raw_script = json.loads(raw_script)
+            except json.JSONDecodeError:
+                raw_script = {}
+        script = WorkflowScript.from_dict(raw_script)
+        if not script.subtasks:
+            return {
+                "mode": "dynamic_workflow",
+                "success": False,
+                "error": "脚本无有效 subtask",
+            }
+        orch = WorkflowOrchestrator(
+            max_concurrent=script.max_concurrent,
+        )
+        ctx = ToolContext(
+            session_id=f"dynwf_{script.id}",
+            workspace=str(self.workspace),
+            config=self.settings,
+        )
+        result = await orch.run(script, ctx)
+        return {
+            "mode": "dynamic_workflow",
+            "success": result.success,
+            "workflow_id": result.id,
+            "n_total": result.n_total,
+            "n_completed": result.n_completed,
+            "n_failed": result.n_failed,
+            "summary": result.summary(),
+        }
 
     async def _validate(self, execution_result: Any) -> dict[str, Any]:
         """Validate execution results using benchmarks and constraints."""
@@ -457,13 +920,37 @@ class AutoloopEngine:
         except Exception:
             pass
 
+        # 数学结构校验: 守恒律 (Bourbaki) + 变分原理 (Lean) + 自动微分 (AutoDiff).
+        # 把物理/化学结论还原成数学约束来验证, 而非只靠 reviewer 文字点评.
+        try:
+            results["math_validation"] = await self._run_math_validation(execution_result)
+        except Exception as e:
+            results["math_validation_error"] = str(e)
+
+        # 收集 5 个数学证据 key (conservation_law / dimensional_consistent /
+        # pde_classification / sobol_top_features / constraint_check), 平铺到
+        # results 顶层. validate→learn gate 会透传给 MathEvidenceChecker 做
+        # Dempster-Shafer 合成. best-effort: 数据不全/工具报错就跳过.
+        try:
+            math_ev = await self._collect_math_evidence(
+                execution_result, results.get("math_validation", {})
+            )
+            for _k, _v in math_ev.items():
+                results[_k] = _v
+        except Exception as e:
+            results["math_evidence_error"] = str(e)
+
         # Reviewer persona 批判性审视: 让 LLM 戴 reviewer 帽子点评本次结果.
         # 这是 validate 阶段接入对话层的关键点 — reviewer persona 的 system
         # prompt 会强约束 LLM 走"挑毛病 + 提改进"的语气, 而不是默认的助手语气.
         # 失败不影响 validation 流程, 只是不带 reviewer_critique 字段.
+        # A1: KB 注入 — reviewer 拿 first-principles 已知结论对照判断结果合理性
         try:
+            reviewer_kb = self._build_kb_text(
+                query=self._summarize_for_kb(execution_result, results)
+            )
             critique = await self._llm_chat(
-                self._build_reviewer_prompt(execution_result, results),
+                self._build_reviewer_prompt(execution_result, results, reviewer_kb),
                 persona_name="reviewer",
             )
             if critique and critique.strip():
@@ -474,7 +961,320 @@ class AutoloopEngine:
         return results
 
     @staticmethod
-    def _build_reviewer_prompt(execution_result: Any, results: dict[str, Any]) -> str:
+    def _summarize_for_kb(execution_result: Any, results: dict[str, Any]) -> str:
+        """把 execution_result + validation results 拍扁成短串当 KB query.
+        给 reviewer 检索已知 first-principles 结论用, 失败无所谓."""
+        try:
+            parts: list[str] = []
+            if isinstance(execution_result, dict):
+                for k in ("result_type", "equations", "lagrangian", "summary"):
+                    v = execution_result.get(k)
+                    if v:
+                        parts.append(str(v)[:120])
+            for k in ("tests_passed", "constraints_satisfied"):
+                v = results.get(k)
+                if v is not None:
+                    parts.append(f"{k}={v}")
+            return " ".join(parts)[:400]
+        except Exception:
+            return ""
+
+    async def _run_math_validation(self, execution_result: Any) -> dict[str, Any]:
+        """把执行结果里的数学结构抽出来, 用数学工具做形式化校验.
+
+        三个独立子项, 互不影响:
+          A. 守恒律 (BourbakiTool.check_conservation) — equations 非空时跑
+          B. 变分原理 (LeanTool.constitutive/variational_principle) — lagrangian 非空时跑
+          C. 自动微分 (AutoDiffTool.gradient) — function spec 齐全时跑
+
+        工具懒加载, 任一缺失/报错只记 *_error, 不阻断其余子项与主 validate 流程.
+        engine 没有自己的 tool_registry, 这里直接构造工具实例 (它们都是无状态轻量构造).
+        """
+        from huginn.types import ToolContext
+
+        out: dict[str, Any] = {}
+        if not isinstance(execution_result, dict):
+            return out
+
+        tool_ctx = ToolContext(
+            session_id=f"mathval_{uuid.uuid4().hex[:8]}",
+            workspace=str(self.workspace),
+            config=self.settings,
+        )
+
+        equations = execution_result.get("equations") or ""
+        lagrangian = execution_result.get("lagrangian") or ""
+        coords = execution_result.get("coordinates") or []
+        velocities = execution_result.get("velocities")
+        domain = execution_result.get("conservation_domain") or "continuum_mechanics"
+        if equations:
+            try:
+                from huginn.tools.bourbaki_tool import BourbakiTool
+
+                tool = BourbakiTool()
+                raw = await tool.call(
+                    {
+                        "task": "check_conservation",
+                        "domain": domain,
+                        "equations": equations,
+                    },
+                    tool_ctx,
+                )
+                # BourbakiTool.call 可能返回 dict 或 BourbakiResult; 统一成 dict
+                if hasattr(raw, "model_dump"):
+                    raw = raw.model_dump()
+                out["conservation"] = {
+                    "verified": raw.get("verified"),
+                    "message": raw.get("message", ""),
+                    "fallback": raw.get("fallback", False),
+                    "method": "bourbaki",
+                }
+            except Exception as e:
+                out["conservation_error"] = str(e)
+
+        # A2: KB 交叉验证 — 把守恒律方程 + Lagrangian 关键词拿去查 KB, 命中的
+        # first-principles 参考块作为 reference_principles 写回, 让下游 reviewer
+        # 能对照已知结论. KB 不可用/空查询都不阻断, 只是不写该字段.
+        kb_ref = self._query_kb_reference(equations, lagrangian)
+        if kb_ref:
+            out["reference_principles"] = kb_ref
+
+        if lagrangian and coords:
+            try:
+                from huginn.tools.lean_tool import LeanTool, LeanToolInput
+
+                tool = LeanTool()
+                args = LeanToolInput(
+                    action="constitutive",
+                    sub_action="variational_principle",
+                    lagrangian=lagrangian,
+                    coordinates=list(coords),
+                    velocities=velocities,
+                )
+                vr = await tool.call(args, tool_ctx)
+                out["variational"] = {
+                    "ok": bool(vr.success),
+                    "data": vr.data,
+                    "error": vr.error,
+                    "method": "lean",
+                }
+            except Exception as e:
+                out["variational_error"] = str(e)
+
+        func_spec = execution_result.get("autodiff")
+        if isinstance(func_spec, dict) and func_spec.get("function_type"):
+            try:
+                from huginn.tools.sci.autodiff_tool import (
+                    AutoDiffInput,
+                    AutoDiffTool,
+                )
+
+                tool = AutoDiffTool()
+                args = AutoDiffInput(
+                    action="gradient",
+                    function_type=func_spec.get("function_type", "custom"),
+                    function_params=func_spec.get("function_params", {}),
+                    variables=func_spec.get("variables", {}),
+                    target_variable=func_spec.get("target_variable"),
+                )
+                vr = await tool.call(args, tool_ctx)
+                out["autodiff"] = {
+                    "ok": bool(vr.success),
+                    "data": vr.data,
+                    "error": vr.error,
+                }
+            except Exception as e:
+                out["autodiff_error"] = str(e)
+
+        return out
+
+    async def _collect_math_evidence(
+        self, execution_result: Any, math_validation: dict
+    ) -> dict[str, Any]:
+        """从 execution_result + math_validation 抽 5 个数学证据 key,
+        供 PhaseGate 的 MathEvidenceChecker 做 Dempster-Shafer 合成.
+
+        证据来源:
+          1. conservation_law — 从 math_validation["conservation"] 透传
+          2. dimensional_consistent — execution_result 带 equation 时跑
+             symbolic_math_tool action=dimensional_analysis
+          3. pde_classification — execution_result 带 pde_coefficients +
+             expected_pde_class 时跑 symbolic_math_tool action=pde_classify
+          4. sobol_top_features — execution_result 带 sobol_data +
+             hypothesis_features 时跑 symbolic_regression_tool action=sobol_indices
+          5. constraint_check — execution_result 带 expression + constraints
+             时跑 symbolic_regression_tool action=constraint_check
+
+        每项 best-effort: 数据不全/工具报错就跳过, 不写 key (math_checker 忽略缺失).
+        """
+        evidence: dict[str, Any] = {}
+        if not isinstance(execution_result, dict):
+            return evidence
+
+        # 1. conservation_law — 从已有 math_validation 透传
+        cons = math_validation.get("conservation")
+        if isinstance(cons, dict) and "verified" in cons:
+            evidence["conservation_law"] = {
+                "verified": bool(cons["verified"]),
+                "current": cons.get("message", ""),
+                "symmetry": cons.get("method", ""),
+            }
+
+        from huginn.types import ToolContext
+
+        tool_ctx = ToolContext(
+            session_id=f"mathevid_{uuid.uuid4().hex[:8]}",
+            workspace=str(self.workspace),
+            config=self.settings,
+        )
+
+        # 2. dimensional_consistent — 跑量纲分析, 所有 quantity 都能解析 → True
+        equation = (
+            execution_result.get("equation")
+            or execution_result.get("equations")
+            or ""
+        )
+        if equation:
+            try:
+                from huginn.tools.symbolic_math.tool import (
+                    SymbolicMathInput,
+                    SymbolicMathTool,
+                )
+
+                tool = SymbolicMathTool()
+                args = SymbolicMathInput(
+                    action="dimensional_analysis",
+                    expression=str(equation),
+                    target="validate_expression",
+                )
+                vr = await tool.call(args, tool_ctx)
+                if vr.success and vr.data:
+                    quantities = vr.data.get("quantities", [])
+                    has_error = any("error" in q for q in quantities)
+                    evidence["dimensional_consistent"] = (
+                        len(quantities) > 0 and not has_error
+                    )
+            except Exception:
+                pass
+
+        # 3. pde_classification — 跑 pde_classify, 比对 expected vs actual
+        pde_coeffs = execution_result.get("pde_coefficients")
+        expected_class = execution_result.get("expected_pde_class")
+        if pde_coeffs and expected_class:
+            try:
+                from huginn.tools.symbolic_math.tool import (
+                    SymbolicMathInput,
+                    SymbolicMathTool,
+                )
+
+                tool = SymbolicMathTool()
+                args = SymbolicMathInput(
+                    action="pde_classify",
+                    expression=str(pde_coeffs),
+                )
+                vr = await tool.call(args, tool_ctx)
+                if vr.success and vr.data:
+                    actual = vr.data.get("classification", "")
+                    evidence["pde_classification"] = {
+                        "consistent": actual.lower() == str(expected_class).lower(),
+                        "expected": str(expected_class),
+                        "actual": actual,
+                    }
+            except Exception:
+                pass
+
+        # 4. sobol_top_features — 跑 sobol_indices, top features (S_i>0.1) 必须
+        # 被 hypothesis_features 覆盖
+        sobol_data = execution_result.get("sobol_data")
+        hypothesis_features = execution_result.get("hypothesis_features")
+        if sobol_data and hypothesis_features:
+            try:
+                from huginn.tools.sci.symbolic_regression_tool import (
+                    SymbolicRegressionInput,
+                    SymbolicRegressionTool,
+                )
+
+                tool = SymbolicRegressionTool()
+                target_col = (
+                    sobol_data.get("target", "y")
+                    if isinstance(sobol_data, dict)
+                    else "y"
+                )
+                args = SymbolicRegressionInput(
+                    action="sobol_indices",
+                    data_json=sobol_data,
+                    target_column=target_col,
+                    n_sobol_samples=512,
+                )
+                vr = await tool.call(args, tool_ctx)
+                if vr.success and vr.data:
+                    first_order = vr.data.get("first_order", {})
+                    if first_order:
+                        top = [f for f, s in first_order.items() if s > 0.1]
+                        evidence["sobol_top_features"] = {
+                            "hypothesis_covers_top": set(top).issubset(
+                                set(hypothesis_features)
+                            ),
+                            "top_features": top,
+                            "hypothesis_features": list(hypothesis_features),
+                        }
+            except Exception:
+                pass
+
+        # 5. constraint_check — 跑 constraint_check, 所有先验通过 → all_passed
+        expr = execution_result.get("expression")
+        constraints = execution_result.get("constraints")
+        if expr and constraints:
+            try:
+                from huginn.tools.sci.symbolic_regression_tool import (
+                    SymbolicRegressionInput,
+                    SymbolicRegressionTool,
+                )
+
+                tool = SymbolicRegressionTool()
+                args = SymbolicRegressionInput(
+                    action="constraint_check",
+                    probe_expression=str(expr),
+                    constraints=constraints,
+                )
+                vr = await tool.call(args, tool_ctx)
+                if vr.success and vr.data:
+                    evidence["constraint_check"] = {
+                        "all_passed": vr.data.get("all_passed", False),
+                        "violations": vr.data.get("violations", []),
+                    }
+            except Exception:
+                pass
+
+        return evidence
+
+    def _query_kb_reference(self, equations: str, lagrangian: str) -> list[dict]:
+        """查 KB 拿 first-principles 参考块. 把 equations + lagrangian 拼成
+        query 串, 命中返回 [{text, source}], 失败/空都返回 []."""
+        query = " ".join(filter(None, [equations, lagrangian])).strip()
+        if not query:
+            return []
+        kb = self._get_kb()
+        if kb is None:
+            return []
+        try:
+            if kb.count() == 0:
+                return []
+            chunks = kb.query(f"conservation law variational {query}", top_k=2)
+            return [
+                {"text": (c.get("text") or "")[:300], "source": c.get("source", "")}
+                for c in chunks
+                if c.get("text")
+            ]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _build_reviewer_prompt(
+        execution_result: Any,
+        results: dict[str, Any],
+        kb_text: str = "",
+    ) -> str:
         """构造让 reviewer persona 点评执行结果的 prompt."""
         try:
             exec_blob = json.dumps(execution_result, ensure_ascii=False, default=str)[:1500]
@@ -484,15 +1284,19 @@ class AutoloopEngine:
             res_blob = json.dumps(results, ensure_ascii=False, default=str)[:1500]
         except Exception:
             res_blob = str(results)[:1500]
+        kb_section = f"\n{kb_text}\n" if kb_text else ""
         return (
             "Below is the execution result and validation summary from an "
             "autonomous materials-science research loop iteration.\n\n"
             f"Execution result:\n{exec_blob}\n\n"
-            f"Validation summary:\n{res_blob}\n\n"
+            f"Validation summary:\n{res_blob}\n"
+            f"{kb_section}"
             "As a critical peer reviewer, point out:\n"
             "1. Any methodological weakness or missing convergence check.\n"
             "2. Whether the result is reproducible and benchmarked.\n"
-            "3. Concrete next-step improvements.\n"
+            "3. Whether the result aligns with the domain knowledge context above "
+            "(if any), or contradicts known first-principles.\n"
+            "4. Concrete next-step improvements.\n"
             "Be concise and direct."
         )
 
@@ -554,10 +1358,13 @@ class AutoloopEngine:
 
         # Report 阶段接入 tutor persona: 让 LLM 用教学口吻写一段总结,
         # 帮助用户理解这轮 loop 做了什么、为什么这么做. 失败就退化为纯表格报告.
+        # A4: 同时查 KB 拿 first-principles 文献块, 拼进 tutor prompt 让总结
+        # 引用已知理论, 报告里会带 "Domain Knowledge References" 段落.
+        kb_text = self._build_kb_text(query=objective)
         tutor_narrative = ""
         try:
             tutor_narrative = await self._llm_chat(
-                self._build_tutor_report_prompt(report_data),
+                self._build_tutor_report_prompt(report_data, kb_text),
                 persona_name="tutor",
             )
             tutor_narrative = (tutor_narrative or "").strip()
@@ -567,6 +1374,8 @@ class AutoloopEngine:
         # Save markdown report to workspace
         report_path = self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
         report_content = self._render_report(report_data)
+        if kb_text:
+            report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
         if tutor_narrative:
             report_content += "\n\n## Tutor's Summary\n\n" + tutor_narrative + "\n"
         report_path.write_text(report_content, encoding="utf-8")
@@ -574,21 +1383,27 @@ class AutoloopEngine:
         return str(report_path)
 
     @staticmethod
-    def _build_tutor_report_prompt(report_data: dict[str, Any]) -> str:
+    def _build_tutor_report_prompt(
+        report_data: dict[str, Any], kb_text: str = ""
+    ) -> str:
         """构造让 tutor persona 写教学口吻总结的 prompt."""
         try:
             phases_blob = json.dumps(report_data["phases"], ensure_ascii=False)[:1200]
         except Exception:
             phases_blob = str(report_data.get("phases", ""))[:1200]
+        kb_section = f"\n{kb_text}\n" if kb_text else ""
         return (
             "You just supervised an autonomous research loop. Summarize for a "
             "graduate student what happened, in a patient, pedagogical tone.\n\n"
             f"Objective: {report_data['objective']}\n"
             f"Total time: {report_data['total_time_seconds']:.1f}s\n"
-            f"Phases:\n{phases_blob}\n\n"
+            f"Phases:\n{phases_blob}\n"
+            f"{kb_section}"
             "Cover:\n"
             "- What the loop tried to achieve and why each phase matters.\n"
             "- Any phase that failed, and what a student should learn from it.\n"
+            "- How the result relates to the domain knowledge context above "
+            "(if any), citing source numbers when relevant.\n"
             "- One concrete suggestion for the next iteration.\n"
             "Keep it under 200 words."
         )
@@ -679,19 +1494,58 @@ Please modify the code to address this task."""
         hint_block = ""
         if self._speculator_hint:
             hint_block = f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint}\n"
+        # 领域知识库检索: 用 context 序列化串当 query, 命中 first-principles
+        # 参考块就拼进 prompt, 让假设接地已知理论而非凭空臆造
+        kb_block = self._build_kb_text(
+            query=json.dumps(context, ensure_ascii=False)[:500]
+        )
+        if kb_block:
+            kb_block = f"\n{kb_block}\n"
+        # 数学深度引导: 提醒 agent 优先识别 PDE / 变分原理 / 微分几何结构,
+        # 并用符号回归 + Sobol 灵敏度 + 物理约束先验 反复试探.
+        # 这一段是把"物理化学是数学的一部分"落到 prompt 的具体抓手.
+        math_block = self._MATH_DEPTH_PROMPT_BLOCK
         return f"""You are an autonomous material science research agent.
-{hint_block}
+{hint_block}{kb_block}{math_block}
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
 Generate a single, testable hypothesis about what should be done next.
 The hypothesis should be a single sentence, concrete and actionable.
+Ground it in the domain knowledge context above when relevant.
+Prefer hypotheses that can be expressed as governing PDEs, variational
+principles, or conservation laws; identify the mathematical structure
+before proposing numerical experiments.
 
 Hypothesis:"""
 
-    def _build_plan_prompt(self, hypothesis: str, context: dict[str, Any]) -> str:
-        return f"""Given the hypothesis: "{hypothesis}"
+    # 数学深度提示块: 在 hypothesis / plan prompt 里持续提醒 agent 用
+    # 符号数学工具把"现象"翻译成"PDE / 变分 / 几何 / 灵敏度"语言.
+    # 用户偏好: 物理、化学本质上是数学的一部分 — 这里把那条原则落进 prompt.
+    _MATH_DEPTH_PROMPT_BLOCK = """
+Math depth guidance (treat physics/chemistry as mathematics):
+- Identify the governing PDE: use symbolic_math_tool action=pde_classify
+  (A;B;C discriminant) to classify elliptic/parabolic/hyperbolic, then
+  pde_separation or pde_characteristics for analytic structure.
+- If the phenomenon extremizes a functional, derive Euler-Lagrange:
+  symbolic_math_tool action=euler_lagrange or action=derive (alias).
+  Check symmetries with action=noether to predict conserved currents.
+- For curved manifolds (defects, interfaces, crystal plasticity), compute
+  Christoffel/Ricci via action=diffgeo_metric or diffgeo_curvature.
+- Before fitting data, run symbolic_regression_tool action=sobol_indices
+  to rank feature importance, then discover expressions with
+  action=discover and validate candidates with action=constraint_check
+  (positivity / monotonicity / finiteness priors).
+"""
 
+    def _build_plan_prompt(self, hypothesis: str, context: dict[str, Any]) -> str:
+        # 同 hypothesize: 用 hypothesis 串检索 KB, 把参考块喂给 planner
+        kb_block = self._build_kb_text(query=hypothesis)
+        if kb_block:
+            kb_block = f"\n{kb_block}\n"
+        math_block = self._MATH_DEPTH_PROMPT_BLOCK
+        return f"""Given the hypothesis: "{hypothesis}"
+{kb_block}{math_block}
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
 
@@ -699,6 +1553,10 @@ Choose ONE mode and describe the plan:
 - coder: modify code/files to fix or improve something
 - workflow: run a computational simulation pipeline
 - explore: search a design space for optimal parameters
+
+When the hypothesis involves a PDE / variational principle / curved
+geometry, prefer the symbolic_math_tool actions listed in the math
+depth block above before falling back to numerical solvers.
 
 Respond in this exact format:
 MODE: <coder|workflow|explore>
