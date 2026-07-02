@@ -6,6 +6,16 @@ import re
 
 import sympy as sp
 
+# sympify 内部走 eval, 拦掉危险模式做 defense-in-depth
+# 注意: 不能用泛化的 "__" 匹配, 因为合法的内部变量名 (如 __u_prime__) 也含双下划线
+_DANGEROUS_PATTERNS = (
+    "__import__", "__builtins__", "__class__", "__subclasses__",
+    "__globals__", "__dict__", "__getattribute__", "__bases__",
+    "__mro__", "__loader__", "__spec__", "__code__",
+    "import ", "exec(", "eval(", "open(", "os.", "sys.",
+    "subprocess", "globals(", "locals(", "getattr(", "setattr(",
+)
+
 
 def parse_symbols(
     symbol_names: list[str], assumptions: dict[str, str]
@@ -28,12 +38,21 @@ def parse_symbols(
     return sym_dict
 
 
+def _validate_expression(expr: str) -> None:
+    """拦掉可能触发代码执行的模式."""
+    low = expr.lower()
+    for pat in _DANGEROUS_PATTERNS:
+        if pat.lower() in low:
+            raise ValueError(f"表达式包含禁用序列 '{pat}'")
+
+
 def safe_parse(expr_str: str, sym_dict: dict[str, sp.Symbol]) -> sp.Expr:
     """把字符串安全解析成 SymPy 表达式.
 
     先塞内置常数和函数, 再让用户符号覆盖它们 —— 否则用户的 "E" (杨氏模量)
     会被 sp.E (欧拉数) 吃掉.
     """
+    _validate_expression(expr_str)
     local_dict = {
         "sin": sp.sin,
         "cos": sp.cos,

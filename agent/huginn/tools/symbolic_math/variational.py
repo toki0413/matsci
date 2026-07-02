@@ -143,6 +143,9 @@ def functional_derivative(args: "SymbolicMathInput") -> ToolResult:
     F[u] = ∫ L(u, u', x) dx  →  δF/δu = ∂L/∂u - d/dx(∂L/∂u')
     实际上等价于 EL 方程的左端. 这里作为独立接口方便调用.
     """
+    import copy
+
+    args = copy.copy(args)
     args.target = "single"
     res = euler_lagrange(args)
     if not res.success:

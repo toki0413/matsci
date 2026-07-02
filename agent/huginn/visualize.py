@@ -15,11 +15,15 @@ def _load_json(path: str | Path) -> dict[str, Any]:
 
 
 def _save_or_show(fig, output_path: str | Path | None) -> Path | None:
+    import matplotlib.pyplot as plt
+
     if output_path:
         target = Path(output_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(target, dpi=150, bbox_inches="tight")
+        plt.close(fig)
         return target
+    plt.close(fig)
     return None
 
 

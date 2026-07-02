@@ -225,17 +225,9 @@ class RedTeamReviewer:
             )),
             HumanMessage(content=prompt),
         ]
-        resp = self._model.ainvoke(messages)
-        # ainvoke 可能返回 coroutine 或直接结果, 兼容处理
-        import inspect
-
-        if inspect.iscoroutine(resp):
-            import asyncio
-
-            result = asyncio.get_event_loop().run_until_complete(resp)
-        else:
-            result = resp
-        text = str(result.content).strip()
+        # 用同步 invoke 避免在 async 引擎上下文里 run_until_complete 报错
+        resp = self._model.invoke(messages)
+        text = str(resp.content).strip()
         return self._parse_llm_findings(text)
 
     def _build_llm_prompt(
