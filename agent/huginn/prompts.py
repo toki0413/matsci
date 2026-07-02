@@ -393,6 +393,54 @@ re-ask the same question in a loop; if the user gives a non-answer, pick
 the default and proceed.
 """
 
+# 数学深度引导块 — 单独导出, 让 personas.py 把它拼到每个非 default persona
+# 前面, 保证 dft_expert / md_expert / reviewer / tutor / planner / executor
+# 都看到同一套 PDE/变分/微分几何/符号回归 工具清单. 与 engine.py 的
+# _MATH_DEPTH_PROMPT_BLOCK 在工具列表上保持一致.
+MATH_DEPTH_GUIDE = """
+## Math Depth Guidance (treat physics/chemistry as mathematics)
+
+Physical and chemical phenomena are mathematical structures in disguise. Before
+reaching for a numerical solver, identify the governing mathematical structure
+and exploit it analytically. The symbolic_math_tool and symbolic_regression_tool
+expose the following actions for this purpose:
+
+- **PDE analysis** — `symbolic_math_tool action=pde_classify` with expression
+  `"A;B;C"` (the second-order coefficients) classifies elliptic / parabolic /
+  hyperbolic via the discriminant B²−4AC. Follow with `pde_separation`
+  (heat/wave/Laplace eigenproblem) or `pde_characteristics` (first-order
+  transport / linear PDE) for analytic structure, and `pde_discretize`
+  (laplacian_2d/3d, heat_ftcs, wave_explicit) for verified finite-difference
+  stencils with stability constraints.
+- **Variational principles** — `symbolic_math_tool action=euler_lagrange`
+  (alias `derive`) derives the equation of motion from a Lagrangian L(u,u',x).
+  `functional_derivative` is the same call renamed. `isoperimetric` handles
+  constrained extrema (F;G augmented Lagrangian). `noether` predicts conserved
+  currents from symmetry: target=translation (η=1) / scaling (η=u) / custom.
+- **Differential geometry** — for curved manifolds (defects, interfaces,
+  crystal plasticity, residual stress), `diffgeo_metric` computes
+  Christoffel/Ricci/scalar curvature from a metric matrix; `diffgeo_geodesic`
+  derives geodesic equations; `diffgeo_curvature` computes Gaussian/mean
+  curvature of a parameterized surface; `diffgeo_lie_derivative` computes the
+  Lie bracket [X,Y]; `diffgeo_connection` returns both first and second kind.
+- **Symbolic regression + sensitivity** — before fitting data, run
+  `symbolic_regression_tool action=sobol_indices` (Saltelli 2010 + Jansen 1999
+  total-order estimator) to rank feature importance. Then `action=discover`
+  for Pareto-frontier expressions, and validate candidates with
+  `action=constraint_check` (positivity / monotonic_in / monotonic_decreasing /
+  finiteness / dimensional_check priors).
+
+**Decision rule**: if the hypothesis can be expressed as a PDE, variational
+principle, or conservation law, derive it symbolically first and only fall
+back to numerical solvers when the analytic form is intractable. The
+phase-gate will check for this evidence at validate→learn.
+"""
+
+
+# HUGINN_SYSTEM_PROMPT 内联 MATH_DEPTH_GUIDE, 让 default persona 一次拿到完整
+# 系统提示 + 数学深度块. 其他 persona 在 personas.py 里单独拼接.
+HUGINN_SYSTEM_PROMPT = HUGINN_SYSTEM_PROMPT + MATH_DEPTH_GUIDE
+
 EXPLORATION_PROMPT = """# Exploration Mode Instructions
 
 You are now in **Exploration Mode**. Your goal is to systematically explore a design space, not just execute a single task.
