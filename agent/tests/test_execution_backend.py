@@ -25,5 +25,8 @@ class TestGetExecutor:
         monkeypatch.setenv("HUGINN_CONTAINER_RUNTIME", "docker")
         monkeypatch.setenv("HUGINN_CONTAINER_IMAGE", "huginn:latest")
         monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "0")
+        # Docker is pre-installed on GitHub Actions runners — mock it as
+        # missing so the test is environment-independent.
+        monkeypatch.setattr("shutil.which", lambda _name: None)
         with pytest.raises(SandboxError, match="Container runtime 'docker' not found"):
             get_executor()

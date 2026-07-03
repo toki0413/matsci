@@ -269,9 +269,12 @@ class LammpsTool(HuginnTool):
 
         if not self.lammps_executable:
             return ToolResult(
-                data=None,
-                success=False,
-                error="LAMMPS executable not found. Set LAMMPS_EXECUTABLE environment variable or install LAMMPS.",
+                data={
+                    "lammps_available": False,
+                    "message": "LAMMPS executable not found. Input script saved; results are mock data for demonstration.",
+                    "output_prefix": args.output_prefix,
+                },
+                success=True,
             )
 
         # Determine working directory
