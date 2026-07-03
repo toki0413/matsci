@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-benchmark>=4.0", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "black>=23.0", "memory-profiler>=0.60", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-benchmark>=4.0", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "hypothesis>=6.0", "black>=23.0", "memory-profiler>=0.60", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7"]
 all = ["pymatgen>=2024.0", "ase>=3.22", "dscribe>=2.0", "paramiko>=3.0", "chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3", "mace-torch>=0.3", "fairchem-core>=1.0", "py4vasp>=0.5", "chgnet>=0.3", "pynep>=0.1", "matplotlib>=3.7"]
 rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3"]
 tooluniverse = ["tooluniverse"]
