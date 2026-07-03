@@ -219,19 +219,49 @@ class FenicsTool(HuginnTool):
                 success=False,
                 error="convergence_check requires at least 2 solution_files.",
             )
-        # 简单收敛: 比较相邻解的 L2 差异
+        # Load each pair of consecutive solutions from XDMF and compute the
+        # L2 norm of their difference.  Solutions may live on different meshes
+        # (h-refinement), so fall back to relative L2 norm comparison when
+        # errornorm can't be used directly.
+        sol_files = input_data.solution_files
         diffs: list[float] = []
-        for i in range(len(input_data.solution_files) - 1):
+        method_used = "errornorm"
+        for i in range(len(sol_files) - 1):
             script = textwrap.dedent(f"""
-                from dolfin import Mesh, Function, XDMFFile
                 import sys
+                from dolfin import (
+                    Mesh, Function, FunctionSpace, XDMFFile,
+                    errornorm, norm,
+                )
+
+                def _load(path):
+                    mesh = Mesh()
+                    with XDMFFile(path) as f:
+                        f.read(mesh)
+                    V = FunctionSpace(mesh, "P", 1)
+                    u = Function(V)
+                    with XDMFFile(path) as f:
+                        f.read_checkpoint(V, u, "u")
+                    return mesh, V, u
+
+                f1_path = {str(sol_files[i])!r}
+                f2_path = {str(sol_files[i + 1])!r}
                 try:
-                    f1 = Function(FunctionSpace(Mesh(), "P", 1))
-                    f2 = Function(FunctionSpace(Mesh(), "P", 1))
-                    # placeholder: real impl would load solutions
-                    print("diff", 0.0)
+                    m1, V1, u1 = _load(f1_path)
+                    m2, V2, u2 = _load(f2_path)
                 except Exception as e:
                     print("error", str(e))
+                    sys.exit(0)
+
+                try:
+                    d = errornorm(u1, u2, "L2")
+                    print("diff", d)
+                except Exception:
+                    n1 = norm(u1, "L2")
+                    n2 = norm(u2, "L2")
+                    denom = max(n1, n2, 1e-15)
+                    d = abs(n1 - n2) / denom
+                    print("diff_rel", d)
             """)
             try:
                 result = subprocess.run(
@@ -239,24 +269,46 @@ class FenicsTool(HuginnTool):
                     cwd=str(work_dir),
                     capture_output=True,
                     text=True,
-                    timeout=30.0,
+                    timeout=60.0,
                 )
+                parsed = False
                 for line in result.stdout.splitlines():
-                    if line.startswith("diff"):
-                        parts = line.split()
-                        if len(parts) == 2:
-                            diffs.append(float(parts[1]))
+                    parts = line.split()
+                    if len(parts) == 2:
+                        try:
+                            val = float(parts[1])
+                            if parts[0] == "diff_rel":
+                                method_used = "relative_l2"
+                            diffs.append(val)
+                            parsed = True
+                        except ValueError:
+                            pass
+                    elif parts and parts[0] == "error":
+                        diffs.append(float("nan"))
+                        parsed = True
+                if not parsed:
+                    diffs.append(float("nan"))
+            except subprocess.TimeoutExpired:
+                diffs.append(float("nan"))
             except Exception:
                 diffs.append(float("nan"))
 
-        converged = len(diffs) > 0 and all(d < 0.01 for d in diffs if d == d)
+        valid = [d for d in diffs if d == d]
+        converged = len(valid) > 0 and all(d < 0.01 for d in valid)
         return ToolResult(
             data={
                 "action": "convergence_check",
-                "n_solutions": len(input_data.solution_files),
+                "n_solutions": len(sol_files),
                 "differences": diffs,
+                "method": method_used,
                 "converged": converged,
-                "message": "Convergence check complete." if diffs else "No differences computed.",
+                "message": (
+                    "Convergence check complete — all L2 differences < 1e-2."
+                    if converged
+                    else "Convergence check complete — some differences exceed tolerance."
+                    if valid
+                    else "No valid differences computed (check solution file format)."
+                ),
             },
             success=True,
         )

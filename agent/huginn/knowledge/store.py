@@ -147,12 +147,47 @@ class KnowledgeBase:
         self._query_cache: TimedLRUCache[list[dict[str, Any]]] = TimedLRUCache(
             max_size=256, ttl=60.0
         )
+        # 语义缓存: gptcache 可选, 没装就退回上面的 TimedLRUCache
+        self._semantic_cache: Any | None = None
+        try:
+            from gptcache import Cache
+            from gptcache.embedding import Onnx
+            from gptcache.manager.factory import manager_factory
+            from gptcache.processor.pre import get_prompt
+            from gptcache.similarity_evaluation import SearchDistanceEvaluation
+
+            onnx = Onnx(model_name="all-MiniLM-L6-v2")
+            data_manager = manager_factory(
+                "sqlite,faiss",
+                data_dir=str(self.root / "semantic_cache"),
+                vector_params={"dimension": onnx.dimension},
+            )
+            self._semantic_cache = Cache()
+            self._semantic_cache.init(
+                pre_embedding_func=get_prompt,
+                data_manager=data_manager,
+                # max_distance=0.4 对应 cosine similarity 约 0.92
+                # (L2 距离 d, sim = 1 - d^2/2, d=0.4 -> sim=0.92)
+                similarity_evaluation=SearchDistanceEvaluation(max_distance=0.4),
+                embedding_func=onnx.to_embeddings,
+            )
+        except Exception:
+            # gptcache 没装或初始化失败 (模型下载/faiss 缺失等), 优雅降级
+            self._semantic_cache = None
 
     @property
     def model(self) -> _EmbeddingModel:
         if self._model is None:
             self._model = _EmbeddingModel()
         return self._model
+
+    def _flush_semantic_cache(self) -> None:
+        """知识库变更时清掉语义缓存, 避免返回过期结果."""
+        if self._semantic_cache is not None:
+            try:
+                self._semantic_cache.flush()
+            except Exception:
+                pass
 
     def add_document(self, filename: str, content: bytes) -> dict[str, Any]:
         """Ingest a document, chunk it, and store embeddings."""
@@ -179,6 +214,7 @@ class KnowledgeBase:
             metadatas=metadatas,
         )
         self._query_cache.clear()
+        self._flush_semantic_cache()
 
         safe_name = f"{doc_id}_{Path(filename).name}"
         doc_path = self.docs_dir / safe_name
@@ -207,6 +243,7 @@ class KnowledgeBase:
         if ids:
             self.collection.delete(ids=ids)
             self._query_cache.clear()
+            self._flush_semantic_cache()
         for path in self.docs_dir.glob(f"{doc_id}_*"):
             path.unlink(missing_ok=True)
         return len(ids) > 0
@@ -215,6 +252,16 @@ class KnowledgeBase:
         """Retrieve top-k relevant chunks for a query."""
         if not text.strip():
             return []
+
+        # 语义缓存优先: 相近的 query 直接复用历史结果
+        if self._semantic_cache is not None:
+            try:
+                hit = self._semantic_cache.get(prompt=text.strip())
+                if hit is not None:
+                    return hit
+            except Exception:
+                pass  # 缓存查询出错不影响正常流程
+
         cache_key = (text.strip(), top_k)
         cached = self._query_cache.get(cache_key)
         if cached is not None:
@@ -237,6 +284,14 @@ class KnowledgeBase:
                 }
             )
         self._query_cache.set(cache_key, chunks)
+
+        # 回写语义缓存, 下次相似 query 能命中
+        if self._semantic_cache is not None:
+            try:
+                self._semantic_cache.put(prompt=text.strip(), data=chunks)
+            except Exception:
+                pass
+
         return chunks
 
     def count(self) -> int:

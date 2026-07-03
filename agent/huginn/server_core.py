@@ -58,6 +58,12 @@ _state_lock = threading.RLock()
 
 _EDIT_TOOLS: set[str] = {"file_write_tool", "file_edit_tool"}
 
+# Shared visual-encoder / image-index singletons (lazily built on first use).
+# Kept here rather than in ServerContext so they don't pull the heavy ML
+# stack into every context construction.
+_visual_encoder = None
+_image_index = None
+
 
 # ── context accessor ────────────────────────────────────────────────
 
@@ -180,6 +186,44 @@ def get_plan_store() -> PlanStore:
         return get_context().plan_store
     get_context().plan_store = PlanStore()
     return get_context().plan_store
+
+
+# ── visual perception (I-JEPA image encoder + index) ────────────────
+
+
+def get_visual_encoder():
+    """Return the shared frozen-image encoder (I-JEPA / CLIP / ResNet50).
+
+    Built lazily and cached at module level so the model is loaded at most
+    once per process. May return an encoder whose ``available`` flag is
+    False when no ML backend could be constructed.
+    """
+    global _visual_encoder
+    if _visual_encoder is None:
+        from huginn.perception.visual_encoder import get_encoder
+
+        _visual_encoder = get_encoder()
+    return _visual_encoder
+
+
+def get_image_index():
+    """Return the shared image vector index, persisting under the workspace.
+
+    The JSON store lives at ``<workspace>/.huginn/visual_index.json`` so the
+    indexed images survive across server restarts.
+    """
+    global _image_index
+    if _image_index is None:
+        from huginn.perception.image_index import ImageIndex
+
+        workspace = "."
+        try:
+            workspace = get_context().config.workspace or "."
+        except Exception:
+            pass
+        store_path = Path(workspace) / ".huginn" / "visual_index.json"
+        _image_index = ImageIndex(store_path=store_path)
+    return _image_index
 
 
 # ── planner ─────────────────────────────────────────────────────────

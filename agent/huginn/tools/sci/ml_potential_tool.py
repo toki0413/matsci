@@ -272,11 +272,11 @@ class MLPotentialTool(HuginnTool):
         )
 
     def _run_fine_tune(self, args: MLPotentialInput) -> ToolResult:
-        """微调 MLIP. 目前只接 MACE 的 fine-tune API, 其它 backend 报 not_supported.
-        MACE fine-tune 依赖 mace.finetune 子模块, 没装就降级 not_available."""
+        """Fine-tune an MLIP.  MACE is wired to its ``mace.finetune.run`` API;
+        other backends don't expose a programmatic fine-tune entry point yet."""
         if args.backend == "mace":
             try:
-                from mace.finetune import run as run_finetune  # noqa: F401
+                from mace.finetune import run as run_finetune
             except ImportError:
                 return ToolResult(
                     data={
@@ -291,24 +291,91 @@ class MLPotentialTool(HuginnTool):
                     success=False,
                     error="mace.finetune not importable",
                 )
+
+            config_path = args.parameters.get("config_path")
+            if not config_path:
+                return ToolResult(
+                    data={
+                        "backend": "mace",
+                        "action": "fine_tune",
+                        "status": "missing_config",
+                        "message": (
+                            "MACE fine-tune needs a YAML config file. "
+                            "Pass parameters.config_path pointing to the training config."
+                        ),
+                    },
+                    success=False,
+                    error="parameters.config_path is required for MACE fine-tune",
+                )
+
+            cli_args = ["--config", str(config_path)]
+            for key in ("device", "seed", "default_dtype", "log_level"):
+                val = args.parameters.get(key)
+                if val is not None:
+                    cli_args += [f"--{key}", str(val)]
+
+            import traceback
+            try:
+                run_finetune(cli_args)
+                return ToolResult(
+                    data={
+                        "backend": "mace",
+                        "action": "fine_tune",
+                        "status": "completed",
+                        "config_path": str(config_path),
+                        "message": "MACE fine-tune finished. Check the log for the model checkpoint path.",
+                    },
+                    success=True,
+                )
+            except SystemExit:
+                return ToolResult(
+                    data={
+                        "backend": "mace",
+                        "action": "fine_tune",
+                        "status": "completed",
+                        "config_path": str(config_path),
+                        "message": "MACE fine-tune finished (argparse exit).",
+                    },
+                    success=True,
+                )
+            except Exception as exc:
+                return ToolResult(
+                    data={
+                        "backend": "mace",
+                        "action": "fine_tune",
+                        "status": "failed",
+                        "config_path": str(config_path),
+                        "traceback": traceback.format_exc()[-1000:],
+                    },
+                    success=False,
+                    error=f"MACE fine-tune failed: {exc}",
+                )
+
+        if args.backend == "chgnet":
             return ToolResult(
                 data={
-                    "backend": "mace",
+                    "backend": "chgnet",
                     "action": "fine_tune",
-                    "status": "not_available",
+                    "status": "not_supported",
                     "message": (
-                        "MACE fine-tune API is wired but needs a training config + "
-                        "GPU to actually run. Pass parameters.config_path to proceed."
+                        "CHGNet fine-tuning is not exposed as a programmatic API. "
+                        "Use the chgnet.train.Trainer CLI directly: "
+                        "python -m chgnet.train --train-set train.json --val-set val.json"
                     ),
                 },
-                success=True,
+                success=False,
+                error="fine_tune not supported for chgnet via this tool",
             )
+
         return ToolResult(
             data={
                 "backend": args.backend,
                 "action": "fine_tune",
                 "status": "not_supported",
-                "message": f"fine_tune is not implemented for backend '{args.backend}'",
+                "message": (
+                    f"fine_tune is not implemented for backend '{args.backend}'. "
+                    f"Supported backends: mace (requires config_path)."
+                ),
             },
             success=False,
             error=f"fine_tune not supported for {args.backend}",

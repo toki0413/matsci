@@ -119,12 +119,13 @@ class LiteratureInput(BaseModel):
     action: Literal[
         "search", "summarize", "benchmark_lookup",
         "fetch_pdf", "citations", "ingest_to_rag",
-        "crawl_web", "citation_graph",
+        "crawl_web", "citation_graph", "extract_figures",
     ] = Field(
         ..., description="search/summarize/benchmark_lookup (第一期) + "
                          "fetch_pdf/citations/ingest_to_rag (第二期) + "
                          "crawl_web (第四期, 爬虫补无API的源) + "
-                         "citation_graph (BFS 引文图)"
+                         "citation_graph (BFS 引文图) + "
+                         "extract_figures (从PDF提图调image_analysis)"
     )
     query: str = Field(default="", description="搜索/综述 query")
     max_results: int = Field(
@@ -265,6 +266,8 @@ class LiteratureTool(HuginnTool):
                 return await self._do_ingest_to_rag(args, context)
             if args.action == "crawl_web":
                 return await self._do_crawl_web(args, context)
+            if args.action == "extract_figures":
+                return await self._do_extract_figures(args, context)
             return ToolResult(
                 data=None, success=False, error=f"unknown action: {args.action}"
             )
@@ -569,40 +572,15 @@ class LiteratureTool(HuginnTool):
         多源候选: OpenAlex oa_url → Unpaywall → Europe PMC → arxiv.org/pdf.
         arxiv.org/pdf 在国内常超时, 放最后兜底, 前面的 OA 源先试.
         """
-        candidates = await self._resolve_pdf_candidates(args)
-        if not candidates:
-            return ToolResult(
-                data=None, success=False,
-                error="无法解析 PDF URL, 需要 arxiv_id/doi/url 或 paper dict (含 url/doi/oa_url)",
-            )
-
-        # 逐个候选 URL 试, 第一个成功就拿, 失败换下一个
-        last_err = ""
-        tried: list[dict[str, str]] = []
-        pdf_bytes = b""
-        used_url = ""
-        for cand in candidates:
-            try:
-                pdf_bytes = await _http_get_bytes(cand)
-                # 校验是 PDF: magic bytes %PDF, 且够大.
-                # OpenAlex oa_url 有时给 HTML 页面不是 PDF, 不校验会拿 HTML
-                # 当 PDF 传给 PyMuPDF, 解析失败还浪费了其他候选源
-                if len(pdf_bytes) < 1000:
-                    tried.append({"url": cand, "status": f"too small ({len(pdf_bytes)} bytes)"})
-                    continue
-                if not pdf_bytes[:5].startswith(b"%PDF"):
-                    tried.append({"url": cand, "status": f"not PDF (got {pdf_bytes[:20]!r})"})
-                    continue
-                used_url = cand
-                break
-            except Exception as exc:
-                err_str = str(exc)
-                tried.append({"url": cand, "status": err_str[:120]})
-                last_err = err_str
-                logger.info("fetch_pdf 候选 %s 失败: %s", cand[:60], exc)
-
-        if not used_url:
-            err_msg = f"所有 PDF 候选源都失败 (试了 {len(candidates)} 个). 最后错误: {last_err[:200]}"
+        pdf_bytes, used_url, tried = await self._download_pdf_bytes(args)
+        if pdf_bytes is None:
+            if not tried:
+                return ToolResult(
+                    data=None, success=False,
+                    error="无法解析 PDF URL, 需要 arxiv_id/doi/url 或 paper dict (含 url/doi/oa_url)",
+                )
+            last_status = tried[-1]["status"] if tried else ""
+            err_msg = f"所有 PDF 候选源都失败 (试了 {len(tried)} 个). 最后错误: {last_status[:200]}"
             if any("10060" in t["status"] or "timeout" in t["status"].lower() for t in tried):
                 err_msg += " | 多个源超时, 试试配 HTTPS_PROXY 环境变量走代理"
             err_msg += f" | tried: {tried}"
@@ -751,6 +729,45 @@ class LiteratureTool(HuginnTool):
         """单 URL 解析 (向后兼容). 返回第一个候选."""
         cands = await self._resolve_pdf_candidates(args)
         return cands[0] if cands else None
+
+    async def _download_pdf_bytes(
+        self, args: LiteratureInput
+    ) -> tuple[bytes | None, str, list[dict[str, str]]]:
+        """多源下载 PDF, 返回 (pdf_bytes, used_url, tried).
+
+        pdf_bytes 为 None 表示全部候选源失败, tried 列表含各源失败原因.
+        _do_fetch_pdf 和 _do_extract_figures 共用这段下载逻辑.
+        """
+        candidates = await self._resolve_pdf_candidates(args)
+        if not candidates:
+            return None, "", []
+
+        last_err = ""
+        tried: list[dict[str, str]] = []
+        pdf_bytes = b""
+        used_url = ""
+        for cand in candidates:
+            try:
+                pdf_bytes = await _http_get_bytes(cand)
+                # magic bytes 校验: %PDF 开头且够大, OpenAlex 有时返回 HTML 冒充 PDF
+                if len(pdf_bytes) < 1000:
+                    tried.append({"url": cand, "status": f"too small ({len(pdf_bytes)} bytes)"})
+                    continue
+                if not pdf_bytes[:5].startswith(b"%PDF"):
+                    tried.append({"url": cand, "status": f"not PDF (got {pdf_bytes[:20]!r})"})
+                    continue
+                used_url = cand
+                break
+            except Exception as exc:
+                err_str = str(exc)
+                tried.append({"url": cand, "status": err_str[:120]})
+                last_err = err_str
+                logger.info("fetch_pdf 候选 %s 失败: %s", cand[:60], exc)
+
+        if not used_url:
+            return None, "", tried
+
+        return pdf_bytes, used_url, tried
 
     # ── citations ───────────────────────────────────────────
 
@@ -1095,6 +1112,124 @@ class LiteratureTool(HuginnTool):
             )
         return await crawl_search_engine(engine, query, args.max_results, context)
 
+    # ── extract_figures ────────────────────────────────────
+
+    async def _do_extract_figures(
+        self, args: LiteratureInput, context: ToolContext
+    ) -> ToolResult:
+        """从论文 PDF 中提取所有嵌入图片, 逐张调 image_analysis_tool 做 plot_extract.
+
+        流程: 多源下载 PDF -> PyMuPDF 抽 image xobjects -> 存临时文件 ->
+        调 image_analysis_tool plot_extract 分析每张图.
+        """
+        pdf_bytes, used_url, tried = await self._download_pdf_bytes(args)
+        if pdf_bytes is None:
+            if not tried:
+                return ToolResult(
+                    data=None, success=False,
+                    error="无法解析 PDF URL, 需要 arxiv_id/doi/url 或 paper dict (含 url/doi/oa_url)",
+                )
+            last_status = tried[-1]["status"] if tried else ""
+            return ToolResult(
+                data=None, success=False,
+                error=f"所有 PDF 候选源都失败 (试了 {len(tried)} 个). 最后错误: {last_status[:200]}",
+            )
+
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            return ToolResult(
+                data=None, success=False,
+                error="PyMuPDF (fitz) 未安装, 无法提取 PDF 图片. pip install pymupdf",
+            )
+
+        import tempfile
+        from pathlib import Path
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="lit_figures_"))
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        extracted: list[dict[str, Any]] = []
+        for page_num, page in enumerate(doc):
+            for img_index, img in enumerate(page.get_images(full=True)):
+                xref = img[0]
+                try:
+                    base_image = doc.extract_image(xref)
+                except Exception as exc:
+                    logger.warning("extract_image xref=%s 失败: %s", xref, exc)
+                    continue
+                image_bytes = base_image["image"]
+                image_ext = base_image["ext"]
+                img_filename = f"page{page_num + 1}_img{img_index + 1}.{image_ext}"
+                img_path = tmp_dir / img_filename
+                img_path.write_bytes(image_bytes)
+                extracted.append({
+                    "page": page_num + 1,
+                    "index": img_index + 1,
+                    "path": str(img_path),
+                    "ext": image_ext,
+                    "size_bytes": len(image_bytes),
+                })
+        doc.close()
+
+        if not extracted:
+            return ToolResult(
+                data={
+                    "action": "extract_figures",
+                    "pdf_url": used_url,
+                    "n_images": 0,
+                    "images": [],
+                    "analyses": [],
+                    "message": "PDF 中未找到嵌入图片",
+                },
+                success=True,
+            )
+
+        # 逐张调 image_analysis_tool 做 plot_extract
+        from huginn.tools.registry import ToolRegistry
+
+        img_tool = ToolRegistry.get("image_analysis_tool")
+        analyses: list[dict[str, Any]] = []
+        if img_tool is not None:
+            for fig in extracted:
+                try:
+                    result = await img_tool.call(
+                        {
+                            "image_path": fig["path"],
+                            "action": "plot_extract",
+                            "parameters": {},
+                        },
+                        context,
+                    )
+                    analyses.append({
+                        "image": fig["path"],
+                        "page": fig["page"],
+                        "success": result.success,
+                        "data": result.data if result.success else None,
+                        "error": result.error if not result.success else None,
+                    })
+                except Exception as exc:
+                    analyses.append({
+                        "image": fig["path"],
+                        "page": fig["page"],
+                        "success": False,
+                        "error": str(exc)[:200],
+                    })
+        else:
+            logger.warning("image_analysis_tool 未注册, 跳过图片分析")
+
+        return ToolResult(
+            data={
+                "action": "extract_figures",
+                "pdf_url": used_url,
+                "n_images": len(extracted),
+                "images": extracted,
+                "analyses": analyses,
+                "tmp_dir": str(tmp_dir),
+            },
+            success=True,
+        )
+
     # ── helpers ─────────────────────────────────────────────
 
     def _get_model(self, context: ToolContext) -> Any:
@@ -1180,4 +1315,7 @@ class LiteratureTool(HuginnTool):
                 return {"cpu_hours": 0.0, "walltime_hours": 0.01}
             # crawl4ai 起 Playwright 浏览器, 比 API 慢得多
             return {"cpu_hours": 0.0, "walltime_hours": 0.15}
+        if args.action == "extract_figures":
+            # 下载 PDF + 提图 + 逐张调 image_analysis, 图多时偏慢
+            return {"cpu_hours": 0.0, "walltime_hours": 0.2}
         return {"cpu_hours": 0.0, "walltime_hours": 0.02}  # summarize/benchmark_lookup 调 LLM

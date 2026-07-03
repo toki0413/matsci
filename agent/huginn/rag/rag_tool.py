@@ -51,9 +51,16 @@ class RAGTool(HuginnTool):
         vault: Any | None = None,
         encrypt_documents: bool = True,
         encrypt_metadata: bool = True,
+        kb: Any | None = None,
     ):
         super().__init__()
-        if vault is not None and vault.is_unlocked():
+        # 共享 KnowledgeBase 模式：传入 KB 实例后直接复用它的 ChromaDB
+        # collection，不再单独建 VectorStore。这样 agent 的 RAG 和 REST
+        # 上传接口读写同一份数据，两边互通。
+        self._kb = kb
+        if kb is not None:
+            self.store = None
+        elif vault is not None and vault.is_unlocked():
             self.store = EncryptedVectorStore(
                 vault=vault,
                 persist_dir=persist_dir,
@@ -65,14 +72,36 @@ class RAGTool(HuginnTool):
 
         # 层次化路由检索：识别 VASP/LAMMPS/Gaussian 等14种软件 + 17种方法关键词
         # 命中路由时在对应子索引里优先搜，提升精度；没命中就退回普通语义搜索
+        # 只在 VectorStore 模式下可用；共享 KB 模式有自己的分块/嵌入流程
         self._hierarchical: Any | None = None
-        try:
-            from huginn.rag.router_retriever import HierarchicalRetriever
+        if self.store is not None:
+            try:
+                from huginn.rag.router_retriever import HierarchicalRetriever
 
-            self._hierarchical = HierarchicalRetriever(self.store)
-        except Exception as e:
-            # 路由检索不可用就走原来的路径，不影响主流程
-            print(f"[rag_tool] hierarchical retriever unavailable: {e}")
+                self._hierarchical = HierarchicalRetriever(self.store)
+            except Exception as e:
+                # 路由检索不可用就走原来的路径，不影响主流程
+                print(f"[rag_tool] hierarchical retriever unavailable: {e}")
+
+    def _resolve_kb(self) -> Any | None:
+        """返回当前共享的 KnowledgeBase，必要时延迟绑定。
+
+        KB 在 server lifespan 阶段才创建——晚于工具注册。如果注册时
+        没有拿到 KB，就在第一次实际调用时从 server context 里取，
+        保证 agent 搜索和前端上传落在同一个 collection 上。
+        """
+        if self._kb is not None:
+            return self._kb
+        try:
+            from huginn.server_core import get_context
+
+            kb = get_context().kb
+            if kb is not None:
+                self._kb = kb
+                return kb
+        except Exception:
+            pass
+        return None
 
     def is_read_only(self, args: RAGToolInput) -> bool:
         return args.action in ["search", "list", "count", "get"]
@@ -103,6 +132,35 @@ class RAGTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error="query is required for search"
             )
+
+        # 共享 KB 路径：跳过层次化路由，直接走 KB 的 query
+        kb = self._resolve_kb()
+        if kb is not None:
+            try:
+                chunks = kb.query(args.query, top_k=args.top_k)
+                # KB 返回 {chunk_id, text, metadata, distance}，
+                # 映射成 VectorStore.search 的格式让调用方无感知
+                results = [
+                    {
+                        "id": c["chunk_id"],
+                        "document": c["text"],
+                        "metadata": c["metadata"],
+                        "distance": c["distance"],
+                    }
+                    for c in chunks
+                ]
+                return ToolResult(
+                    data={
+                        "query": args.query,
+                        "results_count": len(results),
+                        "results": results,
+                    },
+                    success=True,
+                )
+            except Exception as e:
+                return ToolResult(
+                    data=None, success=False, error=f"Search failed: {e}"
+                )
 
         filter_dict = None
         if args.source_filter:
@@ -152,6 +210,50 @@ class RAGTool(HuginnTool):
             return ToolResult(data=None, success=False, error=f"Search failed: {e}")
 
     def _ingest(self, args: RAGToolInput) -> ToolResult:
+        kb = self._resolve_kb()
+        if kb is not None:
+            if args.file_path:
+                path = Path(args.file_path)
+                if not path.exists():
+                    return ToolResult(
+                        data=None, success=False, error=f"File not found: {path}"
+                    )
+                try:
+                    info = kb.add_document(path.name, path.read_bytes())
+                    return ToolResult(
+                        data={
+                            "ingested": info["chunks"],
+                            "ids": [info["doc_id"]],
+                            "source": str(path),
+                        },
+                        success=True,
+                    )
+                except Exception as e:
+                    return ToolResult(
+                        data=None, success=False, error=f"Ingest failed: {e}"
+                    )
+            elif args.document:
+                try:
+                    info = kb.add_document(
+                        "manual.txt", args.document.encode("utf-8")
+                    )
+                    return ToolResult(
+                        data={
+                            "ingested": info["chunks"],
+                            "ids": [info["doc_id"]],
+                        },
+                        success=True,
+                    )
+                except Exception as e:
+                    return ToolResult(
+                        data=None, success=False, error=f"Ingest failed: {e}"
+                    )
+            return ToolResult(
+                data=None,
+                success=False,
+                error="file_path or document required for ingest",
+            )
+
         if args.file_path:
             path = Path(args.file_path)
             if not path.exists():
@@ -189,6 +291,23 @@ class RAGTool(HuginnTool):
         )
 
     def _list_docs(self) -> ToolResult:
+        kb = self._resolve_kb()
+        if kb is not None:
+            try:
+                docs = kb.list_documents()
+                # KB 返回 [{doc_id, filename}]，补成 VectorStore.list_documents
+                # 的字段结构，调用方拿到的 schema 保持一致
+                formatted = [
+                    {"id": d["doc_id"], "metadata": {"filename": d["filename"]}}
+                    for d in docs
+                ]
+                return ToolResult(
+                    data={"total": kb.count(), "documents": formatted},
+                    success=True,
+                )
+            except Exception as e:
+                return ToolResult(data=None, success=False, error=f"List failed: {e}")
+
         try:
             docs = self.store.list_documents(limit=100)
             return ToolResult(
@@ -203,6 +322,32 @@ class RAGTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error="doc_id is required for get"
             )
+
+        kb = self._resolve_kb()
+        if kb is not None:
+            try:
+                # KB 没有单文档查询接口，直接拿底层 ChromaDB collection
+                result = kb.collection.get(
+                    ids=[args.doc_id],
+                    include=["documents", "metadatas"],
+                )
+                if not result["ids"]:
+                    return ToolResult(
+                        data=None,
+                        success=False,
+                        error=f"Document not found: {args.doc_id}",
+                    )
+                return ToolResult(
+                    data={
+                        "id": result["ids"][0],
+                        "document": result["documents"][0],
+                        "metadata": result["metadatas"][0],
+                    },
+                    success=True,
+                )
+            except Exception as e:
+                return ToolResult(data=None, success=False, error=f"Get failed: {e}")
+
         try:
             doc = self.store.get_document(args.doc_id)
             if doc is None:
@@ -219,6 +364,17 @@ class RAGTool(HuginnTool):
                 data=None, success=False, error="doc_ids required for delete"
             )
 
+        kb = self._resolve_kb()
+        if kb is not None:
+            try:
+                # KB.delete_document 只接受单个 doc_id，逐个调
+                deleted = sum(
+                    1 for doc_id in args.doc_ids if kb.delete_document(doc_id)
+                )
+                return ToolResult(data={"deleted": deleted}, success=True)
+            except Exception as e:
+                return ToolResult(data=None, success=False, error=f"Delete failed: {e}")
+
         try:
             self.store.delete(args.doc_ids)
             return ToolResult(
@@ -229,6 +385,13 @@ class RAGTool(HuginnTool):
             return ToolResult(data=None, success=False, error=f"Delete failed: {e}")
 
     def _count(self) -> ToolResult:
+        kb = self._resolve_kb()
+        if kb is not None:
+            try:
+                return ToolResult(data={"total_documents": kb.count()}, success=True)
+            except Exception as e:
+                return ToolResult(data=None, success=False, error=f"Count failed: {e}")
+
         try:
             count = self.store.count()
             return ToolResult(data={"total_documents": count}, success=True)

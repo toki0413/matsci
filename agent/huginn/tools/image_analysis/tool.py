@@ -1,7 +1,7 @@
 """ImageAnalysisTool 主体 — 材料科学图像分析.
 
-7 个 action (sem/tem/eds/particles/defect/phase_field/plot_extract) 在
-scenes_*.py 里实现, call() 按 action lazy import 对应模块, 结果统一
+8 个 action (sem/tem/eds/particles/defect/phase_field/plot_extract/deplot_chart)
+在 scenes_*.py 里实现, call() 按 action lazy import 对应模块, 结果统一
 经过 _maybe_save 写文件.
 """
 from __future__ import annotations
@@ -29,6 +29,7 @@ class ImageAnalysisInput(BaseModel):
         "defect_detect",
         "phase_field",
         "plot_extract",
+        "deplot_chart",
     ] = Field(..., description="图像分析动作")
     parameters: dict[str, Any] = Field(
         default_factory=dict,
@@ -39,8 +40,10 @@ class ImageAnalysisInput(BaseModel):
             "particle_stats: min_area_px/max_area_px/binning/invert/pixel_size_nm; "
             "defect_detect: defect_type/sensitivity/min_defect_area_px; "
             "phase_field: n_phases/interface_width_px/pixel_size_nm; "
-            "plot_extract: x_min/x_max/y_min/y_max/x_axis_type/y_axis_type/"
-            "curve_color/axis_box/color_tolerance"
+            "plot_extract: x_min/x_max/y_min/y_max(可选, 缺失时自动OCR检测)/"
+            "x_axis_type/y_axis_type/curve_color(可填auto做多曲线)/"
+            "axis_box/color_tolerance; "
+            "deplot_chart: max_new_tokens(可选, 默认512)"
         ),
     )
     output_path: str | None = Field(
@@ -58,9 +61,11 @@ class ImageAnalysisTool(HuginnTool):
         "Analyze materials science microscopy images: SEM morphology, TEM "
         "lattice fringes (FFT + d-spacing), EDS element mapping, particle "
         "size statistics (D10/D50/D90 + lognormal fit), defect detection "
-        "(crack/pore/inclusion), phase-field post-processing, and curve data "
-        "extraction from published plots. cv2/skimage are optional; "
-        "numpy+PIL+scipy fallbacks are always available."
+        "(crack/pore/inclusion), phase-field post-processing, curve data "
+        "extraction from published plots (single/multi-curve + auto axis "
+        "detection), and chart-to-table conversion via Google DePlot. "
+        "cv2/skimage are optional; numpy+PIL+scipy fallbacks are always "
+        "available."
     )
     input_schema = ImageAnalysisInput
     read_only = True
@@ -105,6 +110,9 @@ class ImageAnalysisTool(HuginnTool):
             elif input_data.action == "plot_extract":
                 from huginn.tools.image_analysis.scenes_plot_extract import plot_extract
                 result = plot_extract(input_data)
+            elif input_data.action == "deplot_chart":
+                from huginn.tools.image_analysis.scenes_deplot import deplot_chart
+                result = deplot_chart(input_data)
             else:
                 return ToolResult(
                     data=None, success=False, error=f"未知 action: {input_data.action}"

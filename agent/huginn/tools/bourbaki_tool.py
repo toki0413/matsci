@@ -215,16 +215,130 @@ end
             message=f"Dimensional analysis: {len(variables)} variables, all recognized: {recognized}",
         )
 
+    def _classify_pde_type(self, eq_str: str) -> str:
+        """Classify a PDE string by its operator content."""
+        has_laplacian = "∇²" in eq_str or "∇·∇" in eq_str or "Delta" in eq_str
+        has_grad = "∇" in eq_str
+        has_time_deriv = "∂" in eq_str and ("/" in eq_str or "∂t" in eq_str or "∂/∂t" in eq_str)
+        if has_laplacian and has_time_deriv:
+            return "parabolic PDE (diffusion-type)"
+        if has_laplacian and not has_time_deriv:
+            return "elliptic PDE (Poisson/Laplace-type)"
+        if has_grad and has_time_deriv:
+            return "hyperbolic PDE (wave/advection-type)"
+        if has_grad:
+            return "first-order PDE (transport-type)"
+        return "PDE with vector calculus operators"
+
     def _fallback_discover_equation(self, domain: str, equations: str) -> BourbakiResult:
-        """Attempt symbolic equation discovery."""
-        return BourbakiResult(
-            success=True,
-            task="discover_equation",
-            domain=domain,
-            equation="not_implemented",
-            fallback=True,
-            message="Equation discovery requires Lean 4 or manual symbolic analysis",
-        )
+        """Symbolic equation discovery via SymPy.
+
+        Parses the input equation string, identifies variables, and attempts
+        to solve or simplify.  For ODEs it tries ``dsolve``; for algebraic
+        equations it tries ``solve``.  Falls back to structural analysis
+        (variable extraction + equation type classification) when direct
+        solving isn't possible.
+        """
+        import sympy
+
+        eq_str = equations.strip()
+        if not eq_str:
+            return BourbakiResult(
+                success=True,
+                task="discover_equation",
+                domain=domain,
+                fallback=True,
+                message="No equation provided for discovery.",
+            )
+
+        has_unicode_ops = any(g in eq_str for g in ("∇", "∂", "·", "∇·"))
+        if has_unicode_ops:
+            return BourbakiResult(
+                success=True,
+                task="discover_equation",
+                domain=domain,
+                equation=eq_str,
+                fallback=True,
+                message=(
+                    "Equation contains unicode vector calculus operators (∇/∂/·). "
+                    "SymPy cannot parse these directly — classified as "
+                    + self._classify_pde_type(eq_str)
+                    + ". Use Lean 4 for formal discovery."
+                ),
+            )
+
+        if "=" in eq_str:
+            lhs_str, rhs_str = eq_str.split("=", 1)
+            try:
+                lhs = sympy.sympify(lhs_str)
+                rhs = sympy.sympify(rhs_str)
+                residual = sympy.simplify(lhs - rhs)
+                symbols = sorted(list(residual.free_symbols), key=str)
+                var_names = [str(s) for s in symbols]
+
+                if residual == 0:
+                    return BourbakiResult(
+                        success=True,
+                        task="discover_equation",
+                        domain=domain,
+                        equation=f"{lhs} = {rhs}",
+                        verified=True,
+                        fallback=True,
+                        message=f"Equation is an identity (LHS - RHS = 0). Variables: {var_names}",
+                    )
+
+                for sym in symbols:
+                    sols = sympy.solve(residual, sym)
+                    if sols:
+                        return BourbakiResult(
+                            success=True,
+                            task="discover_equation",
+                            domain=domain,
+                            equation=f"{sym} = {sols[0]}",
+                            verified=True,
+                            fallback=True,
+                            message=f"Solved for {sym}. {len(sols)} solution(s) found. Variables: {var_names}",
+                        )
+
+                simplified = sympy.simplify(residual)
+                return BourbakiResult(
+                    success=True,
+                    task="discover_equation",
+                    domain=domain,
+                    equation=f"{lhs} = {rhs}  (residual: {simplified})",
+                    fallback=True,
+                    message=f"Equation simplified but no closed-form solution. Variables: {var_names}",
+                )
+            except Exception:
+                var_names = []
+        else:
+            try:
+                symbols = sorted(list(sympy.sympify(eq_str).free_symbols), key=str)
+                var_names = [str(s) for s in symbols]
+            except Exception:
+                var_names = []
+
+        try:
+            expr = sympy.sympify(eq_str)
+            simplified = sympy.simplify(expr)
+            factored = sympy.factor(simplified)
+            return BourbakiResult(
+                success=True,
+                task="discover_equation",
+                domain=domain,
+                equation=str(factored if factored != simplified else simplified),
+                fallback=True,
+                message=f"Expression simplified. Variables: {var_names}",
+            )
+        except Exception:
+            return BourbakiResult(
+                success=True,
+                task="discover_equation",
+                domain=domain,
+                equation=eq_str,
+                fallback=True,
+                message=f"Could not parse equation symbolically. Raw input preserved. Variables detected: {var_names}",
+            )
 
     def _fallback_check_conservation(self, domain: str, equations: str) -> BourbakiResult:
         """守恒律校验. 先用 SymPy 做代数一致性 (lhs - rhs == 0); 含 unicode
