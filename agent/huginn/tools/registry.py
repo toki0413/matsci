@@ -48,6 +48,9 @@ class ToolRegistry:
 
         schemas = []
         for name, tool in cls._tools.items():
+            # active=False 的工具对 LLM 不可见, 但仍可被 ToolRegistry.get() 直接调用
+            if not tool.active:
+                continue
             schema = {
                 "type": "function",
                 "function": {
@@ -68,6 +71,26 @@ class ToolRegistry:
             schemas.append(schema)
         cls._schemas_cache = schemas
         return schemas
+
+    @classmethod
+    def get_schemas_for_provider(cls, provider: str = "openai") -> list[dict]:
+        """按指定 LLM provider 的格式返回工具 schema。
+
+        借鉴 AstrBot ToolSet 的 openai_schema()/anthropic_schema()/google_schema()
+        思路: 同一份工具定义, 按需转成不同 provider 期望的格式。
+        会过滤掉 active=False 的工具 (对 LLM 不可见)。
+        """
+        from huginn.tools.schema_adapters import adapt_schemas
+
+        schemas = cls.get_all_schemas()
+        # get_all_schemas 已经过滤了 inactive 工具, 这里再兜一层防御:
+        # 万一缓存是工具被禁用前生成的, 也保证不泄漏
+        active_schemas = [
+            s for s in schemas
+            if cls._tools.get(s["function"]["name"]) is None
+            or cls._tools[s["function"]["name"]].active
+        ]
+        return adapt_schemas(active_schemas, provider)
 
     @classmethod
     def get_assembled_schemas(

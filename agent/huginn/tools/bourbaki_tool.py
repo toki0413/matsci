@@ -88,8 +88,14 @@ class BourbakiTool(HuginnTool):
         # Try Lean 4 formal verification first
         if self._check_lean() and self._lean is not None:
             if task == "check_conservation":
-                return self._lean_check_conservation(input_data)
-            if task == "suggest_invariant":
+                result = self._lean_check_conservation(input_data)
+                # Lean build/setup failures aren't real verification results —
+                # fall through to the symbolic fallback so the user still gets
+                # a meaningful answer instead of an opaque "build failed" error.
+                lean_err = (result.lean_output or "").lower()
+                if result.success or "build failed" not in lean_err:
+                    return result
+            elif task == "suggest_invariant":
                 return self._lean_suggest_invariant(input_data)
 
         # Fallback: Python-based symbolic checks

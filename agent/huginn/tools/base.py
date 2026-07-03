@@ -59,6 +59,14 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     # 详见 huginn/tools/profile.py
     profile: ToolProfile | None = None
 
+    # 运行时启停 (AstrBot FunctionTool.active 模式)
+    # False 时工具对 LLM 不可见, 但仍可通过 ToolRegistry.get() 直接调用
+    active: bool = True
+
+    # 后台任务标记 (AstrBot FunctionTool.is_background_task 模式)
+    # True 时工具调用立即返回 task_id, 结果异步轮询
+    is_background_task: bool = False
+
     @staticmethod
     def _default_profile() -> ToolProfile:
         """profile=None 时的回落值, 保持重构前的行为:

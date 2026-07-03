@@ -32,6 +32,7 @@ from huginn.routes.tools import router as tools_router
 from huginn.routes.unified import router as unified_router
 from huginn.routes.workflows import router as workflows_router
 from huginn.routes.data_dict import router as data_dict_router
+from huginn.routes.document import router as document_router
 from huginn.routes.ws import router as ws_router
 from huginn.routes.live_script import router as live_script_router
 from huginn.routes.parameters import router as parameters_router
@@ -75,4 +76,6 @@ ALL_ROUTERS = [
     side_router,
     # 视觉感知: I-JEPA 图像编码 / 检索 / 索引
     visual_router,
+    # 文档理解: PDF 解析 / DocGraph / 信息包
+    document_router,
 ]
