@@ -865,6 +865,7 @@ class HuginnConfig:
                     "provider": m.provider,
                     "model": m.model,
                     "api_key": mask(m.api_key),
+                    "credential_id": m.credential_id,
                     "base_url": m.base_url,
                     "temperature": m.temperature,
                     "enabled": m.enabled,

@@ -37,6 +37,7 @@ from huginn.interaction.progress import ProgressTracker, get_progress_tracker
 from huginn.kg.builder import ProjectKnowledgeGraph
 from huginn.llm import get_model
 from huginn.memory.manager import MemoryManager
+from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.tools.report_tool import ReportTool
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
@@ -160,6 +161,14 @@ class AutoloopEngine:
         self._side_channel = None
         # 侧边对话开关: 测试或不需要侧边对话时关掉, 避免 idle 时碰 LLM.
         self._side_channel_enabled = True
+        # 事件总线: 让外部插件能在阶段开始/结束/失败时挂钩.
+        # 懒加载, 避免 import 时拉起 StarHandlerRegistry.
+        self._event_bus = None
+        # 阶段索引: 给 WorkflowStageEvent 用, 从 phase name 推算.
+        self._phase_order = [
+            "perceive", "hypothesize", "plan", "execute",
+            "validate", "learn", "report",
+        ]
 
     def _get_evolution(self):
         """懒加载 EvolutionEngine, 避免实例化时就拉起日志和规则文件。"""
@@ -189,6 +198,43 @@ class AutoloopEngine:
             except Exception:
                 return None
         return self._kb
+
+    def _get_event_bus(self):
+        """懒加载 EventBus. 没注册 handler 时返回 None, 调用方判空跳过."""
+        if self._event_bus is not None:
+            return self._event_bus
+        try:
+            from huginn.plugins.event_bus import EventBus
+
+            self._event_bus = EventBus()
+        except Exception:
+            return None
+        return self._event_bus
+
+    async def _dispatch_stage_event(
+        self,
+        event_type: EventType,
+        stage_name: str,
+        duration_sec: float = 0.0,
+        error: str | None = None,
+    ) -> None:
+        """向 EventBus 发一个 WorkflowStageEvent. 没总线或没 handler 时静默跳过."""
+        bus = self._get_event_bus()
+        if bus is None:
+            return
+        idx = self._phase_order.index(stage_name) + 1 if stage_name in self._phase_order else 0
+        event = WorkflowStageEvent(
+            type=event_type,
+            workflow_name="autoloop",
+            stage_name=stage_name,
+            stage_index=idx,
+            duration_sec=duration_sec,
+            error=error,
+        )
+        try:
+            await bus.dispatch(event)
+        except Exception:
+            pass
 
     def _build_kb_text(self, query: str) -> str:
         """检索领域知识库, 把命中 chunk 拼成 prompt 上下文块. KB 没装、

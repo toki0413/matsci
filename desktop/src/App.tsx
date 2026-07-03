@@ -460,6 +460,72 @@ function SkillForm({
   );
 }
 
+// Inline helper for the Models tab: probes a local server (ollama / vllm /
+// local / openai-compatible) and lists model names that can be picked with
+// one click. Kept as its own component so the discovered-list state stays local.
+function LocalModelDiscoverer({
+  model,
+  onUpdate,
+}: {
+  model: ModelConfig;
+  onUpdate: (patch: Partial<ModelConfig>) => void;
+}) {
+  const [discovered, setDiscovered] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const LOCAL_PROVIDERS = ["ollama", "vllm", "local", "openai-compatible"];
+  if (!LOCAL_PROVIDERS.includes(model.provider)) return null;
+
+  const discover = async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      const params = new URLSearchParams({
+        provider: model.provider,
+        base_url: model.base_url || "",
+      });
+      const data = await fetch(`${API_BASE}/config/local-models?${params.toString()}`).then((r) => r.json());
+      if (data.success && Array.isArray(data.models) && data.models.length > 0) {
+        setDiscovered(data.models);
+      } else {
+        setErr(data.error || "未发现可用模型, 请检查 base URL");
+        setDiscovered([]);
+      }
+    } catch (e: any) {
+      setErr(e.message || "请求失败");
+      setDiscovered([]);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="md:col-span-2 space-y-1.5">
+      <button
+        onClick={discover}
+        disabled={loading}
+        className="btn-secondary px-2.5 py-1 text-xs disabled:opacity-50"
+      >
+        {loading ? "探测中…" : "Discover Local Models"}
+      </button>
+      {err && <p className="text-xs text-error">{err}</p>}
+      {discovered.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {discovered.map((m) => (
+            <button
+              key={m}
+              onClick={() => onUpdate({ model: m })}
+              className="rounded bg-accent/10 px-2 py-0.5 text-xs text-accent transition-colors hover:bg-accent/20"
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 凭据管理面板: SSH 连接 + LLM API key 的长时存储 / 编辑 / 删除 / 测试。
 // 自包含组件, 通过模块级 API_BASE 与后端 /credentials 交互; 明文密钥从不出后端,
 // 列表只展示脱敏值, 编辑时密钥留空表示"不改"。
@@ -2168,6 +2234,28 @@ export default function App() {
       loadWorkflowTemplates();
     }
   }, [activeTab, memoryFilter.category, memoryFilter.tier]);
+
+  // Lazy-load stored LLM credentials when the Models settings tab is opened,
+  // so users can link a model to a credential instead of pasting a key.
+  useEffect(() => {
+    if (settingsTab !== "models") return;
+    let alive = true;
+    fetch(`${API_BASE}/credentials?kind=llm`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!alive) return;
+        const list = (data.credentials || []).map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          provider: c.metadata?.provider,
+        }));
+        setLlmCredOptions(list);
+      })
+      .catch(() => {
+        // backend may be offline; just leave the list empty
+      });
+    return () => { alive = false; };
+  }, [settingsTab]);
 
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -4257,6 +4345,33 @@ export default function App() {
                               <span className="text-text-muted">Temp</span>
                               <input type="range" min={0} max={2} step={0.05} value={m.temperature} onChange={(e) => updateModel(i, { temperature: parseFloat(e.target.value) })} />
                               <span>{m.temperature.toFixed(2)}</span>
+                            </div>
+
+                            {/* Link to a stored credential, or probe a local server for model names */}
+                            <div className="md:col-span-2 space-y-1.5 border-t border-border pt-3">
+                              <label className="block text-xs font-medium text-text-secondary">Stored credential (optional)</label>
+                              <select
+                                className="input-field text-xs"
+                                value={m.credential_id || ""}
+                                onChange={(e) => updateModel(i, { credential_id: e.target.value || null })}
+                              >
+                                <option value="">— Direct API Key —</option>
+                                {llmCredOptions.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}{c.provider ? ` (${c.provider})` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                              {m.credential_id ? (
+                                <p className="text-xs text-text-secondary">
+                                  Using stored credential. API key field above can be left empty.
+                                </p>
+                              ) : llmCredOptions.length === 0 ? (
+                                <p className="text-xs text-text-muted">
+                                  No stored LLM credentials yet — add some in the Credentials tab.
+                                </p>
+                              ) : null}
+                              <LocalModelDiscoverer model={m} onUpdate={(patch) => updateModel(i, patch)} />
                             </div>
                           </div>
                         )}

@@ -27,6 +27,10 @@ TaskT = Literal[
     "format",
     "cheap",
     "local",
+    # Moonshine 三槽: main 生成假设, verification 用不同 LLM 独立验证,
+    # archival 归档研究日志. 三槽避免"模型自己生成自己验证"的确认偏差.
+    "verification",
+    "archival",
 ]
 
 
@@ -56,6 +60,10 @@ class ModelRouter:
         "format": ["format", "cheap", "default"],
         "cheap": ["cheap", "summarize", "default"],
         "local": ["local", "default"],
+        # verification 优先选独立 LLM, 没有就退回 reasoning 模型
+        "verification": ["verification", "reasoning", "science", "default"],
+        # archival 优先选便宜模型
+        "archival": ["archival", "cheap", "summarize", "default"],
     }
 
     def __init__(self, default_task: TaskT = "default") -> None:
@@ -147,6 +155,23 @@ class ModelRouter:
 
         return candidates[0].model
 
+    def select_verification(self) -> Any:
+        """选验证用 LLM. 优先 verification 标签的独立模型,
+        没注册就退回 reasoning/science, 最后退回 default.
+        这样默认情况下 verification = main, 但用户只要注册一个
+        带 verification 标签的模型就会自动启用独立验证."""
+        return self.select("verification")
+
+    def select_archival(self) -> Any:
+        """选归档用 LLM. 优先 archival/cheap 模型, 降低归档成本."""
+        return self.select("archival")
+
+    def has_dedicated_verification(self) -> bool:
+        """是否注册了独立的 verification 模型 (标签含 'verification')."""
+        return any(
+            "verification" in m.tags for m in self._models.values()
+        )
+
     def list_models(self) -> list[str]:
         """Return registered model names."""
         return list(self._models.keys())
@@ -159,6 +184,9 @@ class ModelRouter:
             HUGINN_MODEL_DEFAULT=openai:gpt-4o
             HUGINN_MODEL_CHEAP=openai:gpt-4o-mini
             HUGINN_MODEL_LOCAL=ollama:qwen2.5:14b
+            # Moonshine 三槽: 注册独立验证/归档模型
+            HUGINN_MODEL_VERIFICATION=deepseek:deepseek-chat
+            HUGINN_MODEL_ARCHIVAL=openai:gpt-4o-mini
         """
         router = cls()
         prefix = "HUGINN_MODEL_"

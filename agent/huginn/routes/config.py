@@ -93,11 +93,22 @@ def _mask_api_key(raw: str | None) -> str | None:
 def _model_to_dict(m: ModelConfig) -> dict[str, Any]:
     """单个 ModelConfig 转可序列化 dict, api_key 脱敏 + 标记是否有 key。"""
     resolved = resolve_provider_key(m.provider, m.api_key)  # type: ignore[arg-type]
+    # credential_id 也能间接提供 key, 单独探一下, 让前端状态灯更准
+    has_cred_key = False
+    if m.credential_id:
+        try:
+            from huginn.security.credential_store import get_credential_store
+            cred = get_credential_store().to_llm_info(m.credential_id)
+            has_cred_key = bool(cred and cred.get("api_key"))
+        except Exception:
+            # 凭据 store 没初始化 / 记录不存在 — 当作没 key, 不影响主流程
+            pass
     return {
         "alias": m.alias,
         "provider": m.provider,
         "model": m.model,
         "api_key": _mask_api_key(m.api_key),
+        "credential_id": m.credential_id,
         "base_url": m.base_url,
         "temperature": m.temperature,
         "enabled": m.enabled,
@@ -105,7 +116,7 @@ def _model_to_dict(m: ModelConfig) -> dict[str, Any]:
         "max_tokens": m.max_tokens,
         # has_key=True 表示实际能拿到 key (含 env/keyring 引用),
         # 前端据此显示状态灯, 比"有没有填字符串"更准确
-        "has_key": bool(resolved),
+        "has_key": bool(resolved) or has_cred_key,
     }
 
 
@@ -416,6 +427,48 @@ async def list_providers() -> dict[str, Any]:
         "doubao", "hunyuan", "openai-compatible", "default",
     ]
     return {"providers": [_provider_info(p) for p in order], "count": len(order)}
+
+
+# ── /config/local-models ────────────────────────────────────────
+
+
+@router.get("/config/local-models", dependencies=[Depends(require_admin_key)])
+async def discover_local_models(provider: str = "ollama", base_url: str = "") -> dict[str, Any]:
+    """探一下本地推理服务 (ollama/vllm/local) 上挂了哪些模型。
+
+    ollama 走 /api/tags, 其余 OpenAI 兼容服务走 /v1/models。5s 超时,
+    连不上就回 success=False + error, 不抛异常给前端。
+    """
+    import json as _json
+    import urllib.request
+
+    # 各 provider 的默认本地地址, 没传 base_url 时兜底
+    defaults = {
+        "ollama": "http://localhost:11434",
+        "vllm": "http://localhost:8000",
+        "local": "http://localhost:8000",
+    }
+    url = base_url or defaults.get(provider, "http://localhost:8000")
+
+    try:
+        if provider == "ollama":
+            api_url = f"{url.rstrip('/')}/api/tags"
+        else:
+            # vLLM 和其它 OpenAI 兼容服务都用 /v1/models
+            api_url = f"{url.rstrip('/')}/v1/models"
+
+        req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = _json.loads(resp.read().decode())
+
+        if provider == "ollama":
+            models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+        else:
+            models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+
+        return {"success": True, "models": models, "provider": provider, "base_url": url}
+    except Exception as e:
+        return {"success": False, "models": [], "error": str(e)}
 
 
 # ── /config/active-model ────────────────────────────────────────
