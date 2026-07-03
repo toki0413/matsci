@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import pathlib
 import shutil
@@ -17,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from huginn.crypto import CryptoVault, EncryptedConfig, KeyManager
+
+logger = logging.getLogger(__name__)
 
 ThinkingIntensity = Literal["low", "medium", "high"]
 
@@ -285,6 +288,10 @@ class SandboxConfig:
 @dataclass
 class HuginnConfig:
     """Huginn configuration."""
+
+    # 配置版本号 (AstrBot 风格自愈机制)
+    # 从 v1 开始, 未来版本升级时用于触发迁移逻辑
+    config_version: int = 1
 
     # Legacy single-model settings (kept for backward compatibility)
     provider: Literal[
@@ -932,6 +939,7 @@ class HuginnConfig:
             "pet_name": self.pet_name,
             "pet_personality": self.pet_personality,
             "feature_flags": dict(self.feature_flags),
+            "config_version": self.config_version,
         }
 
     @classmethod
@@ -1098,6 +1106,49 @@ class HuginnConfig:
 
             data = json.loads(text)
         return cls.from_dict(data)
+
+    @classmethod
+    def check_and_heal(cls, path: str | pathlib.Path | None = None) -> list[str]:
+        """检查并修复配置文件完整性 (AstrBot 风格自愈).
+
+        加载配置文件 → 与默认值递归比对 → 补全缺失键 → 删除孤儿键 → 原子写回.
+
+        Returns: 变更列表
+        """
+        from huginn.config_integrity import migrate_config
+
+        if path is None:
+            return []
+        path = pathlib.Path(path)
+        if not path.exists():
+            return []
+
+        import tomllib
+
+        try:
+            if path.suffix == ".json":
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+            else:
+                with open(path, "rb") as f:
+                    raw = tomllib.load(f)
+        except Exception as e:
+            logger.warning("Failed to load config for healing: %s", e)
+            return []
+
+        healed, changes = migrate_config(raw)
+
+        if changes:
+            _atomic_write(
+                path,
+                healed,
+                format="json" if path.suffix == ".json" else "toml",
+            )
+            logger.info(
+                "Config self-healed %d issues: %s", len(changes), "; ".join(changes)
+            )
+
+        return changes
 
 
 @dataclass
