@@ -274,3 +274,69 @@ async def _test_llm(store, cid: str) -> dict[str, Any]:
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "error": str(e),
         }
+
+
+# ── 凭据 ↔ 模型配置 桥接 ──────────────────────────────────────
+
+
+@router.post("/credentials/import-from-config")
+async def import_credentials_from_config() -> dict[str, Any]:
+    """扫一遍 huginn.toml 里的模型池, 把明文 api_key 批量导入 CredentialStore。
+
+    方便老用户从配置文件内联 key 迁移到凭据管理。返回 {alias: credential_id}
+    映射, 前端可以再据此调 link-model 把模型挂上去。
+    """
+    import os
+    from pathlib import Path
+
+    from huginn.config import HuginnConfig
+    from huginn.security.credential_store import get_credential_store
+
+    # 优先用 HUGINN_CONFIG_FILE 指的文件, 没有就退回环境变量拼配置
+    config_file = Path(os.environ.get("HUGINN_CONFIG_FILE", "huginn.toml"))
+    if config_file.exists():
+        cfg = HuginnConfig.load(config_file)
+    else:
+        cfg = HuginnConfig.from_env()
+
+    store = get_credential_store()
+    mapping = store.import_from_config(cfg)
+
+    return {
+        "success": True,
+        "imported": mapping,
+        "count": len(mapping),
+    }
+
+
+@router.post("/credentials/{cid}/link-model/{alias}")
+async def link_credential_to_model(cid: str, alias: str) -> dict[str, Any]:
+    """把一条凭据挂到某个 ModelConfig 上: 设 credential_id, 清掉明文 api_key。
+
+    之后 agent 跑推理时会从凭据 store 取 key, 配置文件里不再留明文。
+    """
+    from dataclasses import replace
+
+    # 惰性导入, 避免和 routes.config 形成循环依赖
+    from huginn.routes.config import _load_runtime_config, _persist_config
+
+    # 先确认凭据确实存在, 别把无效 id 写进配置
+    store = get_credential_store()
+    rec = store.get_record(cid)
+    if rec is None:
+        return {"success": False, "error": f"credential '{cid}' not found"}
+
+    cfg = _load_runtime_config()
+    idx = next((i for i, m in enumerate(cfg.models) if m.alias == alias), None)
+    if idx is None:
+        return {"success": False, "error": f"model alias '{alias}' not found"}
+
+    # 挂上 credential_id, 同时清掉明文 api_key (改走凭据)
+    cfg.models[idx] = replace(cfg.models[idx], credential_id=cid, api_key=None)
+
+    try:
+        _persist_config(cfg)
+    except Exception as e:
+        return {"success": False, "error": f"persist failed: {e}"}
+
+    return {"success": True, "alias": alias, "credential_id": cid}
