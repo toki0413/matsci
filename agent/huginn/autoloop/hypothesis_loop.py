@@ -111,6 +111,23 @@ class HypothesisGraph:
         self._nodes: dict[str, HypothesisNode] = {}
         self._edges: list[HypothesisEdge] = []
 
+    def _log_research(self, record_type: str, title: str, content: str,
+                      parent_id: str | None = None, status: str = "proposed",
+                      tags: list[str] | None = None) -> None:
+        """把假设生命周期事件写到结构化研究日志. 出错静默跳过."""
+        try:
+            from huginn.research_log import get_research_log
+            get_research_log().add(
+                record_type=record_type,
+                title=title,
+                content=content,
+                parent_id=parent_id,
+                status=status,
+                tags=tags or [],
+            )
+        except Exception:
+            pass
+
     # ── 节点 ─────────────────────────────────────────────────────────
 
     def add_hypothesis(
@@ -140,6 +157,13 @@ class HypothesisGraph:
             self._edges.append(HypothesisEdge(
                 from_id=parent_id, to_id=node_id, edge_type="derive",
             ))
+        self._log_research(
+            "conjecture", node.statement[:80],
+            f"{node.statement}\n\nRationale: {node.rationale}\n"
+            f"Prediction: {node.testable_prediction}",
+            parent_id=parent_id, status="proposed",
+            tags=["autoloop", "hypothesis"],
+        )
         return node_id
 
     def get(self, node_id: str) -> HypothesisNode:
@@ -174,6 +198,13 @@ class HypothesisGraph:
         self._edges.append(HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="support", evidence=evidence,
         ))
+        self._log_research(
+            "verification", f"验证通过: {node.statement[:60]}",
+            f"假设 {node_id} 被实验支持.\n\n"
+            f"Statement: {node.statement}\nEvidence: {evidence}",
+            parent_id=node_id, status="verified",
+            tags=["autoloop", "verified"],
+        )
 
     def refute(self, node_id: str, evidence: dict[str, Any]) -> None:
         """标记假设被实验反驳. 不自动生成修正假设 — 调 refine_failed 才生成."""
@@ -188,6 +219,13 @@ class HypothesisGraph:
         self._edges.append(HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="refute", evidence=evidence,
         ))
+        self._log_research(
+            "counterexample", f"反驳: {node.statement[:60]}",
+            f"假设 {node_id} 被实验反驳.\n\n"
+            f"Statement: {node.statement}\nEvidence: {evidence}",
+            parent_id=node_id, status="refuted",
+            tags=["autoloop", "refuted"],
+        )
 
     def supersede(self, node_id: str) -> None:
         """标记假设被衍生假设取代 (refine_failed 后旧假设变 superseded)."""
@@ -229,6 +267,21 @@ class HypothesisGraph:
         )
         findings = [f.to_dict() for f in report.findings]
 
+        # 把 red-team 发现的障碍记到研究日志
+        obstacle_summary = "; ".join(
+            f.get("description", f.get("severity", "unknown"))
+            for f in findings
+        ) if findings else "无具体发现"
+        self._log_research(
+            "obstacle", f"障碍识别: {node.statement[:50]}",
+            f"假设 {node_id} 在修正时识别到障碍:\n\n"
+            f"原假设: {node.statement}\n"
+            f"失败证据: {evidence}\n"
+            f"Red-team 发现: {obstacle_summary}",
+            parent_id=node_id, status="in_progress",
+            tags=["autoloop", "refine", "red-team"],
+        )
+
         # 2. 生成修正假设
         if model is not None and self._is_real_model(model):
             new_statement = self._llm_refine(node.statement, findings, evidence, model)
@@ -244,6 +297,15 @@ class HypothesisGraph:
         )
         self._nodes[new_id].refinement_basis = findings
         self.supersede(node_id)
+        self._log_research(
+            "proof_attempt", f"修正假设: {new_statement[:60]}",
+            f"基于障碍分析修正假设.\n\n"
+            f"新假设: {new_statement}\n"
+            f"原假设: {node.statement}\n"
+            f"修正依据: {obstacle_summary}",
+            parent_id=new_id, status="proposed",
+            tags=["autoloop", "refine"],
+        )
         return new_id
 
     # ── 边查询 ───────────────────────────────────────────────────────

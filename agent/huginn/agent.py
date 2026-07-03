@@ -140,6 +140,71 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
         return await handler(request)
 
 
+class RateLimitMiddleware(AgentMiddleware):
+    """LLM 调用限流中间件, 在 model_call 层拦截.
+
+    参考 Moonshine Voice 的 max_tokens_per_second 机制: 不让 agent 陷入
+    无限生成烧 token. 调用前 check_allowed 拦截, 超限抛 RateLimitExceeded;
+    调用后从返回的 AIMessage 上挖 usage, record_usage 记账.
+
+    放在 middleware 链里而不是包 model, 是因为 bind_tools 返回的新对象
+    不会带 guard, middleware 层拦更可靠.
+    """
+
+    def __init__(self) -> None:
+        from huginn.security.rate_limiter import get_rate_limiter
+
+        self._limiter = get_rate_limiter()
+
+    def _estimate_tokens(self, messages: list) -> int:
+        """粗估 messages 的 token 数, ~4 字符 / token."""
+        total = 0
+        for msg in messages or []:
+            content = getattr(msg, "content", None) or str(msg)
+            if not isinstance(content, str):
+                content = str(content)
+            total += len(content)
+        return max(total // 4, 1)
+
+    def _extract_usage(self, result: Any) -> tuple[int, int]:
+        """从 model 返回结果里挖 input/output token."""
+        from huginn.security.rate_limiter import _extract_usage as _extract
+
+        return _extract(result)
+
+    def wrap_model_call(self, request, handler):
+        ok, reason = self._limiter.check_allowed(
+            "agent", self._estimate_tokens(getattr(request, "messages", []))
+        )
+        if not ok:
+            from huginn.security.rate_limiter import RateLimitExceeded
+
+            raise RateLimitExceeded(reason, reason="limit_exceeded")
+        result = handler(request)
+        in_tok, out_tok = self._extract_usage(result)
+        self._limiter.record_usage("agent", in_tok, out_tok)
+        return result
+
+    async def awrap_model_call(self, request, handler):
+        ok, reason = self._limiter.check_allowed(
+            "agent", self._estimate_tokens(getattr(request, "messages", []))
+        )
+        if not ok:
+            from huginn.security.rate_limiter import RateLimitExceeded
+
+            raise RateLimitExceeded(reason, reason="limit_exceeded")
+        result = await handler(request)
+        in_tok, out_tok = self._extract_usage(result)
+        self._limiter.record_usage("agent", in_tok, out_tok)
+        return result
+
+    def wrap_tool_call(self, request, handler):
+        return handler(request)
+
+    async def awrap_tool_call(self, request, handler):
+        return await handler(request)
+
+
 from huginn.pet import PetMood, get_pet_bus
 from huginn.phases import ResearchPhase
 from huginn.privacy import redact_secrets, scan_for_secrets
@@ -965,7 +1030,10 @@ class HuginnAgent:
                 tools=self._effective_tools(),
                 system_prompt=system_message,
                 checkpointer=self.checkpointer,
-                middleware=[FixDanglingToolCallsMiddleware()],
+                middleware=[
+                    FixDanglingToolCallsMiddleware(),
+                    RateLimitMiddleware(),
+                ],
             ).with_config({"recursion_limit": 250})
 
             return self._agent_graph
@@ -1731,6 +1799,11 @@ class HuginnAgent:
         from huginn.telemetry import set_telemetry_collector
 
         set_telemetry_collector(self._telemetry_collector)
+
+        # 新一轮 turn: 重置单轮限流计数, 全局累计不动
+        from huginn.security.rate_limiter import get_rate_limiter
+        get_rate_limiter().reset_turn()
+
         with self._telemetry_collector.span(
             "agent_turn", thread_id=thread_id
         ) as turn_span:

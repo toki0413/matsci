@@ -321,7 +321,7 @@ class EncryptedDatabase:
         return self._plaintext_path
 
     def unmount(self, save: bool = True) -> None:
-        """Encrypt and save, then cleanup temporary files."""
+        """Encrypt and save, then securely cleanup temporary files."""
         if not self.is_mounted():
             return
 
@@ -330,7 +330,14 @@ class EncryptedDatabase:
                 self.encrypted_path.parent.mkdir(parents=True, exist_ok=True)
                 self.vault.encrypt_file(self._plaintext_path, self.encrypted_path)
         finally:
+            # Securely erase all files in temp dir before removing it
             if self._temp_dir and self._temp_dir.exists():
+                for child in self._temp_dir.rglob("*"):
+                    if child.is_file():
+                        try:
+                            secure_erase_file(child)
+                        except Exception:
+                            pass
                 shutil.rmtree(self._temp_dir, ignore_errors=True)
             self._temp_dir = None
             self._plaintext_path = None

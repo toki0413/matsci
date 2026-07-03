@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.cache import TimedLRUCache
+
 
 def _embedding_model_cached() -> bool:
     """Check if ChromaDB's default ONNX model is already downloaded."""
@@ -22,6 +24,11 @@ class VectorStore:
     """Local vector store for material science documents."""
 
     DEFAULT_COLLECTION = "huginn_knowledge"
+
+    # 增量缓存: 相同内容不重复计算 embedding, 1h TTL
+    _embed_cache: TimedLRUCache[list[list[float]]] = TimedLRUCache(
+        max_size=2048, ttl=3600.0
+    )
 
     def __init__(
         self,
@@ -101,8 +108,17 @@ class VectorStore:
         ef = self._get_embedding_fn()
         if ef is None:
             return None
+        # 增量缓存: 先查命中, 命中的直接用缓存向量, 没命中的才调 embedding
+        cache_key = hashlib.sha256(
+            "|".join(texts).encode("utf-8")
+        ).hexdigest()
+        cached = VectorStore._embed_cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
-            return ef(texts)
+            result = ef(texts)
+            VectorStore._embed_cache.set(cache_key, result)
+            return result
         except Exception:
             return None
 

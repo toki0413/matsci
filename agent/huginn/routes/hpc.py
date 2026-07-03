@@ -95,6 +95,8 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
     if not cfg.host or not cfg.username:
         return {"success": False, "error": "host and username are required"}
 
+    cid = params.get("credential_id")
+
     try:
         with HPCClient(cfg) as client:
             script = client.generate_job_script(
@@ -110,9 +112,149 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
             job_id = client.submit_job(
                 script, job_name=params.get("job_name", "huginn_job")
             )
-            return {"success": True, "job_id": job_id, "host": cfg.host}
+
+        # Persist to the job store so we can list/cancel/refresh later
+        import os
+        import shlex
+        import time
+        import uuid
+        from pathlib import Path
+
+        from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
+
+        workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
+        store = RemoteJobStore(workspace=workspace)
+        local_id = str(uuid.uuid4())[:8]
+        record = RemoteJobRecord(
+            local_id=local_id,
+            scheduler_id=str(job_id),
+            command=shlex.split(command),
+            cwd=cfg.remote_work_dir,
+            credential_id=cid,
+            queue=params.get("queue"),
+            status="PENDING",
+            submitted_at=time.time(),
+        )
+        store.add_or_update(record)
+
+        return {"success": True, "job_id": job_id, "local_id": local_id, "host": cfg.host}
     except ValueError as e:
         return {"success": False, "error": f"Invalid input: {e}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ── Tracked job management ───────────────────────────────────────
+#
+# These endpoints operate on the RemoteJobStore rather than going through
+# RemoteExecutor. The store is JSON-backed and survives restarts, so jobs
+# submitted via /hpc/submit can be listed, refreshed, and cancelled even
+# after the agent process restarts — as long as credential_id was saved.
+
+
+def _get_store():
+    """Build a RemoteJobStore rooted at HUGINN_WORKSPACE."""
+    import os
+    from pathlib import Path
+
+    from huginn.execution.remote_job_store import RemoteJobStore
+
+    workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
+    return RemoteJobStore(workspace=workspace)
+
+
+@router.get("/hpc/jobs")
+async def hpc_list_jobs(credential_id: str | None = None) -> dict[str, Any]:
+    """List all tracked remote jobs from the job store."""
+    store = _get_store()
+    jobs = store.list_jobs()
+
+    if credential_id:
+        jobs = [j for j in jobs if j.credential_id == credential_id]
+
+    return {
+        "success": True,
+        "jobs": [j.to_dict() for j in jobs],
+        "count": len(jobs),
+    }
+
+
+@router.get("/hpc/jobs/{local_id}")
+async def hpc_get_job(local_id: str) -> dict[str, Any]:
+    """Get details of a specific remote job."""
+    store = _get_store()
+    record = store.get(local_id)
+    if record is None:
+        return {"success": False, "error": f"job '{local_id}' not found"}
+    return {"success": True, "job": record.to_dict()}
+
+
+@router.post("/hpc/jobs/{local_id}/refresh")
+async def hpc_refresh_job(
+    local_id: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Poll the scheduler for the latest status of a tracked job."""
+    import time
+
+    store = _get_store()
+    record = store.get(local_id)
+    if record is None:
+        return {"success": False, "error": f"job '{local_id}' not found"}
+
+    # Prefer the credential_id stored on the record; fall back to inline params
+    params = params or {}
+    cfg, err = _resolve_hpc_config({
+        "credential_id": record.credential_id or params.get("credential_id"),
+        **params,
+    })
+    if err or cfg is None:
+        return {"success": False, "error": err or "cannot resolve HPC config"}
+
+    try:
+        with HPCClient(cfg) as client:
+            status = client.poll_status(record.scheduler_id)
+            record.status = status.state
+            record.exit_code = status.exit_code
+            record.message = status.message
+            if status.state in ("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"):
+                record.completed_at = time.time()
+            store.add_or_update(record)
+            return {"success": True, "job": record.to_dict()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/hpc/jobs/{local_id}/cancel")
+async def hpc_cancel_job(
+    local_id: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Cancel a tracked job on the remote scheduler."""
+    import shlex
+    import time
+
+    store = _get_store()
+    record = store.get(local_id)
+    if record is None:
+        return {"success": False, "error": f"job '{local_id}' not found"}
+
+    params = params or {}
+    cfg, err = _resolve_hpc_config({
+        "credential_id": record.credential_id or params.get("credential_id"),
+        **params,
+    })
+    if err or cfg is None:
+        return {"success": False, "error": err or "cannot resolve HPC config"}
+
+    try:
+        with HPCClient(cfg) as client:
+            if cfg.scheduler == "slurm":
+                client._exec(f"scancel {shlex.quote(record.scheduler_id)}")
+            else:
+                client._exec(f"qdel {shlex.quote(record.scheduler_id)}")
+            record.status = "CANCELLED"
+            record.completed_at = time.time()
+            store.add_or_update(record)
+            return {"success": True, "job": record.to_dict()}
     except Exception as e:
         return {"success": False, "error": str(e)}
 

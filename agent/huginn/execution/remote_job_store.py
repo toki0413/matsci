@@ -24,6 +24,7 @@ class RemoteJobRecord:
     scheduler_id: str
     command: list[str]
     cwd: str
+    credential_id: str | None = None  # lets us reconnect after a restart
     queue: str | None = None
     status: str = "PENDING"
     exit_code: int | None = None
@@ -38,6 +39,7 @@ class RemoteJobRecord:
             "scheduler_id": self.scheduler_id,
             "command": self.command,
             "cwd": self.cwd,
+            "credential_id": self.credential_id,
             "queue": self.queue,
             "status": self.status,
             "exit_code": self.exit_code,
@@ -54,6 +56,8 @@ class RemoteJobRecord:
             scheduler_id=data["scheduler_id"],
             command=list(data.get("command", [])),
             cwd=data.get("cwd", ""),
+            # older saved records won't have this — fall back to None
+            credential_id=data.get("credential_id"),
             queue=data.get("queue"),
             status=data.get("status", "PENDING"),
             exit_code=data.get("exit_code"),

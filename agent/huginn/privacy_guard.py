@@ -33,6 +33,16 @@ class PrivacyGuard:
         "local_only": "完全本地, 不发云端 (强制走本地模型)",
     }
 
+    # 数据生命周期分级 —— 参考 Moonshine Voice 的隐私数据生命周期管理.
+    # permanent:  公开数据 (已发表论文, 公开数据库), 永不脱敏, 永久保留
+    # temporary:  实验原始数据 (POSCAR/轨迹/计算结果), 脱敏后发云端, 会话结束后本地清除
+    # ephemeral:  凭证/内部路径/密钥, 绝不发云端, 用完立即清除
+    DATA_TIERS = {
+        "permanent": {"redact": False, "retain_after_session": True},
+        "temporary": {"redact": True, "retain_after_session": False},
+        "ephemeral": {"redact": True, "retain_after_session": False, "never_cloud": True},
+    }
+
     _singleton_lock = threading.Lock()
     _singleton: "PrivacyGuard | None" = None
 
@@ -41,6 +51,8 @@ class PrivacyGuard:
         # 已脱敏次数 / 各类型计数, 给 summary 用
         self._redact_count: int = 0
         self._type_counts: Counter[str] = Counter()
+        # 临时数据注册表: 记录哪些数据需要在会话结束后清除
+        self._ephemeral_keys: set[str] = set()
 
     @classmethod
     def shared(cls) -> "PrivacyGuard":
@@ -93,6 +105,75 @@ class PrivacyGuard:
             return False
         # ollama / vllm / local 都算本地, 不用切
         return provider not in ("ollama", "vllm", "local", None)
+
+    # ── 数据生命周期分级 ────────────────────────────────────
+
+    def classify_data(self, content: str, content_type: str = "auto") -> str:
+        """根据内容类型和数据特征判定生命周期等级.
+
+        返回 permanent / temporary / ephemeral 之一.
+        策略:
+          - 凭证/密钥/路径 → ephemeral (绝不发云端)
+          - 结构/轨迹/计算结果 → temporary (脱敏后可发, 会话后清除)
+          - 其他 (含公开论文摘录) → permanent
+        """
+        if content_type == "auto":
+            content_type = self._detect_type(content)
+
+        # 凭证/密钥特征: API key, token, password, 路径
+        if re.search(
+            r"(api[_-]?key|secret|token|password|passwd|credential|"
+            r"\.env|/home/|C:\\Users\\|/root/)",
+            content, re.I,
+        ):
+            return "ephemeral"
+
+        # 实验原始数据: 结构/轨迹/计算结果 → temporary
+        if content_type in ("structure", "trajectory", "calculation_result"):
+            return "temporary"
+
+        # 对话历史可能含敏感信息 → temporary
+        if content_type == "conversation":
+            return "temporary"
+
+        # 其余 (公开论文, 理论知识) → permanent
+        return "permanent"
+
+    def get_retention_policy(self, tier: str) -> dict[str, Any]:
+        """返回某等级的保留策略 dict."""
+        return self.DATA_TIERS.get(tier, self.DATA_TIERS["temporary"])
+
+    def should_redact_by_tier(self, content: str, content_type: str = "auto") -> bool:
+        """根据数据分级判断是否需要脱敏, 比级别开关更细粒度.
+
+        ephemeral 等级在任何 privacy level 下都强制脱敏.
+        temporary 在 redact/local_only 下脱敏.
+        permanent 永不脱敏.
+        """
+        tier = self.classify_data(content, content_type)
+        policy = self.get_retention_policy(tier)
+        if not policy.get("redact", False):
+            return False
+        if policy.get("never_cloud", False):
+            return True
+        return self.get_level() != "off"
+
+    def register_ephemeral(self, key: str) -> None:
+        """注册一个临时数据 key, purge_session 时会清除."""
+        with self._lock:
+            self._ephemeral_keys.add(key)
+
+    def purge_session(self) -> list[str]:
+        """会话结束时清除所有临时数据, 返回被清除的 key 列表."""
+        with self._lock:
+            purged = list(self._ephemeral_keys)
+            self._ephemeral_keys.clear()
+            # 重置脱敏计数
+            self._redact_count = 0
+            self._type_counts.clear()
+        if purged:
+            logger.info("purged %d ephemeral data entries", len(purged))
+        return purged
 
     # ── 核心脱敏 ──────────────────────────────────────────────
 

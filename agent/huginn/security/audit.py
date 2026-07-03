@@ -98,6 +98,35 @@ class AuditLogger:
             self._signing_key, line.encode("utf-8"), hashlib.sha256
         ).hexdigest()[:32]
 
+    def _redact_details(self, details: dict[str, Any]) -> dict[str, Any]:
+        """Scan dict values for secrets and redact them before logging."""
+        try:
+            from huginn.privacy.scanner import SecretScanner
+            scanner = SecretScanner()
+        except Exception:
+            return details
+
+        redacted = {}
+        for key, value in details.items():
+            if isinstance(value, str):
+                cleaned = scanner.redact(value)
+                if cleaned != value:
+                    redacted[key] = cleaned
+                else:
+                    redacted[key] = value
+            elif isinstance(value, dict):
+                redacted[key] = self._redact_details(value)
+            elif isinstance(value, list):
+                redacted[key] = [
+                    self._redact_details({"_": item}).get("_", item) if isinstance(item, dict)
+                    else scanner.redact(item) if isinstance(item, str)
+                    else item
+                    for item in value
+                ]
+            else:
+                redacted[key] = value
+        return redacted
+
     def log(
         self,
         event_type: str,
@@ -108,7 +137,7 @@ class AuditLogger:
         output_data: str | bytes | None = None,
     ) -> AuditEvent:
         """Record an audit event."""
-        details = details or {}
+        details = self._redact_details(details or {})
 
         input_hash = None
         if input_data is not None:
