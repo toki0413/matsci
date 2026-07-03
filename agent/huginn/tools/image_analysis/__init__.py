@@ -8,7 +8,8 @@
   scenes_particles      - particle_stats
   scenes_defect         - defect_detect
   scenes_phase_field    - phase_field
-  scenes_plot_extract   - plot_extract
+  scenes_plot_extract   - plot_extract (单/多曲线 + 自动轴检测 + 可选 plotdigitizer)
+  scenes_deplot         - deplot_chart (图表转表格, 需 transformers+torch)
   tool                  - ImageAnalysisTool 主体 + ImageAnalysisInput
 """
 from huginn.tools.image_analysis.tool import ImageAnalysisInput, ImageAnalysisTool

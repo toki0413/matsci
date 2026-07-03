@@ -186,7 +186,27 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         try:
             mod = importlib.import_module(module_name)
             cls = getattr(mod, class_name)
-            ToolRegistry.register(cls(**_tool_kwargs(cls)))
+            kwargs = _tool_kwargs(cls)
+
+            # RAGTool 可以共享 KnowledgeBase 的 collection，让 agent 搜索和
+            # REST 上传接口读写同一份数据。KB 在 lifespan 阶段才创建——晚于
+            # 工具注册，所以这里只在 context 已就绪时尽力传一下；没传到的话
+            # RAGTool 内部会在首次调用时延迟绑定。
+            if class_name == "RAGTool":
+                import inspect
+
+                sig = inspect.signature(cls.__init__)
+                if "kb" in sig.parameters:
+                    try:
+                        from huginn import server_context as _sc
+
+                        _ctx = _sc._server_context
+                        if _ctx is not None and _ctx.kb is not None:
+                            kwargs["kb"] = _ctx.kb
+                    except Exception:
+                        pass
+
+            ToolRegistry.register(cls(**kwargs))
             registered.append(class_name)
         except ImportError as exc:
             skipped.append(f"{class_name} ({exc.name or module_name})")

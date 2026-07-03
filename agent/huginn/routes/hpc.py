@@ -1,4 +1,13 @@
-"""HPC cluster endpoints."""
+"""HPC cluster endpoints.
+
+支持两种凭据来源:
+1. credential_id — 从凭据库取已保存的 SSH 连接 (host/username/password/key_path
+   都在库里, 加密存储), 前端只需传一个 id;
+2. 内联参数 — 直接在 body 里传 host/username/key_path/password, 走老逻辑。
+
+两者可混用: 传 credential_id 拿基础配置, 再用 body 字段临时覆盖 (如换
+remote_work_dir)。这样既支持"选已保存的集群提交", 也兼容旧前端。
+"""
 
 from __future__ import annotations
 
@@ -11,16 +20,48 @@ from huginn.hpc.client import HPCClient, HPCConfig
 router = APIRouter(tags=["hpc"])
 
 
-@router.post("/hpc/test")
-async def hpc_test_connection(params: dict[str, Any]) -> dict[str, Any]:
-    """Test SSH connection to an HPC cluster."""
+def _resolve_hpc_config(params: dict[str, Any]) -> tuple[HPCConfig | None, str | None]:
+    """从请求参数构造 HPCConfig。
+
+    优先用 credential_id 从凭据库加载 (含解密后的 password), 再用 body
+    里的字段做临时覆盖。没传 credential_id 就走内联参数老逻辑。
+
+    返回 (config, error); error 非 None 时 config 为 None。
+    """
+    cid = params.get("credential_id")
+    if cid:
+        # 延迟导入避免 routes <-> security 的循环依赖
+        from huginn.security.credential_store import get_credential_store
+
+        cfg = get_credential_store().to_hpc_config(cid)
+        if cfg is None:
+            return None, f"credential_id '{cid}' 对应的 SSH 凭据不存在"
+        # 允许 body 字段覆盖部分配置 (比如临时换工作目录)
+        if params.get("remote_work_dir"):
+            cfg.remote_work_dir = params["remote_work_dir"]
+        if params.get("scheduler"):
+            cfg.scheduler = params["scheduler"]
+        return cfg, None
+
+    # 内联参数 — 老逻辑, 现在补上 password 字段 (之前漏了)
     cfg = HPCConfig(
         host=params.get("host", ""),
         username=params.get("username", ""),
         scheduler=params.get("scheduler", "slurm"),
         key_path=params.get("key_path"),
+        password=params.get("password"),
         port=params.get("port", 22),
+        remote_work_dir=params.get("remote_work_dir", "~/huginn_jobs"),
     )
+    return cfg, None
+
+
+@router.post("/hpc/test")
+async def hpc_test_connection(params: dict[str, Any]) -> dict[str, Any]:
+    """Test SSH connection to an HPC cluster."""
+    cfg, err = _resolve_hpc_config(params)
+    if err or cfg is None:
+        return {"success": False, "error": err or "无法解析 HPC 配置"}
 
     if not cfg.host or not cfg.username:
         return {"success": False, "error": "host and username are required"}
@@ -47,13 +88,9 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(command, str) or not command.strip():
         return {"success": False, "error": "command is required and must be a non-empty string"}
 
-    cfg = HPCConfig(
-        host=params.get("host", ""),
-        username=params.get("username", ""),
-        scheduler=params.get("scheduler", "slurm"),
-        key_path=params.get("key_path"),
-        remote_work_dir=params.get("remote_work_dir", "~/huginn_jobs"),
-    )
+    cfg, err = _resolve_hpc_config(params)
+    if err or cfg is None:
+        return {"success": False, "error": err or "无法解析 HPC 配置"}
 
     if not cfg.host or not cfg.username:
         return {"success": False, "error": "host and username are required"}
@@ -83,12 +120,9 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
 @router.post("/hpc/status")
 async def hpc_status(params: dict[str, Any]) -> dict[str, Any]:
     """Poll status of a remote HPC job."""
-    cfg = HPCConfig(
-        host=params.get("host", ""),
-        username=params.get("username", ""),
-        scheduler=params.get("scheduler", "slurm"),
-        key_path=params.get("key_path"),
-    )
+    cfg, err = _resolve_hpc_config(params)
+    if err or cfg is None:
+        return {"success": False, "error": err or "无法解析 HPC 配置"}
 
     job_id = params.get("job_id")
     if not job_id:

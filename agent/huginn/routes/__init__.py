@@ -16,6 +16,7 @@ from huginn.routes.events import router as events_router
 from huginn.routes.execution import router as execution_router
 from huginn.routes.health import router as health_router
 from huginn.routes.hpc import router as hpc_router
+from huginn.routes.credentials import router as credentials_router
 from huginn.routes.interaction import router as interaction_router
 from huginn.routes.knowledge import router as knowledge_router
 from huginn.routes.mcp import router as mcp_router
@@ -35,6 +36,7 @@ from huginn.routes.ws import router as ws_router
 from huginn.routes.live_script import router as live_script_router
 from huginn.routes.parameters import router as parameters_router
 from huginn.routes.side import router as side_router
+from huginn.routes.visual import router as visual_router
 
 ALL_ROUTERS = [
     advisor_router,
@@ -59,6 +61,7 @@ ALL_ROUTERS = [
     checkpoints_router,
     compat_router,
     hpc_router,
+    credentials_router,
     team_router,
     system_router,
     coder_router,
@@ -70,4 +73,6 @@ ALL_ROUTERS = [
     interaction_router,
     # 侧边对话: 不打断主任务的并行 Q&A
     side_router,
+    # 视觉感知: I-JEPA 图像编码 / 检索 / 索引
+    visual_router,
 ]

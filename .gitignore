@@ -216,3 +216,7 @@ _stress_test.py
 _ultra_stress_test.py
 _ultra_stress_results.txt
 Huginn_Agent_Overview.pptx
+Huginn_Agent_Overview_enhanced.pptx
+_commit_msg.txt
+_inject_speaker_notes.py
+agent/_gen_arch_slides.py
