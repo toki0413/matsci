@@ -161,6 +161,10 @@ cu111_surface/
 2H-MoS2_monolayer/
 BCC_Fe/
 Si_diamond/
+# agent/Si_diamond/POSCAR is a committed test fixture for XRD/symmetry tests,
+# not scratch output — re-include it.
+!agent/Si_diamond/
+!agent/Si_diamond/POSCAR
 dist-desktop/
 
 # Misc scratch
