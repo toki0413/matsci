@@ -590,3 +590,990 @@ async def _search_core(
             "download_url": download_url,  # fetch_pdf 直接能用
         })
     return papers
+
+
+# ───────────────────────── Europe PMC ─────────────────────────
+
+
+async def _search_europepmc(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """Europe PMC REST API. 33M+ publications, 10.2M full text.
+
+    No API key required. Supports JSON output, citation counts,
+    and open access filtering. Covers biomedical and materials science.
+    """
+    q = urllib.parse.quote(query)
+    url = (
+        f"https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+        f"?query={q}&format=json&pageSize={min(max_results, 25)}"
+        "&resultType=lite"
+    )
+    if year_from:
+        url += f"&filter=FIRST_PDATE:[{year_from}-01-01 TO "
+        if year_to:
+            url += f"{year_to}-12-31]"
+        else:
+            url += "3000-12-31]"
+    elif year_to:
+        url += f"&filter=FIRST_PDATE:[1900-01-01 TO {year_to}-12-31]"
+
+    try:
+        data = await _http_get_json(url)
+    except Exception as exc:
+        logger.warning("Europe PMC 请求失败: %s", exc)
+        return []
+
+    papers: list[dict[str, Any]] = []
+    for item in data.get("resultList", {}).get("result", []) or []:
+        title = item.get("title", "") or ""
+        if not title:
+            continue
+        authors: list[str] = []
+        author_str = item.get("authorString", "") or ""
+        if author_str:
+            authors = [a.strip() for a in author_str.split(",") if a.strip()]
+        year = item.get("pubYear")
+        if year:
+            try:
+                year = int(year)
+            except (ValueError, TypeError):
+                year = None
+        doi = item.get("doi") or None
+        if doi:
+            doi = doi.lower()
+        abstract = ""
+        pmid = item.get("pmid", "")
+        pmcid = item.get("pmcid", "")
+        url_ = item.get("journalInfo", {}).get("journal", {}).get("title", "")
+        if doi:
+            url_ = f"https://doi.org/{doi}"
+        elif pmcid:
+            url_ = f"https://europepmc.org/article/pmc/{pmcid}"
+        elif pmid:
+            url_ = f"https://europepmc.org/article/med/{pmid}"
+        citations = item.get("citedByCount")
+        if citations:
+            try:
+                citations = int(citations)
+            except (ValueError, TypeError):
+                citations = None
+        is_oa = item.get("isOpenAccess") == "Y" or bool(pmcid)
+        pdf_url = ""
+        if pmcid:
+            pdf_url = f"https://europepmc.org/articles/{pmcid}?pdf=render"
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "venue": item.get("journalInfo", {}).get("journal", {}).get("title", "") or "",
+            "doi": doi,
+            "abstract": abstract,
+            "url": url_,
+            "citations": citations,
+            "source": "europepmc",
+            "open_access": is_oa,
+            "download_url": pdf_url,
+        })
+    return papers
+
+
+# ───────────────────────── Zenodo ─────────────────────────
+
+
+async def _search_zenodo(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """Zenodo REST API. CERN's open data repository.
+
+    No API key required for search. Returns datasets, software,
+    publications, and figures. Many materials science datasets.
+    Zenodo can be slow — we use a 45s timeout.
+    """
+    q = urllib.parse.quote(query)
+    url = (
+        f"https://zenodo.org/api/records"
+        f"?q={q}&size={min(max_results, 25)}&sort=mostrecent"
+        "&type=publication"
+    )
+    # year filtering via Zenodo's [date-range] syntax
+    date_filter = ""
+    if year_from:
+        date_filter = f"[{year_from}-01-01 TO "
+        date_filter += f"{year_to}-12-31]" if year_to else "2999-12-31]"
+    elif year_to:
+        date_filter = f"[1900-01-01 TO {year_to}-12-31]"
+    if date_filter:
+        url += f"&publication_date={date_filter}"
+
+    def _fetch() -> dict[str, Any]:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=45) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("Zenodo 请求失败: %s", exc)
+        return []
+
+    papers: list[dict[str, Any]] = []
+    for item in data.get("hits", {}).get("hits", []) or []:
+        meta = item.get("metadata", {})
+        title = meta.get("title", "") or ""
+        if not title:
+            continue
+        authors: list[str] = []
+        for creator in meta.get("creators", []) or []:
+            name = creator.get("name", "")
+            if name:
+                authors.append(name)
+        year: int | None = None
+        pub_date = meta.get("publication_date", "") or ""
+        if pub_date:
+            m = re.match(r"(\d{4})", pub_date)
+            if m:
+                year = int(m.group(1))
+        doi = meta.get("doi") or None
+        rec_id = item.get("id", "")
+        url_ = f"https://zenodo.org/record/{rec_id}" if rec_id else ""
+        if doi:
+            url_ = f"https://doi.org/{doi}"
+        abstract = meta.get("description", "") or ""
+        # strip HTML tags from description
+        if abstract:
+            abstract = re.sub(r"<[^>]+>", "", abstract).strip()[:500]
+        upload_type = meta.get("upload_type", "publication")
+        # find PDF download URL in files
+        download_url = ""
+        for f in item.get("files", []) or []:
+            if f.get("type") == "pdf":
+                download_url = f.get("links", {}).get("self", "")
+                break
+            if not download_url:
+                download_url = f.get("links", {}).get("self", "")
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "venue": "Zenodo",
+            "doi": doi,
+            "abstract": abstract,
+            "url": url_,
+            "citations": None,
+            "source": "zenodo",
+            "open_access": meta.get("access_right") == "open",
+            "download_url": download_url,
+            "upload_type": upload_type,
+        })
+    return papers
+
+
+# ───────────────────────── OpenAIRE ─────────────────────────
+
+
+async def _search_openaire(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """OpenAIRE Search API. 150M+ EU open access publications.
+
+    No API key required. Covers EU-funded research including
+    Horizon 2020 / Horizon Europe materials science projects.
+    """
+    q = urllib.parse.quote(query)
+    url = (
+        f"https://api.openaire.eu/search/publications"
+        f"?keywords={q}&size={min(max_results, 25)}&format=json"
+    )
+    if year_from:
+        url += f"&fromDateAccepted={year_from}-01-01"
+    if year_to:
+        url += f"&untilDateAccepted={year_to}-12-31"
+
+    def _fetch() -> dict[str, Any]:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("OpenAIRE 请求失败: %s", exc)
+        return []
+
+    papers: list[dict[str, Any]] = []
+    # OpenAIRE wraps results under response -> results -> result
+    results_root = data.get("response", {})
+    results = results_root.get("results", {}).get("result", []) or []
+    if isinstance(results, dict):
+        results = [results]
+
+    for wrapper in results:
+        item = (wrapper.get("metadata", {})
+                .get("oaf:entity", {})
+                .get("oaf:result", {}))
+        if not item:
+            continue
+
+        # Title — list of dicts with "$" key, pick the first non-empty
+        title = ""
+        title_field = item.get("title", [])
+        if isinstance(title_field, list):
+            for t in title_field:
+                if isinstance(t, dict) and t.get("$"):
+                    title = t["$"].strip()
+                    break
+        elif isinstance(title_field, dict) and title_field.get("$"):
+            title = title_field["$"].strip()
+        if not title:
+            continue
+
+        # Authors — under "creator" field
+        authors: list[str] = []
+        creators = item.get("creator", [])
+        if isinstance(creators, list):
+            for c in creators:
+                if isinstance(c, dict) and c.get("$"):
+                    authors.append(c["$"])
+        elif isinstance(creators, dict) and creators.get("$"):
+            authors.append(creators["$"])
+
+        # Year
+        year: int | None = None
+        date_field = item.get("dateofacceptance", {})
+        if isinstance(date_field, dict):
+            date_str = date_field.get("$", "") or ""
+            if date_str:
+                m = re.match(r"(\d{4})", date_str)
+                if m:
+                    year = int(m.group(1))
+
+        # DOI — under "pid" field (dict with @classid="doi")
+        doi = None
+        pid = item.get("pid", {})
+        if isinstance(pid, dict):
+            if pid.get("@classid") == "doi" and pid.get("$"):
+                doi = pid["$"].lower()
+        elif isinstance(pid, list):
+            for p in pid:
+                if isinstance(p, dict) and p.get("@classid") == "doi" and p.get("$"):
+                    doi = p["$"].lower()
+                    break
+
+        # URL
+        url_ = ""
+        instances = item.get("instance", [])
+        if isinstance(instances, list):
+            for inst in instances:
+                if isinstance(inst, dict):
+                    webres = inst.get("webresource", {})
+                    if isinstance(webres, dict):
+                        url_ = webres.get("url", {}).get("$", "") or ""
+                        if url_:
+                            break
+        elif isinstance(instances, dict):
+            webres = instances.get("webresource", {})
+            url_ = webres.get("url", {}).get("$", "") or ""
+        if not url_ and doi:
+            url_ = f"https://doi.org/{doi}"
+
+        # Abstract
+        abstract = ""
+        desc = item.get("description", {})
+        if isinstance(desc, dict) and desc.get("$"):
+            abstract = desc["$"][:500]
+        elif isinstance(desc, list):
+            for d in desc:
+                if isinstance(d, dict) and d.get("$"):
+                    abstract = d["$"][:500]
+                    break
+
+        # Citation count — under "measure" list with @id="citationCount"
+        citations = None
+        measures = item.get("measure", [])
+        if isinstance(measures, list):
+            for m_entry in measures:
+                if isinstance(m_entry, dict) and m_entry.get("@id") == "citationCount":
+                    try:
+                        citations = int(float(m_entry.get("@score", "0")))
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "venue": item.get("publisher", {}).get("$", "") or "OpenAIRE",
+            "doi": doi,
+            "abstract": abstract,
+            "url": url_,
+            "citations": citations,
+            "source": "openaire",
+            "open_access": True,
+        })
+    return papers
+
+
+# ───────────────────────── Crystallography Open Database ─────────────────────────
+
+
+async def _search_cod(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """Crystallography Open Database (COD) REST API.
+
+    Free, no API key. 500k+ crystal structures with CIF files.
+    Tries formula search first (COD's strongest feature), falls back
+    to text/mineral search.
+    """
+    q = urllib.parse.quote(query)
+    limit = min(max_results, 25)
+
+    # Try formula search first — COD is primarily a structure database,
+    # and formula queries are its most reliable interface.
+    formula_url = (
+        f"http://www.crystallography.net/cod/result"
+        f"?format=json&count={limit}&formula={q}"
+    )
+
+    def _fetch(url: str) -> Any:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch, formula_url)
+    except Exception as exc:
+        logger.warning("COD formula 请求失败: %s", exc)
+        data = []
+
+    structures: list = []
+    if isinstance(data, dict):
+        structures = data.get("structures", data.get("result", []))
+    elif isinstance(data, list):
+        structures = data
+
+    # Fall back to text search when formula yields nothing.
+    if not structures:
+        text_url = (
+            f"http://www.crystallography.net/cod/result"
+            f"?format=json&count={limit}&text={q}"
+        )
+        try:
+            data = await asyncio.to_thread(_fetch, text_url)
+        except Exception as exc:
+            logger.warning("COD text 请求失败: %s", exc)
+            data = []
+        if isinstance(data, dict):
+            structures = data.get("structures", data.get("result", []))
+        elif isinstance(data, list):
+            structures = data
+
+    papers: list[dict[str, Any]] = []
+    for item in structures:
+        if not isinstance(item, dict):
+            continue
+        file_id = item.get("file", "") or ""
+        formula = item.get("formula", "") or ""
+        mineral = item.get("mineral", "") or ""
+        title = mineral or formula or f"COD entry {file_id}"
+        if not title:
+            continue
+        # Build URL to the CIF file
+        if file_id:
+            # COD stores files in directory hierarchy based on ID
+            dir_path = file_id[:1] + "/" + file_id[1:3] + "/"
+            url_ = f"http://www.crystallography.net/cod/{dir_path}{file_id}.cif"
+        else:
+            url_ = ""
+        sg = item.get("sg", "") or ""
+        a = item.get("a", "") or ""
+        b = item.get("b", "") or ""
+        c = item.get("c", "") or ""
+        abstract_parts = []
+        if formula:
+            abstract_parts.append(f"Formula: {formula}")
+        if sg:
+            abstract_parts.append(f"Space group: {sg}")
+        if a:
+            abstract_parts.append(f"a={a} b={b} c={c}")
+        abstract = "; ".join(abstract_parts)
+        papers.append({
+            "title": title,
+            "authors": [],
+            "year": None,
+            "venue": "Crystallography Open Database",
+            "doi": None,
+            "abstract": abstract,
+            "url": url_,
+            "citations": None,
+            "source": "cod",
+            "open_access": True,
+            "download_url": url_,
+            "formula": formula,
+            "space_group": sg,
+        })
+    return papers
+
+
+# ───────────────────────── Materials Cloud ─────────────────────────
+
+
+async def _search_materials_cloud(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """Materials Cloud API. EPFL's computational materials platform.
+
+    Free, no API key. Contains curated datasets, workflows, and
+    computational materials data (DFT, MD, ML potentials).
+    Uses the Invenio REST API at archive.materialscloud.org.
+    """
+    q = urllib.parse.quote(query)
+    # Materials Cloud runs Invenio; the REST API is under /api/records
+    url = (
+        f"https://archive.materialscloud.org/api/records"
+        f"?q={q}&size={min(max_results, 25)}&sort=newest"
+    )
+
+    def _fetch() -> dict[str, Any]:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("Materials Cloud 请求失败: %s", exc)
+        return []
+
+    papers: list[dict[str, Any]] = []
+    for item in data.get("hits", {}).get("hits", []) or []:
+        meta = item.get("metadata", {})
+        title = meta.get("title", "") or ""
+        if not title:
+            continue
+        # Invenio v3: creators live under person_or_org.name
+        authors: list[str] = []
+        for creator in meta.get("creators", []) or []:
+            if not isinstance(creator, dict):
+                continue
+            porg = creator.get("person_or_org", {})
+            name = (porg or {}).get("name", "") if isinstance(porg, dict) else ""
+            if name:
+                authors.append(name)
+        year: int | None = None
+        pub_date = meta.get("publication_date", "") or ""
+        if pub_date:
+            m = re.match(r"(\d{4})", pub_date)
+            if m:
+                year = int(m.group(1))
+        # Invenio v3: DOI is under pids.doi.identifier
+        doi = None
+        pids = item.get("pids", {}) or {}
+        if isinstance(pids, dict):
+            doi_info = pids.get("doi", {})
+            if isinstance(doi_info, dict):
+                doi = doi_info.get("identifier", "") or None
+        if not doi:
+            doi = meta.get("doi") or None
+        if doi:
+            doi = doi.lower()
+        rec_id = item.get("id", "")
+        url_ = f"https://archive.materialscloud.org/record/{rec_id}" if rec_id else ""
+        if doi:
+            url_ = f"https://doi.org/{doi}"
+        abstract = meta.get("description", "") or ""
+        if abstract:
+            abstract = re.sub(r"<[^>]+>", "", abstract).strip()[:500]
+        # Invenio v3: files is a dict (metadata), not a list of file objects.
+        # Download links are under links.files or links.self.
+        download_url = ""
+        links = item.get("links", {}) or {}
+        if isinstance(links, dict):
+            download_url = links.get("files", "") or links.get("self", "")
+        # access control moved to a separate dict in v3
+        access = item.get("access", {}) or {}
+        is_open = True
+        if isinstance(access, dict):
+            is_open = access.get("record", "") != "restricted"
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "venue": "Materials Cloud",
+            "doi": doi,
+            "abstract": abstract,
+            "url": url_,
+            "citations": None,
+            "source": "materials_cloud",
+            "open_access": is_open,
+            "download_url": download_url,
+        })
+    return papers
+
+
+# ───────────────────────── NOMAD ─────────────────────────
+
+
+async def _search_nomad(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """NOMAD (Novel Materials Discovery) API. 19M+ computational entries.
+
+    Free, no API key. Hosted by FAIRmat/MPSD. Covers DFT, MD, GW,
+    ML potentials from VASP, Quantum ESPRESSO, FHI-aims, CASTEP, etc.
+    Search via the /entries endpoint with ?search= parameter.
+    """
+    q = urllib.parse.quote(query)
+    page_size = min(max_results, 25)
+    url = (
+        f"https://nomad-lab.eu/prod/v1/api/v1/entries"
+        f"?search={q}&page_size={page_size}&owner=public"
+    )
+
+    def _fetch() -> dict[str, Any]:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("NOMAD 请求失败: %s", exc)
+        return []
+
+    total = (data.get("pagination") or {}).get("total", 0)
+    logger.info("NOMAD search '%s': %d total entries, returning %d",
+                query, total, len(data.get("data", [])))
+
+    papers: list[dict[str, Any]] = []
+    for entry in data.get("data", []) or []:
+        results = entry.get("results", {}) or {}
+        material = results.get("material", {}) or {}
+        method = results.get("method", {}) or {}
+
+        formula = material.get("chemical_formula_descriptive", "") or ""
+        formula_reduced = material.get("chemical_formula_reduced", "") or ""
+        elements = material.get("elements", []) or []
+        material_id = material.get("material_id", "") or ""
+
+        # method info
+        workflow = method.get("workflow_name", "") or ""
+        code = method.get("program_name", "") or ""
+
+        entry_id = entry.get("entry_id", "") or ""
+        upload_id = entry.get("upload_id", "") or ""
+
+        title = f"{formula} ({workflow}, {code})" if formula else f"NOMAD entry {entry_id}"
+
+        # Build URL to NOMAD entry
+        url_ = f"https://nomad-lab.eu/prod/v1/gui/entry/id/{entry_id}" if entry_id else ""
+
+        abstract_parts = []
+        if formula:
+            abstract_parts.append(f"Formula: {formula}")
+        if elements:
+            abstract_parts.append(f"Elements: {', '.join(elements)}")
+        if workflow:
+            abstract_parts.append(f"Method: {workflow}")
+        if code:
+            abstract_parts.append(f"Code: {code}")
+        n_atoms = material.get("n_atoms")
+        if n_atoms:
+            abstract_parts.append(f"Atoms: {n_atoms}")
+        space_group = (material.get("symmetry") or {}).get("space_group_number")
+        if space_group:
+            abstract_parts.append(f"Space group: {space_group}")
+        abstract = "; ".join(abstract_parts)
+
+        papers.append({
+            "title": title,
+            "authors": [],
+            "year": None,
+            "venue": "NOMAD",
+            "doi": None,
+            "abstract": abstract,
+            "url": url_,
+            "citations": None,
+            "source": "nomad",
+            "open_access": True,
+            "formula": formula,
+            "formula_reduced": formula_reduced,
+            "elements": elements,
+            "material_id": material_id,
+            "entry_id": entry_id,
+            "method": workflow,
+            "code": code,
+            "total_entries": total,
+        })
+    return papers
+
+
+# ───────────────────────── DataCite ─────────────────────────
+
+
+async def _search_datacite(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """DataCite REST API. DOI registry for research datasets.
+
+    Free, no API key. Covers datasets, software, and other research
+    outputs registered with DataCite. Great for finding raw data,
+    computational results, and supplementary materials.
+    """
+    q = urllib.parse.quote(query)
+    page_size = min(max_results, 25)
+    url = (
+        f"https://api.datacite.org/dois"
+        f"?page[size]={page_size}&query={q}"
+    )
+    if year_from:
+        url += f"&filter=publicationYear>={year_from}"
+    if year_to:
+        url += f"&filter=publicationYear<={year_to}"
+
+    def _fetch() -> dict[str, Any]:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("DataCite 请求失败: %s", exc)
+        return []
+
+    papers: list[dict[str, Any]] = []
+    for item in data.get("data", []) or []:
+        attrs = item.get("attributes", {}) or {}
+        # titles is a list of {title: "...", titleType: "..."}
+        title = ""
+        titles = attrs.get("titles", []) or []
+        for t in titles:
+            if isinstance(t, dict) and t.get("title"):
+                title = t["title"]
+                break
+        if not title:
+            continue
+
+        # creators: list of {name: "...", nameType: "Personal"/"Organizational"}
+        authors: list[str] = []
+        for c in attrs.get("creators", []) or []:
+            if isinstance(c, dict) and c.get("name"):
+                authors.append(c["name"])
+
+        year = attrs.get("publicationYear")
+
+        doi = attrs.get("doi", "") or ""
+        if doi:
+            doi = doi.lower()
+
+        url_ = attrs.get("url", "") or ""
+        if not url_ and doi:
+            url_ = f"https://doi.org/{doi}"
+
+        # descriptions: list of {description: "...", descriptionType: "Abstract"}
+        abstract = ""
+        for d in attrs.get("descriptions", []) or []:
+            if isinstance(d, dict) and d.get("description"):
+                abstract = d["description"][:500]
+                break
+
+        # subjects for keyword tagging
+        subjects = []
+        for s in attrs.get("subjects", []) or []:
+            if isinstance(s, dict) and s.get("subject"):
+                subjects.append(s["subject"])
+
+        resource_type = ""
+        types = attrs.get("types", {}) or {}
+        if isinstance(types, dict):
+            resource_type = types.get("resourceTypeGeneral", "") or ""
+
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "venue": attrs.get("publisher", "") or "DataCite",
+            "doi": doi,
+            "abstract": abstract,
+            "url": url_,
+            "citations": None,
+            "source": "datacite",
+            "open_access": True,
+            "resource_type": resource_type,
+            "subjects": subjects[:10],
+        })
+    return papers
+
+
+# ───────────────────────── Materials Project ─────────────────────────
+
+
+async def _search_materials_project(
+    query: str, max_results: int, year_from: int | None, year_to: int | None
+) -> list[dict[str, Any]]:
+    """Materials Project API. 150k+ computed materials with properties.
+
+    Requires API key (free registration at materialsproject.org).
+    Set HUGINN_MP_API_KEY env var. Without key, returns empty list.
+    Properties include band gap, formation energy, elastic tensor, etc.
+    """
+    api_key = os.environ.get("HUGINN_MP_API_KEY", "")
+    if not api_key:
+        logger.info("Materials Project skipped: no HUGINN_MP_API_KEY set")
+        return []
+
+    q = urllib.parse.quote(query)
+    limit = min(max_results, 25)
+    url = (
+        f"https://api.materialsproject.org/materials/summary/"
+        f"?_limit={limit}&_api_key={api_key}"
+    )
+    # year filtering not supported by MP; skip silently
+
+    def _fetch() -> Any:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("Materials Project 请求失败: %s", exc)
+        return []
+
+    # MP returns a list of material summary dicts
+    if isinstance(data, dict):
+        materials = data.get("data", [])
+    elif isinstance(data, list):
+        materials = data
+    else:
+        materials = []
+
+    papers: list[dict[str, Any]] = []
+    for m in materials:
+        if not isinstance(m, dict):
+            continue
+        formula = m.get("formula_pretty", "") or m.get("full_formula", "") or ""
+        if not formula:
+            continue
+        material_id = m.get("material_id", "") or ""
+        title = f"{formula} (MP-{material_id})" if material_id else formula
+
+        url_ = f"https://nextgen.materialsproject.org/materials/{material_id}" if material_id else ""
+
+        abstract_parts = [f"Formula: {formula}"]
+        band_gap = m.get("band_gap")
+        if band_gap is not None:
+            abstract_parts.append(f"Band gap: {band_gap:.3f} eV")
+        formation_energy = m.get("formation_energy_per_atom")
+        if formation_energy is not None:
+            abstract_parts.append(f"Formation energy: {formation_energy:.4f} eV/atom")
+        energy_above_hull = m.get("energy_above_hull")
+        if energy_above_hull is not None:
+            abstract_parts.append(f"Above hull: {energy_above_hull:.4f} eV")
+        density = m.get("density")
+        if density is not None:
+            abstract_parts.append(f"Density: {density:.2f} g/cm3")
+        symmetry = m.get("symmetry", {}) or {}
+        crystal_system = symmetry.get("crystal_system", "") or ""
+        space_group = symmetry.get("number", "") or ""
+        if crystal_system:
+            abstract_parts.append(f"Crystal system: {crystal_system}")
+        if space_group:
+            abstract_parts.append(f"Space group: {space_group}")
+        deprecated = m.get("deprecated", False)
+        if deprecated:
+            abstract_parts.append("[DEPRECATED]")
+        abstract = "; ".join(abstract_parts)
+
+        papers.append({
+            "title": title,
+            "authors": [],
+            "year": None,
+            "venue": "Materials Project",
+            "doi": None,
+            "abstract": abstract,
+            "url": url_,
+            "citations": None,
+            "source": "materials_project",
+            "open_access": True,
+            "formula": formula,
+            "material_id": material_id,
+            "band_gap": band_gap,
+            "formation_energy": formation_energy,
+            "crystal_system": crystal_system,
+        })
+    return papers
+
+
+# ───────────────────────── OpenCitations ─────────────────────────
+
+
+async def _opencitations_references(
+    doi: str, limit: int = 25
+) -> list[dict[str, Any]]:
+    """OpenCitations COCI API — backward references (papers this DOI cites).
+
+    Free, no API key. Returns DOI-level citation edges without metadata.
+    We enrich with CrossRef DOI lookup when possible.
+    """
+    doi_clean = doi.lower().strip()
+    encoded = urllib.parse.quote(doi_clean, safe="")
+    url = f"https://opencitations.net/index/coci/api/v1/references/{encoded}"
+
+    def _fetch() -> Any:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("OpenCitations references 请求失败: %s", exc)
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    refs: list[dict[str, Any]] = []
+    for item in data[:limit]:
+        if not isinstance(item, dict):
+            continue
+        cited_doi = (item.get("cited") or "").lower().strip()
+        if not cited_doi:
+            continue
+        refs.append({
+            "doi": cited_doi,
+            "title": "",
+            "authors": [],
+            "year": None,
+            "venue": "",
+            "citations": None,
+            "url": f"https://doi.org/{cited_doi}",
+            "source": "opencitations",
+            "creation": item.get("creation", ""),
+            "timespan": item.get("timespan", ""),
+        })
+    return refs
+
+
+async def _opencitations_citations(
+    doi: str, limit: int = 25
+) -> list[dict[str, Any]]:
+    """OpenCitations COCI API — forward citations (papers that cite this DOI).
+
+    Free, no API key. Returns DOI-level citation edges.
+    """
+    doi_clean = doi.lower().strip()
+    encoded = urllib.parse.quote(doi_clean, safe="")
+    url = f"https://opencitations.net/index/coci/api/v1/citations/{encoded}"
+
+    def _fetch() -> Any:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with _OPENER.open(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:
+        logger.warning("OpenCitations citations 请求失败: %s", exc)
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    cites: list[dict[str, Any]] = []
+    for item in data[:limit]:
+        if not isinstance(item, dict):
+            continue
+        citing_doi = (item.get("citing") or "").lower().strip()
+        if not citing_doi:
+            continue
+        cites.append({
+            "doi": citing_doi,
+            "title": "",
+            "authors": [],
+            "year": None,
+            "venue": "",
+            "citations": None,
+            "url": f"https://doi.org/{citing_doi}",
+            "source": "opencitations",
+            "creation": item.get("creation", ""),
+            "timespan": item.get("timespan", ""),
+        })
+    return cites
+
+
+async def _crossref_doi_lookup(doi: str) -> dict[str, Any] | None:
+    """Fetch paper metadata from CrossRef by DOI. Used to enrich OpenCitations results."""
+    doi_clean = doi.lower().strip()
+    url = f"https://api.crossref.org/works/{urllib.parse.quote(doi_clean, safe='')}"
+    try:
+        data = await _http_get_json(url)
+    except Exception:
+        return None
+
+    item = (data.get("message") or {})
+    if not item:
+        return None
+    title_list = item.get("title") or []
+    title = title_list[0] if title_list else ""
+    if not title:
+        return None
+    authors: list[str] = []
+    for a in item.get("author", []) or []:
+        name = f"{a.get('given', '')} {a.get('family', '')}".strip()
+        if name:
+            authors.append(name)
+    year: int | None = None
+    issued = item.get("issued", {}) or {}
+    date_parts = issued.get("date-parts") or [[]]
+    if date_parts and date_parts[0]:
+        year = date_parts[0][0]
+    venue_list = item.get("container-title") or []
+    venue = venue_list[0] if venue_list else ""
+    abstract = re.sub(r"<[^>]+>", "", (item.get("abstract") or "")).strip()
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "venue": venue,
+        "doi": doi_clean,
+        "abstract": abstract,
+        "url": item.get("URL", "") or f"https://doi.org/{doi_clean}",
+        "citations": None,
+        "source": "crossref",
+    }
+
+
+async def _enrich_with_crossref(
+    papers: list[dict[str, Any]], batch_size: int = 5
+) -> list[dict[str, Any]]:
+    """Enrich a list of paper dicts (with DOIs but no titles) via CrossRef lookups.
+
+    OpenCitations only returns DOI edges — no titles or authors. This function
+    batches CrossRef /works/{doi} lookups to fill in metadata. Papers that
+    already have titles are left alone. Papers where CrossRef fails keep their
+    DOI-only stub.
+    """
+    to_enrich = [p for p in papers if p.get("doi") and not p.get("title")]
+    if not to_enrich:
+        return papers
+
+    # Process in small batches to avoid hammering CrossRef
+    for i in range(0, len(to_enrich), batch_size):
+        batch = to_enrich[i:i + batch_size]
+        tasks = [asyncio.create_task(_crossref_doi_lookup(p["doi"])) for p in batch]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for p, res in zip(batch, results):
+            if isinstance(res, dict) and res.get("title"):
+                p["title"] = res["title"]
+                p["authors"] = res.get("authors", [])
+                p["year"] = res.get("year")
+                p["venue"] = res.get("venue", "")
+                p["abstract"] = res.get("abstract", "")
+                p["url"] = res.get("url", p.get("url", ""))
+    return papers
