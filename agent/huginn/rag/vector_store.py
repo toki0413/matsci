@@ -189,9 +189,22 @@ class VectorStore:
         query: str,
         top_k: int = 5,
         filter_dict: dict[str, Any] | None = None,
+        fetch_k: int | None = None,
     ) -> list[dict[str, Any]]:
+        """Search for similar documents.
+
+        Args:
+            query: Search query text
+            top_k: Number of results to return
+            filter_dict: Metadata filter
+            fetch_k: Number of candidates to fetch before filtering/truncation.
+                     Defaults to top_k * 4 if None (AstrBot pattern: over-fetch then trim).
+        """
         collection = self._get_collection()
         query_embedding = self._compute_embeddings([query])
+
+        # AstrBot 风格: 先多捞候选再截断, 给后续 rerank / 过滤留余量
+        n_results = fetch_k or (top_k * 4)
 
         if query_embedding:
             # Primary path: use ChromaDB's native HNSW query (O(log N)).
@@ -199,7 +212,7 @@ class VectorStore:
             try:
                 results = collection.query(
                     query_embeddings=query_embedding,
-                    n_results=top_k,
+                    n_results=n_results,
                     where=filter_dict,
                     include=["documents", "metadatas", "distances"],
                 )
@@ -214,7 +227,7 @@ class VectorStore:
                                 "distance": results["distances"][0][i],
                             }
                         )
-                    return output
+                    return output[:top_k]
             except Exception:
                 pass
 
@@ -240,7 +253,7 @@ class VectorStore:
                     embs = [embs[i] for i in indices]
 
                 if embs:
-                    ranked = self._rust_top_k(query_embedding[0], embs, top_k)
+                    ranked = self._rust_top_k(query_embedding[0], embs, n_results)
                     if ranked is not None:
                         output = []
                         for idx, score in ranked:
@@ -252,7 +265,7 @@ class VectorStore:
                                     "distance": 1.0 - score,
                                 }
                             )
-                        return output
+                        return output[:top_k]
             except Exception:
                 pass
 

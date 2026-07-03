@@ -214,7 +214,9 @@ async def test_tool_chain_repetition() -> None:
 async def test_registry_sustained_access() -> None:
     print("\n[D] Tool Registry Sustained Access (500 reads)")
     from huginn.tools.registry import ToolRegistry
+    from huginn.tools import register_all_tools
 
+    register_all_tools()
     reg = ToolRegistry()
     n = 500
     t0 = time.time()
@@ -223,7 +225,7 @@ async def test_registry_sustained_access() -> None:
     for i in range(n):
         try:
             tools = reg.list_tools()
-            schemas = reg.schemas_cache()
+            schemas = reg.get_all_schemas()
             assert len(tools) > 0
         except Exception:
             errors += 1
@@ -236,7 +238,7 @@ async def test_registry_sustained_access() -> None:
     report(
         "registry 500 reads",
         errors == 0,
-        f"errors={errors} total={elapsed:.1f}s avg={elapsed/n*1000:.1f}ms/read",
+        f"tools={len(reg.list_tools())} errors={errors} total={elapsed:.1f}s avg={elapsed/n*1000:.1f}ms/read",
     )
 
 
@@ -250,15 +252,10 @@ async def test_memory_sustained() -> None:
         report("memory sustained", False, "MemoryManager import failed", skipped=True)
         return
 
-    tmpdir = Path(__file__).parent.parent / "tmp_mem"
-    tmpdir.mkdir(exist_ok=True)
-
     try:
-        mgr = MemoryManager(cache_dir=str(tmpdir / "mem_cache"))
+        mgr = MemoryManager()
     except Exception as e:
         report("memory sustained", False, f"init failed: {e}", skipped=True)
-        import shutil
-        shutil.rmtree(tmpdir, ignore_errors=True)
         return
 
     n = 200
@@ -267,11 +264,9 @@ async def test_memory_sustained() -> None:
 
     for i in range(n):
         try:
-            # Store
-            mgr.remember(f"key_{i}", f"value_{i}", session_id="sust-test")
-            # Recall
-            val = mgr.recall(f"key_{i}", session_id="sust-test")
-            if val:
+            mgr.remember(f"test fact number {i}", category="fact", importance=0.5)
+            results = mgr.recall(f"test fact number {i}", top_k=1)
+            if results:
                 successes += 1
         except Exception:
             pass
@@ -286,9 +281,6 @@ async def test_memory_sustained() -> None:
         successes == n,
         f"successes={successes}/{n} total={elapsed:.1f}s",
     )
-
-    import shutil
-    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ── Quick memory leak test (2-min) ──────────────────────────────────

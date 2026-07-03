@@ -44,7 +44,15 @@ from huginn.perception.document_graph import DocumentGraph
 _NUMERIC_RE = re.compile(
     r"(\d+\.?\d*)\s*"
     r"(°|degree|degrees|deg|Å|angstrom|angstroms|nm|nanometer|nanometers|"
-    r"eV|GHz|MHz|GPa|MPa|K|℃|°C|cm-1|cm⁻¹)",
+    r"μm|um|micron|microns|mm|millimeter|cm|"
+    r"eV|GHz|MHz|kHz|GPa|MPa|kPa|Pa|"
+    r"K|℃|°C|°F|"
+    r"cm-1|cm⁻¹|"
+    r"%|kg/m³|kg/m3|g/cm³|g/cm3|"
+    r"N|kN|MN|J|kJ|W|mW|kW|"
+    r"Ω|Ω·m|Ω·cm|S/cm|mS/cm|"
+    r"h|hour|min|s|ms|"
+    r"ppm|pH|mol/L|mol/L)",
     re.IGNORECASE,
 )
 
@@ -52,7 +60,10 @@ _NUMERIC_RE = re.compile(
 # is making a judgement call, not just reporting a number.
 _QUALITATIVE_RE = re.compile(
     r"(significant|显著|improve|提高|enhance|增强|decrease|降低|"
-    r"confirm|确认)",
+    r"confirm|确认|increase|增加|增大|reduce|减小|"
+    r"achieve|达到|超过|exceed|优于|optimum|最佳|"
+    r"促进|抑制|改善|优化|恶化|"
+    r"表明|说明|发现|result|results)",
     re.IGNORECASE,
 )
 
@@ -70,8 +81,11 @@ _PEAK_DESCRIPTOR_RE = re.compile(
 _CONCLUSION_VERB_RE = re.compile(
     r"\b(?:confirm|confirms|confirming|indicate|indicates|indicates|"
     r"suggest|suggests|demonstrate|demonstrates|reveal|reveals|show|shows|"
-    r"prove|proves|verify|verifies|证实|确认|表明|说明|证实)\s+"
-    r"(.{5,120}?)(?:[.;,]|\bbut\b|$)",
+    r"prove|proves|verify|verifies|"
+    r"证实|确认|表明|说明|证实|发现|结果显示|结果表明|"
+    r"可知|可见|由此|因此|得出|结论|"
+    r"results?\s+show|results?\s+indicate|found\s+that|observed\s+that)\s+"
+    r"(.{5,120}?)(?:[.;,。！？]|\bbut\b|$)",
     re.IGNORECASE,
 )
 
@@ -79,14 +93,32 @@ _CONCLUSION_VERB_RE = re.compile(
 # pick the first metric whose keywords appear. Order matters: longer phrases
 # go first so "lattice constant" wins over a bare "a =".
 _METRIC_KEYWORDS: list[tuple[str, list[str]]] = [
+    # Crystallography / diffraction
     ("2theta", ["2theta", "2θ", "2 theta", "2 θ", "diffraction angle", "bragg angle"]),
     ("d_spacing", ["d-spacing", "d spacing", "d=", "interplanar"]),
     ("lattice_constant", ["lattice constant", "lattice parameter", "a ="]),
     ("band_gap", ["band gap", "bandgap", "eg", "e_g"]),
-    ("crystallite_size", ["crystallite size", "grain size", "scherrer"]),
+    ("crystallite_size", ["crystallite size", "grain size", "scherrer", "晶粒尺寸"]),
     ("intensity", ["intensity", "peak intensity", "relative intensity", "counts"]),
-    ("temperature", ["temperature", "annealing", "synthesized at", "calcined at"]),
-    ("pressure", ["pressure", "applied pressure"]),
+    # Mechanical properties
+    ("compressive_strength", ["compressive strength", "抗压强度", "抗压", "compressive"]),
+    ("flexural_strength", ["flexural strength", "抗折强度", "抗弯强度", "flexural", "bending strength", "fracture"]),
+    ("tensile_strength", ["tensile strength", "抗拉强度", "tensile"]),
+    ("elastic_modulus", ["elastic modulus", "young's modulus", "弹性模量", "杨氏模量", "modulus"]),
+    ("toughness", ["toughness", "韧性", "fracture toughness", "断裂韧性"]),
+    ("strain", ["strain", "应变", "failure strain"]),
+    ("stress", ["stress", "应力", "crack stress", "开裂应力"]),
+    ("density", ["density", "密度", "bulk density"]),
+    ("porosity", ["porosity", "孔隙率"]),
+    # Thermal / electrical
+    ("temperature", ["temperature", "annealing", "synthesized at", "calcined at",
+                      "温度", "养护温度", "表面温度"]),
+    ("heating_rate", ["heating rate", "升温速率", "temperature rate"]),
+    ("pressure", ["pressure", "applied pressure", "压力", "功率"]),
+    ("resistivity", ["resistivity", "电阻率", "resistance", "电阻"]),
+    ("conductivity", ["conductivity", "电导率", "conductance"]),
+    ("thermal_conductivity", ["thermal conductivity", "导热系数", "导热率"]),
+    # Spectroscopy
     ("frequency", ["frequency", "raman shift", "wavenumber", "cm-1", "cm⁻¹", "ir band"]),
 ]
 
@@ -94,14 +126,27 @@ _METRIC_KEYWORDS: list[tuple[str, list[str]]] = [
 # variants onto a canonical token before comparing claim vs data units.
 _UNIT_ALIASES: dict[str, str] = {
     "°": "degree", "°c": "degree", "℃": "degree", "deg": "degree",
-    "degree": "degree", "degrees": "degree",
+    "degree": "degree", "degrees": "degree", "°f": "degree_f",
     "å": "angstrom", "angstrom": "angstrom", "angstroms": "angstrom",
     "nm": "nm", "nanometer": "nm", "nanometers": "nm",
+    "μm": "um", "um": "um", "micron": "um", "microns": "um",
+    "mm": "mm", "millimeter": "mm",
+    "cm": "cm",
     "ev": "eV",
-    "ghz": "GHz", "mhz": "MHz",
-    "gpa": "GPa", "mpa": "MPa",
+    "ghz": "GHz", "mhz": "MHz", "khz": "kHz",
+    "gpa": "GPa", "mpa": "MPa", "kpa": "kPa", "pa": "Pa",
     "k": "K",
     "cm-1": "cm-1", "cm⁻¹": "cm-1",
+    "%": "percent",
+    "kg/m³": "kg_m3", "kg/m3": "kg_m3",
+    "g/cm³": "g_cm3", "g/cm3": "g_cm3",
+    "n": "N", "kn": "kN", "mn": "MN",
+    "j": "J", "kj": "kJ",
+    "w": "W", "mw": "mW", "kw": "kW",
+    "ω": "ohm", "ω·m": "ohm_m", "ω·cm": "ohm_cm",
+    "s/cm": "S_cm", "ms/cm": "mS_cm",
+    "h": "h", "hour": "h", "min": "min", "s": "s", "ms": "ms",
+    "ppm": "ppm", "ph": "pH",
 }
 
 # Units that can be compared at all. If two units aren't in each other's
@@ -110,15 +155,44 @@ _UNIT_ALIASES: dict[str, str] = {
 # don't perform.
 _COMPATIBLE_UNITS: dict[str, set[str]] = {
     "degree": {"degree"},
+    "degree_f": {"degree_f"},
     "angstrom": {"angstrom", "nm"},
-    "nm": {"nm", "angstrom"},
+    "nm": {"nm", "angstrom", "um"},
+    "um": {"um", "nm", "mm"},
+    "mm": {"mm", "um", "cm"},
+    "cm": {"cm", "mm"},
     "eV": {"eV"},
-    "GHz": {"GHz", "MHz"},
-    "MHz": {"MHz", "GHz"},
-    "GPa": {"GPa", "MPa"},
-    "MPa": {"MPa", "GPa"},
-    "K": {"K"},
+    "GHz": {"GHz", "MHz", "kHz"},
+    "MHz": {"MHz", "GHz", "kHz"},
+    "kHz": {"kHz", "MHz"},
+    "GPa": {"GPa", "MPa", "kPa", "Pa"},
+    "MPa": {"MPa", "GPa", "kPa", "Pa"},
+    "kPa": {"kPa", "MPa", "GPa", "Pa"},
+    "Pa": {"Pa", "kPa", "MPa", "GPa"},
+    "K": {"K", "degree"},
     "cm-1": {"cm-1"},
+    "percent": {"percent"},
+    "kg_m3": {"kg_m3", "g_cm3"},
+    "g_cm3": {"g_cm3", "kg_m3"},
+    "N": {"N", "kN", "MN"},
+    "kN": {"kN", "N", "MN"},
+    "MN": {"MN", "kN", "N"},
+    "J": {"J", "kJ"},
+    "kJ": {"kJ", "J"},
+    "W": {"W", "mW", "kW"},
+    "mW": {"mW", "W"},
+    "kW": {"kW", "W"},
+    "ohm": {"ohm"},
+    "ohm_m": {"ohm_m", "ohm_cm"},
+    "ohm_cm": {"ohm_cm", "ohm_m"},
+    "S_cm": {"S_cm", "mS_cm"},
+    "mS_cm": {"mS_cm", "S_cm"},
+    "h": {"h", "min"},
+    "min": {"min", "h", "s"},
+    "s": {"s", "min", "ms"},
+    "ms": {"ms", "s"},
+    "ppm": {"ppm"},
+    "pH": {"pH"},
 }
 
 # Qualifiers that imply a strong / high-intensity signal vs a weak one.
@@ -127,6 +201,21 @@ _HIGH_INTENSITY_QUALIFIERS = frozenset(
     {"sharp", "distinct", "strong", "intense", "prominent", "narrow", "significant"}
 )
 _LOW_INTENSITY_QUALIFIERS = frozenset({"weak", "broad"})
+
+
+# Pre-filter: a single cheap regex that fires when a text block might
+# contain a claim. We only run the expensive extraction pipeline on blocks
+# that pass this filter, cutting the per-block cost dramatically on
+# text-heavy documents where most paragraphs carry no numeric data.
+_CLAIM_PREFILTER_RE = re.compile(
+    r"\d+\.?\d*\s*(?:°|degree|deg|Å|nm|μm|um|mm|cm|eV|GHz|MHz|kHz|"
+    r"GPa|MPa|kPa|Pa|K|℃|cm-1|%|kg/m|N|kN|J|W|Ω|h|min|s|ppm|pH|mol)"
+    r"|"
+    r"(?:significant|显著|improve|提高|enhance|增强|decrease|降低|"
+    r"confirm|确认|increase|增加|reduce|减小|"
+    r"achieve|达到|超过|optimum|最佳|促进|抑制|改善|表明|说明|发现)",
+    re.IGNORECASE,
+)
 
 
 class CrossModalAdapter:
@@ -155,9 +244,23 @@ class CrossModalAdapter:
         "band_gap": 0.05,        # eV
         "crystallite_size": 1.0,   # nm
         "intensity": 0.15,      # relative, 15%
-        "temperature": 2.0,     # K
+        "temperature": 2.0,     # K (or degree C)
+        "heating_rate": 0.05,   # relative, 5%
         "pressure": 0.1,        # GPa
         "frequency": 0.5,      # cm^-1 (Raman/IR)
+        # Mechanical properties — materials science tolerances
+        "compressive_strength": 2.0,  # MPa
+        "flexural_strength": 1.0,     # MPa
+        "tensile_strength": 2.0,      # MPa
+        "elastic_modulus": 1.0,       # GPa
+        "toughness": 0.15,           # relative, 15%
+        "strain": 0.005,             # dimensionless (0.5%)
+        "stress": 2.0,              # MPa
+        "density": 50.0,            # kg/m³
+        "porosity": 0.5,           # percent
+        "resistivity": 0.15,      # relative, 15%
+        "conductivity": 0.15,    # relative, 15%
+        "thermal_conductivity": 0.05,  # relative, 5%
         "default": 0.1,        # 10% relative tolerance
     }
 
@@ -242,6 +345,10 @@ class CrossModalAdapter:
         for text_el in graph.get_elements(ElementType.TEXT):
             content = text_el.content
             if not isinstance(content, str) or not content.strip():
+                continue
+            # Cheap pre-filter: skip blocks that can't possibly carry a
+            # claim. On a 3500-block thesis this cuts the work by ~80%.
+            if not _CLAIM_PREFILTER_RE.search(content):
                 continue
 
             raw_claims: list[dict[str, Any]] = []
@@ -476,13 +583,22 @@ class CrossModalAdapter:
                     if ref.element_type in (ElementType.FIGURE, ElementType.TABLE):
                         figures.append(ref)
 
-        # Fallback when M4 hasn't run yet: consider every figure / table in
-        # the graph. Coarser, but still lets us validate against whatever
-        # data was extracted from charts.
-        if not figures:
+        # Fallback when M4 hasn't run yet: consider figures/tables on the
+        # same page as the parent text. Scanning the whole document is both
+        # slow and noisy — a claim about "Figure 3" on page 5 shouldn't try
+        # to validate against a chart on page 20.
+        if not figures and parent is not None:
             figures = [
                 e for e in id_index.values()
                 if e.element_type in (ElementType.FIGURE, ElementType.TABLE)
+                and e.page == parent.page
+            ]
+        elif not figures:
+            # No parent at all — last resort, same-page as the claim.
+            figures = [
+                e for e in id_index.values()
+                if e.element_type in (ElementType.FIGURE, ElementType.TABLE)
+                and e.page == claim.page
             ]
 
         data: list[dict[str, Any]] = []

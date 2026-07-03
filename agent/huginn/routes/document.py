@@ -6,10 +6,12 @@ summary stats.
 
 Pipeline run on upload:
   M1  PDFElementExtractor    parse PDF into typed elements
+  M2  FigureDataExtractor    run plot_extract on chart figures
   M3  DocumentGraph          build the heterogeneous graph
   M4  RelationPredictor      inject predicted REFERENCES edges
   M5  CrossModalAdapter      extract CLAIM nodes + SUPPORTS/CONTRADICTS
   M6  InfoPackAssembler      bundle into InformationPackage units
+  RAG RAGBridge              (optional) push packages into the KB
 
 Endpoints:
   POST /document/parse                  upload + run full pipeline
@@ -17,6 +19,7 @@ Endpoints:
   GET  /document/{document_id}/graph    fetch nodes + edges
   GET  /document/{document_id}/stats    fetch summary stats
   GET  /document/list                   list parsed documents
+  POST /document/{document_id}/ingest   push packages into the KB
 
 Parsed results live in an in-process dict -- fine for dev / single-user
 setups. Swap for a real store when going multi-tenant.
@@ -24,6 +27,7 @@ setups. Swap for a real store when going multi-tenant.
 
 from __future__ import annotations
 
+import logging
 import tempfile
 import uuid
 from pathlib import Path
@@ -32,10 +36,14 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from huginn.perception.cross_validator import CrossModalAdapter
+from huginn.perception.data_extractor import FigureDataExtractor
 from huginn.perception.document_graph import DocumentGraph
 from huginn.perception.info_pack import InfoPackAssembler
 from huginn.perception.pdf_parser import PDFElementExtractor
+from huginn.perception.rag_bridge import RAGBridge
 from huginn.perception.relation_predictor import RelationPredictor
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/document", tags=["document"])
 
@@ -86,6 +94,12 @@ async def parse_document(file: UploadFile = File(...)) -> dict[str, Any]:
         # M1: parse PDF into elements
         extractor = PDFElementExtractor()
         elements = extractor.extract(tmp_path)
+
+        # M2: extract data from chart figures (best-effort, non-fatal)
+        try:
+            FigureDataExtractor().process(elements)
+        except Exception as exc:
+            logger.warning("M2 figure data extraction skipped: %s", exc)
 
         # M3: build the heterogeneous graph (structural edges only)
         graph = DocumentGraph(elements)
@@ -165,3 +179,42 @@ async def list_documents() -> dict[str, Any]:
         for doc_id, rec in _document_store.items()
     ]
     return {"documents": docs, "count": len(docs)}
+
+
+@router.post("/{document_id}/ingest")
+async def ingest_to_kb(document_id: str) -> dict[str, Any]:
+    """Push a document's info packages into the knowledge base.
+
+    Requires a KnowledgeBase to be available in the server context.
+    Returns the number of packages actually ingested.
+    """
+    record = _document_store.get(document_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="document not found")
+
+    # Try to grab the KB from the server context. When no KB is
+    # configured, we return a clear message instead of a 500.
+    try:
+        from huginn.server_context import _server_context
+        kb = getattr(_server_context, "knowledge_base", None)
+    except Exception:
+        kb = None
+
+    if kb is None:
+        return {
+            "document_id": document_id,
+            "ingested": 0,
+            "message": "no knowledge base configured",
+        }
+
+    bridge = RAGBridge(kb=kb)
+    n = bridge.ingest(
+        record["packages"],
+        document_id=document_id,
+        filename=record["filename"],
+    )
+    return {
+        "document_id": document_id,
+        "ingested": n,
+        "total_packages": len(record["packages"]),
+    }

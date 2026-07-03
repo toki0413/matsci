@@ -49,6 +49,15 @@ _MENTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"表\s*(\d+)"), "table"),
 ]
 
+# Caption type detection — mirrors mention patterns but used by
+# _build_caption_of_edges to link captions only to the right element type.
+_CAPTION_TYPE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?:Figure|Fig\.?)\s*\d+", re.IGNORECASE), "figure"),
+    (re.compile(r"(?:Table|Tab\.?)\s*\d+", re.IGNORECASE), "table"),
+    (re.compile(r"图\s*\d+"), "figure"),
+    (re.compile(r"表\s*\d+"), "table"),
+]
+
 
 class DocumentGraph:
     """A heterogeneous graph over document elements.
@@ -62,11 +71,28 @@ class DocumentGraph:
     add_edge() by downstream modules.
     """
 
+    # Only connect elements of different types in ADJACENT. Text-to-text
+    # adjacency is already covered by SEQ, so adding it here would just
+    # bloat the graph without any new signal for downstream stages.
+    _ADJACENT_CROSS_TYPE_ONLY: bool = True
+
+    # Max ADJACENT edges per node. Prevents a densely packed page from
+    # generating hundreds of edges for a single element.
+    _ADJACENT_MAX_PER_NODE: int = 10
+
+    # Distance threshold for ADJACENT edges (PDF points).
+    _ADJACENT_THRESHOLD: float = 150.0
+
     def __init__(self, elements: list[DocumentElement] | None = None):
         self._elements: dict[str, DocumentElement] = {}  # id -> element
         self._edges: list[GraphEdge] = []
         # (source, target, edge_type) set for O(1) duplicate checks.
         self._edge_index: set[tuple[str, str, EdgeType]] = set()
+        # Adjacency index: element_id -> {edge_type -> set(neighbor_ids)}.
+        # Built alongside _edges so get_neighbors is O(1) instead of O(E).
+        self._adjacency: dict[str, dict[EdgeType, set[str]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
         # Monotonic counter for minting child element ids (mentions, data
         # points). Keeps ids stable and human-readable while avoiding
         # collisions when many children are spawned from one parent.
@@ -92,6 +118,7 @@ class DocumentGraph:
         self._elements = {}
         self._edges = []
         self._edge_index = set()
+        self._adjacency = defaultdict(lambda: defaultdict(set))
         self._child_counter = 0
 
         for el in elements:
@@ -130,6 +157,9 @@ class DocumentGraph:
         # missing element here than downstream in the GNN.
         self._edge_index.add(key)
         self._edges.append(edge)
+        # Maintain the adjacency index for O(1) neighbor lookups.
+        self._adjacency[edge.source][edge.edge_type].add(edge.target)
+        self._adjacency[edge.target][edge.edge_type].add(edge.source)
 
     # ------------------------------------------------------------------
     # Structural edge builders
@@ -194,17 +224,31 @@ class DocumentGraph:
     def _build_caption_of_edges(self) -> list[GraphEdge]:
         """Link each caption to its nearest figure/table on the same page.
 
-        "Nearest" is center-to-center bbox distance. We deliberately stay
-        on the same page -- cross-page caption attribution is unreliable
-        from geometry alone and is better left to the relation model (M4).
+        The caption text is parsed to determine whether it refers to a
+        figure ("图3") or a table ("表2"), and only candidates of the
+        matching type are considered. This prevents a table caption from
+        being linked to a nearby figure (or vice versa) just because it
+        happens to be spatially closer.
         """
         edges: list[GraphEdge] = []
         captions = [e for e in self._elements.values()
                     if e.element_type is ElementType.CAPTION]
-        targets = [e for e in self._elements.values()
-                   if e.element_type in (ElementType.FIGURE, ElementType.TABLE)]
+        figures = [e for e in self._elements.values()
+                   if e.element_type is ElementType.FIGURE]
+        tables = [e for e in self._elements.values()
+                  if e.element_type is ElementType.TABLE]
 
         for cap in captions:
+            cap_type = self._detect_caption_type(cap.content)
+            # Filter targets by the caption's declared type. When we can't
+            # tell from the text, fall back to considering both types.
+            if cap_type == "figure":
+                targets = figures
+            elif cap_type == "table":
+                targets = tables
+            else:
+                targets = figures + tables
+
             same_page = [t for t in targets if t.page == cap.page]
             if not same_page:
                 continue
@@ -216,19 +260,32 @@ class DocumentGraph:
             ))
         return edges
 
-    def _build_adjacent_edges(self, threshold: float = 200.0) -> list[GraphEdge]:
+    def _build_adjacent_edges(self, threshold: float | None = None) -> list[GraphEdge]:
         """Connect spatially close elements on the same page.
 
         Two elements get an ADJACENT edge when their bbox centers are within
-        `threshold` points (PDF points, ~1/72 inch). We only emit one edge
-        per unordered pair, ordered by element_id, so the relation reads as
+        the threshold (PDF points, ~1/72 inch). We only emit one edge per
+        unordered pair, ordered by element_id, so the relation reads as
         effectively undirected even though GraphEdge is directional.
+
+        Optimisations vs. the first version:
+          * Cross-type only: text-text adjacency is already covered by SEQ,
+            so we skip pairs that share the same ElementType. This cuts the
+            edge count dramatically on text-heavy pages.
+          * Per-node cap: at most _ADJACENT_MAX_PER_NODE edges per node,
+            keeping the nearest neighbours and dropping the rest.
+          * Tighter default threshold (150pt instead of 200pt).
 
         Synthesized child nodes (MENTION, aggregate DATA_POINT) are excluded:
         they inherit their parent's bbox and would otherwise be "adjacent"
         to everything the parent touches, drowning the real spatial signal.
         """
+        if threshold is None:
+            threshold = self._ADJACENT_THRESHOLD
         edges: list[GraphEdge] = []
+        # Track how many ADJACENT edges each node already has so we can
+        # enforce the per-node cap without a second pass.
+        per_node_count: dict[str, int] = defaultdict(int)
         by_page: dict[int, list[DocumentElement]] = defaultdict(list)
         for el in self._elements.values():
             if not self._is_spatial(el):
@@ -239,8 +296,17 @@ class DocumentGraph:
             n = len(els)
             for i in range(n):
                 a = els[i]
+                if self._ADJACENT_CROSS_TYPE_ONLY and per_node_count[a.element_id] >= self._ADJACENT_MAX_PER_NODE:
+                    continue
                 for j in range(i + 1, n):
                     b = els[j]
+                    # Skip same-type pairs when cross-type filtering is on.
+                    # Text-text is covered by SEQ; figure-figure and
+                    # table-table adjacency adds little value at this stage.
+                    if self._ADJACENT_CROSS_TYPE_ONLY and a.element_type is b.element_type:
+                        continue
+                    if per_node_count[b.element_id] >= self._ADJACENT_MAX_PER_NODE:
+                        continue
                     # Cheap reject: skip pairs whose bboxes don't even
                     # overlap in projection -- they can't be within
                     # `threshold` unless the threshold is huge.
@@ -253,6 +319,10 @@ class DocumentGraph:
                             target=dst,
                             edge_type=EdgeType.ADJACENT,
                         ))
+                        per_node_count[a.element_id] += 1
+                        per_node_count[b.element_id] += 1
+                        if per_node_count[a.element_id] >= self._ADJACENT_MAX_PER_NODE:
+                            break
         return edges
 
     def _build_extracted_from_edges(self) -> list[GraphEdge]:
@@ -314,6 +384,21 @@ class DocumentGraph:
     # ------------------------------------------------------------------
     # Mention extraction
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_caption_type(content: Any) -> str | None:
+        """Determine whether a caption refers to a figure or a table.
+
+        Scans the caption text for "图N" / "Figure N" (-> figure) or
+        "表N" / "Table N" (-> table). Returns None when no type marker
+        is found, in which case the caller falls back to both types.
+        """
+        if not isinstance(content, str):
+            return None
+        for pattern, kind in _CAPTION_TYPE_PATTERNS:
+            if pattern.search(content):
+                return kind
+        return None
 
     def _extract_mentions(self, element: DocumentElement) -> list[DocumentElement]:
         """Find figure/table mentions in a text block.
@@ -447,14 +532,15 @@ class DocumentGraph:
         """
         if element_id not in self._elements:
             return []
+        adj = self._adjacency.get(element_id)
+        if not adj:
+            return []
         neighbor_ids: set[str] = set()
-        for e in self._edges:
-            if edge_type is not None and e.edge_type is not edge_type:
-                continue
-            if e.source == element_id:
-                neighbor_ids.add(e.target)
-            elif e.target == element_id:
-                neighbor_ids.add(e.source)
+        if edge_type is not None:
+            neighbor_ids.update(adj.get(edge_type, ()))
+        else:
+            for ids in adj.values():
+                neighbor_ids.update(ids)
         return [self._elements[nid] for nid in neighbor_ids if nid in self._elements]
 
     def get_adjacency_matrix(
@@ -505,6 +591,8 @@ class DocumentGraph:
                     continue
                 sub._edge_index.add(key)
                 sub._edges.append(e)
+                sub._adjacency[e.source][e.edge_type].add(e.target)
+                sub._adjacency[e.target][e.edge_type].add(e.source)
         return sub
 
     # ------------------------------------------------------------------

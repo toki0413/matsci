@@ -41,6 +41,23 @@ from huginn.perception.simulator_log_tailer import SimulatorLogTailer, Simulatio
 from huginn.perception.semantic_alignment import SemanticAligner, SemanticConflict
 from huginn.perception.cognitive_integration import CognitiveIntegrator, CognitiveState
 
+# DocGraph pipeline modules (M1-M7)
+from huginn.perception.doc_types import (
+    BBox,
+    DocumentElement,
+    ElementType,
+    EdgeType,
+    GraphEdge,
+    InformationPackage,
+)
+from huginn.perception.document_graph import DocumentGraph
+from huginn.perception.pdf_parser import PDFElementExtractor
+from huginn.perception.relation_predictor import RelationPredictor
+from huginn.perception.cross_validator import CrossModalAdapter
+from huginn.perception.info_pack import InfoPackAssembler
+from huginn.perception.data_extractor import FigureDataExtractor
+from huginn.perception.rag_bridge import RAGBridge
+
 
 @dataclass
 class PerceptionSnapshot:

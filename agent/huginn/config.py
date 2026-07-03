@@ -248,6 +248,9 @@ class AgentProfileConfig:
     max_steps: int = 10
     # Optional per-agent thinking override. Falls back to the model's setting.
     thinking: ThinkingIntensity | dict[str, Any] | None = None
+    # 自定义 system prompt 覆写 (AstrBot 会话级覆写模式)
+    # 设为 None 时使用 persona 加载的 system prompt; 非 None 时直接覆盖
+    system_prompt_override: str | None = None
 
 
 @dataclass
@@ -876,6 +879,7 @@ class HuginnConfig:
                     "enabled": a.enabled,
                     "max_steps": a.max_steps,
                     "thinking": a.thinking,
+                    "system_prompt_override": a.system_prompt_override,
                 }
                 for a in self.agents
             ],
