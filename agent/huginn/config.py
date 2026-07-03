@@ -233,6 +233,10 @@ class ModelConfig:
     # in the model registry. ``dict`` values are passed through verbatim.
     thinking: ThinkingIntensity | dict[str, Any] | None = None
     max_tokens: int | None = None  # must be > thinking budget for Anthropic
+    # Link to a stored LLM credential in CredentialStore.
+    # When set, ModelRegistry.get() will use this credential's api_key
+    # as fallback when api_key field is empty.
+    credential_id: str | None = None
 
 
 @dataclass

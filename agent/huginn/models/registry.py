@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from huginn.config import HuginnConfig, ModelConfig, ThinkingIntensity
@@ -681,10 +681,28 @@ class ModelRegistry:
         self._check_local_only(cfg.provider, cfg.base_url)
         effective_thinking = thinking if thinking is not None else cfg.thinking
         effective_max_tokens = max_tokens if max_tokens is not None else cfg.max_tokens
+
+        resolved_key = resolve_provider_key(cfg.provider, cfg.api_key)
+        # Fallback: if no key in config but credential_id is set, use CredentialStore
+        if not resolved_key and cfg.credential_id:
+            try:
+                from huginn.security.credential_store import get_credential_store
+
+                cred_info = get_credential_store().to_llm_info(cfg.credential_id)
+                if cred_info:
+                    resolved_key = cred_info.get("api_key")
+                    # Credential may also override empty fields
+                    if not cfg.model and cred_info.get("model"):
+                        cfg = replace(cfg, model=cred_info["model"])
+                    if not cfg.base_url and cred_info.get("base_url"):
+                        cfg = replace(cfg, base_url=cred_info["base_url"])
+            except Exception:
+                pass  # CredentialStore not available, fall through
+
         instance = create_langchain_model(
             provider=cfg.provider,  # type: ignore[arg-type]
             model_name=cfg.model,
-            api_key=resolve_provider_key(cfg.provider, cfg.api_key),  # type: ignore[arg-type]
+            api_key=resolved_key,  # type: ignore[arg-type]
             base_url=cfg.base_url,
             temperature=cfg.temperature,
             thinking=effective_thinking,
