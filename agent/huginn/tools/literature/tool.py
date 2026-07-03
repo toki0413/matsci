@@ -29,15 +29,25 @@ from ._http import (
 )
 from .search_sources import (
     _dedup,
-    _norm_title,
+    _sort_papers,
     _search_arxiv,
     _search_core,
     _search_crossref,
+    _search_datacite,
     _search_doaj,
+    _search_europepmc,
+    _search_materials_cloud,
+    _search_materials_project,
+    _search_nomad,
     _search_openalex,
+    _search_openaire,
     _search_pubmed,
     _search_s2,
-    _sort_papers,
+    _search_zenodo,
+    _search_cod,
+    _opencitations_references,
+    _opencitations_citations,
+    _enrich_with_crossref,
 )
 from .pdf_fetch import (
     _scihub_enabled,
@@ -133,9 +143,16 @@ class LiteratureInput(BaseModel):
     )
     sources: list[str] = Field(
         default_factory=lambda: ["arxiv", "s2", "crossref", "openalex",
-                                  "pubmed", "doaj", "core"],
-        description="搜索源, 默认七路全开. 可减到 ['arxiv'] 单源. "
-                    "学术: arxiv/s2/crossref/openalex/pubmed/doaj/core",
+                                  "pubmed", "doaj", "core",
+                                  "europepmc", "zenodo", "openaire",
+                                  "cod", "materials_cloud",
+                                  "nomad", "datacite", "materials_project"],
+        description="搜索源, 默认十五路全开. 可减到 ['arxiv'] 单源. "
+                    "学术文献: arxiv/s2/crossref/openalex/pubmed/doaj/core/"
+                    "europepmc/zenodo/openaire; "
+                    "材料数据库: cod/materials_cloud/nomad/materials_project; "
+                    "数据集: datacite. "
+                    "materials_project 需设 HUGINN_MP_API_KEY",
     )
     year_from: int | None = Field(default=None, description="年份下限 (含)")
     year_to: int | None = Field(default=None, description="年份上限 (含)")
@@ -223,14 +240,17 @@ class LiteratureInput(BaseModel):
 
 
 class LiteratureTool(HuginnTool):
-    """学术文献调研工具. 联网搜索 arXiv/S2/CrossRef/OpenAlex, LLM 综述, 文献基准对比,
-    OA PDF 全文抓取, 引用网络查询, RAG 入库."""
+    """学术文献+材料数据库调研工具. 15 路并发搜索 (arXiv/S2/CrossRef/OpenAlex/PubMed/
+    DOAJ/CORE/EuropePMC/Zenodo/OpenAIRE/COD/MaterialsCloud/NOMAD/DataCite/MaterialsProject),
+    LLM 综述, 文献基准对比, OA PDF 全文抓取, 引用网络查询, RAG 入库."""
 
     name = "literature_tool"
     category = "search"
     description = (
-        "Academic literature survey: search arXiv/Semantic Scholar/CrossRef/OpenAlex in parallel, "
-        "generate multi-paper summaries with citations, look up literature-reported "
+        "Search 15 sources in parallel: literature (arXiv/S2/CrossRef/OpenAlex/PubMed/"
+        "DOAJ/CORE/EuropePMC/Zenodo/OpenAIRE), materials databases (COD/Materials Cloud/"
+        "NOMAD 19M+ entries/Materials Project), and datasets (DataCite). "
+        "Generate multi-paper summaries with citations, look up literature-reported "
         "values for a given system+property (complements validate_tool's built-in benchmarks), "
         "fetch OA PDF full text (multi-source: OpenAlex/Unpaywall/Europe PMC/arXiv), "
         "query citation networks, and ingest papers into local RAG. "
@@ -312,6 +332,38 @@ class LiteratureTool(HuginnTool):
         if "core" in args.sources:
             tasks.append(("core", asyncio.create_task(
                 _search_core(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "europepmc" in args.sources:
+            tasks.append(("europepmc", asyncio.create_task(
+                _search_europepmc(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "zenodo" in args.sources:
+            tasks.append(("zenodo", asyncio.create_task(
+                _search_zenodo(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "openaire" in args.sources:
+            tasks.append(("openaire", asyncio.create_task(
+                _search_openaire(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "cod" in args.sources:
+            tasks.append(("cod", asyncio.create_task(
+                _search_cod(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "materials_cloud" in args.sources:
+            tasks.append(("materials_cloud", asyncio.create_task(
+                _search_materials_cloud(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "nomad" in args.sources:
+            tasks.append(("nomad", asyncio.create_task(
+                _search_nomad(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "datacite" in args.sources:
+            tasks.append(("datacite", asyncio.create_task(
+                _search_datacite(query, args.max_results, args.year_from, args.year_to)
+            )))
+        if "materials_project" in args.sources:
+            tasks.append(("materials_project", asyncio.create_task(
+                _search_materials_project(query, args.max_results, args.year_from, args.year_to)
             )))
         if not tasks:
             return ToolResult(
@@ -772,9 +824,20 @@ class LiteratureTool(HuginnTool):
     # ── citations ───────────────────────────────────────────
 
     async def _do_citations(self, args: LiteratureInput) -> ToolResult:
-        """S2 前/后向引用网络. forward=谁引了这篇; backward=这篇引了谁."""
+        """前/后向引用网络. 先试 S2, 被限速(429)就回退到 OpenCitations.
+
+        forward=谁引了这篇; backward=这篇引了谁.
+        S2 给完整元数据 (title/authors/citations), OpenCitations 只给 DOI 边,
+        靠 CrossRef 补元数据. 两路都挂才报错.
+        """
         paper_id = self._resolve_s2_paper_id(args)
-        if not paper_id:
+        doi = args.doi
+        if not doi and args.paper:
+            doi = (args.paper or {}).get("doi")
+        if not doi and paper_id and paper_id.startswith("DOI:"):
+            doi = paper_id[4:]
+
+        if not paper_id and not doi:
             return ToolResult(
                 data=None, success=False,
                 error="无法解析 paper_id, 需要 doi/arxiv_id 或 paper dict (含 doi/url)",
@@ -782,41 +845,81 @@ class LiteratureTool(HuginnTool):
 
         result: dict[str, Any] = {
             "action": "citations",
-            "paper_id": paper_id,
+            "paper_id": paper_id or (f"DOI:{doi}" if doi else ""),
             "direction": args.direction,
             "forward_citations": [],
             "backward_references": [],
+            "sources_used": [],
         }
 
-        # 前向: 谁引了这篇 → /paper/{id}/citations
-        if args.direction in ("forward", "both"):
-            try:
-                pid_enc = urllib.parse.quote(paper_id, safe="")
-                data = await _http_get_json(
-                    f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/citations"
-                    f"?fields=title,year,authors,citationCount,externalIds&limit={args.max_citations}"
-                )
-                for c in data.get("data", []) or []:
-                    cp = c.get("citingPaper", {}) or {}
-                    result["forward_citations"].append(self._s2_paper_to_dict(cp))
-            except Exception as exc:
-                result["forward_error"] = str(exc)[:200]
-                logger.warning("S2 citations (forward) 失败: %s", exc)
+        s2_failed = False
 
-        # 后向: 这篇引了谁 → /paper/{id}/references
+        # ── 前向: 谁引了这篇 ──
+        if args.direction in ("forward", "both"):
+            # 先试 S2
+            if paper_id:
+                try:
+                    pid_enc = urllib.parse.quote(paper_id, safe="")
+                    data = await _http_get_json(
+                        f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/citations"
+                        f"?fields=title,year,authors,citationCount,externalIds&limit={args.max_citations}"
+                    )
+                    for c in data.get("data", []) or []:
+                        cp = c.get("citingPaper", {}) or {}
+                        result["forward_citations"].append(self._s2_paper_to_dict(cp))
+                    result["sources_used"].append("s2")
+                except Exception as exc:
+                    s2_failed = True
+                    result["forward_error_s2"] = str(exc)[:200]
+                    logger.warning("S2 citations (forward) 失败: %s", exc)
+
+            # S2 挂了就回退 OpenCitations
+            if s2_failed and doi:
+                try:
+                    oc_cites = await _opencitations_citations(doi, args.max_citations)
+                    if oc_cites:
+                        # CrossRef 补元数据
+                        oc_cites = await _enrich_with_crossref(oc_cites)
+                        result["forward_citations"].extend(oc_cites)
+                        result["sources_used"].append("opencitations")
+                        result["forward_fallback"] = "opencitations"
+                except Exception as exc:
+                    result["forward_error_oc"] = str(exc)[:200]
+                    logger.warning("OpenCitations citations (forward) 失败: %s", exc)
+
+        # ── 后向: 这篇引了谁 ──
+        backward_s2_failed = False
         if args.direction in ("backward", "both"):
-            try:
-                pid_enc = urllib.parse.quote(paper_id, safe="")
-                data = await _http_get_json(
-                    f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
-                    f"?fields=title,year,authors,citationCount,externalIds&limit={args.max_citations}"
-                )
-                for r in data.get("data", []) or []:
-                    cp = r.get("citedPaper", {}) or {}
-                    result["backward_references"].append(self._s2_paper_to_dict(cp))
-            except Exception as exc:
-                result["backward_error"] = str(exc)[:200]
-                logger.warning("S2 references (backward) 失败: %s", exc)
+            if paper_id:
+                try:
+                    pid_enc = urllib.parse.quote(paper_id, safe="")
+                    data = await _http_get_json(
+                        f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
+                        f"?fields=title,year,authors,citationCount,externalIds&limit={args.max_citations}"
+                    )
+                    for r in data.get("data", []) or []:
+                        cp = r.get("citedPaper", {}) or {}
+                        result["backward_references"].append(self._s2_paper_to_dict(cp))
+                    if "s2" not in result["sources_used"]:
+                        result["sources_used"].append("s2")
+                except Exception as exc:
+                    backward_s2_failed = True
+                    result["backward_error_s2"] = str(exc)[:200]
+                    logger.warning("S2 references (backward) 失败: %s", exc)
+
+            # S2 挂了就回退 OpenCitations
+            if backward_s2_failed and doi:
+                try:
+                    oc_refs = await _opencitations_references(doi, args.max_citations)
+                    if oc_refs:
+                        oc_refs = await _enrich_with_crossref(oc_refs)
+                        result["backward_references"].extend(oc_refs)
+                        if "opencitations" not in result["sources_used"]:
+                            result["sources_used"].append("opencitations")
+                        result["backward_fallback"] = "opencitations"
+                except Exception as exc:
+                    result["backward_error_oc"] = str(exc)[:200]
+                    logger.warning("OpenCitations references (backward) 失败: %s", exc)
 
         result["forward_count"] = len(result["forward_citations"])
         result["backward_count"] = len(result["backward_references"])
@@ -857,83 +960,132 @@ class LiteratureTool(HuginnTool):
     async def _do_citation_graph(self, args: LiteratureInput) -> ToolResult:
         """BFS 引文图: 从种子 paper 出发, 沿 backward references 往上挖.
 
-        每层调 S2 references API, 收集 nodes + edges. 触顶 max_nodes 或 max_depth
-        就停. S2 API 失败不抛, 记 error 返回已收集的部分图, agent 能用部分结果.
+        每层调 S2 references API, 收集 nodes + edges. S2 被限速(429)时
+        自动切到 OpenCitations DOI 边 + CrossRef 元数据补全. 触顶 max_nodes
+        或 max_depth 就停. 两路都挂也返回已收集的部分图, agent 能用部分结果.
         """
         seed_id = self._resolve_s2_paper_id(args)
-        if not seed_id:
+        doi = args.doi
+        if not doi and args.paper:
+            doi = (args.paper or {}).get("doi")
+        if not doi and seed_id and seed_id.startswith("DOI:"):
+            doi = seed_id[4:]
+
+        if not seed_id and not doi:
             return ToolResult(
                 data=None,
                 success=False,
                 error="无法解析 paper_id, 需要 doi/arxiv_id 或 paper dict (含 doi/url)",
             )
 
-        # 用 paperId 做去重 key (S2 内部 ID), 拿不到就用 title 退化
         visited: set[str] = set()
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, str]] = []
         errors: list[str] = []
+        source_mode = "s2"  # 默认用 S2, 限速后切 "opencitations"
 
         # 种子节点
         seed_node = {
-            "paper_id": seed_id,
+            "paper_id": seed_id or (f"DOI:{doi}" if doi else ""),
             "title": (args.paper or {}).get("title", "") if args.paper else "",
             "year": (args.paper or {}).get("year") if args.paper else None,
-            "doi": args.doi,
+            "doi": doi,
             "depth": 0,
         }
         nodes.append(seed_node)
-        visited.add(seed_id)
+        visited.add(seed_node["paper_id"])
 
         # BFS: 当前层的 paper_id 列表
-        current_layer: list[str] = [seed_id]
+        current_layer: list[str] = [seed_node["paper_id"]]
+        # 同步维护 current_dois, 用于 OpenCitations fallback
+        current_dois: list[str] = [doi] if doi else []
         depth_reached = 0
 
         for depth in range(1, args.max_depth + 1):
             if len(nodes) >= args.max_nodes or not current_layer:
                 break
             next_layer: list[str] = []
-            for parent_id in current_layer:
+            next_dois: list[str] = []
+
+            for idx, parent_id in enumerate(current_layer):
                 if len(nodes) >= args.max_nodes:
                     break
-                # 调 S2 references API 拿 parent 引了谁
-                try:
-                    pid_enc = urllib.parse.quote(parent_id, safe="")
-                    data = await _http_get_json(
-                        f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
-                        f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
-                    )
-                except Exception as exc:
-                    errors.append(f"depth={depth} parent={parent_id}: {exc}"[:200])
-                    continue
+                parent_doi = current_dois[idx] if idx < len(current_dois) else None
 
-                for ref in data.get("data", []) or []:
-                    cp = ref.get("citedPaper", {}) or {}
-                    child_id = cp.get("paperId") or ""
-                    if not child_id:
-                        continue
-                    # 加边
-                    edges.append({"from": parent_id, "to": child_id})
-                    # 没访问过就加节点
-                    if child_id not in visited:
-                        if len(nodes) >= args.max_nodes:
-                            break
-                        nodes.append({
-                            "paper_id": child_id,
-                            "title": cp.get("title", "") or "",
-                            "year": cp.get("year"),
-                            "doi": (cp.get("externalIds") or {}).get("DOI"),
-                            "depth": depth,
-                        })
-                        visited.add(child_id)
-                        next_layer.append(child_id)
-                depth_reached = depth
+                # ── S2 模式: 调 references API ──
+                if source_mode == "s2" and parent_id:
+                    try:
+                        pid_enc = urllib.parse.quote(parent_id, safe="")
+                        data = await _http_get_json(
+                            f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
+                            f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
+                        )
+                        for ref in data.get("data", []) or []:
+                            cp = ref.get("citedPaper", {}) or {}
+                            child_id = cp.get("paperId") or ""
+                            if not child_id:
+                                continue
+                            edges.append({"from": parent_id, "to": child_id})
+                            if child_id not in visited:
+                                if len(nodes) >= args.max_nodes:
+                                    break
+                                child_doi = (cp.get("externalIds") or {}).get("DOI")
+                                nodes.append({
+                                    "paper_id": child_id,
+                                    "title": cp.get("title", "") or "",
+                                    "year": cp.get("year"),
+                                    "doi": child_doi,
+                                    "depth": depth,
+                                })
+                                visited.add(child_id)
+                                next_layer.append(child_id)
+                                if child_doi:
+                                    next_dois.append(child_doi)
+                        depth_reached = depth
+                        continue  # S2 成功就跳过 OpenCitations
+                    except Exception as exc:
+                        errors.append(f"depth={depth} parent={parent_id} s2: {exc}"[:200])
+                        logger.warning("S2 BFS depth=%d failed, switching to OpenCitations: %s", depth, exc)
+                        source_mode = "opencitations"
+
+                # ── OpenCitations 模式: DOI 边 + CrossRef 补元数据 ──
+                if source_mode == "opencitations" and parent_doi:
+                    try:
+                        oc_refs = await _opencitations_references(parent_doi, args.max_citations)
+                        if not oc_refs:
+                            continue
+                        # 批量补元数据
+                        oc_refs = await _enrich_with_crossref(oc_refs)
+                        for ref in oc_refs:
+                            child_doi = ref.get("doi", "")
+                            child_id = f"DOI:{child_doi}" if child_doi else ""
+                            if not child_id or child_id in visited:
+                                continue
+                            edges.append({"from": parent_id, "to": child_id})
+                            if len(nodes) >= args.max_nodes:
+                                break
+                            nodes.append({
+                                "paper_id": child_id,
+                                "title": ref.get("title", ""),
+                                "year": ref.get("year"),
+                                "doi": child_doi,
+                                "depth": depth,
+                                "source": "opencitations",
+                            })
+                            visited.add(child_id)
+                            next_layer.append(child_id)
+                            next_dois.append(child_doi)
+                        depth_reached = depth
+                    except Exception as exc:
+                        errors.append(f"depth={depth} parent={parent_doi} oc: {exc}"[:200])
+
             current_layer = next_layer
+            current_dois = next_dois
 
         return ToolResult(
             data={
                 "action": "citation_graph",
-                "seed_paper_id": seed_id,
+                "seed_paper_id": seed_node["paper_id"],
                 "depth_reached": depth_reached,
                 "n_unique_papers": len(nodes),
                 "n_edges": len(edges),
@@ -941,6 +1093,7 @@ class LiteratureTool(HuginnTool):
                 "edges": edges,
                 "errors": errors,
                 "truncated": len(nodes) >= args.max_nodes,
+                "source_mode": source_mode,
             },
             success=True,
         )
