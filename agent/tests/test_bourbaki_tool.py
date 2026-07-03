@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-# Ensure math_anything is discoverable in test environment
-_bourbaki_path = str(Path(r"C:\Users\wanzh\Desktop\math-anything\math-anything"))
-if _bourbaki_path not in sys.path:
+# Ensure math_anything is discoverable in test environment (local dev only)
+_bourbaki_path = str(Path(__file__).parent.parent.parent / "math-anything" / "math-anything")
+if Path(_bourbaki_path).exists() and _bourbaki_path not in sys.path:
     sys.path.insert(0, _bourbaki_path)
 
 from huginn.tools.bourbaki_tool import BourbakiInput, BourbakiTool
