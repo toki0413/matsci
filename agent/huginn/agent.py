@@ -598,6 +598,10 @@ class HuginnAgent:
             from huginn.personalization import set_shared_style_learner
             set_shared_style_learner(pers.style_learner)
 
+        # 运行模式: "chat" (默认, 快速响应) 或 "research" (深度探索).
+        # research 模式: 更高 recursion limit, 启用研究日志, 验证用独立 LLM.
+        self._mode: str = "chat"
+
     def _make_summarizer(self):
         """Create an async callable for conversation summarization.
 
@@ -633,6 +637,57 @@ class HuginnAgent:
             return model.invoke(messages)
 
         return _summarize
+
+    # ── 运行模式 ──────────────────────────────────────────────
+
+    def set_mode(self, mode: str) -> None:
+        """切换运行模式: 'chat' 或 'research'.
+
+        research 模式提升 recursion limit, 适合长链推理和多步验证.
+        切换后需要 rebuild graph (下次 chat 时自动).
+        """
+        if mode not in ("chat", "research"):
+            raise ValueError(f"未知模式: {mode}. 可选: chat, research")
+        if mode != self._mode:
+            self._mode = mode
+            self._agent_graph = None  # force rebuild
+            logger.info("agent mode switched to '%s'", mode)
+
+    def get_mode(self) -> str:
+        return self._mode
+
+    def is_research_mode(self) -> bool:
+        return self._mode == "research"
+
+    # ── 专精模型 ─────────────────────────────────────────────
+
+    def select_verification_model(self) -> Any:
+        """选验证用 LLM. 有独立 verification 模型就用, 没有就退回主模型.
+
+        参考 Moonshine 三槽: main 生成假设, verification 用不同 LLM 独立验证,
+        避免"模型自己生成自己验证"的确认偏差.
+        """
+        if self.model_router is not None:
+            try:
+                return self.model_router.select_verification()
+            except Exception:
+                pass
+        return self.select_model("reasoning")
+
+    def has_dedicated_verification(self) -> bool:
+        """是否注册了独立的验证模型."""
+        if self.model_router is None:
+            return False
+        return self.model_router.has_dedicated_verification()
+
+    def select_archival_model(self) -> Any:
+        """选归档用 LLM. 优先便宜模型, 降低归档成本."""
+        if self.model_router is not None:
+            try:
+                return self.model_router.select_archival()
+            except Exception:
+                pass
+        return self.select_model("cheap")
 
     def _detect_provider(self) -> str | None:
         """Detect the LLM provider from the configured model."""
@@ -1034,7 +1089,9 @@ class HuginnAgent:
                     FixDanglingToolCallsMiddleware(),
                     RateLimitMiddleware(),
                 ],
-            ).with_config({"recursion_limit": 250})
+            ).with_config({
+                "recursion_limit": 500 if self.is_research_mode() else 250,
+            })
 
             return self._agent_graph
 
