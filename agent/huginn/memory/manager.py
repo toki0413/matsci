@@ -40,10 +40,16 @@ class MemoryManager:
         session: SessionContext | None = None,
         longterm: LongTermMemory | None = None,
         config: MemoryConfig | None = None,
+        llm: Any = None,
     ):
         self.session = session or SessionContext()
         self.longterm = longterm or LongTermMemory()
         self.config = config or MemoryConfig()
+        self._llm = llm  # optional LLM for insight extraction
+
+    def set_llm(self, llm: Any) -> None:
+        """Attach an LLM instance for insight extraction."""
+        self._llm = llm
 
     # --- Session memory operations ---
 
@@ -224,7 +230,7 @@ class MemoryManager:
             f"{len(self.session.tool_calls)} tool calls. "
             f"Topics: {self._extract_topics()}"
         )
-        return self.longterm.store(
+        entry_id = self.longterm.store(
             content=summary,
             category="conversation",
             tags=["session_summary"],
@@ -232,6 +238,142 @@ class MemoryManager:
             importance=0.5,
             tier=tier,
         )
+
+        # Distill knowledge from tool calls — best-effort, never blocks the summary
+        try:
+            distilled = self._run_distillation()
+            if distilled > 0:
+                self.longterm.store(
+                    content=f"Distilled {distilled} knowledge items from session {self.session.session_id}",
+                    category="insight",
+                    tags=["distillation", "auto"],
+                    source=f"session:{self.session.session_id}",
+                    importance=0.7,
+                    tier="long",
+                )
+        except Exception:
+            pass
+
+        # LLM-based insight extraction — only runs if an LLM was wired in
+        try:
+            insight = self._extract_llm_insight()
+            if insight:
+                self.longterm.store(
+                    content=insight,
+                    category="insight",
+                    tags=["llm_extracted", "session_insight"],
+                    source=f"session:{self.session.session_id}",
+                    importance=0.8,
+                    tier="long",
+                )
+        except Exception:
+            pass
+
+        return entry_id
+
+    def _run_distillation(self) -> int:
+        """Run knowledge distillation on session tool calls.
+
+        Converts session tool-call records into the log dict format that
+        KnowledgeDistiller expects, then feeds failures / successes / all
+        calls into the three distill methods.  Newly distilled items are
+        ingested into long-term memory so RAG can retrieve them later.
+
+        Returns the count of newly distilled knowledge items.
+        """
+        try:
+            from huginn.evolution.knowledge_distiller import KnowledgeDistiller
+
+            distiller = KnowledgeDistiller()
+        except Exception:
+            return 0
+
+        # Convert session tool calls to the flat log format the distiller wants
+        logs: list[dict[str, Any]] = []
+        for tc in self.session.tool_calls:
+            success = tc.result.success if tc.result else False
+            log: dict[str, Any] = {
+                "tool_name": tc.tool_name,
+                "success": success,
+                "session_id": self.session.session_id,
+                "tool_input": tc.input_args if isinstance(tc.input_args, dict) else {},
+                "error_message": "",
+                "software": tc.tool_name.replace("_tool", "") if tc.tool_name else "general",
+                "calculation_type": "general",
+            }
+            if not success and tc.result and tc.result.error:
+                log["error_message"] = str(tc.result.error)
+            logs.append(log)
+
+        if not logs:
+            return 0
+
+        failure_logs = [l for l in logs if not l["success"]]
+        success_logs = [l for l in logs if l["success"]]
+
+        total = 0
+        total += len(distiller.distill_error_lessons(failure_logs))
+        total += len(distiller.distill_success_patterns(success_logs))
+        total += len(distiller.distill_tool_tips(logs))
+
+        # Ingest distilled knowledge into long-term memory for RAG retrieval
+        for dk in distiller.knowledge_base:
+            if dk.verification_status == "unverified":
+                self.longterm.store(
+                    content=dk.content,
+                    category="distilled_knowledge",
+                    tags=dk.tags + [dk.source_type],
+                    source=f"distiller:{dk.knowledge_id}",
+                    importance=dk.confidence,
+                    tier="long",
+                )
+
+        return total
+
+    def _extract_llm_insight(self) -> str | None:
+        """Use the LLM to extract a concise insight from the session.
+
+        Returns None when no LLM is available or the response is too short
+        to be useful.
+        """
+        if self._llm is None:
+            return None
+
+        # Build a condensed conversation summary — cap at last 20 messages
+        # to keep the prompt token count manageable.
+        messages_text: list[str] = []
+        for msg in self.session.messages[-20:]:
+            role = msg.role if hasattr(msg, "role") else "unknown"
+            content = msg.content if hasattr(msg, "content") else str(msg)
+            if isinstance(content, dict):
+                content = json.dumps(content, ensure_ascii=False)[:200]
+            messages_text.append(f"{role}: {content}")
+
+        if not messages_text:
+            return None
+
+        conversation = "\n".join(messages_text)
+        prompt = (
+            "Based on this conversation, extract 1-3 concise insights worth remembering "
+            "for future sessions. Focus on: key findings, effective strategies, failed approaches, "
+            "and parameter recommendations. Be specific and actionable.\n\n"
+            f"Conversation:\n{conversation[:3000]}\n\n"
+            "Insights (one per line, max 3 lines):"
+        )
+
+        try:
+            response = self._llm.invoke(prompt)
+            text = ""
+            if hasattr(response, "content"):
+                text = str(response.content)
+            elif isinstance(response, str):
+                text = response
+            text = text.strip()
+            if text and len(text) > 10:
+                return text
+        except Exception:
+            pass
+        return None
 
     def log_episode(self, content: str, importance: float = 0.5) -> str:
         """Log a concise daily episodic memory (session-level event)."""

@@ -136,6 +136,14 @@ async def get_agent() -> HuginnAgent:
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
         get_context().agent.register_tools_from_registry()
 
+    # Wire the agent's LLM into the memory manager for insight extraction
+    try:
+        agent = get_context().agent
+        if agent is not None and getattr(agent, "memory", None) is not None:
+            agent.memory.set_llm(getattr(agent, "model", None))
+    except Exception:
+        pass
+
     return get_context().agent
 
 
@@ -145,8 +153,25 @@ def get_memory_manager() -> MemoryManager:
         return get_context().memory_manager
     cfg = HuginnConfig.from_env()
     memory_md = Path(cfg.workspace) / "MEMORY.md" if cfg.workspace else None
+
+    # Try to wire up semantic search via VectorStore + chromadb.
+    # Falls back to FTS5-only long-term memory if chromadb is missing.
+    vector_store = None
+    longterm = None
+    try:
+        from huginn.rag.vector_store import VectorStore
+
+        vector_store = VectorStore()
+        from huginn.memory.longterm import LongTermMemory
+
+        longterm = LongTermMemory(vector_store=vector_store, enable_semantic=True)
+    except Exception:
+        # chromadb not installed or VectorStore init failed — FTS5 only
+        longterm = None
+
     get_context().memory_manager = MemoryManager(
         config=MemoryConfig(memory_md_path=memory_md),
+        longterm=longterm,
     )
     return get_context().memory_manager
 
