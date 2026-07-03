@@ -1631,6 +1631,17 @@ DESCRIPTION: <brief description of what to do>
         phase = LoopPhase(name=name)
         phase.start_time = time.time()
         phase.status = "running"
+        # 同步路径: 如果当前在 event loop 里, fire-and-forget 发开始事件.
+        # 不 await, 因为 _run_phase 本身是同步的.
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._dispatch_stage_event(
+                    EventType.ON_WORKFLOW_STAGE_START, name
+                )
+            )
+        except RuntimeError:
+            pass
         try:
             phase.result = fn(*args)
             phase.status = "completed"
@@ -1638,6 +1649,24 @@ DESCRIPTION: <brief description of what to do>
             phase.status = "failed"
             phase.error = str(e)
         phase.end_time = time.time()
+        # fire-and-forget 发结束/失败事件
+        try:
+            loop = asyncio.get_running_loop()
+            done_type = (
+                EventType.ON_WORKFLOW_STAGE_DONE
+                if phase.status == "completed"
+                else EventType.ON_WORKFLOW_FAILED
+            )
+            loop.create_task(
+                self._dispatch_stage_event(
+                    done_type,
+                    name,
+                    duration_sec=phase.end_time - (phase.start_time or 0),
+                    error=phase.error,
+                )
+            )
+        except RuntimeError:
+            pass
         return phase
 
     async def _run_phase_async(self, name: str, fn, *args) -> LoopPhase:
@@ -1645,6 +1674,9 @@ DESCRIPTION: <brief description of what to do>
         phase = LoopPhase(name=name)
         phase.start_time = time.time()
         phase.status = "running"
+        await self._dispatch_stage_event(
+            EventType.ON_WORKFLOW_STAGE_START, name
+        )
         try:
             phase.result = await fn(*args)
             phase.status = "completed"
@@ -1652,6 +1684,19 @@ DESCRIPTION: <brief description of what to do>
             phase.status = "failed"
             phase.error = str(e)
         phase.end_time = time.time()
+        if phase.status == "completed":
+            await self._dispatch_stage_event(
+                EventType.ON_WORKFLOW_STAGE_DONE,
+                name,
+                duration_sec=phase.end_time - (phase.start_time or 0),
+            )
+        else:
+            await self._dispatch_stage_event(
+                EventType.ON_WORKFLOW_FAILED,
+                name,
+                duration_sec=phase.end_time - (phase.start_time or 0),
+                error=phase.error,
+            )
         return phase
 
     # ──────────────────────────────────────────────────────────────

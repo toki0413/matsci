@@ -143,6 +143,41 @@ _SECRET_PATTERNS: list[tuple[str, str, str | None]] = [
 ]
 
 
+_PII_PATTERNS: list[tuple[str, str, str | None]] = [
+    # PII — personally identifiable information
+    # Email addresses (standard RFC 5322 simplified)
+    (
+        "pii-email",
+        r"\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,})\b",
+        None,
+    ),
+    # Phone numbers (international format, common patterns)
+    (
+        "pii-phone",
+        r"\b(\+?\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{4})\b",
+        None,
+    ),
+    # ORCID researcher ID (0000-0000-0000-000X)
+    (
+        "pii-orcid",
+        r"\b(\d{4}-\d{4}-\d{4}-\d{3}[\dX])\b",
+        None,
+    ),
+    # Chinese ID card (18 digit)
+    (
+        "pii-cn-idcard",
+        r"\b(\d{17}[\dXx])\b",
+        None,
+    ),
+    # Chinese phone number (11 digit mobile)
+    (
+        "pii-cn-mobile",
+        r"\b(1[3-9]\d{9})\b",
+        None,
+    ),
+]
+
+
 _SPECIAL_CASE_LABELS: dict[str, str] = {
     "aws": "AWS",
     "gcp": "GCP",
@@ -177,6 +212,10 @@ class SecretScanner:
         for rule_id, source, flags in _SECRET_PATTERNS:
             self._rules.append((rule_id, re.compile(source, flags or 0)))
 
+        self._pii_patterns: list[tuple[str, re.Pattern[str]]] = []
+        for rule_id, source, flags in _PII_PATTERNS:
+            self._pii_patterns.append((rule_id, re.compile(source, flags or 0)))
+
     def scan(self, text: str) -> list[SecretMatch]:
         """Return one match per rule that fired. Secret values are not included."""
         matches: list[SecretMatch] = []
@@ -207,6 +246,21 @@ class SecretScanner:
 
             text = pattern.sub(_repl, text)
         return text
+
+    def scan_pii(self, text: str) -> list[SecretMatch]:
+        """Scan only for PII patterns (email, phone, ORCID, etc.)."""
+        matches = []
+        for rule_id, pattern in self._pii_patterns:
+            if pattern.search(text):
+                matches.append(SecretMatch(rule_id=rule_id, label=rule_id))
+        return matches
+
+    def redact_pii(self, text: str) -> str:
+        """Replace PII patterns with [PII_REDACTED]."""
+        result = text
+        for rule_id, pattern in self._pii_patterns:
+            result = pattern.sub("[PII_REDACTED]", result)
+        return result
 
 
 # Module-level singleton for convenience.
