@@ -12,9 +12,9 @@ from huginn.types import ToolContext
 
 class TestBashTool:
     @pytest.mark.skipif(sys.platform == "win32", reason="echo path differs on Windows")
-    def test_run_echo(self):
+    async def test_run_echo(self):
         tool = BashTool()
-        result = tool.call(
+        result = await tool.call(
             {"command": ["echo", "hello"]},
             ToolContext(session_id="test", workspace="."),
         )
@@ -22,9 +22,9 @@ class TestBashTool:
         assert "hello" in result.data["stdout"]
 
     @pytest.mark.skipif(sys.platform == "win32", reason="shell path differs on Windows")
-    def test_stream_echo(self, capsys):
+    async def test_stream_echo(self, capsys):
         tool = BashTool()
-        result = tool.call(
+        result = await tool.call(
             {"command": ["python", "-c", "print('streamed')"], "stream": True},
             ToolContext(session_id="test", workspace="."),
         )

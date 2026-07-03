@@ -46,7 +46,7 @@ class TestContainerExecutor:
         assert "--rm" in cmd
         assert "/tmp/ws:/huginn_work" in cmd
         assert "FOO=bar" in cmd
-        assert cmd[-2:] == ["python", "-c", "print(1)"]
+        assert cmd[-3:] == ["python", "-c", "print(1)"]
 
     @pytest.mark.skipif(sys.platform == "win32", reason="apptainer args differ")
     def test_build_command_apptainer(self):
