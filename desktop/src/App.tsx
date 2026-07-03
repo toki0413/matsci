@@ -71,6 +71,9 @@ interface ModelConfig {
   base_url: string;
   temperature: number;
   enabled: boolean;
+  // When set, the backend resolves the key from the stored credential
+  // instead of using api_key directly. Null = use the inline api_key.
+  credential_id?: string | null;
 }
 
 interface AgentProfile {
@@ -174,16 +177,27 @@ const PERSONAS = [
   { id: "tutor", label: "Patient Tutor" },
 ];
 
+// Keep in sync with backend /config/providers ordering.
 const PROVIDERS = [
-  { id: "openai", label: "OpenAI", keyVar: "OPENAI_API_KEY" },
   { id: "anthropic", label: "Anthropic", keyVar: "ANTHROPIC_API_KEY" },
+  { id: "openai", label: "OpenAI", keyVar: "OPENAI_API_KEY" },
   { id: "deepseek", label: "DeepSeek", keyVar: "DEEPSEEK_API_KEY" },
   { id: "google-genai", label: "Google GenAI", keyVar: "GOOGLE_API_KEY" },
   { id: "openrouter", label: "OpenRouter", keyVar: "OPENROUTER_API_KEY" },
   { id: "nvidia", label: "NVIDIA", keyVar: "NVIDIA_API_KEY" },
   { id: "ollama", label: "Ollama (local)", keyVar: "" },
-  { id: "vllm", label: "vLLM / LM Studio", keyVar: "OPENAI_API_KEY" },
-  { id: "local", label: "Local OpenAI-compatible", keyVar: "OPENAI_API_KEY" },
+  { id: "vllm", label: "vLLM", keyVar: "" },
+  { id: "local", label: "Local OpenAI-compatible", keyVar: "" },
+  { id: "siliconflow", label: "SiliconFlow", keyVar: "SILICONFLOW_API_KEY" },
+  { id: "moonshot", label: "Moonshot (Kimi)", keyVar: "MOONSHOT_API_KEY" },
+  { id: "zhipu", label: "Zhipu (GLM)", keyVar: "ZHIPU_API_KEY" },
+  { id: "baichuan", label: "Baichuan", keyVar: "BAICHUAN_API_KEY" },
+  { id: "dashscope", label: "DashScope (Qwen)", keyVar: "DASHSCOPE_API_KEY" },
+  { id: "qianfan", label: "Qianfan (Baidu)", keyVar: "QIANFAN_API_KEY" },
+  { id: "doubao", label: "Doubao (ByteDance)", keyVar: "DOUBAO_API_KEY" },
+  { id: "hunyuan", label: "Hunyuan (Tencent)", keyVar: "HUNYUAN_API_KEY" },
+  { id: "openai-compatible", label: "OpenAI-compatible", keyVar: "" },
+  { id: "default", label: "Default", keyVar: "" },
 ];
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -457,6 +471,7 @@ function CredentialsPanel() {
   const [editing, setEditing] = useState<{ kind: string; id?: string } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any>>({});
+  const [importing, setImporting] = useState(false);
 
   const [sshForm, setSshForm] = useState({
     name: "", host: "", username: "", port: "22", scheduler: "slurm",
@@ -595,6 +610,25 @@ function CredentialsPanel() {
     setTesting(null);
   };
 
+  // Pull API keys already present in the runtime config (.env / config file)
+  // and write them into the credential store so they can be reused / rotated.
+  const importFromConfig = async () => {
+    setImporting(true);
+    try {
+      const data = await fetch(`${API_BASE}/credentials/import-from-config`, { method: "POST" }).then((r) => r.json());
+      if (data.success) {
+        const n = data.imported ?? data.count ?? 0;
+        flash(n > 0 ? `已从配置导入 ${n} 条凭据` : "配置中未发现可导入的密钥");
+        load();
+      } else {
+        flash(data.error || "导入失败", false);
+      }
+    } catch (e: any) {
+      flash("导入出错: " + e.message, false);
+    }
+    setImporting(false);
+  };
+
   const btn = "rounded px-2 py-1 text-xs transition-colors";
   const btnGhost = `${btn} text-text-secondary hover:bg-bg-tertiary hover:text-text-primary`;
   const btnDanger = `${btn} text-error hover:bg-error/10`;
@@ -672,7 +706,7 @@ function CredentialsPanel() {
         <div>
           <label className="mb-1 block text-xs text-text-secondary">Provider *</label>
           <select className="input" value={llmForm.provider} onChange={(e) => setLlmForm({ ...llmForm, provider: e.target.value })}>
-            {["openai", "anthropic", "deepseek", "google", "openrouter", "nvidia", "ollama", "vllm", "local"].map((p) => <option key={p} value={p}>{p}</option>)}
+            {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
         </div>
         <div>
@@ -742,7 +776,16 @@ function CredentialsPanel() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-semibold text-text-primary">LLM API Key</h4>
-          {editing?.kind !== "llm" && <button onClick={() => startNew("llm")} className="btn-secondary text-xs">+ 新增 LLM</button>}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={importFromConfig}
+              disabled={importing}
+              className="rounded-lg bg-accent px-2.5 py-1 text-xs text-white transition-colors hover:bg-accent/90 disabled:opacity-50"
+            >
+              {importing ? "导入中…" : "从配置导入"}
+            </button>
+            {editing?.kind !== "llm" && <button onClick={() => startNew("llm")} className="btn-secondary text-xs">+ 新增 LLM</button>}
+          </div>
         </div>
         {editing?.kind === "llm" && llmFormEl}
         {loading ? <p className="text-xs text-text-muted">加载中…</p> : llmCreds.length === 0 && !editing ? <p className="text-xs text-text-muted">暂无 LLM 凭据, 点击"新增 LLM"添加。</p> : null}
@@ -832,6 +875,9 @@ export default function App() {
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
   const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet" | "security" | "credentials">("general");
+
+  // Stored LLM credentials made available as a link option in the Models tab.
+  const [llmCredOptions, setLlmCredOptions] = useState<Array<{ id: string; name: string; provider?: string }>>([]);
 
   // Multi-agent team state
   const [teamObjective, setTeamObjective] = useState("");

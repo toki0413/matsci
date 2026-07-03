@@ -21,6 +21,7 @@ PBKDF2 哈希.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -33,6 +34,8 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 
 from huginn.crypto import KeyManager
+
+logger = logging.getLogger(__name__)
 
 # 凭据类型常量 — 用字符串而不是枚举, 方便 JSON 序列化与跨进程传递
 CRED_KIND_SSH = "ssh"
@@ -461,6 +464,43 @@ class CredentialStore:
             "thinking": m.get("thinking"),
             "enabled": m.get("enabled", True),
         }
+
+    def import_from_config(self, config) -> dict[str, str]:
+        """Batch-import plain-text API keys from a HuginnConfig into the store.
+
+        Walks ``config.models`` and creates an LLM credential for every entry
+        whose ``api_key`` is a literal key (not an ``env:`` / ``keyring:``
+        reference). Entries that already have a credential with the same name
+        are skipped. Returns ``{alias: credential_id}`` for everything that was
+        actually imported.
+        """
+        imported: dict[str, str] = {}
+        existing = {c["name"] for c in self.list(CRED_KIND_LLM)}
+
+        for m in config.models:
+            key = m.api_key
+            if not key or key.startswith("env:") or key.startswith("keyring:"):
+                continue
+            if m.alias in existing:
+                logger.info("skip importing '%s' — credential already exists", m.alias)
+                continue
+
+            rec = self.create(
+                kind=CRED_KIND_LLM,
+                name=m.alias,
+                metadata={
+                    "alias": m.alias,
+                    "provider": m.provider,
+                    "model": m.model or "",
+                    "base_url": m.base_url or "",
+                    "temperature": m.temperature,
+                },
+                secret=key,
+            )
+            imported[m.alias] = rec["id"]
+            logger.info("imported LLM credential '%s' (provider=%s)", m.alias, m.provider)
+
+        return imported
 
 
 def get_credential_store() -> CredentialStore:
