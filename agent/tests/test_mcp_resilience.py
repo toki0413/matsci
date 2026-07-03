@@ -161,9 +161,17 @@ class TestReconnect:
         mgr._configs["srv"] = cfg
         mgr._consecutive_failures["srv"] = 2
 
-        # disconnect will be a no-op (nothing in _sessions)
-        # connect will fail because 'false' is not a valid MCP server
-        result = await mgr.reconnect("srv")
+        # Mock connect to raise — spawning the real 'false' binary exits
+        # immediately and surfaces as a CancelledError during async cleanup
+        # on Ubuntu CI, which is environment noise we don't want to test.
+        # The point here is just that reconnect bumps the failure counter.
+        with patch.object(
+            mgr,
+            "connect",
+            new_callable=AsyncMock,
+            side_effect=ConnectionError("mock connect failure"),
+        ):
+            result = await mgr.reconnect("srv")
         assert result is False
         assert mgr._consecutive_failures["srv"] == 3
 
