@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import traceback
 from typing import Any
 
@@ -33,6 +34,8 @@ from huginn.routes.schemas import ChatRequest
 from huginn.server_core import get_agent_factory
 
 router = APIRouter(tags=["interaction"])
+
+logger = logging.getLogger(__name__)
 
 
 # ── 实时反馈: SSE 流式 chat ──────────────────────────────────────
@@ -127,7 +130,7 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
             else:
                 interceptor.on_error("empty message")
         except Exception as exc:
-            traceback.print_exc()
+            logger.error("unexpected error", exc_info=True)
             interceptor.on_error(f"server error: {exc}")
 
     # 后台任务: 跑 agent, 不阻塞 SSE 流的产出

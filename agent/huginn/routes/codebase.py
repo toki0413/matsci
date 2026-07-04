@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 from typing import Any
 
@@ -11,6 +12,8 @@ from fastapi import APIRouter
 from huginn.server_core import get_context
 
 router = APIRouter(tags=["codebase"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/codebase")
@@ -35,7 +38,7 @@ async def codebase_index() -> dict[str, Any]:
             **await asyncio.to_thread(get_context().codebase.index_workspace),
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -50,5 +53,5 @@ async def codebase_search(params: dict[str, Any]) -> dict[str, Any]:
         results = await asyncio.to_thread(get_context().codebase.search, query, top_k)
         return {"results": results}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"results": [], "error": str(e)}

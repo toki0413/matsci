@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import logging
 import traceback
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ from huginn.security.auth import require_api_key
 from huginn.server_core import get_context
 
 router = APIRouter(tags=["knowledge"])
+
+logger = logging.getLogger(__name__)
 
 _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 
@@ -34,7 +37,7 @@ async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
         result = get_context().kb.add_document(file.filename or "unnamed", content)
         return {"success": True, "document": result}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 

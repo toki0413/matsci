@@ -44,7 +44,7 @@ async def bench_run(params: dict[str, Any]) -> dict[str, Any]:
             },
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -60,5 +60,5 @@ async def evolve_run(params: dict[str, Any]) -> dict[str, Any]:
         report = engine.run_full_evolution_cycle()
         return {"success": True, "report": report}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}

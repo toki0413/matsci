@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import logging
 import traceback
 from typing import Any
 
@@ -21,6 +22,8 @@ from huginn.server_core import (
 )
 
 router = APIRouter(tags=["agents"])
+
+logger = logging.getLogger(__name__)
 
 
 # ── Models & Agents ──────────────────────────────────────────────
@@ -218,7 +221,7 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
             ),
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"error": str(e)}
 
 
@@ -245,7 +248,7 @@ async def list_personas() -> dict[str, Any]:
             ],
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -271,7 +274,7 @@ async def list_persona_templates() -> dict[str, Any]:
             ],
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -294,7 +297,7 @@ async def create_persona_from_template(params: dict[str, Any]) -> dict[str, Any]
         p = mgr.instantiate_template(template_name, **overrides)
         return {"success": True, "persona": p.to_dict()}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -313,7 +316,7 @@ async def import_persona(params: dict[str, Any]) -> dict[str, Any]:
         p = mgr.import_persona(markdown, overwrite=overwrite)
         return {"success": True, "persona": p.to_dict()}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -518,7 +521,7 @@ async def orchestrate(params: dict[str, Any]) -> dict[str, Any]:
             "error": result.error,
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -532,7 +535,7 @@ async def telemetry_summary() -> dict[str, Any]:
         agent = await get_agent()
         return {"summary": agent.telemetry_summary()}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"error": str(e)}
 
 
@@ -543,7 +546,7 @@ async def telemetry_spans() -> dict[str, Any]:
         agent = await get_agent()
         return {"spans": agent.telemetry_spans()}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"error": str(e)}
 
 
@@ -575,7 +578,7 @@ async def swarm_run(params: dict[str, Any]) -> dict[str, Any]:
         result = await HuginnSwarm(workers).run(task)
         return {"success": True, **result}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -593,7 +596,7 @@ async def get_style_profile() -> dict[str, Any]:
         learner = get_shared_style_learner()
         return {"success": True, "profile": asdict(learner.get_profile())}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -607,7 +610,7 @@ async def reset_style_profile() -> dict[str, Any]:
         learner.reset()
         return {"success": True}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -633,7 +636,7 @@ async def style_feedback(params: dict[str, Any]) -> dict[str, Any]:
         )
         return {"success": True, "profile": asdict(learner.get_profile())}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -646,5 +649,5 @@ async def get_style_directive() -> dict[str, Any]:
         learner = get_shared_style_learner()
         return {"success": True, "directive": learner.get_style_directive()}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}

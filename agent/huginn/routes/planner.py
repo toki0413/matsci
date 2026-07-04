@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 from typing import Any
 
@@ -12,6 +13,8 @@ from langchain_core.messages import ToolMessage
 from huginn.server_core import get_context, get_planner_agent
 
 router = APIRouter(tags=["planner"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/plan")
@@ -57,5 +60,5 @@ async def generate_plan(params: dict[str, Any]) -> dict[str, Any]:
                     full_response = last.content
         return {"plan": full_response}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"error": f"Planner error: {str(e)}"}

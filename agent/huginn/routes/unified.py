@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import base64
+import logging
 import traceback
 from typing import Any
 
 from fastapi import APIRouter
 
 router = APIRouter(tags=["unified"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/unified/models")
@@ -40,7 +43,7 @@ async def unified_derive(params: dict[str, Any]) -> dict[str, Any]:
             "equations": {k: str(v) for k, v in result["equations"].items()},
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -61,7 +64,7 @@ async def unified_solve_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         )
         return {"success": True, **result}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -94,5 +97,5 @@ async def unified_plot_endpoint(params: dict[str, Any]) -> dict[str, Any]:
             "n_dof": result["n_dof"],
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}

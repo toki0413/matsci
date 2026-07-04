@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import logging
 import traceback
 from typing import Any
 
@@ -35,6 +36,8 @@ from huginn.security.credential_store import (
 )
 
 router = APIRouter(tags=["credentials"])
+
+logger = logging.getLogger(__name__)
 
 
 def _store():
@@ -206,7 +209,7 @@ async def _test_ssh(store, cid: str) -> dict[str, Any]:
             "error": "SSH 连接超时 (15s), 检查 host/端口/网络/密钥",
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {
             "success": False,
             "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -268,7 +271,7 @@ async def _test_llm(store, cid: str) -> dict[str, Any]:
             "error": "请求超时 (10s), 检查 base_url / 模型是否加载完成",
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {
             "success": False,
             "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -279,7 +282,7 @@ async def _test_llm(store, cid: str) -> dict[str, Any]:
 # ── 凭据 ↔ 模型配置 桥接 ──────────────────────────────────────
 
 
-@router.post("/credentials/import-from-config")
+@router.post("/credentials/import-from-config", dependencies=[Depends(require_admin_key)])
 async def import_credentials_from_config() -> dict[str, Any]:
     """扫一遍 huginn.toml 里的模型池, 把明文 api_key 批量导入 CredentialStore。
 
@@ -309,7 +312,7 @@ async def import_credentials_from_config() -> dict[str, Any]:
     }
 
 
-@router.post("/credentials/{cid}/link-model/{alias}")
+@router.post("/credentials/{cid}/link-model/{alias}", dependencies=[Depends(require_admin_key)])
 async def link_credential_to_model(cid: str, alias: str) -> dict[str, Any]:
     """把一条凭据挂到某个 ModelConfig 上: 设 credential_id, 清掉明文 api_key。
 
