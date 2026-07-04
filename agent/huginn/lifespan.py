@@ -194,6 +194,61 @@ async def _close_sqlite_stores() -> None:
     except Exception as e:
         logger.warning("[shutdown] failed to close factory stores: %s", e)
 
+    # ── WAL checkpoint + VACUUM ────────────────────────────────────
+    # Flush the WAL so the -wal/-shm sidecar files don't grow unbounded
+    # across restarts.  Without this, long-running deployments accumulate
+    # multi-GB WAL files that slow startup and waste disk.
+    await _wal_checkpoint_all()
+
+
+async def _wal_checkpoint_all() -> None:
+    """Run ``PRAGMA wal_checkpoint(TRUNCATE)`` on all known SQLite DBs."""
+    import sqlite3
+    from pathlib import Path
+
+    db_paths: list[Path] = []
+
+    # Long-term memory
+    try:
+        from huginn.config import get_config
+        cfg = get_config()
+        mem_db = getattr(cfg.memory, "long_term_db", None)
+        if mem_db:
+            db_paths.append(Path(mem_db))
+    except Exception:
+        pass
+
+    # Checkpointer
+    try:
+        ctx = get_context()
+        ckpt = getattr(ctx, "checkpointer_path", None) or getattr(ctx.config, "checkpointer_path", None)
+        if ckpt:
+            db_paths.append(Path(ckpt))
+    except Exception:
+        pass
+
+    # Research log
+    try:
+        import huginn.research_log as _rl_mod
+        _rl = getattr(_rl_mod, "_research_log_singleton", None)
+        if _rl is not None:
+            db_path = getattr(_rl, "db_path", None)
+            if db_path:
+                db_paths.append(Path(db_path))
+    except Exception:
+        pass
+
+    for db_path in db_paths:
+        if not db_path.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=5)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+            logger.info("[shutdown] WAL checkpoint: %s", db_path.name)
+        except Exception as e:
+            logger.warning("[shutdown] WAL checkpoint failed for %s: %s", db_path.name, e)
+
 
 async def _mcp_health_monitor(manager: Any) -> None:
     """Background task: periodically probe MCP servers and reconnect failures.
@@ -305,7 +360,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[init] Embedding pre-warm skipped: {e}")
 
-    asyncio.create_task(_warm_embeddings())
+    warmup_task = asyncio.create_task(_warm_embeddings())
 
     # Start MCP health monitor (periodic ping + auto-reconnect)
     monitor_task: asyncio.Task | None = None
@@ -316,7 +371,15 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown: cancel monitor first, then disconnect MCP servers
+    # Shutdown: cancel background tasks first so they don't touch closing resources
+    if warmup_task and not warmup_task.done():
+        warmup_task.cancel()
+        try:
+            await warmup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("[shutdown] embedding warmup task cancelled")
+
     if monitor_task and not monitor_task.done():
         monitor_task.cancel()
         try:

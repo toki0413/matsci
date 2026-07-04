@@ -71,12 +71,13 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials="*" not in _cors_origins,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "X-HUGINN-API-KEY", "X-Request-ID"],
 )
 
 
 # ── Rate limiting (sliding window per client IP) ──────────────────────
-_RATE_LIMIT = int(os.environ.get("HUGINN_RATE_LIMIT_PER_MINUTE", "0"))
+# Default to 120 req/min when not explicitly configured. Set to 0 to disable.
+_RATE_LIMIT = int(os.environ.get("HUGINN_RATE_LIMIT_PER_MINUTE", "120"))
 _rate_buckets: dict[str, deque] = defaultdict(deque)
 _RATE_WINDOW = 60.0  # seconds
 # Sweep empty buckets every N requests so _rate_buckets doesn't grow

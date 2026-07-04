@@ -185,9 +185,11 @@ def test_tool_filter_none_for_open(mgr: PhaseManager) -> None:
     assert mgr.tool_filter() is None
 
 
-def test_tool_filter_none_when_phase_tools_unpopulated() -> None:
+def test_tool_filter_none_when_phase_tools_unpopulated(monkeypatch) -> None:
     # before register_all_tools() runs, PHASE_TOOLS is empty so every
     # phase gracefully degrades to "all tools available"
+    # Clear PHASE_TOOLS to simulate unpopulated state
+    monkeypatch.setattr("huginn.phases.PHASE_TOOLS", {})
     pm = PhaseManager(initial=ResearchPhase.EXECUTION)
     assert pm.tool_filter() is None
 

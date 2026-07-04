@@ -42,6 +42,12 @@ services:
     volumes:
       - ./workspace:/app/workspace
       - huginn_state:/app/.huginn
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 from huginn.types import ToolResult
@@ -24,8 +25,10 @@ _HAS_TRANSFORMERS = importlib.util.find_spec("transformers") is not None
 _HAS_TORCH = importlib.util.find_spec("torch") is not None
 _DEPLOT_AVAILABLE = _HAS_TRANSFORMERS and _HAS_TORCH
 
-# processor / model 加载很慢, 加载一次后缓存复用
+# processor / model 加载很慢, 加载一次后缓存复用.
+# threading.Lock 保护防止并发重复加载.
 _deplot_cache: dict = {"processor": None, "model": None}
+_deplot_lock = threading.Lock()
 
 
 def _to_markdown_table(text: str) -> str:
@@ -72,18 +75,24 @@ def _to_markdown_table(text: str) -> str:
 
 def _load_deplot():
     """延迟加载 DePlot 的 processor + model, 加载过就缓存."""
+    # Fast path: check without lock
     if _deplot_cache["processor"] is not None and _deplot_cache["model"] is not None:
         return _deplot_cache["processor"], _deplot_cache["model"]
 
-    import torch  # noqa: F401  torch 要先 import, transformers 推理依赖它
-    from transformers import AutoProcessor, AutoModelForVision2Seq
+    with _deplot_lock:
+        # Double-check after acquiring lock
+        if _deplot_cache["processor"] is not None and _deplot_cache["model"] is not None:
+            return _deplot_cache["processor"], _deplot_cache["model"]
 
-    logger.info("首次加载 DePlot 模型 %s, 会慢一点", _DEPLOT_MODEL_ID)
-    processor = AutoProcessor.from_pretrained(_DEPLOT_MODEL_ID)
-    model = AutoModelForVision2Seq.from_pretrained(_DEPLOT_MODEL_ID)
-    _deplot_cache["processor"] = processor
-    _deplot_cache["model"] = model
-    return processor, model
+        import torch  # noqa: F401  torch 要先 import, transformers 推理依赖它
+        from transformers import AutoProcessor, AutoModelForVision2Seq
+
+        logger.info("首次加载 DePlot 模型 %s, 会慢一点", _DEPLOT_MODEL_ID)
+        processor = AutoProcessor.from_pretrained(_DEPLOT_MODEL_ID)
+        model = AutoModelForVision2Seq.from_pretrained(_DEPLOT_MODEL_ID)
+        _deplot_cache["processor"] = processor
+        _deplot_cache["model"] = model
+        return processor, model
 
 
 def deplot_chart(args: "ImageAnalysisInput") -> ToolResult:
