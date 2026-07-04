@@ -232,4 +232,16 @@ async def summarize_compact_messages(
         estimate_message_tokens(compacted),
     )
 
+    # Belief Entropy: 压缩后算自检信号, 给下一轮压缩调参
+    try:
+        from huginn.utils.belief_entropy import get_belief_entropy
+        be = get_belief_entropy()
+        be._last_result = be.measure(
+            summary=summary_text,
+            original_tokens=current_tokens,
+            compressed_tokens=estimate_message_tokens(compacted),
+        )
+    except Exception:
+        pass
+
     return compacted, summary_text
