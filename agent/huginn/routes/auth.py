@@ -234,3 +234,26 @@ async def refresh_token(request: Request) -> dict[str, Any]:
         "expires_in": _TOKEN_TTL,
         "role": role_str,
     }
+
+
+@router.post("/logout")
+async def logout(request: Request) -> dict[str, Any]:
+    """Revoke the current JWT.
+
+    Adds the token's ``jti`` to the revocation list so subsequent
+    requests carrying it are rejected with 401. The revocation entry
+    auto-expires when the token's original ``exp`` passes, so the
+    list doesn't grow without bound.
+    """
+    from huginn.security.rbac import TokenRevocationList
+
+    claims = _decode_request_token(request)
+    jti = claims.get("jti")
+    exp = claims.get("exp")
+
+    if jti:
+        TokenRevocationList.shared().revoke(jti, exp=exp)
+        return {"revoked": True, "jti": jti}
+
+    # Token without jti — can't revoke individually
+    return {"revoked": False, "reason": "Token has no jti claim"}

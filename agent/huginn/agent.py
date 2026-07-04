@@ -616,6 +616,25 @@ class HuginnAgent:
         # research 模式: 更高 recursion limit, 启用研究日志, 验证用独立 LLM.
         self._mode: str = "chat"
 
+        # Initialize ContextBuilder now that all dependencies are set.
+        # This delegates memory/KG/KB/emotion/history assembly out of the
+        # god-class, reducing agent.py footprint and making the pipeline
+        # independently testable.
+        from huginn.context_builder import ContextBuilder
+
+        self._ctx_builder = ContextBuilder(
+            memory_manager=self.memory,
+            workspace=self.workspace,
+            kg_enabled=self.kg_enabled,
+            kb_enabled=self.kb_enabled,
+            kg_depth=self.kg_depth,
+            kg_top_k=self.kg_top_k,
+            emotion_tracker=self.emotion_tracker,
+            checkpointer=getattr(self, "checkpointer", None),
+            conversation_tree=self._conversation_tree,
+            cache_builder=self._cache_builder,
+        )
+
     def _make_summarizer(self):
         """Create an async callable for conversation summarization.
 
@@ -1167,103 +1186,17 @@ class HuginnAgent:
     def _build_memory_text(self, query: str | None = None) -> str:
         """Recall relevant long-term memory formatted for the prompt tail.
 
-        The query defaults to the current user message so recalled facts are
-        actually relevant. Keeping this text out of the system prompt keeps
-        the static prefix stable and improves LLM prompt/KV-cache hit rates.
-
-        Also injects verified conjectures from the research log, so the LLM
-        can see its own past hypothesis evolution tree.
+        Delegates to :class:`ContextBuilder`.
         """
-        if not query:
-            query = "materials science computation"
-        parts: list[str] = []
-        try:
-            mem = self.memory.recall_for_prompt(query, max_entries=3)
-            if mem:
-                parts.append(mem)
-        except Exception:
-            logger.warning("memory.recall failed in context injection", exc_info=True)
-        # 注入研究日志: 最近已验证/进行中的猜想, 让 LLM 看到自己的演化树
-        try:
-            from huginn.research_log import get_research_log
-            log = get_research_log()
-            # 拿最近 3 条 verified + 2 条 in_progress 的猜想
-            verified = log.list_by_status("verified", limit=3)
-            in_progress = log.list_by_status("in_progress", limit=2)
-            if verified or in_progress:
-                lines = ["### Research Log (recent conjectures)"]
-                for r in verified:
-                    lines.append(f"- [verified] {r.title}")
-                for r in in_progress:
-                    lines.append(f"- [in_progress] {r.title}")
-                lines.append("### End Research Log")
-                parts.append("\n".join(lines))
-        except Exception:
-            logger.warning("research_log read failed", exc_info=True)
-        return "\n\n".join(parts) if parts else ""
+        return self._ctx_builder.build_memory_text(query)
 
     def _build_kg_text(self, query: str) -> str:
-        """Query the project knowledge graph and format results for the prompt."""
-        if not self.kg_enabled:
-            return ""
-        try:
-            from huginn.kg.graph import ProjectKnowledgeGraph
-
-            if self._kg is None:
-                self._kg = ProjectKnowledgeGraph(Path(self.workspace) / ".huginn")
-            result = self._kg.query(query, depth=self.kg_depth, top_k=self.kg_top_k)
-            nodes = {n["id"] for n in result.get("nodes", [])}
-            if not nodes:
-                return ""
-            text = self._kg.to_text(nodes)
-            if not text:
-                return ""
-            return (
-                "### Project Knowledge Context\n"
-                "The following project-specific facts and relationships may help:\n"
-                f"{text}\n"
-                "### End Project Knowledge Context"
-            )
-        except Exception:
-            return ""
+        """Query the project knowledge graph. Delegates to ContextBuilder."""
+        return self._ctx_builder.build_kg_text(query)
 
     def _build_kb_text(self, query: str) -> str:
-        """Query the domain knowledge base (first-principles seed docs) and
-        format the retrieved chunks for the prompt. 镜像 _build_kg_text, 但走
-        ChromaDB 向量检索. 任何异常都吞掉返回空串, 不影响主对话."""
-        if not self.kb_enabled:
-            return ""
-        try:
-            if self._kb is None:
-                from huginn.knowledge.store import get_knowledge_base
-
-                self._kb = get_knowledge_base(str(self.workspace))
-            if self._kb.count() == 0:
-                return ""
-            chunks = self._kb.query(query, top_k=5)
-            if not chunks:
-                return ""
-            lines = []
-            for i, c in enumerate(chunks, 1):
-                # 截断超长 chunk, 避免单条把上下文撑爆
-                text = (c.get("text") or "").strip()
-                if not text:
-                    continue
-                if len(text) > 800:
-                    text = text[:800] + "…"
-                lines.append(f"[{i}] {text}")
-            if not lines:
-                return ""
-            body = "\n".join(lines)
-            return (
-                "### Domain Knowledge Context\n"
-                "The following first-principles reference chunks may ground your answer. "
-                "Cite the source numbers when relevant.\n"
-                f"{body}\n"
-                "### End Domain Knowledge Context"
-            )
-        except Exception:
-            return ""
+        """Query the domain knowledge base. Delegates to ContextBuilder."""
+        return self._ctx_builder.build_kb_text(query)
 
     def _build_state_modifier(self) -> list[SystemMessage]:
         """Static system message used as the graph state modifier."""
@@ -1277,85 +1210,25 @@ class HuginnAgent:
         include_history: bool | None = None,
         kb_text: str | None = None,
     ) -> list[Any]:
-        """Dynamic input messages: conversation history + memory + KG + KB + current user.
+        """Dynamic input messages: history + memory + KG + KB + emotion + user.
 
-        When a LangGraph checkpointer is active, conversation history is
-        already maintained in the graph state — passing it again causes
-        ``add_messages`` to append duplicates, leading to O(n²) memory
-        growth.  We therefore skip history by default whenever a
-        checkpointer is present.  Callers that need checkpointless
-        (stateless) mode can pass ``include_history=True`` explicitly.
+        Delegates to :class:`ContextBuilder`.
         """
-        if memory_text is None:
-            memory_text = self._build_memory_text(query=message)
-        if kg_text is None:
-            kg_text = self._build_kg_text(query=message)
-        if kb_text is None:
-            kb_text = self._build_kb_text(query=message)
-
-        if include_history is None:
-            include_history = self.checkpointer is None
-
-        history_messages: list[Any] | None = None
-        if include_history:
-            history_messages = self._conversation_tree_history_to_messages()
-
-        messages = self._cache_builder.build_input_messages(
-            memory_text,
+        return self._ctx_builder.build_input_messages(
             message,
+            memory_text=memory_text,
             kg_text=kg_text,
-            history_messages=history_messages,
             kb_text=kb_text,
+            include_history=include_history,
         )
-        emotion_text = self._build_emotion_text(message)
-        if emotion_text:
-            # Insert the mood context just before the current user message so it
-            # remains dynamic and does not invalidate the cached static prefix.
-            # Stable ID lets add_messages replace the previous turn's emotion
-            # block instead of accumulating one per turn.
-            messages.insert(-1, SystemMessage(content=emotion_text, id="ctx_emotion"))
-        return messages
 
     def _conversation_tree_history_to_messages(self) -> list[Any]:
-        """Convert the active conversation path (excluding the latest user turn) to LC messages."""
-        messages: list[Any] = []
-        # Skip the last node because it is the current user message being handled.
-        path = self._conversation_tree.active_path()
-        for node_id in path[:-1]:
-            node = self._conversation_tree.get_node(node_id)
-            if node is None:
-                continue
-            meta = node.metadata or {}
-            if node.role == "user":
-                messages.append(HumanMessage(content=node.content))
-            elif node.role == "assistant":
-                tool_calls = meta.get("tool_calls")
-                if tool_calls:
-                    messages.append(
-                        AIMessage(content=node.content, tool_calls=tool_calls)
-                    )
-                else:
-                    messages.append(AIMessage(content=node.content))
-            elif node.role == "system":
-                messages.append(SystemMessage(content=node.content))
-            elif node.role == "tool":
-                # Reconstruct the ToolMessage from stored metadata so the LLM
-                # sees the tool result paired with the originating tool_call_id.
-                messages.append(
-                    ToolMessage(
-                        content=node.content,
-                        tool_call_id=meta.get("tool_call_id", ""),
-                        name=meta.get("name"),
-                    )
-                )
-        return messages
+        """Convert the active conversation path to LC messages. Delegates to ContextBuilder."""
+        return self._ctx_builder.conversation_tree_to_messages()
 
     def _build_emotion_text(self, message: str) -> str | None:
-        """Update the persona's emotional trajectory and return mood context."""
-        if self.emotion_tracker is None:
-            return None
-        self.emotion_tracker.update_from_message(message, source="user")
-        return self.emotion_tracker.context_prompt()
+        """Update persona emotional trajectory and return mood context. Delegates to ContextBuilder."""
+        return self._ctx_builder.build_emotion_text(message)
 
     def _rebuild_cache_builder(self) -> None:
         """Recreate the cache builder when the system prompt changes."""
@@ -1365,6 +1238,9 @@ class HuginnAgent:
             cache_control=self.prompt_cache_control,
         )
         self._cache_builder.set_provider(self._detect_provider())
+        # Keep ContextBuilder in sync with the new cache builder
+        if hasattr(self, "_ctx_builder"):
+            self._ctx_builder._cache_builder = self._cache_builder
 
     def set_persona(
         self,
@@ -1397,6 +1273,8 @@ class HuginnAgent:
                 self.begin_dialogs = begin_dialogs
         if emotion_tracker is not None:
             self.emotion_tracker = emotion_tracker
+            if hasattr(self, "_ctx_builder"):
+                self._ctx_builder.emotion_tracker = emotion_tracker
         self._rebuild_cache_builder()
         self._agent_graph = None
 
