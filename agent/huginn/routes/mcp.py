@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import traceback
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from huginn.server_core import get_context
 from huginn.tools.registry import ToolRegistry
 
 router = APIRouter(tags=["mcp"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/mcp/servers")
@@ -105,7 +108,7 @@ async def connect_mcp_server(
             ],
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 

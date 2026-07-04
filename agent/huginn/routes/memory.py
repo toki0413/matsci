@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 from typing import Any
 
@@ -11,6 +12,8 @@ from fastapi import APIRouter
 from huginn.server_core import get_agent, get_memory_manager
 
 router = APIRouter(tags=["memory"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/memory")
@@ -158,5 +161,5 @@ async def memory_maintenance(params: dict[str, Any] | None = None) -> dict[str, 
         )
         return {"success": True, "summary": summary}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}

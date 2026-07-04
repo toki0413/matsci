@@ -122,6 +122,43 @@ async def _init_mcp_tools():
     except Exception as e:
         print(f"[MCP] Warning: Could not initialize MCP tools: {e}")
 
+    # ── Load Star plugins ─────────────────────────────────────────
+    await _load_star_plugins()
+
+
+async def _load_star_plugins() -> None:
+    """Discover and load Star plugins from the plugins directory.
+
+    Plugins live in ``huginn/plugins/<name>/`` with a ``metadata.yaml``
+    and ``main.py`` defining a ``Star`` subclass.  The loader is
+    fault-tolerant — one bad plugin won't prevent the server from
+    starting.
+    """
+    try:
+        from huginn.plugins.loader import PluginLoader
+
+        base = Path(__file__).resolve().parent  # huginn/
+        plugins_dir = base / "plugins"
+
+        loader = PluginLoader(plugins_dir=str(plugins_dir))
+        get_context().plugin_loader = loader
+
+        discovered = loader.discover()
+        loaded = 0
+        for plugin_dir in discovered:
+            try:
+                await loader.load_one_async(plugin_dir)
+                loaded += 1
+            except Exception as e:
+                logger.warning("[plugins] Failed to load %s: %s", plugin_dir.name, e)
+
+        if loaded:
+            logger.info("[plugins] Loaded %d Star plugin(s)", loaded)
+    except ImportError:
+        logger.debug("[plugins] Plugin framework not available")
+    except Exception as e:
+        logger.warning("[plugins] Plugin loading failed: %s", e)
+
 
 async def _shutdown_mcp():
     """Disconnect all MCP servers."""

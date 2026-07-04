@@ -2,16 +2,38 @@
 
 from __future__ import annotations
 
+import logging
 import traceback
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from huginn.server_core import get_agent_factory, get_context, get_memory_manager
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["execution"])
+
+
+def _validate_working_dir(raw_path: str) -> str:
+    """Ensure working_dir stays within the workspace boundary."""
+    try:
+        workspace = Path(get_context().config.workspace).resolve()
+    except Exception:
+        workspace = Path.cwd()
+
+    resolved = Path(raw_path).resolve()
+    try:
+        resolved.relative_to(workspace)
+    except ValueError:
+        raise HTTPException(
+            status_code=403,
+            detail="working_dir is outside the workspace boundary",
+        )
+    return str(resolved)
 
 
 @router.post("/execute")
@@ -20,7 +42,7 @@ async def execute_stages(params: dict[str, Any]) -> dict[str, Any]:
     from huginn.execution.orchestrator import ExecutionOrchestrator
 
     stages = params.get("stages", [])
-    working_dir = params.get("working_dir", ".")
+    working_dir = _validate_working_dir(params.get("working_dir", "."))
     name = params.get("name", "execute")
 
     def _wrap_tool(tool):
@@ -56,7 +78,7 @@ async def execute_stages(params: dict[str, Any]) -> dict[str, Any]:
             "stages": [r.to_dict() for r in record.stage_results],
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -96,7 +118,7 @@ async def explore_http(params: dict[str, Any]) -> dict[str, Any]:
             "convergence_reason": result.convergence_reason,
         }
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -123,5 +145,5 @@ async def diagnose_error(params: dict[str, Any]) -> dict[str, Any]:
         result = await tool.call(input_data, context)
         return {"success": result.success, "data": result.data}
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}

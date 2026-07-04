@@ -134,13 +134,13 @@ async def agent_websocket(websocket: WebSocket):
                 try:
                     cfg_chat = get_config()
                 except Exception as exc:
-                    traceback.print_exc()
+                    logger.error("unexpected error", exc_info=True)
                     await websocket.send_json({"type": "error", "error": f"Config error: {exc}"})
                     continue
                 try:
                     factory = get_agent_factory()
                 except Exception as exc:
-                    traceback.print_exc()
+                    logger.error("unexpected error", exc_info=True)
                     await websocket.send_json({"type": "error", "error": f"Factory error: {exc}"})
                     continue
                 thinking = msg.thinking
@@ -170,7 +170,7 @@ async def agent_websocket(websocket: WebSocket):
                     try:
                         agent = await get_agent()
                     except Exception as exc:
-                        traceback.print_exc()
+                        logger.error("unexpected error", exc_info=True)
                         await websocket.send_json(
                             {"type": "error", "error": f"Failed to init agent: {exc}"}
                         )
@@ -320,7 +320,7 @@ async def agent_websocket(websocket: WebSocket):
                         )
                         await websocket.send_json({"type": "done"})
                     except Exception as e:
-                        traceback.print_exc()
+                        logger.error("unexpected error", exc_info=True)
                         await websocket.send_json(
                             {"type": "error", "error": f"Team mode error: {e}"}
                         )
@@ -432,7 +432,7 @@ async def agent_websocket(websocket: WebSocket):
                     await websocket.send_json({"type": "done"})
 
                 except Exception as e:
-                    traceback.print_exc()
+                    logger.error("unexpected error", exc_info=True)
                     await websocket.send_json(
                         {"type": "error", "error": f"Agent error: {str(e)}"}
                     )
@@ -510,7 +510,7 @@ async def agent_websocket(websocket: WebSocket):
                     )
 
                 except Exception as e:
-                    traceback.print_exc()
+                    logger.error("unexpected error", exc_info=True)
                     await websocket.send_json(
                         {"type": "error", "error": f"Exploration failed: {str(e)}"}
                     )

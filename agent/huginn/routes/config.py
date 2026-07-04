@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import logging
 import traceback
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,8 @@ from huginn.security.auth import clear_api_key_cache, require_admin_key
 from huginn.server_core import get_context
 
 router = APIRouter(tags=["config"])
+
+logger = logging.getLogger(__name__)
 
 # Runtime override for the config file path, set by encrypt/decrypt endpoints.
 # Kept separate from os.environ so tests don't leak state across requests.
@@ -191,7 +194,7 @@ async def update_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
     try:
         _persist_config(cfg)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"持久化失败: {e}"}
 
     return {
@@ -274,7 +277,7 @@ async def add_model_config(params: dict[str, Any]) -> dict[str, Any]:
     try:
         _persist_config(cfg)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"持久化失败: {e}"}
 
     return {"success": True, "model": _model_to_dict(model)}
@@ -302,7 +305,7 @@ async def update_model_config(alias: str, params: dict[str, Any]) -> dict[str, A
     try:
         _persist_config(cfg)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"持久化失败: {e}"}
 
     return {"success": True, "model": _model_to_dict(updated)}
@@ -320,7 +323,7 @@ async def delete_model_config(alias: str) -> dict[str, Any]:
     try:
         _persist_config(cfg)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"持久化失败: {e}"}
 
     return {"success": True, "deleted": alias}
@@ -397,7 +400,7 @@ async def _run_connectivity_test(model: ModelConfig) -> dict[str, Any]:
         }
     except Exception as e:
         latency_ms = int((time.perf_counter() - start) * 1000)
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {
             "success": False,
             "latency_ms": latency_ms,
@@ -548,7 +551,7 @@ async def set_active_model(params: dict[str, Any]) -> dict[str, Any]:
     try:
         _persist_config(cfg)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"持久化失败: {e}"}
 
     return {"success": True, "active_alias": alias}
@@ -579,7 +582,7 @@ async def encrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         global _config_path_override
         _config_path_override = enc_path
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
     return {"success": True, "path": str(enc_path)}
@@ -607,7 +610,7 @@ async def decrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
     try:
         cfg = HuginnConfig.load(enc_path, password=password)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"解密失败 (密码错?): {e}"}
 
     cfg.encrypt_config = False
@@ -626,7 +629,7 @@ async def decrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         except OSError:
             pass
     except Exception as e:
-        traceback.print_exc()
+        logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
 
     return {"success": True, "path": str(plain_path)}

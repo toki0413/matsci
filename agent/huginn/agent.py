@@ -628,7 +628,7 @@ class HuginnAgent:
             try:
                 model = self.model_router.select("summarize", prefer_cheap=True)
             except Exception:
-                pass
+                logger.warning("model_router.select failed for reasoning model", exc_info=True)
         if model is None:
             model = self.model
         if model is None:
@@ -636,6 +636,8 @@ class HuginnAgent:
 
         async def _summarize(transcript: str):
             from langchain_core.messages import HumanMessage, SystemMessage
+
+            from huginn.llm_retry import FallbackTriggeredError, call_with_fallback
 
             messages = [
                 SystemMessage(content=_SUMMARY_SYSTEM_PROMPT),
@@ -647,7 +649,22 @@ class HuginnAgent:
                 async def _call():
                     return await model.ainvoke(messages)
 
-                return await with_retry(_call, source="summarize")
+                try:
+                    return await with_retry(_call, source="summarize")
+                except FallbackTriggeredError:
+                    # Primary model overloaded — try the fallback model
+                    logger.warning("summarize: primary model overloaded, trying fallback")
+
+                    async def _fallback_call(prompt, mdl):
+                        if hasattr(mdl, "ainvoke"):
+                            return await mdl.ainvoke(messages)
+                        return mdl.invoke(messages)
+
+                    return await call_with_fallback(
+                        prompt=transcript,
+                        primary_model=getattr(model, "model", ""),
+                        llm_call_fn=_fallback_call,
+                    )
             return model.invoke(messages)
 
         return _summarize
@@ -685,7 +702,7 @@ class HuginnAgent:
             try:
                 return self.model_router.select_verification()
             except Exception:
-                pass
+                logger.warning("model_router.select failed for reasoning model fallback", exc_info=True)
         return self.select_model("reasoning")
 
     def has_dedicated_verification(self) -> bool:
@@ -700,7 +717,7 @@ class HuginnAgent:
             try:
                 return self.model_router.select_archival()
             except Exception:
-                pass
+                logger.warning("select_archival_model failed", exc_info=True)
         return self.select_model("cheap")
 
     def _detect_provider(self) -> str | None:
@@ -1165,7 +1182,7 @@ class HuginnAgent:
             if mem:
                 parts.append(mem)
         except Exception:
-            pass
+            logger.warning("memory.recall failed in context injection", exc_info=True)
         # 注入研究日志: 最近已验证/进行中的猜想, 让 LLM 看到自己的演化树
         try:
             from huginn.research_log import get_research_log
@@ -1182,7 +1199,7 @@ class HuginnAgent:
                 lines.append("### End Research Log")
                 parts.append("\n".join(lines))
         except Exception:
-            pass
+            logger.warning("research_log read failed", exc_info=True)
         return "\n\n".join(parts) if parts else ""
 
     def _build_kg_text(self, query: str) -> str:
@@ -1500,7 +1517,7 @@ class HuginnAgent:
                 base = f"{base}\n\n# Project Memory\n{agents_md}"
         except Exception:
             # 上下文注入失败不影响主流程
-            pass
+            logger.debug("context injection skipped", exc_info=True)
         # 用户 taste profile — 问卷填完后持久化到 taste_profile.json,
         # 每轮注入让 agent 按用户思维偏好调整回答风格. 没填过返回空串.
         try:
@@ -1510,7 +1527,7 @@ class HuginnAgent:
             if taste:
                 base = f"{base}\n\n# User Taste Profile\n{taste}"
         except Exception:
-            pass
+            logger.warning("taste profile injection failed", exc_info=True)
         return base
 
     def _effective_tools(self) -> list[Any]:
@@ -1612,7 +1629,7 @@ class HuginnAgent:
             from huginn.privacy_guard import PrivacyGuard
             PrivacyGuard.shared().purge_session()
         except Exception:
-            pass
+            logger.warning("context build step failed", exc_info=True)
         self._exit_stack.close()
 
     def __enter__(self) -> HuginnAgent:
@@ -1804,7 +1821,7 @@ class HuginnAgent:
                     "user", f"[中途修改] {evt.message}"
                 )
             except Exception:
-                pass
+                logger.warning("Failed to save user input to memory", exc_info=True)
             return {"modified": True, "message": evt.message}
         return None
 
@@ -1905,9 +1922,9 @@ class HuginnAgent:
                     try:
                         self.memory.promote_session_summary(tier="long")
                     except Exception:
-                        pass
+                        logger.warning("memory promote_session_summary failed", exc_info=True)
         except Exception:
-            pass
+            logger.warning("adaptive compaction skipped", exc_info=True)
 
         logger.info(
             "Context compacted (%d%% → %d%%)",
@@ -2206,7 +2223,7 @@ class HuginnAgent:
                     existing_msgs = snapshot.values.get("messages", [])
                     self._state_msg_offsets[thread_id] = len(existing_msgs)
                 except Exception:
-                    pass
+                    logger.debug("checkpointer state fetch skipped", exc_info=True)
             try:
                 for attempt in range(max_retries):
                     try:
