@@ -483,6 +483,10 @@ class HuginnAgent:
         # Conversation branch tree for fork/backtrack support.
         self._conversation_tree = ConversationTree()
         self._thread_branch_roots: dict[str, str] = {}
+        # Track how many state messages we've already processed per thread,
+        # so _process_stream_state only acts on new messages instead of
+        # re-adding the entire state history on every stream update.
+        self._state_msg_offsets: dict[str, int] = {}
 
         # Telemetry is scoped to the agent instance so multi-tenant servers can
         # keep traces separate.
@@ -1113,16 +1117,26 @@ class HuginnAgent:
         try:
             from langgraph.prebuilt import create_react_agent
 
-            # Use the effective prompt (base + phase prefix) as the state
-            # modifier so phase-specific guidance is included.
-            messages = [SystemMessage(content=self._effective_system_prompt())]
+            # Use the effective prompt (base + phase prefix) so phase-specific
+            # guidance is included.  langgraph >=1.0 renamed ``state_modifier``
+            # to ``prompt``; older versions still use the former.
+            system_prompt = self._effective_system_prompt()
 
-            agent = create_react_agent(
-                model=self.select_model("agent"),
-                tools=self._effective_tools(),
-                state_modifier=messages,
-                checkpointer=self.checkpointer,
-            )
+            try:
+                agent = create_react_agent(
+                    model=self.select_model("agent"),
+                    tools=self._effective_tools(),
+                    prompt=SystemMessage(content=system_prompt),
+                    checkpointer=self.checkpointer,
+                )
+            except TypeError:
+                # Fallback for langgraph < 1.0 which uses state_modifier
+                agent = create_react_agent(
+                    model=self.select_model("agent"),
+                    tools=self._effective_tools(),
+                    state_modifier=[SystemMessage(content=system_prompt)],
+                    checkpointer=self.checkpointer,
+                )
 
             self._agent_graph = agent
             return agent
@@ -1243,16 +1257,27 @@ class HuginnAgent:
         message: str,
         memory_text: str | None = None,
         kg_text: str | None = None,
-        include_history: bool = True,
+        include_history: bool | None = None,
         kb_text: str | None = None,
     ) -> list[Any]:
-        """Dynamic input messages: conversation history + memory + KG + KB + current user."""
+        """Dynamic input messages: conversation history + memory + KG + KB + current user.
+
+        When a LangGraph checkpointer is active, conversation history is
+        already maintained in the graph state — passing it again causes
+        ``add_messages`` to append duplicates, leading to O(n²) memory
+        growth.  We therefore skip history by default whenever a
+        checkpointer is present.  Callers that need checkpointless
+        (stateless) mode can pass ``include_history=True`` explicitly.
+        """
         if memory_text is None:
             memory_text = self._build_memory_text(query=message)
         if kg_text is None:
             kg_text = self._build_kg_text(query=message)
         if kb_text is None:
             kb_text = self._build_kb_text(query=message)
+
+        if include_history is None:
+            include_history = self.checkpointer is None
 
         history_messages: list[Any] | None = None
         if include_history:
@@ -1269,7 +1294,9 @@ class HuginnAgent:
         if emotion_text:
             # Insert the mood context just before the current user message so it
             # remains dynamic and does not invalidate the cached static prefix.
-            messages.insert(-1, SystemMessage(content=emotion_text))
+            # Stable ID lets add_messages replace the previous turn's emotion
+            # block instead of accumulating one per turn.
+            messages.insert(-1, SystemMessage(content=emotion_text, id="ctx_emotion"))
         return messages
 
     def _conversation_tree_history_to_messages(self) -> list[Any]:
@@ -1668,9 +1695,20 @@ class HuginnAgent:
         thread_id: str,
         pet: Any,
     ) -> None:
-        """Update memory, branch tree, telemetry, and pet status from one graph state."""
+        """Update memory, branch tree, telemetry, and pet status from one graph state.
+
+        ``stream_mode="values"`` returns the full state (including all
+        previous turns) on every update.  We use ``_state_msg_offset`` to
+        skip messages that were already in the state before this turn
+        started, and update the offset as we go so subsequent updates
+        within the same turn only process genuinely new messages.
+        """
         msgs = state.get("messages", [])
-        for msg in msgs:
+        # Only look at messages that appeared after the turn's baseline.
+        offset = self._state_msg_offsets.get(thread_id, 0)
+        new_msgs = msgs[offset:]
+        self._state_msg_offsets[thread_id] = len(msgs)
+        for msg in new_msgs:
             if isinstance(msg, AIMessage):
                 self.memory.add_message("assistant", msg.content)
                 # Stash tool_calls in node metadata so history rebuild can
@@ -2001,13 +2039,14 @@ class HuginnAgent:
             # 引导词作为 SystemMessage 插在用户消息前. 多个钩子可能往
             # metadata 里塞多段, list 就用换行拼起来. 位置跟 emotion_text
             # 一致(-1 之前), 顺序保持 system / emotion / guidance / user.
+            # Stable ID 确保每轮替换而非累积.
             if prompt_guidance:
                 guidance_text = (
                     "\n\n".join(prompt_guidance)
                     if isinstance(prompt_guidance, list)
                     else prompt_guidance
                 )
-                messages.insert(-1, SystemMessage(content=guidance_text))
+                messages.insert(-1, SystemMessage(content=guidance_text, id="ctx_guidance"))
 
             # 个人定制: confidence > 0.3 才注入 style directive, 避免早期瞎猜.
             # directive 作为 SystemMessage 插在用户消息前, 跟 prompt_guidance 同位置.
@@ -2017,7 +2056,7 @@ class HuginnAgent:
                     if profile.confidence > 0.3:
                         directive = self.style_learner.get_style_directive()
                         if directive:
-                            messages.insert(-1, SystemMessage(content=directive))
+                            messages.insert(-1, SystemMessage(content=directive, id="ctx_style"))
                 except Exception:
                     logger.warning(
                         "style directive injection failed", exc_info=True
@@ -2154,6 +2193,20 @@ class HuginnAgent:
             max_retries = 3
             states_yielded = 0
             final_state: dict[str, Any] | None = None
+
+            # Snapshot the existing message count so _process_stream_state
+            # only acts on messages produced during THIS turn.  Without this,
+            # stream_mode="values" re-emits the entire state (including all
+            # previous turns) on every update, causing ConversationTree and
+            # MemoryManager to accumulate duplicates.
+            self._state_msg_offsets[thread_id] = 0
+            if self.checkpointer is not None:
+                try:
+                    snapshot = graph.get_state(config)
+                    existing_msgs = snapshot.values.get("messages", [])
+                    self._state_msg_offsets[thread_id] = len(existing_msgs)
+                except Exception:
+                    pass
             try:
                 for attempt in range(max_retries):
                     try:

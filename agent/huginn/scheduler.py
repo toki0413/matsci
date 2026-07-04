@@ -14,9 +14,12 @@ import subprocess
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# datetime.UTC was added in Python 3.11; use timezone.utc for 3.10 compat
+UTC = timezone.utc
 
 
 @dataclass
