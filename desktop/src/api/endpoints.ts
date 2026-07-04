@@ -167,3 +167,76 @@ export function subscribeEvents(onEvent: (event: unknown) => void): () => void {
   };
   return () => source.close();
 }
+
+/* ── Chat (REST fallback) ────────────────────────── */
+
+export interface ChatRequest {
+  content: string;
+  thread_id?: string;
+  thinking?: unknown;
+  max_tokens?: number;
+  persona?: string;
+}
+
+export interface ChatResponse {
+  agent_id: string;
+  content: string;
+  thread_id: string;
+  tool_trace?: unknown[];
+  error?: string;
+}
+
+export const chat = (agentId: string, req: ChatRequest) =>
+  api.post<ChatResponse>(`/agents/${agentId}/chat`, req);
+
+/* ── Diagnostics ────────────────────────────────── */
+
+export const getDiagnostics = () =>
+  api.get<Record<string, unknown>>('/diagnostics');
+
+export const getCircuitBreakers = () =>
+  api.get<Record<string, unknown>>('/diagnostics/circuit');
+
+/* ── Checkpoints ────────────────────────────────── */
+
+export interface Checkpoint {
+  id: string;
+  base: string;
+  files: string[] | number;
+}
+
+export const createCheckpoint = (path: string) =>
+  api.post<Checkpoint>('/checkpoints', { path });
+
+export const getCheckpoint = (id: string) =>
+  api.get<Checkpoint>(`/checkpoints/${id}`);
+
+export const getCheckpointDiff = (id: string) =>
+  api.get<{ diffs: Array<{ path: string; status: string; diff: string }> }>(
+    `/checkpoints/${id}/diff`,
+  );
+
+export const acceptCheckpoint = (id: string) =>
+  api.post<{ success: boolean }>(`/checkpoints/${id}/accept`);
+
+export const rejectCheckpoint = (id: string) =>
+  api.post<{ success: boolean }>(`/checkpoints/${id}/reject`);
+
+/* ── Execution ──────────────────────────────────── */
+
+export const executeStages = (stages: unknown[], workingDir = '.', name = 'execute') =>
+  api.post('/execute', { stages, working_dir: workingDir, name });
+
+export const explore = (params: Record<string, unknown>) =>
+  api.post('/explore', params);
+
+export const diagnose = (params: Record<string, unknown>) =>
+  api.post('/diagnose', params);
+
+/* ── Admin ──────────────────────────────────────── */
+
+export const getMaintenanceStatus = () =>
+  api.get<{ maintenance: boolean }>('/admin/maintenance');
+
+export const toggleMaintenance = (enabled: boolean) =>
+  api.post<{ maintenance: boolean }>('/admin/maintenance', { enabled });
