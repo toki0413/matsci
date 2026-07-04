@@ -71,6 +71,12 @@ from huginn.agent_config import (
 )
 from huginn.permissions import PermissionConfig
 from huginn.personas import Persona
+from huginn.utils.session_context import (
+    get_thread_id,
+    get_user_message,
+    set_thread_id,
+    set_user_message,
+)
 
 
 class FixDanglingToolCallsMiddleware(AgentMiddleware):
@@ -173,8 +179,10 @@ class RateLimitMiddleware(AgentMiddleware):
         return _extract(result)
 
     def wrap_model_call(self, request, handler):
+        _tid = get_thread_id() or "default"
         ok, reason = self._limiter.check_allowed(
-            "agent", self._estimate_tokens(getattr(request, "messages", []))
+            "agent", self._estimate_tokens(getattr(request, "messages", [])),
+            thread_id=_tid,
         )
         if not ok:
             from huginn.security.rate_limiter import RateLimitExceeded
@@ -182,12 +190,14 @@ class RateLimitMiddleware(AgentMiddleware):
             raise RateLimitExceeded(reason, reason="limit_exceeded")
         result = handler(request)
         in_tok, out_tok = self._extract_usage(result)
-        self._limiter.record_usage("agent", in_tok, out_tok)
+        self._limiter.record_usage("agent", in_tok, out_tok, thread_id=_tid)
         return result
 
     async def awrap_model_call(self, request, handler):
+        _tid = get_thread_id() or "default"
         ok, reason = self._limiter.check_allowed(
-            "agent", self._estimate_tokens(getattr(request, "messages", []))
+            "agent", self._estimate_tokens(getattr(request, "messages", [])),
+            thread_id=_tid,
         )
         if not ok:
             from huginn.security.rate_limiter import RateLimitExceeded
@@ -195,7 +205,7 @@ class RateLimitMiddleware(AgentMiddleware):
             raise RateLimitExceeded(reason, reason="limit_exceeded")
         result = await handler(request)
         in_tok, out_tok = self._extract_usage(result)
-        self._limiter.record_usage("agent", in_tok, out_tok)
+        self._limiter.record_usage("agent", in_tok, out_tok, thread_id=_tid)
         return result
 
     def wrap_tool_call(self, request, handler):
@@ -956,7 +966,7 @@ class HuginnAgent:
             allowed, modified, pre_ctx = await hm.run_pre(
                 tool_name,
                 input_data,
-                thread_id=getattr(self, "thread_id", None),
+                thread_id=get_thread_id() or getattr(self, "thread_id", None),
             )
             if not allowed:
                 # 钩子可在 metadata.block_reason 里塞具体原因, 喂回 LLM
@@ -1003,8 +1013,8 @@ class HuginnAgent:
                 duration_ms = (time.time() - start) * 1000
                 await hm.run_post(
                     tool_name, input_data, result, error, duration_ms,
-                    thread_id=getattr(self, "thread_id", None),
-                    user_message=getattr(self, "_current_user_message", None),
+                    thread_id=get_thread_id() or getattr(self, "thread_id", None),
+                    user_message=get_user_message() or getattr(self, "_current_user_message", None),
                 )
 
         async def hooked_coroutine(**kwargs: Any) -> Any:
@@ -1884,11 +1894,14 @@ class HuginnAgent:
         Stores messages in session memory and tracks tool calls for
         auto-promotion to long-term memory.
         """
-        # 更新当前会话的 thread_id, 让 _wrap_tool_with_hooks 闭包和
-        # post hook 能拿到, PRT Level 1 写 AnomalyLog 时要靠它关联会话
+        # Per-request session context: contextvars give each async task
+        # its own thread_id, so concurrent WS clients sharing the same
+        # agent singleton no longer overwrite each other's state.
+        set_thread_id(thread_id)
+        set_user_message(message)
+        # Keep instance attrs as fallback for code paths that haven't
+        # been migrated to read from contextvars yet.
         self.thread_id = thread_id
-        # 同时存当前用户消息, PRT Level 1 的 LLM 判定钩子要靠它识别
-        # "用户给的值"和"工具返回的值"是否冲突 (DATA_CONFLICT 类别)
         self._current_user_message = message
         # Privacy scan on the raw user message.
         if self.privacy_block_on_secrets:
@@ -1921,9 +1934,9 @@ class HuginnAgent:
 
         set_telemetry_collector(self._telemetry_collector)
 
-        # 新一轮 turn: 重置单轮限流计数, 全局累计不动
+        # 新一轮 turn: 重置该 session 的单轮限流计数, 全局累计不动
         from huginn.security.rate_limiter import get_rate_limiter
-        get_rate_limiter().reset_turn()
+        get_rate_limiter().reset_turn(thread_id=thread_id)
 
         with self._telemetry_collector.span(
             "agent_turn", thread_id=thread_id

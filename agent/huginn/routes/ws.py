@@ -11,8 +11,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import AIMessage, ToolMessage
+from pydantic import ValidationError
 
 from huginn.config import HuginnConfig
+from huginn.routes.schemas import WSMessage
 from huginn.server_core import (
     _EDIT_TOOLS,
     _checkpoints,
@@ -75,24 +77,40 @@ async def agent_websocket(websocket: WebSocket):
     try:
         while True:
             message = await websocket.receive_text()
-            data = json.loads(message)
+            try:
+                data = json.loads(message)
+            except json.JSONDecodeError:
+                await websocket.send_json(
+                    {"type": "error", "error": "Malformed JSON, expected a valid JSON object."}
+                )
+                continue
 
-            msg_type = data.get("type", "user_input")
-            content = data.get("content", "")
-            thread_id = data.get("thread_id", "default")
+            # Validate the envelope so oversized payloads or unsafe thread IDs
+            # are rejected before any downstream code touches them.
+            try:
+                msg = WSMessage(**data)
+            except ValidationError as exc:
+                await websocket.send_json(
+                    {"type": "error", "error": f"Invalid message: {exc.errors()}"}
+                )
+                continue
+
+            msg_type = msg.type
+            content = msg.content
+            thread_id = msg.thread_id
 
             if msg_type == "user_input":
                 cfg_chat = get_config()
                 factory = get_agent_factory()
-                thinking = data.get("thinking")
-                max_tokens = data.get("max_tokens")
+                thinking = msg.thinking
+                max_tokens = msg.max_tokens
 
                 # Request-level thinking/max_tokens override requires a fresh agent
                 # because the cached global agent is built from the default config.
                 # Persona auto-routing: a "persona" field switches the active
                 # persona for this turn; otherwise we optionally infer the best
                 # persona from the query when auto_routing is enabled.
-                requested_persona = data.get("persona")
+                requested_persona = msg.persona
 
                 if thinking is not None or max_tokens is not None or requested_persona:
                     try:

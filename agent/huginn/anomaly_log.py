@@ -87,6 +87,9 @@ class AnomalyLogStore:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            # WAL: 读写不互斥, 崩溃也比默认 rollback journal 更不容易丢数据
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.commit()
 
     def _next_id(self) -> str:

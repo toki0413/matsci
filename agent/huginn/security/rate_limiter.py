@@ -95,44 +95,51 @@ class TokenRateLimiter:
         self.config = config or RateLimitConfig()
         self._lock = threading.Lock()
 
-        # 单轮累计
-        self._turn_tokens: int = 0
-        self._turn_cost: float = 0.0
-
-        # 全局累计 (跨 turn, 只有 reset_all 才清)
+        # 全局累计 (跨 turn, 只有 reset_all 才清) — 总成本是全局预算
         self._total_tokens: int = 0
         self._total_cost: float = 0.0
-
-        # 滑动窗口: (timestamp, tokens) 对, 只保留最近 1s 内的
-        # 用 deque 是因为只在两端操作 (左端 pop 旧记录, 右端 append 新记录),
-        # O(1) 复杂度
-        self._second_window: deque[tuple[float, int]] = deque()
-
-        # 已发过 warning 的维度, 避免日志刷屏. reset_turn 时清掉.
-        self._warned: set[str] = set()
 
         # 按模型记账, 方便事后排查哪个模型烧得多
         self._per_model: dict[str, dict[str, float]] = {}
 
+        # Per-session state: turn tokens, second window, warnings are
+        # isolated per thread_id so one user's burst can't throttle another.
+        self._sessions: dict[str, dict[str, Any]] = {}
+
         self._start_time: float = time.time()
+
+    def _get_session(self, thread_id: str) -> dict[str, Any]:
+        """Lazily create per-session counters. Each session gets its own
+        turn token counter and sliding window."""
+        s = self._sessions.get(thread_id)
+        if s is None:
+            s = {
+                "turn_tokens": 0,
+                "turn_cost": 0.0,
+                "second_window": deque(),
+                "warned": set(),
+            }
+            self._sessions[thread_id] = s
+        return s
+
+    def _prune_session_window(self, s: dict, now: float) -> int:
+        """Drop entries older than 1s from the session's sliding window."""
+        cutoff = now - 1.0
+        win = s["second_window"]
+        while win and win[0][0] < cutoff:
+            win.popleft()
+        return sum(tok for _, tok in win)
 
     # ---- 内部辅助 ----------------------------------------------------------
 
-    def _prune_window(self, now: float) -> int:
-        """清掉 1s 窗口外的旧记录, 返回窗口内 token 总数."""
-        cutoff = now - 1.0
-        while self._second_window and self._second_window[0][0] < cutoff:
-            self._second_window.popleft()
-        return sum(tok for _, tok in self._second_window)
-
-    def _maybe_warn(self, key: str, ratio: float, label: str) -> None:
+    def _maybe_warn(self, s: dict, key: str, ratio: float, label: str) -> None:
         """到阈值发一次 warning, 同一轮内同维度不重复发."""
         thr = self.config.warning_threshold
         if thr <= 0 or ratio < thr:
             return
-        if key in self._warned:
+        if key in s["warned"]:
             return
-        self._warned.add(key)
+        s["warned"].add(key)
         logger.warning(
             "限流预警: %s 已用 %.1f%% (阈值 %.0f%%)",
             label, ratio * 100, thr * 100,
@@ -144,6 +151,7 @@ class TokenRateLimiter:
         self,
         model_name: str,
         estimated_input_tokens: int,
+        thread_id: str = "default",
     ) -> tuple[bool, str]:
         """调用前检查这次调用会不会超限.
 
@@ -152,32 +160,36 @@ class TokenRateLimiter:
         注意: 这里只能预估 input token, output 还没产生没法预估, 所以
         秒级/单轮的判定偏宽松 —— 真正的硬上限靠 record_usage 累加后,
         下次 check_allowed 把后续调用拦住.
+
+        thread_id 用于按会话隔离: 单轮上限和秒级速率是 per-session 的,
+        一个用户的 burst 不会卡住另一个用户; 总成本是全局共享的.
         """
         if not self.config.enabled:
             return True, ""
 
         with self._lock:
             now = time.time()
-            sec_tokens = self._prune_window(now)
+            s = self._get_session(thread_id)
+            sec_tokens = self._prune_session_window(s, now)
             est = max(estimated_input_tokens, 0)
 
-            # 闸门 1: 单轮 token 上限
-            if self._turn_tokens + est > self.config.max_tokens_per_turn:
+            # 闸门 1: 单轮 token 上限 (per-session)
+            if s["turn_tokens"] + est > self.config.max_tokens_per_turn:
                 return False, (
-                    f"单轮 token 超限: 已用 {self._turn_tokens} + 预估 "
+                    f"单轮 token 超限: 已用 {s['turn_tokens']} + 预估 "
                     f"{est} > 上限 {self.config.max_tokens_per_turn} "
-                    f"(model={model_name})"
+                    f"(model={model_name}, thread={thread_id})"
                 )
 
-            # 闸门 2: 秒级速率 —— Moonshine Voice 拦无限循环的核心
+            # 闸门 2: 秒级速率 (per-session)
             if sec_tokens + est > self.config.max_tokens_per_second:
                 return False, (
                     f"秒级 token 超限: 近 1s 已用 {sec_tokens} + 预估 "
                     f"{est} > 上限 {self.config.max_tokens_per_second} "
-                    f"(model={model_name})"
+                    f"(model={model_name}, thread={thread_id})"
                 )
 
-            # 闸门 3: 总成本兜底 —— 已经超了就不再放行
+            # 闸门 3: 总成本兜底 (全局, 跨所有会话)
             if self._total_cost >= self.config.max_total_cost_usd:
                 return False, (
                     f"总成本超限: 已花 ${self._total_cost:.4f} >= "
@@ -185,20 +197,20 @@ class TokenRateLimiter:
                     f"(model={model_name})"
                 )
 
-            # 预警 (不拦截, 只是提醒, 达到 80% 阈值时各维度发一次)
+            # 预警
             self._maybe_warn(
-                "turn",
-                (self._turn_tokens + est) / self.config.max_tokens_per_turn,
+                s, "turn",
+                (s["turn_tokens"] + est) / self.config.max_tokens_per_turn,
                 f"单轮 token ({model_name})",
             )
             self._maybe_warn(
-                "second",
+                s, "second",
                 (sec_tokens + est) / self.config.max_tokens_per_second,
                 f"秒级 token ({model_name})",
             )
             if self.config.max_total_cost_usd > 0:
                 self._maybe_warn(
-                    "cost",
+                    s, "cost",
                     self._total_cost / self.config.max_total_cost_usd,
                     f"总成本 ({model_name})",
                 )
@@ -211,11 +223,15 @@ class TokenRateLimiter:
         input_tokens: int,
         output_tokens: int,
         cost: float = 0.0,
+        thread_id: str = "default",
     ) -> None:
         """调用后记账, 把实际用量加到各计数器上.
 
         input/output/cost 都是这次调用真实产生的. 如果拿不到 usage
         (比如 provider 不返回), 传 0 也行, 至少 turn 调用次数能记上.
+
+        turn tokens 和秒级窗口记到 per-session 计数器; 总 token 和总成本
+        记到全局计数器 (跨所有会话).
         """
         if not self.config.enabled:
             return
@@ -224,16 +240,17 @@ class TokenRateLimiter:
         now = time.time()
 
         with self._lock:
-            self._turn_tokens += total
-            self._turn_cost += cost
+            s = self._get_session(thread_id)
+            s["turn_tokens"] += total
+            s["turn_cost"] += cost
             self._total_tokens += total
             self._total_cost += cost
 
-            # 写进滑动窗口, 按 record 时刻算 (output 已经产生, 时间点合理)
-            self._second_window.append((now, total))
-            self._prune_window(now)
+            # 写进 per-session 滑动窗口
+            s["second_window"].append((now, total))
+            self._prune_session_window(s, now)
 
-            # 按模型汇总
+            # 按模型汇总 (全局)
             bucket = self._per_model.setdefault(
                 model_name,
                 {
@@ -249,16 +266,30 @@ class TokenRateLimiter:
             bucket["calls"] += 1
 
     def get_stats(self) -> dict[str, Any]:
-        """返回当前各维度统计快照, 给监控 / 日志 / debug 用."""
+        """返回当前各维度统计快照, 给监控 / 日志 / debug 用.
+
+        汇总所有活跃 session 的 turn 计数 + 全局累计.
+        """
         with self._lock:
             now = time.time()
-            sec_tokens = self._prune_window(now)
+            total_turn_tokens = 0
+            total_turn_cost = 0.0
+            active_sessions = {}
+            for tid, s in self._sessions.items():
+                sec = self._prune_session_window(s, now)
+                total_turn_tokens += s["turn_tokens"]
+                total_turn_cost += s["turn_cost"]
+                active_sessions[tid] = {
+                    "turn_tokens": s["turn_tokens"],
+                    "turn_cost": round(s["turn_cost"], 6),
+                    "tokens_per_second": sec,
+                }
             return {
-                "turn_tokens": self._turn_tokens,
-                "turn_cost": round(self._turn_cost, 6),
+                "turn_tokens": total_turn_tokens,
+                "turn_cost": round(total_turn_cost, 6),
                 "total_tokens": self._total_tokens,
                 "total_cost": round(self._total_cost, 6),
-                "tokens_per_second": sec_tokens,
+                "active_sessions": active_sessions,
                 "uptime_sec": round(now - self._start_time, 2),
                 "per_model": {
                     k: {
@@ -274,22 +305,21 @@ class TokenRateLimiter:
                 },
             }
 
-    def reset_turn(self) -> None:
-        """新一轮 turn 开始时调, 清单轮计数和预警标记, 全局累计不动."""
+    def reset_turn(self, thread_id: str = "default") -> None:
+        """新一轮 turn 开始时调, 清该 session 的单轮计数和预警标记,
+        全局累计不动."""
         with self._lock:
-            self._turn_tokens = 0
-            self._turn_cost = 0.0
-            self._warned.clear()
+            s = self._get_session(thread_id)
+            s["turn_tokens"] = 0
+            s["turn_cost"] = 0.0
+            s["warned"].clear()
 
     def reset_all(self) -> None:
-        """彻底清零 —— 把全局累计也清了, 慎用."""
+        """彻底清零 —— 把全局累计和所有 session 状态都清了, 慎用."""
         with self._lock:
-            self._turn_tokens = 0
-            self._turn_cost = 0.0
             self._total_tokens = 0
             self._total_cost = 0.0
-            self._second_window.clear()
-            self._warned.clear()
+            self._sessions.clear()
             self._per_model.clear()
             self._start_time = time.time()
 

@@ -35,4 +35,4 @@ jobs:
       - name: Run tests
         run: |
           cd agent
-          pytest -q --cov-fail-under=30 --continue-on-collection-errors
+          pytest -q --cov-fail-under=60

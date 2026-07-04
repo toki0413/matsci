@@ -129,6 +129,71 @@ async def _shutdown_mcp():
         get_context().mcp_manager = None
 
 
+async def _close_sqlite_stores() -> None:
+    """Close SQLite connections held by long-lived singletons on shutdown.
+
+    Every close is wrapped so one failure doesn't block the others. The
+    longterm memory and credential store open per-operation connections
+    (context-managed, closed automatically), so they have nothing for us
+    to do here — we only touch the stores that keep a persistent connection
+    open for the lifetime of the process.
+    """
+    # research_log — module-level singleton; may never have been touched if
+    # no research records were written this run.
+    try:
+        import huginn.research_log as _rl_mod
+
+        _rl = getattr(_rl_mod, "_research_log_singleton", None)
+        if _rl is not None and hasattr(_rl, "close"):
+            _rl.close()
+            logger.info("[shutdown] research_log connection closed")
+    except Exception as e:
+        logger.warning("[shutdown] failed to close research_log: %s", e)
+
+    # anomaly_log + campaign store hang off the AgentFactory, which is built
+    # lazily — they won't exist if no agent was ever created this session.
+    try:
+        factory = getattr(get_context(), "agent_factory", None)
+        if factory is None:
+            return
+
+        anomaly_store = getattr(factory, "_anomaly_store", None)
+        if anomaly_store is not None and hasattr(anomaly_store, "close"):
+            anomaly_store.close()
+            logger.info("[shutdown] anomaly_log connection closed")
+
+        scheduler = getattr(factory, "_shared_scheduler", None)
+        if scheduler is None:
+            return
+
+        # Cancel in-flight async jobs before pulling the store out from
+        # under them — otherwise their finally-block writes hit a closed
+        # handle and the WAL checkpoint may not flush.
+        live = getattr(scheduler, "_live_tasks", {}) or {}
+        pending: list[asyncio.Task] = []
+        for _jid, task in list(live.items()):
+            if not task.done():
+                task.cancel()
+                pending.append(task)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+            logger.info(
+                "[shutdown] cancelled %d in-flight scheduler task(s)", len(pending)
+            )
+
+        # Stop the background drainer coroutine if one is running.
+        _stop = getattr(scheduler, "stop", None)
+        if callable(_stop):
+            _stop()
+
+        store = getattr(scheduler, "store", None)
+        if store is not None and hasattr(store, "close"):
+            store.close()
+            logger.info("[shutdown] campaign store connection closed")
+    except Exception as e:
+        logger.warning("[shutdown] failed to close factory stores: %s", e)
+
+
 async def _mcp_health_monitor(manager: Any) -> None:
     """Background task: periodically probe MCP servers and reconnect failures.
 
@@ -256,6 +321,11 @@ async def lifespan(app: FastAPI):
             pass
         logger.info("[MCP] Health monitor stopped")
     await _shutdown_mcp()
+
+    # Close persistent SQLite connections so WAL checkpoints flush and the
+    # file handles drop cleanly. Done after MCP teardown so nothing new will
+    # try to touch the databases while we're tearing them down.
+    await _close_sqlite_stores()
 
 
 # ── CORS ────────────────────────────────────────────────────────────
