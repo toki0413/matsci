@@ -15,6 +15,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any
 
+from huginn.security.external_breaker import CircuitOpenError, circuit_guard
+
 from ._http import (
     _OPENER,
     _USER_AGENT,
@@ -102,7 +104,11 @@ async def _search_arxiv(
         f"&start=0&max_results={max_results}&sortBy=relevance"
     )
     try:
-        xml_text = await _http_get_text(url)
+        with circuit_guard("arxiv"):
+            xml_text = await _http_get_text(url)
+    except CircuitOpenError:
+        logger.info("arXiv circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("arXiv 请求失败: %s", exc)
         return []
@@ -169,7 +175,11 @@ async def _search_s2(
         f"&limit={max_results}&fields={fields}"
     )
     try:
-        data = await _http_get_json(url)
+        with circuit_guard("semantic_scholar"):
+            data = await _http_get_json(url)
+    except CircuitOpenError:
+        logger.info("Semantic Scholar circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("Semantic Scholar 请求失败: %s", exc)
         return []
@@ -227,7 +237,11 @@ async def _search_crossref(
         url += "&filter=" + ",".join(filters)
 
     try:
-        data = await _http_get_json(url)
+        with circuit_guard("crossref"):
+            data = await _http_get_json(url)
+    except CircuitOpenError:
+        logger.info("CrossRef circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("CrossRef 请求失败: %s", exc)
         return []
@@ -320,7 +334,11 @@ async def _search_openalex(
         url += "&filter=" + ",".join(filters)
 
     try:
-        data = await _http_get_json(url)
+        with circuit_guard("openalex"):
+            data = await _http_get_json(url)
+    except CircuitOpenError:
+        logger.info("OpenAlex circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("OpenAlex 请求失败: %s", exc)
         return []
@@ -391,7 +409,11 @@ async def _search_pubmed(
         esearch_url += f'&mindate={yf}&maxdate={yt}&datetype=pdat'
 
     try:
-        esearch_data = await _http_get_json(esearch_url)
+        with circuit_guard("pubmed"):
+            esearch_data = await _http_get_json(esearch_url)
+    except CircuitOpenError:
+        logger.info("PubMed circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("PubMed esearch 失败: %s", exc)
         return []
@@ -407,7 +429,11 @@ async def _search_pubmed(
         f"?db=pubmed&id={pmid_str}&retmode=json"
     )
     try:
-        esummary_data = await _http_get_json(esummary_url)
+        with circuit_guard("pubmed"):
+            esummary_data = await _http_get_json(esummary_url)
+    except CircuitOpenError:
+        logger.info("PubMed circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("PubMed esummary 失败: %s", exc)
         return []
@@ -470,7 +496,11 @@ async def _search_doaj(
     )
 
     try:
-        data = await _http_get_json(url)
+        with circuit_guard("doaj"):
+            data = await _http_get_json(url)
+    except CircuitOpenError:
+        logger.info("DOAJ circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("DOAJ 请求失败: %s", exc)
         return []
@@ -553,7 +583,11 @@ async def _search_core(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("core"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("CORE circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("CORE 请求失败: %s", exc)
         return []
@@ -619,7 +653,11 @@ async def _search_europepmc(
         url += f"&filter=FIRST_PDATE:[1900-01-01 TO {year_to}-12-31]"
 
     try:
-        data = await _http_get_json(url)
+        with circuit_guard("europepmc"):
+            data = await _http_get_json(url)
+    except CircuitOpenError:
+        logger.info("Europe PMC circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("Europe PMC 请求失败: %s", exc)
         return []
@@ -712,7 +750,11 @@ async def _search_zenodo(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("zenodo"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("Zenodo circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("Zenodo 请求失败: %s", exc)
         return []
@@ -796,7 +838,11 @@ async def _search_openaire(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("openaire"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("OpenAIRE circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("OpenAIRE 请求失败: %s", exc)
         return []
@@ -943,7 +989,11 @@ async def _search_cod(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch, formula_url)
+        with circuit_guard("cod"):
+            data = await asyncio.to_thread(_fetch, formula_url)
+    except CircuitOpenError:
+        logger.info("COD circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("COD formula 请求失败: %s", exc)
         data = []
@@ -961,7 +1011,11 @@ async def _search_cod(
             f"?format=json&count={limit}&text={q}"
         )
         try:
-            data = await asyncio.to_thread(_fetch, text_url)
+            with circuit_guard("cod"):
+                data = await asyncio.to_thread(_fetch, text_url)
+        except CircuitOpenError:
+            logger.info("COD circuit open, skipping text search")
+            data = []
         except Exception as exc:
             logger.warning("COD text 请求失败: %s", exc)
             data = []
@@ -1042,7 +1096,11 @@ async def _search_materials_cloud(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("materials_cloud"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("Materials Cloud circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("Materials Cloud 请求失败: %s", exc)
         return []
@@ -1138,7 +1196,11 @@ async def _search_nomad(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("nomad"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("NOMAD circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("NOMAD 请求失败: %s", exc)
         return []
@@ -1239,7 +1301,11 @@ async def _search_datacite(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("datacite"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("DataCite circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("DataCite 请求失败: %s", exc)
         return []
@@ -1339,7 +1405,11 @@ async def _search_materials_project(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("materials_project"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("Materials Project circuit open, skipping")
+        return []
     except Exception as exc:
         logger.warning("Materials Project 请求失败: %s", exc)
         return []
@@ -1430,7 +1500,11 @@ async def _opencitations_references(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("opencitations"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("OpenCitations circuit open, skipping references")
+        return []
     except Exception as exc:
         logger.warning("OpenCitations references 请求失败: %s", exc)
         return []
@@ -1477,7 +1551,11 @@ async def _opencitations_citations(
             return json.loads(resp.read().decode("utf-8", errors="replace"))
 
     try:
-        data = await asyncio.to_thread(_fetch)
+        with circuit_guard("opencitations"):
+            data = await asyncio.to_thread(_fetch)
+    except CircuitOpenError:
+        logger.info("OpenCitations circuit open, skipping citations")
+        return []
     except Exception as exc:
         logger.warning("OpenCitations citations 请求失败: %s", exc)
         return []
@@ -1512,7 +1590,10 @@ async def _crossref_doi_lookup(doi: str) -> dict[str, Any] | None:
     doi_clean = doi.lower().strip()
     url = f"https://api.crossref.org/works/{urllib.parse.quote(doi_clean, safe='')}"
     try:
-        data = await _http_get_json(url)
+        with circuit_guard("crossref"):
+            data = await _http_get_json(url)
+    except CircuitOpenError:
+        return None
     except Exception:
         return None
 

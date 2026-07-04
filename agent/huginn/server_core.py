@@ -7,8 +7,11 @@ avoid circular imports.  This module has **no** FastAPI dependency.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import threading
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +66,21 @@ _EDIT_TOOLS: set[str] = {"file_write_tool", "file_edit_tool"}
 # stack into every context construction.
 _visual_encoder = None
 _image_index = None
+
+# ── session / thread lifecycle ─────────────────────────────────────
+# Threads held in _threads are ephemeral conversation handles. Without a
+# TTL the dict grows without bound as new threads are created, so we reap
+# any thread that hasn't been touched within the configured window.
+
+_log = logging.getLogger("huginn.server_core")
+
+# How long an idle thread stays alive before cleanup reaps it.
+_SESSION_TTL_HOURS = float(os.environ.get("HUGINN_SESSION_TTL_HOURS", "24"))
+# Run the sweep every N get_or_create_thread() calls instead of every call,
+# otherwise the lock churn dominates under burst traffic.
+_CLEANUP_INTERVAL = 50
+_cleanup_counter = 0
+_cleanup_lock = threading.Lock()
 
 
 # ── context accessor ────────────────────────────────────────────────
@@ -249,6 +267,135 @@ def get_image_index():
         store_path = Path(workspace) / ".huginn" / "visual_index.json"
         _image_index = ImageIndex(store_path=store_path)
     return _image_index
+
+
+# ── thread lifecycle (TTL + user isolation) ────────────────────────
+
+
+def _current_user_id(conn: Any) -> str | None:
+    """Best-effort extraction of the caller's user_id from a request/ws.
+
+    The auth dependency stashes a ``RequestContext`` on ``request.state.auth``
+    (HTTP) — for WebSockets we fall back to decoding the bearer token if the
+    connection carries one. Returns None when no user can be identified,
+    which preserves the legacy shared behaviour.
+    """
+    # HTTP path: request.state.auth.user.user_id
+    try:
+        state = getattr(conn, "state", None)
+        auth = getattr(state, "auth", None) if state is not None else None
+        user = getattr(auth, "user", None) if auth is not None else None
+        if user is not None:
+            uid = getattr(user, "user_id", None)
+            if uid:
+                return uid
+    except Exception:
+        pass
+
+    # WebSocket / fallback: pull the bearer token from headers and decode it.
+    try:
+        headers = getattr(conn, "headers", {})
+        authz = headers.get("authorization", "") if headers else ""
+        if isinstance(authz, bytes):
+            authz = authz.decode("utf-8", "replace")
+        if authz.lower().startswith("bearer "):
+            token = authz[7:]
+            from huginn.security.auth import _decode_token
+
+            claims = _decode_token(token)
+            return claims.get("sub")
+    except Exception:
+        pass
+    return None
+
+
+def _cleanup_expired_threads() -> int:
+    """Drop threads not accessed within the TTL window.
+
+    Uses the ``last_accessed_ts`` epoch stamp set by ``get_or_create_thread``.
+    Threads created before that field existed are left alone on the first
+    pass — they pick it up the next time they're touched. Returns the number
+    of reaped threads.
+    """
+    cutoff = time.time() - _SESSION_TTL_HOURS * 3600.0
+    removed = 0
+    with _state_lock:
+        for tid in list(_threads):
+            meta = _threads[tid]
+            ts = meta.get("last_accessed_ts")
+            if ts is not None and ts < cutoff:
+                del _threads[tid]
+                removed += 1
+    if removed:
+        _log.info(
+            "Reaped %d expired thread(s) older than %.1fh", removed, _SESSION_TTL_HOURS
+        )
+    return removed
+
+
+def touch_thread(thread_id: str) -> dict[str, Any] | None:
+    """Mark a thread as freshly accessed. Returns a copy of its metadata.
+
+    No-ops (returns None) when the thread doesn't exist — callers that need
+    create-on-access semantics should use ``get_or_create_thread`` instead.
+    """
+    now_iso = datetime.now().isoformat()
+    now_ts = time.time()
+    with _state_lock:
+        meta = _threads.get(thread_id)
+        if meta is None:
+            return None
+        meta["last_active"] = now_iso
+        meta["last_accessed_ts"] = now_ts
+        return dict(meta)
+
+
+def get_or_create_thread(
+    thread_id: str,
+    *,
+    user_id: str | None = None,
+    label: str | None = None,
+) -> dict[str, Any]:
+    """Return thread metadata, creating the entry if it's new.
+
+    Associates the thread with *user_id* (when supplied) so multi-tenant
+    deployments can tell sessions apart, and refreshes ``last_accessed_ts``
+    so the TTL sweeper can reap idle threads. The periodic cleanup runs
+    inline every ``_CLEANUP_INTERVAL`` calls to keep ``_threads`` bounded.
+    """
+    global _cleanup_counter
+
+    # Throttle the sweep — a lock check per call is cheaper than a full scan.
+    with _cleanup_lock:
+        _cleanup_counter += 1
+        run_cleanup = _cleanup_counter >= _CLEANUP_INTERVAL
+        if run_cleanup:
+            _cleanup_counter = 0
+    if run_cleanup:
+        _cleanup_expired_threads()
+
+    now_iso = datetime.now().isoformat()
+    now_ts = time.time()
+    with _state_lock:
+        meta = _threads.get(thread_id)
+        if meta is None:
+            meta = {
+                "id": thread_id,
+                "label": label or thread_id,
+                "created_at": now_iso,
+                "last_active": now_iso,
+                "last_accessed_ts": now_ts,
+            }
+            if user_id is not None:
+                meta["user_id"] = user_id
+            _threads[thread_id] = meta
+        else:
+            meta["last_active"] = now_iso
+            meta["last_accessed_ts"] = now_ts
+            # Backfill user_id on threads that predate per-user isolation.
+            if user_id is not None and "user_id" not in meta:
+                meta["user_id"] = user_id
+        return dict(meta)
 
 
 # ── planner ─────────────────────────────────────────────────────────

@@ -4,8 +4,18 @@ Each submodule exposes an ``APIRouter`` named ``router``.
 ``ALL_ROUTERS`` collects them in registration order for the FastAPI app.
 """
 
+from __future__ import annotations
+
+import logging
+import threading
+
+from fastapi import APIRouter, FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
 from huginn.routes.advisor import router as advisor_router
 from huginn.routes.agents import router as agents_router
+from huginn.routes.auth import router as auth_router
 from huginn.routes.bench import router as bench_router
 from huginn.routes.checkpoints import router as checkpoints_router
 from huginn.routes.codebase import router as codebase_router
@@ -42,6 +52,8 @@ from huginn.routes.visual import router as visual_router
 
 ALL_ROUTERS = [
     advisor_router,
+    # auth must come early so /auth/* is registered before any catch-all
+    auth_router,
     health_router,
     config_router,
     project_router,
@@ -82,3 +94,85 @@ ALL_ROUTERS = [
     # Prometheus /metrics 抓取端点
     metrics_router,
 ]
+
+# ── API versioning ──────────────────────────────────────────────────
+
+_logger = logging.getLogger("huginn.api.deprecation")
+
+# Paths served at root that have no /v1 counterpart (infra / docs / auth).
+# Hitting these should NOT emit a deprecation warning.
+_ROOT_ONLY_PATHS = frozenset(
+    {
+        "/health",
+        "/health/rust",
+        "/health/guidance",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/metrics",
+        "/auth/token",
+        "/auth/login",
+        "/",
+    }
+)
+
+# Track which route groups we've already warned about so the log doesn't
+# drown in repeats under load. Keyed by the first path segment, which is
+# bounded by the number of route groups (~35).
+_warned_segments: set[str] = set()
+_warn_lock = threading.Lock()
+
+
+async def _deprecation_dispatch(request: Request, call_next):
+    """Nudge callers away from the legacy root mount toward /v1.
+
+    Adds a ``Deprecation`` response header on every root-level API response
+    and logs a warning the first time we see a given route group. /v1 calls
+    and infra paths are passed through silently.
+    """
+    path = request.url.path
+    is_v1 = path == "/v1" or path.startswith("/v1/")
+    if is_v1 or path in _ROOT_ONLY_PATHS:
+        return await call_next(request)
+
+    response = await call_next(request)
+
+    # Signal deprecation to clients via standard headers.
+    segment = "/" + path.strip("/").split("/", 1)[0] if path.strip("/") else "/"
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = f'</v1{segment}>; rel="successor-version"'
+
+    # Log once per route group to keep the log readable.
+    with _warn_lock:
+        if segment in _warned_segments:
+            return response
+        _warned_segments.add(segment)
+    _logger.warning(
+        "Deprecated root API path %s — use /v1%s instead. "
+        "The root mount is kept for backward compatibility and may be "
+        "removed in a future release.",
+        segment,
+        segment,
+    )
+    return response
+
+
+def include_v1_routes(app: FastAPI, *, keep_root_compat: bool = True) -> None:
+    """Mount every router under the ``/v1`` version prefix.
+
+    This is the canonical API surface going forward. When
+    *keep_root_compat* is True (the default) the same routers are also
+    mounted at the root path so existing clients keep working, with a
+    deprecation warning logged and a ``Deprecation`` header set on each
+    root-level response.
+    """
+    v1_router = APIRouter(prefix="/v1")
+    for router in ALL_ROUTERS:
+        v1_router.include_router(router)
+    app.include_router(v1_router)
+
+    if keep_root_compat:
+        # Keep the un-versioned mount alive so older clients don't break.
+        for router in ALL_ROUTERS:
+            app.include_router(router)
+        app.add_middleware(BaseHTTPMiddleware, dispatch=_deprecation_dispatch)

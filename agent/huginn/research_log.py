@@ -136,6 +136,16 @@ CREATE INDEX IF NOT EXISTS idx_research_archived ON research_records(archived);
 """
 
 
+def _migrate_research_log_v1(conn: sqlite3.Connection) -> None:
+    """v1 baseline -- the schema is created by _SCHEMA below, so this is a no-op.
+
+    Exists to establish the user_version baseline so future schema changes
+    can be tracked properly instead of relying on CREATE TABLE IF NOT EXISTS
+    + scattered ALTER TABLE.
+    """
+    pass
+
+
 class ResearchLog:
     """SQLite 后端的结构化研究日志.
 
@@ -158,6 +168,14 @@ class ResearchLog:
         )
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        # Run versioned migrations before applying the base schema
+        from huginn.utils.migrations import MigrationManager
+
+        _mgr = MigrationManager(self._db_path)
+        try:
+            _mgr.run_migrations([(1, _migrate_research_log_v1)])
+        finally:
+            _mgr.close()
         with self._lock:
             self._conn.executescript(_SCHEMA)
             # WAL: 读写不互斥, 崩溃也比默认的 rollback journal 更不容易丢数据

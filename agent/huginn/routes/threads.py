@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import ValidationError
 
 from huginn.routes.schemas import CreateThreadRequest
-from huginn.server_core import _state_lock, _threads, get_agent
+from huginn.server_core import (
+    _current_user_id,
+    _state_lock,
+    _threads,
+    get_agent,
+    get_or_create_thread,
+    touch_thread,
+)
 
 router = APIRouter(tags=["threads"])
 
@@ -38,7 +44,7 @@ async def list_threads() -> dict[str, Any]:
 
 
 @router.post("/threads")
-async def create_thread(params: dict[str, Any]) -> dict[str, Any]:
+async def create_thread(params: dict[str, Any], request: Request) -> dict[str, Any]:
     """Create a new conversation thread."""
     # Validate the request body — title length and metadata shape.
     try:
@@ -50,14 +56,10 @@ async def create_thread(params: dict[str, Any]) -> dict[str, Any]:
     # Prefer the validated "title" field, fall back to "label" for
     # backward compat with clients that haven't migrated yet.
     label = req.title or params.get("label") or thread_id
-    now = datetime.now().isoformat()
-    with _state_lock:
-        _threads[thread_id] = {
-            "id": thread_id,
-            "label": label,
-            "created_at": now,
-            "last_active": now,
-        }
+    # Bind the thread to the authenticated caller so multi-tenant
+    # deployments can isolate session data. No-op in dev / shared-key mode.
+    user_id = _current_user_id(request)
+    get_or_create_thread(thread_id, user_id=user_id, label=label)
     return {"id": thread_id, "label": label}
 
 
@@ -101,9 +103,9 @@ async def fork_thread(thread_id: str, params: dict[str, Any] | None = None) -> d
     result = agent.fork_conversation(from_node_id=from_node_id)
 
     if result.get("success"):
-        with _state_lock:
-            if thread_id in _threads:
-                _threads[thread_id]["last_active"] = datetime.now().isoformat()
+        # touch_thread refreshes both last_active and last_accessed_ts so
+        # the TTL sweeper treats this thread as recently used.
+        touch_thread(thread_id)
     return {"thread_id": thread_id, **result}
 
 
@@ -134,7 +136,5 @@ async def switch_branch(thread_id: str, params: dict[str, Any]) -> dict[str, Any
     result = agent.switch_branch(node_id)
 
     if result.get("success"):
-        with _state_lock:
-            if thread_id in _threads:
-                _threads[thread_id]["last_active"] = datetime.now().isoformat()
+        touch_thread(thread_id)
     return {"thread_id": thread_id, **result}

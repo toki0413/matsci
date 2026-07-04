@@ -6,7 +6,6 @@ semantic retrieval of past conversations, facts, and insights.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import sqlite3
@@ -36,6 +35,41 @@ MATERIAL_CATEGORIES = {
     "characterization",
     "simulation",
 }
+
+
+def _migrate_memories_v1(conn: sqlite3.Connection) -> None:
+    """Add tier, expires_at, formula, user_id columns to the memories table.
+
+    These were previously scattered as ALTER TABLE + suppress(OperationalError)
+    in _init_db. Consolidating into a versioned migration gives us a proper
+    schema version via PRAGMA user_version and stops swallowing errors
+    silently. Each column is checked individually so databases at different
+    old states all converge to the same schema.
+    """
+    from huginn.utils.migrations import column_exists
+
+    if not column_exists(conn, "memories", "tier"):
+        conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT DEFAULT 'mid'")
+    if not column_exists(conn, "memories", "expires_at"):
+        conn.execute("ALTER TABLE memories ADD COLUMN expires_at TEXT")
+    if not column_exists(conn, "memories", "formula"):
+        conn.execute("ALTER TABLE memories ADD COLUMN formula TEXT")
+    # Multi-tenant isolation: tag every memory with the owning user.
+    # Old rows stay NULL and are treated as shared/global when no user_id
+    # filter is supplied (backward compat).
+    if not column_exists(conn, "memories", "user_id"):
+        conn.execute("ALTER TABLE memories ADD COLUMN user_id TEXT")
+
+
+def _run_memory_migrations(db_path: str) -> None:
+    """Run pending memory schema migrations via MigrationManager."""
+    from huginn.utils.migrations import MigrationManager
+
+    mgr = MigrationManager(db_path)
+    try:
+        mgr.run_migrations([(1, _migrate_memories_v1)])
+    finally:
+        mgr.close()
 
 
 @dataclass
@@ -87,6 +121,7 @@ class LongTermMemory:
             conn.close()
 
     def _init_db(self) -> None:
+        # Base table + indexes that only reference original columns
         with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS memories (
@@ -109,14 +144,14 @@ class LongTermMemory:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_tags ON memories(tags)
             """)
-            # Migrate old databases without tier/expires_at/formula before indexing them
-            for _col, ddl in [
-                ("tier", "ALTER TABLE memories ADD COLUMN tier TEXT DEFAULT 'mid'"),
-                ("expires_at", "ALTER TABLE memories ADD COLUMN expires_at TEXT"),
-                ("formula", "ALTER TABLE memories ADD COLUMN formula TEXT"),
-            ]:
-                with contextlib.suppress(sqlite3.OperationalError):
-                    conn.execute(ddl)
+            conn.commit()
+
+        # Run versioned migrations -- replaces the old scattered
+        # ALTER TABLE + suppress(OperationalError) approach
+        _run_memory_migrations(str(self.db_path))
+
+        # Indexes on migrated columns + FTS (depend on columns added above)
+        with self._connect() as conn:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_formula ON memories(formula)
             """)
@@ -125,6 +160,9 @@ class LongTermMemory:
             """)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_expires ON memories(expires_at)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_user_id ON memories(user_id)
             """)
             conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
@@ -145,11 +183,14 @@ class LongTermMemory:
         tier: str = "mid",
         ttl_hours: float | None = None,
         formula: str | None = None,
+        user_id: str | None = None,
     ) -> str:
         """Store a new memory entry. Returns the entry ID.
 
         tier: short (6h), mid (7d), long (permanent). ttl_hours overrides default TTL.
         formula: optional material formula (e.g. "GaN") for material entries.
+        user_id: optional owner. When set the memory is private to that user;
+            when omitted the memory is shared (backward compatible).
         """
         if tier not in TIER_TTL_HOURS:
             raise ValueError(f"Invalid tier {tier}; choose from {list(TIER_TTL_HOURS)}")
@@ -168,8 +209,8 @@ class LongTermMemory:
             conn.execute(
                 """
                 INSERT INTO memories
-                (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_id,
@@ -183,6 +224,7 @@ class LongTermMemory:
                     now.isoformat(),
                     expires,
                     formula,
+                    user_id,
                 ),
             )
             # formula 进 tags 让 FTS5 也能搜到
@@ -210,6 +252,7 @@ class LongTermMemory:
                         "importance": str(importance),
                         "tier": tier,
                         "formula": formula or "",
+                        "user_id": user_id or "",
                     }
                 ],
                 ids=[entry_id],
@@ -225,12 +268,14 @@ class LongTermMemory:
         tier: str = "long",
         source: str = "",
         importance: float = 0.7,
+        user_id: str | None = None,
     ) -> str:
         """存一条材料记忆. category 必须在 MATERIAL_CATEGORIES 里.
 
         formula: 化学式, 如 "GaN"
         category: structure | property | synthesis | characterization | simulation
         payload: 任意 dict, json 序列化后存 content
+        user_id: 可选, 绑定到具体用户做多租户隔离
         """
         if category not in MATERIAL_CATEGORIES:
             raise ValueError(
@@ -244,6 +289,7 @@ class LongTermMemory:
             importance=importance,
             tier=tier,
             formula=formula,
+            user_id=user_id,
         )
 
     def _where_alive(self, alias: str = "m") -> tuple[str, tuple]:
@@ -280,8 +326,14 @@ class LongTermMemory:
         top_k: int = 5,
         semantic: bool = True,
         formula: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Retrieve alive memories matching query (FTS5 + optional semantic)."""
+        """Retrieve alive memories matching query (FTS5 + optional semantic).
+
+        user_id: when supplied, only memories owned by that user are
+            returned (multi-tenant isolation). When omitted, all memories
+            are visible — this preserves the pre-isolation behaviour.
+        """
         results = []
         alive_where, alive_params = self._where_alive()
 
@@ -290,6 +342,11 @@ class LongTermMemory:
         with self._connect() as conn:
             sql = "SELECT * FROM memories AS m WHERE " + alive_where
             params: list[Any] = list(alive_params)
+            # Scope to a single tenant before any other filter. Omitting the
+            # clause entirely keeps the old shared-memory behaviour intact.
+            if user_id is not None:
+                sql += " AND m.user_id = ?"
+                params.append(user_id)
             if category:
                 sql += " AND category = ?"
                 params.append(category)
@@ -347,10 +404,18 @@ class LongTermMemory:
                 if vr["id"] in seen_ids:
                     continue
                 with self._connect() as conn:
-                    row = conn.execute(
-                        "SELECT * FROM memories WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)",
-                        (vr["id"], datetime.now().isoformat()),
-                    ).fetchone()
+                    # Re-apply the tenant filter on the metadata fetch so a
+                    # vector hit from another user can't leak across tenants.
+                    if user_id is not None:
+                        row = conn.execute(
+                            "SELECT * FROM memories WHERE id = ? AND (expires_at IS NULL OR expires_at > ?) AND user_id = ?",
+                            (vr["id"], datetime.now().isoformat(), user_id),
+                        ).fetchone()
+                    else:
+                        row = conn.execute(
+                            "SELECT * FROM memories WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)",
+                            (vr["id"], datetime.now().isoformat()),
+                        ).fetchone()
                     if row:
                         results.append(dict(row))
 
@@ -455,26 +520,44 @@ class LongTermMemory:
             return conn.total_changes > 0
 
     def list_by_category(
-        self, category: str, limit: int = 50, alive_only: bool = True
+        self,
+        category: str,
+        limit: int = 50,
+        alive_only: bool = True,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         alive_where, alive_params = self._where_alive()
         with self._connect() as conn:
-            sql = f"SELECT * FROM memories AS m WHERE category = ? AND {alive_where} ORDER BY last_accessed DESC LIMIT ?"
-            rows = conn.execute(sql, (category, *alive_params, limit)).fetchall()
+            sql = f"SELECT * FROM memories AS m WHERE category = ? AND {alive_where}"
+            params: list[Any] = [category, *alive_params]
+            if user_id is not None:
+                sql += " AND m.user_id = ?"
+                params.append(user_id)
+            sql += " ORDER BY last_accessed DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, tuple(params)).fetchall()
             return [dict(r) for r in rows]
 
     def list_all(
-        self, limit: int = 200, alive_only: bool = True
+        self,
+        limit: int = 200,
+        alive_only: bool = True,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         if alive_only:
             alive_where, alive_params = self._where_alive()
-            sql = f"SELECT * FROM memories AS m WHERE {alive_where} ORDER BY last_accessed DESC LIMIT ?"
-            params = (*alive_params, limit)
+            sql = f"SELECT * FROM memories AS m WHERE {alive_where}"
+            params: list[Any] = [*alive_params]
         else:
-            sql = "SELECT * FROM memories ORDER BY last_accessed DESC LIMIT ?"
-            params = (limit,)
+            sql = "SELECT * FROM memories AS m WHERE 1=1"
+            params = []
+        if user_id is not None:
+            sql += " AND m.user_id = ?"
+            params.append(user_id)
+        sql += " ORDER BY last_accessed DESC LIMIT ?"
+        params.append(limit)
         with self._connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
+            rows = conn.execute(sql, tuple(params)).fetchall()
             return [dict(r) for r in rows]
 
     def prune_expired(self) -> int:
@@ -537,6 +620,8 @@ class LongTermMemory:
                     importance=item.get("importance", 0.5),
                     tier=tier,
                     ttl_hours=ttl_hours,
+                    formula=item.get("formula"),
+                    user_id=item.get("user_id"),
                 )
                 count += 1
             except Exception:
