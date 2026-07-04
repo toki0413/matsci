@@ -19,6 +19,7 @@ from huginn.routes.hpc import router as hpc_router
 from huginn.routes.credentials import router as credentials_router
 from huginn.routes.interaction import router as interaction_router
 from huginn.routes.knowledge import router as knowledge_router
+from huginn.routes.metrics import router as metrics_router
 from huginn.routes.mcp import router as mcp_router
 from huginn.routes.memory import router as memory_router
 from huginn.routes.pet import router as pet_router
@@ -78,4 +79,6 @@ ALL_ROUTERS = [
     visual_router,
     # 文档理解: PDF 解析 / DocGraph / 信息包
     document_router,
+    # Prometheus /metrics 抓取端点
+    metrics_router,
 ]

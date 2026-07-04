@@ -26,9 +26,11 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from huginn import __version__
 from huginn.lifespan import _get_cors_origins, lifespan
+from huginn.middleware.request_id import RequestIDMiddleware
 from huginn.routes import ALL_ROUTERS
 from huginn.routes.agents import (
     create_persona,
@@ -38,6 +40,10 @@ from huginn.routes.agents import (
     telemetry_summary,
 )
 from huginn.routes.memory import memory_maintenance
+from huginn.routes.metrics import (
+    RATE_LIMIT_BLOCKED_TOTAL,
+    http_metrics_dispatch,
+)
 from huginn.routes.threads import get_thread
 from huginn.routes.unified import unified_plot_endpoint, unified_solve_endpoint
 from huginn.security.auth import require_api_key
@@ -90,9 +96,9 @@ async def rate_limit_middleware(request: Request, call_next):
     if _RATE_LIMIT <= 0:
         return await call_next(request)
 
-    # Skip health checks and docs
+    # Skip health checks, docs, and the Prometheus scrape endpoint.
     path = request.url.path
-    if path in ("/health", "/docs", "/openapi.json", "/redoc"):
+    if path in ("/health", "/docs", "/openapi.json", "/redoc", "/metrics"):
         return await call_next(request)
 
     client_ip = request.client.host if request.client else "unknown"
@@ -110,6 +116,7 @@ async def rate_limit_middleware(request: Request, call_next):
         del _rate_buckets[client_ip]
 
     if len(bucket) >= _RATE_LIMIT:
+        RATE_LIMIT_BLOCKED_TOTAL.labels(session=client_ip).inc()
         return JSONResponse(
             status_code=429,
             content={"success": False, "error": "Rate limit exceeded"},
@@ -127,6 +134,16 @@ async def rate_limit_middleware(request: Request, call_next):
         _sweep_empty_buckets()
 
     return await call_next(request)
+
+
+# Metrics middleware — registered after the rate limiter so it sits outside
+# it (and outside CORS), counting every request — including 429s — and
+# timing the full handler stack. It still wraps CORS, as required.
+app.add_middleware(BaseHTTPMiddleware, dispatch=http_metrics_dispatch)
+
+# Request-ID middleware — registered last so it runs outermost and the
+# correlation id is in place before any other middleware / handler logs.
+app.add_middleware(RequestIDMiddleware)
 
 
 # ── Global exception handler ──────────────────────────────────────────

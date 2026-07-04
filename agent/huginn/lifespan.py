@@ -19,6 +19,7 @@ from huginn.server_core import (
     get_context,
     get_knowledge_base,
 )
+from huginn.utils.json_logging import setup_json_logging
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +263,9 @@ async def _mcp_health_monitor(manager: Any) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Switch the root logger to structured JSON output early so every startup
+    # log line below is already correlated. Opt out with HUGINN_JSON_LOGS=0.
+    setup_json_logging()
     await _init_mcp_tools()
     if _KB_AVAILABLE and get_context().kb is None:
         try:

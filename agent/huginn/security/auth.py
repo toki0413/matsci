@@ -38,7 +38,8 @@ from huginn.security.rbac import (
 API_KEY_HEADER = APIKeyHeader(name="X-HUGINN-API-KEY", auto_error=False)
 _BEARER_PREFIX = "Bearer "
 
-# Paths that are intentionally public (health checks, OpenAPI docs, auth).
+# Paths that are intentionally public (health checks, OpenAPI docs, auth,
+# Prometheus scrape).
 _PUBLIC_PATHS: set[str] = {
     "/health",
     "/health/rust",
@@ -46,6 +47,7 @@ _PUBLIC_PATHS: set[str] = {
     "/docs",
     "/openapi.json",
     "/redoc",
+    "/metrics",
     "/auth/token",
     "/auth/login",
 }
