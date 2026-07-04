@@ -296,6 +296,20 @@ class VaspTool(HuginnTool):
             if autoheal_log:
                 data["autoheal_attempts"] = autoheal_log
 
+            # Physics audit — check if results are physically reasonable.
+            # AutoFixLoop only handles hard failures; this catches results that
+            # "succeeded" but violate basic physics (e.g. unbound energy, neg gap).
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit(
+                    "vasp_tool", args.action, parsed, args.model_dump()
+                )
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                pass  # audit failure can't block result delivery
+
             # 带上 provenance 快照, 事后能追溯参数/版本/环境
             try:
                 from huginn.provenance import capture

@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -76,12 +79,16 @@ class ExecutionOrchestrator:
         tool_registry: dict[str, Callable] | None = None,
         enable_autofix: bool = True,
         max_retries: int = 2,
+        compute_router: Any = None,
     ):
         self.working_dir = Path(working_dir) if working_dir else Path.cwd()
         self.working_dir.mkdir(parents=True, exist_ok=True)
         self.tool_registry = tool_registry or {}
         self.enable_autofix = enable_autofix
         self.max_retries = max_retries
+        # Optional ComputeRouter — when set, _execute_stage annotates params
+        # with execution_target so tools know whether to run locally or on HPC.
+        self.compute_router = compute_router
         self._execution_history: list[WorkflowExecutionRecord] = []
 
     def register_tool(self, name: str, fn: Callable) -> None:
@@ -206,6 +213,16 @@ class ExecutionOrchestrator:
 
         # Substitute dependency outputs into params
         params = self._resolve_param_refs(params, previous_results)
+
+        # ComputeRouter: auto-select local vs HPC execution target
+        if self.compute_router is not None:
+            try:
+                route = self.compute_router.route(tool_name, action, params)
+                params["execution_target"] = route.target
+                params["_route_reason"] = route.reason
+                logger.debug("stage %s routed to %s: %s", stage_id, route.target, route.reason)
+            except Exception:
+                pass  # routing failure shouldn't block execution
 
         started = datetime.now().isoformat()
         t0 = time.time()

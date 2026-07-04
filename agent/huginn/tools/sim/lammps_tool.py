@@ -384,6 +384,23 @@ class LammpsTool(HuginnTool):
                 if "error" not in traj_analysis:
                     data["trajectory_analysis"] = traj_analysis
 
+            # Physics audit — check thermo data for unphysical values.
+            # LAMMPS can exit cleanly while the trajectory itself is garbage
+            # (e.g. exploded temperatures, runaway pressure). Flag those here.
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit(
+                    "lammps_tool",
+                    args.compute_action or action,
+                    {"thermo_data": thermo_data, "final_energy": final_energy},
+                    args.model_dump(),
+                )
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                pass  # audit is best-effort, never block the result
+
             # 带上 provenance 快照, 事后能追溯参数/版本/环境
             # 注意: 在加 provenance 字段前先 snapshot 输出, 避免 output_hash 自指
             try:
