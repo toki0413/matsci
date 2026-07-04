@@ -110,10 +110,18 @@ class AutoloopEngine:
     validation, learning, and reporting into a single cohesive loop.
     """
 
-    def __init__(self, workspace: str | Path | None = None, goal_scheduler: GoalScheduler | None = None):
+    def __init__(
+        self,
+        workspace: str | Path | None = None,
+        goal_scheduler: GoalScheduler | None = None,
+        verification_model: Any = None,
+    ):
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
         self.model = get_model(self.settings)
+        # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
+        # 默认 None 时退回 self.model, 保持向后兼容.
+        self.verification_model = verification_model or self.model
         self.memory = MemoryManager()
         self.kg = ProjectKnowledgeGraph()
         self.report_tool = ReportTool()
@@ -232,7 +240,12 @@ class AutoloopEngine:
             error=error,
         )
         try:
-            await bus.dispatch(event)
+            result = await bus.dispatch(event)
+            if result.executed == 0 and result.failed == 0:
+                logger.debug(
+                    "stage event %s.%s had no handlers",
+                    event_type.name, stage_name,
+                )
         except Exception:
             pass
 
@@ -630,6 +643,12 @@ class AutoloopEngine:
         else:
             tracker.fail(progress_task_id, f"report phase failed: {report_phase.error}")
 
+        # 会话结束: 把 session 摘要提升到 long-term memory, 下次 RAG 能检索到
+        try:
+            self.memory.promote_session_summary(tier="long")
+        except Exception:
+            pass
+
         return AutoloopResult(
             run_id=run_id,
             objective=objective,
@@ -702,9 +721,14 @@ class AutoloopEngine:
         # 先试一把符号回归: 若 context 带 observation_data, 发现的解析表达式
         # 作为 data-driven candidate law 拼进 prompt, 让假设接地数据
         symreg_hint = await self._symreg_hint(context)
+        # Moonshine 跨域猜想: 从 context 提取源问题, 跑三步流水线,
+        # 把跨域类比猜想作为 hint 注入 prompt. 失败静默跳过.
+        conjecture_hint = self._conjecture_hint(context)
         prompt = self._build_hypothesis_prompt(context)
         if symreg_hint:
             prompt = f"{symreg_hint}\n{prompt}"
+        if conjecture_hint:
+            prompt = f"{conjecture_hint}\n{prompt}"
         # 按研究类型选 persona: MD 类用 md_expert, 默认走 dft_expert.
         # 这俩 persona 在 personas.py 内置, 直接取就行.
         persona_name = self._pick_hypothesis_persona(context)
@@ -713,6 +737,43 @@ class AutoloopEngine:
             return response.strip()
         except Exception:
             return None
+
+    def _conjecture_hint(self, context: dict[str, Any]) -> str:
+        """跑 Moonshine 跨域猜想流水线, 返回注入 prompt 的 hint.
+
+        从 context 提取源问题和领域, 调 ConjectureGenerator 生成跨域类比
+        猜想. 失败返回空串, 不影响 hypothesize 主流程.
+        """
+        try:
+            from huginn.autoloop.conjecture import get_conjecture_generator
+
+            source_problem = context.get("goal") or context.get("observation") or ""
+            if not source_problem or len(source_problem) < 10:
+                return ""
+            source_domain = context.get("domain") or "materials science"
+            # 目标领域: 从 KG 拿当前研究方向, 默认用 "battery cathodes"
+            target_domain = context.get("target_domain") or "battery cathodes"
+
+            gen = get_conjecture_generator()
+            result = gen.run(
+                source_problem=str(source_problem)[:500],
+                source_domain=str(source_domain),
+                target_domain=str(target_domain),
+                model=None,  # template mode, 不烧 token
+            )
+            conjecture = result.get("conjecture", {})
+            statement = conjecture.get("statement", "")
+            prediction = conjecture.get("prediction", "")
+            if not statement:
+                return ""
+            return (
+                f"[Cross-domain analogy hint]\n"
+                f"Conjecture: {statement}\n"
+                f"Prediction: {prediction}\n"
+                f"(This is a template-based analogy for inspiration only.)"
+            )
+        except Exception:
+            return ""
 
     async def _symreg_hint(self, context: dict[str, Any]) -> str:
         """从 observation_data 跑符号回归, 把最优解析表达式作为 hint 返回.
@@ -991,6 +1052,7 @@ class AutoloopEngine:
         # prompt 会强约束 LLM 走"挑毛病 + 提改进"的语气, 而不是默认的助手语气.
         # 失败不影响 validation 流程, 只是不带 reviewer_critique 字段.
         # A1: KB 注入 — reviewer 拿 first-principles 已知结论对照判断结果合理性
+        # Moonshine 三槽: reviewer 用独立 verification_model, 避免确认偏差.
         try:
             reviewer_kb = self._build_kb_text(
                 query=self._summarize_for_kb(execution_result, results)
@@ -998,6 +1060,7 @@ class AutoloopEngine:
             critique = await self._llm_chat(
                 self._build_reviewer_prompt(execution_result, results, reviewer_kb),
                 persona_name="reviewer",
+                model=self.verification_model,
             )
             if critique and critique.strip():
                 results["reviewer_critique"] = critique.strip()
@@ -1362,6 +1425,17 @@ class AutoloopEngine:
             },
         )
 
+        # Long-term memory: 把关键迭代写入 long-term, 下次 RAG 能检索到
+        try:
+            self.memory.remember(
+                content=f"iter {self._iteration}: {hypothesis[:120]}",
+                category="autoloop_iteration",
+                importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                tier="mid",
+            )
+        except Exception:
+            pass
+
         # 奖励回流: 把 R_phys 喂给 evolution engine, 驱动基于奖励的进化
         # 这是阶段4 单轨的核心闭环——物理校验分数真正影响 agent 后续行为
         if r_phys is not None:
@@ -1516,12 +1590,14 @@ Please modify the code to address this task."""
     # LLM helpers
     # ──────────────────────────────────────────────────────────────
 
-    async def _llm_chat(self, prompt: str, persona_name: str | None = None) -> str:
+    async def _llm_chat(self, prompt: str, persona_name: str | None = None, model: Any = None) -> str:
         """Send a prompt to the LLM and return the response.
 
         persona_name 不为空时, 把对应 persona 的 system prompt 作为
         SystemMessage 插在最前, 实现"每阶段开始注入 persona system prompt".
         persona 找不到就退化为不注入, 行为跟改动前一致.
+
+        model 不为空时用传入的模型 (用于三槽 verification), 否则用默认 self.model.
         """
         from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -1531,7 +1607,8 @@ Please modify the code to address this task."""
             if sys_prompt:
                 messages.append(SystemMessage(content=sys_prompt))
         messages.append(HumanMessage(content=prompt))
-        response = await self.model.ainvoke(messages)
+        llm = model or self.model
+        response = await llm.ainvoke(messages)
         return str(response.content)
 
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:

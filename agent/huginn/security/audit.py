@@ -17,6 +17,7 @@ import gzip
 import hashlib
 import hmac as _hmac
 import json
+import logging
 import os
 import shutil
 import threading
@@ -57,7 +58,12 @@ class AuditLogger:
         signing_key: str | bytes | None = None,
     ) -> None:
         if log_path is None:
-            log_path = Path("huginn_audit.jsonl")
+            # 落在 runtime home 下, 不散落在 CWD
+            try:
+                from huginn.utils.runtime import get_runtime_home
+                log_path = get_runtime_home() / "audit.jsonl"
+            except Exception:
+                log_path = Path("huginn_audit.jsonl")
         self.log_path = Path(log_path)
         self._lock = threading.Lock()
         self._last_hash = ""
@@ -103,7 +109,11 @@ class AuditLogger:
         try:
             from huginn.privacy.scanner import SecretScanner
             scanner = SecretScanner()
-        except Exception:
+        except Exception as exc:
+            # 扫描器不可用时必须警告 — 不能静默放过未脱敏数据
+            logging.getLogger(__name__).warning(
+                "SecretScanner unavailable (%s), details NOT redacted", exc,
+            )
             return details
 
         redacted = {}
