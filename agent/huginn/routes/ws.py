@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import traceback
 import uuid
 from pathlib import Path
@@ -12,7 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import ValidationError
 
-from huginn.config import HuginnConfig
+from huginn.config import HuginnConfig, get_config
 from huginn.routes.schemas import WSMessage
 from huginn.server_core import (
     _EDIT_TOOLS,
@@ -26,6 +27,8 @@ from huginn.server_core import (
     get_memory_manager,
     get_or_create_thread,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ws"])
 
@@ -100,8 +103,18 @@ async def agent_websocket(websocket: WebSocket):
             thread_id = msg.thread_id
 
             if msg_type == "user_input":
-                cfg_chat = get_config()
-                factory = get_agent_factory()
+                try:
+                    cfg_chat = get_config()
+                except Exception as exc:
+                    traceback.print_exc()
+                    await websocket.send_json({"type": "error", "error": f"Config error: {exc}"})
+                    continue
+                try:
+                    factory = get_agent_factory()
+                except Exception as exc:
+                    traceback.print_exc()
+                    await websocket.send_json({"type": "error", "error": f"Factory error: {exc}"})
+                    continue
                 thinking = msg.thinking
                 max_tokens = msg.max_tokens
 
@@ -126,13 +139,23 @@ async def agent_websocket(websocket: WebSocket):
                         )
                         continue
                 else:
-                    agent = await get_agent()
+                    try:
+                        agent = await get_agent()
+                    except Exception as exc:
+                        traceback.print_exc()
+                        await websocket.send_json(
+                            {"type": "error", "error": f"Failed to init agent: {exc}"}
+                        )
+                        continue
                     # The cached global agent was built without an approval
                     # callback, so ASK-mode tools would be silently denied.
                     # Flip on auto-approve to keep them working; the
                     # tool_call events already give the client visibility.
-                    if not agent._permission_config.auto_approve_all:
-                        agent._permission_config.auto_approve_all = True
+                    if not getattr(agent, "_permission_config", None) or not agent._permission_config.auto_approve_all:
+                        try:
+                            agent._permission_config.auto_approve_all = True
+                        except Exception:
+                            pass
 
                 # Early return when no LLM is configured — skip expensive
                 # persona matching (which loads the ONNX embedding model and
@@ -503,4 +526,4 @@ async def agent_websocket(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.error("WebSocket error: %s", e, exc_info=True)

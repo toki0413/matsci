@@ -68,7 +68,8 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
     try:
         req = ChatRequest.model_validate(params)
     except ValidationError as exc:
-        return {"error": f"Invalid request: {exc.errors()}"}
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=exc.errors())
 
     user_message = req.content
     thread_id = req.thread_id
