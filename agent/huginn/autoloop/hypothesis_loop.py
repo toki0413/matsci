@@ -10,6 +10,7 @@ R5 (W4): 把研究假设组织成图, 节点是假设, 边是 support / refute /
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -114,7 +115,7 @@ class HypothesisGraph:
     def _log_research(self, record_type: str, title: str, content: str,
                       parent_id: str | None = None, status: str = "proposed",
                       tags: list[str] | None = None) -> None:
-        """把假设生命周期事件写到结构化研究日志. 出错静默跳过."""
+        """把假设生命周期事件写到结构化研究日志. 出错只 log debug, 不影响主流程."""
         try:
             from huginn.research_log import get_research_log
             get_research_log().add(
@@ -125,8 +126,10 @@ class HypothesisGraph:
                 status=status,
                 tags=tags or [],
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).debug(
+                "research log write failed: %s", e,
+            )
 
     # ── 节点 ─────────────────────────────────────────────────────────
 

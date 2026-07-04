@@ -62,9 +62,10 @@ class EventBus:
 
     def __post_init__(self) -> None:
         if self.registry is None:
-            # 延迟导入避免循环
-            from huginn.plugins.registry import StarHandlerRegistry
-            self.registry = StarHandlerRegistry()
+            # 用进程级共享 registry, 这样 PluginLoader 注册的 handler
+            # 和 engine dispatch 的事件能碰到一起
+            from huginn.plugins.registry import get_shared_registry
+            self.registry = get_shared_registry()
 
     async def dispatch(self, event: Event) -> DispatchResult:
         """分发事件到所有匹配 handler。

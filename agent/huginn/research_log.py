@@ -167,17 +167,20 @@ class ResearchLog:
 
     @staticmethod
     def _resolve_path(db_path: str | Path | None) -> Path:
-        """决定 sqlite 文件位置: 显式传入 > $HUGINN_CACHE_DIR > ~/.huginn.
+        """决定 sqlite 文件位置: 显式传入 > runtime home.
 
-        跟 provenance / longterm memory 的约定保持一致, 测试也可以直接
-        传一个 tmp 路径进来隔离.
+        统一走 utils.runtime.get_runtime_home(), 不再各自硬编码.
         """
         if db_path is not None:
             return Path(db_path)
-        base = os.environ.get("HUGINN_CACHE_DIR")
-        if base:
-            return Path(base) / "research_log.sqlite"
-        return Path.home() / ".huginn" / "research_log.sqlite"
+        try:
+            from huginn.utils.runtime import get_runtime_home
+            return get_runtime_home() / "research_log.sqlite"
+        except Exception:
+            base = os.environ.get("HUGINN_CACHE_DIR")
+            if base:
+                return Path(base) / "research_log.sqlite"
+            return Path.home() / ".huginn" / "research_log.sqlite"
 
     # ------------------------------------------------------------------
     # 写入

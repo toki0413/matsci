@@ -1129,13 +1129,37 @@ class HuginnAgent:
         The query defaults to the current user message so recalled facts are
         actually relevant. Keeping this text out of the system prompt keeps
         the static prefix stable and improves LLM prompt/KV-cache hit rates.
+
+        Also injects verified conjectures from the research log, so the LLM
+        can see its own past hypothesis evolution tree.
         """
         if not query:
             query = "materials science computation"
+        parts: list[str] = []
         try:
-            return self.memory.recall_for_prompt(query, max_entries=3)
+            mem = self.memory.recall_for_prompt(query, max_entries=3)
+            if mem:
+                parts.append(mem)
         except Exception:
-            return ""
+            pass
+        # 注入研究日志: 最近已验证/进行中的猜想, 让 LLM 看到自己的演化树
+        try:
+            from huginn.research_log import get_research_log
+            log = get_research_log()
+            # 拿最近 3 条 verified + 2 条 in_progress 的猜想
+            verified = log.list_by_status("verified", limit=3)
+            in_progress = log.list_by_status("in_progress", limit=2)
+            if verified or in_progress:
+                lines = ["### Research Log (recent conjectures)"]
+                for r in verified:
+                    lines.append(f"- [verified] {r.title}")
+                for r in in_progress:
+                    lines.append(f"- [in_progress] {r.title}")
+                lines.append("### End Research Log")
+                parts.append("\n".join(lines))
+        except Exception:
+            pass
+        return "\n\n".join(parts) if parts else ""
 
     def _build_kg_text(self, query: str) -> str:
         """Query the project knowledge graph and format results for the prompt."""
@@ -1541,7 +1565,17 @@ class HuginnAgent:
         return self._telemetry_collector.to_dict()
 
     def close(self) -> None:
-        """Release resources held by the agent (checkpointer, etc.)."""
+        """Release resources held by the agent (checkpointer, etc.).
+
+        也触发隐私数据清除: purge_session() 清理临时数据注册表,
+        让 ephemeral tier 的数据不会在会话结束后残留.
+        """
+        # 隐私生命周期收尾: 清除临时数据
+        try:
+            from huginn.privacy_guard import PrivacyGuard
+            PrivacyGuard.shared().purge_session()
+        except Exception:
+            pass
         self._exit_stack.close()
 
     def __enter__(self) -> HuginnAgent:

@@ -115,4 +115,27 @@ class StarHandlerRegistry:
             return sum(len(lst) for lst in self._handlers.values())
 
 
-__all__ = ["StarHandlerRegistry"]
+# ── 进程级共享 registry ────────────────────────────────────────────
+# 解决的问题: engine 和 PluginLoader 各自 new EventBus 时, 每次创建独立
+# 的空 registry, 导致 handler 注册到 A, 事件从 B 发出, 永远碰不上.
+# 共享单例后, 不管谁 new EventBus 都拿到同一个 registry, handler 不丢.
+
+_shared_registry: StarHandlerRegistry | None = None
+_shared_lock = threading.Lock()
+
+
+def get_shared_registry() -> StarHandlerRegistry:
+    """返回进程级共享的 StarHandlerRegistry 单例.
+
+    所有 EventBus 实例默认用这个 registry, 这样 PluginLoader 注册的
+    handler 和 engine dispatch 的事件能碰到一起.
+    """
+    global _shared_registry
+    if _shared_registry is None:
+        with _shared_lock:
+            if _shared_registry is None:
+                _shared_registry = StarHandlerRegistry()
+    return _shared_registry
+
+
+__all__ = ["StarHandlerRegistry", "get_shared_registry"]
