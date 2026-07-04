@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from huginn import __version__
 from huginn.config import HuginnConfig
@@ -82,6 +82,62 @@ async def health() -> dict[str, Any]:
         result["mcp_servers"] = mgr.get_server_status()
 
     return result
+
+
+@router.get("/ready")
+async def readiness(response: Response) -> dict[str, Any]:
+    """Readiness probe -- tells the load balancer "can I handle requests?".
+
+    Unlike /health (liveness: "am I alive?") this checks actual
+    dependencies:
+      * SQLite -- can we read/write the research log?
+      * LLM    -- is a provider configured?
+      * MCP    -- are configured MCP servers connected?
+
+    Returns 200 when everything is green, 503 when any check fails.
+    """
+    checks: dict[str, str] = {}
+
+    # -- SQLite -------------------------------------------------------
+    try:
+        from huginn.research_log import get_research_log
+
+        log = get_research_log()
+        # Trivial round-trip -- catches corrupt/locked databases
+        with log._lock:
+            log._conn.execute("SELECT 1").fetchone()
+        checks["sqlite"] = "ok"
+    except Exception:
+        checks["sqlite"] = "fail"
+
+    # -- LLM provider ------------------------------------------------
+    try:
+        cfg = HuginnConfig.from_env()
+        checks["llm"] = "ok" if _is_configured(cfg) else "fail"
+    except Exception:
+        checks["llm"] = "fail"
+
+    # -- MCP servers --------------------------------------------------
+    try:
+        mgr = get_context().mcp_manager
+        if mgr is None:
+            # No MCP servers configured -- nothing to check
+            checks["mcp"] = "ok"
+        else:
+            status = mgr.get_server_status()
+            if not status:
+                checks["mcp"] = "ok"
+            elif all(s.get("connected") for s in status.values()):
+                checks["mcp"] = "ok"
+            else:
+                checks["mcp"] = "fail"
+    except Exception:
+        checks["mcp"] = "fail"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    if not all_ok:
+        response.status_code = 503
+    return {"ready": all_ok, "checks": checks}
 
 
 @router.get("/health/guidance")

@@ -30,8 +30,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from huginn import __version__
 from huginn.lifespan import _get_cors_origins, lifespan
+from huginn.middleware.limits import RequestSizeLimitMiddleware, RequestTimeoutMiddleware
 from huginn.middleware.request_id import RequestIDMiddleware
-from huginn.routes import ALL_ROUTERS
+from huginn.routes import ALL_ROUTERS, include_v1_routes
 from huginn.routes.agents import (
     create_persona,
     get_persona,
@@ -141,6 +142,14 @@ async def rate_limit_middleware(request: Request, call_next):
 # timing the full handler stack. It still wraps CORS, as required.
 app.add_middleware(BaseHTTPMiddleware, dispatch=http_metrics_dispatch)
 
+# Body size limit — reject requests whose payload exceeds
+# HUGINN_MAX_BODY_SIZE_MB (default 10 MB) before they reach the app.
+app.add_middleware(RequestSizeLimitMiddleware)
+
+# Request timeout — cancel requests that run longer than
+# HUGINN_REQUEST_TIMEOUT_SEC (default 180 s).
+app.add_middleware(RequestTimeoutMiddleware)
+
 # Request-ID middleware — registered last so it runs outermost and the
 # correlation id is in place before any other middleware / handler logs.
 app.add_middleware(RequestIDMiddleware)
@@ -164,8 +173,11 @@ async def _global_exception_handler(request: Request, exc: Exception):
     )
 
 
-for _router in ALL_ROUTERS:
-    app.include_router(_router)
+# Mount the full route surface. include_v1_routes mounts every router
+# under the /v1 version prefix (the canonical API going forward) and, for
+# backward compatibility, also at the root path — with a deprecation
+# warning + header nudging callers toward /v1.
+include_v1_routes(app, keep_root_compat=True)
 
 
 # ── sys.modules wrapper for backward-compatible attribute access ───────

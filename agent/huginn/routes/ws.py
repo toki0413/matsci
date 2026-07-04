@@ -6,7 +6,6 @@ import asyncio
 import json
 import traceback
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -18,13 +17,14 @@ from huginn.routes.schemas import WSMessage
 from huginn.server_core import (
     _EDIT_TOOLS,
     _checkpoints,
+    _current_user_id,
     _snapshot_directory,
     _state_lock,
-    _threads,
     get_agent,
     get_agent_factory,
     get_context,
     get_memory_manager,
+    get_or_create_thread,
 )
 
 router = APIRouter(tags=["ws"])
@@ -179,16 +179,12 @@ async def agent_websocket(websocket: WebSocket):
 
                 team_mode = cfg_chat.team_mode_enabled
 
-                # Track this thread
-                with _state_lock:
-                    if thread_id not in _threads:
-                        _threads[thread_id] = {
-                            "id": thread_id,
-                            "label": thread_id,
-                            "created_at": uuid.uuid4().hex,
-                            "last_active": uuid.uuid4().hex,
-                        }
-                    _threads[thread_id]["last_active"] = uuid.uuid4().hex
+                # Track this thread. Defer to get_or_create_thread so the
+                # session gets a real last_accessed timestamp (the TTL
+                # sweeper needs it) and is bound to the caller's user_id
+                # when auth is in play.
+                _uid = _current_user_id(websocket)
+                get_or_create_thread(thread_id, user_id=_uid, label=thread_id)
 
                 # @agent routing: "@coder write a POSCAR parser"
                 routed_agent_id = None

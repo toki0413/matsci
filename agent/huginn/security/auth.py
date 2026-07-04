@@ -42,6 +42,7 @@ _BEARER_PREFIX = "Bearer "
 # Prometheus scrape).
 _PUBLIC_PATHS: set[str] = {
     "/health",
+    "/ready",
     "/health/rust",
     "/health/guidance",
     "/docs",
@@ -50,6 +51,8 @@ _PUBLIC_PATHS: set[str] = {
     "/metrics",
     "/auth/token",
     "/auth/login",
+    "/auth/me",
+    "/auth/refresh",
 }
 
 logger = logging.getLogger(__name__)
