@@ -39,9 +39,9 @@ async def _connect_mcp_server(
             await manager.connect(config)
         return True
     except TimeoutError:
-        print(f"[MCP] Warning: {name} connection timed out ({timeout}s)")
+        logger.info("[MCP] Warning: {name} connection timed out ({timeout}s)")
     except Exception as e:
-        print(f"[MCP] Warning: failed to connect to {name}: {e}")
+        logger.info("[MCP] Warning: failed to connect to {name}: {e}")
     return False
 
 
@@ -112,15 +112,15 @@ async def _init_mcp_tools():
                     registered.extend(
                         register_mcp_tools(get_context().mcp_manager, server_name=srv)
                     )
-            print(
-                f"[MCP] Registered {len(registered)} tools "
-                f"(ToolUniverse curated by whitelist)"
+            logger.info(
+                "[MCP] Registered %d tools (ToolUniverse curated by whitelist)",
+                len(registered),
             )
         else:
             registered = register_mcp_tools(get_context().mcp_manager)
-            print(f"[MCP] Registered {len(registered)} tools from MCP servers")
+            logger.info("[MCP] Registered {len(registered)} tools from MCP servers")
     except Exception as e:
-        print(f"[MCP] Warning: Could not initialize MCP tools: {e}")
+        logger.info("[MCP] Warning: Could not initialize MCP tools: {e}")
 
     # ── Load Star plugins ─────────────────────────────────────────
     await _load_star_plugins()
@@ -364,18 +364,18 @@ async def lifespan(app: FastAPI):
             cfg = HuginnConfig.from_env()
             get_context().kb = get_knowledge_base(cfg.workspace)
         except Exception as e:
-            print(f"[KB] Warning: could not initialize knowledge base: {e}")
+            logger.info("[KB] Warning: could not initialize knowledge base: {e}")
     if _CODEBASE_AVAILABLE and get_context().codebase is None:
         try:
             cfg = HuginnConfig.from_env()
             get_context().codebase = get_codebase_index(cfg.workspace)
         except Exception as e:
-            print(f"[Codebase] Warning: could not initialize codebase index: {e}")
+            logger.info("[Codebase] Warning: could not initialize codebase index: {e}")
     try:
         cfg = HuginnConfig.from_env()
         configure_pet(cfg.pet_name, cfg.pet_personality)
     except Exception as e:
-        print(f"[Pet] Warning: could not configure pet: {e}")
+        logger.info("[Pet] Warning: could not configure pet: {e}")
 
     # Pre-warm embedding model in background
     async def _warm_embeddings():
@@ -393,9 +393,9 @@ async def lifespan(app: FastAPI):
                     fn(["warmup"])
 
                 await asyncio.to_thread(_do_warm)
-                print("[init] Embedding model pre-warmed")
+                logger.info("[init] Embedding model pre-warmed")
         except Exception as e:
-            print(f"[init] Embedding pre-warm skipped: {e}")
+            logger.info("[init] Embedding pre-warm skipped: {e}")
 
     warmup_task = asyncio.create_task(_warm_embeddings())
 

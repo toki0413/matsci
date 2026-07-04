@@ -49,6 +49,7 @@ from huginn.routes.ws import router as ws_router
 from huginn.routes.live_script import router as live_script_router
 from huginn.routes.parameters import router as parameters_router
 from huginn.routes.side import router as side_router
+from huginn.routes.admin import router as admin_router
 from huginn.routes.visual import router as visual_router
 
 ALL_ROUTERS = [
@@ -95,6 +96,8 @@ ALL_ROUTERS = [
     # Prometheus /metrics 抓取端点
     metrics_router,
     diagnostics_router,
+    # Admin endpoints (maintenance mode, etc.)
+    admin_router,
 ]
 
 # ── API versioning ──────────────────────────────────────────────────
