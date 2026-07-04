@@ -105,9 +105,44 @@ async def agent_websocket(websocket: WebSocket):
     _pending_approvals: dict[str, asyncio.Future[bool]] = {}
     _ws_approval = _make_ws_approval_callback(websocket)
 
+    # ── Heartbeat ────────────────────────────────────────────────
+    # Track the last time we received a message from the client.  If
+    # no message arrives within the heartbeat window, send a ``ping``
+    # frame.  If the client doesn't respond within the timeout, close
+    # the connection to free server resources.
+    last_recv: dict[str, float] = {"t": asyncio.get_event_loop().time()}
+    heartbeat_task: asyncio.Task | None = None
+
+    async def _heartbeat():
+        """Periodically ping idle connections to detect half-open sockets."""
+        while True:
+            await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
+            now = asyncio.get_event_loop().time()
+            idle = now - last_recv["t"]
+            if idle > _WS_HEARTBEAT_INTERVAL:
+                try:
+                    await websocket.send_json({"type": "ping", "ts": now})
+                except Exception:
+                    # Client gone — exit heartbeat loop
+                    return
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
+    _pending_tasks.add(heartbeat_task)
+    heartbeat_task.add_done_callback(_pending_tasks.discard)
+
     try:
         while True:
             message = await websocket.receive_text()
+            last_recv["t"] = asyncio.get_event_loop().time()
+
+            # Handle client-side pong
+            try:
+                data = json.loads(message)
+                if data.get("type") == "pong":
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+
             try:
                 data = json.loads(message)
             except json.JSONDecodeError:
@@ -550,3 +585,11 @@ async def agent_websocket(websocket: WebSocket):
         pass
     except Exception as e:
         logger.error("WebSocket error: %s", e, exc_info=True)
+    finally:
+        # Cancel heartbeat task to free resources
+        if heartbeat_task and not heartbeat_task.done():
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
