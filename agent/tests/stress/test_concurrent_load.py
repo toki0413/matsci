@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from typing import Any
 
@@ -27,19 +28,31 @@ import pytest
 import websockets
 
 BASE_URL = "http://127.0.0.1:8000"
-WS_URL = "ws://127.0.0.1:8000/ws"
+WS_URL = "ws://127.0.0.1:8000/ws/agent"
 
 # 把超时设长一点,压力测试不是在测速度
 TIMEOUT = 30.0
+
+# 压力测试需要带 API key (如果服务端开启了认证)
+# 通过环境变量或直接获取 token
+_API_KEY = os.environ.get("HUGINN_API_KEY", "")
 
 
 def _check_server():
     """确认服务在跑,没跑就 skip 整个文件."""
     try:
-        r = httpx.get(f"{BASE_URL}/health", timeout=2.0)
+        headers = {"X-API-Key": _API_KEY} if _API_KEY else {}
+        r = httpx.get(f"{BASE_URL}/health", timeout=2.0, headers=headers)
         return r.status_code == 200
     except Exception:
         return False
+
+
+def _auth_headers() -> dict[str, str]:
+    """如果有 API key 就带上, 没有就空."""
+    if _API_KEY:
+        return {"X-API-Key": _API_KEY}
+    return {}
 
 
 pytestmark = pytest.mark.skipif(
@@ -56,9 +69,10 @@ async def _send_http_chat(client: httpx.AsyncClient, content: str, thread_id: st
     r = await client.post(
         f"{BASE_URL}/agents/agent/chat",
         json={"content": content, "thread_id": thread_id},
+        headers=_auth_headers(),
         timeout=TIMEOUT,
     )
-    return r.json()
+    return {"status": r.status_code, "body": r.json() if r.status_code != 422 else {"error": "validation"}}
 
 
 async def _send_ws_message(ws: websockets.WebSocketClientProtocol, content: str, thread_id: str) -> str:
@@ -120,7 +134,11 @@ async def test_20_concurrent_websocket_connections():
     async def ws_session(idx: int) -> tuple[int, str]:
         tid = f"stress-ws-{idx:03d}"
         try:
-            async with websockets.connect(f"{WS_URL}?thread_id={tid}", open_timeout=10) as ws:
+            # 带 API key 作为 query param (WS 不方便加 header)
+            url = f"{WS_URL}?thread_id={tid}"
+            if _API_KEY:
+                url += f"&api_key={_API_KEY}"
+            async with websockets.connect(url, open_timeout=10) as ws:
                 resp = await _send_ws_message(ws, f"hello from {idx}", tid)
                 return idx, resp
         except Exception as e:
@@ -184,6 +202,7 @@ async def test_large_payload_handling():
         r = await client.post(
             f"{BASE_URL}/agents/agent/chat",
             json={"content": big_content, "thread_id": "large-payload"},
+            headers=_auth_headers(),
             timeout=TIMEOUT,
         )
     # 应该返回 200 或 422 (如果 schema 校验拦截了),不应该 500
@@ -198,6 +217,7 @@ async def test_oversized_payload_rejected():
         r = await client.post(
             f"{BASE_URL}/agents/agent/chat",
             json={"content": huge_content, "thread_id": "huge-payload"},
+            headers=_auth_headers(),
             timeout=10.0,
         )
     assert r.status_code in (422, 413), f"Should reject oversized payload, got {r.status_code}"
@@ -217,7 +237,7 @@ async def test_metrics_endpoint_after_load():
             except Exception:
                 pass
 
-    # 然后查 metrics
+    # 然后查 metrics (metrics 是 public path,不需要 auth)
     r = httpx.get(f"{BASE_URL}/metrics", timeout=5.0)
     assert r.status_code == 200
     assert "huginn_" in r.text, "Metrics should contain huginn_ prefixed metrics"
