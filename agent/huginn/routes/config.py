@@ -438,9 +438,14 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
 
     ollama 走 /api/tags, 其余 OpenAI 兼容服务走 /v1/models。5s 超时,
     连不上就回 success=False + error, 不抛异常给前端。
+
+    只允许访问 loopback 地址, 防止 SSRF。
     """
+    import ipaddress
     import json as _json
+    import socket
     import urllib.request
+    from urllib.parse import urlparse
 
     # 各 provider 的默认本地地址, 没传 base_url 时兜底
     defaults = {
@@ -449,6 +454,29 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
         "local": "http://localhost:8000",
     }
     url = base_url or defaults.get(provider, "http://localhost:8000")
+
+    # SSRF 防护: 只允许 loopback / 链路本地地址
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return {"success": False, "models": [], "error": f"scheme '{parsed.scheme}' not allowed"}
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return {"success": False, "models": [], "error": "invalid URL: no hostname"}
+    # 允许的 hostname: localhost, 127.0.0.1, ::1, .local 后缀
+    allowed_names = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+    is_loopback_name = hostname.lower() in allowed_names or hostname.endswith(".local")
+    # 如果是 IP 地址, 检查是否 loopback / link-local
+    try:
+        ip = ipaddress.ip_address(hostname)
+        is_loopback_ip = ip.is_loopback or ip.is_link_local or ip.is_private
+    except ValueError:
+        is_loopback_ip = False
+    if not (is_loopback_name or is_loopback_ip):
+        return {
+            "success": False,
+            "models": [],
+            "error": f"blocked: '{hostname}' is not a loopback/local address — SSRF protection",
+        }
 
     try:
         if provider == "ollama":
@@ -468,7 +496,8 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
 
         return {"success": True, "models": models, "provider": provider, "base_url": url}
     except Exception as e:
-        return {"success": False, "models": [], "error": str(e)}
+        # 不回传完整异常信息, 避免泄露内部路径
+        return {"success": False, "models": [], "error": type(e).__name__}
 
 
 # ── /config/active-model ────────────────────────────────────────
