@@ -30,6 +30,7 @@ from fastapi.security import APIKeyHeader
 from huginn.security.rbac import (
     Role,
     SessionManager,
+    TokenRevocationList,
     User,
     jwt_decode,
     jwt_encode,
@@ -119,7 +120,13 @@ def create_token(
     *,
     expires_in: int = 3600,
 ) -> str:
-    """Issue a JWT for *user*."""
+    """Issue a JWT for *user*.
+
+    Includes a unique ``jti`` (JWT ID) claim so the token can be
+    individually revoked via :class:`TokenRevocationList`.
+    """
+    import secrets as _secrets
+
     secret = _jwt_secret()
     if secret is None:
         raise RuntimeError("No JWT secret configured (set HUGINN_JWT_SECRET or HUGINN_API_KEY)")
@@ -127,6 +134,7 @@ def create_token(
         "sub": user.user_id,
         "username": user.username,
         "role": user.role.value,
+        "jti": _secrets.token_urlsafe(16),  # unique ID for revocation
     }
     return jwt_encode(payload, secret, expires_in=expires_in)
 
@@ -202,6 +210,13 @@ def require_api_key(
     if bearer:
         try:
             claims = _decode_token(bearer)
+            # Check revocation list (logout)
+            jti = claims.get("jti")
+            if jti and TokenRevocationList.shared().is_revoked(jti):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                )
             # Attach user context to request state
             store = get_user_store()
             user = store.get_user(claims["sub"])

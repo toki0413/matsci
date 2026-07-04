@@ -278,3 +278,91 @@ class SessionManager:
     def active_count(self) -> int:
         with self._lock:
             return len(self._sessions)
+
+
+# ---------------------------------------------------------------------------
+# Token revocation (logout / deny-list)
+# ---------------------------------------------------------------------------
+
+class TokenRevocationList:
+    """Thread-safe in-memory JWT revocation list.
+
+    When a user logs out, their token's ``jti`` (JWT ID) is added here.
+    Subsequent requests carrying that token are rejected even before
+    the natural ``exp`` expiry.
+
+    Entries are pruned automatically once their original ``exp`` has
+    passed, so the list does not grow without bound.
+
+    Usage::
+
+        from huginn.security.rbac import TokenRevocationList
+
+        revoke_list = TokenRevocationList.shared()
+        revoke_list.revoke(jti="abc123", exp=1700000000)
+        revoke_list.is_revoked("abc123")  # True
+    """
+
+    _singleton: TokenRevocationList | None = None
+    _singleton_lock = threading.Lock()
+
+    def __init__(self) -> None:
+        self._revoked: dict[str, float] = {}  # jti -> exp
+        self._lock = threading.RLock()
+
+    @classmethod
+    def shared(cls) -> TokenRevocationList:
+        """Return the process-wide singleton."""
+        if cls._singleton is None:
+            with cls._singleton_lock:
+                if cls._singleton is None:
+                    cls._singleton = cls()
+        return cls._singleton
+
+    def revoke(self, jti: str, exp: float | None = None) -> None:
+        """Mark *jti* as revoked.
+
+        If *exp* is given (the token's original expiry timestamp), the
+        entry will be auto-pruned after that time. If not, a default
+        TTL of 24 hours is used.
+        """
+        if exp is None:
+            exp = time.time() + 86400  # 24h fallback
+        with self._lock:
+            self._revoked[jti] = exp
+            self._prune_locked()
+
+    def is_revoked(self, jti: str) -> bool:
+        """Check whether *jti* has been revoked."""
+        with self._lock:
+            self._prune_locked()
+            return jti in self._revoked
+
+    def _prune_locked(self) -> int:
+        """Remove entries whose original exp has passed. Caller must hold lock."""
+        now = time.time()
+        expired = [jti for jti, exp in self._revoked.items() if now > exp]
+        for jti in expired:
+            del self._revoked[jti]
+        return len(expired)
+
+    def clear(self) -> None:
+        """Remove all entries (mainly for testing)."""
+        with self._lock:
+            self._revoked.clear()
+
+    def count(self) -> int:
+        with self._lock:
+            self._prune_locked()
+            return len(self._revoked)
+
+    def revoke_user(self, user_id: str, session_manager: SessionManager | None = None) -> int:
+        """Revoke all server-side sessions for *user_id*.
+
+        Since JWTs are stateless, we can't enumerate all outstanding tokens.
+        This destroys all server-side sessions as a best-effort measure.
+        Returns the number of sessions destroyed.
+        """
+        if session_manager is not None:
+            return session_manager.destroy_user_sessions(user_id)
+        return 0
