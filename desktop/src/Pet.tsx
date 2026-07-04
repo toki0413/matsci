@@ -5,8 +5,11 @@ import {
   playPetChirp, playHappyCoo, playFeedTick, playLevelUp,
   startAmbient, stopAmbient, setMuted as setSoundMuted,
 } from "./sounds";
+import { getApiBase, setApiBase } from "./lib/api-client";
 
-let API_BASE = "http://localhost:8000";
+// API_BASE is now managed by the shared api-client module, but we
+// keep a local reference for SSE URL construction. The syncBackendUrl()
+// call below keeps them in sync.
 
 type PetMood = "idle" | "thinking" | "working" | "success" | "error" | "sleeping" | "happy" | "eating" | "hungry" | "levelup";
 type PetPersonality = "cheerful" | "nerdy" | "calm" | "sassy";
@@ -458,17 +461,12 @@ export default function Pet() {
     document.documentElement.style.background = "transparent";
 
     // Sync backend port before opening SSE so we connect to the right URL.
-    let es: EventSource;
-    const init = async () => {
-      try {
-        const port: number = await invoke("get_backend_port");
-        if (port && port > 0) {
-          API_BASE = `http://localhost:${port}`;
-        }
-      } catch {
-        // Tauri IPC not available — keep default
-      }
-      es = new EventSource(`${API_BASE}/events`);
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connectSSE = () => {
+      const baseUrl = getApiBase();
+      es = new EventSource(`${baseUrl}/events`);
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
@@ -498,7 +496,23 @@ export default function Pet() {
       es.onerror = () => {
         setBackendOnline(false);
         speak(formatMsg(pack.offline, petName), "sleeping", true);
+        // Auto-reconnect with delay (previously no reconnect at all)
+        es?.close();
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectSSE, 5_000);
       };
+    };
+
+    const init = async () => {
+      try {
+        const port: number = await invoke("get_backend_port");
+        if (port && port > 0) {
+          setApiBase(`http://localhost:${port}`);
+        }
+      } catch {
+        // Tauri IPC not available — keep default
+      }
+      connectSSE();
     };
     init();
 
@@ -535,6 +549,7 @@ export default function Pet() {
 
     return () => {
       es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (hopTimer.current) clearTimeout(hopTimer.current);
       if (idleTimer.current) clearInterval(idleTimer.current);

@@ -19,6 +19,8 @@ import EmotionTrackerPanel from "./components/EmotionTracker";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { ReconnectingWebSocket } from "./lib/ws-client";
+import { api, getAuthToken, setApiBase as _setApiBase } from "./lib/api-client";
 import {
   MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
   Users, Code2, FlaskConical, Brain, BookOpen, GitBranch,
@@ -135,6 +137,8 @@ async function syncBackendUrl() {
     if (port && port > 0) {
       API_BASE = `http://localhost:${port}`;
       WS_URL = `${API_BASE.replace("http", "ws")}/ws/agent`;
+      // Sync to the shared api-client module so all api.* calls use the right base
+      _setApiBase(API_BASE);
       console.log(`[API] synced to port ${port}`);
     }
   } catch {
@@ -1104,7 +1108,8 @@ export default function App() {
     setSidebarGroups((prev) => ({ ...prev, [group]: !prev[group] }));
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  // reconnectTimeoutRef was used by the old native WS; ReconnectingWebSocket
+  // handles its own reconnection internally now.
 
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
@@ -2438,48 +2443,56 @@ export default function App() {
     return () => { alive = false; };
   }, [settingsTab]);
 
-  const connectWebSocket = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
-    try {
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setIsConnected(true);
-        console.log("[WS] connected");
-        // Sync local config to backend on reconnect
-        pushConfig(loadStoredConfig());
-      };
-
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleWsMessage(data);
-      };
-
-      ws.onclose = () => {
-        setIsConnected(false);
-        wsRef.current = null;
-        reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
-      };
-
-      ws.onerror = (err) => {
-        console.error("[WS] error:", err);
-        setIsConnected(false);
-      };
-    } catch (e) {
-      console.error("[WS] failed to connect:", e);
-      setIsConnected(false);
-    }
-  }, [pushConfig]);
+  // ── WebSocket via ReconnectingWebSocket ────────────────────────
+  // Replaces the previous native WebSocket (fixed 3s reconnect, no heartbeat,
+  // no message buffering) with the production ws-client that provides
+  // exponential backoff (1s→30s), 30s heartbeat ping, message buffering
+  // during disconnection, and auth token support.
+  const wsClientRef = useRef<ReconnectingWebSocket | null>(null);
 
   useEffect(() => {
-    connectWebSocket();
+    // Build WS URL from current API_BASE (already synced via Tauri)
+    const wsUrl = WS_URL || `${API_BASE.replace("http", "ws")}/ws/agent`;
+
+    const ws = new ReconnectingWebSocket({
+      url: wsUrl,
+      authToken: () => getAuthToken(),
+      pingInterval: 30_000, // matches backend heartbeat
+      maxDelay: 30_000,
+      onStatus: (status) => {
+        setIsConnected(status === "connected");
+        if (status === "reconnecting") {
+          setIsConnected(false);
+        }
+      },
+      onMessage: (data) => {
+        // Safe parse: ws-client already handles JSON parsing and
+        // pong/ping filtering, but we guard against unexpected types
+        if (typeof data === "string") return; // non-JSON text, ignore
+        handleWsMessage(data);
+      },
+      onConnected: () => {
+        // Sync local config to backend on connect/reconnect
+        pushConfig(loadStoredConfig());
+      },
+    });
+
+    ws.connect();
+    wsClientRef.current = ws;
+    // Keep wsRef for backward compat with sendMessage()
+    wsRef.current = {
+      readyState: WebSocket.OPEN,
+      send: (data: string) => ws.send(data),
+      close: () => ws.close(),
+    } as unknown as WebSocket;
+
     return () => {
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      wsRef.current?.close();
+      ws.close();
+      wsClientRef.current = null;
+      wsRef.current = null;
     };
-  }, [connectWebSocket]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -2487,15 +2500,17 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === "tools" && tools.length === 0) {
-      fetch(`${API_BASE}/tools`)
-        .then((r) => r.json())
-        .then((data) => setTools(data))
+      api.get('/tools')
+        .then((resp) => {
+          if (resp.ok && resp.data) setTools(resp.data as any);
+        })
         .catch((e) => console.error("Failed to load tools:", e));
     }
     if (activeTab === "skills" && skills.length === 0) {
-      fetch(`${API_BASE}/skills`)
-        .then((r) => r.json())
-        .then((data) => setSkills(data))
+      api.get('/skills')
+        .then((resp) => {
+          if (resp.ok && resp.data) setSkills(resp.data as any);
+        })
         .catch((e) => console.error("Failed to load skills:", e));
     }
   }, [activeTab, tools.length, skills.length]);
@@ -2649,16 +2664,20 @@ export default function App() {
       return;
     }
 
-    if (!wsRef.current) return;
+    if (!wsClientRef.current && !wsRef.current) return;
 
     const userMsg: Message = { role: "user", content, timestamp: formatTime() };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     pendingResponseRef.current = "";
 
-    wsRef.current.send(
-      JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread })
-    );
+    // Use ReconnectingWebSocket.send() which buffers during disconnect
+    const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread });
+    if (wsClientRef.current) {
+      wsClientRef.current.send(payload);
+    } else if (wsRef.current) {
+      wsRef.current.send(payload);
+    }
   };
 
   const runTool = async () => {
