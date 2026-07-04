@@ -9,8 +9,9 @@
      专治 LLM 陷入循环反复生成的场景 (Moonshine Voice 就是靠这个拦住无限朗读的)
   3. 总成本上限 (max_total_cost_usd): 累计花费到阈值就停, 兜底防破产
 
-用法上, RateLimitGuard 包一层 LangChain model 的 invoke/stream, 调用前
-check_allowed 拦截, 调用后 record_usage 记账. 线程安全, 纯标准库实现.
+用法上, RateLimitMiddleware (在 agent.py 里) 包一层 LangChain model 的
+invoke/stream, 调用前 check_allowed 拦截, 调用后 record_usage 记账.
+线程安全, 纯标准库实现.
 
 兼容 Python 3.10+.
 """
@@ -22,7 +23,6 @@ import os
 import threading
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,7 +32,6 @@ __all__ = [
     "RateLimitConfig",
     "RateLimitExceeded",
     "TokenRateLimiter",
-    "RateLimitGuard",
     "get_rate_limiter",
 ]
 
@@ -428,141 +427,6 @@ def _safe_int(val: Any) -> int:
         return int(val)
     except (TypeError, ValueError):
         return 0
-
-
-# ---------------------------------------------------------------------------
-# RateLimitGuard —— LangChain model 的限流中间件
-# ---------------------------------------------------------------------------
-
-# 成本计算回调签名: (model_name, input_tokens, output_tokens) -> cost_usd
-CostCalculator = Callable[[str, int, int], float]
-
-
-class RateLimitGuard:
-    """包一层 LangChain model, 调用前后插入限流检查.
-
-    调用前: check_allowed 拦, 超限直接抛 RateLimitExceeded
-    调用后: 从返回结果里挖真实 usage, record_usage 记账
-
-    sync / async / stream 都支持::
-
-        guard = RateLimitGuard(model, limiter, model_name="claude-sonnet-4")
-        result = guard.invoke(messages)
-        result = await guard.ainvoke(messages)
-        for chunk in guard.stream(messages):
-            ...
-
-    没覆盖到的方法 (bind_tools, with_structured_output 等) 会透传给原始 model,
-    所以大部分场景可以直接拿 guard 替换 model 用.
-    """
-
-    def __init__(
-        self,
-        model: Any,
-        limiter: TokenRateLimiter | None = None,
-        model_name: str | None = None,
-        cost_calculator: CostCalculator | None = None,
-    ) -> None:
-        self._model = model
-        self._limiter = limiter or get_rate_limiter()
-        self._model_name = model_name or _detect_model_name(model)
-        # 可选的成本计算回调, 没传的话 cost 记 0, 只靠 token 限额兜
-        self._cost_calculator = cost_calculator
-
-    # ---- 内部 ----------------------------------------------------------
-
-    def _check(self, estimated_input_tokens: int) -> None:
-        ok, reason = self._limiter.check_allowed(
-            self._model_name, estimated_input_tokens
-        )
-        if not ok:
-            # 根据 reason 文本反推闸门类型, 方便上层判断
-            rtype = "limit_exceeded"
-            if "单轮" in reason:
-                rtype = "turn_limit"
-            elif "秒级" in reason:
-                rtype = "second_limit"
-            elif "总成本" in reason:
-                rtype = "cost_limit"
-            raise RateLimitExceeded(reason, reason=rtype)
-
-    def _record(self, input_tokens: int, output_tokens: int) -> None:
-        cost = 0.0
-        if self._cost_calculator is not None:
-            try:
-                cost = float(
-                    self._cost_calculator(
-                        self._model_name, input_tokens, output_tokens
-                    )
-                )
-            except Exception:
-                # 成本算挂了别影响主流程, 记 0 就行
-                cost = 0.0
-        self._limiter.record_usage(
-            self._model_name, input_tokens, output_tokens, cost
-        )
-
-    # ---- sync 调用 -----------------------------------------------------
-
-    def invoke(self, input: Any, **kwargs: Any) -> Any:
-        est = _estimate_input_tokens(input)
-        self._check(est)
-        result = self._model.invoke(input, **kwargs)
-        in_tok, out_tok = _extract_usage(result)
-        self._record(in_tok, out_tok)
-        return result
-
-    def stream(self, input: Any, **kwargs: Any) -> Iterator[Any]:
-        # 生成器: 调用方 for chunk in guard.stream(...) 时才真正执行.
-        # check 在迭代开始时跑, 超限直接抛, LLM 不会被调到.
-        est = _estimate_input_tokens(input)
-        self._check(est)
-        raw = self._model.stream(input, **kwargs)
-        in_tok, out_tok = 0, 0
-        try:
-            for chunk in raw:
-                # 带 usage 的 chunk 记一下, 流式 usage 是累计值, 最后一个非空的就是最终值
-                ci, co = _extract_usage(chunk)
-                if ci or co:
-                    in_tok, out_tok = ci, co
-                yield chunk
-        finally:
-            # 不管正常结束、异常还是提前 break, 都把攒到的 usage 记上
-            self._record(in_tok, out_tok)
-
-    # ---- async 调用 ----------------------------------------------------
-
-    async def ainvoke(self, input: Any, **kwargs: Any) -> Any:
-        est = _estimate_input_tokens(input)
-        self._check(est)
-        result = await self._model.ainvoke(input, **kwargs)
-        in_tok, out_tok = _extract_usage(result)
-        self._record(in_tok, out_tok)
-        return result
-
-    async def astream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        # 异步生成器: 调用方 async for chunk in guard.astream(...) 直接用.
-        # check 在首次迭代时跑, 超限抛异常, LLM 不会被调到.
-        est = _estimate_input_tokens(input)
-        self._check(est)
-        raw = self._model.astream(input, **kwargs)
-        in_tok, out_tok = 0, 0
-        try:
-            async for chunk in raw:
-                ci, co = _extract_usage(chunk)
-                if ci or co:
-                    in_tok, out_tok = ci, co
-                yield chunk
-        finally:
-            self._record(in_tok, out_tok)
-
-    # ---- 透传 ---------------------------------------------------------
-
-    def __getattr__(self, name: str) -> Any:
-        # 没覆盖到的方法 / 属性直接转给原始 model, 保持透明代理.
-        # __getattr__ 只在正常属性查找失败时触发, _model 已经在 __init__ 设好,
-        # 不会递归.
-        return getattr(self._model, name)
 
 
 # ---------------------------------------------------------------------------

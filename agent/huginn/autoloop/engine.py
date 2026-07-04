@@ -115,6 +115,7 @@ class AutoloopEngine:
         workspace: str | Path | None = None,
         goal_scheduler: GoalScheduler | None = None,
         verification_model: Any = None,
+        memory_manager: MemoryManager | None = None,
     ):
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
@@ -122,7 +123,9 @@ class AutoloopEngine:
         # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
         # 默认 None 时退回 self.model, 保持向后兼容.
         self.verification_model = verification_model or self.model
-        self.memory = MemoryManager()
+        # 共享 MemoryManager: 由 agent/CLI 传入, 避免引擎私有实例和 agent 的
+        # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
+        self.memory = memory_manager or MemoryManager()
         self.kg = ProjectKnowledgeGraph()
         self.report_tool = ReportTool()
 

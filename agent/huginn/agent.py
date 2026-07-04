@@ -1831,6 +1831,36 @@ class HuginnAgent:
         except Exception:
             after_pct = 0
 
+        # Belief Entropy 自适应: 读上次压缩的 h_belief, 调整下一轮参数
+        try:
+            from huginn.utils.belief_entropy import get_belief_entropy
+            be = get_belief_entropy()
+            last = getattr(be, "_last_result", None)
+            if last is not None:
+                if last.adaptive_keep_last_n is not None:
+                    self._adaptive_keep_last_n = max(2, (
+                        getattr(self, "_adaptive_keep_last_n", 6)
+                        + last.adaptive_keep_last_n
+                    ))
+                if last.adaptive_budget_ratio is not None:
+                    base_budget = getattr(self, "_adaptive_budget_ratio", 1.0)
+                    self._adaptive_budget_ratio = max(
+                        0.5, min(2.0, base_budget * last.adaptive_budget_ratio)
+                    )
+                # 高熵时额外触发 memory promote, 防丢关键信息
+                if last.h_belief >= be.config.threshold_high:
+                    logger.warning(
+                        "high belief entropy (%.3f) after compaction, "
+                        "promoting extra memory to long-term",
+                        last.h_belief,
+                    )
+                    try:
+                        self.memory.promote_session_summary(tier="long")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         logger.info(
             "Context compacted (%d%% → %d%%)",
             before["used"],
@@ -2025,11 +2055,18 @@ class HuginnAgent:
             if self.context_budget_tokens > 0:
                 summarizer = self._make_summarizer()
                 if summarizer is not None:
+                    # Belief Entropy 自适应: 用上一轮的熵信号调 keep_last_n
+                    adaptive_kln = getattr(self, "_adaptive_keep_last_n", 4)
+                    # budget 也按自适应比例缩放
+                    adaptive_budget = int(
+                        self.context_budget_tokens
+                        * getattr(self, "_adaptive_budget_ratio", 1.0)
+                    )
                     inputs["messages"], self._conversation_summary = (
                         await summarize_compact_messages(
                             inputs["messages"],
-                            self.context_budget_tokens,
-                            keep_last_n=4,
+                            adaptive_budget,
+                            keep_last_n=adaptive_kln,
                             summarizer=summarizer,
                             existing_summary=self._conversation_summary,
                         )
