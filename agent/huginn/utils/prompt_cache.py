@@ -74,16 +74,21 @@ class PromptCacheBuilder:
 
         When ``cache_control`` is enabled, the *last* static message is
         tagged so the provider can cache everything up to that point.
+
+        Each begin-dialog message carries a stable positional ID (``bd_0``,
+        ``bd_1``, …) so LangGraph's ``add_messages`` replaces it in-place
+        on subsequent turns rather than appending a fresh copy each time.
         """
-        messages: list[BaseMessage] = [SystemMessage(content=self.system_prompt)]
-        for role, content in self.begin_dialogs:
+        messages: list[BaseMessage] = [SystemMessage(content=self.system_prompt, id="sys_prompt")]
+        for idx, (role, content) in enumerate(self.begin_dialogs):
+            stable_id = f"bd_{idx}"
             if role == "user":
-                messages.append(HumanMessage(content=content))
+                messages.append(HumanMessage(content=content, id=stable_id))
             elif role == "assistant":
-                messages.append(AIMessage(content=content))
+                messages.append(AIMessage(content=content, id=stable_id))
             else:
                 # Treat any other role as a system-level instruction.
-                messages.append(SystemMessage(content=content))
+                messages.append(SystemMessage(content=content, id=stable_id))
 
         if self._provider_supports_cache_control() and messages:
             messages[-1].additional_kwargs.update(self._cache_control_kwargs())
@@ -115,6 +120,10 @@ class PromptCacheBuilder:
         optional project knowledge graph context (dynamic),
         optional domain knowledge base context (dynamic),
         current user message (dynamic).
+
+        Dynamic context messages (memory, KG, KB) carry stable IDs so
+        LangGraph's ``add_messages`` replaces them each turn instead of
+        accumulating unbounded duplicates in the graph state.
         """
         prefix = self._static_prefix()
         messages: list[BaseMessage] = list(prefix[1:])
@@ -123,13 +132,13 @@ class PromptCacheBuilder:
             messages.extend(history_messages)
 
         if memory_text:
-            messages.append(SystemMessage(content=memory_text))
+            messages.append(SystemMessage(content=memory_text, id="ctx_memory"))
 
         if kg_text:
-            messages.append(SystemMessage(content=kg_text))
+            messages.append(SystemMessage(content=kg_text, id="ctx_kg"))
 
         if kb_text:
-            messages.append(SystemMessage(content=kb_text))
+            messages.append(SystemMessage(content=kb_text, id="ctx_kb"))
 
         messages.append(HumanMessage(content=user_message))
         return messages
