@@ -3,22 +3,66 @@
 from __future__ import annotations
 
 import difflib
+import logging
 import uuid
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from huginn.server_core import _checkpoints, _snapshot_directory, _state_lock
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["checkpoints"])
+
+# Maximum allowed path depth to prevent excessive recursion.
+_MAX_PATH_DEPTH = 20
+
+
+def _validate_workspace_path(raw_path: str) -> Path:
+    """Ensure the requested path stays within the workspace boundary.
+
+    Prevents path traversal attacks where an attacker could read or
+    write arbitrary system files by passing paths like ``/etc`` or
+    ``~/.ssh``.
+    """
+    from huginn.server_core import get_context
+
+    try:
+        workspace = get_context().config.workspace
+        workspace_resolved = Path(workspace).resolve()
+    except Exception:
+        # Fallback: use current working directory
+        workspace_resolved = Path.cwd()
+
+    base = Path(raw_path).resolve()
+
+    # Check the resolved path is within the workspace
+    try:
+        base.relative_to(workspace_resolved)
+    except ValueError:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Path '{raw_path}' is outside the workspace boundary",
+        )
+
+    # Prevent excessive depth
+    rel = base.relative_to(workspace_resolved)
+    if len(rel.parts) > _MAX_PATH_DEPTH:
+        raise HTTPException(
+            status_code=400,
+            detail="Path exceeds maximum allowed depth",
+        )
+
+    return base
 
 
 @router.post("/checkpoints")
 async def create_checkpoint(params: dict[str, Any]) -> dict[str, Any]:
     """Create a checkpoint of the given directory for later diff review."""
-    base = Path(params.get("path", ".")).resolve()
+    base = _validate_workspace_path(params.get("path", "."))
     snapshot = _snapshot_directory(base)
     cp_id = uuid.uuid4().hex[:8]
     with _state_lock:

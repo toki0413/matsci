@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from huginn.agent import _create_langchain_model
 from huginn.config import HuginnConfig, Settings
+from huginn.models.registry import create_langchain_model
 
 
 def get_model(
@@ -44,7 +44,7 @@ def get_model(
     effective_thinking = thinking if thinking is not None else cfg.thinking
     effective_max_tokens = max_tokens if max_tokens is not None else cfg.max_tokens
 
-    return _create_langchain_model(
+    return create_langchain_model(
         provider=cfg.provider,
         model_name=cfg.model,
         api_key=cfg.resolved_api_key,

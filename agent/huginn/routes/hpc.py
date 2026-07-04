@@ -11,13 +11,17 @@ remote_work_dir)。这样既支持"选已保存的集群提交", 也兼容旧前
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from huginn.hpc.client import HPCClient, HPCConfig
+from huginn.security.auth import require_admin_key
 
-router = APIRouter(tags=["hpc"])
+router = APIRouter(tags=["hpc"], dependencies=[Depends(require_admin_key)])
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_hpc_config(params: dict[str, Any]) -> tuple[HPCConfig | None, str | None]:
@@ -78,7 +82,8 @@ async def hpc_test_connection(params: dict[str, Any]) -> dict[str, Any]:
             else:
                 return {"success": False, "error": stderr or "Connection failed"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error("HPC test connection failed: %s", e, exc_info=True)
+        return {"success": False, "error": "Connection failed (see server logs)"}
 
 
 @router.post("/hpc/submit")

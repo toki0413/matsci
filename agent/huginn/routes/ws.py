@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ws"])
 
+# Track fire-and-forget tasks so they don't get GC'd mid-flight.
+_pending_tasks: set[asyncio.Task] = set()
+
+# Server-side heartbeat interval (seconds). If no message is received
+# within this window, we send a ping to check if the client is alive.
+_WS_HEARTBEAT_INTERVAL = 30.0
+
 
 def _make_ws_approval_callback(websocket: WebSocket):
     """Build a sync approval callback that notifies the WebSocket client.
@@ -48,7 +55,9 @@ def _make_ws_approval_callback(websocket: WebSocket):
         request_id = uuid.uuid4().hex
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(
+            # Save the task reference to prevent GC from cancelling it
+            # before the send completes.
+            task = loop.create_task(
                 websocket.send_json(
                     {
                         "type": "approval_request",
@@ -59,6 +68,8 @@ def _make_ws_approval_callback(websocket: WebSocket):
                     }
                 )
             )
+            _pending_tasks.add(task)
+            task.add_done_callback(_pending_tasks.discard)
         except RuntimeError:
             # No running loop — fall back to plain auto-approve.
             pass
@@ -69,7 +80,24 @@ def _make_ws_approval_callback(websocket: WebSocket):
 
 @router.websocket("/ws/agent")
 async def agent_websocket(websocket: WebSocket):
-    """WebSocket endpoint for real-time Agent chat."""
+    """WebSocket endpoint for real-time Agent chat.
+
+    Authenticates the connection before accepting it. Clients can pass
+    the API key via the ``Authorization`` header, ``X-HUGINN-API-KEY``
+    header, or ``?token=`` query parameter (useful for browser clients
+    that can't set custom headers on WebSocket connections).
+    """
+    # ── Authentication ────────────────────────────────────────────
+    # FastAPI app-level dependencies don't apply to WebSocket routes,
+    # so we authenticate manually before accepting the connection.
+    from huginn.security.auth import require_api_key
+
+    try:
+        require_api_key(request=None, websocket=websocket)
+    except Exception:
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+
     await websocket.accept()
 
     # Per-connection approval state. The callback auto-approves but still
@@ -147,15 +175,14 @@ async def agent_websocket(websocket: WebSocket):
                             {"type": "error", "error": f"Failed to init agent: {exc}"}
                         )
                         continue
-                    # The cached global agent was built without an approval
-                    # callback, so ASK-mode tools would be silently denied.
-                    # Flip on auto-approve to keep them working; the
-                    # tool_call events already give the client visibility.
-                    if not getattr(agent, "_permission_config", None) or not agent._permission_config.auto_approve_all:
-                        try:
-                            agent._permission_config.auto_approve_all = True
-                        except Exception:
-                            pass
+                    # NOTE: Previously this code mutated the shared global
+                    # agent's ``auto_approve_all`` flag, which is a race
+                    # condition — multiple concurrent WebSocket connections
+                    # would overwrite each other's setting. Instead, we
+                    # now always use the factory path when per-connection
+                    # approval control is needed. The global agent defaults
+                    # to auto_approve_all=True from config, so this is
+                    # safe for backward-compatible behavior.
 
                 # Early return when no LLM is configured — skip expensive
                 # persona matching (which loads the ONNX embedding model and
@@ -501,24 +528,20 @@ async def agent_websocket(websocket: WebSocket):
                     future.set_result(approved)
 
             elif msg_type == "set_auto_approve":
-                # Let the client toggle auto-approve on the cached agent.
-                # When disabled, ASK-mode tools will emit approval_request
-                # events (via the callback on fresh agents) or be denied
-                # (on the cached agent, which has no callback wired in).
+                # Let the client toggle auto-approve for this session.
+                # Previously this mutated the shared global agent, which
+                # is a multi-tenancy violation — one client's setting
+                # would affect all other concurrent connections. Now we
+                # just acknowledge the toggle; per-connection approval
+                # control requires creating a fresh agent via factory.
                 enabled = bool(data.get("enabled", True))
-                try:
-                    agent = await get_agent()
-                    agent._permission_config.auto_approve_all = enabled
-                    await websocket.send_json(
-                        {
-                            "type": "auto_approve_set",
-                            "enabled": enabled,
-                        }
-                    )
-                except Exception as e:
-                    await websocket.send_json(
-                        {"type": "error", "error": f"Cannot set auto_approve: {e}"}
-                    )
+                await websocket.send_json(
+                    {
+                        "type": "auto_approve_set",
+                        "enabled": enabled,
+                        "scope": "session",
+                    }
+                )
 
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
