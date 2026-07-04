@@ -221,7 +221,7 @@ async def hpc_refresh_job(
             store.add_or_update(record)
             return {"success": True, "job": record.to_dict()}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": type(e).__name__}
 
 
 @router.post("/hpc/jobs/{local_id}/cancel")
@@ -256,7 +256,7 @@ async def hpc_cancel_job(
             store.add_or_update(record)
             return {"success": True, "job": record.to_dict()}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": type(e).__name__}
 
 
 @router.post("/hpc/status")

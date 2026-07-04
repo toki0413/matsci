@@ -7,6 +7,36 @@
 - POST /credentials/{cid}/link-model/{alias}
 """
 
+# ── Python 3.10 compat ──────────────────────────────────────────────────
+# StrEnum and datetime.UTC both landed in 3.11.  huginn/routes/__init__.py
+# drags in the full server stack which uses them unconditionally.
+import datetime
+import enum
+import sys
+import types
+from pathlib import Path
+
+if sys.version_info < (3, 11):
+    if not hasattr(enum, "StrEnum"):
+        class _StrEnumShim(str, enum.Enum):
+            pass
+        enum.StrEnum = _StrEnumShim
+    if not hasattr(datetime, "UTC"):
+        datetime.UTC = datetime.timezone.utc
+
+# Stub out huginn.routes so __init__.py never runs — same trick as
+# test_hpc_job_management.py.  We only need config.py and credentials.py.
+import huginn  # noqa: E402
+
+_routes_dir = str(Path(__file__).resolve().parent.parent / "huginn" / "routes")
+if "huginn.routes" not in sys.modules:
+    _stub = types.ModuleType("huginn.routes")
+    _stub.__path__ = [_routes_dir]
+    sys.modules["huginn.routes"] = _stub
+    huginn.routes = _stub
+
+# ── Real imports ────────────────────────────────────────────────────────
+
 import json
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -90,6 +120,32 @@ def test_local_models_connection_error(client):
     assert data["models"] == []
     assert "error" in data
     assert data["error"]  # 错误信息非空
+
+
+def test_local_models_ssrf_blocked(client):
+    """base_url 指向外部地址时应被 SSRF 防护拦截。"""
+    r = client.get(
+        "/config/local-models",
+        params={"provider": "ollama", "base_url": "http://8.8.8.8:11434"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["success"] is False
+    assert "SSRF" in data["error"] or "blocked" in data["error"]
+
+
+def test_local_models_ssrf_localhost_allowed(client):
+    """显式传 localhost 应该放行 (不实际连接, mock urlopen)。"""
+    payload = {"models": [{"name": "llama3:8b"}]}
+    with patch("urllib.request.urlopen", return_value=_fake_urlopen(payload)):
+        r = client.get(
+            "/config/local-models",
+            params={"provider": "ollama", "base_url": "http://127.0.0.1:11434"},
+        )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["success"] is True
+    assert "llama3:8b" in data["models"]
 
 
 # ── _model_to_dict ──────────────────────────────────────────────
