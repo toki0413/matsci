@@ -543,20 +543,110 @@ class ToolAdapter:
                 logger.debug("smart_compress sync wrapper failed for %s: %s", tool.name, exc)
                 return obj
 
-        async def _arun(**kwargs: Any) -> dict[str, Any]:
-            """Async execution wrapper."""
-            payload, context = _build_inputs(**kwargs)
-            input_data = tool.input_schema(**kwargs)
+        # ── Shared pre-execution checks ──────────────────────────
+        # Extracted to eliminate duplication between _run (sync) and
+        # _arun (async).  Both paths run the same sequence of gates;
+        # only the async-call mechanism differs for confirmation and
+        # validation.
 
+        def _run_pre_checks(
+            input_data: Any,
+            kwargs: dict[str, Any],
+        ) -> tuple[dict[str, Any] | None, Any]:
+            """Run pre-execution gates: permission, cache, router, budget,
+            loop detection, circuit breaker.
+
+            Returns ``(early_return, router)``.  ``early_return`` is a
+            dict to return immediately if a gate blocks, or ``None``.
+            ``router`` is the ToolCallRouter (may be None).
+            """
+            # 1. Permission
             approved, reason = _check_permission(input_data)
             if not approved:
                 output = {"error": reason or f"Tool '{tool.name}' was denied"}
                 _audit(input_data, output, approved=False, reason=reason)
                 _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
-                return output
+                return output, None
 
-            # 硬确认门: 破坏性/高成本操作必须用户先点头, 不让 LLM 自己拍板.
-            # HUGINN_AUTO_APPROVE=1 时跳过 (CI / benchmark 场景).
+            # 2. Cache (checked before confirmation — safe, no approval needed)
+            cached = _get_cached(input_data)
+            if cached is not None:
+                _audit(input_data, cached, approved=True, reason="cache_hit")
+                _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
+                _record_cache_hit(tool.name)
+                return cached, None
+
+            # 3. Router (lightweight-path decision)
+            router = self._current_router
+            if router is not None:
+                allowed, router_reason = router.should_allow(tool.name, kwargs, {})
+                if not allowed:
+                    output = {"error": router_reason, "_router_blocked": True}
+                    _audit(input_data, output, approved=False, reason="router_blocked")
+                    _publish(PetMood.ERROR, f"{tool.name} blocked by router", {"reason": router_reason})
+                    return output, router
+
+            # 4. Budget
+            budget = self._current_budget
+            if budget is not None:
+                if not budget.record(tool.name):
+                    _, budget_reason = budget.should_stop()
+                    output = {"error": f"工具调用预算耗尽: {budget_reason}", "_budget_exceeded": True}
+                    _audit(input_data, output, approved=True, reason="budget_exceeded")
+                    _publish(PetMood.ERROR, f"{tool.name} blocked by budget", {"reason": budget_reason})
+                    return output, router
+
+            # 5. Loop detection
+            loop_detector = self._current_loop_detector
+            if loop_detector is not None:
+                is_loop = loop_detector.record(tool.name, kwargs)
+                if is_loop:
+                    _, loop_reason = loop_detector.should_break()
+                    output = {"error": loop_reason, "_loop_detected": True}
+                    _audit(input_data, output, approved=False, reason="loop_detected")
+                    _publish(PetMood.ERROR, f"{tool.name} blocked by loop detector", {"reason": loop_reason})
+                    return output, router
+
+            # 6. Circuit breaker
+            blocked = _breaker_blocked(tool.name)
+            if blocked is not None:
+                _audit(input_data, blocked, approved=False, reason="circuit_open")
+                _publish(PetMood.ERROR, f"{tool.name} circuit open", {"retry_after": blocked.get("retry_after", 0)})
+                return blocked, router
+
+            return None, router
+
+        def _run_post_checks(
+            input_data: Any,
+            result: Any,
+            output: dict[str, Any],
+            context: Any,
+            router: Any,
+        ) -> dict[str, Any]:
+            """Post-execution: constraints, audit, cache, publish."""
+            if router is not None:
+                router.record_light_attempt(tool.name)
+            result = _check_constraints(result, context)
+            output = _serialize(result)
+            _audit(input_data, output, approved=True, reason=None)
+            if result.success:
+                _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
+                _set_cached(input_data, output)
+            else:
+                _publish(PetMood.ERROR, f"{tool.name} failed", {"tool": tool.name, "error": result.error})
+            return output
+
+        async def _arun(**kwargs: Any) -> dict[str, Any]:
+            """Async execution wrapper."""
+            payload, context = _build_inputs(**kwargs)
+            input_data = tool.input_schema(**kwargs)
+
+            # Shared pre-checks (permission, cache, router, budget, loop, breaker)
+            early, router = _run_pre_checks(input_data, kwargs)
+            if early is not None:
+                return early
+
+            # Confirmation gate (async: direct await)
             if (
                 os.environ.get("HUGINN_AUTO_APPROVE") != "1"
                 and not permission_config.auto_approve_all
@@ -566,107 +656,17 @@ class ToolAdapter:
                 if confirm_q:
                     confirmed = await _ask_confirmation(context, confirm_q)
                     if not confirmed:
-                        output = {
-                            "error": f"用户取消了 {tool.name} 调用",
-                            "_user_cancelled": True,
-                        }
-                        _audit(
-                            input_data,
-                            output,
-                            approved=False,
-                            reason="user_cancelled",
-                        )
-                        _publish(
-                            PetMood.ERROR,
-                            f"{tool.name} cancelled by user",
-                            {"reason": confirm_q},
-                        )
+                        output = {"error": f"用户取消了 {tool.name} 调用", "_user_cancelled": True}
+                        _audit(input_data, output, approved=False, reason="user_cancelled")
+                        _publish(PetMood.ERROR, f"{tool.name} cancelled by user", {"reason": confirm_q})
                         return output
 
             validation = await tool.validate_input(input_data, context)
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
-                _publish(
-                    PetMood.ERROR,
-                    f"{tool.name} input invalid",
-                    {"reason": validation.message},
-                )
+                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
                 return output
-
-            cached = _get_cached(input_data)
-            if cached is not None:
-                _audit(input_data, cached, approved=True, reason="cache_hit")
-                _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
-                _record_cache_hit(tool.name)
-                return cached
-
-            # 最简路径决策: 重型工具调用前先看轻量路径走没走过, 没走过就拦下
-            # 把 reason 喂回 LLM, 让它要么先调轻量工具, 要么加 __confirm_heavy=true
-            router = self._current_router
-            if router is not None:
-                allowed, router_reason = router.should_allow(
-                    tool.name, kwargs, {}
-                )
-                if not allowed:
-                    output = {
-                        "error": router_reason,
-                        "_router_blocked": True,
-                    }
-                    _audit(input_data, output, approved=False, reason="router_blocked")
-                    _publish(
-                        PetMood.ERROR,
-                        f"{tool.name} blocked by router",
-                        {"reason": router_reason},
-                    )
-                    return output
-
-            # 工具调用预算检查：缓存命中不算，只有真正执行工具才计数
-            budget = self._current_budget
-            if budget is not None:
-                if not budget.record(tool.name):
-                    stop, reason = budget.should_stop()
-                    output = {
-                        "error": f"工具调用预算耗尽: {reason}",
-                        "_budget_exceeded": True,
-                    }
-                    _audit(input_data, output, approved=True, reason="budget_exceeded")
-                    _publish(
-                        PetMood.ERROR,
-                        f"{tool.name} blocked by budget",
-                        {"reason": reason},
-                    )
-                    return output
-
-            # 工具调用循环检测: 记一笔, 命中就拦下, 把 reason 喂回 LLM
-            # 让它换思路. 缓存命中不算 (没真正执行), 跟 budget 同口径.
-            loop_detector = self._current_loop_detector
-            if loop_detector is not None:
-                is_loop = loop_detector.record(tool.name, kwargs)
-                if is_loop:
-                    _, loop_reason = loop_detector.should_break()
-                    output = {
-                        "error": loop_reason,
-                        "_loop_detected": True,
-                    }
-                    _audit(input_data, output, approved=False, reason="loop_detected")
-                    _publish(
-                        PetMood.ERROR,
-                        f"{tool.name} blocked by loop detector",
-                        {"reason": loop_reason},
-                    )
-                    return output
-
-            # 熔断器前置检查: 连续失败的工具直接拒, 不浪费 timeout 去试
-            blocked = _breaker_blocked(tool.name)
-            if blocked is not None:
-                _audit(input_data, blocked, approved=False, reason="circuit_open")
-                _publish(
-                    PetMood.ERROR,
-                    f"{tool.name} circuit open",
-                    {"retry_after": blocked.get("retry_after", 0)},
-                )
-                return blocked
 
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
             # 按工具类型分级超时，防止外部 API 卡死整个 agent
@@ -699,48 +699,37 @@ class ToolAdapter:
                     time.time() - _call_start,
                     result.error if not result.success else None,
                 )
-                # 轻量工具执行完记一笔, 后续重型工具凭此放行.
-                # record_light_attempt 内部会过滤非轻量工具, 这里无脑调即可.
-                if router is not None:
-                    router.record_light_attempt(tool.name)
+                # Post-execution: constraints, audit, cache, publish
                 result = _check_constraints(result, context)
                 output = _serialize(result)
                 # LLM-based smart compression for very large text payloads.
                 # Runs only when a summarizer has been registered.
                 output = await _smart_compress_output(output)
                 span.metadata["success"] = result.success
-                # 记录 args/result 让 trajectory replay 能看到工具的真实输入输出
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
                 if result.error:
                     span.metadata["error"] = result.error
-            _audit(input_data, output, approved=True, reason=None)
-            if result.success:
-                _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
-                _set_cached(input_data, output)
-            else:
-                _publish(
-                    PetMood.ERROR,
-                    f"{tool.name} failed",
-                    {"tool": tool.name, "error": result.error},
-                )
+            output = _run_post_checks(input_data, result, output, context, router)
             return output
 
         def _run(**kwargs: Any) -> dict[str, Any]:
-            """Sync execution wrapper."""
+            """Sync execution wrapper.
+
+            Delegates pre-checks and post-checks to the shared helpers
+            to avoid duplicating the 6-gate pipeline.  Only the
+            async-specific calls (confirmation, validation, compression)
+            are handled differently here.
+            """
             payload, context = _build_inputs(**kwargs)
             input_data = tool.input_schema(**kwargs)
 
-            approved, reason = _check_permission(input_data)
-            if not approved:
-                output = {"error": reason or f"Tool '{tool.name}' was denied"}
-                _audit(input_data, output, approved=False, reason=reason)
-                _publish(PetMood.ERROR, f"{tool.name} denied", {"reason": reason})
-                return output
+            # Shared pre-checks (permission, cache, router, budget, loop, breaker)
+            early, router = _run_pre_checks(input_data, kwargs)
+            if early is not None:
+                return early
 
-            # 硬确认门 (同步版): 把 async _ask_confirmation 套进 event loop.
-            # 跟上面 _smart_compress_output 同款套路: 先试 asyncio.run, 撞上
-            # 已有 loop 就新开一个跑.
+            # Confirmation gate (sync: wrap async call)
             if (
                 os.environ.get("HUGINN_AUTO_APPROVE") != "1"
                 and not permission_config.auto_approve_all
@@ -763,26 +752,15 @@ class ToolAdapter:
                                 _ask_confirmation(context, confirm_q)
                             )
                     except Exception:
-                        # ClarificationManager 不可用时安全放行, 不阻断
+                        # ClarificationManager unavailable — safe passthrough
                         confirmed = True
                     if not confirmed:
-                        output = {
-                            "error": f"用户取消了 {tool.name} 调用",
-                            "_user_cancelled": True,
-                        }
-                        _audit(
-                            input_data,
-                            output,
-                            approved=False,
-                            reason="user_cancelled",
-                        )
-                        _publish(
-                            PetMood.ERROR,
-                            f"{tool.name} cancelled by user",
-                            {"reason": confirm_q},
-                        )
+                        output = {"error": f"用户取消了 {tool.name} 调用", "_user_cancelled": True}
+                        _audit(input_data, output, approved=False, reason="user_cancelled")
+                        _publish(PetMood.ERROR, f"{tool.name} cancelled by user", {"reason": confirm_q})
                         return output
 
+            # Input validation (sync: handle coroutine result)
             validation_result = tool.validate_input(input_data, context)
             if asyncio.iscoroutine(validation_result):
                 try:
@@ -798,87 +776,10 @@ class ToolAdapter:
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
-                _publish(
-                    PetMood.ERROR,
-                    f"{tool.name} input invalid",
-                    {"reason": validation.message},
-                )
+                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
                 return output
 
-            cached = _get_cached(input_data)
-            if cached is not None:
-                _audit(input_data, cached, approved=True, reason="cache_hit")
-                _publish(PetMood.SUCCESS, f"{tool.name} (cached)", {"tool": tool.name})
-                _record_cache_hit(tool.name)
-                return cached
-
-            # 最简路径决策 (同步路径): 跟 _arun 同样的 sanity check
-            router = self._current_router
-            if router is not None:
-                allowed, router_reason = router.should_allow(
-                    tool.name, kwargs, {}
-                )
-                if not allowed:
-                    output = {
-                        "error": router_reason,
-                        "_router_blocked": True,
-                    }
-                    _audit(input_data, output, approved=False, reason="router_blocked")
-                    _publish(
-                        PetMood.ERROR,
-                        f"{tool.name} blocked by router",
-                        {"reason": router_reason},
-                    )
-                    return output
-
-            # 工具调用预算检查（同步路径）
-            budget = self._current_budget
-            if budget is not None:
-                if not budget.record(tool.name):
-                    stop, reason = budget.should_stop()
-                    output = {
-                        "error": f"工具调用预算耗尽: {reason}",
-                        "_budget_exceeded": True,
-                    }
-                    _audit(input_data, output, approved=True, reason="budget_exceeded")
-                    _publish(
-                        PetMood.ERROR,
-                        f"{tool.name} blocked by budget",
-                        {"reason": reason},
-                    )
-                    return output
-
-            # 工具调用循环检测 (同步路径): 跟 _arun 同样的口径, 缓存命中不算
-            loop_detector = self._current_loop_detector
-            if loop_detector is not None:
-                is_loop = loop_detector.record(tool.name, kwargs)
-                if is_loop:
-                    _, loop_reason = loop_detector.should_break()
-                    output = {
-                        "error": loop_reason,
-                        "_loop_detected": True,
-                    }
-                    _audit(input_data, output, approved=False, reason="loop_detected")
-                    _publish(
-                        PetMood.ERROR,
-                        f"{tool.name} blocked by loop detector",
-                        {"reason": loop_reason},
-                    )
-                    return output
-
-            # 熔断器前置检查 (同步路径): 跟 _arun 同口径
-            blocked = _breaker_blocked(tool.name)
-            if blocked is not None:
-                _audit(input_data, blocked, approved=False, reason="circuit_open")
-                _publish(
-                    PetMood.ERROR,
-                    f"{tool.name} circuit open",
-                    {"retry_after": blocked.get("retry_after", 0)},
-                )
-                return blocked
-
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
-            # 同步路径也套分级超时
             timeout = get_timeout(tool.name)
             _call_start = time.time()
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
@@ -907,41 +808,25 @@ class ToolAdapter:
                         error=f"{tool.name} timed out after {timeout}s",
                     )
                 except Exception as exc:
-                    # 非超时异常: 记完失败再抛, 同 _arun
                     _record_outcome(
                         tool.name, False, time.time() - _call_start, str(exc)
                     )
                     raise
-                # 到这里 result 一定是 ToolResult (正常返回或超时)
                 _record_outcome(
                     tool.name,
                     result.success,
                     time.time() - _call_start,
                     result.error if not result.success else None,
                 )
-                # 轻量工具执行完记一笔 (同步路径). 同 _arun, 无脑调即可.
-                if router is not None:
-                    router.record_light_attempt(tool.name)
                 result = _check_constraints(result, context)
                 output = _serialize(result)
-                # LLM-based smart compression for very large text payloads.
-                # Mirrors the async path; only runs when a summarizer is set.
                 output = _sync_smart_compress(output)
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
                 if result.error:
                     span.metadata["error"] = result.error
-            _audit(input_data, output, approved=True, reason=None)
-            if result.success:
-                _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
-                _set_cached(input_data, output)
-            else:
-                _publish(
-                    PetMood.ERROR,
-                    f"{tool.name} failed",
-                    {"tool": tool.name, "error": result.error},
-                )
+            output = _run_post_checks(input_data, result, output, context, router)
             return output
 
         return StructuredTool.from_function(

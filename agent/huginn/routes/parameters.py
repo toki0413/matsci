@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/parameters", tags=["parameters"])
+from huginn.security.auth import require_admin_key
+
+router = APIRouter(
+    prefix="/parameters",
+    tags=["parameters"],
+    dependencies=[Depends(require_admin_key)],
+)
 
 
 class ParamSetRequest(BaseModel):
