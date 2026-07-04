@@ -18,7 +18,8 @@ import traceback
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import ValidationError
 
 from huginn.interaction.clarification import get_clarification_manager
 from huginn.interaction.interrupt import (
@@ -28,6 +29,7 @@ from huginn.interaction.interrupt import (
 )
 from huginn.interaction.progress import get_progress_tracker
 from huginn.interaction.streaming import StreamInterceptor
+from huginn.routes.schemas import ChatRequest
 from huginn.server_core import get_agent_factory
 
 router = APIRouter(tags=["interaction"])
@@ -51,8 +53,16 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
     - error:        异常
     - interrupt:    被用户中断 (带 reason)
     """
-    message = params.get("message", "")
-    thread_id = params.get("thread_id", "default")
+    # Validate the request body before spinning up the SSE stream.
+    try:
+        req = ChatRequest.model_validate(params)
+    except ValidationError as exc:
+        return JSONResponse(
+            {"error": f"Invalid request: {exc.errors()}"}, status_code=422
+        )
+
+    message = req.content
+    thread_id = req.thread_id
     timeout = float(params.get("timeout", 300))
 
     interceptor = StreamInterceptor(thread_id=thread_id)
@@ -69,8 +79,8 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
                 agent = factory.create(
                     agent_id,
                     thread_id=thread_id,
-                    thinking=params.get("thinking"),
-                    max_tokens=params.get("max_tokens"),
+                    thinking=req.thinking,
+                    max_tokens=req.max_tokens,
                 )
                 # sidecar serve 模式自动批准工具, 跟 /chat 行为一致
                 agent._permission_config.auto_approve_all = True

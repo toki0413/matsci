@@ -174,6 +174,9 @@ class CredentialStore:
         # 但每次 with 块内连接是独立的, 不会真跨线程用同一连接
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        # WAL: 每个新连接都设上, 避免并发写时 "database is locked"
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _ensure_schema(self) -> None:

@@ -7,7 +7,9 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter
+from pydantic import ValidationError
 
+from huginn.routes.schemas import CreateThreadRequest
 from huginn.server_core import _state_lock, _threads, get_agent
 
 router = APIRouter(tags=["threads"])
@@ -38,8 +40,16 @@ async def list_threads() -> dict[str, Any]:
 @router.post("/threads")
 async def create_thread(params: dict[str, Any]) -> dict[str, Any]:
     """Create a new conversation thread."""
+    # Validate the request body — title length and metadata shape.
+    try:
+        req = CreateThreadRequest.model_validate(params)
+    except ValidationError as exc:
+        return {"error": f"Invalid request: {exc.errors()}"}
+
     thread_id = params.get("id") or uuid.uuid4().hex[:8]
-    label = params.get("label") or thread_id
+    # Prefer the validated "title" field, fall back to "label" for
+    # backward compat with clients that haven't migrated yet.
+    label = req.title or params.get("label") or thread_id
     now = datetime.now().isoformat()
     with _state_lock:
         _threads[thread_id] = {

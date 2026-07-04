@@ -91,15 +91,16 @@ def test_reset_all() -> None:
 
 def test_sliding_window() -> None:
     limiter = TokenRateLimiter(RateLimitConfig())
-    # 手动塞一条 2 秒前的旧记录进窗口
+    # 手动塞一条 2 秒前的旧记录进 per-session 窗口
     old_ts = time.time() - 2.0
     with limiter._lock:
-        limiter._second_window.append((old_ts, 5000))
-    # 记一笔新的, record_usage 内部会调 _prune_window 把旧的裁掉
+        s = limiter._get_session("default")
+        s["second_window"].append((old_ts, 5000))
+    # 记一笔新的, record_usage 内部会调 _prune_session_window 把旧的裁掉
     limiter.record_usage("m", 100, 50)
     stats = limiter.get_stats()
     # 旧的 5000 应该被清了, 只剩新的 150
-    assert stats["tokens_per_second"] == 150
+    assert stats["active_sessions"]["default"]["tokens_per_second"] == 150
 
 
 # ── 成本追踪 ──────────────────────────────────────────────

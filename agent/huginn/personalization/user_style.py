@@ -432,6 +432,9 @@ class StyleLearner:
         try:
             conn = sqlite3.connect(self._storage_path)
             try:
+                # WAL: 并发 save 时不互斥读写, synchronous=NORMAL 够快也够安全
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS style_profile "
                     "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"

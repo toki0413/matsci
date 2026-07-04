@@ -8,9 +8,11 @@ import traceback
 from typing import Any
 
 from fastapi import APIRouter
+from pydantic import ValidationError
 
 from huginn.config import HuginnConfig, get_config
 from huginn.models.registry import ModelRegistry
+from huginn.routes.schemas import ChatRequest
 from huginn.server_core import (
     get_agent,
     get_agent_factory,
@@ -62,6 +64,15 @@ async def list_agents() -> dict[str, Any]:
 @router.post("/agents/{agent_id}/chat")
 async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, Any]:
     """Send a single-turn message to a specific agent profile."""
+    # Validate the request body before touching any downstream code.
+    try:
+        req = ChatRequest.model_validate(params)
+    except ValidationError as exc:
+        return {"error": f"Invalid request: {exc.errors()}"}
+
+    user_message = req.content
+    thread_id = req.thread_id
+
     try:
         # sidecar serve 是非交互 API 服务, dev 模式下既没容器运行时也没审批回调
         # 自动放行本地沙箱, 不然 code_tool/bash_tool 调用全卡在 SandboxError
@@ -72,9 +83,9 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
         factory = get_agent_factory()
         agent = factory.create(
             agent_id,
-            thread_id=params.get("thread_id", "default"),
-            thinking=params.get("thinking"),
-            max_tokens=params.get("max_tokens"),
+            thread_id=thread_id,
+            thinking=req.thinking,
+            max_tokens=req.max_tokens,
         )
         # sidecar serve 是非交互 API 服务, 不可能有审批回调, 强制自动批准所有工具
         # 不然 ASK 模式的工具会被拒, agent 只能回退到手动计算
@@ -83,13 +94,10 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
         # thread_id 必须传进去, 否则 invoke 用默认 "default", 不同对话历史全混一起
         # 180s 超时兜底: DeepSeek 对长输出推理慢 + 内部 3 次重试退避可能累计很久
         timeout = float(params.get("timeout", 180))
-        # thread_id 提到局部变量: 超时分支要用它告诉调用方怎么续跑,
-        # 不然 900s 的工作就白费了 —— checkpointer 已经落了盘, 续上就能接着干
-        thread_id = params.get("thread_id", "default")
         state = await asyncio.wait_for(
             asyncio.to_thread(
                 agent.invoke,
-                params.get("message", ""),
+                user_message,
                 thread_id=thread_id,
             ),
             timeout=timeout,
@@ -143,7 +151,7 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
                         f"({', '.join(tool_names_seen[:5])}), LLM 未生成总结文本, "
                         f"以下是工具返回结果:\n\n{result_block}"
                     ),
-                    "thread_id": params.get("thread_id", "default"),
+                    "thread_id": thread_id,
                     "tool_trace": tool_trace,
                 }
             return {
@@ -155,7 +163,7 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
         result = {
             "agent_id": agent_id,
             "content": content,
-            "thread_id": params.get("thread_id", "default"),
+            "thread_id": thread_id,
             "tool_trace": tool_trace,
         }
         if needs_clarification:
@@ -172,7 +180,7 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
         # 写 checkpoint. 调用方最好等一下再续, 避免两个 run 抢同一个
         # thread_id 的 checkpoint. 彻底解决要换进程隔离/任务队列, 那是
         # round8 计划里的 Layer 3 流式返回, 这里先做最小可行的分段返回.
-        msg_text = params.get("message", "") or ""
+        msg_text = user_message or ""
         # 检测多语言混合: 非拉丁字符集种类多时 API 处理可能异常慢
         # 中文很常见不算触发条件, 只数非中非拉丁的文字 (阿拉伯/韩/俄/日等)
         non_latin_blocks: set[str] = set()

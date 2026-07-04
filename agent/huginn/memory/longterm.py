@@ -78,6 +78,9 @@ class LongTermMemory:
     def _connect(self):
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
+        # 每次开连接都设 WAL, 写入不卡读, 并发场景少踩 "database is locked"
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         try:
             yield conn
         finally:
