@@ -14,10 +14,12 @@ psutil 是可选依赖，没装就优雅降级——snapshot 返回 psutil_avail
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
 import time
+import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -374,6 +376,35 @@ class SystemHealthMonitor:
             self._maybe_auto_fix(ev)
             with self._lock:
                 self._anomalies.append(ev)
+
+        if events:
+            self._fire_alert_webhook(events)
+
+    def _fire_alert_webhook(self, events: list[AnomalyEvent]) -> None:
+        """有异常就往外部 webhook 推一条告警，没配 URL 就跳过。"""
+        url = os.environ.get("HUGINN_ALERT_WEBHOOK_URL")
+        if not url:
+            return
+        for ev in events:
+            payload = json.dumps(
+                {
+                    "event": "anomaly",
+                    "resource": ev.resource,
+                    "severity": ev.severity,
+                    "message": ev.message,
+                    "value": ev.value,
+                    "threshold": ev.threshold,
+                    "timestamp": ev.timestamp,
+                }
+            ).encode("utf-8")
+            try:
+                req = urllib.request.Request(
+                    url, data=payload, headers={"Content-Type": "application/json"}
+                )
+                urllib.request.urlopen(req, timeout=5)
+            except Exception:
+                # webhook 挂了不能把监控线程也带崩
+                logger.debug("alert webhook POST failed", exc_info=True)
 
     def _diagnose_cpu(self, m: SystemMetrics) -> AnomalyEvent | None:
         if m.cpu_percent < self._policy.cpu_percent:

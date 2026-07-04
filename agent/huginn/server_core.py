@@ -28,6 +28,8 @@ from huginn.project_context import load_project_context
 from huginn.server_context import ServerContext, get_server_context
 from huginn.tools.registry import ToolRegistry
 
+logger = logging.getLogger(__name__)
+
 # ── optional imports ────────────────────────────────────────────────
 
 try:
@@ -130,8 +132,8 @@ async def get_agent() -> HuginnAgent:
     if cfg.provider == "ollama" and cfg.models:
         ollama_models = [m for m in cfg.models if m.provider == "ollama" and m.enabled]
         if ollama_models and not await _check_ollama_available(cfg.ollama_host):
-            print(f"Warning: Ollama not responding at {cfg.ollama_host}")
-            print("Falling back to mock mode (no LLM)")
+            logger.warning("Ollama not responding at {cfg.ollama_host}")
+            logger.info("Falling back to mock mode (no LLM)")
             get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
             get_context().agent.register_tools_from_registry()
             return get_context().agent
@@ -139,18 +141,18 @@ async def get_agent() -> HuginnAgent:
     try:
         get_context().agent = factory.create_lead()
     except ImportError as e:
-        print(f"Warning: Missing dependency for configured model: {e}")
-        print("Falling back to mock mode (no LLM)")
+        logger.warning("Missing dependency for configured model: {e}")
+        logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
         get_context().agent.register_tools_from_registry()
     except ValueError as e:
-        print(f"Warning: {e}")
-        print("Falling back to mock mode (no LLM)")
+        logger.warning("{e}")
+        logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
         get_context().agent.register_tools_from_registry()
     except Exception as e:
-        print(f"Warning: Failed to initialize agent: {e}")
-        print("Falling back to mock mode (no LLM)")
+        logger.warning("Failed to initialize agent: {e}")
+        logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
         get_context().agent.register_tools_from_registry()
 
@@ -428,7 +430,7 @@ def get_planner_agent() -> HuginnAgent:
         if project_ctx.strip():
             base_prompt = f"{base_prompt}\n\n# Project Context\n\n{project_ctx}"
     except Exception as e:
-        print(f"[planner] project context warning: {e}")
+        logger.info("[planner] project context warning: {e}")
 
     system_prompt = base_prompt + PLANNER_SUFFIX
 
@@ -444,7 +446,7 @@ def get_planner_agent() -> HuginnAgent:
             system_prompt_override=system_prompt
         )
     except Exception as e:
-        print(f"Warning: Failed to initialize planner model: {e}")
+        logger.warning("Failed to initialize planner model: {e}")
         get_context().planner_agent = HuginnAgent(
             model=None, system_prompt=system_prompt
         )

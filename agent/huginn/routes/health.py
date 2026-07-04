@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -13,6 +14,8 @@ from fastapi import APIRouter, Response
 from huginn import __version__
 from huginn.config import HuginnConfig
 from huginn.server_core import _check_ollama_available, get_context
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
 
@@ -36,31 +39,120 @@ _PROVIDER_KEY_ENV: dict[str, str] = {
 
 
 def _is_configured(cfg: HuginnConfig) -> bool:
-    """Determine whether the system has a usable LLM configuration.
-
-    Handles three cases:
-    1. Ollama (keyless): configured if provider is ollama
-    2. Multi-model pool: configured if any model has a resolved key
-    3. Legacy single-model: configured if provider != default and key exists
-    """
-    # Ollama needs no API key
+    """Determine whether the system has a usable LLM configuration."""
     if cfg.provider == "ollama":
         return True
-
-    # Multi-model pool
     if cfg.models:
         for m in cfg.models:
             if m.provider == "ollama":
                 return True
             if m.enabled and (m.api_key or _PROVIDER_KEY_ENV.get(m.provider) and os.environ.get(_PROVIDER_KEY_ENV[m.provider])):
                 return True
-
-    # Legacy single-model
     return cfg.provider != "default" and bool(cfg.resolved_api_key)
+
+
+# ── Liveness ──────────────────────────────────────────────────────
+
+
+@router.get("/health/live")
+async def health_live() -> dict[str, Any]:
+    """Liveness probe — "is the process alive?".
+
+    Returns 200 unconditionally as long as the event loop can respond.
+    Kubernetes should use this for liveness probes — it must NEVER
+    return non-200 due to dependency failures, otherwise the pod gets
+    killed and restarted (which doesn't fix the dependency).
+    """
+    cfg = HuginnConfig.from_env()
+    return {
+        "status": "alive",
+        "version": __version__,
+        "provider": cfg.provider,
+        "model": cfg.model,
+    }
+
+
+# ── Readiness ──────────────────────────────────────────────────────
+
+
+@router.get("/health/ready")
+@router.get("/ready")
+async def health_ready(response: Response) -> dict[str, Any]:
+    """Readiness probe — "can I handle requests right now?".
+
+    Checks actual dependency reachability:
+      * SQLite — can we read/write?
+      * LLM — is a provider configured?
+      * MCP — are configured servers connected?
+
+    Returns 200 when all checks pass, 503 when any fail.
+    Each check includes an ``error`` field on failure for diagnostics.
+    """
+    checks: dict[str, dict[str, Any]] = {}
+
+    # -- SQLite -------------------------------------------------------
+    try:
+        from huginn.research_log import get_research_log
+
+        log = get_research_log()
+        with log._lock:
+            log._conn.execute("SELECT 1").fetchone()
+        checks["sqlite"] = {"status": "ok"}
+    except Exception as e:
+        logger.warning("/ready sqlite check failed", exc_info=True)
+        checks["sqlite"] = {"status": "fail", "error": str(e)[:200]}
+
+    # -- LLM provider ------------------------------------------------
+    try:
+        cfg = HuginnConfig.from_env()
+        if _is_configured(cfg):
+            checks["llm"] = {"status": "ok", "provider": cfg.provider}
+        else:
+            checks["llm"] = {"status": "fail", "error": "No provider configured"}
+    except Exception as e:
+        logger.warning("/ready llm check failed", exc_info=True)
+        checks["llm"] = {"status": "fail", "error": str(e)[:200]}
+
+    # -- MCP servers --------------------------------------------------
+    try:
+        mgr = get_context().mcp_manager
+        if mgr is None:
+            checks["mcp"] = {"status": "ok", "note": "not configured"}
+        else:
+            status = mgr.get_server_status()
+            if not status:
+                checks["mcp"] = {"status": "ok", "note": "no servers"}
+            elif all(s.get("connected") for s in status.values()):
+                checks["mcp"] = {"status": "ok", "servers": len(status)}
+            else:
+                disconnected = [
+                    name for name, s in status.items() if not s.get("connected")
+                ]
+                checks["mcp"] = {
+                    "status": "fail",
+                    "error": f"Servers not connected: {', '.join(disconnected)}",
+                }
+    except Exception as e:
+        logger.warning("/ready mcp check failed", exc_info=True)
+        checks["mcp"] = {"status": "fail", "error": str(e)[:200]}
+
+    all_ok = all(c["status"] == "ok" for c in checks.values())
+    if not all_ok:
+        response.status_code = 503
+    return {"ready": all_ok, "checks": checks}
+
+
+# ── Legacy /health (backward compat) ─────────────────────────────
 
 
 @router.get("/health")
 async def health() -> dict[str, Any]:
+    """Legacy health endpoint — returns basic config info.
+
+    .. deprecated::
+        Use ``/health/live`` for liveness and ``/health/ready`` for
+        readiness. This endpoint is kept for backward compatibility.
+    """
     cfg = HuginnConfig.from_env()
     configured = _is_configured(cfg)
 
@@ -70,13 +162,12 @@ async def health() -> dict[str, Any]:
         "provider": cfg.provider,
         "model": cfg.model,
         "configured": configured,
+        "deprecation": "Use /health/live (liveness) and /health/ready (readiness)",
     }
 
-    # Add model pool info if available
     if cfg.models:
         result["model_pool"] = len([m for m in cfg.models if m.enabled])
 
-    # Add MCP server status
     mgr = get_context().mcp_manager
     if mgr:
         result["mcp_servers"] = mgr.get_server_status()
@@ -84,70 +175,9 @@ async def health() -> dict[str, Any]:
     return result
 
 
-@router.get("/ready")
-async def readiness(response: Response) -> dict[str, Any]:
-    """Readiness probe -- tells the load balancer "can I handle requests?".
-
-    Unlike /health (liveness: "am I alive?") this checks actual
-    dependencies:
-      * SQLite -- can we read/write the research log?
-      * LLM    -- is a provider configured?
-      * MCP    -- are configured MCP servers connected?
-
-    Returns 200 when everything is green, 503 when any check fails.
-    """
-    checks: dict[str, str] = {}
-
-    # -- SQLite -------------------------------------------------------
-    try:
-        from huginn.research_log import get_research_log
-
-        log = get_research_log()
-        # Trivial round-trip -- catches corrupt/locked databases
-        with log._lock:
-            log._conn.execute("SELECT 1").fetchone()
-        checks["sqlite"] = "ok"
-    except Exception:
-        checks["sqlite"] = "fail"
-
-    # -- LLM provider ------------------------------------------------
-    try:
-        cfg = HuginnConfig.from_env()
-        checks["llm"] = "ok" if _is_configured(cfg) else "fail"
-    except Exception:
-        checks["llm"] = "fail"
-
-    # -- MCP servers --------------------------------------------------
-    try:
-        mgr = get_context().mcp_manager
-        if mgr is None:
-            # No MCP servers configured -- nothing to check
-            checks["mcp"] = "ok"
-        else:
-            status = mgr.get_server_status()
-            if not status:
-                checks["mcp"] = "ok"
-            elif all(s.get("connected") for s in status.values()):
-                checks["mcp"] = "ok"
-            else:
-                checks["mcp"] = "fail"
-    except Exception:
-        checks["mcp"] = "fail"
-
-    all_ok = all(v == "ok" for v in checks.values())
-    if not all_ok:
-        response.status_code = 503
-    return {"ready": all_ok, "checks": checks}
-
-
 @router.get("/health/guidance")
 async def health_guidance() -> dict[str, Any]:
-    """Detect available providers and return configuration recommendations.
-
-    Scans environment variables for API keys and probes local Ollama.
-    The frontend can use this to guide the user through initial setup.
-    """
-    # Scan for available API keys
+    """Detect available providers and return configuration recommendations."""
     available_providers: list[dict[str, Any]] = []
     keyless_providers: list[dict[str, Any]] = []
 
@@ -159,7 +189,6 @@ async def health_guidance() -> dict[str, Any]:
                 "key_detected": True,
             })
 
-    # Ollama is always keyless — check if it's reachable
     ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
     ollama_ok = await _check_ollama_available(ollama_host)
     if ollama_ok:
@@ -175,12 +204,10 @@ async def health_guidance() -> dict[str, Any]:
             "available": False,
         })
 
-    # Build recommendation
     current = HuginnConfig.from_env()
     recommendation: dict[str, Any] = {}
     if not _is_configured(current):
         if available_providers:
-            # Recommend the first detected cloud provider
             top = available_providers[0]
             recommendation = {
                 "action": "set_provider",
@@ -229,7 +256,3 @@ async def health_rust() -> dict[str, Any]:
             "error": str(e),
             "functions": [],
         }
-
-
-# NOTE: /config, /config/encrypt 已迁移到 huginn.routes.config,
-# 这里不再注册, 避免路由冲突。前端 POST /config 仍可用, 由 config router 接管。

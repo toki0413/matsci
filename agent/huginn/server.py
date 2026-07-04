@@ -23,7 +23,7 @@ import types
 from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -118,10 +118,17 @@ async def rate_limit_middleware(request: Request, call_next):
         del _rate_buckets[client_ip]
 
     if len(bucket) >= _RATE_LIMIT:
-        RATE_LIMIT_BLOCKED_TOTAL.labels(session=client_ip).inc()
+        RATE_LIMIT_BLOCKED_TOTAL.labels(session="all").inc()
+        from huginn.errors import huginn_error_response
+        request_id = getattr(request.state, "request_id", "unknown")
         return JSONResponse(
             status_code=429,
-            content={"success": False, "error": "Rate limit exceeded"},
+            content=huginn_error_response(
+                "RATE_LIMITED",
+                "Rate limit exceeded",
+                request_id,
+                status_code=429,
+            ),
             headers={"Retry-After": str(int(_RATE_WINDOW))},
         )
 
@@ -155,6 +162,12 @@ app.add_middleware(RequestTimeoutMiddleware)
 # correlation id is in place before any other middleware / handler logs.
 app.add_middleware(RequestIDMiddleware)
 
+# Maintenance mode middleware — returns 503 for non-health requests
+# when HUGINN_MAINTENANCE=1 or runtime toggle is on.
+from huginn.middleware.maintenance import MaintenanceMiddleware  # noqa: E402
+
+app.add_middleware(MaintenanceMiddleware)
+
 
 # ── Global exception handler ──────────────────────────────────────────
 # Catches unhandled exceptions and returns a proper 500 response instead
@@ -163,15 +176,40 @@ app.add_middleware(RequestIDMiddleware)
 async def _global_exception_handler(request: Request, exc: Exception):
     import logging
 
+    request_id = getattr(request.state, "request_id", "unknown")
     logging.getLogger("huginn.server").error(
-        "Unhandled exception in %s %s: %s", request.method, request.url.path, exc,
+        "Unhandled exception in %s %s [request_id=%s]: %s",
+        request.method, request.url.path, request_id, exc,
         exc_info=True,
     )
-    # Don't leak internal details to the client
+    # Don't leak internal details to the client, but include request_id
+    # so the client can correlate with server logs.
     return JSONResponse(
         status_code=500,
-        content={"success": False, "error": "Internal server error"},
+        content={
+            "error_code": "INTERNAL_ERROR",
+            "message": "Internal server error",
+            "request_id": request_id,
+        },
     )
+
+
+# ── Unified HTTPException handler ───────────────────────────────────
+# Ensures all HTTPExceptions (including those raised by FastAPI's own
+# validation) return the same JSON envelope.
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    from huginn.errors import huginn_error_response
+    import json
+
+    request_id = getattr(request.state, "request_id", "unknown")
+    body = huginn_error_response(
+        code=getattr(exc, "huginn_code", "HTTP_ERROR"),
+        message=str(exc.detail) if exc.detail else "Error",
+        request_id=request_id,
+        status_code=exc.status_code,
+    )
+    return JSONResponse(status_code=exc.status_code, content=body)
 
 
 # Mount the full route surface. include_v1_routes mounts every router

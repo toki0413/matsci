@@ -7,6 +7,7 @@ semantic retrieval of past conversations, facts, and insights.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from huginn.rag.vector_store import VectorStore
+
+logger = logging.getLogger(__name__)
 
 # Imported lazily to avoid circular imports at module load time.
 _decay_module: Any | None = None
@@ -206,39 +209,48 @@ class LongTermMemory:
             expires = (now + timedelta(hours=ttl_hours)).isoformat()
 
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO memories
-                (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    entry_id,
-                    category,
-                    content,
-                    json.dumps(tags),
-                    source,
-                    importance,
-                    tier,
-                    now.isoformat(),
-                    now.isoformat(),
-                    expires,
-                    formula,
-                    user_id,
-                ),
-            )
-            # formula 进 tags 让 FTS5 也能搜到
-            fts_tags = " ".join(tags + ([formula] if formula else []))
-            conn.execute(
-                "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
-                (
-                    conn.execute("SELECT last_insert_rowid()").fetchone()[0],
-                    content,
-                    fts_tags,
-                    source,
-                ),
-            )
-            conn.commit()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO memories
+                    (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry_id,
+                        category,
+                        content,
+                        json.dumps(tags),
+                        source,
+                        importance,
+                        tier,
+                        now.isoformat(),
+                        now.isoformat(),
+                        expires,
+                        formula,
+                        user_id,
+                    ),
+                )
+                # formula 进 tags 让 FTS5 也能搜到
+                fts_tags = " ".join(tags + ([formula] if formula else []))
+                conn.execute(
+                    "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
+                    (
+                        conn.execute("SELECT last_insert_rowid()").fetchone()[0],
+                        content,
+                        fts_tags,
+                        source,
+                    ),
+                )
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                if "disk" in str(e).lower() or "full" in str(e).lower():
+                    logger.error("disk full, cannot write to long-term memory: %s", e)
+                    # 紧急清理：删低重要度的非 long 记忆腾空间
+                    conn.execute("DELETE FROM memories WHERE tier != 'long' ORDER BY importance ASC LIMIT 100")
+                    conn.commit()
+                    raise
+                raise
 
         if self._enable_semantic:
             self._vector_store.ingest(
@@ -398,7 +410,11 @@ class LongTermMemory:
 
         # Semantic search via vector store
         if semantic and self._enable_semantic:
-            vec_results = self._vector_store.search(query, top_k=top_k)
+            try:
+                vec_results = self._vector_store.search(query, top_k=top_k)
+            except Exception:
+                logger.warning("vector search failed, falling back to FTS-only", exc_info=True)
+                vec_results = []
             seen_ids = {r["id"] for r in results}
             for vr in vec_results:
                 if vr["id"] in seen_ids:
