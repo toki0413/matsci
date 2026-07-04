@@ -1,0 +1,13 @@
+{
+  "default_mode": {
+    "type": "string",
+    "default": "full",
+    "description": "Initial ponytail intensity: lite, full, or ultra",
+    "enum": ["lite", "full", "ultra", "off"]
+  },
+  "inject_system_prompt": {
+    "type": "boolean",
+    "default": true,
+    "description": "Whether to inject ponytail rules into the LLM system prompt"
+  }
+}

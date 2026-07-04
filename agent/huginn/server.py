@@ -99,7 +99,7 @@ async def rate_limit_middleware(request: Request, call_next):
 
     # Skip health checks, docs, and the Prometheus scrape endpoint.
     path = request.url.path
-    if path in ("/health", "/docs", "/openapi.json", "/redoc", "/metrics"):
+    if path in ("/health", "/docs", "/openapi.json", "/redoc", "/metrics", "/diagnostics"):
         return await call_next(request)
 
     client_ip = request.client.host if request.client else "unknown"
