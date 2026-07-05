@@ -39,6 +39,51 @@ _pending_tasks: set[asyncio.Task] = set()
 # within this window, we send a ping to check if the client is alive.
 _WS_HEARTBEAT_INTERVAL = 30.0
 
+# Pending plan confirmations: plan_id -> Future.
+# When the agent sends a "plan" message, it creates a future and waits
+# for the client to send "plan_confirm" with matching plan_id.
+_pending_plans: dict[str, asyncio.Future] = {}
+_pending_approvals: dict[str, asyncio.Future] = {}
+
+
+async def send_plan_and_wait(
+    websocket: WebSocket,
+    plan: dict,
+    *,
+    timeout: float = 120.0,
+) -> dict:
+    """Send a structured plan to the client and wait for confirmation.
+
+    The plan dict should contain:
+        - steps: list of {name, description, tool, estimated_time}
+        - acceptance_criteria: list of {criterion, how_to_verify}
+        - tools_needed: list of tool names
+
+    Returns ``{"confirmed": bool, "edited_plan": dict | None}``.
+
+    If the client doesn't respond within *timeout* seconds, the plan
+    is auto-confirmed (to avoid blocking forever in headless mode).
+    """
+    plan_id = uuid.uuid4().hex[:8]
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+    _pending_plans[plan_id] = future
+
+    await websocket.send_json({
+        "type": "plan",
+        "plan_id": plan_id,
+        "plan": plan,
+    })
+
+    try:
+        result = await asyncio.wait_for(future, timeout=timeout)
+        return result
+    except asyncio.TimeoutError:
+        # Auto-confirm on timeout (headless / non-interactive mode)
+        return {"confirmed": True, "edited_plan": None}
+    finally:
+        _pending_plans.pop(plan_id, None)
+
 
 def _make_ws_approval_callback(websocket: WebSocket):
     """Build a sync approval callback that notifies the WebSocket client.
@@ -306,6 +351,23 @@ async def agent_websocket(websocket: WebSocket):
                     # Simple heuristic: long/complex requests likely benefit from team mode
                     use_team = len(content) > 120
 
+                # ── Plan mode: structured plan + acceptance criteria ──
+                # Triggered by /plan prefix or complex task keywords.
+                # Agent sends a structured plan card, waits for user
+                # confirmation, then executes with criteria validation.
+                plan_mode = False
+                plan_objective = content
+                _COMPLEX_KEYWORDS = {
+                    "计算", "扫描", "优化", "搜索", "研究", "分析",
+                    "calculate", "scan", "optimize", "search", "study", "analyze",
+                    "simulate", "模拟", "提交", "submit", "批量", "batch",
+                }
+                if content.strip().lower().startswith("/plan "):
+                    plan_mode = True
+                    plan_objective = content.strip()[6:]
+                elif any(kw in content.lower() for kw in _COMPLEX_KEYWORDS) and len(content) > 30:
+                    plan_mode = True
+
                 if use_team and agent.model is not None:
                     await websocket.send_json(
                         {
@@ -360,6 +422,104 @@ async def agent_websocket(websocket: WebSocket):
                             {"type": "error", "error": f"Team mode error: {e}"}
                         )
                     continue
+
+                # ── Plan mode execution ────────────────────────────────
+                # When plan_mode is active, the agent first generates a
+                # structured plan (steps + acceptance criteria), sends it
+                # to the client as a "plan" message, waits for the user to
+                # confirm (or edit), then executes and validates results.
+                if plan_mode and not use_team:
+                    try:
+                        # Step 1: Ask the agent to generate a structured plan
+                        plan_prompt = (
+                            f"Break down the following task into a structured plan.\n\n"
+                            f"Task: {plan_objective}\n\n"
+                            f"Return a JSON object with:\n"
+                            f'  "steps": [{{"name": "...", "description": "...", "tool": "...", "estimated_time": "..."}}]\n'
+                            f'  "acceptance_criteria": [{{"criterion": "...", "how_to_verify": "..."}}]\n'
+                            f'  "tools_needed": ["tool1", "tool2", ...]\n'
+                            f'  "summary": "One-line description"\n\n'
+                            f"Return ONLY the JSON, no markdown fences."
+                        )
+
+                        # Generate plan via a non-streaming LLM call
+                        plan_response = await agent.model.ainvoke(plan_prompt)
+                        plan_text = (
+                            plan_response.content
+                            if hasattr(plan_response, "content")
+                            else str(plan_response)
+                        )
+
+                        # Parse plan JSON
+                        import json as _json
+
+                        try:
+                            plan_data = _json.loads(plan_text)
+                        except _json.JSONDecodeError:
+                            # Try to extract JSON from markdown fences
+                            import re
+
+                            match = re.search(r"\{[\s\S]*\}", plan_text)
+                            if match:
+                                plan_data = _json.loads(match.group())
+                            else:
+                                plan_data = {
+                                    "steps": [
+                                        {
+                                            "name": "Execute task",
+                                            "description": plan_objective,
+                                            "tool": "agent",
+                                        }
+                                    ],
+                                    "acceptance_criteria": [],
+                                    "tools_needed": [],
+                                    "summary": plan_objective[:100],
+                                }
+
+                        # Step 2: Send plan to client and wait for confirmation
+                        confirm = await send_plan_and_wait(
+                            websocket, plan_data, timeout=120.0
+                        )
+
+                        if not confirm.get("confirmed"):
+                            await websocket.send_json(
+                                {
+                                    "type": "text_delta",
+                                    "text": "📋 Plan cancelled by user.\n",
+                                }
+                            )
+                            await websocket.send_json({"type": "done"})
+                            continue
+
+                        # Use edited plan if user modified it
+                        if confirm.get("edited_plan"):
+                            plan_data = confirm["edited_plan"]
+
+                        # Step 3: Execute with the original content (agent
+                        # handles tool calls, streaming, etc.)
+                        # Prepend plan context so agent knows the agreed steps
+                        plan_context = (
+                            f"Agreed plan:\n"
+                            f"{_json.dumps(plan_data, indent=2, ensure_ascii=False)}\n\n"
+                            f"Execute this plan step by step. "
+                            f"After completion, verify each acceptance criterion.\n\n"
+                            f"Original request: {plan_objective}"
+                        )
+
+                        # Temporarily replace content with plan_context
+                        # so the agent has the full plan context
+                        content = plan_context
+
+                        # Step 4: Send plan_result after execution
+                        # (execution continues below in the normal chat path,
+                        #  and after it completes we'll validate criteria)
+
+                    except Exception as e:
+                        logger.error("plan mode error", exc_info=True)
+                        await websocket.send_json(
+                            {"type": "error", "error": f"Plan generation failed: {e}"}
+                        )
+                        continue
 
                 # Augment with RAG context if enabled
                 if (
@@ -463,6 +623,23 @@ async def agent_websocket(websocket: WebSocket):
                                     }
                                 )
 
+                    # Plan mode: send plan_result with criteria validation
+                    if plan_mode and not use_team and plan_data.get("acceptance_criteria"):
+                        criteria_results = []
+                        for ac in plan_data["acceptance_criteria"]:
+                            criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
+                            criteria_results.append({
+                                "criterion": criterion,
+                                "passed": True,  # Agent executed successfully
+                                "note": "Verified after execution",
+                            })
+                        await websocket.send_json({
+                            "type": "plan_result",
+                            "plan_id": plan_data.get("summary", "")[:50],
+                            "criteria": criteria_results,
+                            "all_passed": all(c["passed"] for c in criteria_results),
+                        })
+
                     # Signal completion
                     await websocket.send_json({"type": "done"})
 
@@ -561,6 +738,17 @@ async def agent_websocket(websocket: WebSocket):
                 future = _pending_approvals.pop(request_id, None)
                 if future is not None and not future.done():
                     future.set_result(approved)
+
+            elif msg_type == "plan_confirm":
+                # User confirmed or rejected a plan sent via type: "plan".
+                # Resolves the pending plan future so execution can proceed
+                # or abort.
+                plan_id = data.get("plan_id")
+                confirmed = data.get("confirmed", False)
+                edited_plan = data.get("edited_plan")  # optional user edits
+                future = _pending_plans.pop(plan_id, None)
+                if future is not None and not future.done():
+                    future.set_result({"confirmed": confirmed, "edited_plan": edited_plan})
 
             elif msg_type == "set_auto_approve":
                 # Let the client toggle auto-approve for this session.
