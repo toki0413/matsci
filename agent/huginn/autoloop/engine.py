@@ -1136,6 +1136,14 @@ class AutoloopEngine:
         except Exception as e:
             results["generative_verify_error"] = str(e)
 
+        # 涌现复杂度 (EC): 4 维度量 agent 行为的"涌现"程度.
+        # 工具多样性 + 推理熵 + 跨域连接 + 新颖性, 几何平均.
+        try:
+            from huginn.validation.emergent_complexity import compute_ec
+            results["emergent_complexity"] = compute_ec(execution_result, results)
+        except Exception as e:
+            results["emergent_complexity_error"] = str(e)
+
         return results
 
     @staticmethod
