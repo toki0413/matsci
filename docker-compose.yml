@@ -1,0 +1,69 @@
+# Huginn agent 的本地/单机编排。
+# 用法:
+#   docker compose up -d                  # 只起 agent
+#   docker compose --profile ollama up -d # 连本地 ollama 一起起
+# 密钥走 .env 或当前 shell 的环境变量, 不写死在这里。
+
+services:
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    # Dockerfile 默认 CMD 绑的是 127.0.0.1:8000, 容器外摸不到;
+    # 这里改成 0.0.0.0:8999, 端口也跟需求对齐
+    command: >
+      uvicorn huginn.server:app
+      --host 0.0.0.0
+      --port 8999
+    ports:
+      - "8999:8999"
+    environment:
+      # 认证: 不设就只开公开端点, 生产必须给
+      HUGINN_API_KEY: ${HUGINN_API_KEY:-}
+      HUGINN_ADMIN_API_KEY: ${HUGINN_ADMIN_API_KEY:-}
+      # 工作区 / 状态目录
+      HUGINN_WORKSPACE: /app/workspace
+      HUGINN_CHECKPOINTER_PATH: /app/data/huginn_checkpoints.sqlite
+      HUGINN_PROMPT_CACHE_CONTROL: "0"
+      # LLM 提供商: 默认 openai, 想走本地就 HUGINN_PROVIDER=ollama
+      HUGINN_PROVIDER: ${HUGINN_PROVIDER:-openai}
+      HUGINN_MODEL: ${HUGINN_MODEL:-gpt-4o}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # ollama 服务名固定叫 ollama, 起了 profile 就能直接用
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      # 三块持久化: 工作区 / 知识库 / 记忆, 互不挤占
+      - huginn-workspace:/app/workspace
+      # KB 代码里是 workspace/.huginn_kb, 单独挂个卷让它能独立扩容/备份
+      - huginn-kb:/app/workspace/.huginn_kb
+      - huginn-memory:/app/data
+    healthcheck:
+      # /health/live 是无条件 200 的存活探针, 不会因为依赖挂了误杀进程
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8999/health/live', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
+  # 可选本地 LLM, 默认不起, --profile ollama 才拉
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  huginn-workspace:
+  huginn-kb:
+  huginn-memory:
+  ollama-models:

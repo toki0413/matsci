@@ -83,14 +83,21 @@ class ThermoToolInput(BaseModel):
     避免到 call() 里才发现少了关键字段.
     """
 
-    action: Literal["properties", "thermodynamic", "phase_equilibrium", "mixture"] = (
+    action: Literal[
+        "properties",
+        "thermodynamic",
+        "phase_equilibrium",
+        "mixture",
+        "phase_diagram",
+    ] = (
         Field(
             ...,
             description=(
                 "properties: 查询纯组分基本物性 (CAS/MW/Tb/Tc 等); "
                 "thermodynamic: 指定 T/P 下的焓/熵/Gibbs/热容等; "
                 "phase_equilibrium: 混合物泡点/露点; "
-                "mixture: 指定组成下混合物的物性"
+                "mixture: 指定组成下混合物的物性; "
+                "phase_diagram: 构建凸包相图 (需 pymatgen)"
             ),
         )
     )
@@ -127,10 +134,34 @@ class ThermoToolInput(BaseModel):
             "取值见工具说明, 如 ['MW', 'Tc', 'Pc', 'Cp']"
         ),
     )
+    # phase_diagram 专用: 一组 entries, 每个包含 composition 和 energy
+    entries: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "For phase_diagram: list of {composition, energy} dicts, "
+            "e.g. [{'composition': 'Li2O', 'energy': -20.5}, ...]. "
+            "Energy should be total energy per atom or per formula unit."
+        ),
+    )
+    output_plot: str | None = Field(
+        default=None,
+        description=(
+            "For phase_diagram: path to save convex hull plot. "
+            "If None, no plot is generated."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_required_fields(self) -> "ThermoToolInput":
         """按 action 校验必填字段, 缺了直接在 schema 层报错."""
+        if self.action == "phase_diagram":
+            if not self.entries:
+                raise ValueError(
+                    "action 'phase_diagram' requires 'entries' "
+                    "(list of {composition, energy} dicts)"
+                )
+            return self
+
         if self.action in ("properties", "thermodynamic"):
             if not self.compound:
                 raise ValueError(
@@ -192,7 +223,8 @@ class ThermoTool(HuginnTool):
         "焓/熵/Gibbs、密度/粘度/导热系数, 以及混合物泡点/露点. "
         "基于 thermo 库 (pip install thermo), 无需联网. "
         "Actions: properties (纯组分基本物性), thermodynamic (指定 T/P 物性), "
-        "phase_equilibrium (混合物泡露点), mixture (混合物物性)."
+        "phase_equilibrium (混合物泡露点), mixture (混合物物性), "
+        "phase_diagram (凸包相图, 需 pymatgen)."
     )
     input_schema = ThermoToolInput
     output_schema = ThermoToolOutput
@@ -209,6 +241,10 @@ class ThermoTool(HuginnTool):
 
     async def call(self, args: ThermoToolInput, context: ToolContext) -> ToolResult:
         """分发到对应的 action handler. thermo 在这里才 lazy import."""
+        # phase_diagram 用的是 pymatgen, 不依赖 thermo 库, 单独走
+        if args.action == "phase_diagram":
+            return await self._handle_phase_diagram(args, context)
+
         if not _thermo_available():
             return ToolResult(
                 data=None,
@@ -388,6 +424,120 @@ class ThermoTool(HuginnTool):
             mixture=result,
             conditions={"T": T, "P": P},
             warnings=warnings,
+        )
+        return ToolResult(data=output.model_dump(), success=True)
+
+    async def _handle_phase_diagram(
+        self, args: ThermoToolInput, context: ToolContext
+    ) -> ToolResult:
+        """构建凸包相图, 返回稳定相 + 分解焓.
+
+        用 pymatgen 的 PhaseDiagram / PDPlotter. pymatgen 没装就优雅降级,
+        返回明确的安装提示而不是崩溃.
+        """
+        try:
+            from pymatgen.analysis.phase_diagram import (
+                PDPlotter,
+                PhaseDiagram,
+            )
+            from pymatgen.core import Composition
+            from pymatgen.entries.computed_entries import ComputedEntry
+        except ImportError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    "pymatgen is required for phase_diagram. "
+                    "Install with: pip install pymatgen"
+                ),
+            )
+
+        # 把 user entries 转成 ComputedEntry
+        comp_entries: list[ComputedEntry] = []
+        for e in args.entries or []:
+            try:
+                comp = Composition(e["composition"])
+                energy = float(e["energy"])
+                comp_entries.append(ComputedEntry(comp, energy))
+            except Exception as exc:
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"Invalid entry {e}: {exc}",
+                )
+
+        if not comp_entries:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="No valid entries provided for phase diagram",
+            )
+
+        try:
+            pd = PhaseDiagram(comp_entries)
+        except Exception as exc:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Failed to construct phase diagram: {exc}",
+            )
+
+        # 稳定相
+        stable_phases: list[dict[str, Any]] = []
+        for entry in pd.stable_entries:
+            stable_phases.append({
+                "composition": entry.composition.reduced_formula,
+                "energy": entry.energy,
+                "energy_per_atom": entry.energy_per_atom,
+            })
+
+        # 每个输入 entry 的分解焓和距离凸包的能量
+        decomp_info: list[dict[str, Any]] = []
+        for entry in comp_entries:
+            try:
+                decomp, e_above = pd.get_decomp_and_e_above_hull(entry)
+                decomp_dict = {
+                    e.composition.reduced_formula: v for e, v in decomp.items()
+                }
+            except Exception:
+                e_above = None
+                decomp_dict = {}
+            decomp_info.append({
+                "composition": entry.composition.reduced_formula,
+                "energy": entry.energy,
+                "energy_above_hull": e_above,
+                "is_stable": entry in pd.stable_entries,
+                "decomposition": decomp_dict,
+            })
+
+        result: dict[str, Any] = {
+            "stable_phases": stable_phases,
+            "all_entries": decomp_info,
+            "n_stable": len(stable_phases),
+            "n_total": len(comp_entries),
+        }
+
+        # 画图 — 失败不影响数据返回
+        if args.output_plot:
+            try:
+                plotter = PDPlotter(pd)
+                fig = plotter.get_plot()
+                plot_path = args.output_plot
+                # PDPlotter 返回 matplotlib Figure, 直接 savefig
+                if hasattr(fig, "savefig"):
+                    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+                else:
+                    # 某些 pymatgen 版本返回 Plotly 对象
+                    fig.write_image(plot_path)
+                result["plot_path"] = plot_path
+            except Exception as exc:
+                result["plot_warning"] = f"Failed to generate plot: {exc}"
+
+        output = ThermoToolOutput(
+            action="phase_diagram",
+            properties=result,
+            conditions={"n_entries": len(comp_entries)},
+            warnings=[],
         )
         return ToolResult(data=output.model_dump(), success=True)
 

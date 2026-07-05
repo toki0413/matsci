@@ -1,14 +1,17 @@
-"""Materials database tool — query Materials Project and OQMD.
+"""Materials database tool — query Materials Project, OQMD, AFLOW, and NOMAD.
 
 A read-only tool for retrieving structures, thermodynamic data, and
 properties from public materials databases. Requires user-supplied API keys
 or environment variables (MP_API_KEY / OQMD_API_KEY).
+AFLOW and NOMAD public data do not require API keys.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -22,6 +25,12 @@ from huginn.tools.tool_cache import EXTERNAL_API_TTL, cacheable
 from huginn.types import ToolContext, ToolResult
 
 
+def _formula_to_elements(formula: str) -> list[str]:
+    """从化学式抽元素符号, 给 NOMAD query DSL 用. 'SiO2' -> ['Si','O']."""
+    symbols = re.findall(r"[A-Z][a-z]?", formula)
+    return symbols
+
+
 class MaterialsDatabaseInput(BaseModel):
     action: Literal[
         "mp_summary",
@@ -29,6 +38,9 @@ class MaterialsDatabaseInput(BaseModel):
         "oqmd_query",
         "oqmd_structure",
         "batch_query",
+        "aflow_query",
+        "aflow_structure",
+        "nomad_query",
     ] = Field(..., description="Database action to perform")
     query: str | None = Field(
         default=None,
@@ -96,17 +108,31 @@ class MaterialsDatabaseTool(HuginnTool):
         phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.HYPOTHESIS}),
     )
     description = (
-        "Query Materials Project or OQMD for structures, energies, band gaps, "
-        "and thermodynamic data. Provide an API key or set MP_API_KEY / OQMD_API_KEY."
+        "Query Materials Project, OQMD, AFLOW, or NOMAD for structures, energies, "
+        "band gaps, and thermodynamic data. Provide an API key or set MP_API_KEY / OQMD_API_KEY. "
+        "AFLOW and NOMAD public data are accessible without keys."
     )
     input_schema = MaterialsDatabaseInput
     output_schema = MaterialsDatabaseOutput
     read_only = True
-    _init_kwargs_map = {"mp_api_key": "mp_api_key", "oqmd_api_key": "oqmd_api_key"}
+    _init_kwargs_map = {
+        "mp_api_key": "mp_api_key",
+        "oqmd_api_key": "oqmd_api_key",
+        "aflow_api_key": "aflow_api_key",
+        "nomad_api_key": "nomad_api_key",
+    }
 
-    def __init__(self, mp_api_key: str | None = None, oqmd_api_key: str | None = None):
+    def __init__(
+        self,
+        mp_api_key: str | None = None,
+        oqmd_api_key: str | None = None,
+        aflow_api_key: str | None = None,
+        nomad_api_key: str | None = None,
+    ):
         self._config_mp_key = mp_api_key
         self._config_oqmd_key = oqmd_api_key
+        self._config_aflow_key = aflow_api_key
+        self._config_nomad_key = nomad_api_key
 
     def is_read_only(self, args: MaterialsDatabaseInput) -> bool:
         return True
@@ -137,6 +163,11 @@ class MaterialsDatabaseTool(HuginnTool):
         # batch_query 走单独路径, 内部并发查多个 mp_id/formula
         if args.action == "batch_query":
             return await self._handle_batch_query(args, context)
+        # AFLOW / NOMAD 公开数据, 不走本地结构库
+        if args.action.startswith("aflow_"):
+            return await self._handle_aflow(args, context)
+        if args.action.startswith("nomad_"):
+            return await self._handle_nomad(args, context)
         # 先查本地结构库，命中就省掉一次外部 API 往返
         local_hit = self._local_lookup(args)
         if local_hit is not None:
@@ -294,6 +325,18 @@ class MaterialsDatabaseTool(HuginnTool):
     def _oqmd_key(self, override: str | None) -> str | None:
         return (
             override or self._config_oqmd_key or os.environ.get("OQMD_API_KEY") or None
+        )
+
+    def _aflow_key(self, override: str | None) -> str | None:
+        # AFLOW REST is public, key is optional
+        return (
+            override or self._config_aflow_key or os.environ.get("AFLOW_API_KEY") or None
+        )
+
+    def _nomad_key(self, override: str | None) -> str | None:
+        # NOMAD public data doesn't need a key, only private uploads do
+        return (
+            override or self._config_nomad_key or os.environ.get("NOMAD_API_KEY") or None
         )
 
     async def _handle_mp(
@@ -508,6 +551,192 @@ class MaterialsDatabaseTool(HuginnTool):
                 raise RuntimeError(
                     f"Invalid JSON response from database: {exc}"
                 ) from exc
+
+    # ── AFLOW ───────────────────────────────────────────────────────
+    # AFLOW REST (aflowlib.duke.edu) is public, no key needed.
+
+    async def _handle_aflow(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        target = args.query
+        if not target:
+            return ToolResult(
+                data=None, success=False,
+                error="aflow_query requires a query (formula or material_id)",
+            )
+
+        base = "http://aflowlib.duke.edu/aflowlib"
+        params: dict[str, Any] = {"limit": args.limit}
+        if target.lower().startswith("aflow:"):
+            params["aflow"] = target
+        else:
+            params["composition"] = target
+        url = f"{base}?{urlencode(params, doseq=True)}"
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        return ToolResult(
+                            data=None, success=False,
+                            error=f"AFLOW API error {resp.status}: {text[:200]}",
+                        )
+                    # AFLOW returns JSON (newer) or AFLUX text (older)
+                    try:
+                        raw = await resp.json(content_type=None)
+                    except Exception:
+                        raw = await resp.text()
+        except asyncio.TimeoutError:
+            return ToolResult(
+                data=None, success=False, error="AFLOW request timed out (30s)"
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"AFLOW request failed: {e}")
+
+        records = self._normalize_aflow(raw)
+        output = MaterialsDatabaseOutput(
+            source="aflow", count=len(records), records=records,
+            warnings=[] if records else [f"No AFLOW results for: {target}"],
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    def _normalize_aflow(self, raw: Any) -> list[dict[str, Any]]:
+        """AFLOW responses are heterogeneous: list / dict / AFLUX text."""
+        records: list[dict[str, Any]] = []
+        if isinstance(raw, str):
+            for block in raw.split(">>>"):
+                rec: dict[str, Any] = {}
+                for line in block.strip().splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if k in ("compound", "formula"):
+                            rec["formula"] = v
+                        elif k in ("aflow_id", "auid"):
+                            rec["entry_id"] = v
+                        elif k in ("spacegroup", "sg"):
+                            rec["spacegroup"] = v
+                        elif k == "Egap":
+                            try:
+                                rec["band_gap"] = float(v)
+                            except ValueError:
+                                rec["band_gap"] = v
+                        elif k in ("enthalpy", "enthalpy_atom"):
+                            try:
+                                rec["energy"] = float(v)
+                            except ValueError:
+                                rec["energy"] = v
+                if rec:
+                    rec["source"] = "aflow"
+                    records.append(rec)
+        elif isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                records.append({
+                    "formula": item.get("compound") or item.get("formula"),
+                    "entry_id": item.get("aflow_id") or item.get("auid"),
+                    "spacegroup": item.get("spacegroup") or item.get("sg"),
+                    "band_gap": item.get("Egap"),
+                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
+                    "source": "aflow",
+                })
+        elif isinstance(raw, dict) and "data" in raw:
+            for item in raw["data"]:
+                records.append({
+                    "formula": item.get("compound") or item.get("formula"),
+                    "entry_id": item.get("aflow_id") or item.get("auid"),
+                    "spacegroup": item.get("spacegroup") or item.get("sg"),
+                    "band_gap": item.get("Egap"),
+                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
+                    "source": "aflow",
+                })
+        return records[:50]
+
+    # ── NOMAD ───────────────────────────────────────────────────────
+    # NOMAD public data doesn't need a key.
+
+    async def _handle_nomad(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        target = args.query
+        if not target:
+            return ToolResult(
+                data=None, success=False,
+                error="nomad_query requires a query (formula or material_id)",
+            )
+
+        base = "https://nomad-lab.eu/prod-1/api/v1/entries/query"
+        headers: dict[str, str] = {}
+        nomad_key = self._nomad_key(args.api_key)
+        if nomad_key:
+            headers["Authorization"] = f"Bearer {nomad_key}"
+
+        body: dict[str, Any] = {
+            "owner": "public",
+            "pagination": {"page_size": min(args.limit, 50)},
+            "query": {
+                "results.material.elements:all": _formula_to_elements(target),
+                "results.material.chemical_formula_descriptive:contains": target,
+            },
+        }
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.post(base, json=body) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        return ToolResult(
+                            data=None, success=False,
+                            error=f"NOMAD API error {resp.status}: {text[:200]}",
+                        )
+                    raw = await resp.json()
+        except asyncio.TimeoutError:
+            return ToolResult(
+                data=None, success=False, error="NOMAD request timed out (30s)"
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"NOMAD request failed: {e}")
+
+        records = self._normalize_nomad(raw)
+        output = MaterialsDatabaseOutput(
+            source="nomad", count=len(records), records=records,
+            warnings=[] if records else [f"No NOMAD results for: {target}"],
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    def _normalize_nomad(self, raw: Any) -> list[dict[str, Any]]:
+        """Normalize NOMAD /entries/query response into records."""
+        records: list[dict[str, Any]] = []
+        if not isinstance(raw, dict):
+            return records
+        for item in raw.get("data", []):
+            entry_id = item.get("entry_id") or item.get("upload_id")
+            results = item.get("results", {})
+            material = results.get("material") or [{}]
+            mat = material[0] if isinstance(material, list) and material else material
+            formula = (
+                mat.get("chemical_formula_descriptive")
+                or mat.get("chemical_formula_reduced")
+            )
+            props = results.get("properties", {})
+            records.append({
+                "entry_id": entry_id,
+                "formula": formula,
+                "spacegroup": (mat.get("structure") or {}).get("space_group"),
+                "band_gap": props.get("electronic", {}).get("band_gap"),
+                "energy": props.get("energetic", {}).get("total_energy"),
+                "source": "nomad",
+            })
+        return records[:50]
 
     def _normalize_mp_summary(self, item: dict[str, Any]) -> dict[str, Any]:
         symmetry = item.get("symmetry") or {}

@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from huginn.autoloop.budget import IterationBudget, ProgressiveBudget
 from huginn.autoloop.goal_scheduler import Goal, GoalScheduler
@@ -147,6 +150,8 @@ class AutoloopEngine:
         self._persona_manager = None
         # 领域知识库 (first-principles seed docs) 懒加载 — 避免实例化时拉 ChromaDB
         self._kb = None
+        # PerceptionLayer 懒加载 — 长生命周期, start() 后后台线程持续积累事件
+        self._perception = None
         # 进度跟踪: 默认走进程级单例, 跟 WorkflowEngine 共享, 让 /tasks
         # 路由能汇总所有引擎的进度. 测试时可注入独立 tracker 隔离.
         self.progress_tracker: ProgressTracker | None = None
@@ -189,6 +194,21 @@ class AutoloopEngine:
 
             self._evolution = EvolutionEngine(logger=ExecutionLogger())
         return self._evolution
+
+    def _get_perception(self):
+        """懒加载 PerceptionLayer — 长生命周期, start 后持续监听文件/日志事件.
+
+        一旦创建就在后台持续运行, _perceive() 只取 snapshot 不再 start/stop.
+        析构时由 GC 或显式 stop() 回收线程.
+        """
+        if self._perception is None:
+            try:
+                from huginn.perception import PerceptionLayer
+                self._perception = PerceptionLayer(self.workspace)
+                self._perception.start()
+            except Exception:
+                return None
+        return self._perception
 
     def _get_persona_manager(self):
         """懒加载 PersonaManager, 实例化时才扫描 persona 文件."""
@@ -670,14 +690,15 @@ class AutoloopEngine:
     # ──────────────────────────────────────────────────────────────
 
     def _perceive(self) -> dict[str, Any] | None:
-        """Perceive the workspace using the multi-modal perception layer."""
-        from huginn.perception import PerceptionLayer
-        
-        perception = PerceptionLayer(self.workspace)
-        perception.start()
+        """Perceive the workspace using the multi-modal perception layer.
+
+        The PerceptionLayer is now a long-lived member started in __init__,
+        so background watchers and log tailers actually accumulate events
+        between iterations. Previously we started+stopped it here, which
+        killed the watcher threads before they could collect anything.
+        """
+        perception = self._get_perception()
         snapshot = perception.get_snapshot()
-        perception.stop()
-        
         context = snapshot.to_context()
         if not snapshot.has_activity():
             return None
@@ -900,7 +921,11 @@ class AutoloopEngine:
             return await self._execute_coder(description, context)
         elif mode == "workflow":
             # Use WorkflowEngine to run computational pipeline
-            return await self._execute_workflow(description, context)
+            result = await self._execute_workflow(description, context)
+            # On failure, try applying a learned heuristic fix before giving up
+            if isinstance(result, dict) and not result.get("success", True):
+                result = await self._try_evolved_fix(mode, description, result) or result
+            return result
         elif mode == "dynamic_workflow":
             # A5: agent 写的并行 subtask 脚本, orchestrator 并发跑
             return await self._execute_dynamic_workflow(plan, context)
@@ -909,6 +934,28 @@ class AutoloopEngine:
             return await self._execute_explore(description, context)
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
+
+    async def _try_evolved_fix(
+        self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Check if the evolution engine has a learned fix for this error.
+
+        This is the other half of the Learn→Execute loop: when a tool fails,
+        we ask evolution if it's seen this error before and has a fix.
+        Returns a patched result dict on hit, None on miss.
+        """
+        try:
+            evolution = self._get_evolution()
+            error_str = str(error_result.get("error", ""))
+            fix = evolution.apply_heuristic_fix(tool_name, tool_input, error_str)
+            if fix:
+                patched_desc = fix.get("description", str(tool_input))
+                return await self._execute_workflow(
+                    patched_desc, {"_evolved_fix": True}
+                )
+        except Exception:
+            pass
+        return None
 
     async def _execute_dynamic_workflow(
         self, plan: dict[str, Any], context: dict[str, Any]
@@ -1456,11 +1503,61 @@ class AutoloopEngine:
                 n_skills = len(reward_result["high_reward_skills"])
                 n_patches = len(reward_result["low_reward_patches"])
                 if n_skills or n_patches:
-                    print(
-                        f"  → Reward evolution: +{n_skills} skills, +{n_patches} patches (R_phys={r_phys:.2f})"
+                    logger.info(
+                        "reward evolution: +%d skills, +%d patches (R_phys=%.2f)",
+                        n_skills, n_patches, r_phys,
                     )
             except Exception as e:
-                print(f"  → Reward evolution failed: {e}")
+                logger.warning("reward evolution failed: %s", e)
+
+        # KB 回写: 把本次实验结论存入知识库, 下次同类问题能从 KB 召回.
+        # 不存原始数据 (太大), 只存 hypothesis + validation 摘要.
+        try:
+            kb = self._get_kb()
+            if kb:
+                summary_text = (
+                    f"Iteration {self._iteration}: {hypothesis[:200]}\n"
+                    f"Mode: {plan.get('mode', 'unknown')}\n"
+                    f"R_phys: {r_phys}\n"
+                    f"Validation: {json.dumps(validation, default=str)[:500]}"
+                )
+                kb.add_document(
+                    filename=f"autoloop_iter_{self._iteration}.txt",
+                    content=summary_text.encode("utf-8"),
+                )
+        except Exception:
+            pass
+
+        # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
+        # 让 ProjectKnowledgeGraph 随实验增长而非只读展示.
+        try:
+            self.kg.add_entity(
+                label=hypothesis[:80],
+                entity_type="experiment",
+                source="autoloop",
+                confidence=float(r_phys) if r_phys is not None else 0.5,
+                iteration=self._iteration,
+                r_phys=r_phys,
+            )
+            self.kg.save()
+        except Exception:
+            pass
+
+        # Benchmark 失败回写: 把验证失败写入 memory, 下次 _plan 能读到.
+        if isinstance(validation, dict) and not validation.get("tests_passed", True):
+            try:
+                self.memory.remember(
+                    content=(
+                        f"Validation failure iter {self._iteration}: "
+                        f"{json.dumps(validation, default=str)[:400]}"
+                    ),
+                    category="benchmark_failure",
+                    tags=["autoloop", "validation"],
+                    importance=0.7,
+                    tier="mid",
+                )
+            except Exception:
+                pass
 
     async def _report(self, objective: str, phases: list[LoopPhase], total_time: float) -> str | None:
         """Generate a final report summarizing the loop."""
@@ -1670,8 +1767,25 @@ Math depth guidance (treat physics/chemistry as mathematics):
         if kb_block:
             kb_block = f"\n{kb_block}\n"
         math_block = self._MATH_DEPTH_PROMPT_BLOCK
+
+        # Inject learned skills + prompt patches from evolution engine.
+        # This is the "use what you learned" half of the Learn→Plan loop.
+        skill_hints = ""
+        patch_hints = ""
+        try:
+            evolution = self._get_evolution()
+            skills = evolution.get_relevant_skills(hypothesis)
+            if skills:
+                skill_lines = [f"  - {s.name}: {s.description}" for s in skills[:3]]
+                skill_hints = "\nLearned skills (from past iterations):\n" + "\n".join(skill_lines) + "\n"
+            patches = evolution.get_prompt_patches()
+            if patches:
+                patch_hints = "\nLearned patches:\n" + "\n".join(f"  - {p}" for p in patches[:3]) + "\n"
+        except Exception:
+            pass
+
         return f"""Given the hypothesis: "{hypothesis}"
-{kb_block}{math_block}
+{kb_block}{math_block}{skill_hints}{patch_hints}
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
 

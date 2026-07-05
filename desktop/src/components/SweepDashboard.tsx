@@ -127,9 +127,12 @@ function ChartTooltipContent({
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-border bg-bg-secondary px-3 py-2 shadow-lg">
+    <div
+      className="rounded-lg border border-border bg-bg-secondary px-3 py-2 shadow-lg"
+      style={{ fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
+    >
       {payload.map((entry, i) => (
-        <p key={i} className="text-xs text-text-secondary">
+        <p key={i} className="text-text-secondary">
           <span className="text-text-primary">{entry.name}:</span>{" "}
           {typeof entry.value === "number" ? entry.value.toFixed(4) : entry.value}
         </p>
@@ -768,21 +771,23 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                     <XAxis
                       dataKey={chartXAxis}
                       name={chartXAxis}
-                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      tick={{ fill: "#9a9590", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                       axisLine={{ stroke: "#d5cfc6" }}
                       tickLine={{ stroke: "#d5cfc6" }}
                       label={{
                         value: chartXAxis,
                         position: "bottom",
                         fill: "#6b665f",
-                        fontSize: 12,
+                        fontFamily: "Arial",
+                        fontSize: 20,
+                        fontWeight: "bold",
                         offset: 0,
                       }}
                     />
                     <YAxis
                       dataKey={chartYAxis}
                       name={chartYAxis}
-                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      tick={{ fill: "#9a9590", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                       axisLine={{ stroke: "#d5cfc6" }}
                       tickLine={{ stroke: "#d5cfc6" }}
                       label={{
@@ -790,7 +795,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                         angle: -90,
                         position: "insideLeft",
                         fill: "#6b665f",
-                        fontSize: 12,
+                        fontFamily: "Arial",
+                        fontSize: 20,
+                        fontWeight: "bold",
                       }}
                     />
                     <Tooltip
@@ -816,20 +823,22 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                     <CartesianGrid stroke="#d5cfc6" strokeDasharray="3 3" />
                     <XAxis
                       dataKey={chartXAxis}
-                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      tick={{ fill: "#9a9590", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                       axisLine={{ stroke: "#d5cfc6" }}
                       tickLine={{ stroke: "#d5cfc6" }}
                       label={{
                         value: chartXAxis,
                         position: "bottom",
                         fill: "#6b665f",
-                        fontSize: 12,
+                        fontFamily: "Arial",
+                        fontSize: 20,
+                        fontWeight: "bold",
                         offset: 0,
                       }}
                     />
                     <YAxis
                       dataKey={chartYAxis}
-                      tick={{ fill: "#9a9590", fontSize: 11 }}
+                      tick={{ fill: "#9a9590", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                       axisLine={{ stroke: "#d5cfc6" }}
                       tickLine={{ stroke: "#d5cfc6" }}
                       label={{
@@ -837,7 +846,9 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                         angle: -90,
                         position: "insideLeft",
                         fill: "#6b665f",
-                        fontSize: 12,
+                        fontFamily: "Arial",
+                        fontSize: 20,
+                        fontWeight: "bold",
                       }}
                     />
                     <Tooltip
