@@ -41,6 +41,7 @@ class MaterialsDatabaseInput(BaseModel):
         "aflow_query",
         "aflow_structure",
         "nomad_query",
+        "omat24_predict",
     ] = Field(..., description="Database action to perform")
     query: str | None = Field(
         default=None,
@@ -71,6 +72,15 @@ class MaterialsDatabaseInput(BaseModel):
     formulas: list[str] | None = Field(
         default=None,
         description="For batch_query: list of formulas (e.g. ['SiO2', 'TiO2'])",
+    )
+    # omat24_predict 专用: 结构文件路径 + 传给 MLIP 的参数
+    structure_file: str | None = Field(
+        default=None,
+        description="For omat24_predict: path to structure file for OMat24 energy prediction",
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="For omat24_predict: extra kwargs passed to ml_potential_tool (device, etc.)",
     )
 
 
@@ -110,7 +120,9 @@ class MaterialsDatabaseTool(HuginnTool):
     description = (
         "Query Materials Project, OQMD, AFLOW, or NOMAD for structures, energies, "
         "band gaps, and thermodynamic data. Provide an API key or set MP_API_KEY / OQMD_API_KEY. "
-        "AFLOW and NOMAD public data are accessible without keys."
+        "AFLOW and NOMAD public data are accessible without keys. "
+        "Also supports omat24_predict: predict formation energy and stability "
+        "with OMat24 EquiformerV2 and compare to the MP hull."
     )
     input_schema = MaterialsDatabaseInput
     output_schema = MaterialsDatabaseOutput
@@ -155,11 +167,15 @@ class MaterialsDatabaseTool(HuginnTool):
             "limit": args.limit,
             "mp_ids": args.mp_ids,
             "formulas": args.formulas,
+            "structure_file": args.structure_file,
         },
     )
     async def _call_cached(
         self, args: MaterialsDatabaseInput, context: ToolContext
     ) -> ToolResult:
+        # omat24_predict 走 MLIP 预测 + MP hull 比对, 不走本地结构库
+        if args.action == "omat24_predict":
+            return await self._handle_omat24_predict(args, context)
         # batch_query 走单独路径, 内部并发查多个 mp_id/formula
         if args.action == "batch_query":
             return await self._handle_batch_query(args, context)
@@ -797,3 +813,126 @@ class MaterialsDatabaseTool(HuginnTool):
             fallback = path.with_suffix(".json")
             fallback.write_text(json.dumps(structure_data, indent=2), encoding="utf-8")
             return str(fallback)
+
+    # ── OMat24 预测 ─────────────────────────────────────────────────
+    # 用 OMat24 EquiformerV2 预测能量, 再跟 MP hull 比稳定性.
+    # 实际的 ML 推理委托给 ml_potential_tool, 这里只做编排 + hull 比对.
+
+    async def _handle_omat24_predict(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        struct_path = args.structure_file
+        if not struct_path or not Path(struct_path).exists():
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Structure file not found: {struct_path}",
+            )
+
+        # 1. 读结构拿组成和原子数
+        try:
+            from ase.io import read
+
+            atoms = read(struct_path)
+            formula = atoms.get_chemical_formula()
+            n_atoms = len(atoms)
+        except Exception as exc:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Failed to read structure: {exc}",
+            )
+
+        # 2. 调 ml_potential_tool 预测能量
+        from huginn.tools.sci.ml_potential_tool import (
+            MLPotentialInput,
+            MLPotentialTool,
+        )
+
+        ml_tool = MLPotentialTool()
+        ml_result = await ml_tool.call(
+            MLPotentialInput(
+                backend="equiformer_v2_omat24",
+                action="predict",
+                structure_file=struct_path,
+                parameters=args.parameters,
+            ),
+            context,
+        )
+
+        if not ml_result.success:
+            return ToolResult(
+                data={
+                    "backend": "equiformer_v2_omat24",
+                    "action": "omat24_predict",
+                    "formula": formula,
+                    "status": "prediction_failed",
+                },
+                success=False,
+                error=f"OMat24 prediction failed: {ml_result.error}",
+            )
+
+        predicted_energy = ml_result.data["energy"]
+        predicted_energy_per_atom = predicted_energy / n_atoms
+
+        # 3. 查 MP 同组成, 拿参考能量做 hull 比对
+        mp_energy_per_atom = None
+        mp_material_id = None
+        try:
+            api_key = self._mp_key(args.api_key)
+            base_url = "https://api.materialsproject.org"
+            params: dict[str, Any] = {
+                "formula": formula,
+                "fields": "material_id,formula_pretty,energy_per_atom",
+                "limit": 1,
+                "API_KEY": api_key,
+            }
+            url = f"{base_url}/materials/summary/?{urlencode(params, doseq=True)}"
+            async with aiohttp.ClientSession() as session:
+                data = await self._get_json(session, url)
+                items = data.get("data", [])
+                if items:
+                    mp_energy_per_atom = items[0].get("energy_per_atom")
+                    mp_material_id = items[0].get("material_id")
+        except Exception:
+            # MP 查不到不影响预测, 只是少了 hull 参考
+            pass
+
+        # 4. 判断稳定性 + 置信度
+        stability = "unknown (no MP reference)"
+        confidence = "low"
+        energy_diff = None
+
+        if mp_energy_per_atom is not None:
+            energy_diff = predicted_energy_per_atom - mp_energy_per_atom
+            # ponytail: 粗略阈值, 不是真正的凸包计算.
+            # 要精确的 energy above hull 需要查所有竞争相, 这里只跟 MP 已知最稳定相对比.
+            if energy_diff < -0.05:
+                stability = "below hull (predicted more stable than MP reference)"
+            elif energy_diff > 0.05:
+                stability = "above hull (predicted less stable than MP reference)"
+            else:
+                stability = "near hull (within 50 meV/atom of MP reference)"
+            confidence = "high" if abs(energy_diff) < 0.05 else "medium"
+        else:
+            # 没有 MP 参考, 只能说预测本身成功了
+            confidence = "medium"
+
+        return ToolResult(
+            data={
+                "backend": "equiformer_v2_omat24",
+                "action": "omat24_predict",
+                "formula": formula,
+                "n_atoms": n_atoms,
+                "predicted_energy": predicted_energy,
+                "predicted_energy_per_atom": predicted_energy_per_atom,
+                "mp_energy_per_atom": mp_energy_per_atom,
+                "mp_material_id": mp_material_id,
+                "energy_diff_per_atom": energy_diff,
+                "stability": stability,
+                "confidence": confidence,
+            },
+            success=True,
+        )

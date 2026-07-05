@@ -6,8 +6,11 @@
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
+import shutil
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
@@ -30,6 +33,7 @@ class ImageAnalysisInput(BaseModel):
         "phase_field",
         "plot_extract",
         "deplot_chart",
+        "code_verify",
     ] = Field(..., description="图像分析动作")
     parameters: dict[str, Any] = Field(
         default_factory=dict,
@@ -43,7 +47,9 @@ class ImageAnalysisInput(BaseModel):
             "plot_extract: x_min/x_max/y_min/y_max(可选, 缺失时自动OCR检测)/"
             "x_axis_type/y_axis_type/curve_color(可填auto做多曲线)/"
             "axis_box/color_tolerance; "
-            "deplot_chart: max_new_tokens(可选, 默认512)"
+            "deplot_chart: max_new_tokens(可选, 默认512); "
+            "code_verify: analysis_result(来自 sem/tem/eds 等 action 的输出 dict)/"
+            "original_action(可选, 默认 sem_analysis)/timeout(可选, 默认 30s)"
         ),
     )
     output_path: str | None = Field(
@@ -113,6 +119,8 @@ class ImageAnalysisTool(HuginnTool):
             elif input_data.action == "deplot_chart":
                 from huginn.tools.image_analysis.scenes_deplot import deplot_chart
                 result = deplot_chart(input_data)
+            elif input_data.action == "code_verify":
+                result = self._run_code_verify(input_data)
             else:
                 return ToolResult(
                     data=None, success=False, error=f"未知 action: {input_data.action}"
@@ -132,3 +140,106 @@ class ImageAnalysisTool(HuginnTool):
                 json.dumps(data, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+
+    # -- code_verify: SWE-Vision 范式, 用代码验证视觉判断 --
+
+    def _run_code_verify(self, input_data: ImageAnalysisInput) -> ToolResult:
+        """根据 analysis_result 生成验证代码, 在沙箱里跑, 返回 measured vs claimed.
+
+        失败不阻塞, 返回 error 让 agent 决定是否重试.
+        """
+        analysis_result = input_data.parameters.get("analysis_result") or {}
+        original_action = input_data.parameters.get("original_action", "sem_analysis")
+        timeout = float(input_data.parameters.get("timeout", 30.0))
+
+        # 目前只实现了 SEM 的验证代码生成, 其他 action 复用 SEM 路径
+        # 后续扩展 tem/eds 时在这里加分支即可
+        from huginn.tools.image_analysis.scenes_sem import generate_verification_code
+
+        code = generate_verification_code(input_data.image_path, analysis_result)
+
+        # ast.parse 验证语法, 生成代码本身不应该有语法错误
+        try:
+            ast.parse(code)
+        except SyntaxError as exc:
+            return ToolResult(
+                data=None, success=False,
+                error=f"Verification code syntax error: {exc}",
+            )
+
+        return self._execute_in_sandbox(code, timeout)
+
+    def _execute_in_sandbox(self, code: str, timeout: float) -> ToolResult:
+        """在 SandboxExecutor 子进程里跑验证代码, 解析 __VERIFY_RESULT__ 标记.
+
+        不走 restricted_python (会拦 Image.open), 改用 ast.parse + 沙箱超时.
+        """
+        from huginn.security.sandbox import SandboxConfig, SandboxExecutor
+
+        sandbox = SandboxExecutor(SandboxConfig(
+            allowed_executables={"python", "python3"},
+            default_timeout=timeout,
+            max_timeout=max(timeout, 60.0),
+        ))
+
+        work_dir = Path(self._tmp_dir())
+        work_dir.mkdir(parents=True, exist_ok=True)
+        script = work_dir / "_verify_code.py"
+        script.write_text(code, encoding="utf-8")
+
+        # sidecar 打包后 PATH 里可能没 python, fallback 到当前解释器
+        python_exe = (
+            shutil.which("python")
+            or shutil.which("python3")
+            or sys.executable
+            or "python"
+        )
+
+        sb = sandbox.run(
+            [python_exe, str(script)],
+            cwd=str(work_dir),
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+        )
+
+        if not sb.success:
+            # 代码执行失败 (包括 AssertionError) — 不阻塞, 把 stderr 带回去
+            return ToolResult(
+                data={
+                    "verified": False,
+                    "stdout": sb.stdout,
+                    "stderr": sb.stderr,
+                    "returncode": sb.returncode,
+                },
+                success=False,
+                error=f"Verification code failed: {sb.stderr[:500] if sb.stderr else sb.stdout[:500]}",
+            )
+
+        # 解析 __VERIFY_RESULT__ 标记
+        parsed = None
+        for line in reversed(sb.stdout.splitlines()):
+            if line.startswith("__VERIFY_RESULT__:"):
+                payload = line[len("__VERIFY_RESULT__:"):]
+                try:
+                    parsed = json.loads(payload)
+                except json.JSONDecodeError:
+                    parsed = {"raw": payload}
+                break
+
+        return ToolResult(
+            data={
+                "verified": parsed.get("all_match", False) if parsed else False,
+                "checks": parsed.get("checks", []) if parsed else [],
+                "measured": parsed.get("measured", {}) if parsed else {},
+                "claimed": parsed.get("claimed", {}) if parsed else {},
+                "stdout": sb.stdout,
+            },
+            success=True,
+        )
+
+    @staticmethod
+    def _tmp_dir() -> str:
+        """临时目录给沙箱脚本用, 跑完不清理 (OS temp 反正会定期清)."""
+        import tempfile
+        return tempfile.mkdtemp(prefix="huginn_verify_")
