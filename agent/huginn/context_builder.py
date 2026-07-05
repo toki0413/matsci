@@ -147,7 +147,12 @@ class ContextBuilder:
     # ── Domain knowledge base ──────────────────────────────────────
 
     def build_kb_text(self, query: str) -> str:
-        """Query the domain knowledge base (vector retrieval)."""
+        """Query the domain knowledge base (vector retrieval).
+
+        Also performs cross-reference: when KB chunks are found, their
+        text is used as a secondary query to recall related memories,
+        creating a memory↔KB cross-reference loop.
+        """
         if not self.kb_enabled:
             return ""
         try:
@@ -167,6 +172,22 @@ class ContextBuilder:
                 if len(text) > 800:
                     text = text[:800] + "…"
                 lines.append(f"[{i}] {text}")
+
+                # ── Cross-reference: KB chunk → memory recall ──────
+                # When a KB chunk is found, use its text as a query to
+                # recall related long-term memories. This creates a
+                # bidirectional link: if the agent previously learned
+                # something related to this KB content, it surfaces here.
+                if self.memory and i <= 2:  # only for top 2 chunks
+                    try:
+                        related = self.memory.recall_for_prompt(
+                            text[:200], max_entries=1
+                        )
+                        if related:
+                            lines.append(f"    ↳ Memory: {related[:200]}")
+                    except Exception:
+                        pass
+
             if not lines:
                 return ""
             body = "\n".join(lines)

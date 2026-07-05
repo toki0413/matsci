@@ -1,4 +1,4 @@
-"""Application lifespan, MCP initialization, and CORS configuration."""
+﻿"""Application lifespan, MCP initialization, and CORS configuration."""
 
 from __future__ import annotations
 
@@ -39,9 +39,9 @@ async def _connect_mcp_server(
             await manager.connect(config)
         return True
     except TimeoutError:
-        logger.info("[MCP] Warning: {name} connection timed out ({timeout}s)")
+        logger.info(f"[MCP] Warning: {name} connection timed out ({timeout}s)")
     except Exception as e:
-        logger.info("[MCP] Warning: failed to connect to {name}: {e}")
+        logger.info(f"[MCP] Warning: failed to connect to {name}: {e}")
     return False
 
 
@@ -118,9 +118,9 @@ async def _init_mcp_tools():
             )
         else:
             registered = register_mcp_tools(get_context().mcp_manager)
-            logger.info("[MCP] Registered {len(registered)} tools from MCP servers")
+            logger.info(f"[MCP] Registered {len(registered)} tools from MCP servers")
     except Exception as e:
-        logger.info("[MCP] Warning: Could not initialize MCP tools: {e}")
+        logger.info(f"[MCP] Warning: Could not initialize MCP tools: {e}")
 
     # ── Load Star plugins ─────────────────────────────────────────
     await _load_star_plugins()
@@ -364,18 +364,18 @@ async def lifespan(app: FastAPI):
             cfg = HuginnConfig.from_env()
             get_context().kb = get_knowledge_base(cfg.workspace)
         except Exception as e:
-            logger.info("[KB] Warning: could not initialize knowledge base: {e}")
+            logger.info(f"[KB] Warning: could not initialize knowledge base: {e}")
     if _CODEBASE_AVAILABLE and get_context().codebase is None:
         try:
             cfg = HuginnConfig.from_env()
             get_context().codebase = get_codebase_index(cfg.workspace)
         except Exception as e:
-            logger.info("[Codebase] Warning: could not initialize codebase index: {e}")
+            logger.info(f"[Codebase] Warning: could not initialize codebase index: {e}")
     try:
         cfg = HuginnConfig.from_env()
         configure_pet(cfg.pet_name, cfg.pet_personality)
     except Exception as e:
-        logger.info("[Pet] Warning: could not configure pet: {e}")
+        logger.info(f"[Pet] Warning: could not configure pet: {e}")
 
     # Pre-warm embedding model in background
     async def _warm_embeddings():
@@ -395,7 +395,7 @@ async def lifespan(app: FastAPI):
                 await asyncio.to_thread(_do_warm)
                 logger.info("[init] Embedding model pre-warmed")
         except Exception as e:
-            logger.info("[init] Embedding pre-warm skipped: {e}")
+            logger.info(f"[init] Embedding pre-warm skipped: {e}")
 
     warmup_task = asyncio.create_task(_warm_embeddings())
 
@@ -447,3 +447,4 @@ def _get_cors_origins() -> list[str]:
         "tauri://localhost",
         "http://tauri.localhost",
     ]
+

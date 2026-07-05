@@ -6,6 +6,7 @@ Allows Huginn to use tools from external MCP servers
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -17,6 +18,20 @@ from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
+
+# MCP tool timeout defaults (seconds), by read-only classification.
+_MCP_TIMEOUT_READONLY = 60  # read queries: 60s
+_MCP_TIMEOUT_WRITE = 120  # write ops: 120s
+
+# High-value MCP tools whose results should be promoted to memory.
+_HIGH_VALUE_MCP_TOOLS = {
+    "query_materials_project",
+    "get_structure",
+    "search_by_property",
+    "query_interatomic_potentials",
+    "compare_materials",
+    "extract_math",
+}
 
 
 def _schema_to_pydantic(
@@ -58,6 +73,11 @@ class MCPToolAdapter(HuginnTool):
 
     This enables seamless integration of MCP server tools into the
     Huginn tool registry and LangGraph agent.
+
+    Includes:
+    - CircuitBreaker protection (prevents cascading failures)
+    - Async timeout (prevents hanging MCP calls)
+    - Automatic memory promotion for high-value results
     """
 
     def __init__(
@@ -93,9 +113,41 @@ class MCPToolAdapter(HuginnTool):
         return self._tool_name in read_only_names
 
     async def call(self, args: BaseModel, context: ToolContext) -> ToolResult:
+        # Determine timeout based on read/write classification
+        timeout = (
+            _MCP_TIMEOUT_READONLY
+            if self.is_read_only(args)
+            else _MCP_TIMEOUT_WRITE
+        )
+
+        # Use CircuitBreaker if available
+        try:
+            from huginn.agents.circuit_breaker import circuit_guard
+
+            async with circuit_guard(self._tool_name):
+                return await self._call_with_timeout(args, context, timeout)
+        except ImportError:
+            # CircuitBreaker not available, just use timeout
+            return await self._call_with_timeout(args, context, timeout)
+        except Exception as e:
+            # CircuitBreaker open or other protection error
+            cb_msg = "Circuit breaker open" if "circuit" in str(e).lower() else str(e)
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"MCP tool '{self._tool_name}' unavailable: {cb_msg}",
+            )
+
+    async def _call_with_timeout(
+        self, args: BaseModel, context: ToolContext, timeout: int
+    ) -> ToolResult:
+        """Execute MCP tool call with timeout and memory promotion."""
         try:
             arguments = args.model_dump(exclude_none=True)
-            result = await self._client_manager.call_tool(self._tool_name, arguments)
+            result = await asyncio.wait_for(
+                self._client_manager.call_tool(self._tool_name, arguments),
+                timeout=timeout,
+            )
 
             if result.get("is_error"):
                 return ToolResult(
@@ -111,8 +163,35 @@ class MCPToolAdapter(HuginnTool):
             except Exception:
                 data = {"raw_output": output}
 
+            # ── Promote high-value MCP results to memory ──────────
+            # If this is a high-value tool (materials DB query, structure
+            # retrieval, etc.), store the result in long-term memory so
+            # future queries can benefit without re-calling the MCP server.
+            if self._tool_name in _HIGH_VALUE_MCP_TOOLS and context.memory_manager:
+                try:
+                    memory_text = output[:2000] if isinstance(output, str) else json.dumps(data)[:2000]
+                    context.memory_manager.add_tool_call(
+                        tool_name=self._tool_name,
+                        tool_args=arguments,
+                        tool_result=memory_text,
+                        success=True,
+                    )
+                except Exception:
+                    # Memory promotion failure should never block tool result
+                    logger.debug(
+                        "MCP memory promotion failed for %s",
+                        self._tool_name,
+                        exc_info=True,
+                    )
+
             return ToolResult(data=data, success=True)
 
+        except asyncio.TimeoutError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"MCP tool '{self._tool_name}' timed out after {timeout}s",
+            )
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"MCP tool error: {e}")
 
