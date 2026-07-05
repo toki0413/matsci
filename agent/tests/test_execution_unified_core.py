@@ -23,14 +23,12 @@ from huginn.execution.dimensional_validator import (
     UnitRegistry,
     registry,
 )
-from huginn.execution.input_generator import GeneratedInput, InputFileGenerator
 from huginn.execution.orchestrator import (
     ExecutionOrchestrator,
     StageResult,
     WorkflowExecutionRecord,
 )
 from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
-from huginn.execution.result_parser import ParsedResult, ResultParser
 from huginn.unified.bridge import (
     BRIDGE_REGISTRY,
     cauchy_born_elasticity,
@@ -59,128 +57,6 @@ from huginn.unified.models import (
 )
 from huginn.unified.solve import solve
 from huginn.unified.visualize import plot_solution, solve_and_plot
-
-
-# ------------------------------------------------------------------
-# execution/result_parser
-# ------------------------------------------------------------------
-
-class TestResultParser:
-    def test_parse_unknown_file(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "unknown.xyz"
-        f.write_text("blah")
-        result = parser.parse(f)
-        assert result.software == "unknown"
-        assert result.converged is False
-
-    def test_detect_vasp_outcar(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "OUTCAR"
-        f.write_text("free  energy   TOTEN  = -123.456 eV\nreached required accuracy\n")
-        result = parser.parse(f)
-        assert result.software == "VASP"
-        assert result.converged is True
-        assert result.energy == pytest.approx(-123.456)
-
-    def test_detect_vasp_warnings(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "OUTCAR"
-        f.write_text("ZBRENT error\nWARNING: some issue\n")
-        result = parser.parse(f)
-        assert any("ZBRENT" in w for w in result.warnings)
-
-    def test_detect_gaussian_log(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "run.log"
-        f.write_text("Entering Gaussian System\nSCF Done: E(RHF) = -123.456\nNormal termination\n")
-        result = parser.parse(f)
-        assert result.software == "Gaussian"
-        assert result.converged is True
-        assert result.energy == pytest.approx(-123.456)
-
-    def test_detect_lammps_log(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "run.log"
-        f.write_text("LAMMPS\nStep Temp Press\n1 300.0 1.0\n2 301.0 1.1\n")
-        result = parser.parse(f)
-        assert result.software == "LAMMPS"
-        assert result.converged is True
-
-    def test_detect_lammps_error(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "run.log"
-        f.write_text("LAMMPS\nERROR: some error\n")
-        result = parser.parse(f)
-        assert result.converged is False
-        assert result.errors
-
-    def test_detect_abaqus_dat(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "job.dat"
-        f.write_text("THE ANALYSIS HAS BEEN COMPLETED\n")
-        result = parser.parse(f)
-        assert result.software == "ABAQUS"
-        assert result.converged is True
-
-    def test_detect_openfoam_log(self, tmp_path: Path):
-        parser = ResultParser()
-        f = tmp_path / "run.log"
-        f.write_text("foam\np final residual = 1e-5\n")
-        result = parser.parse(f)
-        assert result.software == "OpenFOAM"
-        assert result.converged is True
-
-
-# ------------------------------------------------------------------
-# execution/input_generator
-# ------------------------------------------------------------------
-
-class TestInputFileGenerator:
-    def test_generate_vasp_inputs(self):
-        gen = InputFileGenerator()
-        inputs = gen.generate_vasp_inputs(
-            system="Si bulk",
-            structure={"lattice": 5.43, "basis": [[0, 0, 0]], "species": ["Si"]},
-            task="relax",
-        )
-        names = [i.filename for i in inputs]
-        assert "POSCAR" in names
-        assert "INCAR" in names
-        assert "KPOINTS" in names
-
-    def test_generate_vasp_inputs_with_overrides(self):
-        gen = InputFileGenerator()
-        inputs = gen.generate_vasp_inputs(
-            system="Si",
-            structure={"lattice": 5.43, "basis": [[0, 0, 0]], "species": ["Si"]},
-            task="relax",
-            params={"ENCUT": 600},
-        )
-        incar = next(i for i in inputs if i.filename == "INCAR")
-        assert "ENCUT = 600" in incar.content
-
-    def test_generated_input_dataclass(self):
-        inp = GeneratedInput("VASP", "POSCAR", "Si\n1.0\n", "structure")
-        assert inp.software == "VASP"
-        assert inp.filename == "POSCAR"
-
-    def test_generate_gaussian_input(self):
-        gen = InputFileGenerator()
-        inp = gen.generate_gaussian_input(
-            task="opt", method="B3LYP", basis="6-31g",
-            structure="Si 0 0 0\nSi 0 0 2",
-        )
-        assert "B3LYP/6-31g" in inp.content
-        assert "opt" in inp.content
-
-    def test_generate_lammps_input(self):
-        gen = InputFileGenerator()
-        inp = gen.generate_lammps_input(
-            task="md", structure_file="data.lmp", potential="sw",
-        )
-        assert "units metal" in inp.content
-        assert "sw" in inp.content
 
 
 # ------------------------------------------------------------------

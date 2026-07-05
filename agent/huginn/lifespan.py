@@ -358,6 +358,15 @@ async def lifespan(app: FastAPI):
     # Switch the root logger to structured JSON output early so every startup
     # log line below is already correlated. Opt out with HUGINN_JSON_LOGS=0.
     setup_json_logging()
+    # Run pending schema migrations for every SQLite store up front, so
+    # backups + integrity checks happen in one place rather than lazily
+    # when each store is first touched. Failures are contained — a bad
+    # migration on one DB shouldn't stop the whole app from booting.
+    try:
+        from huginn.utils.migrations import run_all_migrations
+        await asyncio.to_thread(run_all_migrations)
+    except Exception as e:
+        logger.warning(f"[migrations] startup sweep failed: {e}")
     await _init_mcp_tools()
     if _KB_AVAILABLE and get_context().kb is None:
         try:

@@ -1,0 +1,114 @@
+name: Stress Test
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  SERVER_PORT: "8999"
+  HUGINN_API_KEY: test-key-12345
+  HUGINN_DEV_MODE: "0"
+  STRESS_TEST_URL: http://127.0.0.1:8999
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # The project ships deps through pyproject.toml; if a requirements.txt
+          # is added later it takes precedence (matches the documented path).
+          if [ -f agent/requirements.txt ]; then
+            pip install -r agent/requirements.txt
+          else
+            pip install -e "./agent[dev]"
+            pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
+            pip install pymatgen ase paramiko PyPDF2 pint spglib
+            pip install toml croniter fastapi uvicorn
+            pip install langchain-openai langgraph-checkpoint-sqlite
+          fi
+          # Stress test clients (not pulled in by the app deps).
+          pip install httpx websockets
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com --recv-keys C5AD17C747E8713848F5C8D0FBA9424D2283E8FC
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Start backend
+        working-directory: agent
+        env:
+          HUGINN_API_KEY: ${{ env.HUGINN_API_KEY }}
+          HUGINN_DEV_MODE: ${{ env.HUGINN_DEV_MODE }}
+        run: |
+          uvicorn huginn.server:app --host 127.0.0.1 --port ${{ env.SERVER_PORT }} > /tmp/uvicorn.log 2>&1 &
+          echo $! > /tmp/uvicorn.pid
+
+      - name: Wait for health check
+        run: |
+          for i in $(seq 1 90); do
+            if curl -sf "$STRESS_TEST_URL/health/live" >/dev/null; then
+              echo "backend is healthy"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::backend did not become healthy within 90s"
+          cat /tmp/uvicorn.log
+          exit 1
+
+      - name: Run k6 stress tests
+        env:
+          API_KEY: ${{ env.HUGINN_API_KEY }}
+        continue-on-error: true
+        run: |
+          k6 run \
+            -e STRESS_TEST_URL="$STRESS_TEST_URL" \
+            -e API_KEY="$API_KEY" \
+            agent/tests/stress/k6_stress.js 2>&1 | tee /tmp/k6.log
+
+      - name: Run pytest stress tests (fallback)
+        env:
+          STRESS_TEST_URL: ${{ env.STRESS_TEST_URL }}
+          HUGINN_API_KEY: ${{ env.HUGINN_API_KEY }}
+        run: |
+          python -m pytest agent/tests/stress/test_http_stress.py -v \
+            --no-cov -o asyncio_mode=auto 2>&1 | tee /tmp/pytest-stress.log
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-logs
+          path: |
+            /tmp/uvicorn.log
+            /tmp/k6.log
+            /tmp/pytest-stress.log
+
+      - name: Stop backend
+        if: always()
+        run: |
+          [ -f /tmp/uvicorn.pid ] && kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true
