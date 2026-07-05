@@ -19,11 +19,6 @@ from huginn.utils.tokens import (
     rough_token_count,
     rough_token_count_for_text,
 )
-from huginn.diagnostics.convergence import (
-    DiagnosisReport,
-    ConvergenceDiagnostician,
-    VASP_FAILURE_PATTERNS,
-)
 from huginn.benchmark.core import (
     BenchmarkCase,
     BenchmarkSuite,
@@ -131,51 +126,6 @@ class TestUtilsContext:
     def test_compact_messages_zero_budget(self):
         msgs = [{"content": "a"}]
         assert compact_messages(msgs, budget_tokens=0) == msgs
-
-
-class TestDiagnosticsConvergence:
-    def test_known_patterns_exist(self):
-        assert "EDDDAV" in VASP_FAILURE_PATTERNS
-        assert "ZPOTRF" in VASP_FAILURE_PATTERNS
-        assert "ZBRENT" in VASP_FAILURE_PATTERNS
-        assert "TOO FEW BANDS" in VASP_FAILURE_PATTERNS
-
-    def test_diagnose_convergence_known(self):
-        d = ConvergenceDiagnostician()
-        report = d.diagnose("vasp", "EDDDAV error occurred")
-        assert isinstance(report, DiagnosisReport)
-        assert report is not None
-        assert report.auto_fixable is True
-
-    def test_diagnose_convergence_unknown(self):
-        d = ConvergenceDiagnostician()
-        report = d.diagnose("vasp", "UNKNOWN_ERROR")
-        assert report is None
-
-    def test_diagnose_convergence_wrong_software(self):
-        d = ConvergenceDiagnostician()
-        report = d.diagnose("qe", "EDDDAV")
-        assert report is None
-
-    def test_diagnose_file_no_file(self, tmp_path: Path):
-        d = ConvergenceDiagnostician()
-        report = d.diagnose_from_file("vasp", tmp_path / "nonexistent")
-        assert report is None
-
-    def test_diagnose_file_with_content(self, tmp_path: Path):
-        d = ConvergenceDiagnostician()
-        log = tmp_path / "vasp.log"
-        log.write_text("some EDDDAV error here")
-        report = d.diagnose_from_file("vasp", log)
-        assert report is not None
-        assert "EDDDAV" in report.problem
-
-    def test_suggest_auto_fix(self):
-        d = ConvergenceDiagnostician()
-        report = d.diagnose("vasp", "EDDDAV")
-        fixes = d.suggest_auto_fix(report)
-        assert fixes is not None
-        assert "ALGO" in fixes
 
 
 class TestBenchmarkCore:

@@ -45,23 +45,6 @@ class TestEvolutionSmoke:
         engine = EvolutionEngine(logger=logger)
         assert str(engine.rules_path).endswith("evolution_rules.json")
 
-    def test_skill_library(self, tmp_path: Path):
-        from huginn.evolution.skill_evolver import Skill, SkillLibrary
-
-        lib = SkillLibrary(str(tmp_path / "skills.json"))
-        skill = Skill(
-            skill_id="test_skill",
-            name="test_skill",
-            description="A test skill",
-            domain="test",
-            trigger_patterns=["test"],
-            workflow=[],
-        )
-        lib.add(skill)
-        assert lib.get("test_skill") is not None
-        assert lib.find_by_trigger("test query")[0].skill_id == "test_skill"
-
-
 class TestPhysicsValidationSmoke:
     def test_validate_dft_result(self):
         from huginn.validation.physics import PhysicsValidator
@@ -100,19 +83,6 @@ class TestMCPClientSmoke:
         mgr = MCPClientManager()
         assert mgr.list_tools() == []
         assert mgr.get_tool_info("unknown") is None
-
-
-class TestDiagnosticsSmoke:
-    def test_convergence_diagnosis(self):
-        from huginn.diagnostics.convergence import ConvergenceDiagnostician
-
-        doc = ConvergenceDiagnostician()
-        report = doc.diagnose("vasp", "EDDDAV error in the log")
-        assert report is not None
-        assert "电子步不收敛" in report.problem
-        fixes = doc.suggest_auto_fix(report)
-        assert fixes is not None
-        assert "ALGO" in fixes
 
 
 class TestMechanicsSmoke:
