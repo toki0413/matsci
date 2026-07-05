@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -351,7 +354,8 @@ class KnowledgeDistiller:
                     },
                 )
                 ingested += 1
-            except Exception:
+            except Exception as e:
+                logger.debug("auto_ingest_to_kb chunk failed: %s", e)
                 continue
         return ingested
 
