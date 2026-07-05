@@ -118,6 +118,14 @@ def _apply_thinking_kwargs(
             kwargs["extra_body"] = {"enable_thinking": True}
         return
 
+    # Local OpenAI-compatible presets — pass enable_thinking in extra_body.
+    # Most local servers (lm-studio, llama.cpp, sglang) expose thinking via
+    # the same OpenAI extra_body convention, so we reuse it here.
+    if provider in _LOCAL_PRESETS and isinstance(thinking, str):
+        if thinking != "off":
+            kwargs["extra_body"] = {"enable_thinking": True}
+        return
+
 
 @dataclass
 class ModelCaps:

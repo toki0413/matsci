@@ -376,17 +376,28 @@ class ConjectureGenerator:
         self,
         transfer_result: dict[str, Any],
         model: Any = None,
+        prompt_level: int = 1,
+        known_solutions: list[str] | None = None,
     ) -> dict[str, Any]:
         """从迁移结果生成可检验猜想.
 
         返回 statement (猜想陈述), prediction (可证伪预测),
         rationale (类比依据), confidence (置信度).
 
+        prompt_level 控制提示策略:
+        - 0: 纯自由生成, 不加任何额外提示
+        - 1: 领域知识表提示 (默认, 性价比最高)
+        - 2: 分步引导 + 遗忘已知解法 (需要传 known_solutions)
+
         结果写 research_log (CONJECTURE), parent 指向 transfer 的 BRIDGE 记录.
         """
         if model is not None and self._is_real_model(model):
             try:
-                result = self._llm_generate(transfer_result, model)
+                result = self._llm_generate(
+                    transfer_result, model,
+                    prompt_level=prompt_level,
+                    known_solutions=known_solutions,
+                )
             except Exception:
                 logger.debug("LLM generate failed, fallback to template", exc_info=True)
                 result = self._template_generate(transfer_result)
@@ -424,15 +435,23 @@ class ConjectureGenerator:
         source_domain: str,
         target_domain: str,
         model: Any = None,
+        prompt_level: int = 1,
+        known_solutions: list[str] | None = None,
     ) -> dict[str, Any]:
         """完整流水线: extract → transfer → generate.
 
         三步串行执行, 每步结果传给下一步. 研究日志里的记录靠 parent_id
         串成一棵树: OPEN_QUESTION → BRIDGE → CONJECTURE.
+
+        prompt_level 透传给 generate_conjecture (0/1/2, 默认 1).
         """
         pattern = self.extract_pattern(source_problem, source_domain, model)
         transfer = self.transfer_domain(pattern, target_domain, model)
-        conjecture = self.generate_conjecture(transfer, model)
+        conjecture = self.generate_conjecture(
+            transfer, model,
+            prompt_level=prompt_level,
+            known_solutions=known_solutions,
+        )
 
         return {
             "source_problem": source_problem,
@@ -449,6 +468,28 @@ class ConjectureGenerator:
             "method": pattern.get("method", "template"),
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
+    def forget_then_generate(
+        self,
+        source_problem: str,
+        source_domain: str,
+        target_domain: str,
+        known_solutions: list[str],
+        model: Any = None,
+    ) -> dict[str, Any]:
+        """遗忘-重生模式: 先遗忘已知解法, 再从第一性原理重新推理.
+
+        等价于 run(prompt_level=2, known_solutions=known_solutions).
+        单独暴露出来是因为语义上跟普通 run 有区别 — 强制跳出已有思路.
+        """
+        return self.run(
+            source_problem=source_problem,
+            source_domain=source_domain,
+            target_domain=target_domain,
+            model=model,
+            prompt_level=2,
+            known_solutions=known_solutions,
+        )
 
     # ── template fallbacks ─────────────────────────────────────────
 
@@ -663,29 +704,21 @@ class ConjectureGenerator:
         }
 
     def _llm_generate(
-        self, transfer_result: dict[str, Any], model: Any
+        self,
+        transfer_result: dict[str, Any],
+        model: Any,
+        prompt_level: int = 1,
+        known_solutions: list[str] | None = None,
     ) -> dict[str, Any]:
-        """调 LLM 生成可检验猜想."""
+        """调 LLM 生成可检验猜想. prompt_level 决定提示策略."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        system_prompt, user_prompt = self._build_generation_prompt(
+            transfer_result, prompt_level, known_solutions
+        )
         messages = [
-            SystemMessage(content=(
-                "You are a materials science conjecture generator. "
-                "Given a transferred pattern, formulate a testable conjecture with: "
-                "- statement: a clear, falsifiable conjecture statement\n"
-                "- prediction: what specific observable result would confirm/refute it\n"
-                "- rationale: why this makes sense, grounded in the cross-domain analogy\n"
-                "- confidence: low|medium|high\n"
-                "Output ONLY a JSON object with these keys. No markdown."
-            )),
-            HumanMessage(content=(
-                f"Transferred pattern: {transfer_result.get('transferred_pattern', '')}\n"
-                f"Target domain: {transfer_result.get('target_domain', '')}\n"
-                f"Source domain: {transfer_result.get('source_domain', '')}\n"
-                f"Domain mapping: {json.dumps(transfer_result.get('domain_mapping', {}), ensure_ascii=False)}\n"
-                f"Analogy notes: {transfer_result.get('analogy_notes', '')}\n"
-                f"Generate a testable conjecture."
-            )),
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
         ]
         text = self._invoke_model(model, messages)
         parsed = self._parse_json(text)
@@ -698,7 +731,101 @@ class ConjectureGenerator:
             "domain": transfer_result.get("target_domain", ""),
             "confidence": parsed.get("confidence", "medium"),
             "method": "llm",
+            "prompt_level": prompt_level,
         }
+
+    def _build_generation_prompt(
+        self,
+        transfer_result: dict[str, Any],
+        prompt_level: int,
+        known_solutions: list[str] | None,
+    ) -> tuple[str, str]:
+        """按 prompt_level 构建系统提示 + 用户提示.
+
+        Level 0: 纯自由生成, 不加额外上下文.
+        Level 1: 附带领域知识表, 帮 LLM 落到具体术语.
+        Level 2: 分步引导推理 + 遗忘已知解法, 强制从第一性原理出发.
+        """
+        transferred = transfer_result.get("transferred_pattern", "")
+        target_domain = transfer_result.get("target_domain", "")
+        source_domain = transfer_result.get("source_domain", "")
+        domain_mapping = json.dumps(
+            transfer_result.get("domain_mapping", {}), ensure_ascii=False
+        )
+        analogy_notes = transfer_result.get("analogy_notes", "")
+
+        # 所有级别共用的输出格式要求
+        output_spec = (
+            "Output ONLY a JSON object with keys: "
+            "statement (falsifiable conjecture), "
+            "prediction (specific observable result), "
+            "rationale (grounded reasoning), "
+            "confidence (low|medium|high). No markdown."
+        )
+
+        base_user = (
+            f"Transferred pattern: {transferred}\n"
+            f"Target domain: {target_domain}\n"
+            f"Source domain: {source_domain}\n"
+            f"Domain mapping: {domain_mapping}\n"
+            f"Analogy notes: {analogy_notes}\n"
+        )
+
+        if prompt_level == 0:
+            # 纯自由生成
+            system = (
+                "You are a materials science conjecture generator. "
+                "Given a transferred pattern, formulate a testable conjecture. "
+                + output_spec
+            )
+            return system, base_user + "Generate a testable conjecture."
+
+        if prompt_level == 1:
+            # 领域知识表提示
+            domain_info = _lookup_domain(target_domain)
+            system = (
+                "You are a materials science conjecture generator. "
+                "Use the provided domain knowledge to ground your conjecture "
+                "in domain-appropriate terminology and mechanisms. "
+                + output_spec
+            )
+            user = (
+                base_user
+                + f"Domain knowledge: {json.dumps(domain_info, ensure_ascii=False)}\n"
+                + "Generate a testable conjecture grounded in this domain knowledge."
+            )
+            return system, user
+
+        # Level 2: 分步引导 + 遗忘已知解法
+        domain_info = _lookup_domain(target_domain)
+        forget_section = ""
+        if known_solutions:
+            forget_section = (
+                "\n\nIMPORTANT: Ignore the following known solutions. "
+                "Do NOT reproduce or build upon them. "
+                "Reason from first principles to find a NOVEL approach:\n"
+                + "\n".join(f"- {s}" for s in known_solutions)
+            )
+
+        system = (
+            "You are a materials science conjecture generator using "
+            "first-principles reasoning. Follow the step-by-step instructions. "
+            "Ignore any known solutions provided and derive a genuinely novel conjecture. "
+            + output_spec
+        )
+        user = (
+            base_user
+            + f"Domain knowledge: {json.dumps(domain_info, ensure_ascii=False)}\n\n"
+            "Step 1: Identify the core physical mechanism that connects "
+            f"the transferred pattern '{transferred}' to {target_domain}.\n"
+            "Step 2: Consider what observable quantity would change and in which direction.\n"
+            "Step 3: State the underlying assumption and its boundary conditions.\n"
+            "Step 4: Formulate a falsifiable conjecture and a specific prediction.\n"
+            f"Step 5: Rate your confidence (low|medium|high)."
+            f"{forget_section}\n\n"
+            "Output the JSON object with your final conjecture."
+        )
+        return system, user
 
     # ── helpers ─────────────────────────────────────────────────────
 

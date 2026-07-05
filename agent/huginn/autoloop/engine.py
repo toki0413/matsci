@@ -1050,6 +1050,15 @@ class AutoloopEngine:
             if r_phys is not None:
                 results["r_phys"] = r_phys
 
+        # 思维坍塌检测: 检查 LLM 输出是否陷入重复推理 / 发散 / 工具循环.
+        # 纯规则, 不需要 LLM, 先跑一遍把信号收集回来.
+        try:
+            collapse = self._detect_thinking_collapse(execution_result)
+            if collapse:
+                results["thinking_collapse"] = collapse
+        except Exception as e:
+            results["thinking_collapse_error"] = str(e)
+
         # Try to run pytest on modified files
         try:
             import subprocess
@@ -1117,6 +1126,16 @@ class AutoloopEngine:
         except Exception as e:
             results["reviewer_critique_error"] = str(e)
 
+        # 生成式验证: 用 verification_model 给 agent 输出打 0-1 分.
+        # 分数 < 0.5 时标记 needs_retry, 让上层决定是否重试或升级 prompt.
+        # verification_model 不可用时优雅降级到上面的规则检查.
+        try:
+            gen_verify = await self._generative_verify(execution_result, results)
+            if gen_verify:
+                results["generative_verify"] = gen_verify
+        except Exception as e:
+            results["generative_verify_error"] = str(e)
+
         return results
 
     @staticmethod
@@ -1137,6 +1156,191 @@ class AutoloopEngine:
             return " ".join(parts)[:400]
         except Exception:
             return ""
+
+    # -- 思维坍塌检测 + 生成式验证 --
+
+    def _detect_thinking_collapse(self, execution_result: Any) -> dict[str, Any] | None:
+        """检查 LLM 输出是否陷入重复推理 / 发散 / 工具调用循环.
+
+        三条规则, 纯文本分析不需要 LLM:
+          1. 相同短语 (5 词 n-gram) 出现 3+ 次 → 重复推理路径
+          2. 输出 > 200 词但 unique word ratio < 0.3 → 发散但不前进
+          3. 相同工具 + 相同参数出现 2+ 次 → 工具循环
+
+        检测到任一信号就返回 dict, 否则 None.
+        """
+        from collections import Counter
+
+        text = self._extract_text(execution_result)
+        if not text or len(text.strip()) < 20:
+            return None
+
+        signals: dict[str, Any] = {}
+
+        # Rule 1: 重复短语 — 5 词 n-gram 出现 3+ 次
+        words = text.lower().split()
+        if len(words) >= 10:
+            ngrams = [
+                " ".join(words[i : i + 5])
+                for i in range(len(words) - 4)
+            ]
+            counts = Counter(ngrams)
+            repeated = [(p, c) for p, c in counts.items() if c >= 3]
+            if repeated:
+                repeated.sort(key=lambda x: -x[1])
+                signals["repeated_phrases"] = repeated[:5]
+
+        # Rule 2: 发散推理 — 长文本但词汇丰富度低
+        if len(words) > 200:
+            unique_ratio = len(set(words)) / len(words)
+            if unique_ratio < 0.3:
+                signals["divergent_reasoning"] = {
+                    "word_count": len(words),
+                    "unique_ratio": round(unique_ratio, 3),
+                }
+
+        # Rule 3: 工具调用循环 — 相同工具 + 相同参数 2+ 次
+        if isinstance(execution_result, dict):
+            loops = self._find_tool_call_loops(execution_result)
+            if loops:
+                signals["tool_call_loops"] = loops
+
+        if not signals:
+            return None
+
+        # 严重度: 有重复短语或工具循环 = high, 只有发散 = medium
+        has_loop = bool(signals.get("tool_call_loops"))
+        has_repeat = bool(signals.get("repeated_phrases"))
+        signals["severity"] = "high" if (has_loop or has_repeat) else "medium"
+        return signals
+
+    @staticmethod
+    def _find_tool_call_loops(execution_result: dict) -> list[dict[str, Any]]:
+        """从 execution_result 里找重复的工具调用 (同工具 + 同参数 2+ 次)."""
+        import hashlib
+
+        calls = (
+            execution_result.get("tool_calls")
+            or execution_result.get("steps")
+            or execution_result.get("actions")
+            or []
+        )
+        if not isinstance(calls, list):
+            return []
+
+        seen: dict[str, int] = {}
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            name = call.get("tool") or call.get("name") or call.get("action") or ""
+            params = call.get("input") or call.get("params") or call.get("args") or {}
+            try:
+                payload = name + json.dumps(params, sort_keys=True, default=str)
+            except Exception:
+                payload = name + str(params)
+            key = hashlib.sha256(payload.encode()).hexdigest()[:12]
+            seen[key] = seen.get(key, 0) + 1
+
+        return [
+            {"call_hash": k, "count": c}
+            for k, c in seen.items()
+            if c >= 2
+        ]
+
+    @staticmethod
+    def _extract_text(execution_result: Any) -> str:
+        """从 execution_result 里抽文本, 给坍塌检测做分析用."""
+        if execution_result is None:
+            return ""
+        if isinstance(execution_result, str):
+            return execution_result
+        if not isinstance(execution_result, dict):
+            return str(execution_result)
+
+        parts: list[str] = []
+        for key in ("summary", "description", "result_data", "output",
+                     "error", "reasoning", "plan", "hypothesis"):
+            v = execution_result.get(key)
+            if v:
+                parts.append(str(v))
+        # 嵌套的 steps / tool_calls 里的文本也抽出来
+        for key in ("steps", "tool_calls", "actions"):
+            items = execution_result.get(key)
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        for sk in ("description", "output", "result", "error"):
+                            sv = item.get(sk)
+                            if sv:
+                                parts.append(str(sv))
+        return " ".join(parts)
+
+    async def _generative_verify(
+        self, execution_result: Any, results: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """用 verification_model 给 agent 输出打 0-1 质量分.
+
+        分数 < 0.5 标记 needs_retry. verification_model 不可用时返回
+        None, 让上层降级到规则检查 (thinking_collapse 等).
+        """
+        if self.verification_model is None:
+            return None
+
+        text = self._extract_text(execution_result)
+        if not text or len(text.strip()) < 10:
+            return None
+
+        # 截断防止 prompt 爆炸
+        snippet = text[:2000]
+        collapse = results.get("thinking_collapse", {})
+        collapse_hint = ""
+        if collapse:
+            collapse_hint = (
+                f"\nNote: automated checks detected: {json.dumps(collapse, default=str)[:300]}"
+            )
+
+        prompt = (
+            "You are a verification model. Score the quality of this agent output "
+            "from 0.0 to 1.0.\n"
+            "1.0 = well-reasoned, complete, correct.\n"
+            "0.5 = acceptable but has issues.\n"
+            "0.0 = poor, incorrect, or incomplete.\n"
+            f"{collapse_hint}\n\n"
+            f"Agent output:\n{snippet}\n\n"
+            "Respond with ONLY a JSON object: "
+            '{"score": <float>, "reason": "<brief>"}'
+        )
+
+        resp = await self._llm_chat(prompt, model=self.verification_model)
+        score, reason = self._parse_verify_score(resp)
+
+        return {
+            "score": score,
+            "reason": reason,
+            "needs_retry": score < 0.5,
+        }
+
+    @staticmethod
+    def _parse_verify_score(resp: str) -> tuple[float, str]:
+        """从 LLM 响应里抠出 score 和 reason, 容错解析."""
+        import re
+
+        if not resp:
+            return 0.5, "empty response"
+
+        # 先试 JSON 解析
+        try:
+            data = json.loads(resp.strip())
+            return float(data.get("score", 0.5)), str(data.get("reason", ""))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # fallback: 正则抠数字
+        m = re.search(r"([01]\.\d+|[01])\b", resp)
+        if m:
+            return float(m.group(1)), resp[:200]
+
+        return 0.5, resp[:200]
 
     async def _run_math_validation(self, execution_result: Any) -> dict[str, Any]:
         """把执行结果里的数学结构抽出来, 用数学工具做形式化校验.

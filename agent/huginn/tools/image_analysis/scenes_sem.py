@@ -1,6 +1,7 @@
 """SEM 形貌分析 — 衬度统计 / 粗糙度 / 暗区分割 / 边缘密度."""
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -106,3 +107,92 @@ def sem_analysis(args: "ImageAnalysisInput") -> ToolResult:
         "histogram": hist.astype(float).tolist(),
     }
     return ToolResult(data=data)
+
+
+def generate_verification_code(image_path: str, analysis_result: dict) -> str:
+    """根据 SEM 分析结果声称的测量值, 生成独立验证代码.
+
+    SWE-Vision 范式: 不信 VLM 的 "看图说话", 而是生成 Python 代码做
+    结构化测量来交叉验证. 代码用 PIL 重新加载图像, 用 numpy/scipy
+    独立测量衬度和暗区, 然后断言 measured vs claimed 在容差内.
+
+    生成的代码在沙箱里跑, 失败返回错误不阻塞主流程.
+    """
+    m = analysis_result.get("measurements", {})
+    claimed = {
+        "image_shape": m.get("image_shape"),
+        "contrast_mean": m.get("contrast_mean"),
+        "contrast_std": m.get("contrast_std"),
+        "n_dark_regions": m.get("n_dark_regions"),
+        "mean_area_px2": m.get("mean_area_px2"),
+        "threshold_used": m.get("threshold_used"),
+    }
+    claimed_json = json.dumps(claimed, default=str)
+    safe_path = image_path.replace("\\", "/")
+
+    lines = [
+        "import json",
+        "from PIL import Image",
+        "import numpy as np",
+        "",
+        f"IMAGE_PATH = {safe_path!r}",
+        f"CLAIMED = {claimed_json}",
+        "",
+        "img = Image.open(IMAGE_PATH).convert('L')",
+        "arr = np.asarray(img, dtype=float)",
+        "",
+        "measured = {}",
+        "measured['image_shape'] = [int(arr.shape[0]), int(arr.shape[1])]",
+        "measured['contrast_mean'] = float(arr.mean())",
+        "measured['contrast_std'] = float(arr.std())",
+        "",
+        "# 用同样的阈值重新分割暗区, skimage 优先, scipy 兜底",
+        "thr = CLAIMED.get('threshold_used')",
+        "if thr is None:",
+        "    thr = arr.mean() - 0.5 * arr.std()",
+        "binary = arr < float(thr)",
+        "",
+        "try:",
+        "    from skimage.measure import label as sk_label",
+        "    labeled, n = sk_label(binary)",
+        "    counts = np.bincount(labeled.ravel())",
+        "    counts[0] = 0",
+        "    areas = counts[counts > 0].astype(float)",
+        "except ImportError:",
+        "    from scipy.ndimage import label as nd_label",
+        "    labeled, n = nd_label(binary)",
+        "    counts = np.bincount(labeled.ravel())",
+        "    counts[0] = 0",
+        "    areas = counts[counts > 0].astype(float)",
+        "",
+        "measured['n_dark_regions'] = int(n)",
+        "measured['mean_area_px2'] = float(areas.mean()) if len(areas) > 0 else 0.0",
+        "",
+        "# 逐项对比 measured vs claimed, 15% 容差",
+        "checks = []",
+        "for key in ['contrast_mean', 'contrast_std', 'n_dark_regions', 'mean_area_px2']:",
+        "    mv = measured.get(key)",
+        "    cv = CLAIMED.get(key)",
+        "    if mv is None or cv is None:",
+        "        continue",
+        "    rel = abs(mv - cv) / (abs(cv) + 1e-9)",
+        "    ok = rel < 0.15",
+        "    checks.append({'key': key, 'measured': mv, 'claimed': cv,",
+        "                   'rel_diff': rel, 'match': ok})",
+        "",
+        "# 图像尺寸必须完全一致",
+        "if CLAIMED.get('image_shape') is not None:",
+        "    shape_ok = measured['image_shape'] == CLAIMED['image_shape']",
+        "    checks.append({'key': 'image_shape', 'measured': measured['image_shape'],",
+        "                   'claimed': CLAIMED['image_shape'], 'match': shape_ok})",
+        "",
+        "all_match = all(c.get('match', False) for c in checks)",
+        "",
+        "# 断言: 核心测量值必须在容差内, 不满足就 AssertionError",
+        "assert all_match, 'Verification failed: ' + json.dumps(checks, default=str)",
+        "",
+        "result = {'all_match': all_match, 'checks': checks,",
+        "          'measured': measured, 'claimed': CLAIMED}",
+        "print('__VERIFY_RESULT__:' + json.dumps(result, default=str))",
+    ]
+    return "\n".join(lines)
