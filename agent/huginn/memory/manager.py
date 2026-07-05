@@ -334,7 +334,7 @@ class MemoryManager:
         # the same ChromaDB collection that user-uploaded docs use.
         # Only confirmed or high-confidence knowledge is ingested.
         try:
-            from huginn.server import get_context
+            from huginn.server_core import get_context
 
             ctx = get_context()
             if ctx.kb is not None:

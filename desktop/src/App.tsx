@@ -43,6 +43,7 @@ interface Message {
   isPlan?: boolean;
   planId?: string;
   planData?: any;
+  planConfirmed?: boolean;
   // Clarification: interactive question cards from agent
   isClarification?: boolean;
   clarifications?: any[];
@@ -1138,6 +1139,8 @@ export default function App() {
   const [personaEmotion, setPersonaEmotion] = useState<{ mood: string; valence: number; arousal: number; trust: number } | null>(null);
   // Pending clarification questions from agent
   const [pendingClarifications, setPendingClarifications] = useState<{ question_id?: string; question: string; options?: string[]; thread_id?: string }[]>([]);
+  // Deep PDF parse loading state
+  const [parseLoading, setParseLoading] = useState(false);
 
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
@@ -2057,6 +2060,7 @@ export default function App() {
   // figure data extraction, document graph, relation prediction,
   // cross-modal validation, and info pack assembly.
   const parseDocument = async (file: File) => {
+    setParseLoading(true);
     setKbMsg("Parsing document (6-stage pipeline)…");
     try {
       const resp = await api.upload<any>('/document/parse', file, { timeout: 120_000 });
@@ -2073,10 +2077,10 @@ export default function App() {
       }
     } catch (e: any) {
       setKbMsg(`Parse error: ${e.message}`);
+    } finally {
+      setParseLoading(false);
     }
   };
-
-  // ── Load parsed document structure graph ────────────────────────
   const loadDocumentGraph = useCallback(async (docId: string) => {
     try {
       const resp = await api.get<any>(`/document/${docId}/graph`);
@@ -2760,15 +2764,7 @@ export default function App() {
             planData,
           } as Message,
         ]);
-        // Auto-confirm for now (user can also click a confirm button)
-        // The backend will auto-confirm after 120s timeout anyway
-        if (wsClientRef.current) {
-          wsClientRef.current.send(JSON.stringify({
-            type: "plan_confirm",
-            plan_id: planId,
-            confirmed: true,
-          }));
-        }
+        // Do NOT auto-confirm — user must click Confirm/Cancel buttons
         break;
       }
       case "plan_result": {
@@ -2832,6 +2828,7 @@ export default function App() {
       case "task_progress": {
         // Long task progress (HPC job, sweep, etc.)
         const tp = data;
+        const taskKey = tp.task_type + (tp.job_id ? `_${tp.job_id}` : "");
         let progressText = "";
         if (tp.task_type === "hpc_job") {
           const icon = tp.status === "completed" ? "✅" : tp.status === "failed" ? "❌" : tp.status === "running" ? "🔄" : "⏳";
@@ -2842,11 +2839,16 @@ export default function App() {
           progressText = `📈 Progress: ${tp.progress_pct}%`;
         }
         setMessages((prev) => {
-          // Update last progress message if same task, else add new
-          const last = prev[prev.length - 1];
-          if (last?.isTaskProgress && last.taskType === tp.task_type && last.jobId === tp.job_id) {
-            return [...prev.slice(0, -1), { ...last, content: progressText, timestamp: formatTime() }];
+          // Search all messages for a matching task to update (not just last)
+          for (let i = prev.length - 1; i >= Math.max(0, prev.length - 10); i--) {
+            const m = prev[i];
+            if (m.isTaskProgress && (m.taskType + (m.jobId ? `_${m.jobId}` : "")) === taskKey) {
+              const updated = [...prev];
+              updated[i] = { ...m, content: progressText, timestamp: formatTime() };
+              return updated;
+            }
           }
+          // No match found — append new
           return [...prev, {
             role: "assistant",
             content: progressText,
@@ -2869,6 +2871,25 @@ export default function App() {
               timestamp: formatTime(),
             },
           ]);
+        }
+        break;
+      }
+      case "approval_request": {
+        // Tool approval request from agent (auto-approved by backend,
+        // shown for visibility)
+        // Don't add to messages — just log to console for now
+        console.log("[WS] Approval request:", data.tool_name, data.reason);
+        break;
+      }
+      case "auto_approve_set": {
+        // Auto-approve toggle response
+        console.log("[WS] Auto-approve set:", data.enabled, data.scope);
+        break;
+      }
+      case "ping": {
+        // Backend heartbeat ping — respond with pong
+        if (wsClientRef.current) {
+          wsClientRef.current.send(JSON.stringify({ type: "pong" }));
         }
         break;
       }
@@ -3339,6 +3360,48 @@ export default function App() {
                         <div className="text-[15px] leading-relaxed">
                           <MessageContent content={msg.content} />
                         </div>
+                        {/* Plan confirm/cancel buttons */}
+                        {msg.isPlan && msg.planId && (
+                          <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
+                            <button
+                              onClick={() => {
+                                if (wsClientRef.current) {
+                                  wsClientRef.current.send(JSON.stringify({
+                                    type: "plan_confirm",
+                                    plan_id: msg.planId,
+                                    confirmed: true,
+                                  }));
+                                }
+                                // Mark as confirmed to disable buttons
+                                setMessages((prev) => prev.map((m) =>
+                                  m === msg ? { ...m, planConfirmed: true } : m
+                                ));
+                              }}
+                              disabled={msg.planConfirmed}
+                              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {msg.planConfirmed ? "✓ Confirmed" : "Confirm & Execute"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (wsClientRef.current) {
+                                  wsClientRef.current.send(JSON.stringify({
+                                    type: "plan_confirm",
+                                    plan_id: msg.planId,
+                                    confirmed: false,
+                                  }));
+                                }
+                                setMessages((prev) => prev.map((m) =>
+                                  m === msg ? { ...m, planConfirmed: true } : m
+                                ));
+                              }}
+                              disabled={msg.planConfirmed}
+                              className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary hover:bg-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
                         {/* Interactive clarification question cards */}
                         {msg.isClarification && msg.clarifications && (
                           <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
@@ -3353,7 +3416,8 @@ export default function App() {
                                       <button
                                         key={opt}
                                         onClick={() => answerClarification(q.question_id, opt)}
-                                        className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20 transition-colors"
+                                        disabled={pendingClarifications.length === 0}
+                                        className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                                       >
                                         {opt}
                                       </button>
@@ -3905,9 +3969,10 @@ export default function App() {
                     />
                     <button
                       onClick={() => parseFileInputRef.current?.click()}
-                      className="w-full rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+                      disabled={parseLoading}
+                      className="w-full rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      📊 Deep PDF Parse
+                      {parseLoading ? "⏳ Parsing…" : "📊 Deep PDF Parse"}
                     </button>
                     <p className="mt-1.5 text-xs text-text-muted">
                       6-stage: extract → figures → graph → relations → validate → assemble

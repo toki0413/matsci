@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from pathlib import Path
 from typing import Any
@@ -220,7 +221,59 @@ class KnowledgeBase:
         doc_path = self.docs_dir / safe_name
         doc_path.write_bytes(content)
 
-        return {"doc_id": doc_id, "filename": filename, "chunks": len(chunks)}
+        return {
+            "doc_id": doc_id,
+            "filename": filename,
+            "chunks": len(chunks),
+        }
+
+    def add_text(
+        self,
+        text: str,
+        filename: str = "auto_sediment",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Ingest raw text directly into the knowledge base.
+
+        Unlike ``add_document`` which takes a file, this method accepts
+        pre-extracted text — used by auto-sedimentation and distilled
+        knowledge ingestion pipelines.
+
+        Returns a dict with doc_id and chunk count.
+        """
+        if not text or not text.strip():
+            return {"doc_id": "", "chunks": 0}
+
+        doc_id = uuid.uuid4().hex[:12]
+        chunks = _chunk_text(text)
+        if not chunks:
+            return {"doc_id": doc_id, "chunks": 0}
+
+        chunk_hash = hashlib.sha256("".join(chunks).encode()).hexdigest()
+        embeddings = self.model.encode(chunks, cache_key=chunk_hash).tolist()
+        ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+
+        base_meta = {"doc_id": doc_id, "filename": filename}
+        if metadata:
+            # Serialize metadata values to strings for ChromaDB compatibility
+            for k, v in metadata.items():
+                if isinstance(v, (list, dict)):
+                    base_meta[k] = json.dumps(v, ensure_ascii=False)
+                else:
+                    base_meta[k] = str(v) if v is not None else ""
+
+        metadatas = [dict(base_meta, chunk=i) for i in range(len(chunks))]
+
+        self.collection.add(
+            ids=ids,
+            documents=chunks,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+        self._query_cache.clear()
+        self._flush_semantic_cache()
+
+        return {"doc_id": doc_id, "chunks": len(chunks)}
 
     def list_documents(self) -> list[dict[str, Any]]:
         """Return unique documents stored in the collection."""

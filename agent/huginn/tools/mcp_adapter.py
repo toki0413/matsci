@@ -120,11 +120,17 @@ class MCPToolAdapter(HuginnTool):
             else _MCP_TIMEOUT_WRITE
         )
 
-        # Use CircuitBreaker if available
+        # Use async CircuitBreaker if available
         try:
-            from huginn.agents.circuit_breaker import circuit_guard
+            from huginn.agents.circuit_breaker import async_circuit_guard
 
-            async with circuit_guard(self._tool_name):
+            async with async_circuit_guard(self._tool_name) as guard:
+                if guard.get("blocked"):
+                    return ToolResult(
+                        data=None,
+                        success=False,
+                        error=f"MCP tool '{self._tool_name}' circuit breaker open",
+                    )
                 return await self._call_with_timeout(args, context, timeout)
         except ImportError:
             # CircuitBreaker not available, just use timeout
