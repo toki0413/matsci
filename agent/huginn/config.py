@@ -1132,7 +1132,15 @@ class HuginnConfig:
         if not path.exists():
             return []
 
-        import tomllib
+        # tomllib is stdlib in 3.11+; fall back to tomli for older Python
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            try:
+                import tomli as tomllib
+            except ModuleNotFoundError:
+                logger.warning("Neither tomllib nor tomli available; TOML config healing skipped")
+                return []
 
         try:
             if path.suffix == ".json":

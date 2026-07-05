@@ -135,6 +135,10 @@ class AutoloopEngine:
         # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
         self.memory = memory_manager or MemoryManager()
         self.kg = ProjectKnowledgeGraph()
+        # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
+        # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
+        from huginn.autoloop.hypothesis_loop import HypothesisGraph
+        self.hypothesis_graph = HypothesisGraph()
         self.report_tool = ReportTool()
 
         # Sub-engines
@@ -620,6 +624,15 @@ class AutoloopEngine:
                 print("  → No hypothesis generated, skipping iteration")
                 continue
             print(f"  → Hypothesis: {hypothesis}")
+            # 把假设记进 hypothesis graph, 方便后续 support/refute 追踪
+            _current_hyp_id = None
+            try:
+                _current_hyp_id = self.hypothesis_graph.add_hypothesis(
+                    statement=hypothesis,
+                    rationale=context.get("summary", ""),
+                )
+            except Exception:
+                pass
 
             # 3. Plan
             phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
@@ -672,6 +685,20 @@ class AutoloopEngine:
                            current_label=f"iter {self._iteration}: validate ({phase.status})")
             validation = phase.result
             print(f"  → Validation: {validation}")
+
+            # 更新假设图: tests_passed → support, 否则 → refute
+            try:
+                tests_passed = validation.get("tests_passed", False)
+                if _current_hyp_id is not None:
+                    if tests_passed:
+                        self.hypothesis_graph.support(_current_hyp_id, evidence=validation)
+                    else:
+                        self.hypothesis_graph.refute(
+                            _current_hyp_id,
+                            evidence={"errors": validation.get("errors", "tests failed")},
+                        )
+            except Exception:
+                pass
 
             # gate: validate→learn — 要有 tests_passed 证据才放行.
             # tests 没过 = 没有"测试通过"的证据, 传空 dict 让门阻断,
@@ -1302,6 +1329,15 @@ class AutoloopEngine:
         try:
             from huginn.validation.emergent_complexity import compute_ec
             results["emergent_complexity"] = compute_ec(execution_result, results)
+            # EC 反馈: 低 EC (< 0.2) 说明 agent 行为太模板化,
+            # 提示下轮多探索; 高 EC (> 0.6) 说明行为已足够涌现.
+            ec_score = results["emergent_complexity"].get("ec_score", 0)
+            if ec_score < 0.2 and self._iteration > 0:
+                ec_hint = f"EC={ec_score:.2f}: low emergent complexity, try diverse tools or cross-domain reasoning"
+                self._speculator_hint = (
+                    (self._speculator_hint + "\n" + ec_hint).strip()
+                    if self._speculator_hint else ec_hint
+                )
         except Exception as e:
             results["emergent_complexity_error"] = str(e)
 

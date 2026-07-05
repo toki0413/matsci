@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 
 import pytest
@@ -54,7 +55,12 @@ class TestScheduleManager:
 
     def test_run_due_executes_command(self, tmp_path):
         manager = ScheduleManager(tmp_path)
-        manager.add("* * * * *", "echo hello")
+        # echo 是 Windows shell 内建命令, shell=False 下找不到可执行文件,
+        # 用 python -c 代替, 跨平台都能跑
+        if sys.platform == "win32":
+            manager.add("* * * * *", f'"{sys.executable}" -c "print(\'hello\')"')
+        else:
+            manager.add("* * * * *", "echo hello")
         results = manager.run_due(now=datetime(2030, 1, 1, 12, 0, 0))
         assert len(results) == 1
         assert results[0]["success"] is True
