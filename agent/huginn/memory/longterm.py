@@ -479,6 +479,24 @@ class LongTermMemory:
                 return dict(row)
             return None
 
+    def touch(self, entry_id: str) -> bool:
+        """Touch a memory entry to rejuvenate its TTL and increment access count.
+
+        Used by the distilled knowledge verification loop: when a tool
+        succeeds, related distilled knowledge entries are touched to
+        signal they were validated by real use.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                (datetime.now().isoformat(), entry_id),
+            )
+            conn.commit()
+            if cur.rowcount > 0:
+                self._rejuvenate([entry_id])
+                return True
+            return False
+
     def update(
         self,
         entry_id: str,

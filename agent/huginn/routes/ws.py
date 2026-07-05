@@ -43,9 +43,8 @@ _WS_HEARTBEAT_INTERVAL = 30.0
 # for the client to send "plan_confirm" with matching plan_id.
 _pending_plans: dict[str, asyncio.Future] = {}
 _pending_approvals: dict[str, asyncio.Future] = {}
-# Plan contexts: stored when plan_mode sends a plan to the client,
-# used by the plan_confirm handler to continue execution.
-_pending_plan_contexts: dict[str, dict] = {}
+# NOTE: _pending_plan_contexts is per-connection (defined inside
+# agent_websocket) to prevent cross-connection plan_id collisions.
 
 
 def _extract_task_progress(content: str) -> dict | None:
@@ -207,6 +206,10 @@ async def agent_websocket(websocket: WebSocket):
     # emits approval_request events so the client has full visibility.
     _pending_approvals: dict[str, asyncio.Future[bool]] = {}
     _ws_approval = _make_ws_approval_callback(websocket)
+
+    # Per-connection plan contexts: plan_id -> execution context.
+    # Local to this connection to prevent cross-user plan_id collisions.
+    _pending_plan_contexts: dict[str, dict] = {}
 
     # ── Heartbeat ────────────────────────────────────────────────
     # Track the last time we received a message from the client.  If
