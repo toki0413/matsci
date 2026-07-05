@@ -58,12 +58,24 @@ _SEARCH_FAIL_HINT = (
 
 
 class WebSearchInput(BaseModel):
-    query: str = Field(..., description="Search query string")
+    action: str = Field(
+        default="search",
+        description="search | fetch. search 跑搜索; fetch 抓取单个 URL 正文",
+    )
+    query: str = Field(default="", description="搜索 query (action=search 时用)")
+    url: str = Field(default="", description="要抓取的页面 URL (action=fetch 时用)")
     max_results: int = Field(
         default=5,
         ge=1,
         le=20,
         description="Maximum number of results to return (default 5)",
+    )
+    compact: bool = Field(
+        default=True,
+        description=(
+            "True: 返回索引化文本块 [0] 标题: 摘要..., 后续用 [0]/[1] 引用; "
+            "False: 返回原始结构化结果"
+        ),
     )
 
 
@@ -95,7 +107,16 @@ class WebSearchTool(HuginnTool):
         return WebSearchInput.model_json_schema()
 
     def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        """执行搜索。按优先级降级：Tavily → duckduckgo_search → urllib。"""
+        """执行搜索/抓取。action=search 按优先级降级：Tavily → duckduckgo_search → urllib。
+
+        compact=True (默认) 时把结果压成索引化文本块, 方便 LLM 用 [0]/[1] 引用。
+        """
+        action = (args.get("action") or "search").strip().lower()
+
+        if action == "fetch":
+            return self._fetch(args)
+
+        # ── search ──
         query = (args.get("query") or "").strip()
         if not query:
             return ToolResult(
@@ -125,16 +146,15 @@ class WebSearchTool(HuginnTool):
         if os.environ.get("TAVILY_API_KEY"):
             result = self._search_tavily(query, max_results)
             if result is not None:
-                return result
-            # Tavily 挂了就继续往下走
+                return self._maybe_compact(result, args)
 
         # 2) duckduckgo_search 库
         result = self._search_ddgs(query, max_results)
         if result is not None:
-            return result
+            return self._maybe_compact(result, args)
 
         # 3) urllib 兜底
-        return self._search_fallback(query, max_results)
+        return self._maybe_compact(self._search_fallback(query, max_results), args)
 
     async def call(self, args: dict, context: ToolContext) -> ToolResult:
         """HuginnTool 入口。放到线程池里跑，避免阻塞事件循环。"""
@@ -289,3 +309,152 @@ class WebSearchTool(HuginnTool):
                 }
             )
         return results
+
+    # ── 索引化输出 (BrowserAct 启发) ──────────────────────────────────
+
+    @staticmethod
+    def _maybe_compact(result: ToolResult, args: dict) -> ToolResult:
+        """compact=True 时把搜索结果压成 '[i] 标题: 摘要' 索引文本块.
+
+        原始 results 仍保留 (但精简成 index/title/url, 去掉 snippet 省 token),
+        后续 LLM/调用方可以用 [0]/[1] 直接引用某条结果. compact=False 时原样返回.
+        """
+        if not args.get("compact", True):
+            return result
+        # 浅拷一份, 不就地改调用方持有的 data
+        data = dict(result.data) if isinstance(result.data, dict) else {}
+        results = data.get("results") or []
+        lines = []
+        slim: list[dict[str, Any]] = []
+        for i, item in enumerate(results):
+            title = (item.get("title") or "").strip()
+            snippet = (item.get("snippet") or "").strip()
+            # 一行一条, 截断超长摘要避免刷屏
+            if len(snippet) > 300:
+                snippet = snippet[:297] + "..."
+            lines.append(f"[{i}] {title}: {snippet}" if snippet else f"[{i}] {title}")
+            slim.append({"index": i, "title": title, "url": item.get("url", "")})
+        data["indexed"] = "\n".join(lines)
+        data["results"] = slim
+        data["n_results"] = len(slim)
+        return ToolResult(
+            data=data,
+            success=result.success,
+            error=result.error,
+            new_messages=result.new_messages,
+            side_effects=result.side_effects,
+        )
+
+    # ── fetch: 抓取单个页面, 切块索引 ────────────────────────────────
+
+    def _fetch(self, args: dict) -> ToolResult:
+        """下载一个 URL 的正文, 去标签后切成索引化文本块返回."""
+        url = (args.get("url") or "").strip()
+        if not url:
+            return ToolResult(
+                data={"error": "url is required for fetch", "chunks": []},
+                success=False,
+                error="url is required for fetch",
+            )
+        if _web_search_disabled():
+            return ToolResult(
+                data={"url": url, "chunks": [], "error": "web_search disabled",
+                      "hint": _SEARCH_DISABLED_HINT},
+                success=False, error=_SEARCH_DISABLED_HINT,
+            )
+
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; HuginnAgent/1.0)",
+                    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
+                raw = resp.read()
+            # 大页面截断, 避免内存爆掉
+            if len(raw) > 2_000_000:
+                raw = raw[:2_000_000]
+            charset = "utf-8"
+            ctype = resp.headers.get("Content-Type", "")
+            m = re.search(r"charset=([\w-]+)", ctype, re.IGNORECASE)
+            if m:
+                charset = m.group(1)
+            html = raw.decode(charset, errors="ignore")
+        except Exception as exc:
+            logger.warning("fetch %s 失败: %s", url, exc)
+            return ToolResult(
+                data={"url": url, "chunks": [], "error": str(exc),
+                      "hint": _SEARCH_FAIL_HINT},
+                success=False, error=f"fetch failed: {exc}",
+            )
+
+        text = self._html_to_text(html)
+        compact = args.get("compact", True)
+        chunks = self._chunk_text(text, size=600)
+        data: dict[str, Any] = {
+            "url": url,
+            "n_chunks": len(chunks),
+            "title": self._extract_title(html),
+        }
+        if compact:
+            # 索引化: [0] 文本块...
+            data["indexed"] = "\n".join(f"[{i}] {c}" for i, c in enumerate(chunks))
+            data["chunks"] = [{"index": i, "preview": c[:80]} for i, c in enumerate(chunks)]
+        else:
+            data["chunks"] = [{"index": i, "text": c} for i, c in enumerate(chunks)]
+        return ToolResult(data=data, success=True)
+
+    @staticmethod
+    def _html_to_text(html: str) -> str:
+        """粗暴去标签 + 解码实体, 拿到可读正文. 不做完整 DOM 解析, 够 LLM 读就行."""
+        # 先抠 <script>/<style> 整块扔掉, 否则 JS 会污染正文
+        html = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        # 块级标签换行
+        html = re.sub(r"</(p|div|li|h[1-6]|tr|br)\s*>", "\n", html, flags=re.IGNORECASE)
+        html = re.sub(r"<br\s*/?>", "\n", html, flags=re.IGNORECASE)
+        # 去剩余标签
+        text = re.sub(r"<[^>]+>", "", html)
+        # 解码常见 HTML 实体
+        text = (text.replace("&nbsp;", " ").replace("&amp;", "&")
+                    .replace("&lt;", "<").replace("&gt;", ">")
+                    .replace("&quot;", '"').replace("&#39;", "'"))
+        # 压缩空白
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n\s*\n+", "\n\n", text)
+        return text.strip()
+
+    @staticmethod
+    def _extract_title(html: str) -> str:
+        m = re.search(r"<title[^>]*>(.*?)</title>", html, re.DOTALL | re.IGNORECASE)
+        if not m:
+            return ""
+        return re.sub(r"\s+", " ", m.group(1)).strip()
+
+    @staticmethod
+    def _chunk_text(text: str, size: int = 600) -> list[str]:
+        """按大致句子边界切块, 每块不超过 size 字符."""
+        if not text:
+            return []
+        # 按句号/换行粗切, 再拼到 size 附近. 不追求精确, 够用.
+        sentences = re.split(r"(?<=[。.!?\n])\s+", text)
+        chunks: list[str] = []
+        cur = ""
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+            if len(cur) + len(s) + 1 <= size:
+                cur = (cur + " " + s).strip()
+            else:
+                if cur:
+                    chunks.append(cur)
+                # 超长单句硬切
+                while len(s) > size:
+                    chunks.append(s[:size])
+                    s = s[size:]
+                cur = s
+        if cur:
+            chunks.append(cur)
+        return chunks

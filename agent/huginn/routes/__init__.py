@@ -60,6 +60,8 @@ from huginn.routes.terminal import router as terminal_router
 # 实时 3D 分子查看器: REST (load/trajectory/elements) + WebSocket (/ws/viewer3d)
 from huginn.routes.viewer3d import router as viewer3d_router
 from huginn.routes.viewer3d import ws_router as viewer3d_ws_router
+# 有状态 ipykernel 会话
+from huginn.routes.kernel import router as kernel_router
 
 ALL_ROUTERS = [
     advisor_router,
@@ -118,6 +120,8 @@ ALL_ROUTERS = [
     tunnels_router,
     transfer_router,
     terminal_router,
+    # 有状态 ipykernel 会话: 创建 / 执行 / 查状态 / 关闭
+    kernel_router,
 ]
 
 # ── API versioning ──────────────────────────────────────────────────
