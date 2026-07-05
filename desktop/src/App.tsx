@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+﻿import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -39,6 +39,13 @@ interface Message {
   tool_status?: "running" | "done" | "error";
   tool_result?: string;
   tool_call_id?: string;
+  // Plan mode: structured plan card from agent
+  isPlan?: boolean;
+  planId?: string;
+  planData?: any;
+  // Clarification: interactive question cards from agent
+  isClarification?: boolean;
+  clarifications?: any[];
 }
 
 interface ToolInfo {
@@ -173,7 +180,9 @@ const DEFAULT_CONFIG: AppConfig = {
   encryption_key_file: "",
 };
 
-const PERSONAS = [
+// Persona list — loaded dynamically from backend /personas endpoint.
+// Falls back to this minimal list if the API is unavailable.
+const PERSONAS_FALLBACK = [
   { id: "default", label: "Default Materials Scientist" },
   { id: "dft_expert", label: "DFT Expert" },
   { id: "md_expert", label: "MD Expert" },
@@ -1116,6 +1125,12 @@ export default function App() {
   const [toolArgs, setToolArgs] = useState<Record<string, any>>({});
   const [toolResult, setToolResult] = useState<string>("");
   const [toolLoading, setToolLoading] = useState(false);
+
+  // Persona state — dynamically loaded from backend
+  const [personaList, setPersonaList] = useState<{ id: string; label: string; description?: string; avatar?: string }[]>(PERSONAS_FALLBACK);
+  const [personaEmotion, setPersonaEmotion] = useState<{ mood: string; valence: number; arousal: number; trust: number } | null>(null);
+  // Pending clarification questions from agent
+  const [pendingClarifications, setPendingClarifications] = useState<{ question_id?: string; question: string; options?: string[]; thread_id?: string }[]>([]);
 
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
@@ -2515,6 +2530,47 @@ export default function App() {
     }
   }, [activeTab, tools.length, skills.length]);
 
+  // ── Dynamic persona loading from backend ──────────────────────
+  useEffect(() => {
+    api.get('/personas')
+      .then((resp) => {
+        if (resp.ok && resp.data) {
+          const data = resp.data as any;
+          const personas = (data.personas || data || []).map((p: any) => ({
+            id: p.name || p.id,
+            label: p.name || p.id,
+            description: p.description || '',
+            avatar: p.avatar || '',
+          }));
+          if (personas.length > 0) {
+            setPersonaList(personas);
+          }
+        }
+      })
+      .catch(() => { /* keep fallback list */ });
+  }, []);
+
+  // ── Load persona emotion when persona changes ──────────────────
+  useEffect(() => {
+    if (!config.persona || config.persona === 'default') {
+      setPersonaEmotion(null);
+      return;
+    }
+    api.get(`/personas/${config.persona}/emotion`)
+      .then((resp) => {
+        if (resp.ok && resp.data) {
+          const d = resp.data as any;
+          setPersonaEmotion({
+            mood: d.context_prompt?.slice(0, 80) || '',
+            valence: d.state?.valence ?? 0,
+            arousal: d.state?.arousal ?? 0,
+            trust: d.state?.trust ?? 0.5,
+          });
+        }
+      })
+      .catch(() => { /* emotion not available */ });
+  }, [config.persona]);
+
   const handleWsMessage = (data: any) => {
     switch (data.type) {
       case "text_delta":
@@ -2681,6 +2737,33 @@ export default function App() {
         ]);
         break;
       }
+      case "clarification_request": {
+        // Agent is asking clarifying questions before proceeding.
+        // Render as interactive question cards in the chat.
+        const questions = data.questions || [];
+        const questionText = questions.map((q: any, i: number) => {
+          const opts = q.options ? q.options.map((o: string) => `[${o}]`).join(" ") : "";
+          return `${i + 1}. ${q.question || q}${opts ? " " + opts : ""}`;
+        }).join("\n");
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `❓ Please clarify:\n${questionText}`,
+            timestamp: formatTime(),
+            isClarification: true,
+            clarifications: questions,
+          } as Message,
+        ]);
+        // Store for interactive UI rendering
+        setPendingClarifications(questions.map((q: any) => ({
+          question_id: q.question_id,
+          question: q.question || q,
+          options: q.options || [],
+          thread_id: data.thread_id,
+        })));
+        break;
+      }
     }
   };
 
@@ -2724,6 +2807,40 @@ export default function App() {
       wsClientRef.current.send(payload);
     } else if (wsRef.current) {
       wsRef.current.send(payload);
+    }
+  };
+
+  // ── Answer clarification questions ────────────────────────────
+  // Called when user clicks an option button or types an answer to
+  // a clarification_request. Sends the answer via WS and clears
+  // the pending clarifications.
+  const answerClarification = (questionId: string | undefined, answer: string) => {
+    const payload = JSON.stringify({
+      type: "clarification_response",
+      question_id: questionId,
+      answer,
+      thread_id: activeThread,
+    });
+    if (wsClientRef.current) {
+      wsClientRef.current.send(payload);
+    } else if (wsRef.current) {
+      wsRef.current.send(payload);
+    }
+    // Add user's answer to chat
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: answer, timestamp: formatTime() },
+    ]);
+    setPendingClarifications([]);
+  };
+
+  // ── Switch persona mid-conversation ────────────────────────────
+  const switchPersona = async (personaName: string) => {
+    try {
+      await api.post(`/personas/${personaName}/switch`, {});
+      setConfig((prev) => ({ ...prev, persona: personaName }));
+    } catch (e) {
+      console.error("Failed to switch persona:", e);
     }
   };
 
@@ -3114,6 +3231,34 @@ export default function App() {
                         <div className="text-[15px] leading-relaxed">
                           <MessageContent content={msg.content} />
                         </div>
+                        {/* Interactive clarification question cards */}
+                        {msg.isClarification && msg.clarifications && (
+                          <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
+                            {msg.clarifications.map((q: any, qi: number) => (
+                              <div key={qi} className="rounded-lg bg-bg-tertiary p-3">
+                                <div className="text-sm font-medium text-text-primary">
+                                  {q.question || q}
+                                </div>
+                                {q.options && q.options.length > 0 ? (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {q.options.map((opt: string) => (
+                                      <button
+                                        key={opt}
+                                        onClick={() => answerClarification(q.question_id, opt)}
+                                        className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20 transition-colors"
+                                      >
+                                        {opt}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                            <div className="text-xs text-text-tertiary">
+                              Type your answer or click an option above
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -3125,6 +3270,12 @@ export default function App() {
                 {!isConnected && (
                   <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
                     Backend is not connected. Start the server to send messages, or configure it in Settings.
+                  </div>
+                )}
+
+                {pendingClarifications.length > 0 && (
+                  <div className="mb-3 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs text-accent">
+                    💡 Agent is waiting for your clarification — answer above or type below
                   </div>
                 )}
 
@@ -4474,13 +4625,28 @@ export default function App() {
                         <label className="mb-1.5 block text-xs font-medium text-text-secondary">Persona</label>
                         <select
                           value={config.persona}
-                          onChange={(e) => { const next = { ...config, persona: e.target.value }; setConfig(next); setConfigDirty(true); }}
+                          onChange={(e) => {
+                            const next = { ...config, persona: e.target.value };
+                            setConfig(next);
+                            setConfigDirty(true);
+                            switchPersona(e.target.value);
+                          }}
                           className="input"
                         >
-                          {PERSONAS.map((p) => (
-                            <option key={p.id} value={p.id}>{p.label}</option>
+                          {personaList.map((p) => (
+                            <option key={p.id} value={p.id}>{p.label}{p.description ? ` — ${p.description.slice(0, 40)}` : ""}</option>
                           ))}
                         </select>
+                        {personaEmotion && (
+                          <div className="mt-1.5 text-xs text-text-tertiary">
+                            <span className="inline-flex items-center gap-1">
+                              <span className="inline-block h-2 w-2 rounded-full" style={{
+                                backgroundColor: personaEmotion.valence > 0 ? "#7ee787" : personaEmotion.valence < -0.3 ? "#f85149" : "#8b949e"
+                              }} />
+                              {personaEmotion.mood || "neutral mood"}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <div className="md:col-span-2">
                         <label className="flex cursor-pointer items-center gap-2">
@@ -4687,7 +4853,7 @@ export default function App() {
                               value={a.persona}
                               onChange={(e) => updateAgent(i, { persona: e.target.value })}
                             >
-                              {PERSONAS.map((p) => (
+                              {personaList.map((p) => (
                                 <option key={p.id} value={p.id}>{p.label}</option>
                               ))}
                             </select>
@@ -5308,3 +5474,4 @@ export default function App() {
     </div>
   );
 }
+

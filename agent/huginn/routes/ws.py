@@ -549,7 +549,48 @@ async def agent_websocket(websocket: WebSocket):
                     seen_tool_results: set[str] = set()
                     auto_cp_id: str | None = None
                     workspace_path = Path(cfg_chat.workspace).resolve()
+
+                    # Check for clarification questions in state metadata
+                    _clarify_sent = False
+
                     async for state in agent.chat(content, thread_id):
+                        # ── Clarification support ────────────────────
+                        # When the agent decides the user's request is
+                        # ambiguous, it sets needs_clarification=True and
+                        # attach a list of clarify_questions. We send these
+                        # as a structured WS message so the frontend can
+                        # render interactive question cards.
+                        if (
+                            not _clarify_sent
+                            and state.get("needs_clarification")
+                            and state.get("clarify_questions")
+                        ):
+                            questions = state["clarify_questions"]
+                            await websocket.send_json(
+                                {
+                                    "type": "clarification_request",
+                                    "thread_id": thread_id,
+                                    "questions": questions,
+                                }
+                            )
+                            _clarify_sent = True
+                            # Also send the agent's text (the questions
+                            # phrased as natural language)
+                            messages = state.get("messages", [])
+                            if messages:
+                                last_msg = messages[-1]
+                                text = (
+                                    last_msg.content
+                                    if hasattr(last_msg, "content")
+                                    else str(last_msg)
+                                )
+                                if text:
+                                    await websocket.send_json(
+                                        {"type": "text_delta", "text": text}
+                                    )
+                            await websocket.send_json({"type": "done"})
+                            break
+
                         messages = state.get("messages", [])
                         if not messages:
                             continue
@@ -749,6 +790,28 @@ async def agent_websocket(websocket: WebSocket):
                 future = _pending_plans.pop(plan_id, None)
                 if future is not None and not future.done():
                     future.set_result({"confirmed": confirmed, "edited_plan": edited_plan})
+
+            elif msg_type == "clarification_response":
+                # User answered a clarification_request. Resolve the
+                # pending clarification via the ClarificationManager.
+                question_id = data.get("question_id")
+                answer = data.get("answer", "")
+                thread_id = data.get("thread_id", "default")
+                if question_id:
+                    from huginn.interaction.clarification import (
+                        ClarificationManager,
+                    )
+
+                    mgr = ClarificationManager()
+                    mgr.resolve(question_id, answer)
+                else:
+                    # Resolve all pending for this thread
+                    from huginn.interaction.clarification import (
+                        ClarificationManager,
+                    )
+
+                    mgr = ClarificationManager()
+                    mgr.resolve_thread(thread_id, answer)
 
             elif msg_type == "set_auto_approve":
                 # Let the client toggle auto-approve for this session.
