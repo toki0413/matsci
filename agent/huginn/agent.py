@@ -1222,7 +1222,29 @@ class HuginnAgent:
 
     def _build_kb_text(self, query: str) -> str:
         """Query the domain knowledge base. Delegates to ContextBuilder."""
-        return self._ctx_builder.build_kb_text(query)
+        builder = getattr(self, "_ctx_builder", None)
+        if builder is not None:
+            return builder.build_kb_text(query)
+        # Fallback: query _kb directly (used when __init__ was bypassed)
+        if not getattr(self, "kb_enabled", False):
+            return ""
+        kb = getattr(self, "_kb", None)
+        if kb is None or kb.count() == 0:
+            return ""
+        chunks = kb.query(query, top_k=5)
+        if not chunks:
+            return ""
+        lines = []
+        for i, c in enumerate(chunks, 1):
+            text = (c.get("text") or "").strip()
+            if not text:
+                continue
+            if len(text) > 800:
+                text = text[:800] + "…"
+            lines.append(f"[{i}] {text}")
+        if not lines:
+            return ""
+        return "### Domain Knowledge Context\n" + "\n".join(lines) + "\n"
 
     def _build_state_modifier(self) -> list[SystemMessage]:
         """Static system message used as the graph state modifier."""

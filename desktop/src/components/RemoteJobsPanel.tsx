@@ -119,7 +119,7 @@ export function RemoteJobsPanel() {
           No remote jobs yet. Submit a job via SSH to see it here.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="cv-list space-y-2">
           {jobs.map((job) => {
             const active = job.status === "PENDING" || job.status === "RUNNING";
             return (

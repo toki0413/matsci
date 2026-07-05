@@ -177,9 +177,10 @@ class KernelSession:
         fd, path = tempfile.mkstemp(suffix=".pkl", prefix="huginn_kernel_")
         os.close(fd)
         self._state_file = path
-        # 初始化空命名空间
+        # 空命名空间即可, exec 会自动注入 __builtins__; 不要 pickle
+        # __builtins__ 本身——在模块上下文里它是 module, 含 PyCapsule 无法 pickle
         with open(path, "wb") as f:
-            pickle.dump({"__builtins__": __builtins__}, f)
+            pickle.dump({}, f)
 
     def _subprocess_exec(self, code: str) -> KernelExecResult:
         if not self._state_file:
@@ -193,7 +194,7 @@ class KernelSession:
             "    with open(_sf, 'rb') as _f:\n"
             "        _g = pickle.load(_f)\n"
             "except Exception:\n"
-            "    _g = {'__builtins__': __builtins__}\n"
+            "    _g = {}\n"
             "_out, _err = io.StringIO(), io.StringIO()\n"
             "_so, _se = sys.stdout, sys.stderr\n"
             "sys.stdout, sys.stderr = _out, _err\n"
@@ -202,11 +203,23 @@ class KernelSession:
             "except Exception:\n"
             "    traceback.print_exc(file=_err)\n"
             "sys.stdout, sys.stderr = _so, _se\n"
+            # 存回前剥掉 __builtins__: exec 会把它塞进 _g (module 形态),
+            # 而 module 含 PyCapsule 无法 pickle, 必须排除
+            "_g.pop('__builtins__', None)\n"
+            # 原子写: pickle 到临时文件再 os.replace, 避免 dump 中途失败
+            # (globals 里有不可 pickle 的对象如 module/file) 把状态文件写坏,
+            # 写坏的文件下次 load 会变成空命名空间, 丢光所有变量
+            "import os as _os, tempfile as _tf\n"
+            "_fd, _tmp = _tf.mkstemp(dir=_os.path.dirname(_sf) or '.')\n"
+            "_os.close(_fd)\n"
             "try:\n"
-            "    with open(_sf, 'wb') as _f:\n"
+            "    with open(_tmp, 'wb') as _f:\n"
             "        pickle.dump(_g, _f)\n"
+            "    _os.replace(_tmp, _sf)\n"
             "except Exception as _e:\n"
             "    _err.write('warning: state pickle failed: ' + repr(_e) + '\\n')\n"
+            "    try: _os.unlink(_tmp)\n"
+            "    except OSError: pass\n"
             "sys.stdout.write(_out.getvalue())\n"
             "sys.stderr.write(_err.getvalue())\n"
         )
@@ -222,13 +235,16 @@ class KernelSession:
                 status="timeout", error="subprocess execution timeout"
             )
         stderr = proc.stderr or ""
+        # 用户代码抛异常时 traceback 走 stderr, 据此回填 error 状态,
+        # 否则 subprocess 路径永远报 ok, 错误被吞掉
+        had_error = "Traceback (most recent call last)" in stderr
         # subprocess 模式拿不到 inline 图像, 只有文本
         return KernelExecResult(
             stdout=proc.stdout or "",
             stderr=stderr,
             images=[],
-            error=None,
-            status="ok",
+            error=stderr if had_error else None,
+            status="error" if had_error else "ok",
         )
 
     # ── 公共接口 ─────────────────────────────────────────────────

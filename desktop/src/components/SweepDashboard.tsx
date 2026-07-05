@@ -618,7 +618,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
                   <th className="px-3 py-2 font-medium">Duration</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="cv-list">
                 {jobs.map((job, idx) => (
                   <>
                     <tr

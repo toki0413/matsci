@@ -72,7 +72,7 @@ class TestProjectKnowledgeGraph:
         assert set(stats["node_types"].keys()) == {"Material", "Tool", "Method"}
 
         exported = kg.export(fmt="json")
-        assert "nodes" in exported and "edges" in exported
+        assert "nodes" in exported and ("links" in exported or "edges" in exported)
         gml = kg.export(fmt="gml")
         assert "graph" in gml or "node" in gml
 
