@@ -46,6 +46,61 @@ _pending_plans: dict[str, asyncio.Future] = {}
 _pending_approvals: dict[str, asyncio.Future] = {}
 
 
+def _extract_task_progress(content: str) -> dict | None:
+    """Detect HPC job / sweep / long-running task info from tool output.
+
+    Returns a dict suitable for sending as ``task_progress`` WS message,
+    or None if no progress info is detected.
+    """
+    import re
+
+    text = content.lower()
+
+    # HPC job submitted: "job_id: 12345" or "submitted job 12345"
+    job_match = re.search(r"job[_ ]?(?:id)?[:\s]+(\d+)", text)
+    if job_match and any(
+        kw in text for kw in ("submit", "hpc", "slurm", "qsub", "queue")
+    ):
+        job_id = job_match.group(1)
+        status = "queued"
+        if "running" in text:
+            status = "running"
+        elif "complet" in text or "finish" in text:
+            status = "completed"
+        elif "fail" in text or "error" in text:
+            status = "failed"
+        return {
+            "task_type": "hpc_job",
+            "job_id": job_id,
+            "status": status,
+            "message": content[:200],
+        }
+
+    # Parameter sweep progress: "3/10 complete" or "progress: 30%"
+    sweep_match = re.search(r"(\d+)\s*/\s*(\d+)\s*(?:complet|done|finish)", text)
+    if sweep_match:
+        done = int(sweep_match.group(1))
+        total = int(sweep_match.group(2))
+        return {
+            "task_type": "sweep",
+            "completed": done,
+            "total": total,
+            "progress_pct": round(done / total * 100, 1) if total else 0,
+            "message": content[:200],
+        }
+
+    pct_match = re.search(r"progress[:\s]+(\d+(?:\.\d+)?)\s*%", text)
+    if pct_match:
+        pct = float(pct_match.group(1))
+        return {
+            "task_type": "progress",
+            "progress_pct": pct,
+            "message": content[:200],
+        }
+
+    return None
+
+
 async def send_plan_and_wait(
     websocket: WebSocket,
     plan: dict,
@@ -522,6 +577,7 @@ async def agent_websocket(websocket: WebSocket):
                         continue
 
                 # Augment with RAG context if enabled
+                _rag_sources = []  # collect citation sources for this turn
                 if (
                     cfg_chat.rag_enabled
                     and get_context().kb is not None
@@ -539,8 +595,16 @@ async def agent_websocket(websocket: WebSocket):
                                 f"{context}\n\n"
                                 f"Question: {content}"
                             )
+                            # Collect source metadata for frontend citation display
+                            for i, c in enumerate(chunks):
+                                _rag_sources.append({
+                                    "ref": i + 1,
+                                    "filename": c.get("filename") or c.get("source") or "unknown",
+                                    "text": (c.get("text") or "")[:200],
+                                    "distance": c.get("distance"),
+                                })
                     except Exception as e:
-                        print(f"[RAG] query failed: {e}")
+                        logger.warning("[RAG] query failed: %s", e)
 
                 # Stream agent responses
                 try:
@@ -639,15 +703,30 @@ async def agent_websocket(websocket: WebSocket):
                             tid = getattr(last_msg, "tool_call_id", None)
                             if tid and tid not in seen_tool_results:
                                 seen_tool_results.add(tid)
+                                tool_content = str(
+                                    getattr(last_msg, "content", "")
+                                )
                                 await websocket.send_json(
                                     {
                                         "type": "tool_result",
                                         "id": tid,
-                                        "content": str(
-                                            getattr(last_msg, "content", "")
-                                        ),
+                                        "content": tool_content,
                                     }
                                 )
+
+                                # ── Long task progress detection ──────
+                                # When a tool result contains HPC job info,
+                                # sweep progress, or long-running task markers,
+                                # send a structured task_progress message so
+                                # the frontend can render a progress card.
+                                _progress = _extract_task_progress(
+                                    tool_content
+                                )
+                                if _progress:
+                                    await websocket.send_json({
+                                        "type": "task_progress",
+                                        **_progress,
+                                    })
 
                         # Only send text delta for assistant content
                         if hasattr(last_msg, "content") and not isinstance(
@@ -680,6 +759,50 @@ async def agent_websocket(websocket: WebSocket):
                             "criteria": criteria_results,
                             "all_passed": all(c["passed"] for c in criteria_results),
                         })
+
+                    # Send citations if RAG was used this turn
+                    if _rag_sources:
+                        await websocket.send_json({
+                            "type": "citations",
+                            "sources": _rag_sources,
+                        })
+
+                    # ── Auto-sediment to knowledge base ───────────────
+                    # When RAG is enabled and the agent produced a
+                    # substantial response, automatically store the
+                    # Q&A pair into the knowledge base for future
+                    # retrieval. This creates a self-growing KB where
+                    # each conversation enriches the corpus.
+                    if (
+                        cfg_chat.rag_enabled
+                        and full_response
+                        and len(full_response) > 50
+                        and get_context().kb is not None
+                    ):
+                        try:
+                            import time as _time
+
+                            sediment_text = (
+                                f"Q: {content[:500]}\n\n"
+                                f"A: {full_response[:2000]}"
+                            )
+                            get_context().kb.ingest(
+                                text=sediment_text,
+                                metadata={
+                                    "type": "conversation",
+                                    "thread_id": thread_id,
+                                    "timestamp": _time.time(),
+                                    "source": "auto_sediment",
+                                },
+                            )
+                            await websocket.send_json({
+                                "type": "sediment",
+                                "stored": True,
+                                "preview": sediment_text[:100],
+                            })
+                        except Exception:
+                            # Sediment failure should never block the response
+                            logger.debug("auto-sediment failed", exc_info=True)
 
                     # Signal completion
                     await websocket.send_json({"type": "done"})
