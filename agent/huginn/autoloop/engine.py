@@ -107,6 +107,8 @@ class AutoloopResult:
     trajectory_path: str | None = None
     goal_achieved: bool | None = None
     goal_judgment: dict[str, Any] | None = None
+    # 落盘的 provenance JSONL, run 结束后可回放整条 tool chain
+    provenance_path: str | None = None
 
 
 class AutoloopEngine:
@@ -487,6 +489,20 @@ class AutoloopEngine:
         start_time = time.time()
         phases: list[LoopPhase] = []
 
+        # provenance: 串起本次 run 的 tool chain, 结束时 append 到 .huginn/provenance.jsonl.
+        # _execute 每跑一次工具往 record add_snapshot, 这里只建壳子.
+        # 跟 _iteration/_budget 同一套路: 实例属性, 不支持并发 run.
+        from huginn.provenance import ProvenanceLogger, ProvenanceRecord
+        provenance_logger = ProvenanceLogger(
+            self.workspace / ".huginn" / "provenance.jsonl"
+        )
+        provenance_record = ProvenanceRecord(
+            run_id=run_id,
+            objective=objective,
+            timestamps={"start": datetime.now().isoformat()},
+        )
+        self._provenance_record = provenance_record
+
         # 给本次 run 挂一个独立的 telemetry collector, _run_phase 会往里写 span.
         # run 结束时落盘到 .huginn/trajectories/, 让 replay 命令能回放.
         from huginn.telemetry import TelemetryCollector, set_telemetry_collector
@@ -721,6 +737,15 @@ class AutoloopEngine:
         except Exception as e:
             print(f"[Autoloop] GoalJudge skipped: {e}")
 
+        # provenance 落盘: 把整条 tool chain append 到 JSONL, 失败不阻断返回
+        provenance_path = None
+        try:
+            provenance_record.timestamps["end"] = datetime.now().isoformat()
+            provenance_logger.log(provenance_record)
+            provenance_path = str(provenance_logger.path)
+        except Exception:
+            provenance_path = None
+
         return AutoloopResult(
             run_id=run_id,
             objective=objective,
@@ -731,6 +756,7 @@ class AutoloopEngine:
             trajectory_path=str(trajectory_path) if trajectory_path else None,
             goal_achieved=goal_achieved,
             goal_judgment=goal_judgment,
+            provenance_path=provenance_path,
         )
 
     def stop(self) -> None:
@@ -970,22 +996,43 @@ class AutoloopEngine:
 
         if mode == "coder":
             # Use CoderRunner to modify code
-            return await self._execute_coder(description, context)
+            result = await self._execute_coder(description, context)
         elif mode == "workflow":
             # Use WorkflowEngine to run computational pipeline
             result = await self._execute_workflow(description, context)
             # On failure, try applying a learned heuristic fix before giving up
             if isinstance(result, dict) and not result.get("success", True):
                 result = await self._try_evolved_fix(mode, description, result) or result
-            return result
         elif mode == "dynamic_workflow":
             # A5: agent 写的并行 subtask 脚本, orchestrator 并发跑
-            return await self._execute_dynamic_workflow(plan, context)
+            result = await self._execute_dynamic_workflow(plan, context)
         elif mode == "explore":
             # Use ExplorationOrchestrator to search design space
-            return await self._execute_explore(description, context)
+            result = await self._execute_explore(description, context)
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
+
+        # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
+        self._record_provenance(mode, plan, result)
+        return result
+
+    def _record_provenance(
+        self, tool_name: str, input_params: dict[str, Any], output: Any
+    ) -> None:
+        """往当前 run 的 provenance record 追加一次 tool-call 快照.
+
+        run() 启动时建好 self._provenance_record; 没建 (比如单测里直接调
+        _execute) 就跳过, 不强求调用方先 setup. provenance 是 best-effort,
+        快照挂了不能把 execute 带挂.
+        """
+        record = getattr(self, "_provenance_record", None)
+        if record is None:
+            return
+        try:
+            from huginn.provenance import capture
+            record.add_snapshot(capture(tool_name, input_params, output=output))
+        except Exception:
+            pass
 
     async def _try_evolved_fix(
         self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]
