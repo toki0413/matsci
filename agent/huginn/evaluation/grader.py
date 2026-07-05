@@ -4,6 +4,7 @@
 evaluation 包的导入路径向后兼容.
 """
 from huginn.validation.grader import (
+    BenchGrader,
     DimensionalGrader,
     GraderRegistry,
     GraderResult,
@@ -19,6 +20,7 @@ __all__ = [
     "DimensionalGrader",
     "RedTeamGrader",
     "HallucinationGrader",
+    "BenchGrader",
     "GraderRegistry",
     "default_registry",
 ]
