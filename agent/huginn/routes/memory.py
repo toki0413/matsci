@@ -163,3 +163,26 @@ async def memory_maintenance(params: dict[str, Any] | None = None) -> dict[str, 
     except Exception as e:
         logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+@router.post("/memory/lint")
+async def memory_lint(params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """LLM Wiki Lint: knowledge base health check.
+
+    Scans the long-term memory for contradictions, orphan entries,
+    stale assertions, low-confidence distilled knowledge, and
+    cross-reference candidates.
+
+    Inspired by Karpathy's LLM Wiki concept — periodically checking
+    the knowledge base for issues that manual review would miss.
+    """
+    try:
+        agent = await get_agent()
+        p = params or {}
+        report = agent.memory.longterm.lint(
+            limit=p.get("limit", 100),
+        )
+        return {"success": True, "report": report}
+    except Exception as e:
+        logger.error("lint error", exc_info=True)
+        return {"success": False, "error": str(e)}

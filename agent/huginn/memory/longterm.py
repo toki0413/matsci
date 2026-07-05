@@ -704,3 +704,168 @@ class LongTermMemory:
         if deduplicate:
             summary["deduplicated"] = self.deduplicate()
         return summary
+
+    def lint(self, limit: int = 100) -> dict[str, Any]:
+        """LLM Wiki Lint: knowledge base health check.
+
+        Inspired by Karpathy's LLM Wiki concept — periodically scan
+        the knowledge base for contradictions, orphan entries, stale
+        assertions, and missing cross-references.
+
+        Returns a report dict with issues found.
+        """
+        import re as _re
+
+        report: dict[str, Any] = {
+            "total_entries": 0,
+            "contradictions": [],
+            "orphans": [],
+            "stale": [],
+            "low_confidence": [],
+            "cross_ref_candidates": [],
+            "summary": "",
+        }
+
+        with self._connect() as conn:
+            alive_where, alive_params = self._where_alive()
+            rows = conn.execute(
+                f"""SELECT * FROM memories WHERE {alive_where}
+                    ORDER BY importance DESC, access_count DESC
+                    LIMIT ?""",
+                (*alive_params, limit),
+            ).fetchall()
+
+        report["total_entries"] = len(rows)
+        if not rows:
+            report["summary"] = "No entries to lint."
+            return report
+
+        # Collect entries by category for cross-reference analysis
+        entries_by_category: dict[str, list[dict]] = {}
+        all_entries = []
+        for row in rows:
+            entry = dict(row)
+            all_entries.append(entry)
+            cat = entry.get("category", "unknown")
+            entries_by_category.setdefault(cat, []).append(entry)
+
+        # 1. Find contradictions: entries in same category with
+        # conflicting numeric values (e.g., "band_gap = 1.12" vs
+        # "band_gap = 1.15" for the same material)
+        for cat, entries in entries_by_category.items():
+            if len(entries) < 2:
+                continue
+            for i, e1 in enumerate(entries):
+                for e2 in entries[i + 1:]:
+                    # Check if entries reference same material/formula
+                    f1 = (e1.get("formula") or "").lower()
+                    f2 = (e2.get("formula") or "").lower()
+                    if f1 and f2 and f1 == f2:
+                        # Same formula — check for numeric conflicts
+                        nums1 = set(
+                            _re.findall(
+                                r"(\d+\.?\d*)\s*(?:eV|eV/atom|eV/\u00c5|GPa|K|THz|\u00c5)",
+                                e1.get("content", ""),
+                            )
+                        )
+                        nums2 = set(
+                            _re.findall(
+                                r"(\d+\.?\d*)\s*(?:eV|eV/atom|eV/\u00c5|GPa|K|THz|\u00c5)",
+                                e2.get("content", ""),
+                            )
+                        )
+                        if nums1 and nums2 and nums1 != nums2:
+                            report["contradictions"].append({
+                                "formula": f1,
+                                "entry1_id": e1["id"],
+                                "entry1_nums": list(nums1)[:5],
+                                "entry2_id": e2["id"],
+                                "entry2_nums": list(nums2)[:5],
+                                "category": cat,
+                            })
+
+        # 2. Find orphans: entries never accessed (access_count = 0)
+        # and older than 7 days
+        for entry in all_entries:
+            if entry.get("access_count", 0) == 0:
+                created = entry.get("created_at", "")
+                try:
+                    age_days = (
+                        datetime.now() - datetime.fromisoformat(created)
+                    ).days
+                    if age_days > 7:
+                        report["orphans"].append({
+                            "id": entry["id"],
+                            "category": entry.get("category"),
+                            "age_days": age_days,
+                            "content_preview": (entry.get("content") or "")[:80],
+                        })
+                except Exception:
+                    pass
+
+        # 3. Find stale: long-tier entries not accessed in 30+ days
+        for entry in all_entries:
+            if entry.get("tier") == "long":
+                last_accessed = entry.get("last_accessed") or entry.get(
+                    "created_at", ""
+                )
+                try:
+                    age_days = (
+                        datetime.now() - datetime.fromisoformat(last_accessed)
+                    ).days
+                    if age_days > 30:
+                        report["stale"].append({
+                            "id": entry["id"],
+                            "category": entry.get("category"),
+                            "days_since_access": age_days,
+                            "content_preview": (entry.get("content") or "")[:80],
+                        })
+                except Exception:
+                    pass
+
+        # 4. Find low confidence distilled knowledge
+        for entry in all_entries:
+            if entry.get("category") == "distilled_knowledge":
+                imp = entry.get("importance", 0)
+                if imp < 0.3:
+                    report["low_confidence"].append({
+                        "id": entry["id"],
+                        "importance": imp,
+                        "content_preview": (entry.get("content") or "")[:80],
+                    })
+
+        # 5. Cross-reference candidates: entries mentioning the same
+        # material/formula but in different categories (e.g., a
+        # calculation result and a distilled lesson about the same
+        # material should be cross-linked)
+        formula_map: dict[str, list[str]] = {}
+        for entry in all_entries:
+            formula = (entry.get("formula") or "").lower()
+            if formula:
+                formula_map.setdefault(formula, []).append(
+                    f"{entry['category']}:{entry['id']}"
+                )
+        for formula, refs in formula_map.items():
+            if len(refs) > 1:
+                report["cross_ref_candidates"].append({
+                    "formula": formula,
+                    "entries": refs,
+                })
+
+        # Build summary
+        issues = (
+            len(report["contradictions"])
+            + len(report["orphans"])
+            + len(report["stale"])
+            + len(report["low_confidence"])
+        )
+        report["summary"] = (
+            f"Linted {report['total_entries']} entries: "
+            f"{len(report['contradictions'])} contradictions, "
+            f"{len(report['orphans'])} orphans, "
+            f"{len(report['stale'])} stale, "
+            f"{len(report['low_confidence'])} low-confidence, "
+            f"{len(report['cross_ref_candidates'])} cross-ref candidates."
+        )
+
+        return report
