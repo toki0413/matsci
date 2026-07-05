@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import traceback
 import uuid
 from pathlib import Path
 
@@ -13,7 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import ValidationError
 
-from huginn.config import HuginnConfig, get_config
+from huginn.config import get_config
 from huginn.routes.schemas import WSMessage
 from huginn.server_core import (
     _EDIT_TOOLS,
@@ -197,7 +196,8 @@ async def agent_websocket(websocket: WebSocket):
 
     try:
         require_api_key(request=None, websocket=websocket)
-    except Exception:
+    except Exception as auth_exc:
+        logger.warning("WebSocket auth failed: %s", auth_exc)
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
@@ -225,8 +225,9 @@ async def agent_websocket(websocket: WebSocket):
             if idle > _WS_HEARTBEAT_INTERVAL:
                 try:
                     await websocket.send_json({"type": "ping", "ts": now})
-                except Exception:
+                except Exception as hb_exc:
                     # Client gone — exit heartbeat loop
+                    logger.debug("heartbeat send failed: %s", hb_exc)
                     return
 
     heartbeat_task = asyncio.create_task(_heartbeat())
@@ -695,7 +696,7 @@ async def agent_websocket(websocket: WebSocket):
                                                 }
                                             )
                                         except Exception as e:
-                                            print(f"[auto-cp] failed: {e}")
+                                            logger.debug("[auto-cp] failed: %s", e)
                                     await websocket.send_json(
                                         {
                                             "type": "tool_call",

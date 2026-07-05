@@ -2540,6 +2540,9 @@ export default function App() {
       onConnected: () => {
         // Sync local config to backend on connect/reconnect
         pushConfig(loadStoredConfig());
+        // Reset transient state that may be stale after reconnect
+        setPendingClarifications([]);
+        setIsStreaming(false);
       },
     });
 
