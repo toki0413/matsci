@@ -46,6 +46,13 @@ interface Message {
   // Clarification: interactive question cards from agent
   isClarification?: boolean;
   clarifications?: any[];
+  // Citations: RAG source references
+  isCitation?: boolean;
+  citationSources?: any[];
+  // Task progress: HPC job / sweep updates
+  isTaskProgress?: boolean;
+  taskType?: string;
+  jobId?: string;
 }
 
 interface ToolInfo {
@@ -2013,6 +2020,7 @@ export default function App() {
   const [kbQuery, setKbQuery] = useState<string>("");
   const [kbChunks, setKbChunks] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const parseFileInputRef = useRef<HTMLInputElement>(null);
 
   const loadKnowledge = async () => {
     try {
@@ -2043,6 +2051,45 @@ export default function App() {
       setKbMsg(`Upload error: ${e.message}`);
     }
   };
+
+  // ── Deep PDF document parsing (6-stage pipeline) ───────────────
+  // Uses /document/parse which runs M1-M6: PDF element extraction,
+  // figure data extraction, document graph, relation prediction,
+  // cross-modal validation, and info pack assembly.
+  const parseDocument = async (file: File) => {
+    setKbMsg("Parsing document (6-stage pipeline)…");
+    try {
+      const resp = await api.upload<any>('/document/parse', file, { timeout: 120_000 });
+      if (resp.ok && resp.data) {
+        const d = resp.data as any;
+        setKbMsg(
+          `✅ Parsed: ${d.info_packages || 0} info packages, ` +
+          `${d.graph?.nodes || 0} graph nodes, ` +
+          `${d.graph?.edges || 0} edges`
+        );
+        loadKnowledge();
+      } else {
+        setKbMsg(`Parse failed: ${resp.error?.message || 'unknown'}`);
+      }
+    } catch (e: any) {
+      setKbMsg(`Parse error: ${e.message}`);
+    }
+  };
+
+  // ── Load parsed document structure graph ────────────────────────
+  const loadDocumentGraph = useCallback(async (docId: string) => {
+    try {
+      const resp = await api.get<any>(`/document/${docId}/graph`);
+      if (resp.ok && resp.data) {
+        setKbMsg(
+          `📊 Document graph: ${(resp.data as any).nodes?.length || 0} nodes, ` +
+          `${(resp.data as any).edges?.length || 0} edges`
+        );
+        return resp.data;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, []);
 
   const deleteKnowledge = async (docId: string) => {
     try {
@@ -2762,6 +2809,67 @@ export default function App() {
           options: q.options || [],
           thread_id: data.thread_id,
         })));
+        break;
+      }
+      case "citations": {
+        // RAG citation sources — render as expandable source list
+        const sources = data.sources || [];
+        const sourceText = sources.map((s: any) =>
+          `[${s.ref}] ${s.filename}${s.distance ? ` (score: ${(1 - s.distance).toFixed(2)})` : ""}`
+        ).join("\n");
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `📎 Sources:\n${sourceText}`,
+            timestamp: formatTime(),
+            isCitation: true,
+            citationSources: sources,
+          } as Message,
+        ]);
+        break;
+      }
+      case "task_progress": {
+        // Long task progress (HPC job, sweep, etc.)
+        const tp = data;
+        let progressText = "";
+        if (tp.task_type === "hpc_job") {
+          const icon = tp.status === "completed" ? "✅" : tp.status === "failed" ? "❌" : tp.status === "running" ? "🔄" : "⏳";
+          progressText = `${icon} HPC Job ${tp.job_id}: ${tp.status}`;
+        } else if (tp.task_type === "sweep") {
+          progressText = `📊 Sweep: ${tp.completed}/${tp.total} (${tp.progress_pct}%)`;
+        } else {
+          progressText = `📈 Progress: ${tp.progress_pct}%`;
+        }
+        setMessages((prev) => {
+          // Update last progress message if same task, else add new
+          const last = prev[prev.length - 1];
+          if (last?.isTaskProgress && last.taskType === tp.task_type && last.jobId === tp.job_id) {
+            return [...prev.slice(0, -1), { ...last, content: progressText, timestamp: formatTime() }];
+          }
+          return [...prev, {
+            role: "assistant",
+            content: progressText,
+            timestamp: formatTime(),
+            isTaskProgress: true,
+            taskType: tp.task_type,
+            jobId: tp.job_id,
+          } as Message];
+        });
+        break;
+      }
+      case "sediment": {
+        // Knowledge base auto-sediment confirmation
+        if (data.stored) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: `💾 Result saved to knowledge base`,
+              timestamp: formatTime(),
+            },
+          ]);
+        }
         break;
       }
     }
@@ -3782,6 +3890,30 @@ export default function App() {
                     </p>
                   </div>
 
+                  {/* Deep PDF parsing — 6-stage document analysis pipeline */}
+                  <div className="mb-4 rounded-lg border border-accent/20 bg-accent/5 p-3">
+                    <input
+                      ref={parseFileInputRef}
+                      type="file"
+                      className="hidden"
+                      accept=".pdf"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) parseDocument(file);
+                        if (parseFileInputRef.current) parseFileInputRef.current.value = "";
+                      }}
+                    />
+                    <button
+                      onClick={() => parseFileInputRef.current?.click()}
+                      className="w-full rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+                    >
+                      📊 Deep PDF Parse
+                    </button>
+                    <p className="mt-1.5 text-xs text-text-muted">
+                      6-stage: extract → figures → graph → relations → validate → assemble
+                    </p>
+                  </div>
+
                   {kbMsg && (
                     <div className="mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
                       {kbMsg}
@@ -3803,12 +3935,21 @@ export default function App() {
                         className="mb-2 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2"
                       >
                         <span className="truncate text-xs text-text-primary">{doc.filename}</span>
-                        <button
-                          onClick={() => deleteKnowledge(doc.doc_id)}
-                          className="text-xs text-error hover:underline"
-                        >
-                          Delete
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => loadDocumentGraph(doc.doc_id)}
+                            className="text-xs text-accent hover:underline"
+                            title="View document structure graph"
+                          >
+                            📊
+                          </button>
+                          <button
+                            onClick={() => deleteKnowledge(doc.doc_id)}
+                            className="text-xs text-error hover:underline"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
