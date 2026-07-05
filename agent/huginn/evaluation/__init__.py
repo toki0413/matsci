@@ -2,6 +2,7 @@
 
 from huginn.evaluation.arena_store import ArenaRecord, ArenaStore
 from huginn.evaluation.core import evaluate
+from huginn.evaluation.goal_judge import GoalJudge
 from huginn.evaluation.grader import (
     BenchGrader,
     DimensionalGrader,
@@ -27,6 +28,7 @@ __all__ = [
     "BlindArena",
     "JudgeEvaluator",
     "JudgeResult",
+    "GoalJudge",
     # grader (实现在 validation 层, 这里 re-export)
     "GraderResult",
     "GraderRegistry",

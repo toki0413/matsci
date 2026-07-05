@@ -2336,6 +2336,24 @@ class HuginnAgent:
                 if self._main_fallback_override is not None:
                     self._main_fallback_override = None
                     self._agent_graph = None
+                # 自动落盘轨迹: turn 结束后把 telemetry span 树写到
+                # .huginn/trajectories/ 下, 让 replay 命令能读到.
+                # best-effort: 写失败不影响主流程
+                try:
+                    from huginn.telemetry import save_trajectory
+                    traj_dir = self.workspace / ".huginn" / "trajectories"
+                    traj_path = traj_dir / f"{thread_id}_{int(time.time())}.json"
+                    save_trajectory(
+                        self._telemetry_collector,
+                        traj_path,
+                        metadata={
+                            "thread_id": thread_id,
+                            "user_message": message[:200],
+                            "turn_count": self._turn_count,
+                        },
+                    )
+                except Exception:
+                    logger.debug("trajectory save failed", exc_info=True)
                 # STOP 事件: 一轮回复结束, 给 test_stop_hook 之类的钩子用
                 try:
                     stop_ctx = HookContext(
