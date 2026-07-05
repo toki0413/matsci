@@ -2634,6 +2634,53 @@ export default function App() {
         break;
       case "pong":
         break;
+      case "plan": {
+        // Structured plan from agent — render as a plan card
+        const planData = data.plan;
+        const planId = data.plan_id;
+        const steps = (planData?.steps || []).map((s: any, i: number) =>
+          `${i + 1}. **${s.name || "Step"}**: ${s.description || ""}`
+        ).join("\n");
+        const criteria = (planData?.acceptance_criteria || []).map((c: any) =>
+          `✅ ${c.criterion || c}`
+        ).join("\n");
+        const tools = (planData?.tools_needed || []).join(", ");
+        const planContent = `📋 **Plan**: ${planData?.summary || ""}\n\n${steps}\n${criteria ? `\n${criteria}\n` : ""}${tools ? `\n🔧 Tools: ${tools}` : ""}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: planContent,
+            timestamp: formatTime(),
+            isPlan: true,
+            planId,
+            planData,
+          } as Message,
+        ]);
+        // Auto-confirm for now (user can also click a confirm button)
+        // The backend will auto-confirm after 120s timeout anyway
+        if (wsClientRef.current) {
+          wsClientRef.current.send(JSON.stringify({
+            type: "plan_confirm",
+            plan_id: planId,
+            confirmed: true,
+          }));
+        }
+        break;
+      }
+      case "plan_result": {
+        // Validation results for acceptance criteria
+        const criteria = (data.criteria || []).map((c: any) =>
+          `${c.passed ? "✅" : "❌"} ${c.criterion}`
+        ).join("\n");
+        const allPassed = data.all_passed;
+        const resultContent = `${allPassed ? "🎉 All criteria passed!" : "⚠️ Some criteria failed"}\n${criteria}`;
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: resultContent, timestamp: formatTime() },
+        ]);
+        break;
+      }
     }
   };
 
