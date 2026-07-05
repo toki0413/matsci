@@ -14,11 +14,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+import os
+import xml.etree.ElementTree as ET
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import PlainTextResponse
 
 from huginn.bot.bridge import (
     BotConfig,
@@ -27,6 +32,14 @@ from huginn.bot.bridge import (
     set_config,
     start_bridge,
     stop_bridge,
+)
+from huginn.bot.wechat_bridge import (
+    WeChatConfig,
+    get_wechat_bridge,
+    get_wechat_config,
+    set_wechat_config,
+    start_wechat_bridge,
+    stop_wechat_bridge,
 )
 from huginn.security.auth import require_admin_key
 
@@ -164,3 +177,162 @@ async def onebot_event(event: dict[str, Any]) -> dict[str, Any]:
         logger.error("处理 OneBot 事件失败", exc_info=True)
         # 返回 200 避免 go-cqhttp 反复重试
         return {"status": "error", "error": str(e)}
+
+
+# ── WeChat (iLink) 桥接管理 ─────────────────────────────────────────
+
+
+@router.get("/bot/wechat/status", dependencies=[Depends(require_admin_key)])
+async def wechat_status() -> dict[str, Any]:
+    """查看 wechat bridge 运行状态."""
+    bridge = get_wechat_bridge()
+    if bridge is None:
+        return {
+            "running": False,
+            "enabled": get_wechat_config().enabled,
+            "stats": None,
+        }
+    return bridge.get_status()
+
+
+@router.post("/bot/wechat/start", dependencies=[Depends(require_admin_key)])
+async def wechat_start() -> dict[str, Any]:
+    """启动 wechat bridge (iLink 长轮询)."""
+    cfg = get_wechat_config()
+    if not cfg.enabled:
+        return {
+            "success": False,
+            "error": "wechat 未启用, 请先 PUT /bot/wechat/config 设 enabled=true",
+        }
+    bridge = get_wechat_bridge()
+    if bridge is not None and bridge.is_running:
+        return {"success": True, "message": "wechat 已在运行", "status": bridge.get_status()}
+    try:
+        bridge = await start_wechat_bridge()
+        return {"success": True, "status": bridge.get_status()}
+    except Exception as e:
+        logger.error("启动 wechat 失败", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/bot/wechat/stop", dependencies=[Depends(require_admin_key)])
+async def wechat_stop() -> dict[str, Any]:
+    """停止 wechat bridge."""
+    bridge = get_wechat_bridge()
+    if bridge is None:
+        return {"success": True, "message": "wechat 未在运行"}
+    try:
+        await stop_wechat_bridge()
+        return {"success": True, "message": "wechat 已停止"}
+    except Exception as e:
+        logger.error("停止 wechat 失败", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/bot/wechat/config", dependencies=[Depends(require_admin_key)])
+async def wechat_get_config() -> dict[str, Any]:
+    """查看当前 wechat 配置."""
+    return {"success": True, "config": asdict(get_wechat_config())}
+
+
+@router.put("/bot/wechat/config", dependencies=[Depends(require_admin_key)])
+async def wechat_update_config(params: dict[str, Any]) -> dict[str, Any]:
+    """更新 wechat 配置 (部分更新, bridge 运行中实时生效)."""
+    current = get_wechat_config()
+    current_dict = asdict(current)
+    for key, value in params.items():
+        if key in current_dict:
+            current_dict[key] = value
+        else:
+            logger.warning("忽略未知 wechat 配置字段: %s", key)
+    try:
+        new_cfg = WeChatConfig(**current_dict)
+        set_wechat_config(new_cfg)
+        return {"success": True, "config": asdict(new_cfg)}
+    except TypeError as e:
+        return {"success": False, "error": f"配置字段类型错误: {e}"}
+
+
+# ── 企业微信回调 ─────────────────────────────────────────────────────
+#
+# 企业微信在后台配置回调 URL 后, 会向 /wechat/event 发 GET (验证) 和 POST (消息).
+# 签名验证: sha1("".join(sorted([token, timestamp, nonce]))) == msg_signature
+# token 通过环境变量 HUGINN_WECOM_TOKEN 配置.
+
+
+def _verify_wecom_signature(
+    token: str, signature: str, timestamp: str, nonce: str
+) -> bool:
+    if not token:
+        return False
+    computed = hashlib.sha1(
+        "".join(sorted([token, timestamp, nonce])).encode()
+    ).hexdigest()
+    return computed == signature
+
+
+@router.get("/wechat/event")
+async def wechat_event_verify(
+    msg_signature: str = "",
+    timestamp: str = "",
+    nonce: str = "",
+    echostr: str = "",
+):
+    """企业微信回调 URL 验证 (GET).
+
+    首次配置回调时企业微信发 GET, 验签通过后原样返回 echostr.
+    """
+    token = os.environ.get("HUGINN_WECOM_TOKEN", "")
+    if not _verify_wecom_signature(token, msg_signature, timestamp, nonce):
+        return {"error": "invalid signature"}
+    return PlainTextResponse(echostr)
+
+
+@router.post("/wechat/event")
+async def wechat_event(
+    request: Request,
+    msg_signature: str = "",
+    timestamp: str = "",
+    nonce: str = "",
+):
+    """企业微信消息回调 (POST).
+
+    验签后解析 XML, 转成 OneBot v11 事件交给 bridge 处理.
+    企业微信要求 5 秒内响应, 所以异步处理消息后立即回 success.
+    """
+    token = os.environ.get("HUGINN_WECOM_TOKEN", "")
+    if not _verify_wecom_signature(token, msg_signature, timestamp, nonce):
+        return {"error": "invalid signature"}
+
+    body = await request.body()
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        logger.warning("企业微信回调 XML 解析失败")
+        return PlainTextResponse("success")
+
+    # 目前只处理文本消息
+    if root.findtext("MsgType", "") != "text":
+        return PlainTextResponse("success")
+
+    from_user = root.findtext("FromUserName", "")
+    content = root.findtext("Content", "")
+    if not from_user or not content:
+        return PlainTextResponse("success")
+
+    event = {
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": from_user,
+        "message": content,
+        "raw_message": content,
+        "message_id": root.findtext("MsgId", ""),
+        "sender": {"nickname": from_user},
+    }
+
+    # 优先 wechat bridge, 没有就退回 QQ bridge
+    bridge = get_wechat_bridge() or get_bridge()
+    if bridge is not None and bridge.is_running:
+        asyncio.create_task(bridge.handle_message(event))
+
+    return PlainTextResponse("success")
