@@ -136,6 +136,7 @@ DOMAIN_TAG_TREE: dict[str, list[str]] = {
     "催化": ["电催化", "光催化", "热催化"],
     "能源材料": ["电池材料", "储氢材料", "超级电容器"],
     "生物材料": ["生物陶瓷", "生物聚合物", "生物活性涂层"],
+    "机械工程": ["粉末冶金", "塑性加工", "增材制造", "热处理", "机械设计"],
 }
 
 # 一级 / 二级标签对应的关键词, 命中即打标. 不追求全, 覆盖常见场景够用
@@ -165,6 +166,19 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "生物陶瓷": ["生物陶瓷", "bioceramic", "羟基磷灰石", "hydroxyapatite", "HAP"],
     "生物聚合物": ["生物聚合物", "biopolymer", "聚乳酸", "PLA", "壳聚糖", "chitosan"],
     "生物活性涂层": ["生物活性涂层", "bioactive coating", "表面改性", "生物涂层"],
+    # 机械工程 — 域级关键词要覆盖各子领域常见词, 否则只提子领域不提"机械工程"的文本打不上域标签
+    "机械工程": [
+        "机械工程", "mechanical engineering", "机械设计", "mechanical design",
+        "应力分析", "stress analysis", "制造工艺", "粉末冶金", "powder metallurgy",
+        "塑性加工", "增材制造", "additive manufacturing", "热处理", "heat treatment",
+        "疲劳", "fatigue", "轧制", "rolling", "烧结", "sintering", "锻造", "forging",
+        "淬火", "quenching", "3D打印", "3D printing", "磨损", "wear",
+    ],
+    "粉末冶金": ["粉末冶金", "powder metallurgy", "压制", "die compaction", "烧结", "sintering", "HIP", "热等静压", "CIP", "冷等静压"],
+    "塑性加工": ["塑性加工", "rolling", "轧制", "extrusion", "挤压", "forging", "锻造", "drawing", "拉拔", "板料", "sheet metal"],
+    "增材制造": ["增材制造", "additive manufacturing", "3D printing", "3D打印", "SLM", "选择性激光熔化", "SLS", "选择性激光烧结", "FDM", "熔融沉积", "送粉", "scan path", "扫描路径"],
+    "热处理": ["热处理", "heat treatment", "退火", "annealing", "淬火", "quenching", "回火", "tempering", "炉", "furnace"],
+    "机械设计": ["应力分析", "stress analysis", "疲劳", "fatigue", "断裂", "fracture", "磨损", "wear", "摩擦学", "tribology"],
 }
 
 

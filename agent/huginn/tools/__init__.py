@@ -137,6 +137,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.specialty_analysis_tool", "SpecialtyAnalysisTool"),
         ("huginn.tools.fem_tool", "FEMTool"),
         ("huginn.tools.sim.transolver_tool", "TransolverTool"),
+        ("huginn.tools.sim.mechanical_tool", "MechanicalTool"),
         # ── sci/ ──
         ("huginn.tools.symbolic_regression_tool", "SymbolicRegressionTool"),
         ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),
