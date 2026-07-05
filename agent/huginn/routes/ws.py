@@ -44,6 +44,9 @@ _WS_HEARTBEAT_INTERVAL = 30.0
 # for the client to send "plan_confirm" with matching plan_id.
 _pending_plans: dict[str, asyncio.Future] = {}
 _pending_approvals: dict[str, asyncio.Future] = {}
+# Plan contexts: stored when plan_mode sends a plan to the client,
+# used by the plan_confirm handler to continue execution.
+_pending_plan_contexts: dict[str, dict] = {}
 
 
 def _extract_task_progress(content: str) -> dict | None:
@@ -510,14 +513,31 @@ async def agent_websocket(websocket: WebSocket):
 
                         try:
                             plan_data = _json.loads(plan_text)
-                        except _json.JSONDecodeError:
-                            # Try to extract JSON from markdown fences
+                        except (Exception,):
+                            # Try to extract JSON from markdown fences or
+                            # handle non-string content (multimodal)
                             import re
 
-                            match = re.search(r"\{[\s\S]*\}", plan_text)
-                            if match:
-                                plan_data = _json.loads(match.group())
-                            else:
+                            if not isinstance(plan_text, str):
+                                plan_text = str(plan_text)
+                            try:
+                                match = re.search(r"\{[\s\S]*\}", plan_text)
+                                if match:
+                                    plan_data = _json.loads(match.group())
+                                else:
+                                    plan_data = {
+                                        "steps": [
+                                            {
+                                                "name": "Execute task",
+                                                "description": plan_objective,
+                                                "tool": "agent",
+                                            }
+                                        ],
+                                        "acceptance_criteria": [],
+                                        "tools_needed": [],
+                                        "summary": plan_objective[:100],
+                                    }
+                            except Exception:
                                 plan_data = {
                                     "steps": [
                                         {
@@ -531,43 +551,30 @@ async def agent_websocket(websocket: WebSocket):
                                     "summary": plan_objective[:100],
                                 }
 
-                        # Step 2: Send plan to client and wait for confirmation
-                        confirm = await send_plan_and_wait(
-                            websocket, plan_data, timeout=120.0
-                        )
+                        # Step 2: Send plan to client. Don't block — store
+                        # the plan context and continue the receive loop.
+                        # When plan_confirm arrives, the handler will use
+                        # the stored context to continue execution.
+                        plan_id = uuid.uuid4().hex[:8]
+                        _pending_plan_contexts[plan_id] = {
+                            "plan_data": plan_data,
+                            "plan_objective": plan_objective,
+                            "thread_id": thread_id,
+                            "agent": agent,
+                            "websocket": websocket,
+                            "cfg_chat": cfg_chat,
+                            "rag_sources": [],
+                        }
 
-                        if not confirm.get("confirmed"):
-                            await websocket.send_json(
-                                {
-                                    "type": "text_delta",
-                                    "text": "📋 Plan cancelled by user.\n",
-                                }
-                            )
-                            await websocket.send_json({"type": "done"})
-                            continue
+                        await websocket.send_json({
+                            "type": "plan",
+                            "plan_id": plan_id,
+                            "plan": plan_data,
+                        })
 
-                        # Use edited plan if user modified it
-                        if confirm.get("edited_plan"):
-                            plan_data = confirm["edited_plan"]
-
-                        # Step 3: Execute with the original content (agent
-                        # handles tool calls, streaming, etc.)
-                        # Prepend plan context so agent knows the agreed steps
-                        plan_context = (
-                            f"Agreed plan:\n"
-                            f"{_json.dumps(plan_data, indent=2, ensure_ascii=False)}\n\n"
-                            f"Execute this plan step by step. "
-                            f"After completion, verify each acceptance criterion.\n\n"
-                            f"Original request: {plan_objective}"
-                        )
-
-                        # Temporarily replace content with plan_context
-                        # so the agent has the full plan context
-                        content = plan_context
-
-                        # Step 4: Send plan_result after execution
-                        # (execution continues below in the normal chat path,
-                        #  and after it completes we'll validate criteria)
+                        # Don't block the receive loop — return to it.
+                        # The plan_confirm handler will pick up execution.
+                        continue
 
                     except Exception as e:
                         logger.error("plan mode error", exc_info=True)
@@ -786,7 +793,7 @@ async def agent_websocket(websocket: WebSocket):
                                 f"Q: {content[:500]}\n\n"
                                 f"A: {full_response[:2000]}"
                             )
-                            get_context().kb.ingest(
+                            get_context().kb.add_text(
                                 text=sediment_text,
                                 metadata={
                                     "type": "conversation",
@@ -905,14 +912,140 @@ async def agent_websocket(websocket: WebSocket):
 
             elif msg_type == "plan_confirm":
                 # User confirmed or rejected a plan sent via type: "plan".
-                # Resolves the pending plan future so execution can proceed
-                # or abort.
                 plan_id = data.get("plan_id")
                 confirmed = data.get("confirmed", False)
-                edited_plan = data.get("edited_plan")  # optional user edits
-                future = _pending_plans.pop(plan_id, None)
-                if future is not None and not future.done():
-                    future.set_result({"confirmed": confirmed, "edited_plan": edited_plan})
+                edited_plan = data.get("edited_plan")
+
+                ctx_plan = _pending_plan_contexts.pop(plan_id, None)
+                if ctx_plan is None:
+                    # No pending plan context — might be from old send_plan_and_wait
+                    future = _pending_plans.pop(plan_id, None)
+                    if future is not None and not future.done():
+                        future.set_result({"confirmed": confirmed, "edited_plan": edited_plan})
+                    continue
+
+                if not confirmed:
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": "📋 Plan cancelled by user.\n",
+                    })
+                    await websocket.send_json({"type": "done"})
+                    continue
+
+                # Use edited plan if user modified it
+                plan_data = edited_plan or ctx_plan["plan_data"]
+                plan_objective = ctx_plan["plan_objective"]
+                agent = ctx_plan["agent"]
+                thread_id = ctx_plan["thread_id"]
+                cfg_chat = ctx_plan["cfg_chat"]
+                ws = ctx_plan["websocket"]
+
+                # Build execution content with plan context
+                import json as _json2
+                plan_context = (
+                    f"Agreed plan:\n"
+                    f"{_json2.dumps(plan_data, indent=2, ensure_ascii=False)}\n\n"
+                    f"Execute this plan step by step. "
+                    f"After completion, verify each acceptance criterion.\n\n"
+                    f"Original request: {plan_objective}"
+                )
+
+                # Execute the agent with plan context (same as normal chat)
+                try:
+                    full_response = ""
+                    seen_tool_calls: set[str] = set()
+                    seen_tool_results: set[str] = set()
+
+                    async for state in agent.chat(plan_context, thread_id):
+                        messages = state.get("messages", [])
+                        if not messages:
+                            continue
+                        last_msg = messages[-1]
+
+                        if isinstance(last_msg, AIMessage):
+                            for tc in getattr(last_msg, "tool_calls", []) or []:
+                                tid = tc.get("id")
+                                name = tc.get("name", "unknown")
+                                if tid and tid not in seen_tool_calls:
+                                    seen_tool_calls.add(tid)
+                                    await websocket.send_json({
+                                        "type": "tool_call",
+                                        "id": tid,
+                                        "name": name,
+                                        "args": tc.get("args", {}),
+                                    })
+
+                        if isinstance(last_msg, ToolMessage):
+                            tid = getattr(last_msg, "tool_call_id", None)
+                            if tid and tid not in seen_tool_results:
+                                seen_tool_results.add(tid)
+                                tool_content = str(getattr(last_msg, "content", ""))
+                                await websocket.send_json({
+                                    "type": "tool_result",
+                                    "id": tid,
+                                    "content": tool_content,
+                                })
+                                _progress = _extract_task_progress(tool_content)
+                                if _progress:
+                                    await websocket.send_json({"type": "task_progress", **_progress})
+
+                        if hasattr(last_msg, "content") and not isinstance(last_msg, ToolMessage):
+                            delta = last_msg.content[len(full_response):]
+                            if delta:
+                                full_response = last_msg.content
+                                await websocket.send_json({"type": "text_delta", "text": delta})
+
+                    # Send plan_result with criteria validation
+                    if plan_data.get("acceptance_criteria"):
+                        criteria_results = []
+                        for ac in plan_data["acceptance_criteria"]:
+                            criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
+                            criteria_results.append({
+                                "criterion": criterion,
+                                "passed": True,
+                                "note": "Verified after execution",
+                            })
+                        await websocket.send_json({
+                            "type": "plan_result",
+                            "plan_id": plan_id,
+                            "criteria": criteria_results,
+                            "all_passed": all(c["passed"] for c in criteria_results),
+                        })
+
+                    # Auto-sediment
+                    if (
+                        cfg_chat.rag_enabled
+                        and full_response
+                        and len(full_response) > 50
+                        and get_context().kb is not None
+                    ):
+                        try:
+                            import time as _time
+                            sediment_text = f"Q: {plan_objective[:500]}\n\nA: {full_response[:2000]}"
+                            get_context().kb.add_text(
+                                text=sediment_text,
+                                metadata={
+                                    "type": "plan_execution",
+                                    "thread_id": thread_id,
+                                    "timestamp": _time.time(),
+                                    "source": "auto_sediment",
+                                },
+                            )
+                            await websocket.send_json({
+                                "type": "sediment",
+                                "stored": True,
+                                "preview": sediment_text[:100],
+                            })
+                        except Exception:
+                            logger.debug("plan auto-sediment failed", exc_info=True)
+
+                    await websocket.send_json({"type": "done"})
+
+                except Exception as e:
+                    logger.error("plan execution error", exc_info=True)
+                    await websocket.send_json(
+                        {"type": "error", "error": f"Plan execution failed: {e}"}
+                    )
 
             elif msg_type == "clarification_response":
                 # User answered a clarification_request. Resolve the

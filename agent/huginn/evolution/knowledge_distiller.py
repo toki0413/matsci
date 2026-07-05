@@ -339,7 +339,7 @@ class KnowledgeDistiller:
             ):
                 continue
             try:
-                kb.ingest(
+                kb.add_text(
                     text=dk.content,
                     metadata={
                         "source": "distilled_knowledge",

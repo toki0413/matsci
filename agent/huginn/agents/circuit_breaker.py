@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import threading
 import time
-from contextlib import contextmanager
-from typing import Generator
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncGenerator, Generator
 
 
 class _BreakerState:
@@ -207,6 +207,40 @@ def circuit_guard(
             ctx["result"] = result
 
     退出时根据有没有抛异常自动 record_success / record_failure。
+    """
+    b = breaker or CircuitBreaker.shared()
+    ctx: dict = {
+        "blocked": False,
+        "error_result": None,
+        "result": None,
+    }
+    if not b.can_call(tool_name):
+        stats = b.get_stats(tool_name)
+        ctx["blocked"] = True
+        ctx["error_result"] = {
+            "error": "circuit_open",
+            "tool": tool_name,
+            "retry_after": stats.get("retry_after", 0),
+        }
+        yield ctx
+        return
+    try:
+        yield ctx
+        b.record_success(tool_name)
+    except Exception as exc:
+        b.record_failure(tool_name, str(exc))
+        raise
+
+
+@asynccontextmanager
+async def async_circuit_guard(
+    tool_name: str,
+    breaker: CircuitBreaker | None = None,
+) -> AsyncGenerator[dict, None]:
+    """Async version of circuit_guard for use with `async with`.
+
+    Same semantics: checks circuit state, yields ctx dict,
+    records success/failure on exit.
     """
     b = breaker or CircuitBreaker.shared()
     ctx: dict = {
