@@ -17,6 +17,7 @@ from huginn.routes.advisor import router as advisor_router
 from huginn.routes.agents import router as agents_router
 from huginn.routes.auth import router as auth_router
 from huginn.routes.bench import router as bench_router
+from huginn.routes.bot import router as bot_router
 from huginn.routes.checkpoints import router as checkpoints_router
 from huginn.routes.codebase import router as codebase_router
 from huginn.routes.coder import router as coder_router
@@ -51,6 +52,7 @@ from huginn.routes.parameters import router as parameters_router
 from huginn.routes.side import router as side_router
 from huginn.routes.admin import router as admin_router
 from huginn.routes.visual import router as visual_router
+from huginn.routes.export_share import router as export_share_router
 
 ALL_ROUTERS = [
     advisor_router,
@@ -68,6 +70,8 @@ ALL_ROUTERS = [
     memory_router,
     agents_router,
     bench_router,
+    # Bot bridge: OneBot v11 QQ/WeChat 接入
+    bot_router,
     execution_router,
     unified_router,
     workflows_router,
@@ -98,6 +102,8 @@ ALL_ROUTERS = [
     diagnostics_router,
     # Admin endpoints (maintenance mode, etc.)
     admin_router,
+    # 导出 / 导入 / 分享: 全量打包、单组件导出、归档导入
+    export_share_router,
 ]
 
 # ── API versioning ──────────────────────────────────────────────────

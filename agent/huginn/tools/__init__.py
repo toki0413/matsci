@@ -165,6 +165,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.image_design_tool", "ImageDesignTool"),
         ("huginn.tools.visualize_tool", "VisualizeTool"),
         ("huginn.tools.characterization_tool", "CharacterizationTool"),
+        ("huginn.tools.model3d_tool", "Model3DTool"),
         # ── search/ (可选检索类) ──
         ("huginn.tools.browser_tool", "BrowserTool"),
         ("huginn.tools.review_committee_tool", "ReviewCommitteeTool"),
