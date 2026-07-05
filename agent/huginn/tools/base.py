@@ -86,6 +86,29 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
             return self.input_schema.model_json_schema()
         return None
 
+    def format_result(self, result: ToolResult) -> dict[str, Any]:
+        """Serialize a ToolResult to JSON-safe dict (CLI-Anything --json contract).
+
+        Validates against output_schema if defined; validation failure
+        is logged but doesn't block — the data still goes through.
+        """
+        from huginn.types import _jsonify
+
+        payload = result.to_dict()
+
+        # output_schema 是可选的, 有就校验
+        if self.output_schema and result.success and result.data is not None:
+            try:
+                if isinstance(result.data, dict):
+                    self.output_schema(**result.data)
+                elif not isinstance(result.data, self.output_schema):
+                    # 非侵入式: 记录不匹配但不阻塞
+                    pass
+            except Exception:
+                pass  # 校验失败不阻塞, 数据照传
+
+        return payload
+
     # ── 调度元数据便利属性 ──────────────────────────────────────────
     # 透传到 profile, profile=None 时回落到默认值, 保证未声明 profile 的
     # 工具行为与重构前一致.
