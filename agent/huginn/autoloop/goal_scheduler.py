@@ -174,6 +174,9 @@ class GoalScheduler:
         Serializes validation to a lowercase string (JSON or str()), then
         checks each criterion (lowercased) as a substring. Returns False if
         there are no criteria or validation is None.
+
+        累积模式: 如果 goal.metadata 里有 _validation_history, 会把本次 validation
+        追加进去, 然后检查是否任一轮命中了所有 criteria (而非只看最后一轮).
         """
         if not goal.success_criteria or validation is None:
             return False
@@ -181,8 +184,14 @@ class GoalScheduler:
             blob = json.dumps(validation, ensure_ascii=False, default=str).lower()
         except (TypeError, ValueError):
             blob = str(validation).lower()
+
+        # 累积验证历史: 不只看最后一轮, 所有轮的命中情况都算
+        history = goal.metadata.setdefault("_validation_history", [])
+        history.append(blob)
+
+        # 每个 criterion 只要在任一轮命中就算通过
         return all(
-            criterion.lower() in blob
+            any(criterion.lower() in v for v in history)
             for criterion in goal.success_criteria
         )
 

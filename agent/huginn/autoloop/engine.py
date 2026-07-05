@@ -104,6 +104,9 @@ class AutoloopResult:
     success: bool
     report_path: str | None = None
     total_time_seconds: float = 0.0
+    trajectory_path: str | None = None
+    goal_achieved: bool | None = None
+    goal_judgment: dict[str, Any] | None = None
 
 
 class AutoloopEngine:
@@ -484,6 +487,12 @@ class AutoloopEngine:
         start_time = time.time()
         phases: list[LoopPhase] = []
 
+        # 给本次 run 挂一个独立的 telemetry collector, _run_phase 会往里写 span.
+        # run 结束时落盘到 .huginn/trajectories/, 让 replay 命令能回放.
+        from huginn.telemetry import TelemetryCollector, set_telemetry_collector
+        run_collector = TelemetryCollector()
+        set_telemetry_collector(run_collector)
+
         self._iteration = 0
         self._should_stop = False
 
@@ -672,6 +681,46 @@ class AutoloopEngine:
         except Exception:
             pass
 
+        # 轨迹落盘: 把 telemetry span 树 + 工具调用 + phase 决策写成 JSON
+        # best-effort: 写失败不影响 return
+        trajectory_path = None
+        trajectory_data = None
+        try:
+            from huginn.telemetry import save_trajectory, load_trajectory
+            traj_dir = self.workspace / ".huginn" / "trajectories"
+            trajectory_path = traj_dir / f"{run_id}.json"
+            save_trajectory(
+                run_collector,
+                trajectory_path,
+                metadata={
+                    "run_id": run_id,
+                    "objective": objective[:200],
+                    "phases": [p.name for p in phases],
+                    "total_time": total_time,
+                },
+            )
+            trajectory_data = load_trajectory(trajectory_path)
+        except Exception:
+            trajectory_path = None
+
+        # 端到端目标达成判定: 拿原始 objective + 轨迹 + 最终 report 做 LLM 判定
+        # 没有 verification LLM 时降级到规则判定
+        goal_achieved = None
+        goal_judgment = None
+        try:
+            from huginn.evaluation.goal_judge import GoalJudge
+            # report_phase.result 是最终报告路径或文本
+            final_output = str(report_phase.result or "")
+            judge = GoalJudge(llm=self.verification_model or self.model)
+            goal_judgment = judge.judge(
+                objective=objective,
+                trajectory=trajectory_data,
+                final_output=final_output,
+            )
+            goal_achieved = goal_judgment.get("achieved")
+        except Exception as e:
+            print(f"[Autoloop] GoalJudge skipped: {e}")
+
         return AutoloopResult(
             run_id=run_id,
             objective=objective,
@@ -679,6 +728,9 @@ class AutoloopEngine:
             success=all(p.status == "completed" for p in phases[-7:]),
             report_path=report_phase.result,
             total_time_seconds=total_time,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            goal_achieved=goal_achieved,
+            goal_judgment=goal_judgment,
         )
 
     def stop(self) -> None:
@@ -2048,12 +2100,22 @@ DESCRIPTION: <brief description of what to do>
             )
         except RuntimeError:
             pass
+        # 包 telemetry span: 把 phase 级决策也记进轨迹, 回放时不止看 tool_call
+        from huginn.telemetry import get_telemetry_collector
+        span_cm = get_telemetry_collector().span(f"phase:{name}")
         try:
-            phase.result = fn(*args)
-            phase.status = "completed"
+            with span_cm as phase_span:
+                phase.result = fn(*args)
+                phase.status = "completed"
+                phase_span.metadata["status"] = "completed"
         except Exception as e:
             phase.status = "failed"
             phase.error = str(e)
+            try:
+                phase_span.metadata["status"] = "failed"
+                phase_span.metadata["error"] = str(e)
+            except Exception:
+                pass
         phase.end_time = time.time()
         # fire-and-forget 发结束/失败事件
         try:
@@ -2083,12 +2145,21 @@ DESCRIPTION: <brief description of what to do>
         await self._dispatch_stage_event(
             EventType.ON_WORKFLOW_STAGE_START, name
         )
+        from huginn.telemetry import get_telemetry_collector
+        span_cm = get_telemetry_collector().span(f"phase:{name}")
         try:
-            phase.result = await fn(*args)
-            phase.status = "completed"
+            with span_cm as phase_span:
+                phase.result = await fn(*args)
+                phase.status = "completed"
+                phase_span.metadata["status"] = "completed"
         except Exception as e:
             phase.status = "failed"
             phase.error = str(e)
+            try:
+                phase_span.metadata["status"] = "failed"
+                phase_span.metadata["error"] = str(e)
+            except Exception:
+                pass
         phase.end_time = time.time()
         if phase.status == "completed":
             await self._dispatch_stage_event(
