@@ -123,6 +123,8 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.comsol_tool", "ComsolTool"),
         ("huginn.tools.qe_tool", "QuantumEspressoTool"),
         ("huginn.tools.cp2k_tool", "Cp2kTool"),
+        ("huginn.tools.gaussian_tool", "GaussianTool"),
+        ("huginn.tools.orca_tool", "OrcaTool"),
         ("huginn.tools.openfoam_tool", "OpenFoamTool"),
         ("huginn.tools.packing_tool", "PackingTool"),
         ("huginn.tools.abaqus_tool", "AbaqusTool"),

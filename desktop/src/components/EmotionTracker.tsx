@@ -253,11 +253,11 @@ export default function EmotionTrackerPanel({
                     <PolarGrid stroke="var(--border)" />
                     <PolarAngleAxis
                       dataKey="dimension"
-                      tick={{ fill: "var(--text-secondary)", fontSize: 11 }}
+                      tick={{ fill: "var(--text-secondary)", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                     />
                     <PolarRadiusAxis
                       domain={[0, 100]}
-                      tick={{ fill: "var(--text-muted)", fontSize: 9 }}
+                      tick={{ fill: "var(--text-muted)", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                       tickCount={5}
                     />
                     <Radar
@@ -273,7 +273,9 @@ export default function EmotionTrackerPanel({
                         background: "var(--bg-tertiary)",
                         border: "1px solid var(--border)",
                         borderRadius: "8px",
-                        fontSize: "12px",
+                        fontFamily: "Arial",
+                        fontSize: 20,
+                        fontWeight: "bold",
                       }}
                       formatter={(_value: any, _name: any, props: any) => {
                         const raw = props.payload.rawValue;
@@ -359,25 +361,27 @@ export default function EmotionTrackerPanel({
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis
                       dataKey="time"
-                      tick={{ fill: "var(--text-muted)", fontSize: 10 }}
+                      tick={{ fill: "var(--text-muted)", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                       angle={-20}
                       textAnchor="end"
                       height={50}
                     />
                     <YAxis
                       domain={[-1, 1]}
-                      tick={{ fill: "var(--text-muted)", fontSize: 10 }}
+                      tick={{ fill: "var(--text-muted)", fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                     />
                     <Tooltip
                       contentStyle={{
                         background: "var(--bg-tertiary)",
                         border: "1px solid var(--border)",
                         borderRadius: "8px",
-                        fontSize: "12px",
+                        fontFamily: "Arial",
+                        fontSize: 20,
+                        fontWeight: "bold",
                       }}
                     />
                     <Legend
-                      wrapperStyle={{ fontSize: "11px" }}
+                      wrapperStyle={{ fontFamily: "Arial", fontSize: 20, fontWeight: "bold" }}
                     />
                     {DIMENSIONS.map((dim, i) => (
                       <Line

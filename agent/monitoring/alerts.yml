@@ -1,0 +1,74 @@
+# Prometheus 告警规则 — Huginn agent。
+# 加载: prometheus.yml 里 rule_files 指向本文件。
+# 磁盘/内存两条依赖 node_exporter (宿主机视角), 没装 node_exporter 就不触发,
+# 不会误报。其余几条直接用 /metrics 暴露的 huginn_* 指标。
+
+groups:
+  - name: huginn
+    rules:
+      # 服务不可用: scrape 抓不到就是挂了, 1m 就报, critical
+      - alert: HuginnServiceDown
+        expr: up{job="huginn"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Huginn agent 不可达"
+          description: "Prometheus 连续 1m 抓不到 {{ $labels.instance }} 的指标, 服务可能挂了。"
+
+      # 高错误率: 5xx 占比超 5% 持续 5m。
+      # 分母加了 >1 req/s 的流量门槛, 避免低流量时段一个偶发 500 就把比例拉爆。
+      - alert: HuginnHighErrorRate
+        expr: |
+          (
+            sum(rate(huginn_requests_total{status=~"5.."}[5m]))
+            / sum(rate(huginn_requests_total[5m]))
+          ) > 0.05
+          and
+          sum(rate(huginn_requests_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Huginn 5xx 错误率偏高"
+          description: "5xx 占比超过 5% 已持续 5m, 当前比例 {{ $value | humanizePercentage }}。"
+
+      # 响应慢: p95 > 2s 持续 5m。
+      # MONITORING.md 里的 10s 是面板基线, 这里按需求收到 2s 做告警, 更早吱声。
+      - alert: HuginnHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(huginn_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Huginn 响应时间慢"
+          description: "p95 延迟超过 2s 已持续 5m, 当前 {{ $value }}s。"
+
+      # 磁盘空间低: 剩余 < 10%。排除 tmpfs/overlay 等伪文件系统。
+      - alert: HuginnDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|autofs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|autofs"}
+          ) < 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "磁盘空间不足 ({{ $labels.mountpoint }})"
+          description: "剩余空间低于 10%, 当前可用 {{ $value | humanizePercentage }}。"
+
+      # 内存使用高: 已用 > 90% (即可用 < 10%)。
+      - alert: HuginnHighMemoryUsage
+        expr: |
+          (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "内存使用率高"
+          description: "内存占用超过 90% 已持续 5m, 当前 {{ $value | humanizePercentage }}。"

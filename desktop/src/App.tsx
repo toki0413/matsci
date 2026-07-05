@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback } from "react";
+﻿import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -9,16 +9,18 @@ import {
 } from "@tauri-apps/plugin-notification";
 import Pet from "./Pet";
 import { playTaskComplete, playError as playErrorSound } from "./sounds";
-import PeriodicTable from "./components/PeriodicTable";
+import ErrorBoundary from "./components/ErrorBoundary";
 import SandboxPanel from "./components/SandboxPanel";
-import Notebook from "./components/Notebook";
 import DiffViewer from "./components/DiffViewer";
-import SweepDashboard from "./components/SweepDashboard";
-import StructureViewer from "./components/StructureViewer";
 import EmotionTrackerPanel from "./components/EmotionTracker";
 import MessageContent from "./components/MessageContent";
 import CredentialsPanel from "./components/CredentialsPanel";
 import RemoteJobsPanel from "./components/RemoteJobsPanel";
+// Heavy tab panels — code-split so the initial bundle stays small.
+const PeriodicTable = lazy(() => import("./components/PeriodicTable"));
+const Notebook = lazy(() => import("./components/Notebook"));
+const SweepDashboard = lazy(() => import("./components/SweepDashboard"));
+const StructureViewer = lazy(() => import("./components/StructureViewer"));
 import { PROVIDERS, formatTime } from "./lib/constants";
 import { ReconnectingWebSocket } from "./lib/ws-client";
 import { getAuthToken, setApiBase as _setApiBase } from "./lib/api-client";
@@ -520,6 +522,16 @@ function LocalModelDiscoverer({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Minimal suspense fallback — just a spinner so tabs feel responsive
+// while the chunk for a heavy panel loads.
+function LoadingFallback() {
+  return (
+    <div className="flex h-full w-full items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
     </div>
   );
 }
@@ -2540,12 +2552,13 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-2">
+        <nav className="flex-1 overflow-y-auto px-3 py-2" aria-label="Main navigation">
           {sidebarGroupsData.map((group, gi) => (
             <div key={group.key} className={gi > 0 ? "mt-1" : ""}>
               {/* Group header - clickable, collapsible */}
               <button
                 onClick={() => toggleSidebarGroup(group.key)}
+                aria-expanded={sidebarGroups[group.key]}
                 className="sidebar-group-header flex w-full items-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted hover:text-text-secondary transition-colors"
               >
                 <ChevronDown
@@ -2559,6 +2572,8 @@ export default function App() {
 
               {/* Collapsible items container */}
               <div
+                role="tablist"
+                aria-label={group.label}
                 className="sidebar-group-content overflow-hidden transition-all duration-200 ease-in-out"
                 style={{
                   maxHeight: sidebarGroups[group.key] ? `${group.tabs.length * 36 + 4}px` : "0px",
@@ -2568,6 +2583,8 @@ export default function App() {
                 {group.tabs.map((tab) => (
                   <button
                     key={tab.id}
+                    role="tab"
+                    aria-selected={activeTab === tab.id}
                     onClick={() => setActiveTab(tab.id)}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                       tab.indented ? "pl-6" : ""
@@ -2647,6 +2664,8 @@ export default function App() {
                 onClick={() => { setChatSearchOpen((p) => !p); if (chatSearchOpen) setChatSearchQuery(""); }}
                 className={`rounded-lg p-1.5 transition-colors ${chatSearchOpen ? "bg-bg-tertiary text-accent" : "text-text-muted hover:text-text-secondary"}`}
                 title="Search messages"
+                aria-label="Search messages"
+                aria-expanded={chatSearchOpen}
               >
                 <Search size={16} />
               </button>
@@ -2687,7 +2706,7 @@ export default function App() {
                       {messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase())).length} matches
                     </span>
                   )}
-                  <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary">
+                  <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary" aria-label="Close search">
                     <X size={14} />
                   </button>
                 </div>
@@ -3404,6 +3423,7 @@ export default function App() {
                             onClick={() => loadDocumentGraph(doc.doc_id)}
                             className="text-xs text-accent hover:underline"
                             title="View document structure graph"
+                            aria-label="View document structure graph"
                           >
                             📊
                           </button>
@@ -3874,11 +3894,11 @@ export default function App() {
                           </div>
                           <div className="flex flex-col gap-1">
                             {m.tier !== "long" && (
-                              <button onClick={() => promoteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Promote to long">
+                              <button onClick={() => promoteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Promote to long" aria-label="Promote memory to long-term">
                                 ⬆
                               </button>
                             )}
-                            <button onClick={() => deleteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Delete">
+                            <button onClick={() => deleteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Delete" aria-label="Delete memory">
                               🗑
                             </button>
                           </div>
@@ -5290,13 +5310,21 @@ export default function App() {
 
           {activeTab === "periodic" && (
             <div className="h-full overflow-y-auto p-4">
-              <PeriodicTable API_BASE={API_BASE} />
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingFallback />}>
+                  <PeriodicTable API_BASE={API_BASE} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
           )}
 
           {activeTab === "notebook" && (
             <div className="h-full overflow-hidden p-4">
-              <Notebook API_BASE={API_BASE} />
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingFallback />}>
+                  <Notebook API_BASE={API_BASE} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
           )}
 
@@ -5308,13 +5336,21 @@ export default function App() {
 
           {activeTab === "sweep" && (
             <div className="h-full overflow-y-auto p-4">
-              <SweepDashboard API_BASE={API_BASE} />
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingFallback />}>
+                  <SweepDashboard API_BASE={API_BASE} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
           )}
 
           {activeTab === "structure" && (
             <div className="h-full overflow-hidden p-4">
-              <StructureViewer API_BASE={API_BASE} />
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingFallback />}>
+                  <StructureViewer API_BASE={API_BASE} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
           )}
         </div>

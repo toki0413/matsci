@@ -422,6 +422,9 @@ class HuginnAgent:
         self.model = m.model
         self.model_router = m.model_router
         self.langchain_tools = t.tools or []
+        # 529 风暴时临时换上的备用主模型, None 表示走默认主模型.
+        # 在 chat() 重试循环里设置, finally 里清掉, 不影响后续 turn.
+        self._main_fallback_override: Any = None
 
         # Resource management for persistent checkpointers and similar objects.
         self._exit_stack = ExitStack()
@@ -1109,11 +1112,34 @@ class HuginnAgent:
         Uses the model router when available; otherwise falls back to the
         single model configured at construction time.
         """
+        # 529 降级: 主对话被临时换成便宜档时, 直接返回备用模型,
+        # 不影响 verification / summarize 等其它槽的选择
+        if task == "agent" and self._main_fallback_override is not None:
+            return self._main_fallback_override
         if self.model_router is not None:
             return self.model_router.select(task)
         if self.model is None:
             raise RuntimeError("HuginnAgent has no model or model_router configured")
         return self.model
+
+    def _select_main_fallback_model(self) -> Any:
+        """主对话 529 风暴时挑一个备用模型.
+
+        只在 model_router 注册了多模型时生效: 选便宜档且和当前主模型不同的.
+        单模型配置返回 None —— 没东西可切, 让上层按原逻辑抛错更诚实.
+        """
+        if self.model_router is None:
+            return None
+        if len(self.model_router.list_models()) < 2:
+            return None
+        try:
+            primary = self.select_model("agent")
+            cheap = self.model_router.select("cheap", prefer_cheap=True)
+            if cheap is not primary:
+                return cheap
+        except Exception:
+            logger.debug("pick main fallback model failed", exc_info=True)
+        return None
 
     def build_graph(self) -> Any:
         """Build the LangGraph agent graph."""
@@ -2131,7 +2157,8 @@ class HuginnAgent:
                 except Exception:
                     logger.debug("checkpointer state fetch skipped", exc_info=True)
             try:
-                for attempt in range(max_retries):
+                attempt = 0
+                while attempt < max_retries:
                     try:
                         if use_sync_stream:
                             states = await asyncio.to_thread(
@@ -2205,6 +2232,27 @@ class HuginnAgent:
                             or _is_context_overflow(exc)
                         )
                         if not retryable or attempt == max_retries - 1:
+                            # 529 过载 + 配了多模型: 重试耗尽前切到便宜档再试一轮,
+                            # 复用 local_only 的换模型套路 (self._agent_graph=None
+                            # 后 build_graph 重建). _main_fallback_override 卡住只切一次,
+                            # 备用模型也 529 就老老实实抛上去.
+                            if (
+                                _is_overloaded(exc)
+                                and self._main_fallback_override is None
+                                and (fb := self._select_main_fallback_model()) is not None
+                            ):
+                                logger.warning(
+                                    "main chat 529 overloaded after %d attempts, "
+                                    "switching to fallback model: %s",
+                                    attempt + 1,
+                                    getattr(fb, "model", type(fb).__name__),
+                                )
+                                self._main_fallback_override = fb
+                                self._agent_graph = None
+                                graph = self.build_graph()
+                                await asyncio.sleep(_jitter(_exponential_backoff(1)))
+                                attempt = 0  # 备用模型重新计数
+                                continue
                             raise
                         # 429 优先用服务端给的 retry-after, 其它走指数退避+抖动
                         if _is_rate_limit(exc):
@@ -2224,6 +2272,7 @@ class HuginnAgent:
                             exc,
                         )
                         await asyncio.sleep(wait)
+                        attempt += 1
 
                 # Scan the final assistant message for a phase-transition
                 # marker emitted by the LLM and apply it if valid.
@@ -2260,6 +2309,11 @@ class HuginnAgent:
                 self._tool_adapter.set_router(None)
                 # 同样清掉循环检测器
                 self._tool_adapter.set_loop_detector(None)
+                # 本轮切过备用主模型的话, 清掉覆盖并失效图缓存,
+                # 下一 turn 重新用主模型建图, 别让降级变成永久降级
+                if self._main_fallback_override is not None:
+                    self._main_fallback_override = None
+                    self._agent_graph = None
                 # STOP 事件: 一轮回复结束, 给 test_stop_hook 之类的钩子用
                 try:
                     stop_ctx = HookContext(

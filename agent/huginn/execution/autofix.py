@@ -92,6 +92,25 @@ class AutoFixLoop:
                 "fixes": {"basis_check": True, "diffuse": "add_for_anions"},
                 "description": "Check basis set completeness",
             },
+            # ORCA rules
+            {
+                "tools": ["orca_tool"],
+                "patterns": ["scf", "convergence", "not converged", "SCF"],
+                "fixes": {"scf_conv": "tight", "grid": 7},
+                "description": "Tighten SCF convergence and use larger grid",
+            },
+            {
+                "tools": ["orca_tool"],
+                "patterns": ["optimization", "GEOMETRY", "not converged", "cycle"],
+                "fixes": {"opt_maxiter": 200},
+                "description": "Increase optimization max iterations",
+            },
+            {
+                "tools": ["orca_tool"],
+                "patterns": ["memory", "out of memory", "allocation"],
+                "fixes": {"maxcore": "double"},
+                "description": "Double maxcore memory per core",
+            },
             # LAMMPS rules
             {
                 "tools": ["lammps_tool"],
