@@ -212,7 +212,7 @@ class PonytailStar(Star):
         self._state.history.append({
             "from": old_mode,
             "to": new_mode,
-            "timestamp": __import__("datetime").datetime.now().isoformat(),
+            "timestamp": datetime.datetime.now().isoformat(),
         })
         self._persist()
 

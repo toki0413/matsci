@@ -185,7 +185,7 @@ def _try_import_tree_sitter() -> tuple[Any, dict[str, Any]] | None:
     languages: dict[str, Any] = {}
     for lang_name, mod_name in lang_modules.items():
         try:
-            mod = __import__(mod_name)
+            mod = importlib.import_module(mod_name)
         except Exception:
             continue
         # 不同版本 language 包 API:

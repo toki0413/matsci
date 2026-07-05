@@ -373,7 +373,7 @@ class VisualEncoder:
 # Tests that need isolation can call reset_encoder() to drop the cache.
 
 _ENCODER: VisualEncoder | None = None
-_ENCODER_LOCK = __import__("threading").Lock()
+_ENCODER_LOCK = threading.Lock()
 
 
 def get_encoder() -> VisualEncoder | None:
