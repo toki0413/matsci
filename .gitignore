@@ -93,6 +93,9 @@ agent/lean/HuginnLean/
 *.bak
 *.bak.*
 
+# Migration backups
+*.db.bak_v*
+
 # Playwright test output
 desktop/test-results/
 
