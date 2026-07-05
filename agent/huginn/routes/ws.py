@@ -629,6 +629,18 @@ async def agent_websocket(websocket: WebSocket):
                     _clarify_sent = False
 
                     async for state in agent.chat(content, thread_id):
+                        # ── Thought loop termination ────────────────
+                        # If the agent detected a persistent thought loop
+                        # (LLM repeating similar output), it terminates
+                        # and sends a special state. We notify the user.
+                        if state.get("thought_loop_terminated"):
+                            await websocket.send_json({
+                                "type": "text_delta",
+                                "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
+                            })
+                            await websocket.send_json({"type": "done"})
+                            break
+
                         # ── Clarification support ────────────────────
                         # When the agent decides the user's request is
                         # ambiguous, it sets needs_clarification=True and

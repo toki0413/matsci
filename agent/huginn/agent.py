@@ -1606,6 +1606,28 @@ class HuginnAgent:
         for msg in new_msgs:
             if isinstance(msg, AIMessage):
                 self.memory.add_message("assistant", msg.content)
+                # ── 思考循环检测 ──────────────────────────────
+                # Check if LLM output is stuck in a loop (repeating
+                # similar content without calling tools)
+                if hasattr(self, "_thought_detector") and self._thought_detector:
+                    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                    if content and len(content) > 20:
+                        is_loop = self._thought_detector.record_output(content)
+                        if is_loop:
+                            should_break, reason, should_terminate = (
+                                self._thought_detector.should_break()
+                            )
+                            if should_terminate:
+                                self._thought_loop_terminated = True
+                                logger.warning(
+                                    "Thought loop detected and terminated: %s",
+                                    reason,
+                                )
+                            else:
+                                logger.info(
+                                    "Thought loop detected, injecting break: %s",
+                                    reason,
+                                )
                 # Stash tool_calls in node metadata so history rebuild can
                 # reconstruct the AIMessage with its tool calls intact.
                 meta: dict[str, Any] = {}
@@ -2081,6 +2103,12 @@ class HuginnAgent:
             turn_loop_detector = LoopDetector()
             self._tool_adapter.set_loop_detector(turn_loop_detector)
 
+            # 思考循环检测: 抓 LLM 反复输出相似内容但不调工具的死循环
+            from huginn.agents.loop_detector import ThoughtLoopDetector
+
+            self._thought_detector = ThoughtLoopDetector()
+            self._thought_loop_terminated = False
+
             # Retry the graph invocation for transient API failures. We only
             # retry before any state has been yielded — once output starts
             # flowing to the caller, re-running would duplicate it.
@@ -2120,6 +2148,17 @@ class HuginnAgent:
                                 states_yielded += 1
                                 final_state = state
                                 yield state
+                                # 思考循环终止: 检测到 LLM 反复输出相似内容
+                                # 且已 break 2 次仍未脱离 → 强制终止
+                                if getattr(self, "_thought_loop_terminated", False):
+                                    logger.warning(
+                                        "Terminating chat due to persistent thought loop"
+                                    )
+                                    yield {
+                                        "thought_loop_terminated": True,
+                                        "state": final_state,
+                                    }
+                                    break
                                 # 单步模式: 工具结果出来后暂停, 把控制权交回调用方
                                 if self._break_flag:
                                     self._break_flag = False
