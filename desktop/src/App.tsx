@@ -1287,7 +1287,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
-  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet" | "security" | "credentials" | "jobs">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet" | "security" | "credentials" | "jobs" | "export" | "bot">("general");
 
   // Stored LLM credentials made available as a link option in the Models tab.
   const [llmCredOptions, setLlmCredOptions] = useState<Array<{ id: string; name: string; provider?: string }>>([]);
@@ -4922,7 +4922,7 @@ export default function App() {
               <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
                 <span className="text-sm font-semibold">Settings</span>
                 <div className="flex items-center gap-2">
-                  {(["general", "models", "agents", "privacy", "pet", "security", "credentials", "jobs"] as const).map((t) => (
+                  {(["general", "models", "agents", "privacy", "pet", "security", "credentials", "jobs", "export", "bot"] as const).map((t) => (
                     <button
                       key={t}
                       onClick={() => setSettingsTab(t)}
@@ -4932,7 +4932,7 @@ export default function App() {
                           : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
                       }`}
                     >
-                      {t === "jobs" ? "SSH Jobs" : t}
+                      {t === "jobs" ? "SSH Jobs" : t === "export" ? "Export" : t === "bot" ? "Bot" : t}
                     </button>
                   ))}
                 </div>
@@ -5447,6 +5447,324 @@ export default function App() {
 
                 {settingsTab === "jobs" && (
                   <RemoteJobsPanel />
+                )}
+
+                {/* Export / Import Panel */}
+                {settingsTab === "export" && (
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-text-primary">数据导出与共享</h3>
+                      <p className="mt-1 text-xs text-text-muted">
+                        将记忆、知识库、知识图谱等数据打包为压缩文件, 可用于备份或分享给其他用户。
+                      </p>
+                    </div>
+
+                    {/* Export status */}
+                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+                      <div className="mb-2 text-xs font-medium text-text-secondary">可导出数据</div>
+                      <div id="export-status" className="space-y-1 text-xs text-text-muted">
+                        <span className="text-text-muted">点击下方按钮查看...</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const resp = await fetch(`${API_BASE}/export/status`);
+                            const data = await resp.json();
+                            const el = document.getElementById("export-status");
+                            if (el && data.available) {
+                              el.innerHTML = Object.entries(data.available)
+                                .filter(([, v]: any) => v)
+                                .map(([k]: any) => `<div>✓ ${k}</div>`)
+                                .join("");
+                            }
+                          } catch (e: any) {
+                            console.error("export status error:", e);
+                          }
+                        }}
+                        className="btn-secondary text-xs mt-2"
+                      >
+                        刷新状态
+                      </button>
+                    </div>
+
+                    {/* Export all */}
+                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+                      <div className="mb-2 text-xs font-medium text-text-secondary">全量导出</div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`${API_BASE}/export/all`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ format: "zip" }),
+                              });
+                              if (resp.ok) {
+                                const blob = await resp.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = "huginn_export.zip";
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }
+                            } catch (e: any) {
+                              console.error("export error:", e);
+                            }
+                          }}
+                          className="btn-primary text-xs"
+                        >
+                          📦 导出全部 (ZIP)
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`${API_BASE}/export/memory`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ format: "json" }),
+                              });
+                              if (resp.ok) {
+                                const blob = await resp.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = "huginn_memory.json";
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }
+                            } catch (e: any) {
+                              console.error("export memory error:", e);
+                            }
+                          }}
+                          className="btn-secondary text-xs"
+                        >
+                          🧠 仅记忆
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`${API_BASE}/export/knowledge`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ format: "json" }),
+                              });
+                              if (resp.ok) {
+                                const blob = await resp.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = "huginn_knowledge.json";
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }
+                            } catch (e: any) {
+                              console.error("export knowledge error:", e);
+                            }
+                          }}
+                          className="btn-secondary text-xs"
+                        >
+                          📚 仅知识库
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Import */}
+                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+                      <div className="mb-2 text-xs font-medium text-text-secondary">导入归档</div>
+                      <input
+                        type="file"
+                        accept=".zip,.tar.gz,.json"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const formData = new FormData();
+                          formData.append("file", file);
+                          try {
+                            const resp = await fetch(`${API_BASE}/import/all`, {
+                              method: "POST",
+                              body: formData,
+                            });
+                            const data = await resp.json();
+                            if (data.imported) {
+                              alert(`导入成功: ${JSON.stringify(data.imported)}`);
+                            }
+                          } catch (e: any) {
+                            alert(`导入失败: ${e.message}`);
+                          }
+                        }}
+                        className="hidden"
+                        id="import-file-input"
+                      />
+                      <button
+                        onClick={() => document.getElementById("import-file-input")?.click()}
+                        className="btn-secondary text-xs"
+                      >
+                        📥 选择文件导入
+                      </button>
+                      <p className="mt-1 text-xs text-text-muted">
+                        支持 ZIP / TAR.GZ / JSON 格式, 导入时自动合并到现有数据。
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bot Management Panel */}
+                {settingsTab === "bot" && (
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-text-primary">机器人接入</h3>
+                      <p className="mt-1 text-xs text-text-muted">
+                        通过 OneBot v11 协议接入 QQ/微信机器人。需要先部署 go-cqhttp / Lagrange / NapCat。
+                      </p>
+                    </div>
+
+                    {/* Bot status */}
+                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-medium text-text-secondary">状态: </span>
+                          <span id="bot-status-text" className="text-xs text-text-muted">未运行</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => {
+                              try {
+                                const resp = await fetch(`${API_BASE}/bot/start`, { method: "POST" });
+                                const data = await resp.json();
+                                const el = document.getElementById("bot-status-text");
+                                if (el) el.textContent = data.running ? "运行中" : "启动失败";
+                              } catch (e: any) {
+                                console.error("bot start error:", e);
+                              }
+                            }}
+                            className="btn-primary text-xs"
+                          >
+                            ▶ 启动
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await fetch(`${API_BASE}/bot/stop`, { method: "POST" });
+                                const el = document.getElementById("bot-status-text");
+                                if (el) el.textContent = "已停止";
+                              } catch (e: any) {
+                                console.error("bot stop error:", e);
+                              }
+                            }}
+                            className="btn-secondary text-xs"
+                          >
+                            ⏹ 停止
+                          </button>
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const resp = await fetch(`${API_BASE}/bot/status`);
+                            const data = await resp.json();
+                            const el = document.getElementById("bot-status-text");
+                            if (el) el.textContent = data.running ? `运行中 (${data.platform})` : "未运行";
+                          } catch (e: any) {
+                            console.error("bot status error:", e);
+                          }
+                        }}
+                        className="btn-secondary text-xs mt-2"
+                      >
+                        刷新状态
+                      </button>
+                    </div>
+
+                    {/* Bot config */}
+                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+                      <div className="mb-2 text-xs font-medium text-text-secondary">配置</div>
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-xs text-text-muted">平台</label>
+                          <select
+                            id="bot-platform"
+                            className="input mt-1 w-full text-xs"
+                            defaultValue="qq"
+                          >
+                            <option value="qq">QQ</option>
+                            <option value="wechat">微信</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-text-muted">Bot ID (QQ号/微信号)</label>
+                          <input
+                            type="text"
+                            id="bot-id"
+                            className="input mt-1 w-full text-xs"
+                            placeholder="如: 123456789"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-text-muted">HTTP API 地址</label>
+                          <input
+                            type="text"
+                            id="bot-api-url"
+                            className="input mt-1 w-full text-xs"
+                            placeholder="如: http://127.0.0.1:5700"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-text-muted">事件监听端口</label>
+                          <input
+                            type="number"
+                            id="bot-http-port"
+                            className="input mt-1 w-full text-xs"
+                            defaultValue={8080}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-text-muted">允许的群号 (逗号分隔, 留空=全部)</label>
+                          <input
+                            type="text"
+                            id="bot-allowed-groups"
+                            className="input mt-1 w-full text-xs"
+                            placeholder="如: 123456,789012"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const config: any = {
+                            platform: (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq",
+                            bot_id: (document.getElementById("bot-id") as HTMLInputElement)?.value || "",
+                            api_url: (document.getElementById("bot-api-url") as HTMLInputElement)?.value || "",
+                            http_port: parseInt((document.getElementById("bot-http-port") as HTMLInputElement)?.value || "8080"),
+                            enabled: true,
+                          };
+                          const groups = (document.getElementById("bot-allowed-groups") as HTMLInputElement)?.value;
+                          if (groups) {
+                            config.allowed_groups = groups.split(",").map((s: string) => s.trim()).filter(Boolean);
+                          }
+                          try {
+                            await fetch(`${API_BASE}/bot/config`, {
+                              method: "PUT",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify(config),
+                            });
+                            alert("配置已保存");
+                          } catch (e: any) {
+                            alert(`保存失败: ${e.message}`);
+                          }
+                        }}
+                        className="btn-primary text-xs mt-2"
+                      >
+                        保存配置
+                      </button>
+                    </div>
+
+                    <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
+                      <p className="text-xs text-accent">
+                        💡 使用说明: 先启动 go-cqhttp 或 Lagrange, 配置 HTTP POST 上报到
+                        <code className="mx-1 rounded bg-bg-tertiary px-1">http://your-host:8080/onebot/v11/event</code>
+                        然后在上方填写配置并启动。
+                      </p>
+                    </div>
+                  </div>
                 )}
 
                 <div className="mt-6 flex items-center gap-3 pt-2">
