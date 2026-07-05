@@ -3,6 +3,52 @@ import { api } from "../lib/api";
 import { getApiBase } from "../lib/api-client";
 import { PROVIDERS } from "../lib/constants";
 
+// /config/providers only hands back ids + defaults — the readable label and the
+// 国际/国内/本地/自定义 grouping live here so the dropdown reads naturally.
+// ponytail: ceiling — if the backend grows a new provider, add a label entry here
+// (unknown ids fall back to the raw id under 自定义). upgrade path: have the
+// backend return label/category directly and drop this map.
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic (Claude)",
+  openai: "OpenAI (GPT)",
+  "google-genai": "Google (Gemini)",
+  openrouter: "OpenRouter (聚合)",
+  nvidia: "NVIDIA NIM",
+  deepseek: "DeepSeek (深度求索)",
+  siliconflow: "硅基流动 (SiliconFlow)",
+  moonshot: "Kimi (月之暗面)",
+  zhipu: "智谱 GLM",
+  baichuan: "百川",
+  dashscope: "阿里通义 (DashScope)",
+  qianfan: "百度千帆",
+  doubao: "字节豆包",
+  hunyuan: "腾讯混元",
+  minimax: "MiniMax (稀宇)",
+  ollama: "Ollama (本地)",
+  vllm: "vLLM (本地)",
+  local: "本地 (OpenAI 兼容)",
+  "lm-studio": "LM Studio (本地)",
+  "llama-cpp": "llama.cpp (本地)",
+  sglang: "SGLang (本地)",
+  "openai-compatible": "自定义 (OpenAI 兼容)",
+  default: "默认 (Default)",
+};
+
+const PROVIDER_CATEGORIES = ["国际", "国内", "本地", "自定义"] as const;
+
+const DOMESTIC_PROVIDERS = new Set([
+  "deepseek", "siliconflow", "moonshot", "zhipu", "baichuan",
+  "dashscope", "qianfan", "doubao", "hunyuan", "minimax",
+]);
+
+// Keyless providers are all loopback-local (ollama/vllm/local/lm-studio/...);
+// openai-compatible + default are user-supplied, so they land in 自定义.
+function providerCategory(p: { provider: string; needs_api_key: boolean }): string {
+  if (!p.needs_api_key) return "本地";
+  if (p.provider === "openai-compatible" || p.provider === "default") return "自定义";
+  return DOMESTIC_PROVIDERS.has(p.provider) ? "国内" : "国际";
+}
+
 export function CredentialsPanel() {
   const [sshCreds, setSshCreds] = useState<any[]>([]);
   const [llmCreds, setLlmCreds] = useState<any[]>([]);
@@ -13,6 +59,12 @@ export function CredentialsPanel() {
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any>>({});
   const [importing, setImporting] = useState(false);
+
+  // Provider catalogue pulled from /config/providers (id + defaults). null while
+  // loading / on fetch failure — the dropdown falls back to the flat PROVIDERS list.
+  const [providers, setProviders] = useState<any[] | null>(null);
+  // Inline connectivity-test result for the LLM form (before it's saved).
+  const [formTest, setFormTest] = useState<any>(null);
 
   // External API key form
   const [apiKeyForm, setApiKeyForm] = useState({ service: "", api_key: "" });
@@ -39,6 +91,9 @@ export function CredentialsPanel() {
     setTimeout(() => setMsg(null), 3500);
   };
 
+  // Look up a fetched provider entry by id (null until /config/providers resolves).
+  const providerInfo = (id: string) => providers?.find((p) => p.provider === id) || null;
+
   const load = async () => {
     try {
       const [ssh, llm, svc] = await Promise.all([
@@ -57,19 +112,31 @@ export function CredentialsPanel() {
 
   useEffect(() => { load(); }, []);
 
+  // Fetch the provider catalogue once. Silent on failure — the form just falls
+  // back to the flat PROVIDERS list, so a flaky backend shouldn't block creds UI.
+  useEffect(() => {
+    api.get<{ providers?: any[] }>("/config/providers")
+      .then((d) => setProviders(d.providers || []))
+      .catch(() => setProviders(null));
+  }, []);
+
   const startNew = (kind: string) => {
     setEditing({ kind });
     setTestResult({});
+    setFormTest(null);
     if (kind === "ssh") {
       setSshForm({ name: "", host: "", username: "", port: "22", scheduler: "slurm", key_path: "", password: "", remote_work_dir: "~/huginn_jobs", strict_host_key_checking: true });
     } else {
-      setLlmForm({ name: "", provider: "openai", model: "", base_url: "", api_key: "", alias: "" });
+      // prefill model/base_url from the openai defaults if the catalogue's loaded
+      const pi = providerInfo("openai");
+      setLlmForm({ name: "", provider: "openai", model: pi?.default_model || "", base_url: pi?.default_base_url || "", api_key: "", alias: "" });
     }
   };
 
   const startEdit = (c: any) => {
     setEditing({ kind: c.kind, id: c.id });
     setTestResult({});
+    setFormTest(null);
     if (c.kind === "ssh") {
       const m = c.metadata || {};
       setSshForm({
@@ -136,6 +203,34 @@ export function CredentialsPanel() {
       if (data.success) { flash(editing?.id ? "LLM 凭据已更新" : "LLM 凭据已创建"); setEditing(null); load(); }
       else flash(data.error || "保存失败", false);
     } catch (e: any) { flash("保存出错: " + e.message, false); }
+  };
+
+  // Fire an unsaved connectivity probe via the inline model-test endpoint.
+  // Sending the raw api_key from the form; for edits with a blank key field the
+  // backend falls back to the provider's env var (resolve_provider_key).
+  const testForm = async () => {
+    if (!llmForm.provider || !llmForm.model) {
+      flash("provider / model 必填后再测试", false);
+      return;
+    }
+    setFormTest({ loading: true });
+    try {
+      const data = await api.post<{ success?: boolean; error?: string | null; latency_ms?: number; model_response?: string }>(
+        "/config/models/test",
+        {
+          alias: "__test__",
+          provider: llmForm.provider,
+          model: llmForm.model,
+          api_key: llmForm.api_key || undefined,
+          base_url: llmForm.base_url || undefined,
+          temperature: 0.0,
+          enabled: true,
+        }
+      );
+      setFormTest(data);
+    } catch (e: any) {
+      setFormTest({ success: false, error: e.message });
+    }
   };
 
   const remove = async (id: string, name: string) => {
@@ -252,6 +347,14 @@ export function CredentialsPanel() {
     </div>
   );
 
+  const needsKey = providerInfo(llmForm.provider)?.needs_api_key ?? true;
+  const grouped = providers
+    ? PROVIDER_CATEGORIES.reduce<Record<string, any[]>>((acc, cat) => {
+        acc[cat] = providers.filter((p) => providerCategory(p) === cat);
+        return acc;
+      }, {})
+    : null;
+
   const llmFormEl = (
     <div className="card space-y-3 border-accent/20 bg-accent/5">
       <h4 className="text-sm font-semibold">{editing?.id ? "编辑 LLM 凭据" : "新增 LLM 凭据"}</h4>
@@ -262,25 +365,60 @@ export function CredentialsPanel() {
         </div>
         <div>
           <label className="mb-1 block text-xs text-text-secondary">Provider *</label>
-          <select className="input" value={llmForm.provider} onChange={(e) => setLlmForm({ ...llmForm, provider: e.target.value })}>
-            {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          <select
+            className="input"
+            value={llmForm.provider}
+            onChange={(e) => {
+              const provider = e.target.value;
+              const pi = providerInfo(provider);
+              // switching provider resets model/base_url to its defaults so the
+              // user sees a sane starting point; they can still override afterwards
+              setLlmForm((f) => ({ ...f, provider, model: pi?.default_model || "", base_url: pi?.default_base_url || "" }));
+              setFormTest(null);
+            }}
+          >
+            {grouped
+              ? PROVIDER_CATEGORIES.map((cat) => {
+                  const items = grouped[cat];
+                  if (!items?.length) return null;
+                  return (
+                    <optgroup key={cat} label={cat}>
+                      {items.map((p) => (
+                        <option key={p.provider} value={p.provider}>
+                          {PROVIDER_LABELS[p.provider] || p.provider}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })
+              : PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
         </div>
         <div>
           <label className="mb-1 block text-xs text-text-secondary">Model *</label>
-          <input className="input" value={llmForm.model} onChange={(e) => setLlmForm({ ...llmForm, model: e.target.value })} placeholder="deepseek-chat / gpt-4o / ..." />
+          <input className="input" value={llmForm.model} onChange={(e) => setLlmForm({ ...llmForm, model: e.target.value })} placeholder={providerInfo(llmForm.provider)?.default_model || "deepseek-chat / gpt-4o / ..."} />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-text-secondary">Base URL (可选)</label>
-          <input className="input" value={llmForm.base_url} onChange={(e) => setLlmForm({ ...llmForm, base_url: e.target.value })} placeholder="https://api.deepseek.com" />
+          <label className="mb-1 block text-xs text-text-secondary">Base URL {needsKey ? "(可选)" : "*"}</label>
+          <input className="input" value={llmForm.base_url} onChange={(e) => setLlmForm({ ...llmForm, base_url: e.target.value })} placeholder={providerInfo(llmForm.provider)?.default_base_url || "https://api.deepseek.com"} />
         </div>
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-xs text-text-secondary">API Key ({editing?.id ? "留空=不修改" : "必填, 本地 provider 可填占位"})</label>
-          <input type="password" className="input" value={llmForm.api_key} onChange={(e) => setLlmForm({ ...llmForm, api_key: e.target.value })} placeholder="sk-..." />
-        </div>
+        {needsKey && (
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs text-text-secondary">API Key ({editing?.id ? "留空=不修改" : "必填"})</label>
+            <input type="password" className="input" value={llmForm.api_key} onChange={(e) => setLlmForm({ ...llmForm, api_key: e.target.value })} placeholder={providerInfo(llmForm.provider)?.env_var || "sk-..."} />
+          </div>
+        )}
+        {formTest && !formTest.loading && (
+          <div className={`md:col-span-2 text-xs ${formTest.success ? "text-success" : "text-error"}`}>
+            {formTest.success
+              ? `✓ 连通${formTest.latency_ms != null ? ` · ${formTest.latency_ms}ms` : ""}${formTest.model_response ? ` · ${String(formTest.model_response).slice(0, 40)}` : ""}`
+              : `✗ ${formTest.error || "失败"}`}
+          </div>
+        )}
       </div>
       <div className="flex gap-2">
         <button onClick={saveLlm} className="btn-primary text-xs">保存</button>
+        <button onClick={testForm} disabled={formTest?.loading} className="btn-secondary text-xs">{formTest?.loading ? "测试中…" : "测试连接"}</button>
         <button onClick={() => setEditing(null)} className="btn-secondary text-xs">取消</button>
       </div>
     </div>
