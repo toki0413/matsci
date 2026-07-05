@@ -202,6 +202,40 @@ class HallucinationGrader:
         return self.evaluate(data)
 
 
+class BenchGrader:
+    """包 MatWorldBench: 把 benchmark 评测结果折算成 GraderResult.
+
+    data: {"task_id": str, "agent_output": dict}
+    延迟导入 MatWorldBench, 避免 validation -> evaluation 的循环依赖.
+    """
+
+    name = "matworld_bench"
+
+    def __init__(self, bench: Any | None = None) -> None:
+        if bench is not None:
+            self._bench = bench
+        else:
+            from huginn.evaluation.matworld_bench import MatWorldBench
+            self._bench = MatWorldBench()
+
+    def evaluate(self, data: dict[str, Any]) -> GraderResult:
+        task_id = data.get("task_id", "")
+        agent_output = data.get("agent_output") or data.get("output") or {}
+        if not task_id:
+            return GraderResult(
+                name=self.name, score=0.0, passed=False,
+                message="missing task_id",
+            )
+        res = self._bench.evaluate(task_id, agent_output)
+        return GraderResult(
+            name=self.name, score=res.score, passed=res.passed,
+            checks=[res.details], message=f"task={task_id}",
+        )
+
+    def __call__(self, data: dict[str, Any]) -> GraderResult:
+        return self.evaluate(data)
+
+
 class GraderRegistry:
     """注册多个 Grader, 统一跑 evaluate_all 拿同构结果."""
 
@@ -237,6 +271,7 @@ __all__ = [
     "DimensionalGrader",
     "RedTeamGrader",
     "HallucinationGrader",
+    "BenchGrader",
     "GraderRegistry",
     "default_registry",
 ]

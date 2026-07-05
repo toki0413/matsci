@@ -3,6 +3,7 @@
 from huginn.evaluation.arena_store import ArenaRecord, ArenaStore
 from huginn.evaluation.core import evaluate
 from huginn.evaluation.grader import (
+    BenchGrader,
     DimensionalGrader,
     GraderRegistry,
     GraderResult,
@@ -12,6 +13,12 @@ from huginn.evaluation.grader import (
     default_registry,
 )
 from huginn.evaluation.judge import BlindArena, JudgeEvaluator, JudgeResult
+from huginn.evaluation.matworld_bench import (
+    BenchResult,
+    BenchTask,
+    CATEGORIES,
+    MatWorldBench,
+)
 
 __all__ = [
     "evaluate",
@@ -27,5 +34,11 @@ __all__ = [
     "DimensionalGrader",
     "RedTeamGrader",
     "HallucinationGrader",
+    "BenchGrader",
     "default_registry",
+    # matworld bench
+    "CATEGORIES",
+    "BenchTask",
+    "BenchResult",
+    "MatWorldBench",
 ]
