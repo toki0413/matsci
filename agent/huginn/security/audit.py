@@ -61,7 +61,7 @@ class AuditLogger:
             # 落在 runtime home 下, 不散落在 CWD
             try:
                 from huginn.utils.runtime import get_runtime_home
-                log_path = get_runtime_home() / "audit.jsonl"
+                log_path = get_runtime_home() / "huginn_audit.jsonl"
             except Exception:
                 log_path = Path("huginn_audit.jsonl")
         self.log_path = Path(log_path)

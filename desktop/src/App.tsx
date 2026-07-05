@@ -4761,10 +4761,15 @@ export default function App() {
                             const data = await api.get<{ available?: Record<string, boolean> }>("/export/status");
                             const el = document.getElementById("export-status");
                             if (el && data.available) {
-                              el.innerHTML = Object.entries(data.available)
+                              // 用 textContent 代替 innerHTML, 避免 XSS
+                              el.innerHTML = "";
+                              Object.entries(data.available)
                                 .filter(([, v]) => v)
-                                .map(([k]) => `<div>✓ ${k}</div>`)
-                                .join("");
+                                .forEach(([k]) => {
+                                  const div = document.createElement("div");
+                                  div.textContent = `✓ ${k}`;
+                                  el.appendChild(div);
+                                });
                             }
                           } catch (e: any) {
                             console.error("export status error:", e);

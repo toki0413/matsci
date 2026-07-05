@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from huginn.security.auth import require_api_key
@@ -74,6 +74,13 @@ async def export_data(
     fmt: str = "json",
 ) -> Any:
     """Export Huginn records as a downloadable file."""
+    # 白名单校验, 防止路径穿越 (source 直接拼进文件名)
+    ALLOWED_SOURCES = {"audit", "remote_jobs", "knowledge", "checkpoints", "provenance", "trajectories"}
+    if source not in ALLOWED_SOURCES:
+        raise HTTPException(status_code=400, detail=f"Invalid source: {source}")
+    # defense-in-depth: 剥掉可能的路径分隔符
+    source = Path(source).name
+
     from huginn.export_manager import ExportManager
 
     manager = ExportManager(get_context().config.workspace)

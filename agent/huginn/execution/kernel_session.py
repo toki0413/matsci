@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import pickle
 import subprocess
 import sys
@@ -173,14 +174,13 @@ class KernelSession:
     # ── subprocess 降级路径 ──────────────────────────────────────
 
     def _start_subprocess(self) -> None:
-        # 用临时文件存 pickle 的 globals, 跨 execute 保留状态
-        fd, path = tempfile.mkstemp(suffix=".pkl", prefix="huginn_kernel_")
+        # 用临时文件存 JSON 的 globals, 跨 execute 保留状态
+        fd, path = tempfile.mkstemp(suffix=".json", prefix="huginn_kernel_")
         os.close(fd)
         self._state_file = path
-        # 空命名空间即可, exec 会自动注入 __builtins__; 不要 pickle
-        # __builtins__ 本身——在模块上下文里它是 module, 含 PyCapsule 无法 pickle
-        with open(path, "wb") as f:
-            pickle.dump({}, f)
+        # 空命名空间即可, exec 会自动注入 __builtins__
+        with open(path, "w") as f:
+            json.dump({}, f)
 
     def _subprocess_exec(self, code: str) -> KernelExecResult:
         if not self._state_file:
@@ -188,11 +188,20 @@ class KernelSession:
         # 每次执行: 加载状态 -> exec -> 存回状态 -> 打印输出
         # 用 repr 转义代码, 避免注入
         script = (
-            "import pickle, sys, io, traceback\n"
+            "import json, sys, io, traceback\n"
             f"_sf = {self._state_file!r}\n"
+            # 先尝试 JSON, 失败则回退 pickle (旧格式), 再不行用空命名空间
             "try:\n"
-            "    with open(_sf, 'rb') as _f:\n"
-            "        _g = pickle.load(_f)\n"
+            "    with open(_sf, 'r') as _f:\n"
+            "        _g = json.load(_f)\n"
+            "except (json.JSONDecodeError, UnicodeDecodeError):\n"
+            "    import pickle, logging\n"
+            "    logging.warning('loading legacy pickle state: %s', _sf)\n"
+            "    try:\n"
+            "        with open(_sf, 'rb') as _f:\n"
+            "            _g = pickle.load(_f)\n"
+            "    except Exception:\n"
+            "        _g = {}\n"
             "except Exception:\n"
             "    _g = {}\n"
             "_out, _err = io.StringIO(), io.StringIO()\n"
@@ -204,20 +213,23 @@ class KernelSession:
             "    traceback.print_exc(file=_err)\n"
             "sys.stdout, sys.stderr = _so, _se\n"
             # 存回前剥掉 __builtins__: exec 会把它塞进 _g (module 形态),
-            # 而 module 含 PyCapsule 无法 pickle, 必须排除
+            # JSON 无法序列化 module, 必须排除
             "_g.pop('__builtins__', None)\n"
-            # 原子写: pickle 到临时文件再 os.replace, 避免 dump 中途失败
-            # (globals 里有不可 pickle 的对象如 module/file) 把状态文件写坏,
-            # 写坏的文件下次 load 会变成空命名空间, 丢光所有变量
+            # 原子写: JSON dump 到临时文件再 os.replace, 避免 dump 中途失败
+            # 把状态文件写坏, 写坏的文件下次 load 会变成空命名空间, 丢光所有变量
             "import os as _os, tempfile as _tf\n"
             "_fd, _tmp = _tf.mkstemp(dir=_os.path.dirname(_sf) or '.')\n"
             "_os.close(_fd)\n"
+            # 非 JSON 可序列化对象 (module, function 等) 用 str() 兜底
+            "def _json_default(o):\n"
+            "    try: return str(o)\n"
+            "    except Exception: return None\n"
             "try:\n"
-            "    with open(_tmp, 'wb') as _f:\n"
-            "        pickle.dump(_g, _f)\n"
+            "    with open(_tmp, 'w') as _f:\n"
+            "        json.dump(_g, _f, default=_json_default)\n"
             "    _os.replace(_tmp, _sf)\n"
             "except Exception as _e:\n"
-            "    _err.write('warning: state pickle failed: ' + repr(_e) + '\\n')\n"
+            "    _err.write('warning: state json dump failed: ' + repr(_e) + '\\n')\n"
             "    try: _os.unlink(_tmp)\n"
             "    except OSError: pass\n"
             "sys.stdout.write(_out.getvalue())\n"

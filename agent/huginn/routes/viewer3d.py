@@ -573,6 +573,14 @@ async def viewer3d_websocket(websocket: WebSocket) -> None:
     * 推送 frame (原子位置 + 能量 + 温度)
     * 接收 force 事件并转发到模拟器
     """
+    # WebSocket 路由不走 router 级依赖, 手动鉴权 (和其他 WS 端点一致)
+    try:
+        require_api_key(request=None, websocket=websocket)
+    except Exception as auth_exc:
+        logger.warning("viewer3d WebSocket auth failed: %s", auth_exc)
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+
     await websocket.accept()
     sim: _MockSim | None = None
     stream_task: asyncio.Task | None = None
