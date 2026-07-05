@@ -7,6 +7,7 @@ expressions, and executes them as subprocess commands.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import sys
@@ -185,7 +186,7 @@ class ScheduleManager:
             return []
         try:
             raw = self._path.read_text(encoding="utf-8")
-            data = __import__("json").loads(raw)
+            data = json.loads(raw)
         except Exception:
             return []
         return [ScheduledJob(**item) for item in data]
@@ -194,6 +195,6 @@ class ScheduleManager:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         data = [asdict(job) for job in jobs]
         self._path.write_text(
-            __import__("json").dumps(data, indent=2, ensure_ascii=False),
+            json.dumps(data, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )

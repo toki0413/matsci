@@ -18,7 +18,7 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from huginn.bot.bridge import (
     BotConfig,
@@ -28,6 +28,7 @@ from huginn.bot.bridge import (
     start_bridge,
     stop_bridge,
 )
+from huginn.security.auth import require_admin_key
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ router = APIRouter(tags=["bot"])
 # ── 管理端点 ────────────────────────────────────────────────────────
 
 
-@router.get("/bot/status")
+@router.get("/bot/status", dependencies=[Depends(require_admin_key)])
 async def bot_status() -> dict[str, Any]:
     """获取 bot 运行状态和统计信息."""
     bridge = get_bridge()
@@ -51,7 +52,7 @@ async def bot_status() -> dict[str, Any]:
     return bridge.get_status()
 
 
-@router.post("/bot/start")
+@router.post("/bot/start", dependencies=[Depends(require_admin_key)])
 async def bot_start() -> dict[str, Any]:
     """启动 bot bridge.
 
@@ -77,7 +78,7 @@ async def bot_start() -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@router.post("/bot/stop")
+@router.post("/bot/stop", dependencies=[Depends(require_admin_key)])
 async def bot_stop() -> dict[str, Any]:
     """停止 bot bridge."""
     bridge = get_bridge()
@@ -91,14 +92,14 @@ async def bot_stop() -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@router.get("/bot/config")
+@router.get("/bot/config", dependencies=[Depends(require_admin_key)])
 async def get_bot_config() -> dict[str, Any]:
     """查看当前 bot 配置."""
     cfg = get_config()
     return {"success": True, "config": asdict(cfg)}
 
 
-@router.put("/bot/config")
+@router.put("/bot/config", dependencies=[Depends(require_admin_key)])
 async def update_bot_config(params: dict[str, Any]) -> dict[str, Any]:
     """更新 bot 配置.
 
