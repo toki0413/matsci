@@ -53,6 +53,13 @@ from huginn.routes.side import router as side_router
 from huginn.routes.admin import router as admin_router
 from huginn.routes.visual import router as visual_router
 from huginn.routes.export_share import router as export_share_router
+# 远程计算增强: 隧道 / 文件传输 / 远程终端 (仿 MobaXterm)
+from huginn.routes.tunnels import router as tunnels_router
+from huginn.routes.transfer import router as transfer_router
+from huginn.routes.terminal import router as terminal_router
+# 实时 3D 分子查看器: REST (load/trajectory/elements) + WebSocket (/ws/viewer3d)
+from huginn.routes.viewer3d import router as viewer3d_router
+from huginn.routes.viewer3d import ws_router as viewer3d_ws_router
 
 ALL_ROUTERS = [
     advisor_router,
@@ -104,6 +111,13 @@ ALL_ROUTERS = [
     admin_router,
     # 导出 / 导入 / 分享: 全量打包、单组件导出、归档导入
     export_share_router,
+    # 实时 3D 分子查看器: 结构加载 / 轨迹 / 元素表 / WebSocket 流
+    viewer3d_router,
+    viewer3d_ws_router,
+    # 远程计算增强 (仿 MobaXterm): SSH 隧道 / 文件传输 / 远程终端
+    tunnels_router,
+    transfer_router,
+    terminal_router,
 ]
 
 # ── API versioning ──────────────────────────────────────────────────

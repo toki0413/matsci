@@ -78,6 +78,31 @@ def _validate_env_var(key: str, value: str) -> None:
         raise ValueError(f"Env var {key!r} value contains forbidden characters")
 
 
+# 优先级到数值的映射; SLURM priority 范围 0-10000, 这里取经验值
+# 让 urgent 作业明显比 normal 先跑, 但不抢光集群
+_PRIORITY_MAP = {"low": 100, "normal": 500, "high": 1000, "urgent": 2000}
+
+
+def _priority_to_int(priority: str) -> int | None:
+    """把 low/normal/high/urgent 映射成调度器能识别的数值。"""
+    return _PRIORITY_MAP.get(priority)
+
+
+def _validate_dependency_type(dtype: str) -> None:
+    """依赖类型必须是 SLURM/PBS 认可的几个值。"""
+    if dtype not in ("afterok", "afterany", "afternotok", "after"):
+        raise ValueError(f"Unsupported dependency type: {dtype!r}")
+
+
+def _validate_array_spec(spec: str) -> None:
+    """数组规格只允许数字、横杠、逗号和百分号 (限并发)。
+
+    合法例子: "1-10" "1-10%2" "1,3,5" "0-99"
+    """
+    if not re.match(r"^[0-9][0-9,\-%]*$", spec):
+        raise ValueError(f"Invalid array spec: {spec!r}")
+
+
 @dataclass
 class HPCConfig:
     """Configuration for HPC connection and resource selection."""
@@ -213,8 +238,19 @@ class HPCClient:
         modules: list[str] | None = None,
         env_vars: dict[str, str] | None = None,
         gpus_per_node: int | None = None,
+        priority: str = "normal",
+        depends_on: list[str] | None = None,
+        dependency_type: str = "afterok",
+        array_spec: str | None = None,
     ) -> str:
-        """Generate a job script for the configured scheduler."""
+        """Generate a job script for the configured scheduler.
+
+        新增参数:
+        - priority: low / normal / high / urgent, 映射成调度器优先级
+        - depends_on: 前置作业 ID 列表, 全部满足后才启动本作业
+        - dependency_type: afterok (默认) / afterany / afternotok
+        - array_spec: 数组作业规格 (如 "1-10"), 提交一批同类作业
+        """
         # Validate all user-controlled inputs before building the script
         _validate_command(command)
         job_name = _sanitize_job_name(job_name)
@@ -236,6 +272,10 @@ class HPCClient:
                 modules,
                 env_vars,
                 gpus_per_node,
+                priority,
+                depends_on,
+                dependency_type,
+                array_spec,
             )
         elif self.config.scheduler == "pbs":
             return self._generate_pbs_script(
@@ -248,6 +288,10 @@ class HPCClient:
                 modules,
                 env_vars,
                 gpus_per_node,
+                priority,
+                depends_on,
+                dependency_type,
+                array_spec,
             )
         else:
             raise ValueError(f"Unsupported scheduler: {self.config.scheduler}")
@@ -263,6 +307,10 @@ class HPCClient:
         modules: list[str] | None,
         env_vars: dict[str, str] | None,
         gpus_per_node: int | None,
+        priority: str = "normal",
+        depends_on: list[str] | None = None,
+        dependency_type: str = "afterok",
+        array_spec: str | None = None,
     ) -> str:
         lines = ["#!/bin/bash"]
         lines.append(f"#SBATCH --job-name={job_name}")
@@ -283,8 +331,27 @@ class HPCClient:
         if queue or self.config.default_queue:
             lines.append(f"#SBATCH --partition={queue or self.config.default_queue}")
 
-        lines.append("#SBATCH --output=slurm-%j.out")
-        lines.append("#SBATCH --error=slurm-%j.err")
+        # 数组作业: 一条脚本提交一批子任务, 用 %j 区分输出文件
+        if array_spec:
+            _validate_array_spec(array_spec)
+            lines.append(f"#SBATCH --array={array_spec}")
+            lines.append("#SBATCH --output=slurm-%A_%a.out")
+            lines.append("#SBATCH --error=slurm-%A_%a.err")
+        else:
+            lines.append("#SBATCH --output=slurm-%j.out")
+            lines.append("#SBATCH --error=slurm-%j.err")
+
+        # 优先级: 映射成数值, urgent 抢前面
+        prio = _priority_to_int(priority)
+        if prio is not None and priority != "normal":
+            lines.append(f"#SBATCH --priority={prio}")
+
+        # 依赖: 等前置作业跑完再启动, 链式提交靠这个
+        if depends_on:
+            _validate_dependency_type(dependency_type)
+            dep_str = ":".join(str(j) for j in depends_on)
+            lines.append(f"#SBATCH --dependency={dependency_type}:{dep_str}")
+
         lines.append("")
 
         if modules:
@@ -313,6 +380,10 @@ class HPCClient:
         modules: list[str] | None,
         env_vars: dict[str, str] | None,
         gpus_per_node: int | None,
+        priority: str = "normal",
+        depends_on: list[str] | None = None,
+        dependency_type: str = "afterok",
+        array_spec: str | None = None,
     ) -> str:
         lines = ["#!/bin/bash"]
         lines.append(f"#PBS -N {job_name}")
@@ -331,8 +402,29 @@ class HPCClient:
         if queue or self.config.default_queue:
             lines.append(f"#PBS -q {queue or self.config.default_queue}")
 
-        lines.append("#PBS -o pbs-$PBS_JOBID.out")
-        lines.append("#PBS -e pbs-$PBS_JOBID.err")
+        # PBS 数组: 不同版本用 -t (Torque) 或 -J (PBS Pro), 这里用兼容性最好的 -t
+        if array_spec:
+            _validate_array_spec(array_spec)
+            lines.append(f"#PBS -t {array_spec}")
+            lines.append("#PBS -o pbs-${PBS_ARRAYID}.out")
+            lines.append("#PBS -e pbs-${PBS_ARRAYID}.err")
+        else:
+            lines.append("#PBS -o pbs-$PBS_JOBID.out")
+            lines.append("#PBS -e pbs-$PBS_JOBID.err")
+
+        # 优先级: PBS 用 -p 取整数, 范围 -1024..1023
+        prio = _priority_to_int(priority)
+        if prio is not None and priority != "normal":
+            # 映射到 PBS 范围内, urgent 最高
+            pbs_prio = {100: -512, 500: 0, 1000: 512, 2000: 1023}
+            lines.append(f"#PBS -p {pbs_prio.get(prio, 0)}")
+
+        # 依赖: PBS 用 -W depend=afterok:JOBID
+        if depends_on:
+            _validate_dependency_type(dependency_type)
+            dep_str = ":".join(str(j) for j in depends_on)
+            lines.append(f'#PBS -W depend={dependency_type}:{dep_str}')
+
         lines.append("")
         lines.append("cd $PBS_O_WORKDIR")
         lines.append("")
