@@ -312,6 +312,44 @@ class AutoloopEngine:
         except Exception:
             return ""
 
+    def _build_kg_text(self, query: str) -> str:
+        """检索知识图谱, 把相关实体+关系拼成 prompt 上下文块.
+        KG 没建、空、查询失败都返回空串. 这是 KG 读回闭环的关键 —
+        _learn 写入的实体, _hypothesize/_plan 要能检索到."""
+        if not query:
+            return ""
+        kg = getattr(self, "kg", None)
+        if kg is None:
+            return ""
+        try:
+            result = kg.query(query, depth=1, top_k=8)
+            nodes = result.get("nodes") or []
+            if not nodes:
+                return ""
+            lines = []
+            for node in nodes[:8]:
+                data = node.get("data", node)
+                label = data.get("label", node.get("id", ""))
+                etype = data.get("type", "")
+                conf = data.get("confidence", 0)
+                lines.append(f"- [{etype}] {label} (conf={conf:.2f})")
+                # 把出边也带上
+                for edge in (node.get("edges") or [])[:3]:
+                    rel = edge.get("relation", "→")
+                    dst = edge.get("dst_label", edge.get("dst", ""))
+                    lines.append(f"  {rel} → {dst}")
+            if not lines:
+                return ""
+            body = "\n".join(lines)
+            return (
+                "### Knowledge Graph Context\n"
+                "Previously discovered entities and relations from prior runs:\n"
+                f"{body}\n"
+                "### End Knowledge Graph Context"
+            )
+        except Exception:
+            return ""
+
     def _persona_system_prompt(self, persona_name: str | None) -> str:
         """取 persona 的 system prompt. 找不到就返回空串, 不报错."""
         if not persona_name:
@@ -674,6 +712,30 @@ class AutoloopEngine:
                 if self._goal_scheduler is not None:
                     self._goal_scheduler.complete_goal(goal.id)
                 self._should_stop = True
+
+            # GoalJudge 反馈: 每 3 轮或最后一轮做一次快速目标判定.
+            # 没达成时把 gaps 拼进 _speculator_hint, 下轮 plan 会看到.
+            if goal is not None and not self._should_stop:
+                if self._iteration % 3 == 2 or self._iteration >= max_iterations - 1:
+                    try:
+                        from huginn.evaluation.goal_judge import GoalJudge
+                        judge = GoalJudge(llm=None)  # rule-based in loop, LLM judge at exit
+                        final_text = str(validation.get("summary") or
+                                         validation.get("result_data") or
+                                         execution_result.get("summary", ""))
+                        gj = judge.judge(goal.objective, None, final_text)
+                        if gj.get("achieved"):
+                            print(f"  → GoalJudge: achieved (score={gj['score']})")
+                            self._should_stop = True
+                        elif gj.get("gaps"):
+                            gap_hint = "; ".join(gj["gaps"][:3])
+                            self._speculator_hint = (
+                                (self._speculator_hint + "\n" + gap_hint).strip()
+                                if self._speculator_hint else gap_hint
+                            )
+                            print(f"  → GoalJudge gaps: {gap_hint}")
+                    except Exception:
+                        pass
 
         # 7. Report
         total_time = time.time() - start_time
@@ -1242,6 +1304,27 @@ class AutoloopEngine:
             results["emergent_complexity"] = compute_ec(execution_result, results)
         except Exception as e:
             results["emergent_complexity_error"] = str(e)
+
+        # 统一 Grader: 用 GraderRegistry 跑 physics + dimensional + hallucination,
+        # 把分数和 reward 信号收集起来. 这步替换了部分 ad-hoc 校验, 统一接口.
+        try:
+            from huginn.validation.grader import default_registry
+            reg = default_registry()
+            grader_results = reg.evaluate_all(execution_result, results)
+            results["grader_scores"] = {
+                name: {
+                    "score": gr.score,
+                    "passed": gr.passed,
+                    "message": gr.message,
+                }
+                for name, gr in grader_results.items()
+            }
+            # 把整体 reward 算出来给 evolution engine 用
+            if grader_results:
+                avg_score = sum(gr.score for gr in grader_results.values()) / len(grader_results)
+                results["grader_reward"] = round(avg_score, 4)
+        except Exception as e:
+            results["grader_error"] = str(e)
 
         return results
 
@@ -2035,12 +2118,19 @@ Please modify the code to address this task."""
         )
         if kb_block:
             kb_block = f"\n{kb_block}\n"
+        # 知识图谱检索: 把之前 run 发现的实体和关系拉回来, 避免
+        # 重复发现已有结论, 也让假设能建立在已有发现上
+        kg_block = self._build_kg_text(
+            query=json.dumps(context, ensure_ascii=False)[:500]
+        )
+        if kg_block:
+            kg_block = f"\n{kg_block}\n"
         # 数学深度引导: 提醒 agent 优先识别 PDE / 变分原理 / 微分几何结构,
         # 并用符号回归 + Sobol 灵敏度 + 物理约束先验 反复试探.
         # 这一段是把"物理化学是数学的一部分"落到 prompt 的具体抓手.
         math_block = self._MATH_DEPTH_PROMPT_BLOCK
         return f"""You are an autonomous material science research agent.
-{hint_block}{kb_block}{math_block}
+{hint_block}{kb_block}{kg_block}{math_block}
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
@@ -2077,6 +2167,10 @@ Math depth guidance (treat physics/chemistry as mathematics):
         kb_block = self._build_kb_text(query=hypothesis)
         if kb_block:
             kb_block = f"\n{kb_block}\n"
+        # KG 检索: 用 hypothesis 当 query, 看看已有实体里有没有相关的
+        kg_block = self._build_kg_text(query=hypothesis)
+        if kg_block:
+            kg_block = f"\n{kg_block}\n"
         math_block = self._MATH_DEPTH_PROMPT_BLOCK
 
         # Inject learned skills + prompt patches from evolution engine.
@@ -2096,7 +2190,7 @@ Math depth guidance (treat physics/chemistry as mathematics):
             pass
 
         return f"""Given the hypothesis: "{hypothesis}"
-{kb_block}{math_block}{skill_hints}{patch_hints}
+{kb_block}{kg_block}{math_block}{skill_hints}{patch_hints}
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
 
