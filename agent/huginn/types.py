@@ -41,13 +41,62 @@ class PermissionResult:
 
 @dataclass
 class ToolResult:
-    """Result of a tool execution, mirroring Claude Code's ToolResult<T>."""
+    """Result of a tool execution, mirroring Claude Code's ToolResult<T>.
+
+    CLI-Anything 契约: 任何工具的输出都必须可序列化为 JSON.
+    to_dict() / to_json() 处理常见不可序列化类型.
+    """
 
     data: Any
     success: bool = True
     error: str | None = None
     new_messages: list[dict] = field(default_factory=list)
     side_effects: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dict (CLI-Anything --json contract)."""
+        return {
+            "data": _jsonify(self.data),
+            "success": self.success,
+            "error": self.error,
+            "side_effects": list(self.side_effects),
+        }
+
+    def to_json(self, **kwargs: Any) -> str:
+        import json
+        return json.dumps(self.to_dict(), ensure_ascii=False, **kwargs)
+
+
+def _jsonify(obj: Any) -> Any:
+    """Recursively convert non-serializable types to JSON-safe equivalents."""
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    # Pydantic v2
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    # Pydantic v1 fallback
+    if hasattr(obj, "dict") and not isinstance(obj, dict):
+        return obj.dict()
+    # numpy
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    if hasattr(obj, "item") and not isinstance(obj, dict):
+        try:
+            return obj.item()
+        except (ValueError, AttributeError):
+            pass
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, (set, frozenset)):
+        return [ _jsonify(x) for x in obj]
+    if isinstance(obj, dict):
+        return {str(k): _jsonify(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonify(x) for x in obj]
+    # datetime / other isoformat-able objects
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    return str(obj)
 
 
 @dataclass
