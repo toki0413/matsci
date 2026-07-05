@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool
 from huginn.tools.gp_tool import NumPyGP
+from huginn.tools.neural_proxy import NeuralPDEProxy
 from huginn.tools.profile import ToolProfile
 from huginn.types import ToolContext, ToolResult
 
@@ -87,6 +88,7 @@ class MultiFidelityInput(BaseModel):
         "bayesian_calibrate",
         "nested_doe",
         "variance_reduction",
+        "neural_proxy",
     ] = Field(
         description=(
             "register_source: 注册保真数据源; "
@@ -95,7 +97,8 @@ class MultiFidelityInput(BaseModel):
             "select_next: cost-aware 主动学习选点; "
             "bayesian_calibrate: Kennedy-O'Hagan 2000 Bayesian model calibration (MCMC); "
             "nested_doe: 嵌套空间填充 DOE (LF ⊃ HF); "
-            "variance_reduction: 控制变量方差缩减"
+            "variance_reduction: 控制变量方差缩减; "
+            "neural_proxy: Transolver 神经 PDE 快速预估 + FEM 校验"
         )
     )
     name: str | None = Field(default=None, description="register_source: 数据源名称")
@@ -168,6 +171,19 @@ class MultiFidelityInput(BaseModel):
         default=None,
         description="variance_reduction: 控制系数 β, None=自动最优",
     )
+    # neural_proxy 专用
+    mesh_data: dict | None = Field(
+        default=None,
+        description="neural_proxy: mesh 数据 {'nodes': [[x,y],...], 'elements': ...}",
+    )
+    boundary_conditions: dict | None = Field(
+        default=None,
+        description="neural_proxy: 边界条件 {'type': 'dirichlet', 'values': [...]}",
+    )
+    model_path: str | None = Field(
+        default=None,
+        description="neural_proxy: 训练好的 Transolver 权重路径",
+    )
 
 
 # ── tool ─────────────────────────────────────────────────────────────────────
@@ -192,6 +208,8 @@ class MultiFidelityTool(HuginnTool):
     def __init__(self) -> None:
         self._sources: list[FidelitySource] = []
         self._surrogate: MultiFidelitySurrogate | None = None
+        # 神经 PDE 代理: 延迟构造, 避免跟 _neural_proxy 方法重名被遮蔽
+        self._proxy: NeuralPDEProxy | None = None
 
     async def call(
         self, args: dict[str, Any], context: ToolContext | None = None
@@ -212,6 +230,8 @@ class MultiFidelityTool(HuginnTool):
                 return self._nested_doe(input_data)
             if input_data.action == "variance_reduction":
                 return self._variance_reduction(input_data)
+            if input_data.action == "neural_proxy":
+                return self._neural_proxy(input_data)
             return ToolResult(data=None, success=False, error=f"未知 action: {input_data.action}")
         except Exception as exc:
             return ToolResult(data=None, success=False, error=f"MultiFidelityTool failed: {exc}")
@@ -656,6 +676,97 @@ class MultiFidelityTool(HuginnTool):
             },
             success=True,
         )
+
+
+    def _neural_proxy(self, inp: MultiFidelityInput) -> ToolResult:
+        """Transolver 神经 PDE 快速预估 + FEM 校验.
+
+        流程:
+          1. 有 neural proxy (torch+transolver+权重) -> 先跑神经快速预估
+          2. 再用已拟合的多保真 surrogate 做 FEM 级校验 (残差 = |neural - fem|)
+          3. neural 不可用 -> 直接返回降级提示, 让上层走纯 FEM
+        """
+        if not inp.mesh_data or not inp.boundary_conditions:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="neural_proxy 需要 mesh_data 和 boundary_conditions",
+            )
+
+        # 延迟构造 proxy, 第一次用才建
+        if self._proxy is None:
+            self._proxy = NeuralPDEProxy()
+
+        proxy = self._proxy
+        if inp.model_path:
+            proxy.load_model(inp.model_path)
+
+        if not proxy.available():
+            # 降级: 没装 torch/transolver, 直接提示用 FEM
+            return ToolResult(
+                data={
+                    "neural_estimate": None,
+                    "degraded": True,
+                    "reason": proxy.status(),
+                    "fem_available": self._surrogate is not None
+                    and self._surrogate.fitted,
+                },
+                success=True,
+            )
+
+        # 神经快速预估
+        sol = proxy.predict(inp.mesh_data, inp.boundary_conditions)
+        if not sol.available:
+            return ToolResult(
+                data={
+                    "neural_estimate": None,
+                    "degraded": True,
+                    "reason": sol.reason,
+                    "backend": sol.backend,
+                    "fem_available": self._surrogate is not None
+                    and self._surrogate.fitted,
+                },
+                success=True,
+            )
+
+        result: dict[str, Any] = {
+            "neural_estimate": {
+                "field": sol.field.tolist(),
+                "backend": sol.backend,
+                "meta": sol.meta,
+            },
+            "degraded": False,
+        }
+
+        # FEM 校验: 用已拟合的 surrogate 在 mesh 节点上预测, 算跟神经解的残差
+        if self._surrogate is not None and self._surrogate.fitted:
+            try:
+                nodes = inp.mesh_data.get("nodes", inp.mesh_data)
+                X = np.array(nodes, dtype=float)
+                if X.ndim == 1:
+                    X = X.reshape(1, -1)
+                fem_mu, fem_sigma = self._surrogate.predict(X)
+                # 残差: 神经解 vs FEM 均值 (长度对齐才比)
+                n = min(len(sol.field), len(fem_mu))
+                if n > 0:
+                    resid = sol.field[:n] - fem_mu[:n]
+                    result["fem_validation"] = {
+                        "mu": fem_mu[:n].tolist(),
+                        "sigma": fem_sigma[:n].tolist(),
+                        "residual_mean": float(np.mean(resid)),
+                        "residual_std": float(np.std(resid)),
+                        "residual_max": float(np.max(np.abs(resid))),
+                    }
+                else:
+                    result["fem_validation"] = {"note": "长度对不齐, 跳过残差"}
+            except Exception as exc:
+                result["fem_validation"] = {"error": str(exc)}
+        else:
+            result["fem_validation"] = {
+                "note": "surrogate 未拟合, 跳过 FEM 校验 (先 fit_surrogate)"
+            }
+
+        return ToolResult(data=result, success=True)
 
 
 __all__ = [
