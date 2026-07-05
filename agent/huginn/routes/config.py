@@ -137,6 +137,15 @@ def _provider_info(provider: str) -> dict[str, Any]:
     # vllm / local 默认走本地, 也不强求 key
     if provider in ("vllm", "local"):
         needs_key = False
+    # local LLM presets — no key needed, preset base_url
+    if provider in ("lm-studio", "llama-cpp", "sglang"):
+        needs_key = False
+        presets = {
+            "lm-studio": "http://localhost:1234/v1",
+            "llama-cpp": "http://localhost:8080/v1",
+            "sglang": "http://localhost:30000/v1",
+        }
+        base_url = presets.get(provider)
 
     return {
         "provider": provider,
@@ -427,7 +436,9 @@ async def list_providers() -> dict[str, Any]:
         "anthropic", "openai", "deepseek", "google-genai", "openrouter",
         "nvidia", "ollama", "vllm", "local", "siliconflow",
         "moonshot", "zhipu", "baichuan", "dashscope", "qianfan",
-        "doubao", "hunyuan", "openai-compatible", "default",
+        "doubao", "hunyuan", "minimax",
+        "lm-studio", "llama-cpp", "sglang",
+        "openai-compatible", "default",
     ]
     return {"providers": [_provider_info(p) for p in order], "count": len(order)}
 

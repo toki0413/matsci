@@ -32,7 +32,12 @@ ProviderT = Literal[
     "qianfan",
     "doubao",
     "hunyuan",
+    "minimax",
     "openai-compatible",
+    # Local LLM presets (all OpenAI-compatible)
+    "lm-studio",
+    "llama-cpp",
+    "sglang",
 ]
 
 
@@ -107,7 +112,11 @@ def _apply_thinking_kwargs(
             kwargs["reasoning_effort"] = thinking
         return
 
-    # DeepSeek, Google, Ollama, NVIDIA, domestic: no standard mapping yet.
+    # DeepSeek and Qwen/DashScope support enable_thinking via extra_body
+    if provider in ("deepseek", "dashscope") and isinstance(thinking, str):
+        if thinking != "off":
+            kwargs["extra_body"] = {"enable_thinking": True}
+        return
 
 
 @dataclass
@@ -172,6 +181,12 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "deepseek-reasoner": ModelCaps(
         vision=False, tools=False, reasoning=True, streaming=True
     ),
+    "deepseek-v4-pro": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True
+    ),
+    "deepseek-v4-flash": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True
+    ),
     # ── Google Gemini ──────────────────────────────────────────
     "gemini-2.5-pro": ModelCaps(
         vision=True, tools=True, reasoning=True, streaming=True
@@ -185,8 +200,13 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "gemini-1.5-flash": ModelCaps(
         vision=True, tools=True, reasoning=False, streaming=True
     ),
-    # ── Qwen / 通义 ────────────────────────────────────────────
+    # ── Qwen / 通义 (DashScope) ───────────────────────────────
     "qwen-max": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen3-max": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "qwen3.5-plus": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "qwen3.6-max-preview": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "qwen3.6-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen-long": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "qwen2.5:14b": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
@@ -197,11 +217,27 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "moonshot-v1-32k": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
-    # ── GLM ───────────────────────────────────────────────────
+    "moonshot-v1-128k": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    "kimi-k2.6": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "kimi-k2-thinking": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "kimi-k2-turbo-preview": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # ── GLM (智谱) ────────────────────────────────────────────
     "glm-4": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
     "glm-4-flash": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
+    "glm-4.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "glm-4.7-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "glm-5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "glm-5.1": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "glm-5.2": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    # ── MiniMax ───────────────────────────────────────────────
+    "MiniMax-M2.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "MiniMax-M2.7-highspeed": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "MiniMax-M2.5": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "MiniMax-M2": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
 }
 
 
@@ -228,7 +264,7 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
     "deepseek": {
         "env": "DEEPSEEK_API_KEY",
         "base_url": "https://api.deepseek.com",
-        "default_model": "deepseek-chat",
+        "default_model": "deepseek-v4-flash",
     },
     "siliconflow": {
         "env": "SILICONFLOW_API_KEY",
@@ -238,7 +274,7 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
     "moonshot": {
         "env": "MOONSHOT_API_KEY",
         "base_url": "https://api.moonshot.cn/v1",
-        "default_model": "moonshot-v1-8k",
+        "default_model": "kimi-k2.6",
     },
     "zhipu": {
         "env": "ZHIPU_API_KEY",
@@ -253,7 +289,7 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
     "dashscope": {
         "env": "DASHSCOPE_API_KEY",
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "default_model": "qwen-max",
+        "default_model": "qwen3.5-plus",
     },
     "qianfan": {
         "env": "QIANFAN_API_KEY",
@@ -270,6 +306,11 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
         "base_url": "https://api.hunyuan.tencentcloudapi.com/v1",
         "default_model": "hunyuan-turbo",
     },
+    "minimax": {
+        "env": "MINIMAX_API_KEY",
+        "base_url": "https://api.minimaxi.com/v1",
+        "default_model": "MiniMax-M2.7",
+    },
     "openai-compatible": {
         "env": "OPENAI_API_KEY",
         "base_url": None,
@@ -277,11 +318,27 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
     },
 }
 
+#: Local LLM presets — all OpenAI-compatible, all run on localhost.
+_LOCAL_PRESETS: dict[str, dict[str, str]] = {
+    "lm-studio": {
+        "base_url": "http://localhost:1234/v1",
+        "default_model": "local-model",
+    },
+    "llama-cpp": {
+        "base_url": "http://localhost:8080/v1",
+        "default_model": "local-model",
+    },
+    "sglang": {
+        "base_url": "http://localhost:30000/v1",
+        "default_model": "default",
+    },
+}
+
 _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "anthropic": "claude-3-5-sonnet-20241022",
     "openai": "gpt-4o",
     "ollama": "qwen2.5:14b",
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-v4-flash",
     "google-genai": "gemini-2.5-pro",
     "openrouter": "anthropic/claude-sonnet-4",
     "nvidia": "meta/llama-3.1-405b-instruct",
@@ -289,14 +346,18 @@ _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "local": None,
     "default": None,
     "siliconflow": "deepseek-ai/DeepSeek-V3",
-    "moonshot": "moonshot-v1-8k",
+    "moonshot": "kimi-k2.6",
     "zhipu": "glm-4-flash",
     "baichuan": "Baichuan4",
-    "dashscope": "qwen-max",
+    "dashscope": "qwen3.5-plus",
     "qianfan": "ernie-4.0-turbo-8k",
     "doubao": "doubao-pro-32k",
     "hunyuan": "hunyuan-turbo",
+    "minimax": "MiniMax-M2.7",
     "openai-compatible": None,
+    "lm-studio": "local-model",
+    "llama-cpp": "local-model",
+    "sglang": "default",
 }
 
 _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
@@ -318,7 +379,12 @@ _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
     "qianfan": "QIANFAN_API_KEY",
     "doubao": "DOUBAO_API_KEY",
     "hunyuan": "HUNYUAN_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
     "openai-compatible": "OPENAI_API_KEY",
+    # Local presets don't need real keys — fill any non-empty string
+    "lm-studio": "",
+    "llama-cpp": "",
+    "sglang": "",
 }
 
 
@@ -343,6 +409,7 @@ _CLOUD_PROVIDERS: set[str] = {
     "qianfan",
     "doubao",
     "hunyuan",
+    "minimax",
 }
 
 
@@ -353,8 +420,9 @@ def is_local_provider(provider: str, base_url: str | None = None) -> bool:
         return True
     if provider in ("vllm", "local"):
         return _is_local_url(base_url) if base_url else True
+    if provider in _LOCAL_PRESETS:
+        return True
     if provider == "openai-compatible":
-        # Generic OpenAI-compatible endpoint is local only when it points to localhost.
         return _is_local_url(base_url) if base_url else False
     if provider in _CLOUD_PROVIDERS:
         return _is_local_url(base_url)
@@ -555,6 +623,21 @@ def create_langchain_model(
             max_tokens=max_tokens,
         )
 
+    if provider in _LOCAL_PRESETS:
+        preset = _LOCAL_PRESETS[provider]
+        resolved_base_url = base_url or preset["base_url"]
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as err:
+            raise ImportError("pip install langchain-openai") from err
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key or "not-needed",
+            base_url=resolved_base_url,
+            temperature=temperature,
+            request_timeout=_llm_request_timeout(),
+        )
+
     if provider == "nvidia":
         try:
             from langchain_nvidia_ai_endpoints import ChatNVIDIA
@@ -579,6 +662,98 @@ def resolve_provider_key(provider: ProviderT, api_key: str | None) -> str | None
         return api_key
     env_var = _PROVIDER_KEY_ENV.get(provider)
     return os.environ.get(env_var) if env_var else None
+
+
+def list_providers() -> list[dict[str, Any]]:
+    """Return all supported providers with metadata for UI rendering.
+
+    Each entry: {id, label, base_url, default_model, env_var, local, needs_key}
+    """
+    entries: list[dict[str, Any]] = []
+
+    # Cloud providers with dedicated handling
+    cloud_meta: list[tuple[str, str, str | None, str | None, str]] = [
+        ("anthropic", "Anthropic (Claude)", None, "claude-3-5-sonnet-20241022", "ANTHROPIC_API_KEY"),
+        ("openai", "OpenAI (GPT)", None, "gpt-4o", "OPENAI_API_KEY"),
+        ("google-genai", "Google (Gemini)", None, "gemini-2.5-pro", "GOOGLE_API_KEY"),
+        ("openrouter", "OpenRouter (聚合)", None, "anthropic/claude-sonnet-4", "OPENROUTER_API_KEY"),
+        ("nvidia", "NVIDIA NIM", None, "meta/llama-3.1-405b-instruct", "NVIDIA_API_KEY"),
+    ]
+    for pid, label, url, model, env in cloud_meta:
+        entries.append({
+            "id": pid, "label": label, "base_url": url,
+            "default_model": model, "env_var": env,
+            "local": False, "needs_key": True,
+        })
+
+    # Domestic OpenAI-compatible providers
+    for pid, cfg in _DOMESTIC_OPENAI_COMPATIBLE.items():
+        if pid == "openai-compatible":
+            continue
+        label_map = {
+            "deepseek": "DeepSeek (深度求索)",
+            "siliconflow": "硅基流动 (SiliconFlow)",
+            "moonshot": "Kimi (月之暗面)",
+            "zhipu": "智谱 GLM",
+            "baichuan": "百川",
+            "dashscope": "阿里通义 (DashScope)",
+            "qianfan": "百度千帆",
+            "doubao": "字节豆包",
+            "hunyuan": "腾讯混元",
+            "minimax": "MiniMax (稀宇)",
+        }
+        entries.append({
+            "id": pid,
+            "label": label_map.get(pid, pid),
+            "base_url": cfg.get("base_url"),
+            "default_model": cfg.get("default_model"),
+            "env_var": cfg.get("env"),
+            "local": False,
+            "needs_key": True,
+        })
+
+    # Local LLM presets
+    entries.append({
+        "id": "ollama", "label": "Ollama (本地)",
+        "base_url": "http://localhost:11434",
+        "default_model": "qwen2.5:14b",
+        "env_var": "", "local": True, "needs_key": False,
+    })
+    entries.append({
+        "id": "vllm", "label": "vLLM (本地)",
+        "base_url": "http://localhost:8000/v1",
+        "default_model": None, "env_var": "", "local": True, "needs_key": False,
+    })
+    for pid, preset in _LOCAL_PRESETS.items():
+        label_map = {
+            "lm-studio": "LM Studio (本地)",
+            "llama-cpp": "llama.cpp (本地)",
+            "sglang": "SGLang (本地)",
+        }
+        entries.append({
+            "id": pid,
+            "label": label_map.get(pid, pid),
+            "base_url": preset["base_url"],
+            "default_model": preset["default_model"],
+            "env_var": "", "local": True, "needs_key": False,
+        })
+
+    # Generic OpenAI-compatible (user provides everything)
+    entries.append({
+        "id": "openai-compatible", "label": "自定义 (OpenAI 兼容)",
+        "base_url": None, "default_model": None,
+        "env_var": "OPENAI_API_KEY", "local": False, "needs_key": True,
+    })
+
+    return entries
+
+
+def get_provider_info(provider: str) -> dict[str, Any] | None:
+    """Get info for a single provider by id. Returns None if not found."""
+    for entry in list_providers():
+        if entry["id"] == provider:
+            return entry
+    return None
 
 
 @dataclass
