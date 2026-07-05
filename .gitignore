@@ -93,6 +93,9 @@ agent/lean/HuginnLean/
 *.bak
 *.bak.*
 
+# Playwright test output
+desktop/test-results/
+
 # Local runtime data
 agent/.huginn_kb/
 agent/.huginn_memory/
