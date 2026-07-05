@@ -20,7 +20,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { ReconnectingWebSocket } from "./lib/ws-client";
-import { api, getAuthToken, setApiBase as _setApiBase } from "./lib/api-client";
+import { getAuthToken, setApiBase as _setApiBase } from "./lib/api-client";
+import { api } from "./lib/api";
+import { isWSMessage, type WSMessage } from "./types/ws";
 import {
   MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
   Users, Code2, FlaskConical, Brain, BookOpen, GitBranch,
@@ -78,6 +80,31 @@ interface SkillInfo {
     default?: any;
   }>;
   tags: string[];
+}
+
+// Shapes for a few REST responses that are consumed in multiple places.
+// Kept loose (optional fields) since the backend evolves independently.
+
+interface PersonaSeed {
+  name?: string;
+  id?: string;
+  description?: string;
+  avatar?: string;
+}
+
+interface PersonaEmotionResponse {
+  context_prompt?: string;
+  state?: { valence?: number; arousal?: number; trust?: number };
+}
+
+interface DocumentParseResult {
+  info_packages?: number;
+  graph?: { nodes?: unknown[]; edges?: unknown[] };
+}
+
+interface DocumentGraph {
+  nodes?: unknown[];
+  edges?: unknown[];
 }
 
 interface ModelConfig {
@@ -142,8 +169,7 @@ interface BackendLogEvent {
 
 let API_BASE = "http://localhost:8000";
 let WS_URL =
-  ((import.meta as any).env?.VITE_WS_URL as string | undefined) ||
-  `${API_BASE.replace("http", "ws")}/ws/agent`;
+  import.meta.env.VITE_WS_URL || `${API_BASE.replace("http", "ws")}/ws/agent`;
 
 /** Update API_BASE and WS_URL from the actual backend port reported by Tauri. */
 async function syncBackendUrl() {
@@ -327,12 +353,24 @@ function buildDefaultArgs(schema: any): Record<string, any> {
   return out;
 }
 
+interface JsonSchemaProperty {
+  type?: string;
+  description?: string;
+  enum?: string[];
+}
+
+interface JsonSchema {
+  type?: string;
+  required?: string[];
+  properties?: Record<string, JsonSchemaProperty>;
+}
+
 function JsonSchemaForm({
   schema,
   value,
   onChange,
 }: {
-  schema: any;
+  schema: JsonSchema;
   value: Record<string, any>;
   onChange: (v: Record<string, any>) => void;
 }) {
@@ -343,8 +381,7 @@ function JsonSchemaForm({
   };
   return (
     <div className="space-y-4">
-      {Object.entries(schema.properties || {}).map(([key, propRaw]) => {
-        const prop = propRaw as any;
+      {Object.entries(schema.properties ?? {}).map(([key, prop]) => {
         const label = (
           <span className="text-xs font-medium text-text-secondary">
             {key}
@@ -383,7 +420,7 @@ function JsonSchemaForm({
               onChange={(e) => update(key, e.target.value)}
               className="input text-sm"
             >
-              {prop.enum.map((opt: string) => (
+              {prop.enum.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
                 </option>
@@ -506,7 +543,9 @@ function LocalModelDiscoverer({
         provider: model.provider,
         base_url: model.base_url || "",
       });
-      const data = await fetch(`${API_BASE}/config/local-models?${params.toString()}`).then((r) => r.json());
+      const data = await api.get<{ success?: boolean; models?: string[]; error?: string }>(
+        `/config/local-models?${params.toString()}`
+      );
       if (data.success && Array.isArray(data.models) && data.models.length > 0) {
         setDiscovered(data.models);
       } else {
@@ -589,9 +628,9 @@ function CredentialsPanel() {
   const load = async () => {
     try {
       const [ssh, llm, svc] = await Promise.all([
-        fetch(`${API_BASE}/credentials?kind=ssh`).then((r) => r.json()),
-        fetch(`${API_BASE}/credentials?kind=llm`).then((r) => r.json()),
-        fetch(`${API_BASE}/credentials`).then((r) => r.json()),
+        api.get<{ credentials?: any[] }>("/credentials?kind=ssh"),
+        api.get<{ credentials?: any[] }>("/credentials?kind=llm"),
+        api.get<{ services?: any[] }>("/credentials"),
       ]);
       setSshCreds(ssh.credentials || []);
       setLlmCreds(llm.credentials || []);
@@ -688,14 +727,14 @@ function CredentialsPanel() {
   const remove = async (id: string, name: string) => {
     if (!confirm(`删除凭据 "${name}"？此操作不可撤销。`)) return;
     try {
-      const data = await fetch(`${API_BASE}/credentials/${id}`, { method: "DELETE" }).then((r) => r.json());
+      const data = await api.del<{ success?: boolean; error?: string }>(`/credentials/${id}`);
       if (data.success) { flash("已删除"); load(); } else flash(data.error || "删除失败", false);
     } catch (e: any) { flash("删除出错: " + e.message, false); }
   };
 
   const setDef = async (id: string) => {
     try {
-      const data = await fetch(`${API_BASE}/credentials/${id}/set-default`, { method: "POST" }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; error?: string }>(`/credentials/${id}/set-default`);
       if (data.success) { flash("已设为默认"); load(); } else flash(data.error || "设置失败", false);
     } catch (e: any) { flash("出错: " + e.message, false); }
   };
@@ -704,7 +743,7 @@ function CredentialsPanel() {
     setTesting(id);
     setTestResult((p) => ({ ...p, [id]: { loading: true } }));
     try {
-      const data = await fetch(`${API_BASE}/credentials/${id}/test`, { method: "POST" }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; error?: string }>(`/credentials/${id}/test`);
       setTestResult((p) => ({ ...p, [id]: data }));
     } catch (e: any) {
       setTestResult((p) => ({ ...p, [id]: { success: false, error: e.message } }));
@@ -717,7 +756,9 @@ function CredentialsPanel() {
   const importFromConfig = async () => {
     setImporting(true);
     try {
-      const data = await fetch(`${API_BASE}/credentials/import-from-config`, { method: "POST" }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; imported?: number; count?: number; error?: string }>(
+        "/credentials/import-from-config"
+      );
       if (data.success) {
         const n = data.imported ?? data.count ?? 0;
         flash(n > 0 ? `已从配置导入 ${n} 条凭据` : "配置中未发现可导入的密钥");
@@ -927,12 +968,10 @@ function CredentialsPanel() {
             onClick={async () => {
               if (!apiKeyForm.service || !apiKeyForm.api_key) return;
               try {
-                const resp = await fetch(`${API_BASE}/credentials/${apiKeyForm.service}`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ api_key: apiKeyForm.api_key }),
-                });
-                const data = await resp.json();
+                const data = await api.post<{ success?: boolean; error?: string }>(
+                  `/credentials/${apiKeyForm.service}`,
+                  { api_key: apiKeyForm.api_key }
+                );
                 if (data.success !== false) {
                   flash(`${apiKeyForm.service} API Key 已保存`);
                   setApiKeyForm({ service: "", api_key: "" });
@@ -974,8 +1013,9 @@ function CredentialsPanel() {
                           setTestingService(s.service);
                           setServiceTestResult({});
                           try {
-                            const resp = await fetch(`${API_BASE}/credentials/${s.service}/test`);
-                            const data = await resp.json();
+                            const data = await api.get<{ valid?: boolean; error?: string }>(
+                              `/credentials/${s.service}/test`
+                            );
                             setServiceTestResult({ [s.service]: data });
                           } catch (e: any) {
                             setServiceTestResult({ [s.service]: { valid: false, error: e.message } });
@@ -995,7 +1035,7 @@ function CredentialsPanel() {
                       <button
                         onClick={async () => {
                           try {
-                            await fetch(`${API_BASE}/credentials/${s.service}`, { method: "DELETE" });
+                            await api.del(`/credentials/${s.service}`);
                             flash(`${s.service} API Key 已删除`);
                             load();
                           } catch (e: any) {
@@ -1029,7 +1069,7 @@ function RemoteJobsPanel() {
 
   const load = async () => {
     try {
-      const data = await fetch(`${API_BASE}/hpc/jobs`).then((r) => r.json());
+      const data = await api.get<{ success?: boolean; jobs?: any[] }>("/hpc/jobs");
       if (data.success) setJobs(data.jobs || []);
     } catch {
       // 后端还没起来就先静默, 下个轮询周期再试
@@ -1047,7 +1087,7 @@ function RemoteJobsPanel() {
   const refreshJob = async (localId: string) => {
     setBusy(localId);
     try {
-      await fetch(`${API_BASE}/hpc/jobs/${localId}/refresh`, { method: "POST" });
+      await api.post(`/hpc/jobs/${localId}/refresh`);
       await load();
     } catch {
       // 网络抖动之类的, 忽略
@@ -1059,7 +1099,7 @@ function RemoteJobsPanel() {
     if (!confirm("取消该作业? 正在运行的任务会被终止。")) return;
     setBusy(localId);
     try {
-      await fetch(`${API_BASE}/hpc/jobs/${localId}/cancel`, { method: "POST" });
+      await api.post(`/hpc/jobs/${localId}/cancel`);
       await load();
     } catch {
       // 同上
@@ -1547,12 +1587,7 @@ export default function App() {
   // Push config to backend whenever it changes or we come online
   const pushConfig = useCallback(async (cfg: AppConfig) => {
     try {
-      const resp = await fetch(`${API_BASE}/config`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      await api.post("/config", cfg);
       return true;
     } catch (e) {
       console.warn("[config] failed to push:", e);
@@ -1578,12 +1613,10 @@ export default function App() {
     setTeamError("");
     setTeamResult(null);
     try {
-      const resp = await fetch(`${API_BASE}/team/plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objective: teamObjective }),
-      });
-      const data = await resp.json();
+      const data = await api.post<{ success?: boolean; tasks?: any[]; error?: string }>(
+        "/team/plan",
+        { objective: teamObjective }
+      );
       if (data.success) {
         setTeamPlan(data.tasks || []);
       } else {
@@ -1603,12 +1636,10 @@ export default function App() {
     setTeamError("");
     setTeamResult(null);
     try {
-      const resp = await fetch(`${API_BASE}/team/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objective: teamObjective }),
-      });
-      const data = await resp.json();
+      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
+        "/team/run",
+        { objective: teamObjective }
+      );
       if (data.success) {
         setTeamResult(data);
       } else {
@@ -1629,12 +1660,10 @@ export default function App() {
     try {
       const body: any = { task: coderTask, auto_approve: coderAutoApprove };
       if (coderMaxIters !== "") body.max_iterations = Number(coderMaxIters);
-      const resp = await fetch(`${API_BASE}/coder`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await resp.json();
+      const data = await api.post<{ success?: boolean; final_answer?: string; error?: string }>(
+        "/coder",
+        body
+      );
       if (data.success) {
         setCoderResult(data.final_answer || "Done.");
       } else {
@@ -1654,11 +1683,10 @@ export default function App() {
     try {
       const body: any = { evolve: benchEvolve };
       if (benchCategories.trim()) body.categories = benchCategories.split(",").map((s) => s.trim()).filter(Boolean);
-      const data = await fetch(`${API_BASE}/bench/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; report?: any; error?: string }>(
+        "/bench/run",
+        body
+      );
       if (data.success) {
         setBenchResult(data.report);
       } else {
@@ -1676,11 +1704,10 @@ export default function App() {
     setEvolveError("");
     setEvolveResult(null);
     try {
-      const data = await fetch(`${API_BASE}/evolve/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; report?: any; error?: string }>(
+        "/evolve/run",
+        {}
+      );
       if (data.success) {
         setEvolveResult(data.report);
       } else {
@@ -1707,11 +1734,10 @@ export default function App() {
         setExecuteRunning(false);
         return;
       }
-      const data = await fetch(`${API_BASE}/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stages, working_dir: executeWorkingDir, name: executeName }),
-      }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
+        "/execute",
+        { stages, working_dir: executeWorkingDir, name: executeName }
+      );
       if (data.success) {
         setExecuteResult(data);
       } else {
@@ -1726,7 +1752,7 @@ export default function App() {
 
   const loadWorkflowTemplates = async () => {
     try {
-      const data = await fetch(`${API_BASE}/workflows`).then((r) => r.json());
+      const data = await api.get<any[]>("/workflows");
       setWorkflowTemplates(Array.isArray(data) ? data : []);
     } catch (e: any) {
       console.error("[workflows] load failed:", e);
@@ -1749,11 +1775,10 @@ export default function App() {
           args[k] = v;
         }
       });
-      const data = await fetch(`${API_BASE}/workflows/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template: workflowTemplate, args }),
-      }).then((r) => r.json());
+      const data = await api.post<{ error?: string } & Record<string, any>>(
+        "/workflows/execute",
+        { template: workflowTemplate, args }
+      );
       if (data.error) {
         setWorkflowError(data.error);
       } else {
@@ -1772,15 +1797,14 @@ export default function App() {
     setExploreError("");
     setExploreResult(null);
     try {
-      const data = await fetch(`${API_BASE}/explore`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
+        "/explore",
+        {
           objective: exploreObjective,
           max_iterations: exploreMaxIters,
           max_branches: exploreMaxBranches,
-        }),
-      }).then((r) => r.json());
+        }
+      );
       if (data.success) {
         setExploreResult(data);
       } else {
@@ -1799,16 +1823,15 @@ export default function App() {
     setDiagnoseErrorMsg("");
     setDiagnoseResult(null);
     try {
-      const data = await fetch(`${API_BASE}/diagnose`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await api.post<{ success?: boolean; data?: any; error?: string }>(
+        "/diagnose",
+        {
           error_message: diagnoseError,
           software: diagnoseSoftware || undefined,
           calculation_type: diagnoseCalcType || undefined,
           context: diagnoseContext || undefined,
-        }),
-      }).then((r) => r.json());
+        }
+      );
       if (data.success) {
         setDiagnoseResult(data.data);
       } else {
@@ -1826,11 +1849,10 @@ export default function App() {
     setHpcError("");
     setHpcResult(null);
     try {
-      const data = await fetch(`${API_BASE}/hpc/test`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ host: hpcHost, username: hpcUsername, scheduler: hpcScheduler, key_path: hpcKeyPath || undefined }),
-      }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
+        "/hpc/test",
+        { host: hpcHost, username: hpcUsername, scheduler: hpcScheduler, key_path: hpcKeyPath || undefined }
+      );
       if (data.success) {
         setHpcResult(data);
       } else {
@@ -1849,10 +1871,9 @@ export default function App() {
     setHpcError("");
     setHpcResult(null);
     try {
-      const data = await fetch(`${API_BASE}/hpc/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await api.post<{ success?: boolean; job_id?: string; error?: string } & Record<string, any>>(
+        "/hpc/submit",
+        {
           host: hpcHost,
           username: hpcUsername,
           scheduler: hpcScheduler,
@@ -1863,10 +1884,10 @@ export default function App() {
           nodes: hpcNodes,
           ntasks_per_node: hpcNtasks,
           queue: hpcQueue || undefined,
-        }),
-      }).then((r) => r.json());
+        }
+      );
       if (data.success) {
-        setHpcJobId(data.job_id);
+        setHpcJobId(data.job_id ?? "");
         setHpcResult(data);
       } else {
         setHpcError(data.error || "HPC submit failed.");
@@ -1883,17 +1904,16 @@ export default function App() {
     setHpcRunning(true);
     setHpcError("");
     try {
-      const data = await fetch(`${API_BASE}/hpc/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
+        "/hpc/status",
+        {
           host: hpcHost,
           username: hpcUsername,
           scheduler: hpcScheduler,
           key_path: hpcKeyPath || undefined,
           job_id: hpcJobId,
-        }),
-      }).then((r) => r.json());
+        }
+      );
       if (data.success) {
         setHpcResult(data);
       } else {
@@ -2099,11 +2119,7 @@ export default function App() {
   const createCheckpoint = async () => {
     if (!cwd) return;
     try {
-      const cp = (await fetch(`${API_BASE}/checkpoints`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: cwd }),
-      }).then((r) => r.json())) as Checkpoint;
+      const cp = await api.post<Checkpoint>("/checkpoints", { path: cwd });
       setCheckpoints((prev) => [cp, ...prev]);
       setActiveCp(cp.id);
       loadDiffs(cp.id);
@@ -2114,7 +2130,7 @@ export default function App() {
 
   const loadDiffs = async (cpId: string) => {
     try {
-      const data = await fetch(`${API_BASE}/checkpoints/${cpId}/diff`).then((r) => r.json());
+      const data = await api.get<{ diffs?: DiffEntry[] }>(`/checkpoints/${cpId}/diff`);
       setDiffs((data.diffs as DiffEntry[]) || []);
       setActiveCp(cpId);
     } catch (e: any) {
@@ -2124,7 +2140,7 @@ export default function App() {
 
   const acceptCheckpoint = async (cpId: string) => {
     try {
-      await fetch(`${API_BASE}/checkpoints/${cpId}/accept`, { method: "POST" });
+      await api.post(`/checkpoints/${cpId}/accept`);
       setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
       if (activeCp === cpId) {
         setActiveCp(null);
@@ -2137,7 +2153,7 @@ export default function App() {
 
   const rejectCheckpoint = async (cpId: string) => {
     try {
-      await fetch(`${API_BASE}/checkpoints/${cpId}/reject`, { method: "POST" });
+      await api.post(`/checkpoints/${cpId}/reject`);
       setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
       if (activeCp === cpId) {
         setActiveCp(null);
@@ -2163,7 +2179,7 @@ export default function App() {
 
   const loadKnowledge = async () => {
     try {
-      const data = await fetch(`${API_BASE}/knowledge`).then((r) => r.json());
+      const data = await api.get<{ documents?: any[]; available?: any }>("/knowledge");
       setKbDocs(data.documents || []);
       setKbAvailable(data.available);
     } catch (e: any) {
@@ -2176,12 +2192,12 @@ export default function App() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const data = await fetch(`${API_BASE}/knowledge/upload`, {
-        method: "POST",
-        body: form,
-      }).then((r) => r.json());
+      const data = await api.upload<{ success?: boolean; error?: string; document?: { chunks: number } }>(
+        "/knowledge/upload",
+        form
+      );
       if (data.success) {
-        setKbMsg(`Uploaded ${data.document.chunks} chunks from ${file.name}`);
+        setKbMsg(`Uploaded ${data.document?.chunks ?? 0} chunks from ${file.name}`);
         loadKnowledge();
       } else {
         setKbMsg(`Upload failed: ${data.error}`);
@@ -2199,41 +2215,34 @@ export default function App() {
     setParseLoading(true);
     setKbMsg("Parsing document (6-stage pipeline)…");
     try {
-      const resp = await api.upload<any>('/document/parse', file, { timeout: 120_000 });
-      if (resp.ok && resp.data) {
-        const d = resp.data as any;
-        setKbMsg(
-          `✅ Parsed: ${d.info_packages || 0} info packages, ` +
-          `${d.graph?.nodes || 0} graph nodes, ` +
-          `${d.graph?.edges || 0} edges`
-        );
-        loadKnowledge();
-      } else {
-        setKbMsg(`Parse failed: ${resp.error?.message || 'unknown'}`);
-      }
-    } catch (e: any) {
-      setKbMsg(`Parse error: ${e.message}`);
+      const d = await api.upload<DocumentParseResult>('/document/parse', file);
+      setKbMsg(
+        `✅ Parsed: ${d.info_packages || 0} info packages, ` +
+        `${d.graph?.nodes?.length || 0} graph nodes, ` +
+        `${d.graph?.edges?.length || 0} edges`
+      );
+      loadKnowledge();
+    } catch (e) {
+      setKbMsg(`Parse error: ${(e as Error).message}`);
     } finally {
       setParseLoading(false);
     }
   };
   const loadDocumentGraph = useCallback(async (docId: string) => {
     try {
-      const resp = await api.get<any>(`/document/${docId}/graph`);
-      if (resp.ok && resp.data) {
-        setKbMsg(
-          `📊 Document graph: ${(resp.data as any).nodes?.length || 0} nodes, ` +
-          `${(resp.data as any).edges?.length || 0} edges`
-        );
-        return resp.data;
-      }
+      const data = await api.get<DocumentGraph>(`/document/${docId}/graph`);
+      setKbMsg(
+        `📊 Document graph: ${data.nodes?.length || 0} nodes, ` +
+        `${data.edges?.length || 0} edges`
+      );
+      return data;
     } catch { /* ignore */ }
     return null;
   }, []);
 
   const deleteKnowledge = async (docId: string) => {
     try {
-      await fetch(`${API_BASE}/knowledge/${docId}`, { method: "DELETE" });
+      await api.del(`/knowledge/${docId}`);
       loadKnowledge();
     } catch (e: any) {
       setKbMsg(`Delete failed: ${e.message}`);
@@ -2244,11 +2253,10 @@ export default function App() {
     if (!kbQuery.trim()) return;
     setKbMsg("Querying…");
     try {
-      const data = await fetch(`${API_BASE}/knowledge/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: kbQuery, top_k: 5 }),
-      }).then((r) => r.json());
+      const data = await api.post<{ chunks?: any[] } & Record<string, any>>(
+        "/knowledge/query",
+        { query: kbQuery, top_k: 5 }
+      );
       setKbChunks(data.chunks || []);
       setKbMsg(data.chunks?.length ? `Found ${data.chunks.length} chunks` : "No results");
     } catch (e: any) {
@@ -2279,7 +2287,7 @@ export default function App() {
 
   const loadMcp = async () => {
     try {
-      const data = await fetch(`${API_BASE}/mcp/servers`).then((r) => r.json());
+      const data = await api.get<{ servers?: any[] }>("/mcp/servers");
       setMcpServers(data.servers || []);
     } catch (e: any) {
       setMcpMsg(`Failed to load MCP servers: ${e.message}`);
@@ -2288,7 +2296,7 @@ export default function App() {
 
   const discoverMcp = async () => {
     try {
-      const data = await fetch(`${API_BASE}/mcp/servers/discover`).then((r) => r.json());
+      const data = await api.get<{ servers?: any[] }>("/mcp/servers/discover");
       setDiscoveredServers(data.servers || []);
     } catch (e: any) {
       setMcpMsg(`Discovery failed: ${e.message}`);
@@ -2298,11 +2306,10 @@ export default function App() {
   const connectMcp = async (server: { name: string; command: string; args: string[] }) => {
     setMcpMsg(`Connecting ${server.name}…`);
     try {
-      const data = await fetch(`${API_BASE}/mcp/servers/connect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(server),
-      }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; tools?: any[]; error?: string }>(
+        "/mcp/servers/connect",
+        server
+      );
       if (data.success) {
         setMcpMsg(`Connected ${server.name} (${data.tools?.length || 0} tools)`);
         loadMcp();
@@ -2317,9 +2324,9 @@ export default function App() {
   const disconnectMcp = async (name: string) => {
     setMcpMsg(`Disconnecting ${name}…`);
     try {
-      const data = await fetch(`${API_BASE}/mcp/servers/${name}/disconnect`, {
-        method: "POST",
-      }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; error?: string }>(
+        `/mcp/servers/${name}/disconnect`
+      );
       if (data.success) {
         setMcpMsg(`Disconnected ${name}`);
         loadMcp();
@@ -2345,7 +2352,7 @@ export default function App() {
 
   const loadThreads = async () => {
     try {
-      const data = await fetch(`${API_BASE}/threads`).then((r) => r.json());
+      const data = await api.get<{ threads?: Thread[] }>("/threads");
       setThreads(data.threads || []);
     } catch (e: any) {
       console.error("[threads] load failed:", e);
@@ -2354,11 +2361,7 @@ export default function App() {
 
   const createThread = async () => {
     try {
-      const data = await fetch(`${API_BASE}/threads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: "New thread" }),
-      }).then((r) => r.json());
+      const data = await api.post<{ id: string; label: string }>("/threads", { label: "New thread" });
       setActiveThread(data.id);
       setMessages([
         {
@@ -2375,11 +2378,7 @@ export default function App() {
 
   const renameThread = async (id: string, label: string) => {
     try {
-      await fetch(`${API_BASE}/threads/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label }),
-      }).then((r) => r.json());
+      await api.patch(`/threads/${id}`, { label });
       loadThreads();
     } catch (e: any) {
       console.error("[threads] rename failed:", e);
@@ -2388,7 +2387,7 @@ export default function App() {
 
   const deleteThread = async (id: string) => {
     try {
-      await fetch(`${API_BASE}/threads/${id}`, { method: "DELETE" });
+      await api.del(`/threads/${id}`);
       if (activeThread === id) {
         setActiveThread("desktop");
       }
@@ -2400,7 +2399,7 @@ export default function App() {
 
   const loadProjectContext = async () => {
     try {
-      const data = await fetch(`${API_BASE}/project-context`).then((r) => r.json());
+      const data = await api.get<{ content?: string; source?: string }>("/project-context");
       setProjectContext(data.content || "");
       setProjectContextSource(data.source || "none");
       setProjectContextMsg("");
@@ -2412,11 +2411,10 @@ export default function App() {
   const saveProjectContext = async () => {
     setProjectContextMsg("Saving…");
     try {
-      const data = await fetch(`${API_BASE}/project-context`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: projectContext }),
-      }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; error?: string }>(
+        "/project-context",
+        { content: projectContext }
+      );
       if (data.success) {
         setProjectContextMsg("Saved. Agent will reload on next message.");
       } else {
@@ -2429,7 +2427,7 @@ export default function App() {
 
   const loadCodebaseStatus = async () => {
     try {
-      const data = await fetch(`${API_BASE}/codebase`).then((r) => r.json());
+      const data = await api.get<any>("/codebase");
       setCodebaseStatus(data);
     } catch (e: any) {
       setCodebaseMsg(`Status failed: ${e.message}`);
@@ -2439,8 +2437,8 @@ export default function App() {
   const indexCodebase = async () => {
     setCodebaseMsg("Indexing workspace…");
     try {
-      const data = await fetch(`${API_BASE}/codebase/index`, { method: "POST" }).then((r) =>
-        r.json()
+      const data = await api.post<{ success?: boolean; indexed_files?: number; chunks?: number; error?: string }>(
+        "/codebase/index"
       );
       if (data.success) {
         setCodebaseMsg(`Indexed ${data.indexed_files} files, ${data.chunks} chunks`);
@@ -2457,11 +2455,10 @@ export default function App() {
     if (!codebaseQuery.trim()) return;
     setCodebaseMsg("Searching…");
     try {
-      const data = await fetch(`${API_BASE}/codebase/search`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: codebaseQuery, top_k: 8 }),
-      }).then((r) => r.json());
+      const data = await api.post<{ results?: any[] } & Record<string, any>>(
+        "/codebase/search",
+        { query: codebaseQuery, top_k: 8 }
+      );
       setCodebaseResults(data.results || []);
       setCodebaseMsg(data.results?.length ? `Found ${data.results.length} results` : "No results");
     } catch (e: any) {
@@ -2475,7 +2472,7 @@ export default function App() {
       if (memoryFilter.category) params.set("category", memoryFilter.category);
       if (memoryFilter.tier) params.set("tier", memoryFilter.tier);
       params.set("limit", "200");
-      const data = await fetch(`${API_BASE}/memory?${params.toString()}`).then((r) => r.json());
+      const data = await api.get<{ entries?: MemoryEntry[] }>(`/memory?${params.toString()}`);
       setMemories(data.entries || []);
     } catch (e: any) {
       setMemoryMsg(`Load failed: ${e.message}`);
@@ -2484,7 +2481,7 @@ export default function App() {
 
   const loadMemoryStats = async () => {
     try {
-      const data = await fetch(`${API_BASE}/memory/stats`).then((r) => r.json());
+      const data = await api.get<MemoryStats>("/memory/stats");
       setMemoryStats(data);
     } catch {
       setMemoryStats(null);
@@ -2498,11 +2495,10 @@ export default function App() {
     }
     setMemoryMsg("Searching…");
     try {
-      const data = await fetch(`${API_BASE}/memory/search`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: memorySearch, top_k: 10 }),
-      }).then((r) => r.json());
+      const data = await api.post<{ results?: MemoryEntry[] } & Record<string, any>>(
+        "/memory/search",
+        { query: memorySearch, top_k: 10 }
+      );
       setMemories(data.results || []);
       setMemoryMsg(data.results?.length ? `Found ${data.results.length} results` : "No results");
     } catch (e: any) {
@@ -2513,17 +2509,16 @@ export default function App() {
   const createMemory = async () => {
     setMemoryMsg("Saving…");
     try {
-      const data = await fetch(`${API_BASE}/memory`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await api.post<{ success?: boolean; error?: string }>(
+        "/memory",
+        {
           content: memoryForm.content,
           category: memoryForm.category,
           tags: memoryForm.tags.split(",").map((t) => t.trim()).filter(Boolean),
           importance: memoryForm.importance,
           tier: memoryForm.tier,
-        }),
-      }).then((r) => r.json());
+        }
+      );
       if (data.success) {
         setMemoryForm({ content: "", category: "fact", tags: "", importance: 0.5, tier: "mid" });
         setMemoryMsg("Memory saved.");
@@ -2540,7 +2535,7 @@ export default function App() {
   const deleteMemory = async (id: string) => {
     if (!confirm("Delete this memory?")) return;
     try {
-      await fetch(`${API_BASE}/memory/${id}`, { method: "DELETE" });
+      await api.del(`/memory/${id}`);
       loadMemory();
       loadMemoryStats();
     } catch (e: any) {
@@ -2550,7 +2545,7 @@ export default function App() {
 
   const promoteMemory = async (id: string) => {
     try {
-      const data = await fetch(`${API_BASE}/memory/promote/${id}`, { method: "POST" }).then((r) => r.json());
+      const data = await api.post<{ success?: boolean; error?: string }>(`/memory/promote/${id}`);
       if (data.success) {
         loadMemory();
         loadMemoryStats();
@@ -2565,7 +2560,7 @@ export default function App() {
   const pruneMemory = async () => {
     if (!confirm("Prune expired and low-importance memories?")) return;
     try {
-      const data = await fetch(`${API_BASE}/memory/prune`, { method: "POST" }).then((r) => r.json());
+      const data = await api.post<{ expired?: number; low_importance?: number }>("/memory/prune");
       setMemoryMsg(`Pruned ${data.expired ?? 0} expired, ${data.low_importance ?? 0} low-importance.`);
       loadMemory();
       loadMemoryStats();
@@ -2577,7 +2572,7 @@ export default function App() {
   const syncMemoryMd = async () => {
     setMemoryMsg("Syncing MEMORY.md…");
     try {
-      const data = await fetch(`${API_BASE}/memory/sync-md`, { method: "POST" }).then((r) => r.json());
+      const data = await api.post<{ path?: string }>("/memory/sync-md");
       if (data.path) {
         setMemoryMsg(`Synced to ${data.path}`);
       } else {
@@ -2628,8 +2623,8 @@ export default function App() {
   useEffect(() => {
     if (settingsTab !== "models") return;
     let alive = true;
-    fetch(`${API_BASE}/credentials?kind=llm`)
-      .then((r) => r.json())
+    api
+      .get<{ credentials?: any[] }>("/credentials?kind=llm")
       .then((data) => {
         if (!alive) return;
         const list = (data.credentials || []).map((c: any) => ({
@@ -2671,7 +2666,7 @@ export default function App() {
         // Safe parse: ws-client already handles JSON parsing and
         // pong/ping filtering, but we guard against unexpected types
         if (typeof data === "string") return; // non-JSON text, ignore
-        handleWsMessage(data);
+        if (isWSMessage(data)) handleWsMessage(data);
       },
       onConnected: () => {
         // Sync local config to backend on connect/reconnect
@@ -2705,36 +2700,30 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === "tools" && tools.length === 0) {
-      api.get('/tools')
-        .then((resp) => {
-          if (resp.ok && resp.data) setTools(resp.data as any);
-        })
+      api.get<ToolInfo[]>('/tools')
+        .then(setTools)
         .catch((e) => console.error("Failed to load tools:", e));
     }
     if (activeTab === "skills" && skills.length === 0) {
-      api.get('/skills')
-        .then((resp) => {
-          if (resp.ok && resp.data) setSkills(resp.data as any);
-        })
+      api.get<SkillInfo[]>('/skills')
+        .then(setSkills)
         .catch((e) => console.error("Failed to load skills:", e));
     }
   }, [activeTab, tools.length, skills.length]);
 
   // ── Dynamic persona loading from backend ──────────────────────
   useEffect(() => {
-    api.get('/personas')
-      .then((resp) => {
-        if (resp.ok && resp.data) {
-          const data = resp.data as any;
-          const personas = (data.personas || data || []).map((p: any) => ({
-            id: p.name || p.id,
-            label: p.name || p.id,
-            description: p.description || '',
-            avatar: p.avatar || '',
-          }));
-          if (personas.length > 0) {
-            setPersonaList(personas);
-          }
+    api.get<{ personas?: PersonaSeed[] } | PersonaSeed[]>('/personas')
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data.personas || []);
+        const personas = list.map((p) => ({
+          id: p.name || p.id || '',
+          label: p.name || p.id || '',
+          description: p.description || '',
+          avatar: p.avatar || '',
+        }));
+        if (personas.length > 0) {
+          setPersonaList(personas);
         }
       })
       .catch(() => { /* keep fallback list */ });
@@ -2746,22 +2735,19 @@ export default function App() {
       setPersonaEmotion(null);
       return;
     }
-    api.get(`/personas/${config.persona}/emotion`)
-      .then((resp) => {
-        if (resp.ok && resp.data) {
-          const d = resp.data as any;
-          setPersonaEmotion({
-            mood: d.context_prompt?.slice(0, 80) || '',
-            valence: d.state?.valence ?? 0,
-            arousal: d.state?.arousal ?? 0,
-            trust: d.state?.trust ?? 0.5,
-          });
-        }
+    api.get<PersonaEmotionResponse>(`/personas/${config.persona}/emotion`)
+      .then((d) => {
+        setPersonaEmotion({
+          mood: d.context_prompt?.slice(0, 80) || '',
+          valence: d.state?.valence ?? 0,
+          arousal: d.state?.arousal ?? 0,
+          trust: d.state?.trust ?? 0.5,
+        });
       })
       .catch(() => { /* emotion not available */ });
   }, [config.persona]);
 
-  const handleWsMessage = (data: any) => {
+  const handleWsMessage = (data: WSMessage) => {
     switch (data.type) {
       case "text_delta":
         setMessages((prev) => {
@@ -3044,11 +3030,10 @@ export default function App() {
       setPlanLoading(true);
       setPendingPlan("");
       try {
-        const data = await fetch(`${API_BASE}/plan`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content, thread_id: activeThread }),
-        }).then((r) => r.json());
+        const data = await api.post<{ error?: string; plan?: string } & Record<string, any>>(
+          "/plan",
+          { content, thread_id: activeThread }
+        );
         if (data.error) {
           setPendingPlan(`❌ ${data.error}`);
         } else {
@@ -3124,12 +3109,7 @@ export default function App() {
     setToolResult("");
     try {
       const name = selectedTool.function.name;
-      const resp = await fetch(`${API_BASE}/tools/${name}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toolArgs),
-      });
-      const data = await resp.json();
+      const data = await api.post(`/tools/${name}`, toolArgs);
       setToolResult(JSON.stringify(data, null, 2));
     } catch (e: any) {
       setToolResult(`Error: ${e.message}`);
@@ -3143,12 +3123,7 @@ export default function App() {
     setSkillLoading(true);
     setSkillResult("");
     try {
-      const resp = await fetch(`${API_BASE}/skills/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skill: selectedSkill.name, args: skillArgs }),
-      });
-      const data = await resp.json();
+      const data = await api.post("/skills/execute", { skill: selectedSkill.name, args: skillArgs });
       setSkillResult(JSON.stringify(data, null, 2));
     } catch (e: any) {
       setSkillResult(`Error: ${e.message}`);
@@ -5296,7 +5271,7 @@ export default function App() {
                         <label className="mb-1.5 block text-xs font-medium text-text-secondary">Personality</label>
                         <select
                           value={config.pet_personality}
-                          onChange={(e) => { const next = { ...config, pet_personality: e.target.value as any }; setConfig(next); setConfigDirty(true); }}
+                          onChange={(e) => { const next = { ...config, pet_personality: e.target.value as "cheerful" | "nerdy" | "calm" | "sassy" }; setConfig(next); setConfigDirty(true); }}
                           className="input"
                         >
                           <option value="cheerful">Cheerful</option>
@@ -5361,7 +5336,7 @@ export default function App() {
                       <button
                         onClick={async () => {
                           try {
-                            await fetch(`${API_BASE}/pet/reset`, { method: "POST" });
+                            await api.post("/pet/reset");
                           } catch {
                             // backend may not have this endpoint yet
                           }
@@ -5418,11 +5393,10 @@ export default function App() {
                     <button
                       onClick={async () => {
                         try {
-                          const data = await fetch(`${API_BASE}/config/encrypt`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ path: "huginn.toml", password: config.encryption_password }),
-                          }).then((r) => r.json());
+                          const data = await api.post<{ success?: boolean; path?: string; error?: string }>(
+                            "/config/encrypt",
+                            { path: "huginn.toml", password: config.encryption_password }
+                          );
                           if (data.success) {
                             setConfigSavedMsg(`Encrypted config saved to ${data.path}`);
                             setTimeout(() => setConfigSavedMsg(""), 4000);
@@ -5468,13 +5442,12 @@ export default function App() {
                       <button
                         onClick={async () => {
                           try {
-                            const resp = await fetch(`${API_BASE}/export/status`);
-                            const data = await resp.json();
+                            const data = await api.get<{ available?: Record<string, boolean> }>("/export/status");
                             const el = document.getElementById("export-status");
                             if (el && data.available) {
                               el.innerHTML = Object.entries(data.available)
-                                .filter(([, v]: any) => v)
-                                .map(([k]: any) => `<div>✓ ${k}</div>`)
+                                .filter(([, v]) => v)
+                                .map(([k]) => `<div>✓ ${k}</div>`)
                                 .join("");
                             }
                           } catch (e: any) {
@@ -5494,20 +5467,17 @@ export default function App() {
                         <button
                           onClick={async () => {
                             try {
-                              const resp = await fetch(`${API_BASE}/export/all`, {
+                              const blob = await api.getBlob("/export/all", {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ format: "zip" }),
+                                headers: { "Content-Type": "application/json" },
                               });
-                              if (resp.ok) {
-                                const blob = await resp.blob();
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = "huginn_export.zip";
-                                a.click();
-                                URL.revokeObjectURL(url);
-                              }
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = "huginn_export.zip";
+                              a.click();
+                              URL.revokeObjectURL(url);
                             } catch (e: any) {
                               console.error("export error:", e);
                             }
@@ -5519,20 +5489,17 @@ export default function App() {
                         <button
                           onClick={async () => {
                             try {
-                              const resp = await fetch(`${API_BASE}/export/memory`, {
+                              const blob = await api.getBlob("/export/memory", {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ format: "json" }),
+                                headers: { "Content-Type": "application/json" },
                               });
-                              if (resp.ok) {
-                                const blob = await resp.blob();
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = "huginn_memory.json";
-                                a.click();
-                                URL.revokeObjectURL(url);
-                              }
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = "huginn_memory.json";
+                              a.click();
+                              URL.revokeObjectURL(url);
                             } catch (e: any) {
                               console.error("export memory error:", e);
                             }
@@ -5544,20 +5511,17 @@ export default function App() {
                         <button
                           onClick={async () => {
                             try {
-                              const resp = await fetch(`${API_BASE}/export/knowledge`, {
+                              const blob = await api.getBlob("/export/knowledge", {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ format: "json" }),
+                                headers: { "Content-Type": "application/json" },
                               });
-                              if (resp.ok) {
-                                const blob = await resp.blob();
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = "huginn_knowledge.json";
-                                a.click();
-                                URL.revokeObjectURL(url);
-                              }
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = "huginn_knowledge.json";
+                              a.click();
+                              URL.revokeObjectURL(url);
                             } catch (e: any) {
                               console.error("export knowledge error:", e);
                             }
@@ -5581,11 +5545,10 @@ export default function App() {
                           const formData = new FormData();
                           formData.append("file", file);
                           try {
-                            const resp = await fetch(`${API_BASE}/import/all`, {
-                              method: "POST",
-                              body: formData,
-                            });
-                            const data = await resp.json();
+                            const data = await api.upload<{ imported?: Record<string, any> }>(
+                              "/import/all",
+                              formData
+                            );
                             if (data.imported) {
                               alert(`导入成功: ${JSON.stringify(data.imported)}`);
                             }
@@ -5630,8 +5593,7 @@ export default function App() {
                           <button
                             onClick={async () => {
                               try {
-                                const resp = await fetch(`${API_BASE}/bot/start`, { method: "POST" });
-                                const data = await resp.json();
+                                const data = await api.post<{ running?: boolean }>("/bot/start");
                                 const el = document.getElementById("bot-status-text");
                                 if (el) el.textContent = data.running ? "运行中" : "启动失败";
                               } catch (e: any) {
@@ -5645,7 +5607,7 @@ export default function App() {
                           <button
                             onClick={async () => {
                               try {
-                                await fetch(`${API_BASE}/bot/stop`, { method: "POST" });
+                                await api.post("/bot/stop");
                                 const el = document.getElementById("bot-status-text");
                                 if (el) el.textContent = "已停止";
                               } catch (e: any) {
@@ -5661,8 +5623,7 @@ export default function App() {
                       <button
                         onClick={async () => {
                           try {
-                            const resp = await fetch(`${API_BASE}/bot/status`);
-                            const data = await resp.json();
+                            const data = await api.get<{ running?: boolean; platform?: string }>("/bot/status");
                             const el = document.getElementById("bot-status-text");
                             if (el) el.textContent = data.running ? `运行中 (${data.platform})` : "未运行";
                           } catch (e: any) {
@@ -5741,11 +5702,7 @@ export default function App() {
                             config.allowed_groups = groups.split(",").map((s: string) => s.trim()).filter(Boolean);
                           }
                           try {
-                            await fetch(`${API_BASE}/bot/config`, {
-                              method: "PUT",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify(config),
-                            });
+                            await api.put("/bot/config", config);
                             alert("配置已保存");
                           } catch (e: any) {
                             alert(`保存失败: ${e.message}`);
@@ -6007,7 +5964,7 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-3">
                     <input type="text" value={hpcHost} onChange={(e) => setHpcHost(e.target.value)} placeholder="Host" className="input text-xs" />
                     <input type="text" value={hpcUsername} onChange={(e) => setHpcUsername(e.target.value)} placeholder="Username" className="input text-xs" />
-                    <select value={hpcScheduler} onChange={(e) => setHpcScheduler(e.target.value as any)} className="input text-xs">
+                    <select value={hpcScheduler} onChange={(e) => setHpcScheduler(e.target.value as "slurm" | "pbs")} className="input text-xs">
                       <option value="slurm">SLURM</option>
                       <option value="pbs">PBS</option>
                     </select>
