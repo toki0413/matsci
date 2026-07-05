@@ -28,8 +28,10 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
+
+from huginn.security.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -456,14 +458,21 @@ async def get_elements() -> dict[str, Any]:
     }
 
 
-@router.post("/load")
+@router.post("/load", dependencies=[Depends(require_api_key)])
 async def load_structure(req: LoadRequest) -> dict[str, Any]:
     """加载结构文件, 返回原子坐标 / 键 / 晶胞."""
     if req.content:
         text = req.content
         fmt = req.format if req.format != "auto" else "xyz"
     elif req.file_path:
-        p = Path(req.file_path)
+        p = Path(req.file_path).resolve()
+        # ponytail: path traversal guard — only allow files under workspace
+        # Upgrade: if multi-tenant needed, check per-user sandbox root.
+        workspace = Path.cwd().resolve()
+        try:
+            p.relative_to(workspace)
+        except ValueError:
+            return {"error": "file_path must be within workspace"}
         if not p.exists():
             return {"error": f"file not found: {req.file_path}"}
         text = p.read_text(encoding="utf-8", errors="replace")
@@ -483,13 +492,18 @@ async def load_structure(req: LoadRequest) -> dict[str, Any]:
         return {"error": f"parse failed: {e}"}
 
 
-@router.post("/trajectory")
+@router.post("/trajectory", dependencies=[Depends(require_api_key)])
 async def load_trajectory(req: TrajectoryRequest) -> dict[str, Any]:
     """加载轨迹文件, 返回帧列表."""
     if req.content:
         text = req.content
     elif req.file_path:
-        p = Path(req.file_path)
+        p = Path(req.file_path).resolve()
+        workspace = Path.cwd().resolve()
+        try:
+            p.relative_to(workspace)
+        except ValueError:
+            return {"error": "file_path must be within workspace"}
         if not p.exists():
             return {"error": f"file not found: {req.file_path}"}
         text = p.read_text(encoding="utf-8", errors="replace")
