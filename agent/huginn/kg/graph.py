@@ -28,11 +28,13 @@ class ProjectKnowledgeGraph:
     def load(self) -> None:
         """Load graph from JSON node-link data."""
         data = json.loads(self.path.read_text(encoding="utf-8"))
-        self._graph = nx.node_link_graph(data, directed=True, multigraph=False)
+        # 显式指定 edges key, 兼容旧数据并消除 NetworkX 3.6 FutureWarning
+        edges_key = "links" if "links" in data else "edges"
+        self._graph = nx.node_link_graph(data, directed=True, multigraph=False, edges=edges_key)
 
     def save(self) -> None:
         """Persist graph as JSON node-link data."""
-        data = nx.node_link_data(self._graph)
+        data = nx.node_link_data(self._graph, edges="links")
         self.path.write_text(
             json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -131,7 +133,7 @@ class ProjectKnowledgeGraph:
         """Export graph as JSON node-link data or GML string."""
         if fmt == "gml":
             return "\n".join(nx.generate_gml(self._graph))
-        return nx.node_link_data(self._graph)
+        return nx.node_link_data(self._graph, edges="links")
 
     def query(self, seed: str, depth: int = 1, top_k: int = 10) -> dict[str, Any]:
         """Query the graph for seed entities and return a subgraph."""

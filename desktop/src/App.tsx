@@ -10,13 +10,14 @@ import {
 import Pet from "./Pet";
 import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import ErrorBoundary from "./components/ErrorBoundary";
-import SandboxPanel from "./components/SandboxPanel";
-import DiffViewer from "./components/DiffViewer";
-import EmotionTrackerPanel from "./components/EmotionTracker";
 import MessageContent from "./components/MessageContent";
-import CredentialsPanel from "./components/CredentialsPanel";
-import RemoteJobsPanel from "./components/RemoteJobsPanel";
-// Heavy tab panels — code-split so the initial bundle stays small.
+// Tab panels only mount when their tab is active — lazy-load so the
+// recharts / diff / three chunks stay out of the initial bundle.
+const EmotionTrackerPanel = lazy(() => import("./components/EmotionTracker"));
+const SandboxPanel = lazy(() => import("./components/SandboxPanel"));
+const DiffViewer = lazy(() => import("./components/DiffViewer"));
+const CredentialsPanel = lazy(() => import("./components/CredentialsPanel"));
+const RemoteJobsPanel = lazy(() => import("./components/RemoteJobsPanel"));
 const PeriodicTable = lazy(() => import("./components/PeriodicTable"));
 const Notebook = lazy(() => import("./components/Notebook"));
 const SweepDashboard = lazy(() => import("./components/SweepDashboard"));
@@ -621,7 +622,8 @@ export default function App() {
   const [skillResult, setSkillResult] = useState<string>("");
   const [skillLoading, setSkillLoading] = useState(false);
 
-  const [config, setConfig] = useState<AppConfig>(loadStoredConfig());
+  // Lazy init: loadStoredConfig() hits localStorage, only run once on mount.
+  const [config, setConfig] = useState<AppConfig>(() => loadStoredConfig());
   const [configDirty, setConfigDirty] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
   const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet" | "security" | "credentials" | "jobs" | "export" | "bot">("general");
@@ -2502,6 +2504,9 @@ export default function App() {
   ];
 
   const allTabs = sidebarGroupsData.flatMap((g) => g.tabs);
+  // Resolve the active tab once — the header reads icon + label, and without
+  // this it scans allTabs twice per render.
+  const activeTabInfo = allTabs.find((t) => t.id === activeTab);
 
   const sectionAccent: Record<string, string> = {
     core: "var(--seed-primary)",
@@ -2630,10 +2635,10 @@ export default function App() {
         <header className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
           <div className="flex items-center gap-2.5">
             <span style={{ color: activeAccent }}>
-              {allTabs.find((t) => t.id === activeTab)?.icon}
+              {activeTabInfo?.icon}
             </span>
             <span className="text-sm font-semibold">
-              {allTabs.find((t) => t.id === activeTab)?.label}
+              {activeTabInfo?.label}
             </span>
             {activeTab === "chat" && (
               <>
@@ -2711,7 +2716,7 @@ export default function App() {
                   </button>
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              <div className="cv-list flex-1 overflow-y-auto p-6 space-y-5">
                 {(chatSearchQuery.trim()
                   ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
                   : messages
@@ -3309,11 +3314,13 @@ export default function App() {
 
                 <div className="flex flex-1 overflow-hidden">
                   {activeCp && diffs.length > 0 ? (
-                    <DiffViewer
-                      diffs={diffs}
-                      onAcceptAll={() => acceptCheckpoint(activeCp)}
-                      onRejectAll={() => rejectCheckpoint(activeCp)}
-                    />
+                    <Suspense fallback={<LoadingFallback />}>
+                      <DiffViewer
+                        diffs={diffs}
+                        onAcceptAll={() => acceptCheckpoint(activeCp)}
+                        onRejectAll={() => rejectCheckpoint(activeCp)}
+                      />
+                    </Suspense>
                   ) : activeCp ? (
                     <div className="flex h-full items-center justify-center text-sm text-text-muted">
                       No changes in this checkpoint
@@ -3756,7 +3763,11 @@ export default function App() {
           )}
 
           {activeTab === "emotion" && (
-            <EmotionTrackerPanel apiBase={API_BASE} />
+            <ErrorBoundary>
+              <Suspense fallback={<LoadingFallback />}>
+                <EmotionTrackerPanel apiBase={API_BASE} />
+              </Suspense>
+            </ErrorBoundary>
           )}
 
           {activeTab === "memory" && (
@@ -4289,7 +4300,7 @@ export default function App() {
                         <input
                           type="password"
                           value={config.api_key}
-                          onChange={(e) => { setConfig({ ...config, api_key: e.target.value }); setConfigDirty(true); }}
+                          onChange={(e) => { setConfig((prev) => ({ ...prev, api_key: e.target.value })); setConfigDirty(true); }}
                           placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || "API key"}
                           className="input"
                         />
@@ -4309,7 +4320,7 @@ export default function App() {
                         <input
                           type="text"
                           value={config.ollama_host}
-                          onChange={(e) => { setConfig({ ...config, ollama_host: e.target.value }); setConfigDirty(true); }}
+                          onChange={(e) => { setConfig((prev) => ({ ...prev, ollama_host: e.target.value })); setConfigDirty(true); }}
                           placeholder="http://localhost:11434"
                           className="input"
                         />
@@ -5330,7 +5341,11 @@ export default function App() {
 
           {activeTab === "sandbox" && (
             <div className="h-full overflow-hidden p-4">
-              <SandboxPanel API_BASE={API_BASE} />
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingFallback />}>
+                  <SandboxPanel API_BASE={API_BASE} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
           )}
 

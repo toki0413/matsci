@@ -443,7 +443,7 @@ class DynamicsDiscoveryTool(HuginnTool):
                 error="coefficient length must match terms length",
             )
 
-        def rhs(_t, x):
+        def rhs(_t, x) -> list:
             vals = np.array([self._eval_term(name, x) for name in terms])
             return [float(coef @ vals) for coef in coef_rows]
 
@@ -493,7 +493,7 @@ if __name__ == "__main__":
     n = 600
     t = np.linspace(0, 30, n)
 
-    def true_rhs(_t, x):
+    def true_rhs(_t, x) -> list:
         return [x[1], -1.0 * x[0] - 0.2 * x[1]]
 
     sol = _ivp(true_rhs, (t[0], t[-1]), [1.0, 0.0], t_eval=t, rtol=1e-8, atol=1e-10)

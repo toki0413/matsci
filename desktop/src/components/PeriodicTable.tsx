@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import elementsData from "../data/elements.json";
 
 /* ────────────────────────────── Types ────────────────────────────── */
@@ -75,6 +75,56 @@ function cellBorder(el: Element, mode: ColorMode): string {
 }
 
 /* ──────────────────────── Main Component ─────────────────────────── */
+
+// Memoized element cell — 118 of these render in the grid. Wrapping in memo
+// means selecting one element only re-renders that cell, not all 118.
+// Props are kept primitive (booleans/strings) so shallow comparison works;
+// onClick identity changes only when compareMode flips.
+const ElementCell = memo(function ElementCell({
+  el, isSelected, isMatch, colorMode, onClick,
+}: {
+  el: Element;
+  isSelected: boolean;
+  isMatch: boolean;
+  colorMode: ColorMode;
+  onClick: (el: Element) => void;
+}) {
+  const bg = cellBg(el, colorMode);
+  const borderColor = cellBorder(el, colorMode);
+  return (
+    <button
+      onClick={() => onClick(el)}
+      className={`
+        relative flex flex-col items-center justify-center
+        rounded-lg border cursor-pointer
+        transition-all duration-150
+        hover:border-accent hover:z-10 hover:scale-110
+        focus:outline-none focus:ring-2 focus:ring-accent
+        ${isSelected ? "ring-2 ring-accent z-10" : ""}
+        ${!isMatch ? "opacity-20 pointer-events-none" : ""}
+      `}
+      style={{
+        gridRow: el.row,
+        gridColumn: el.col,
+        backgroundColor: bg,
+        borderColor: isSelected ? "#d4884a" : borderColor + "66",
+        minHeight: 44,
+        minWidth: 0,
+      }}
+      title={`${el.name} (${el.symbol}) — ${el.category}`}
+    >
+      <span className="absolute top-0.5 left-1 text-[8px] leading-none text-text-muted font-mono">
+        {el.atomic_number}
+      </span>
+      <span className="text-sm font-semibold leading-tight text-text-primary mt-1">
+        {el.symbol}
+      </span>
+      <span className="text-[7px] leading-none text-text-secondary truncate w-full text-center px-0.5">
+        {el.name}
+      </span>
+    </button>
+  );
+});
 
 export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
   const [selectedElements, setSelectedElements] = useState<Set<number>>(new Set());
@@ -160,48 +210,6 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
   }, []);
 
   /* ──────────────────────── Render helpers ─────────────────────────── */
-
-  function renderElementCell(el: Element) {
-    const isSelected = selectedElements.has(el.atomic_number);
-    const isMatch = matchesSearch(el);
-    const bg = cellBg(el, colorMode);
-    const borderColor = cellBorder(el, colorMode);
-
-    return (
-      <button
-        key={el.atomic_number}
-        onClick={() => handleElementClick(el)}
-        className={`
-          relative flex flex-col items-center justify-center
-          rounded-lg border cursor-pointer
-          transition-all duration-150
-          hover:border-accent hover:z-10 hover:scale-110
-          focus:outline-none focus:ring-2 focus:ring-accent
-          ${isSelected ? "ring-2 ring-accent z-10" : ""}
-          ${!isMatch ? "opacity-20 pointer-events-none" : ""}
-        `}
-        style={{
-          gridRow: el.row,
-          gridColumn: el.col,
-          backgroundColor: bg,
-          borderColor: isSelected ? "#d4884a" : borderColor + "66",
-          minHeight: 44,
-          minWidth: 0,
-        }}
-        title={`${el.name} (${el.symbol}) — ${el.category}`}
-      >
-        <span className="absolute top-0.5 left-1 text-[8px] leading-none text-text-muted font-mono">
-          {el.atomic_number}
-        </span>
-        <span className="text-sm font-semibold leading-tight text-text-primary mt-1">
-          {el.symbol}
-        </span>
-        <span className="text-[7px] leading-none text-text-secondary truncate w-full text-center px-0.5">
-          {el.name}
-        </span>
-      </button>
-    );
-  }
 
   /* ── Detail panel: single element ── */
   function renderDetailSingle(el: Element) {
@@ -482,7 +490,16 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
             <PlaceholderMarker row={6} col={3} label="57-71" />
             <PlaceholderMarker row={7} col={3} label="89-103" />
 
-            {gridCells.map(({ el }) => renderElementCell(el))}
+            {gridCells.map(({ el }) => (
+              <ElementCell
+                key={el.atomic_number}
+                el={el}
+                isSelected={selectedElements.has(el.atomic_number)}
+                isMatch={matchesSearch(el)}
+                colorMode={colorMode}
+                onClick={handleElementClick}
+              />
+            ))}
           </div>
 
           {/* Legend */}

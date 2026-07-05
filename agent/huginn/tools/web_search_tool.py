@@ -46,6 +46,34 @@ def _web_search_disabled() -> bool:
     )
 
 
+def _is_ssrf_blocked(url: str) -> tuple[bool, str]:
+    """SSRF 防护: 拦截指向内网/本机的 fetch 请求.
+
+    只放行 http(s), 解析主机名拿到 IP 后拒绝 loopback / 私有 / 链路本地 /
+    保留地址. DNS 解析存在 TOCTOU (解析时 OK、请求时变), 这里做第一道防线
+    已经挡住绝大多数内网探测; 严格环境应在出网代理侧再校验一次.
+    """
+    import ipaddress
+    import socket
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return True, f"scheme '{parsed.scheme}' not allowed"
+    host = parsed.hostname
+    if not host:
+        return True, "missing host"
+    # 字面量 IP 直接判, 主机名走 DNS 解析
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return True, f"cannot resolve host '{host}'"
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return True, f"host '{host}' resolves to non-public {ip}"
+    return False, ""
+
+
 # 网络不通时给 LLM 的引导, 避免它死磕 web_search 反复重试
 _SEARCH_DISABLED_HINT = (
     "web_search disabled by HUGINN_DISABLE_WEB_SEARCH. "
@@ -361,6 +389,14 @@ class WebSearchTool(HuginnTool):
                 data={"url": url, "chunks": [], "error": "web_search disabled",
                       "hint": _SEARCH_DISABLED_HINT},
                 success=False, error=_SEARCH_DISABLED_HINT,
+            )
+
+        blocked, reason = _is_ssrf_blocked(url)
+        if blocked:
+            logger.warning("fetch blocked by SSRF guard: %s (%s)", url, reason)
+            return ToolResult(
+                data={"url": url, "chunks": [], "error": f"blocked: {reason}"},
+                success=False, error=f"fetch blocked (SSRF guard): {reason}",
             )
 
         try:
