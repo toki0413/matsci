@@ -328,6 +328,24 @@ class MemoryManager:
                     tier="long",
                 )
 
+        # ── Auto-ingest distilled knowledge into KnowledgeBase ────
+        # This bridges Memory→KB: distilled experience (error lessons,
+        # success patterns, tool tips) becomes RAG-retrievable via
+        # the same ChromaDB collection that user-uploaded docs use.
+        # Only confirmed or high-confidence knowledge is ingested.
+        try:
+            from huginn.server import get_context
+
+            ctx = get_context()
+            if ctx.kb is not None:
+                ingested = distiller.auto_ingest_to_kb(kb=ctx.kb)
+                if ingested > 0:
+                    logger.info(
+                        "Distilled knowledge → KB: %d chunks ingested", ingested
+                    )
+        except Exception:
+            logger.debug("distilled→KB auto-ingest skipped", exc_info=True)
+
         return total
 
     def _extract_llm_insight(self) -> str | None:

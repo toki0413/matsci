@@ -306,9 +306,75 @@ class KnowledgeDistiller:
 
         return str(merged_path)
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+    def auto_ingest_to_kb(self, kb=None) -> int:
+        """Auto-ingest confirmed distilled knowledge into the KnowledgeBase.
+
+        This bridges the Memory→KB gap: distilled experience (error lessons,
+        success patterns, tool tips, domain facts) becomes RAG-retrievable,
+        so future queries can benefit from past experience.
+
+        Only ingests knowledge with verification_status == "confirmed" or
+        confidence >= 0.7 to avoid polluting the KB with low-quality entries.
+
+        Returns the number of newly ingested chunks.
+        """
+        if kb is None:
+            try:
+                from huginn.knowledge.store import get_knowledge_base
+
+                kb = get_knowledge_base()
+            except Exception:
+                return 0
+        if kb is None:
+            return 0
+
+        ingested = 0
+        for dk in self.knowledge_base:
+            # Only ingest high-quality knowledge
+            if dk.verification_status == "rejected":
+                continue
+            if (
+                dk.verification_status != "confirmed"
+                and dk.confidence < 0.7
+            ):
+                continue
+            try:
+                kb.ingest(
+                    text=dk.content,
+                    metadata={
+                        "source": "distilled_knowledge",
+                        "source_type": dk.source_type,
+                        "category": dk.category,
+                        "confidence": dk.confidence,
+                        "knowledge_id": dk.knowledge_id,
+                        "tags": dk.tags,
+                    },
+                )
+                ingested += 1
+            except Exception:
+                continue
+        return ingested
+
+    def verify_knowledge(
+        self, knowledge_id: str, status: str = "confirmed"
+    ) -> bool:
+        """Update verification status of a distilled knowledge entry.
+
+        Enables the self-correction loop: knowledge that gets recalled
+        and leads to successful outcomes is promoted to "confirmed";
+        knowledge that gets contradicted is marked "rejected".
+        """
+        for dk in self.knowledge_base:
+            if dk.knowledge_id == knowledge_id:
+                dk.verification_status = status
+                if status == "confirmed":
+                    dk.usage_count += 1
+                    dk.confidence = min(1.0, dk.confidence + 0.1)
+                elif status == "rejected":
+                    dk.confidence = max(0.0, dk.confidence - 0.3)
+                self._save()
+                return True
+        return False
 
     def _generate_error_lesson(
         self, tool: str, error: str, software: str, calc_type: str
