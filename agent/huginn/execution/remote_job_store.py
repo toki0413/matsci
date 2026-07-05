@@ -16,9 +16,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+# 优先级 -> SLURM --qos / PBS -q 的映射值; 纯前端展示用, 后端不做强校验
+JOB_PRIORITY_LEVELS = ("low", "normal", "high", "urgent")
+
+
 @dataclass(slots=True)
 class RemoteJobRecord:
-    """Tracked record of a submitted remote job."""
+    """Tracked record of a submitted remote job.
+
+    新增字段 (priority / depends_on / array_spec / walltime_estimate) 都带
+    默认值, 老的存档记录照样能反序列化, 不会因为加字段就炸。
+    """
 
     local_id: str
     scheduler_id: str
@@ -31,6 +39,19 @@ class RemoteJobRecord:
     submitted_at: float = field(default_factory=lambda: 0.0)
     completed_at: float | None = None
     message: str | None = None
+    # ── 队列增强字段 ─────────────────────────────────────────
+    # 优先级: low / normal / high / urgent, 影响调度顺序与 qos 选择
+    priority: str = "normal"
+    # 依赖: 该作业依赖的前置作业 scheduler_id 列表, 前置完成后才启动
+    depends_on: list[str] = field(default_factory=list)
+    # 依赖类型: afterok (默认, 前置成功才跑) / afterany / afternotok
+    dependency_type: str = "afterok"
+    # 数组作业规格, 比如 "1-10" 表示 10 个子作业; None 表示普通作业
+    array_spec: str | None = None
+    # 数组里这条记录对应的子任务编号 (从 1 开始); 普通作业为 None
+    array_index: int | None = None
+    # 用户预估的运行时长, 比如 "02:30:00"; 仅记录, 不强制生效
+    walltime_estimate: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize record to a JSON-friendly dict."""
@@ -46,6 +67,12 @@ class RemoteJobRecord:
             "submitted_at": self.submitted_at,
             "completed_at": self.completed_at,
             "message": self.message,
+            "priority": self.priority,
+            "depends_on": self.depends_on,
+            "dependency_type": self.dependency_type,
+            "array_spec": self.array_spec,
+            "array_index": self.array_index,
+            "walltime_estimate": self.walltime_estimate,
         }
 
     @classmethod
@@ -64,6 +91,13 @@ class RemoteJobRecord:
             submitted_at=data.get("submitted_at", 0.0),
             completed_at=data.get("completed_at"),
             message=data.get("message"),
+            # 新字段: 老记录没有就走默认值, 保证向后兼容
+            priority=data.get("priority", "normal"),
+            depends_on=list(data.get("depends_on", [])),
+            dependency_type=data.get("dependency_type", "afterok"),
+            array_spec=data.get("array_spec"),
+            array_index=data.get("array_index"),
+            walltime_estimate=data.get("walltime_estimate"),
         )
 
 
