@@ -211,3 +211,193 @@ class LoopDetector:
                 f"LoopDetector(history={len(self._history)}, "
                 f"last_loop={self._last_loop})"
             )
+
+
+# ── 思考循环检测 ────────────────────────────────────────────────
+
+
+def _hash_text(text: str) -> str:
+    """Hash LLM output text for similarity detection."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _similarity(text1: str, text2: str) -> float:
+    """Calculate text similarity using Jaccard on word sets.
+
+    Returns 0.0-1.0 where 1.0 means identical word sets.
+    Fast and language-agnostic, suitable for loop detection.
+    """
+    if not text1 or not text2:
+        return 0.0
+    words1 = set(text1.lower().split())
+    words2 = set(text2.lower().split())
+    if not words1 or not words2:
+        return 0.0
+    intersection = words1 & words2
+    union = words1 | words2
+    return len(intersection) / len(union)
+
+
+class ThoughtLoopDetector:
+    """检测 LLM 思考/输出陷入死循环.
+
+    跟 LoopDetector 互补: LoopDetector 看工具调用模式, 这个看
+    LLM 的输出文本模式. 场景:
+      - LLM 反复生成几乎相同的回答 (word similarity > 0.85)
+      - LLM 在 plan/clarification 之间无限来回
+      - LLM 反复说 "let me try again" 但没有实质进展
+
+    判定规则:
+      - 连续 ≥3 次输出相似度 > 0.85 → 死循环
+      - 连续 ≥5 次输出相似度 > 0.60 → 疑似循环
+      - 同一文本完全重复 ≥2 次 → 立即判定
+
+    检测到循环后, agent 应:
+      1. 向 LLM 发送 "break" 指令, 强制换思路
+      2. 如果连续 2 次 break 后仍未脱离, 终止执行
+    """
+
+    def __init__(
+        self,
+        window_size: int = 10,
+        high_sim_threshold: float = 0.85,
+        low_sim_threshold: float = 0.60,
+        high_sim_count: int = 3,
+        low_sim_count: int = 5,
+        exact_dup_count: int = 2,
+    ) -> None:
+        self.window_size = window_size
+        self.high_sim_threshold = high_sim_threshold
+        self.low_sim_threshold = low_sim_threshold
+        self.high_sim_count = high_sim_count
+        self.low_sim_count = low_sim_count
+        self.exact_dup_count = exact_dup_count
+        self._lock = threading.RLock()
+        self._outputs: deque[str] = deque(maxlen=window_size)
+        self._break_count = 0  # 已发送 break 指令的次数
+        self._last_loop: dict[str, Any] | None = None
+
+    def record_output(self, text: str) -> bool:
+        """记录一次 LLM 输出, 返回是否检测到循环."""
+        with self._lock:
+            self._outputs.append(text)
+            return self._detect(text)
+
+    def should_break(self) -> tuple[bool, str, bool]:
+        """返回 (是否该 break, 原因, 是否该终止).
+
+        终止标志为 True 时, agent 应立即停止执行, 不再重试.
+        """
+        with self._lock:
+            if not self._last_loop:
+                return False, "", False
+
+            loop = self._last_loop
+            kind = loop["kind"]
+            count = loop["count"]
+
+            if kind == "exact_dup":
+                reason = (
+                    f"LLM output repeated exactly {count} times. "
+                    f"The model is stuck. Breaking to try a different approach."
+                )
+            elif kind == "high_sim":
+                reason = (
+                    f"LLM output has been very similar {count} times "
+                    f"(similarity > {self.high_sim_threshold}). "
+                    f"The model may be in a loop. Try a different strategy."
+                )
+            else:
+                reason = (
+                    f"LLM output has been similar {count} times "
+                    f"(similarity > {self.low_sim_threshold}). "
+                    f"Consider whether the current approach is working."
+                )
+
+            self._break_count += 1
+            # 连续 break 2 次仍未脱离 → 终止
+            should_terminate = self._break_count >= 2
+            if should_terminate:
+                reason = (
+                    f"Thought loop persists after {self._break_count} breaks. "
+                    f"Terminating to prevent infinite loop."
+                )
+
+            return True, reason, should_terminate
+
+    def reset(self) -> None:
+        """清空历史 (下一轮 agent chat 开始时用)."""
+        with self._lock:
+            self._outputs.clear()
+            self._break_count = 0
+            self._last_loop = None
+
+    def status(self) -> dict[str, Any]:
+        """返回当前检测器状态."""
+        with self._lock:
+            return {
+                "outputs_tracked": len(self._outputs),
+                "break_count": self._break_count,
+                "last_loop": self._last_loop,
+                "high_sim_threshold": self.high_sim_threshold,
+                "low_sim_threshold": self.low_sim_threshold,
+            }
+
+    def _detect(self, text: str) -> bool:
+        """检测当前输出是否形成循环."""
+        outputs = list(self._outputs)
+
+        # Rule 1: Exact duplicate
+        text_hash = _hash_text(text)
+        exact_count = sum(1 for o in outputs if _hash_text(o) == text_hash)
+        if exact_count >= self.exact_dup_count:
+            self._last_loop = {
+                "kind": "exact_dup",
+                "count": exact_count,
+                "text_preview": text[:100],
+            }
+            return True
+
+        # Rule 2: High similarity (≥ 0.85) consecutive
+        if len(outputs) >= self.high_sim_count:
+            recent = outputs[-(self.high_sim_count):]
+            all_high = all(
+                _similarity(text, o) >= self.high_sim_threshold
+                for o in recent
+                if o != text
+            )
+            if all_high and len(recent) >= self.high_sim_count - 1:
+                self._last_loop = {
+                    "kind": "high_sim",
+                    "count": self.high_sim_count,
+                    "similarity": self.high_sim_threshold,
+                    "text_preview": text[:100],
+                }
+                return True
+
+        # Rule 3: Low similarity (≥ 0.60) consecutive
+        if len(outputs) >= self.low_sim_count:
+            recent = outputs[-(self.low_sim_count):]
+            all_low = all(
+                _similarity(text, o) >= self.low_sim_threshold
+                for o in recent
+                if o != text
+            )
+            if all_low and len(recent) >= self.low_sim_count - 1:
+                self._last_loop = {
+                    "kind": "low_sim",
+                    "count": self.low_sim_count,
+                    "similarity": self.low_sim_threshold,
+                    "text_preview": text[:100],
+                }
+                return True
+
+        return False
+
+    def __repr__(self) -> str:
+        with self._lock:
+            return (
+                f"ThoughtLoopDetector(outputs={len(self._outputs)}, "
+                f"breaks={self._break_count}, "
+                f"last_loop={self._last_loop})"
+            )
