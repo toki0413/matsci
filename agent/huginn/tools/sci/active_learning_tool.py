@@ -8,6 +8,7 @@ property. Designed to close the compute--experiment loop.
 from __future__ import annotations
 
 import csv
+import inspect
 import json
 from pathlib import Path
 from typing import Any, Literal
@@ -222,7 +223,7 @@ class ActiveLearningTool(HuginnTool):
                 )
 
             if hasattr(objective_tool, "call"):
-                if __import__("inspect").iscoroutinefunction(objective_tool.call):
+                if inspect.iscoroutinefunction(objective_tool.call):
                     out = await objective_tool.call(tool_input, context)
                 else:
                     out = objective_tool.call(tool_input, context)

@@ -6,7 +6,9 @@ interface with database-at-rest encryption support.
 
 from __future__ import annotations
 
+import datetime
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -207,7 +209,7 @@ class EncryptedRAGManager:
         persist = Path(self._persist_dir or Path.home() / ".huginn" / "rag")
         backup_path = (
             Path(backup_dir)
-            / f"rag_backup_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.enc"
+            / f"rag_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.enc"
         )
         backup_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -224,7 +226,7 @@ class EncryptedRAGManager:
         persist = Path(self._persist_dir or Path.home() / ".huginn" / "rag")
         if persist.exists():
             # Move existing to temp for safety
-            temp_backup = persist.with_suffix(f".bak_{__import__('time').time()}")
+            temp_backup = persist.with_suffix(f".bak_{time.time()}")
             shutil.move(str(persist), str(temp_backup))
 
         self._vault.decrypt_directory(backup_path, persist)

@@ -158,7 +158,7 @@ class VectorStore:
             meta.setdefault("source", "unknown")
             meta.setdefault(
                 "ingested_at",
-                str(__import__("datetime").datetime.now().isoformat()),
+                str(datetime.datetime.now().isoformat()),
             )
 
         # Compute embeddings if not provided
