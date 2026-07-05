@@ -553,12 +553,25 @@ function LocalModelDiscoverer({
 function CredentialsPanel() {
   const [sshCreds, setSshCreds] = useState<any[]>([]);
   const [llmCreds, setLlmCreds] = useState<any[]>([]);
+  const [serviceCreds, setServiceCreds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [editing, setEditing] = useState<{ kind: string; id?: string } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any>>({});
   const [importing, setImporting] = useState(false);
+
+  // External API key form
+  const [apiKeyForm, setApiKeyForm] = useState({ service: "", api_key: "" });
+  const [testingService, setTestingService] = useState<string | null>(null);
+  const [serviceTestResult, setServiceTestResult] = useState<Record<string, any>>({});
+
+  const SUPPORTED_SERVICES = [
+    "openai", "anthropic", "google_ai", "deepseek", "qwen",
+    "materials_project", "wiley", "scopus", "springer_nature",
+    "elsevier_science_direct", "arxiv", "semantic_scholar",
+    "nist_webbook", "pubchem", "chemspider",
+  ];
 
   const [sshForm, setSshForm] = useState({
     name: "", host: "", username: "", port: "22", scheduler: "slurm",
@@ -575,12 +588,14 @@ function CredentialsPanel() {
 
   const load = async () => {
     try {
-      const [ssh, llm] = await Promise.all([
+      const [ssh, llm, svc] = await Promise.all([
         fetch(`${API_BASE}/credentials?kind=ssh`).then((r) => r.json()),
         fetch(`${API_BASE}/credentials?kind=llm`).then((r) => r.json()),
+        fetch(`${API_BASE}/credentials`).then((r) => r.json()),
       ]);
       setSshCreds(ssh.credentials || []);
       setLlmCreds(llm.credentials || []);
+      setServiceCreds(svc.services || []);
     } catch (e: any) {
       flash("加载凭据失败: " + e.message, false);
     }
@@ -877,6 +892,127 @@ function CredentialsPanel() {
         {editing?.kind === "llm" && llmFormEl}
         {loading ? <p className="text-xs text-text-muted">加载中…</p> : llmCreds.length === 0 && !editing ? <p className="text-xs text-text-muted">暂无 LLM 凭据, 点击"新增 LLM"添加。</p> : null}
         <div className="space-y-2">{llmCreds.map((c) => renderCard(c, `${c.metadata?.provider || ""} / ${c.metadata?.model || ""}${c.metadata?.base_url ? " · " + c.metadata.base_url : ""}`))}</div>
+      </section>
+
+      {/* 外部 API Keys (Materials Project, Scopus, etc.) */}
+      <section className="mt-6">
+        <div className="mb-2 flex items-center justify-between">
+          <h4 className="text-sm font-semibold text-text-primary">外部 API Keys</h4>
+          <span className="text-xs text-text-muted">材料数据库 / 文献检索等</span>
+        </div>
+        <p className="mb-3 text-xs text-text-muted">
+          为外部数据源和文献检索服务配置 API Key。密钥加密存储, 不会明文返回。你自行申请后在此输入。
+        </p>
+
+        {/* Add new API key form */}
+        <div className="mb-3 flex gap-2">
+          <select
+            value={apiKeyForm.service}
+            onChange={(e) => setApiKeyForm({ ...apiKeyForm, service: e.target.value })}
+            className="input flex-1 text-xs"
+          >
+            <option value="">选择服务…</option>
+            {SUPPORTED_SERVICES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <input
+            type="password"
+            value={apiKeyForm.api_key}
+            onChange={(e) => setApiKeyForm({ ...apiKeyForm, api_key: e.target.value })}
+            placeholder="API Key…"
+            className="input flex-1 text-xs"
+          />
+          <button
+            onClick={async () => {
+              if (!apiKeyForm.service || !apiKeyForm.api_key) return;
+              try {
+                const resp = await fetch(`${API_BASE}/credentials/${apiKeyForm.service}`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ api_key: apiKeyForm.api_key }),
+                });
+                const data = await resp.json();
+                if (data.success !== false) {
+                  flash(`${apiKeyForm.service} API Key 已保存`);
+                  setApiKeyForm({ service: "", api_key: "" });
+                  load();
+                } else {
+                  flash(`保存失败: ${data.error || "未知错误"}`, false);
+                }
+              } catch (e: any) {
+                flash(`保存失败: ${e.message}`, false);
+              }
+            }}
+            disabled={!apiKeyForm.service || !apiKeyForm.api_key}
+            className="btn-primary text-xs disabled:opacity-50"
+          >
+            保存
+          </button>
+        </div>
+
+        {/* Service credentials list */}
+        {serviceCreds.length === 0 ? (
+          <p className="text-xs text-text-muted">暂无外部 API Key。选择服务并输入密钥后点击保存。</p>
+        ) : (
+          <div className="space-y-2">
+            {serviceCreds.map((s: any) => (
+              <div key={s.service} className="flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-text-primary">{s.service}</span>
+                  {s.has_key ? (
+                    <span className="rounded bg-success/20 px-1.5 py-0.5 text-xs text-success">✓ 已配置</span>
+                  ) : (
+                    <span className="rounded bg-warning/20 px-1.5 py-0.5 text-xs text-warning">未配置</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  {s.has_key && (
+                    <>
+                      <button
+                        onClick={async () => {
+                          setTestingService(s.service);
+                          setServiceTestResult({});
+                          try {
+                            const resp = await fetch(`${API_BASE}/credentials/${s.service}/test`);
+                            const data = await resp.json();
+                            setServiceTestResult({ [s.service]: data });
+                          } catch (e: any) {
+                            setServiceTestResult({ [s.service]: { valid: false, error: e.message } });
+                          }
+                          setTestingService(null);
+                        }}
+                        disabled={testingService === s.service}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        {testingService === s.service ? "测试中…" : "测试"}
+                      </button>
+                      {serviceTestResult[s.service] && (
+                        <span className={`text-xs ${serviceTestResult[s.service].valid ? "text-success" : "text-error"}`}>
+                          {serviceTestResult[s.service].valid ? "✓ 有效" : `✗ ${serviceTestResult[s.service].error || "无效"}`}
+                        </span>
+                      )}
+                      <button
+                        onClick={async () => {
+                          try {
+                            await fetch(`${API_BASE}/credentials/${s.service}`, { method: "DELETE" });
+                            flash(`${s.service} API Key 已删除`);
+                            load();
+                          } catch (e: any) {
+                            flash(`删除失败: ${e.message}`, false);
+                          }
+                        }}
+                        className="text-xs text-error hover:underline"
+                      >
+                        删除
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );
