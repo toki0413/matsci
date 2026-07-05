@@ -32,7 +32,9 @@ from huginn.security.auth import require_admin_key
 from huginn.security.credential_store import (
     CRED_KIND_LLM,
     CRED_KIND_SSH,
+    SUPPORTED_SERVICES,
     get_credential_store,
+    get_service_credential_store,
 )
 
 router = APIRouter(tags=["credentials"])
@@ -45,16 +47,29 @@ def _store():
     return get_credential_store()
 
 
+def _svc_store():
+    # 包一层方便测试 monkeypatch — 与 _store() 对应, 指 service API key 存储
+    return get_service_credential_store()
+
+
 # ── 列表 / 详情 / 默认 ─────────────────────────────────────────
 
 
 @router.get("/credentials", dependencies=[Depends(require_admin_key)])
 async def list_credentials(kind: str | None = None) -> dict[str, Any]:
-    """列出凭据 (脱敏)。?kind=ssh 或 ?kind=llm 过滤; 不传返回全部。"""
+    """列出凭据 (脱敏)。?kind=ssh 或 ?kind=llm 过滤; 不传返回全部。
+
+    返回体里同时带上 ``services`` — 已配置的外部服务 API key 清单 (只有
+    service 名 + metadata + has_key, 永不回明文/密文 key)。这样前端一个
+    请求就能同时拿到 SSH/LLM 凭据和外部服务 key 的状态。
+    """
     store = _store()
     if kind and kind not in (CRED_KIND_SSH, CRED_KIND_LLM):
         return {"success": False, "error": f"kind 必须是 ssh 或 llm, 得到 {kind!r}"}
-    return {"credentials": store.list(kind=kind)}
+    return {
+        "credentials": store.list(kind=kind),
+        "services": _svc_store().list_services(),
+    }
 
 
 @router.get("/credentials/defaults", dependencies=[Depends(require_admin_key)])
@@ -131,7 +146,18 @@ async def update_credential(cid: str, params: dict[str, Any]) -> dict[str, Any]:
 
 @router.delete("/credentials/{cid}", dependencies=[Depends(require_admin_key)])
 async def delete_credential(cid: str) -> dict[str, Any]:
-    """删除凭据。若删的是默认, 同 kind 自动提升最早一条为默认。"""
+    """删除凭据。
+
+    双模式分发: 路径参数既可能是外部服务名 (openai / materials_project ...),
+    也可能是 SSH/LLM 凭据的 hex id。服务名命中 SUPPORTED_SERVICES 时按 service
+    凭据删, 否则按 cid 走原来的 SQLite 删除 (删默认则同 kind 自动提升最早一条)。
+    前端传的 id 是 hex token, 不会和服务名撞, 所以可以放心合在一个端点里。
+    """
+    if cid in SUPPORTED_SERVICES:
+        ok = _svc_store().delete_credential(cid)
+        if not ok:
+            return {"success": False, "error": f"服务 {cid} 未配置凭据"}
+        return {"success": True, "service": cid}
     ok = _store().delete(cid)
     if not ok:
         return {"success": False, "error": f"凭据 {cid} 不存在"}
@@ -343,3 +369,181 @@ async def link_credential_to_model(cid: str, alias: str) -> dict[str, Any]:
         return {"success": False, "error": f"persist failed: {e}"}
 
     return {"success": True, "alias": alias, "credential_id": cid}
+
+
+# ════════════════════════════════════════════════════════════════════
+# 外部服务 API Key 管理 (service-keyed, 加密 JSON 落盘)
+# ════════════════════════════════════════════════════════════════════
+#
+# 与上面的 SSH/LLM 凭据 CRUD 并列, 这一组面向"外部数据源 / 出版商 /
+# LLM provider"的 API key: 一份 service 一份 key。端点:
+#     POST   /credentials/{service}        新增 / 更新一份 service 凭据
+#     GET    /credentials/{service}/test   探活: 拿 key 去服务端问一句
+# 列表和删除复用上面已注册的 GET /credentials / DELETE /credentials/{cid}
+# — service 名会命中 SUPPORTED_SERVICES, 由那两个端点做双模式分发。
+
+
+@router.post("/credentials/{service}", dependencies=[Depends(require_admin_key)])
+async def set_service_credential(
+    service: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """新增 / 更新一份外部服务 API key。
+
+    body 字段:
+        api_key    str   必填, 明文 (落盘前会 Fernet 加密)
+        metadata   dict  非敏感附加信息 (base_url / owner / 备注 ...), 可选
+
+    service 必须在 SUPPORTED_SERVICES 里, 否则拒掉 — 避免任意字符串当
+    service 名写进存储。
+    """
+    if service not in SUPPORTED_SERVICES:
+        return {
+            "success": False,
+            "error": (
+                f"不支持的服务 {service!r}, 可选: {SUPPORTED_SERVICES}"
+            ),
+        }
+    api_key = params.get("api_key")
+    if not api_key or not str(api_key).strip():
+        return {"success": False, "error": "api_key 必填且不能为空"}
+    metadata = params.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return {"success": False, "error": "metadata 必须是对象"}
+
+    try:
+        _svc_store().set_credential(service, str(api_key), metadata)
+    except Exception as e:
+        logger.error("写入 service 凭据失败: %s", service, exc_info=True)
+        return {"success": False, "error": str(e)}
+    return {"success": True, "service": service}
+
+
+@router.get(
+    "/credentials/{service}/test", dependencies=[Depends(require_admin_key)]
+)
+async def test_service_credential(service: str) -> dict[str, Any]:
+    """探活外部服务凭据: 取明文 key 去服务端发一个最小请求, 看 401/403 还是 200。
+
+    返回 ``{valid: bool, error: str?}``。没有配 key / 服务名不支持 /
+    请求失败都会回 valid=False 并带上原因; 只有真返回 2xx 才算 valid=True。
+    网络不通时不算 key 无效, 会把网络错误回传让前端区分提示。
+    """
+    if service not in SUPPORTED_SERVICES:
+        return {
+            "valid": False,
+            "error": (
+                f"不支持的服务 {service!r}, 可选: {SUPPORTED_SERVICES}"
+            ),
+        }
+    store = _svc_store()
+    if not store.has_credential(service):
+        return {"valid": False, "error": f"未配置 {service} 的凭据"}
+
+    api_key = store.get_credential(service)
+    tester = _SERVICE_TESTERS.get(service) or _format_check
+    try:
+        valid, error = await tester(api_key)
+    except Exception as e:
+        logger.error("service 凭据探活异常: %s", service, exc_info=True)
+        return {"valid": False, "error": str(e)}
+    return {"valid": bool(valid), "error": error}
+
+
+# ── 服务探活实现 ───────────────────────────────────────────────
+#
+# 能做"真问一句"的服务走 HTTP 探活 (aiohttp, 10s 超时); 没有公开探活端点
+# 或需要 OAuth 的 (google_ai / wiley / chemspider ...) 退回格式校验 —
+# 至少挡掉明显的空 key / 短 key, 不假装能验。
+
+_SERVICE_TEST_TIMEOUT = 10.0
+
+
+def _http_tester(url, *, build_headers=None, build_params=None, ok_status=200):
+    """造一个"GET 一发看状态码"的 async 探活函数。
+
+    build_headers / build_params 都是 ``api_key -> dict`` 的 callable,
+    把 key 拼进 header (Bearer / X-API-KEY) 或 query (apikey=)。
+    ok_status 默认 200; 有些服务 204 也算正常, 调用时覆盖即可。
+    """
+
+    async def _tester(api_key: str) -> tuple[bool, str | None]:
+        try:
+            import aiohttp
+        except ImportError:  # pragma: no cover - aiohttp 是硬依赖
+            return False, "服务器缺少 aiohttp, 无法探活"
+        headers = build_headers(api_key) if build_headers else {}
+        params = build_params(api_key) if build_params else None
+        timeout = aiohttp.ClientTimeout(total=_SERVICE_TEST_TIMEOUT)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    url, headers=headers, params=params
+                ) as resp:
+                    if resp.status == ok_status:
+                        return True, None
+                    body = await resp.text()
+                    # 401/403 是 key 问题, 其它状态码也算探活失败但带原文
+                    return False, f"HTTP {resp.status}: {body[:160]}"
+        except asyncio.TimeoutError:
+            return False, f"请求超时 ({int(_SERVICE_TEST_TIMEOUT)}s)"
+        except Exception as e:  # noqa: BLE001 - 探活要把任何异常透传给前端
+            return False, f"{type(e).__name__}: {e}"
+
+    return _tester
+
+
+async def _format_check(api_key: str) -> tuple[bool, str | None]:
+    """无公开探活端点的服务: 退回格式校验。
+
+    只挡明显的空 / 过短 key; 没法验真伪时按"格式 OK"放行, 由前端展示
+    "未做活体验证"提示。Google AI / Wiley / ChemSpider 这类要 OAuth 或
+    私有协议的都走这里。
+    """
+    if not api_key or len(api_key) < 8:
+        return False, "key 过短或为空 (少于 8 字符)"
+    return True, None
+
+
+# service → async tester(api_key) -> (valid, error)
+# 没列在这里的 (google_ai / wiley / elsevier_science_direct / arxiv /
+# nist_webbook / pubchem / chemspider) 走 _format_check 兜底。
+_SERVICE_TESTERS = {
+    "openai": _http_tester(
+        "https://api.openai.com/v1/models",
+        build_headers=lambda k: {"Authorization": f"Bearer {k}"},
+    ),
+    "anthropic": _http_tester(
+        "https://api.anthropic.com/v1/models?limit=1",
+        build_headers=lambda k: {
+            "x-api-key": k,
+            "anthropic-version": "2023-06-01",
+        },
+    ),
+    "deepseek": _http_tester(
+        "https://api.deepseek.com/models",
+        build_headers=lambda k: {"Authorization": f"Bearer {k}"},
+    ),
+    "qwen": _http_tester(
+        # DashScope 的 OpenAI 兼容端点
+        "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
+        build_headers=lambda k: {"Authorization": f"Bearer {k}"},
+    ),
+    "materials_project": _http_tester(
+        "https://api.materialsproject.org/rest/v2/api_check",
+        build_headers=lambda k: {"X-API-KEY": k},
+    ),
+    "scopus": _http_tester(
+        # Elsevier API: apikey 走 query
+        "https://api.elsevier.com/authenticate",
+        build_params=lambda k: {"apikey": k},
+    ),
+    "springer_nature": _http_tester(
+        "https://api.springernature.com/metadata/json",
+        build_params=lambda k: {"q": "doi:1", "api_key": k},
+    ),
+    "semantic_scholar": _http_tester(
+        "https://api.semanticscholar.org/graph/v1/paper/search",
+        build_headers=lambda k: {"x-api-key": k},
+        build_params=lambda _k: {"query": "test", "limit": 1},
+    ),
+}

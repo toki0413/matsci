@@ -529,3 +529,301 @@ def reset_credential_store() -> None:
     global _store_singleton
     with _store_lock:
         _store_singleton = None
+
+
+# ════════════════════════════════════════════════════════════════════
+# 外部服务 API Key 凭据存储 (service-keyed, 加密 JSON 落盘)
+# ════════════════════════════════════════════════════════════════════
+#
+# 上面那个 CredentialStore 面向 SSH 连接 + LLM 推理 key: SQLite、以 cid
+# 为主键、同 kind 可多套。下面这套 ServiceCredentialStore 面向"外部数据源 /
+# 出版商 / LLM provider"的 API key: 一份 service 一份 key, 走加密 JSON,
+# 主键就是 service 名。两套并行, 互不干扰 — 上面的 SSH/LLM CRUD 照常用,
+# 这套给前端"选服务 → 填 key → 一键测试"用。
+#
+# 设计要点:
+# - api_key 用 Fernet 加密后写进 JSON, metadata 明文 (非敏感);
+# - 全程 RLock, load → 改 → save 原子化, 避免并发写丢更新;
+# - 明文 key 只能经 get_credential() 拿到, list_services() 永不回密文/明文;
+# - cryptography 惰性导入, 缺包时给清晰报错而不是模块加载期炸。
+
+# 前端下拉用的预定义服务清单 — 不在这里面的服务名会被路由层拒掉,
+# 避免任意字符串当 service 名写进存储。
+SUPPORTED_SERVICES: list[str] = [
+    "openai",
+    "anthropic",
+    "google_ai",
+    "deepseek",
+    "qwen",
+    "materials_project",
+    "wiley",
+    "scopus",
+    "springer_nature",
+    "elsevier_science_direct",
+    "arxiv",
+    "semantic_scholar",
+    "nist_webbook",
+    "pubchem",
+    "chemspider",
+]
+
+# 模块级单例锁 + 单例引用 — 与上面的 _store_lock 分开, 两套存储互不干扰
+_svc_store_lock = threading.Lock()
+_svc_store_singleton: "ServiceCredentialStore | None" = None
+
+
+def _service_cred_file() -> Path:
+    """服务 API key 加密 JSON 的落盘路径。
+
+    优先 HUGINN_CACHE_DIR (与项目其它模块的隔离约定一致, 测试靠它把写入
+    重定向到临时目录), 否则退回 ~/.huginn/credentials.enc.json。
+    """
+    cache = os.environ.get("HUGINN_CACHE_DIR")
+    if cache:
+        return Path(cache) / "credentials.enc.json"
+    return Path.home() / ".huginn" / "credentials.enc.json"
+
+
+def _master_key_file() -> Path:
+    """主密钥文件路径。
+
+    HUGINN_ENCRYPTION_KEY 未设时自动生成的 Fernet key 落到这里。生产环境
+    应改用环境变量显式提供, 这个文件只是兜底。
+    """
+    cache = os.environ.get("HUGINN_CACHE_DIR")
+    base = Path(cache) if cache else (Path.home() / ".huginn")
+    return base / "master.key"
+
+
+def _get_service_fernet():
+    """构造 ServiceCredentialStore 用的 Fernet 实例。
+
+    优先级:
+    1. ``HUGINN_ENCRYPTION_KEY`` 环境变量 — 一个 base64 urlsafe Fernet key
+    2. 自动生成并落到 ``master.key`` 文件 (同时打 WARNING, 提醒生产环境
+       显式配置; 桌面单机场景靠文件权限兜底)
+
+    惰性导入 cryptography: 缺包时抛 ImportError 而不是在模块加载期就炸,
+    这样即使没装 cryptography, 上面的 CredentialStore 仍可正常 import
+    (它顶部已硬 import 过, 这里单独可控方便后续按需拆分)。
+    """
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError as exc:  # pragma: no cover - cryptography 是硬依赖
+        raise ImportError(
+            "加密凭据存储需要 cryptography 库。请执行 "
+            "`pip install cryptography` 后重试。"
+        ) from exc
+
+    env_key = os.environ.get("HUGINN_ENCRYPTION_KEY")
+    if env_key:
+        try:
+            return Fernet(env_key.encode("utf-8"))
+        except Exception as exc:
+            raise RuntimeError(
+                "HUGINN_ENCRYPTION_KEY 不是合法的 Fernet key。"
+                "请用 Fernet.generate_key() 生成一个 base64 urlsafe key。"
+            ) from exc
+
+    # 没设环境变量 — 自动生成并落盘, 同时告警
+    key_file = _master_key_file()
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    if not key_file.exists():
+        new_key = Fernet.generate_key()
+        key_file.write_bytes(new_key)
+        try:
+            os.chmod(key_file, 0o600)
+        except OSError:
+            # Windows 上 chmod 语义不同, 忽略即可; 文件仍在用户目录下
+            pass
+        logger.warning(
+            "HUGINN_ENCRYPTION_KEY 未设置, 已自动生成主密钥并写入 %s。"
+            "生产环境请通过环境变量显式提供 HUGINN_ENCRYPTION_KEY, "
+            "并妥善备份该密钥文件 — 丢失后已存储的凭据将无法解密。",
+            key_file,
+        )
+    return Fernet(key_file.read_bytes())
+
+
+class ServiceCredentialStore:
+    """以 service 名为主键的加密 API key 存储 (JSON 落盘)。
+
+    一份 service 一份 key, 适合前端做"选服务 → 填 key → 测试"的流程。
+    api_key 用 Fernet 加密后写进 JSON, metadata 明文存储 (非敏感参数)。
+    全程加锁, load → 改 → save 原子化, 避免并发写丢更新。
+
+    明文 key 只能通过 :meth:`get_credential` 取到;
+    :meth:`list_services` 永远不返回密文或明文, 只回 service 名 + metadata +
+    has_key 标记, 方便前端展示状态灯。
+
+    与 :class:`CredentialStore` (SQLite / SSH+LLM / cid-keyed) 互补, 不共享
+    存储文件, 单例也各自独立。
+    """
+
+    def __init__(
+        self,
+        file_path: str | Path,
+        fernet: Any = None,
+    ) -> None:
+        self.file_path = Path(file_path)
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        # fernet 可注入 (测试用假实现); 默认走 HUGINN_ENCRYPTION_KEY / master.key
+        self._fernet = fernet if fernet is not None else _get_service_fernet()
+        self._lock = threading.RLock()
+
+    # ── 内部: 文件读写 ─────────────────────────────────────────
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        """读 JSON。文件不存在或损坏时返回空 dict, 不抛 — 让上层逻辑统一处理。"""
+        if not self.file_path.exists():
+            return {}
+        try:
+            text = self.file_path.read_text(encoding="utf-8")
+            data = json.loads(text) if text.strip() else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "凭据文件 %s 读取失败, 当作空处理: %s", self.file_path, exc
+            )
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+    def _save(self, data: dict[str, dict[str, Any]]) -> None:
+        """原子写: 先写 .tmp 再 rename, 避免半写状态损坏凭据库。"""
+        tmp = self.file_path.with_suffix(self.file_path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(self.file_path)
+
+    def _encrypt(self, plaintext: str) -> str:
+        if not plaintext:
+            return ""
+        return self._fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+
+    def _decrypt(self, token: str) -> str:
+        if not token:
+            return ""
+        try:
+            return self._fernet.decrypt(token.encode("utf-8")).decode("utf-8")
+        except Exception as exc:
+            # 密钥换了 / 文件损坏 — 不要把密文抛出去, 给个安全提示
+            raise RuntimeError(
+                "无法解密凭据: 主密钥可能已变更。若重置过 HUGINN_ENCRYPTION_KEY "
+                "或迁移过 master.key, 旧凭据需重新录入。"
+            ) from exc
+
+    # ── 公开 API ───────────────────────────────────────────────
+
+    def set_credential(
+        self,
+        service: str,
+        api_key: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """新增 / 更新一份 service 凭据。
+
+        metadata 走合并而非整体替换 — 便于增量补字段 (比如先存 key, 后补
+        base_url)。updated_at / created_at 自动维护。
+        """
+        if not service or not service.strip():
+            raise ValueError("service 不能为空")
+        service = service.strip()
+        with self._lock:
+            data = self._load()
+            entry = data.get(service, {})
+            old_meta = entry.get("metadata") if isinstance(entry, dict) else None
+            new_meta = dict(old_meta or {})
+            if metadata:
+                new_meta.update(metadata)
+            now = _now_iso()
+            new_meta["updated_at"] = now
+            if "created_at" not in new_meta:
+                new_meta["created_at"] = now
+            data[service] = {
+                "api_key": self._encrypt(api_key or ""),
+                "metadata": new_meta,
+            }
+            self._save(data)
+        logger.info("service 凭据已写入: %s", service)
+
+    def get_credential(self, service: str) -> str:
+        """取明文 api_key。不存在返回空串 (调用方按需用 has_credential 判)。"""
+        with self._lock:
+            data = self._load()
+            entry = data.get(service)
+            if not isinstance(entry, dict):
+                return ""
+            return self._decrypt(entry.get("api_key", ""))
+
+    def list_services(self) -> list[dict[str, Any]]:
+        """列出已配置的 service (脱敏: 只回 service 名 + metadata + has_key)。
+
+        顺序按 service 名排序, 方便前端稳定渲染。永远不回密文或明文 key。
+        """
+        with self._lock:
+            data = self._load()
+            result: list[dict[str, Any]] = []
+            for name, entry in sorted(data.items()):
+                if not isinstance(entry, dict):
+                    continue
+                meta = entry.get("metadata") or {}
+                enc = entry.get("api_key", "")
+                result.append(
+                    {
+                        "service": name,
+                        "metadata": dict(meta),
+                        "has_key": bool(enc),
+                        "updated_at": meta.get("updated_at", ""),
+                    }
+                )
+            return result
+
+    def delete_credential(self, service: str) -> bool:
+        """删除一份 service 凭据。不存在返回 False。"""
+        with self._lock:
+            data = self._load()
+            if service not in data:
+                return False
+            del data[service]
+            self._save(data)
+        logger.info("service 凭据已删除: %s", service)
+        return True
+
+    def has_credential(self, service: str) -> bool:
+        with self._lock:
+            data = self._load()
+            entry = data.get(service)
+            return isinstance(entry, dict) and bool(entry.get("api_key"))
+
+    def get_metadata(self, service: str) -> dict[str, Any]:
+        """取 service 的 metadata (非敏感)。不存在返回空 dict。"""
+        with self._lock:
+            data = self._load()
+            entry = data.get(service)
+            if not isinstance(entry, dict):
+                return {}
+            return dict(entry.get("metadata") or {})
+
+
+def get_service_credential_store() -> ServiceCredentialStore:
+    """返回全局 ServiceCredentialStore 单例 (线程安全懒加载)。
+
+    路由层和集成层都走这个入口, 保证全进程共用同一份 JSON 与 Fernet。
+    测试不要用这个 — 直接 ServiceCredentialStore(tmp_path, fernet) 隔离。
+    """
+    global _svc_store_singleton
+    if _svc_store_singleton is None:
+        with _svc_store_lock:
+            if _svc_store_singleton is None:
+                _svc_store_singleton = ServiceCredentialStore(_service_cred_file())
+    return _svc_store_singleton
+
+
+def reset_service_credential_store() -> None:
+    """清除 service 凭据单例。主要给测试用, 生产代码别调。"""
+    global _svc_store_singleton
+    with _svc_store_lock:
+        _svc_store_singleton = None

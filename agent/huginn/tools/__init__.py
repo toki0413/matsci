@@ -175,6 +175,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         # ── materials/ ──
         ("huginn.tools.materials_database_tool", "MaterialsDatabaseTool"),
         ("huginn.tools.experimental_data_tool", "ExperimentalDataTool"),
+        ("huginn.tools.thermo_tool", "ThermoTool"),
         # ── wetlab/ ──
         ("huginn.tools.wetlab_rpc_tool", "WetlabRpcTool"),
     ]
