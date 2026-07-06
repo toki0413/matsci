@@ -95,6 +95,10 @@ class UnifiedSessionState:
     # Keys: type ("new_plan"|"plan_update"|"high_cost_tool"|"mode_switch"),
     #       message (what we're asking), data (plan dict, tool name, etc.)
 
+    # Cognitive prompt from the state machine — context_builder reads this
+    # to inject the dual-mode attention prompt into the LLM messages.
+    _cognitive_prompt: str = ""
+
     tool_results_this_turn: list[dict[str, Any]] = field(default_factory=list)
     # Results from the current turn's tool calls, for reflection.
 

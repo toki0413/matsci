@@ -159,8 +159,11 @@ class TestHuginnAgentPromptCache:
             assert msgs[1].content == "hi there"
             assert isinstance(msgs[2], SystemMessage)
             assert "hcp structure" in msgs[2].content
-            assert isinstance(msgs[3], HumanMessage)
-            assert msgs[3].content == "compute stress for Ti"
+            # The last message must be the current user input — but there may
+            # be injected SystemMessages (L1 coords, cognitive prompt, etc.)
+            # between the memory block and the user message.
+            assert isinstance(msgs[-1], HumanMessage)
+            assert msgs[-1].content == "compute stress for Ti"
 
     def test_memory_recall_uses_current_query(self):
         with tempfile.TemporaryDirectory() as tmp:

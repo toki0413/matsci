@@ -261,20 +261,26 @@ class ContextBuilder:
     def build_plan_text(self, session_state=None) -> str:
         """Inject active plan context so the LLM knows where we are in the plan.
 
-        Without this the model has no idea it's supposed to be executing
-        step 2 of 3 — the plan-aware piece of loop engineering.
+        Also injects L1 coordinates even without an active plan — they survive
+        context compression and tell the model where we are structurally.
         """
-        if session_state is None or not getattr(session_state, "active_plan_id", None):
-            return ""
+        parts = []
 
-        parts = ["### Current Plan"]
-        parts.append(f"Objective: {session_state.active_plan_objective}")
-        parts.append(f"Step: {session_state.active_plan_step_index + 1}")
-        if session_state.l1_coordinates:
-            parts.append(f"Position: {session_state.l1_coordinates}")
-        parts.append(f"Cognitive mode: {session_state.cognitive_mode.value}")
-        parts.append("### End Current Plan")
-        return "\n".join(parts)
+        # L1 coordinates always injected (they're the structural breadcrumb)
+        l1 = getattr(session_state, "l1_coordinates", "") if session_state else ""
+        if l1:
+            parts.append("### Structural Coordinates (L1)")
+            parts.append(l1)
+            parts.append("### End Structural Coordinates")
+
+        if session_state and getattr(session_state, "active_plan_id", None):
+            parts.append("### Current Plan")
+            parts.append(f"Objective: {session_state.active_plan_objective}")
+            parts.append(f"Step: {session_state.active_plan_step_index + 1}")
+            parts.append(f"Cognitive mode: {session_state.cognitive_mode.value}")
+            parts.append("### End Current Plan")
+
+        return "\n".join(parts) if parts else ""
 
     def build_session_continuity(self, session_state=None) -> str:
         """Inject previous session summary for cross-session continuity.
@@ -298,6 +304,63 @@ class ContextBuilder:
                 parts.append(f"{i}. {goal}")
             parts.append("### End Recent Goals")
         return "\n\n".join(parts) if parts else ""
+
+    def build_cognitive_prompt(self, session_state=None) -> str:
+        """Inject the dual-mode attention prompt based on cognitive state.
+
+        This is the practical implementation of 'singularity condensation' vs
+        'axiom focus' — different system prompt additions for discovery vs
+        construction modes.
+        """
+        if session_state is None:
+            return ""
+        # The cognitive prompt is stored on session_state by the agent
+        # (which owns the CognitiveStateMachine). We just read it.
+        prompt = getattr(session_state, "_cognitive_prompt", "")
+        return prompt if prompt else ""
+
+    def build_evolution_rules(self) -> str:
+        """Inject learned evolution rules into context.
+
+        Reads from the EvolutionEngine's persisted rules file and formats
+        the most relevant ones as context for the LLM. This closes the
+        evolution feedback loop: tool fails → rule learned → next call
+        benefits from the lesson.
+        """
+        try:
+            from huginn.evolution.logger import ExecutionLogger
+            from pathlib import Path
+            import os
+            import json
+
+            base = os.environ.get("HUGINN_CACHE_DIR", ".huginn")
+            rules_path = Path(base) / "evolution_rules.json"
+            if not rules_path.exists():
+                return ""
+
+            with rules_path.open("r", encoding="utf-8") as f:
+                rules = json.load(f)
+            if not rules:
+                return ""
+
+            # Only inject high-confidence rules, max 5 to keep prompt small
+            relevant = [
+                r for r in rules
+                if r.get("confidence", 0) >= 0.5
+            ][:5]
+            if not relevant:
+                return ""
+
+            lines = ["### Learned Lessons (from past executions)"]
+            for r in relevant:
+                lines.append(
+                    f"- When {r.get('trigger', '?')}: {r.get('action', '?')} "
+                    f"(confidence: {r.get('confidence', 0):.0%})"
+                )
+            lines.append("### End Learned Lessons")
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     # ── Full input messages ────────────────────────────────────────
 
@@ -350,6 +413,19 @@ class ContextBuilder:
         if plan_text:
             from langchain_core.messages import SystemMessage
             messages.insert(-1, SystemMessage(content=plan_text, id="ctx_plan"))
+
+        # Cognitive mode attention prompt (discovery vs construction)
+        cognitive_text = self.build_cognitive_prompt(session_state)
+        if cognitive_text:
+            from langchain_core.messages import SystemMessage
+            messages.insert(-1, SystemMessage(content=cognitive_text, id="ctx_cognitive"))
+
+        # Evolution rules — lessons from past failures/successes
+        evolution_text = self.build_evolution_rules()
+        if evolution_text:
+            from langchain_core.messages import SystemMessage
+            messages.insert(-1, SystemMessage(content=evolution_text, id="ctx_evolution"))
+
         continuity_text = self.build_session_continuity(session_state)
         if continuity_text:
             from langchain_core.messages import SystemMessage

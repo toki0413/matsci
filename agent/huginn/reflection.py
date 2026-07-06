@@ -45,6 +45,19 @@ class ReflectionResult:
     needs_user_input: bool = False
     confirm_type: str = ""  # "continue" | "replan" | "mode_switch"
 
+    def to_transition_signal(self) -> str:
+        """Map reflection result to a cognitive state machine signal type.
+
+        Returns the signal_type string for TransitionSignal, or "" if no signal.
+        """
+        if not self.tool_succeeded or self.has_physics_errors:
+            return "physics_error" if self.has_physics_errors else "tool_failure"
+        if self.plan_step_completed:
+            return "tool_success"
+        if self.has_physics_warnings:
+            return "tool_success"  # warnings don't block
+        return "tool_success"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "tool_succeeded": self.tool_succeeded,
