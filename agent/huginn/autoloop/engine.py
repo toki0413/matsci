@@ -61,6 +61,18 @@ _PHASE_PERSONAS: dict[str, str | None] = {
     "report": "tutor",  # 教学风格输出
 }
 
+# result_data 里的 key -> 文献检索时用的性质名. _literature_comparison 遍历这个表.
+_LIT_PROPERTY_MAP: dict[str, str] = {
+    "energy": "total energy",
+    "band_gap": "band gap",
+    "volume": "volume",
+    "bulk_modulus": "bulk modulus",
+    "magnetization": "magnetization",
+    "lattice_a": "lattice constant a",
+    "lattice_b": "lattice constant b",
+    "lattice_c": "lattice constant c",
+}
+
 
 def _extract_tests_passed(validation: Any) -> bool:
     """从 validation 结果里抽 tests_passed 布尔, 给 validate→learn 门用.
@@ -1341,28 +1353,132 @@ class AutoloopEngine:
         except Exception as e:
             results["emergent_complexity_error"] = str(e)
 
-        # 统一 Grader: 用 GraderRegistry 跑 physics + dimensional + hallucination,
+        # 文献对比: 抽取数值结果, 查文献基准, 跑创新信号检测.
+        # best-effort: 文献工具不可用或网络超时就跳过, 不影响主校验流程.
+        try:
+            lit_comp = await self._literature_comparison(execution_result)
+            if lit_comp:
+                results["literature_comparison"] = lit_comp
+        except Exception as e:
+            results["literature_comparison_error"] = str(e)
+
+        # 统一 Grader: 用 GraderRegistry 跑 physics + dimensional + hallucination + literature,
         # 把分数和 reward 信号收集起来. 这步替换了部分 ad-hoc 校验, 统一接口.
         try:
             from huginn.validation.grader import default_registry
             reg = default_registry()
-            grader_results = reg.evaluate_all(execution_result, results)
+            # 合并 execution_result 和 results, 让 LiteratureGrader 能拿到 literature_comparison
+            merged: dict[str, Any] = {}
+            if isinstance(execution_result, dict):
+                merged.update(execution_result)
+            merged.update(results)
+            grader_list = reg.evaluate_all(merged)
             results["grader_scores"] = {
-                name: {
+                gr.name: {
                     "score": gr.score,
                     "passed": gr.passed,
                     "message": gr.message,
                 }
-                for name, gr in grader_results.items()
+                for gr in grader_list
             }
             # 把整体 reward 算出来给 evolution engine 用
-            if grader_results:
-                avg_score = sum(gr.score for gr in grader_results.values()) / len(grader_results)
+            if grader_list:
+                avg_score = sum(gr.score for gr in grader_list) / len(grader_list)
                 results["grader_reward"] = round(avg_score, 4)
         except Exception as e:
             results["grader_error"] = str(e)
 
         return results
+
+    async def _literature_comparison(self, execution_result: Any) -> dict[str, Any]:
+        """Extract numeric results, look up literature benchmarks, run innovation
+        signal detection. Best-effort — any failure just skips that property.
+
+        Returns {property_key: InnovationSignal} for properties where literature
+        data was found. Empty dict if nothing to compare.
+        """
+        if not isinstance(execution_result, dict):
+            return {}
+
+        result_data = (
+            execution_result.get("result_data")
+            or execution_result.get("parsed")
+            or {}
+        )
+        if not isinstance(result_data, dict):
+            return {}
+
+        # system / formula: benchmark_lookup 必须知道查什么材料
+        system = None
+        for key in ("formula", "system", "material", "compound"):
+            val = result_data.get(key) or execution_result.get(key)
+            if val:
+                system = str(val)
+                break
+        if not system:
+            return {}
+
+        # 抽数值: 扁平 key + 嵌套 lattice_params
+        numerics: dict[str, float] = {}
+        for key in _LIT_PROPERTY_MAP:
+            val = result_data.get(key)
+            if val is not None:
+                try:
+                    numerics[key] = float(val)
+                except (TypeError, ValueError):
+                    pass
+        lattice = result_data.get("lattice_params") or {}
+        if isinstance(lattice, dict):
+            for param in ("a", "b", "c"):
+                val = lattice.get(param)
+                if val is not None:
+                    try:
+                        numerics[f"lattice_{param}"] = float(val)
+                    except (TypeError, ValueError):
+                        pass
+
+        if not numerics:
+            return {}
+
+        try:
+            from huginn.tools.literature import LiteratureInput, LiteratureTool
+            from huginn.validation.innovation_signal import InnovationSignalDetector
+        except ImportError:
+            return {}
+
+        tool = LiteratureTool()
+        tool_ctx = ToolContext(
+            session_id=f"litcmp_{uuid.uuid4().hex[:8]}",
+            workspace=str(self.workspace),
+            config=self.settings,
+        )
+        detector = InnovationSignalDetector()
+
+        comparison: dict[str, Any] = {}
+        for prop_key, agent_value in numerics.items():
+            prop_name = _LIT_PROPERTY_MAP.get(prop_key, prop_key)
+            try:
+                res = await tool.call(
+                    LiteratureInput(
+                        action="benchmark_lookup",
+                        system=system,
+                        property=prop_name,
+                        max_results=10,
+                    ),
+                    tool_ctx,
+                )
+                if not res.success or not res.data:
+                    continue
+                reported = res.data.get("reported_values") or []
+                lit_values = [r["value"] for r in reported if "value" in r]
+                if not lit_values:
+                    continue
+                signal = detector.detect(prop_key, agent_value, lit_values)
+                comparison[prop_key] = signal
+            except Exception:
+                continue
+
+        return comparison
 
     @staticmethod
     def _summarize_for_kb(execution_result: Any, results: dict[str, Any]) -> str:
