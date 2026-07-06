@@ -58,11 +58,20 @@ import huginn.lifespan as _lf
 # before any route handler runs.
 register_all_tools()
 
+# Hide interactive docs in production to avoid leaking API surface.
+_hide_docs = (
+    os.environ.get("HUGINN_ENV", "").lower() == "production"
+    or os.environ.get("HUGINN_HIDE_DOCS", "").lower() in ("1", "true", "yes")
+)
+
 app = FastAPI(
     title="Huginn Server",
     version=__version__,
     lifespan=lifespan,
     dependencies=[Depends(require_api_key)],
+    docs_url=None if _hide_docs else "/docs",
+    redoc_url=None if _hide_docs else "/redoc",
+    openapi_url=None if _hide_docs else "/openapi.json",
 )
 
 _cors_origins = _get_cors_origins()

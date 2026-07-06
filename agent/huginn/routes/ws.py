@@ -430,6 +430,55 @@ async def agent_websocket(websocket: WebSocket):
                 elif any(kw in content.lower() for kw in _COMPLEX_KEYWORDS) and len(content) > 30:
                     plan_mode = True
 
+                # ── Research mode: kick off the autonomous loop ──
+                # /research prefix or long research-flavored messages
+                # trigger the full autoloop engine instead of a single
+                # chat turn.
+                research_mode = False
+                research_objective = content
+                _RESEARCH_KEYWORDS = {
+                    "autonomous research", "自主研究", "文献综述",
+                    "literature review", "实验设计", "experiment design",
+                    "系统调研", "systematic review", "深度调研",
+                    "deep research",
+                }
+                if content.strip().lower().startswith("/research "):
+                    research_mode = True
+                    research_objective = content.strip()[len("/research "):]
+                elif any(kw in content.lower() for kw in _RESEARCH_KEYWORDS) and len(content) > 80:
+                    research_mode = True
+
+                if research_mode:
+                    await websocket.send_json(
+                        {"type": "text_delta",
+                         "text": "Starting autonomous research loop...\n"}
+                    )
+                    try:
+                        from huginn.autoloop.engine import AutoloopEngine
+
+                        workspace = get_context().config.workspace or "."
+                        engine = AutoloopEngine(workspace=workspace)
+                        result = await engine.run(research_objective)
+
+                        await websocket.send_json(
+                            {
+                                "type": "text_delta",
+                                "text": (
+                                    f"Research loop "
+                                    f"{'succeeded' if result.success else 'finished with issues'}.\n"
+                                    f"Report: {result.report_path or 'N/A'}\n"
+                                    f"Total time: {result.total_time_seconds:.1f}s"
+                                ),
+                            }
+                        )
+                        await websocket.send_json({"type": "done"})
+                    except Exception as e:
+                        logger.error("autoloop error", exc_info=True)
+                        await websocket.send_json(
+                            {"type": "error", "error": f"Research loop error: {e}"}
+                        )
+                    continue
+
                 if use_team and agent.model is not None:
                     await websocket.send_json(
                         {

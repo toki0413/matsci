@@ -16,6 +16,7 @@ from starlette.requests import Request
 from huginn.routes.advisor import router as advisor_router
 from huginn.routes.agents import router as agents_router
 from huginn.routes.auth import router as auth_router
+from huginn.routes.autoloop import router as autoloop_router
 from huginn.routes.bench import router as bench_router
 from huginn.routes.bot import router as bot_router
 from huginn.routes.checkpoints import router as checkpoints_router
@@ -78,6 +79,7 @@ ALL_ROUTERS = [
     pet_router,
     memory_router,
     agents_router,
+    autoloop_router,
     bench_router,
     # Bot bridge: OneBot v11 QQ/WeChat 接入
     bot_router,

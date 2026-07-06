@@ -242,6 +242,10 @@ class VaspTool(HuginnTool):
             cmd = [self.vasp_executable]
             result: Any = None
             max_retries = args.max_auto_retries
+            # 软失败原因. returncode=0 但 SCF 没收敛 / 物理审计报错都属于软失败,
+            # 这种情况 result.returncode==0, 不能让最终 success 判定当成成功.
+            soft_failure_msg: str | None = None
+            audit_report = None
 
             for attempt in range(max_retries + 1):
                 sb_result = self.sandbox.run(
@@ -253,16 +257,68 @@ class VaspTool(HuginnTool):
                 )
                 result = sb_result
 
-                if result.returncode == 0:
-                    break
-                # 失败了, 看还有没有重试额度 + 能不能自动修
+                # 判断这次跑完到底算成功还是失败:
+                # - returncode != 0 → 硬失败, 用 stderr 诊断
+                # - returncode == 0 但 SCF 没收敛 → 软失败, VASP 经常静默返回 0
+                # - returncode == 0 且 SCF 收敛, 但物理审计报错 → 软失败
+                error: str | None = None
+                soft_failure_msg = None
+                if result.returncode != 0:
+                    error = result.stderr or ""
+                else:
+                    # returncode=0 不代表收敛了, 先查 OUTCAR 的 SCF 状态
+                    parsed_now = (
+                        self._parse_outcar(work_dir / "OUTCAR")
+                        if (work_dir / "OUTCAR").exists()
+                        else {}
+                    )
+                    vasprun_now = work_dir / "vasprun.xml"
+                    if vasprun_now.exists():
+                        parsed_now.update(self._parse_vasprun_quick(vasprun_now))
+                    if not parsed_now.get("converged", True):
+                        # SCF 没收敛 (NELM 撑满), 软失败走重试
+                        error = (
+                            "SCF did not converge — "
+                            "electronic convergence not reached (NELM)"
+                        )
+                        soft_failure_msg = error
+                    else:
+                        # SCF 收敛了, 再过一遍物理审计,
+                        # 抓 unbound energy / 负 gap 之类的 "成功但不可信"
+                        try:
+                            from huginn.execution.physics_auditor import (
+                                PhysicsAuditor,
+                            )
+
+                            auditor = PhysicsAuditor()
+                            audit_report = auditor.audit(
+                                "vasp_tool",
+                                args.action,
+                                parsed_now,
+                                args.model_dump(),
+                            )
+                            if audit_report.has_errors:
+                                errs = [
+                                    f.message
+                                    for f in audit_report.findings
+                                    if f.severity == "error"
+                                ]
+                                error = f"Physics audit found errors: {errs}"
+                                soft_failure_msg = error
+                        except Exception:
+                            pass  # 审计本身挂了不能阻塞结果
+
+                if error is None:
+                    break  # 真正成功
+
+                # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
                 if attempt < max_retries:
-                    fixed = self._try_autofix(work_dir, result.stderr or "")
+                    fixed = self._try_autofix(work_dir, error)
                     if fixed:
                         autoheal_log.append(
                             {
                                 "attempt": attempt + 1,
-                                "error": (result.stderr or "")[:300],
+                                "error": error[:300],
                                 "fixes_applied": fixed["fixes"],
                                 "reasoning": fixed["reasoning"],
                             }
@@ -279,8 +335,10 @@ class VaspTool(HuginnTool):
             if vasprun.exists():
                 parsed.update(self._parse_vasprun_quick(vasprun))
 
+            # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 物理审计报错)
+            ok = result.returncode == 0 and soft_failure_msg is None
             output = VaspToolOutput(
-                status="completed" if result.returncode == 0 else "failed",
+                status="completed" if ok else "failed",
                 energy=parsed.get("energy"),
                 converged=parsed.get("converged", False),
                 output_files=[
@@ -299,16 +357,20 @@ class VaspTool(HuginnTool):
             # Physics audit — check if results are physically reasonable.
             # AutoFixLoop only handles hard failures; this catches results that
             # "succeeded" but violate basic physics (e.g. unbound energy, neg gap).
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit(
-                    "vasp_tool", args.action, parsed, args.model_dump()
-                )
+            # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
+            if audit_report is not None:
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception:
-                pass  # audit failure can't block result delivery
+            else:
+                try:
+                    from huginn.execution.physics_auditor import PhysicsAuditor
+
+                    auditor = PhysicsAuditor()
+                    audit_report = auditor.audit(
+                        "vasp_tool", args.action, parsed, args.model_dump()
+                    )
+                    data["physics_audit"] = audit_report.to_dict()
+                except Exception:
+                    pass  # audit failure can't block result delivery
 
             # 带上 provenance 快照, 事后能追溯参数/版本/环境
             try:
@@ -322,8 +384,16 @@ class VaspTool(HuginnTool):
 
             return ToolResult(
                 data=data,
-                success=result.returncode == 0,
-                error=result.stderr[:500] if result.returncode != 0 else None,
+                success=ok,
+                error=(
+                    None
+                    if ok
+                    else (
+                        result.stderr[:500]
+                        if result.returncode != 0
+                        else soft_failure_msg
+                    )
+                ),
             )
 
         except subprocess.TimeoutExpired:
