@@ -847,6 +847,39 @@ class AutoloopEngine:
         except Exception:
             provenance_path = None
 
+        # FAIR metadata: generate schema.org/Dataset JSON-LD so the run
+        # output is findable / citable. Best-effort — failure here doesn't
+        # affect the returned result.
+        try:
+            from huginn.export.fair_metadata import (
+                generate_dataset_metadata,
+                write_fair_jsonld,
+            )
+
+            # Collect result data from completed phases for variableMeasured.
+            run_results: dict[str, Any] = {}
+            for ph in phases:
+                if ph.result and isinstance(ph.result, dict):
+                    run_results.update(ph.result)
+
+            fair_metadata = generate_dataset_metadata(
+                run_id=run_id,
+                objective=objective,
+                results=run_results,
+                provenance={
+                    "report_path": str(report_phase.result) if report_phase.result else None,
+                    "trajectory_path": str(trajectory_path) if trajectory_path else None,
+                    "provenance_path": provenance_path,
+                    "start_time": provenance_record.timestamps.get("start"),
+                    "end_time": provenance_record.timestamps.get("end"),
+                },
+            )
+            jsonld_path = self.workspace / f"{run_id}_dataset.jsonld"
+            write_fair_jsonld(fair_metadata, jsonld_path)
+            logger.info("FAIR JSON-LD written to %s", jsonld_path)
+        except Exception:
+            logger.debug("FAIR metadata generation failed", exc_info=True)
+
         return AutoloopResult(
             run_id=run_id,
             objective=objective,

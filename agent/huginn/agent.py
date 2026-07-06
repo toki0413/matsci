@@ -712,6 +712,13 @@ class HuginnAgent:
     def is_research_mode(self) -> bool:
         return self._mode == "research"
 
+    def should_use_verification_model(self) -> bool:
+        """Whether self-checking should run with an independent verification LLM.
+
+        Research mode always verifies; chat mode skips it for speed.
+        """
+        return self._mode == "research"
+
     # ── 专精模型 ─────────────────────────────────────────────
 
     def select_verification_model(self) -> Any:
@@ -1410,9 +1417,24 @@ class HuginnAgent:
         return ""
 
     def _effective_system_prompt(self) -> str:
-        """Base system prompt + current phase prefix + transition hint + env context."""
+        """Base system prompt + mode prefix + phase prefix + env context."""
+        # Research mode adds behavioral directives that push the LLM toward
+        # systematic scientific rigor. Chat mode skips this to stay snappy.
+        if self._mode == "research":
+            base = (
+                "RESEARCH MODE: You are conducting systematic scientific research.\n"
+                "- Always cite literature sources for claims\n"
+                "- Quantify uncertainty in results\n"
+                "- Compare results to published values\n"
+                "- Flag unexpected results as potential discoveries\n"
+                "- Write findings to knowledge base\n\n"
+                f"{self.system_prompt}"
+            )
+        else:
+            base = self.system_prompt
+
         prefix = self._phase_manager.prompt_prefix()
-        base = f"{prefix}\n\n{self.system_prompt}" if prefix else self.system_prompt
+        base = f"{prefix}\n\n{base}" if prefix else base
         # Tell the LLM it can drive the phase state machine itself by
         # emitting a marker. We list the valid destinations up front so
         # it does not have to guess.
@@ -1456,20 +1478,36 @@ class HuginnAgent:
             logger.warning("taste profile injection failed", exc_info=True)
         return base
 
-    def _effective_tools(self) -> list[Any]:
-        """Return the tool list filtered by the current research phase.
+    # Heavy simulation tools that are too expensive / slow for casual chat.
+    # In research mode these are available; in chat mode they're filtered out
+    # to keep responses snappy and avoid accidentally kicking off a DFT run.
+    _EXPENSIVE_TOOL_NAMES: set[str] = {
+        "vasp_tool", "lammps_tool", "cp2k_tool", "transolver_tool",
+    }
 
-        When the phase has a tool filter (non-None), only tools whose names
-        appear in the filter are exposed to the LLM. This keeps the tool
-        description list short and focused, reducing prompt tokens and
-        steering the model toward phase-appropriate actions.
+    def _effective_tools(self) -> list[Any]:
+        """Return the tool list filtered by mode and research phase.
+
+        Two layers of filtering, applied in order:
+        1. Mode filter: chat mode drops expensive simulation tools
+           (VASP/LAMMPS/CP2K/Transolver); research mode keeps everything.
+        2. Phase filter: when the current phase has a tool filter, only
+           tools whose names appear in it are exposed.
         """
+        tools = list(self.langchain_tools)
+
+        # Layer 1 — mode-based filtering.
+        if self._mode == "chat":
+            tools = [
+                t for t in tools if t.name not in self._EXPENSIVE_TOOL_NAMES
+            ]
+
+        # Layer 2 — phase-based filtering (on the already-mode-filtered list).
         phase_tools = self._phase_manager.tool_filter()
-        if phase_tools is None:
-            return self.langchain_tools
-        return [
-            t for t in self.langchain_tools if t.name in phase_tools
-        ]
+        if phase_tools is not None:
+            tools = [t for t in tools if t.name in phase_tools]
+
+        return tools
 
     def _tool_names_for_validation(self) -> set[str]:
         """收集当前 agent 所有工具名, 给 ToolNameValidationHook 做校验用.
@@ -1891,11 +1929,16 @@ class HuginnAgent:
         self,
         message: str,
         thread_id: str = "default",
+        image_path: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Send a message to the Agent and stream responses.
 
         Stores messages in session memory and tracks tool calls for
         auto-promotion to long-term memory.
+
+        If *image_path* is provided, the agent routes the image through
+        the vision fallback chain: native multimodal for vision-capable
+        models, or CV-tool context injection for text-only models.
         """
         # Per-request session context: contextvars give each async task
         # its own thread_id, so concurrent WS clients sharing the same
@@ -1906,6 +1949,29 @@ class HuginnAgent:
         # been migrated to read from contextvars yet.
         self.thread_id = thread_id
         self._current_user_message = message
+
+        # ── Vision routing ──
+        # Decide how to handle an attached image before the message
+        # reaches the LLM. NATIVE_LLM → multimodal content blocks;
+        # CV_TOOLS → prepend a text description so a text-only model
+        # still knows an image was attached; TEXT_ONLY → no change.
+        from huginn.vision.router import VisionRoute, VisionRouter
+
+        _vision_route = VisionRoute.TEXT_ONLY
+        _vision_content: list[dict] | None = None
+        if image_path:
+            _vr = VisionRouter(
+                visual_encoder=getattr(self, "_visual_encoder", None),
+                image_index=getattr(self, "_image_index", None),
+            )
+            model_name = getattr(self.model, "model", None) or getattr(self.model, "model_name", "")
+            _vision_route = _vr.route(model_name, message or image_path)
+            if _vision_route == VisionRoute.NATIVE_LLM:
+                _vision_content = _vr.build_content(message, image_path)
+            elif _vision_route == VisionRoute.CV_TOOLS:
+                cv_ctx = _vr.build_context(image_path)
+                message = f"{cv_ctx}\n\n{message}"
+
         # Privacy scan on the raw user message.
         if self.privacy_block_on_secrets:
             found = scan_for_secrets(message)
@@ -2000,6 +2066,16 @@ class HuginnAgent:
             messages = self._build_input_messages(
                 message, memory_text=memory_text, kb_text=kb_text
             )
+
+            # NATIVE_LLM vision route: swap the last HumanMessage's text
+            # content for multimodal content blocks (text + image_url).
+            # Everything downstream (graph, provider) already handles list
+            # content via LangChain's content-block convention.
+            if _vision_content is not None:
+                for msg in reversed(messages):
+                    if isinstance(msg, HumanMessage):
+                        msg.content = _vision_content
+                        break
 
             # 引导词作为 SystemMessage 插在用户消息前. 多个钩子可能往
             # metadata 里塞多段, list 就用换行拼起来. 位置跟 emotion_text
@@ -2366,6 +2442,18 @@ class HuginnAgent:
                     await self.hook_manager.trigger(STOP, stop_ctx)
                 except Exception:
                     logger.warning("STOP hook raised", exc_info=True)
+                # Mode-based memory persistence:
+                # research → promote the turn summary to long-term KB so
+                #   future sessions can RAG-retrieve findings.
+                # chat → leave it in short-term only (cheaper, faster).
+                if self.is_research_mode():
+                    try:
+                        self.memory.promote_session_summary(tier="long")
+                    except Exception:
+                        logger.debug(
+                            "research-mode memory promote failed",
+                            exc_info=True,
+                        )
                 pet.publish(PetMood.IDLE, "Ready", {"thread_id": thread_id})
                 self._turn_count += 1
                 if (
