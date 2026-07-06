@@ -44,6 +44,7 @@ class LammpsToolInput(BaseModel):
         "submit_async",
         "poll_job",
         "wait_job",
+        "equilibrium_check",
     ] = Field(...)
     input_script: str = Field(
         default="", description="LAMMPS input script content or file path"
@@ -86,6 +87,25 @@ class LammpsToolInput(BaseModel):
         ge=0,
         le=5,
         description="On failure or physics-audit error, auto-diagnose + patch script and retry up to N times",
+    )
+    # equilibrium_check 专用
+    log_file_path: str | None = Field(
+        default=None,
+        description="For equilibrium_check: path to log.lammps (defaults to working_dir/log.lammps)",
+    )
+    target_temp: float | None = Field(
+        default=None,
+        description="For equilibrium_check: target temperature in K",
+    )
+    target_pressure: float | None = Field(
+        default=None,
+        description="For equilibrium_check: target pressure in bar",
+    )
+    window: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=100.0,
+        description="For equilibrium_check: percentage of trailing steps to use (default 30%)",
     )
 
     @model_validator(mode="after")
@@ -248,6 +268,10 @@ class LammpsTool(HuginnTool):
             return self._handle_poll_job(args)
         if args.action == "wait_job":
             return await self._handle_wait_job(args)
+
+        # Equilibrium check: analyze thermo data from a log file, no LAMMPS run
+        if args.action == "equilibrium_check":
+            return self._run_equilibrium_check(args)
 
         # Handle trajectory analysis without running LAMMPS
         if args.action == "analyze_trajectory":
@@ -749,6 +773,163 @@ class LammpsTool(HuginnTool):
             warnings.append(f"Failed to parse log: {e}")
 
         return thermo_data, final_energy, warnings
+
+    def _run_equilibrium_check(self, args: LammpsToolInput) -> ToolResult:
+        """Check if an MD run has reached thermal/mechanical equilibrium.
+
+        Parses thermo data from the LAMMPS log, takes the trailing *window*%
+        of steps, and checks temperature against *target_temp* (within 5%)
+        and drift (linear slope) against a threshold. Returns a recommendation
+        if the system hasn't settled yet.
+        """
+        # resolve which log file to parse
+        log_path = Path(args.log_file_path) if args.log_file_path else None
+        if log_path is None and args.working_dir:
+            log_path = Path(args.working_dir) / "log.lammps"
+        if log_path is None or not log_path.exists():
+            return ToolResult(
+                data=None,
+                success=False,
+                error="No log file found. Provide log_file_path or working_dir with log.lammps",
+            )
+
+        thermo_data, _, _ = self._parse_log(log_path)
+        if not thermo_data:
+            return ToolResult(
+                data={
+                    "equilibrated": False,
+                    "avg_temp": None,
+                    "avg_pressure": None,
+                    "temp_drift": None,
+                    "pressure_drift": None,
+                    "recommendation": "Log file contains no thermo data. Check the log for errors.",
+                },
+                success=True,
+            )
+
+        temps = thermo_data.get("temp", [])
+        press = thermo_data.get("press", [])
+        steps = thermo_data.get("step", [])
+
+        if not temps:
+            return ToolResult(
+                data={
+                    "equilibrated": False,
+                    "avg_temp": None,
+                    "avg_pressure": None,
+                    "temp_drift": None,
+                    "pressure_drift": None,
+                    "recommendation": "No temperature data found in log. Check thermo_style.",
+                },
+                success=True,
+            )
+
+        # take the trailing window% of data points
+        n_total = len(temps)
+        n_tail = max(1, int(n_total * args.window / 100.0))
+        tail_temps = temps[-n_tail:]
+        tail_press = press[-n_tail:] if press else []
+        tail_steps = steps[-n_tail:] if steps else list(range(n_tail))
+
+        avg_temp = sum(tail_temps) / len(tail_temps)
+        avg_press = sum(tail_press) / len(tail_press) if tail_press else None
+
+        temp_drift = self._linear_slope(tail_steps, tail_temps)
+        pressure_drift = (
+            self._linear_slope(tail_steps, tail_press) if tail_press else None
+        )
+
+        # temperature within 5% of target?
+        temp_ok = True
+        if args.target_temp is not None and args.target_temp > 0:
+            temp_ok = abs(avg_temp - args.target_temp) / args.target_temp <= 0.05
+
+        # drift threshold: ~1 K per 100 steps is a reasonable cutoff for
+        # "still drifting". ponytail: this is heuristic and system-dependent;
+        # for production runs, tune based on the specific thermostat/barostat.
+        drift_threshold = 0.01
+        temp_drift_ok = abs(temp_drift) < drift_threshold
+
+        equilibrated = temp_ok and temp_drift_ok
+
+        # build recommendation
+        recommendation = self._build_equilibrium_recommendation(
+            equilibrated, avg_temp, args.target_temp, temp_drift,
+            avg_press, args.target_pressure, n_tail, n_total,
+        )
+
+        return ToolResult(
+            data={
+                "equilibrated": equilibrated,
+                "avg_temp": avg_temp,
+                "avg_pressure": avg_press,
+                "temp_drift": temp_drift,
+                "pressure_drift": pressure_drift,
+                "recommendation": recommendation,
+                "window_steps": n_tail,
+                "total_steps": n_total,
+            },
+            success=True,
+        )
+
+    @staticmethod
+    def _build_equilibrium_recommendation(
+        equilibrated: bool,
+        avg_temp: float,
+        target_temp: float | None,
+        temp_drift: float,
+        avg_press: float | None,
+        target_pressure: float | None,
+        n_tail: int,
+        n_total: int,
+    ) -> str:
+        if equilibrated:
+            return "System has reached equilibrium. Proceed with production run."
+
+        reasons: list[str] = []
+
+        if target_temp is not None and target_temp > 0:
+            rel_err = abs(avg_temp - target_temp) / target_temp
+            if rel_err > 0.05:
+                reasons.append(
+                    f"avg temp {avg_temp:.1f} K deviates {rel_err*100:.1f}% from target {target_temp:.1f} K"
+                )
+
+        if abs(temp_drift) >= 0.01:
+            reasons.append(f"temperature drift {temp_drift:.4f} K/step is too high")
+
+        if target_pressure is not None and avg_press is not None:
+            if abs(avg_press - target_pressure) > max(abs(target_pressure) * 0.1, 100.0):
+                reasons.append(
+                    f"avg pressure {avg_press:.1f} bar is far from target {target_pressure:.1f} bar"
+                )
+
+        if not reasons:
+            return "System is close to equilibrium. Extend equilibration to confirm stability."
+
+        # suggest extending by 50% more steps or halving the timestep
+        extend_by = max(int(n_total * 0.5), 1000)
+        rec = "Not equilibrated: " + "; ".join(reasons) + "."
+        rec += f" Extend run by ~{extend_by} steps or reduce timestep by half."
+        return rec
+
+    @staticmethod
+    def _linear_slope(x: list[float], y: list[float]) -> float:
+        """Least-squares slope of y vs x. Returns 0 for degenerate input."""
+        n = len(y)
+        if n < 2:
+            return 0.0
+        # use list indices as x when x is empty or mismatched length
+        if len(x) != n:
+            x = list(range(n))
+        sx = sum(x)
+        sy = sum(y)
+        sxy = sum(xi * yi for xi, yi in zip(x, y))
+        sxx = sum(xi * xi for xi in x)
+        denom = n * sxx - sx * sx
+        if denom == 0:
+            return 0.0
+        return (n * sxy - sx * sy) / denom
 
     def _apply_script_fixes(self, script: str, fixes: dict[str, str]) -> str:
         """Apply diagnosed fixes to LAMMPS input script.
