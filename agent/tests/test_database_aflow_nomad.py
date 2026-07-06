@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from huginn.tools.database_tool import DatabaseTool, DatabaseToolInput, _formula_to_elements
+from huginn.tools.database_tool import (
+    DatabaseTool,
+    DatabaseToolInput,
+    MaterialsDatabaseTool,
+    _formula_to_elements,
+)
 
 
 class TestFormulaToElements:
@@ -20,7 +25,7 @@ class TestFormulaToElements:
 
 class TestNormalizeAflow:
     def test_normalize_json_list(self):
-        tool = DatabaseTool()
+        tool = MaterialsDatabaseTool()
         raw = [
             {"compound": "SiO2", "auid": "aflow:123", "sg": "P1", "Egap": 5.2, "enthalpy_atom": -9.0},
         ]
@@ -32,7 +37,7 @@ class TestNormalizeAflow:
         assert records[0]["source"] == "aflow"
 
     def test_normalize_text_block(self):
-        tool = DatabaseTool()
+        tool = MaterialsDatabaseTool()
         raw = ">>>compound=SiO2\nauid=aflow:456\nEgap=3.1\n>>>\ncompound=Fe2O3\nauid=aflow:789"
         records = tool._normalize_aflow(raw)
         assert len(records) == 2
@@ -40,14 +45,14 @@ class TestNormalizeAflow:
         assert records[1]["formula"] == "Fe2O3"
 
     def test_normalize_dict_with_data_key(self):
-        tool = DatabaseTool()
+        tool = MaterialsDatabaseTool()
         raw = {"data": [{"compound": "GaAs", "auid": "aflow:abc", "Egap": 1.4}]}
         records = tool._normalize_aflow(raw)
         assert records[0]["formula"] == "GaAs"
         assert records[0]["band_gap"] == 1.4
 
     def test_normalize_caps_at_50(self):
-        tool = DatabaseTool()
+        tool = MaterialsDatabaseTool()
         raw = [{"compound": f"C{i}", "auid": f"aflow:{i}"} for i in range(100)]
         records = tool._normalize_aflow(raw)
         assert len(records) == 50
@@ -55,7 +60,7 @@ class TestNormalizeAflow:
 
 class TestNormalizeNomad:
     def test_normalize_nomad_response(self):
-        tool = DatabaseTool()
+        tool = MaterialsDatabaseTool()
         raw = {
             "data": [
                 {
@@ -119,7 +124,8 @@ class TestAflowQuery:
 
     def test_aflow_timeout_degrades_gracefully(self, monkeypatch):
         tool = DatabaseTool()
-        args = DatabaseToolInput(database="aflow", query_type="search", formula="SiO2")
+        # 用 Fe2O3 避开 success 测试的 SiO2 缓存命中 (@cacheable TTL=7d)
+        args = DatabaseToolInput(database="aflow", query_type="search", formula="Fe2O3")
 
         fake_session = MagicMock()
         fake_session.__aenter__ = AsyncMock(return_value=fake_session)
@@ -172,7 +178,8 @@ class TestNomadQuery:
 
     def test_nomad_api_error_returns_failure(self, monkeypatch):
         tool = DatabaseTool()
-        args = DatabaseToolInput(database="nomad", query_type="search", formula="SiO2")
+        # 用 Al2O3 避开 success 测试的 SiO2 缓存命中 (@cacheable TTL=7d)
+        args = DatabaseToolInput(database="nomad", query_type="search", formula="Al2O3")
 
         fake_resp = MagicMock()
         fake_resp.status = 500

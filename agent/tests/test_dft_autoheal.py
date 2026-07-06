@@ -35,6 +35,12 @@ class TestVaspAutoHeal:
             calls["n"] += 1
             if calls["n"] == 1:
                 return _sandbox_result(1, stderr="ZBRENT: fatal error in bracketing")
+            # 模拟 VASP 收敛后写出 OUTCAR
+            (work_dir / "OUTCAR").write_text(
+                "reached required accuracy\n"
+                "free  energy   TOTEN  =  -10.0\n",
+                encoding="utf-8",
+            )
             return _sandbox_result(0, stderr="", stdout="reached required accuracy")
 
         monkeypatch.setattr(tool.sandbox, "run", fake_run)

@@ -77,6 +77,11 @@ class ClarificationManager:
         # 里塞 Future 走 dataclass 默认序列化时出问题.
         self._futures: dict[str, asyncio.Future] = {}
         self._lock = threading.Lock()
+        # 提问统计: {question_type: {"asked": N, "answered": N, "timed_out": N}}
+        # 用来调优触发阈值 — 某类问题超时率高说明问得不对, 下次少问
+        self._stats: dict[str, dict[str, int]] = {}
+        # 每线程上次提问时间, 给 should_ask_contextual 的 cooldown 用
+        self._last_ask_time: dict[str, float] = {}
 
     # ── 判断要不要问 ───────────────────────────────────────────
 
@@ -101,6 +106,161 @@ class ClarificationManager:
                 # 已经攒了 3 个没回答的, 再问也是堆着, 不如用默认值
                 return False
         return True
+
+    def should_ask_contextual(
+        self, question_type: str, context: dict[str, Any] | None = None
+    ) -> bool:
+        """上下文感知的触发判断, 比 should_ask 多看几个维度.
+
+        额外考虑:
+        - consecutive_failures: autoloop 连续失败 3+ 次时强制触发 (绕过 cooldown)
+        - cost_estimate: 预估成本 > 阈值时强制触发 (绕过 cooldown)
+        - cooldown: 同一 thread 60s 内不重复问同类问题
+        - 超时率: 某类问题超时率 > 70% 时降频 (少问)
+        """
+        if not self.should_ask(question_type, context):
+            return False
+
+        ctx = context or {}
+        thread_id = ctx.get("thread_id", "")
+
+        # 强制触发: 连续失败 3+ 次或高成本, 绕过 cooldown 直接问
+        failures = ctx.get("consecutive_failures", 0)
+        if failures >= 3:
+            return True
+
+        cost_hours = ctx.get("cost_estimate_hours", 0)
+        if cost_hours and cost_hours >= 1.0:
+            return True
+
+        # cooldown: 60s 内同 thread 不重复问
+        with self._lock:
+            last = self._last_ask_time.get(thread_id, 0)
+        if time.time() - last < 60:
+            return False
+
+        # 超时率高的类型降频: 这类问题用户大概率不回答, 少问
+        stats = self._stats.get(question_type, {})
+        asked = stats.get("asked", 0)
+        timed_out = stats.get("timed_out", 0)
+        if asked >= 5 and timed_out / asked > 0.7:
+            return False
+
+        return True
+
+    def generate_question(
+        self,
+        context: dict[str, Any],
+        model: Any | None = None,
+    ) -> tuple[str, list[str], str]:
+        """根据上下文生成提问文案 + 选项 + 默认值.
+
+        有 LLM 时用 LLM 生成上下文相关的问题; 没有时走模板.
+        返回 (question, options, default_answer).
+
+        context 里应该带:
+        - question_type: task_vague / param_ambiguous / multi_path / cost_confirm
+        - phase: 当前在哪个阶段 (plan / validate / ...)
+        - summary: 当前阶段的摘要
+        - options_hint: 可选的选项提示 (如 ["GGA-PBE", "HSE06"])
+        """
+        qtype = context.get("question_type", "task_vague")
+        phase = context.get("phase", "")
+        summary = context.get("summary", "")
+
+        # 有真实 LLM 时让它生成更好的问题
+        if model is not None and not hasattr(model, "_mock_name"):
+            try:
+                return self._llm_generate_question(model, qtype, phase, summary, context)
+            except Exception:
+                pass  # 降级到模板
+
+        # 模板兜底
+        return self._template_question(qtype, summary, context)
+
+    def _llm_generate_question(
+        self, model: Any, qtype: str, phase: str,
+        summary: str, context: dict[str, Any],
+    ) -> tuple[str, list[str], str]:
+        """调 LLM 生成上下文相关的提问. 失败时抛异常让上层降级."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        options_hint = context.get("options_hint", [])
+        options_str = " / ".join(options_hint) if options_hint else "N/A"
+
+        sys_prompt = (
+            "You generate a single concise clarifying question for a materials "
+            "science research agent. The question must be specific to the context, "
+            "offer clear options when possible, and include a safe default. "
+            "Reply in the same language as the summary. "
+            f"Output format: QUESTION\\nOPTIONS (comma-separated)\\nDEFAULT"
+        )
+        user_prompt = (
+            f"Phase: {phase}\n"
+            f"Question type: {qtype}\n"
+            f"Context summary: {summary[:500]}\n"
+            f"Available options hint: {options_str}\n"
+            "Generate one question, options, and a safe default."
+        )
+        resp = model.ainvoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_prompt)])
+        # model.ainvoke 返回 coroutine, 但这里可能不在 async 上下文
+        # 如果是 coroutine, 抛异常让上层走模板
+        if asyncio.iscoroutine(resp):
+            raise RuntimeError("async model in sync generate_question")
+        text = str(resp.content).strip()
+        parts = text.split("\n")
+        question = parts[0].strip() if parts else text
+        options = [o.strip() for o in parts[1].split(",")] if len(parts) > 1 else []
+        default = parts[2].strip() if len(parts) > 2 else (options[0] if options else "")
+        return question, options, default
+
+    @staticmethod
+    def _template_question(
+        qtype: str, summary: str, context: dict[str, Any],
+    ) -> tuple[str, list[str], str]:
+        """无 LLM 时的模板提问. 按类型走不同模板."""
+        options_hint = context.get("options_hint", [])
+
+        if qtype == "cost_confirm":
+            tool = context.get("tool", "计算")
+            q = f"即将执行 {tool} 计算, 预计耗时较长. 确认执行？"
+            return q, ["确认执行", "调整参数", "取消"], "确认执行"
+
+        if qtype == "multi_path":
+            paths = options_hint or ["方案A", "方案B"]
+            q = f"检测到多个可选路径: {' / '.join(paths)}. 请选择？"
+            return q, paths, paths[0] if paths else ""
+
+        if qtype == "param_ambiguous":
+            param = context.get("param", "关键参数")
+            q = f"{param} 未明确指定. 请提供具体值？"
+            return q, options_hint or [], options_hint[0] if options_hint else ""
+
+        if qtype == "validation_fail":
+            fails = context.get("consecutive_failures", 1)
+            q = (
+                f"已连续 {fails} 轮验证未通过. "
+                f"当前结果: {summary[:200]}. "
+                "建议方向？"
+            )
+            return q, [
+                "修正假设重新实验",
+                "调整计算参数",
+                "换一种方法",
+                "继续当前路径",
+            ], "继续当前路径"
+
+        # task_vague 兜底
+        q = f"当前任务描述不够具体: {summary[:200]}. 请补充目标或输入？"
+        return q, [], ""
+
+    def _record_stats(self, question_type: str, outcome: str) -> None:
+        """记录提问结果 (answered / timed_out / skipped)."""
+        with self._lock:
+            s = self._stats.setdefault(question_type, {"asked": 0, "answered": 0, "timed_out": 0})
+            s["asked"] += 1
+            if outcome in ("answered", "timed_out"):
+                s[outcome] += 1
 
     # ── agent 侧: 提问并等回答 ─────────────────────────────────
 
@@ -149,14 +309,18 @@ class ClarificationManager:
             self._questions[qid] = q
             self._by_thread.setdefault(thread_id, []).append(qid)
             self._futures[qid] = fut
+            self._last_ask_time[thread_id] = time.time()
 
+        qtype = (metadata or {}).get("question_type", "agent_initiated")
         try:
             # 挂着等回答, 超时退回 default
             answer = await asyncio.wait_for(fut, timeout=timeout_val)
+            self._record_stats(qtype, "answered")
             return str(answer)
         except asyncio.TimeoutError:
             q.answer = default_answer or ""
             q.answered_at = time.time()
+            self._record_stats(qtype, "timed_out")
             return q.answer
         except asyncio.CancelledError:
             # agent loop 被取消时跟着退, Future 自动清理

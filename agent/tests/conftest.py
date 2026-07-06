@@ -36,11 +36,12 @@ def _clear_config_cache_between_tests(monkeypatch):
     from huginn.config import clear_config_cache
 
     monkeypatch.delenv("HUGINN_CONFIG_FILE", raising=False)
-    try:
-        from huginn.routes import config as _routes_config
-        _routes_config._config_path_override = None
-    except ImportError:
-        pass
+    # Only reset if the module is already loaded — avoids pulling the
+    # entire routes→agent→langgraph import chain on every test setup.
+    import sys
+    _mod = sys.modules.get("huginn.routes.config")
+    if _mod is not None and hasattr(_mod, "_config_path_override"):
+        _mod._config_path_override = None
     clear_config_cache()
     yield
     clear_config_cache()

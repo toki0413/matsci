@@ -165,6 +165,10 @@ class AutoloopEngine:
 
         self._should_stop = False
         self._iteration = 0
+        # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户
+        self._consecutive_failures = 0
+        # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
+        self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
         self._evolution = None
         # PersonaManager 懒加载 — 避免实例化时就扫描 .huginn/personas 目录
@@ -517,6 +521,94 @@ class AutoloopEngine:
                 print(f"  → [side] failed to answer {sq.id}: {exc}")
         return answered
 
+    def _get_clarification_manager(self):
+        """懒加载 ClarificationManager. 不可用时返回 None, 调用方判空跳过."""
+        if self._clarification_mgr is not None:
+            return self._clarification_mgr
+        try:
+            from huginn.interaction.clarification import get_clarification_manager
+            self._clarification_mgr = get_clarification_manager()
+        except Exception:
+            return None
+        return self._clarification_mgr
+
+    async def _maybe_clarify(
+        self,
+        checkpoint: str,
+        phase_result: Any,
+        thread_id: str = "autoloop",
+    ) -> str | None:
+        """在关键决策点检查是否需要向用户提问.
+
+        checkpoint 取值:
+        - "plan": 计划生成后, 高成本 mode (workflow/DFT) 时确认
+        - "validation_fail": 验证失败后, 连续 3+ 次时问方向
+
+        返回用户回答的字符串, 或 None (无需提问 / manager 不可用 / 超时走默认).
+
+        非阻塞设计: 没有 async event loop 时直接返回 None, 不强制阻塞.
+        autoloop 在 async 上下文里跑, 所以正常路径能拿到回答.
+        """
+        mgr = self._get_clarification_manager()
+        if mgr is None:
+            return None
+
+        # 构建上下文
+        if checkpoint == "plan":
+            plan = phase_result or {}
+            mode = plan.get("mode", "")
+            # 只对高成本 mode 提问 (workflow=DFT/MD, 通常是几小时)
+            expensive_modes = ("workflow", "dft", "md", "vasp", "lammps")
+            if mode.lower() not in expensive_modes:
+                return None
+
+            ctx = {
+                "thread_id": thread_id,
+                "question_type": "cost_confirm",
+                "phase": "plan",
+                "summary": f"mode={mode}, desc={plan.get('description', '')[:200]}",
+                "tool": mode,
+                "cost_estimate_hours": 1.0,  # workflow 类至少 1h
+            }
+        elif checkpoint == "validation_fail":
+            if self._consecutive_failures < 3:
+                return None
+            ctx = {
+                "thread_id": thread_id,
+                "question_type": "validation_fail",
+                "phase": "validate",
+                "summary": str(phase_result)[:300],
+                "consecutive_failures": self._consecutive_failures,
+            }
+        else:
+            return None
+
+        if not mgr.should_ask_contextual(ctx.get("question_type", ""), ctx):
+            return None
+
+        # 生成提问
+        question, options, default = mgr.generate_question(ctx, model=None)
+
+        try:
+            answer = await mgr.ask(
+                thread_id=thread_id,
+                question=question,
+                options=options,
+                context=ctx.get("summary", ""),
+                default_answer=default,
+                timeout=5,  # short timeout: if no human watching, proceed with default
+                metadata={
+                    "question_type": ctx.get("question_type", ""),
+                    "checkpoint": checkpoint,
+                    "iteration": self._iteration,
+                },
+            )
+            print(f"  → [clarify] {checkpoint}: {answer[:80]}")
+            return answer
+        except Exception as exc:
+            print(f"  → [clarify] {checkpoint} failed: {exc}")
+            return None
+
     # ──────────────────────────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────────────────────────
@@ -565,6 +657,7 @@ class AutoloopEngine:
 
         self._iteration = 0
         self._should_stop = False
+        self._consecutive_failures = 0
 
         # Goal: 激活后每轮 learn 查 completion, 满足则提前停.
         # scheduler 可能为 None (测试不传), 这时只做内存检查不持久化.
@@ -658,6 +751,9 @@ class AutoloopEngine:
                 continue
             print(f"  → Plan: {plan['mode']} | {plan['description']}")
 
+            # 高成本 plan 时问用户确认 (非阻塞, 超时走默认继续)
+            await self._maybe_clarify("plan", plan)
+
             # 预算: 后期迭代限制昂贵 mode. 拒绝时把可用 mode 写进 hint,
             # continue 到下一轮让 LLM 改提 plan. 降级后全程放行.
             if not self._check_budget(self._iteration, plan):
@@ -712,10 +808,18 @@ class AutoloopEngine:
             except Exception:
                 pass
 
+            # 连续失败计数: 通过则清零, 不通过则累加并在阈值时问用户
+            _tests_ok = _extract_tests_passed(validation)
+            if _tests_ok:
+                self._consecutive_failures = 0
+            else:
+                self._consecutive_failures += 1
+                # 连续 3+ 次失败, 问用户方向 (非阻塞, 超时走默认继续)
+                await self._maybe_clarify("validation_fail", validation)
+
             # gate: validate→learn — 要有 tests_passed 证据才放行.
             # tests 没过 = 没有"测试通过"的证据, 传空 dict 让门阻断,
             # 而不是传 tests_passed=False (hook 只查 key 存在性, False 会被当成有值)
-            _tests_ok = _extract_tests_passed(validation)
             _gate_evidence: dict[str, Any] = (
                 {"tests_passed": True} if _tests_ok else {}
             )

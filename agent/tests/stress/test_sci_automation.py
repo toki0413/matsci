@@ -253,7 +253,15 @@ class TestLLMRetryInResearch:
 
 # ── Autoloop 引擎端到端 ────────────────────────────────────────────
 
+# AutoloopEngine.__init__ 调 get_model() 需要 HUGINN_MODEL 环境变量
+# CI 不配模型时直接跳过, 不影响 coverage
+_autoloop_skip = pytest.mark.skipif(
+    not os.environ.get("HUGINN_MODEL"),
+    reason="AutoloopEngine requires HUGINN_MODEL for real LLM calls",
+)
 
+
+@_autoloop_skip
 class TestAutoloopE2E:
     """验证 Autoloop 引擎的完整研究循环."""
 
