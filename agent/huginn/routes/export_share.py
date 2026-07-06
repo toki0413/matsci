@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 
 from huginn.security.auth import require_api_key
 from huginn.server_core import get_context
@@ -20,6 +21,11 @@ from huginn.server_core import get_context
 router = APIRouter(tags=["export_share"])
 
 logger = logging.getLogger(__name__)
+
+
+class ExportParams(BaseModel):
+    format: str = "zip"
+    include: list[str] | None = None
 
 # 上传文件大小上限：500 MB
 _MAX_UPLOAD_BYTES = 500 * 1024 * 1024
@@ -45,7 +51,7 @@ async def export_status() -> dict[str, Any]:
 
 
 @router.post("/export/all", dependencies=[Depends(require_api_key)])
-async def export_all(params: dict[str, Any] | None = None) -> Any:
+async def export_all(params: ExportParams | None = None) -> Any:
     """导出全部数据，返回文件下载.
 
     请求体参数:
@@ -53,9 +59,9 @@ async def export_all(params: dict[str, Any] | None = None) -> Any:
         include: 要导出的组件列表，如 ["memory", "knowledge"]
                  默认全部
     """
-    params = params or {}
-    fmt = params.get("format", "zip")
-    include = params.get("include")
+    params = params or ExportParams()
+    fmt = params.format
+    include = params.include
 
     try:
         mgr = _get_manager()
@@ -73,10 +79,10 @@ async def export_all(params: dict[str, Any] | None = None) -> Any:
 
 
 @router.post("/export/memory", dependencies=[Depends(require_api_key)])
-async def export_memory(params: dict[str, Any] | None = None) -> Any:
+async def export_memory(params: ExportParams | None = None) -> Any:
     """只导出长期记忆，返回文件下载或 JSON bytes."""
-    params = params or {}
-    fmt = params.get("format", "json")
+    params = params or ExportParams()
+    fmt = params.format
     try:
         mgr = _get_manager()
         data = mgr.export_memory(format=fmt)
@@ -103,10 +109,10 @@ async def export_memory(params: dict[str, Any] | None = None) -> Any:
 
 
 @router.post("/export/knowledge", dependencies=[Depends(require_api_key)])
-async def export_knowledge(params: dict[str, Any] | None = None) -> Any:
+async def export_knowledge(params: ExportParams | None = None) -> Any:
     """只导出知识库，返回文件下载或 JSON bytes."""
-    params = params or {}
-    fmt = params.get("format", "json")
+    params = params or ExportParams()
+    fmt = params.format
     try:
         mgr = _get_manager()
         data = mgr.export_knowledge(format=fmt)

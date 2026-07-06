@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from huginn.security.auth import require_api_key
 from huginn.server_core import get_context
@@ -20,6 +21,11 @@ router = APIRouter(tags=["knowledge"])
 logger = logging.getLogger(__name__)
 
 _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
+class KnowledgeQuery(BaseModel):
+    query: str = ""
+    top_k: int = 5
 
 
 @router.post("/knowledge/upload")
@@ -95,14 +101,12 @@ async def export_data(
 
 
 @router.post("/knowledge/query")
-async def query_knowledge(params: dict[str, Any]) -> dict[str, Any]:
+async def query_knowledge(params: KnowledgeQuery) -> dict[str, Any]:
     """Query the knowledge base and return relevant chunks."""
     if get_context().kb is None:
         return {"chunks": [], "error": "Knowledge base is not available"}
     try:
-        text = params.get("query", "")
-        top_k = int(params.get("top_k", 5))
-        chunks = get_context().kb.query(text, top_k=top_k)
+        chunks = get_context().kb.query(params.query, top_k=params.top_k)
         return {"chunks": chunks}
     except Exception as e:
         return {"chunks": [], "error": str(e)}

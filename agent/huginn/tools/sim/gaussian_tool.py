@@ -171,6 +171,11 @@ class GaussianTool(HuginnTool):
         """Run Gaussian with auto-fix retry loop."""
         autoheal_log: list[dict[str, Any]] = []
         log_file = gjf_file.with_suffix(".log")
+        rc = -1
+        stderr = ""
+        # 软失败原因. returncode=0 但 SCF 没收敛 / 优化没收敛都属于软失败,
+        # Gaussian 经常静默返回 0, 不能当成功返回.
+        soft_failure_msg: str | None = None
 
         for attempt in range(args.max_auto_retries + 1):
             cmd = [self.gaussian_executable, gjf_file.name]
@@ -186,27 +191,52 @@ class GaussianTool(HuginnTool):
             rc = self._get_returncode(sb_result)
             stderr = self._get_stderr(sb_result)
 
-            if rc == 0:
-                break
+            # 判断这次跑完到底算成功还是失败:
+            # - rc != 0 → 硬失败, stderr 诊断
+            # - rc == 0 但 SCF 没收敛 / 优化没收敛 → 软失败, Gaussian 经常静默返回 0
+            error: str | None = None
+            soft_failure_msg = None
+            if rc != 0:
+                error = stderr or ""
+            else:
+                # returncode=0 不代表收敛了, 查 .log 的 SCF / 优化状态
+                parsed_now = self._parse_log(log_file) if log_file.exists() else {}
+                if parsed_now.get("scf_convergence_failure"):
+                    # SCF 没收敛, 任何 action 都是软失败
+                    error = "SCF did not converge — Convergence failure"
+                    soft_failure_msg = error
+                elif args.action in ("opt", "freq") and not parsed_now.get(
+                    "converged", False
+                ):
+                    # 优化没收敛, opt/freq 才查
+                    error = "Optimization did not converge"
+                    soft_failure_msg = error
+                # sp 只要有能量就算成功, 不查优化收敛
 
-            # failed — try autofix if we have retries left
+            if error is None:
+                break  # 真正成功
+
+            # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
             if attempt < args.max_auto_retries:
-                fixed = self._try_autofix(gjf_file, stderr or "")
+                fixed = self._try_autofix(gjf_file, error)
                 if fixed:
                     autoheal_log.append({
                         "attempt": attempt + 1,
-                        "error": (stderr or "")[:300],
+                        "error": error[:300],
                         "fixes_applied": fixed["fixes"],
                         "reasoning": fixed["reasoning"],
                     })
                     continue
                 break  # nothing to fix or no more retries
+            break  # 重试耗尽
 
         # parse the log file
         parsed = self._parse_log(log_file) if log_file.exists() else {}
 
+        # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 优化没收敛)
+        ok = rc == 0 and soft_failure_msg is None
         output = GaussianToolOutput(
-            status="completed" if rc == 0 else "failed",
+            status="completed" if ok else "failed",
             energy=parsed.get("energy"),
             converged=parsed.get("converged", False),
             forces=parsed.get("forces", []),
@@ -223,8 +253,8 @@ class GaussianTool(HuginnTool):
 
         return ToolResult(
             data=data,
-            success=rc == 0,
-            error=stderr[:500] if rc != 0 else None,
+            success=ok,
+            error=None if ok else (stderr[:500] if rc != 0 else soft_failure_msg),
         )
 
     def _try_autofix(self, gjf_file: Path, stderr: str) -> dict[str, Any] | None:

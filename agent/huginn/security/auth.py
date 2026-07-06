@@ -40,15 +40,18 @@ API_KEY_HEADER = APIKeyHeader(name="X-HUGINN-API-KEY", auto_error=False)
 _BEARER_PREFIX = "Bearer "
 
 # Paths that are intentionally public (health checks, OpenAPI docs, auth,
-# Prometheus scrape).
+# Prometheus scrape). Interactive docs are dropped in production so the
+# API surface isn't exposed — see _hide_docs below.
+_hide_docs = (
+    os.environ.get("HUGINN_ENV", "").lower() == "production"
+    or os.environ.get("HUGINN_HIDE_DOCS", "").lower() in ("1", "true", "yes")
+)
+
 _PUBLIC_PATHS: set[str] = {
     "/health",
     "/ready",
     "/health/rust",
     "/health/guidance",
-    "/docs",
-    "/openapi.json",
-    "/redoc",
     "/metrics",
     "/diagnostics",
     "/diagnostics/tools",
@@ -59,6 +62,8 @@ _PUBLIC_PATHS: set[str] = {
     "/auth/me",
     "/auth/refresh",
 }
+if not _hide_docs:
+    _PUBLIC_PATHS |= {"/docs", "/openapi.json", "/redoc"}
 
 logger = logging.getLogger(__name__)
 

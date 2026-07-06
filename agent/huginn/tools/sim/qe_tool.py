@@ -48,6 +48,13 @@ class QuantumEspressoToolInput(BaseModel):
     working_dir: str | None = Field(default=None)
     output_prefix: str = Field(default="qe_out")
     result_files: list[str] = Field(default_factory=list)
+    # 计算失败 / SCF 没收敛时自动诊断 + 改输入重试的次数. 0 = 关闭自愈.
+    max_auto_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="On failure or non-convergence, auto-diagnose + patch input and retry up to N times",
+    )
 
 
 class QuantumEspressoTool(HuginnTool):
@@ -240,31 +247,166 @@ class QuantumEspressoTool(HuginnTool):
         cmd = [self.qe_executable, "-in", str(input_path)]
 
         cfg = SandboxConfig(dry_run=False)
-        with open(output_path, "w", encoding="utf-8") as stdout_file:
-            result = self.sandbox.run(
-                cmd,
-                cwd=work_dir,
-                config=cfg,
-                stdout=stdout_file,
-                stderr=subprocess.STDOUT,
-            )
+        autoheal_log: list[dict[str, Any]] = []
+        result: dict[str, Any] = {}
+        # 软失败原因. returncode=0 但 SCF 没收敛属于软失败,
+        # 这种情况 result returncode==0, 不能当成功返回.
+        soft_failure_msg: str | None = None
+        max_retries = args.max_auto_retries
+
+        for attempt in range(max_retries + 1):
+            with open(output_path, "w", encoding="utf-8") as stdout_file:
+                result = self.sandbox.run(
+                    cmd,
+                    cwd=work_dir,
+                    config=cfg,
+                    stdout=stdout_file,
+                    stderr=subprocess.STDOUT,
+                )
+
+            rc = result.get("returncode", -1)
+            # 判断这次跑完到底算成功还是失败:
+            # - rc != 0 → 硬失败, stderr 被合进 output 文件了, 读出来诊断
+            # - rc == 0 但 SCF 没收敛 → 软失败, QE 经常静默返回 0
+            error: str | None = None
+            soft_failure_msg = None
+            if rc != 0:
+                error = self._read_output_tail(output_path)
+            else:
+                parsed_now = self._parse_output_file(output_path)
+                if not parsed_now.get("converged", True):
+                    error = "SCF did not converge — convergence not achieved"
+                    soft_failure_msg = error
+
+            if error is None:
+                break  # 真正成功
+
+            # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
+            if attempt < max_retries:
+                fixed = self._try_autofix(input_path, error)
+                if fixed:
+                    autoheal_log.append(
+                        {
+                            "attempt": attempt + 1,
+                            "error": error[:300],
+                            "fixes_applied": fixed["fixes"],
+                            "reasoning": fixed["reasoning"],
+                        }
+                    )
+                    continue
+            break  # 没修动或重试耗尽
 
         parsed = self._parse_output_file(output_path)
-        success = result.get("returncode", -1) == 0
+        ok = result.get("returncode", -1) == 0 and soft_failure_msg is None
+        data: dict[str, Any] = {
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+            "qe_available": True,
+            "parsed": parsed,
+            "message": (
+                "QE execution completed."
+                if ok
+                else "QE execution failed; see output."
+            ),
+        }
+        if autoheal_log:
+            data["autoheal_attempts"] = autoheal_log
+
         return ToolResult(
-            data={
-                "input_path": str(input_path),
-                "output_path": str(output_path),
-                "qe_available": True,
-                "parsed": parsed,
-                "message": (
-                    "QE execution completed."
-                    if success
-                    else "QE execution failed; see output."
-                ),
-            },
-            success=success,
+            data=data,
+            success=ok,
+            error=(
+                None
+                if ok
+                else (soft_failure_msg or "QE execution failed; see output.")
+            ),
         )
+
+    def _read_output_tail(self, output_path: Path, tail: int = 2000) -> str:
+        """Read the tail of the QE output for error diagnosis.
+
+        QE 的 stderr 被 stdout=STDOUT 合进了 output 文件, 硬失败时从这读错误文本.
+        """
+        try:
+            content = output_path.read_text(encoding="utf-8", errors="ignore")
+            return content[-tail:]
+        except Exception:
+            return ""
+
+    def _read_input_params(self, input_path: Path) -> dict[str, Any]:
+        """读 QE .in 解析成 dict, 给 AutoFixLoop 判断当前参数用."""
+        params: dict[str, Any] = {}
+        try:
+            for line in input_path.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("!") or s.startswith("&") or s == "/":
+                    continue
+                if "=" not in s:
+                    continue
+                k, v = s.split("=", 1)
+                k = k.strip().lower()
+                v = v.strip().strip("'\"")
+                # 数字尽量转成数字, 方便 halve/double 规则
+                try:
+                    num = float(v)
+                    v = int(num) if num == int(num) else num  # type: ignore[assignment]
+                except ValueError:
+                    pass
+                params[k] = v
+        except Exception:
+            pass
+        return params
+
+    def _apply_input_fixes(self, input_path: Path, fixes: dict[str, Any]) -> None:
+        """Patch QE .in 的 &ELECTRONS 块 (conv_thr / mixing_beta / mixing_type ...)."""
+        try:
+            lines = input_path.read_text(encoding="utf-8").split("\n")
+            # 找 &ELECTRONS 块边界, SCF 相关参数都在这
+            block_start = block_end = None
+            for i, line in enumerate(lines):
+                s = line.strip().lower()
+                if s.startswith("&electrons"):
+                    block_start = i
+                elif block_start is not None and s == "/":
+                    block_end = i
+                    break
+            if block_start is None or block_end is None:
+                return  # 没找到 &ELECTRONS, 不敢瞎改
+            # 已有参数的行索引, 方便原地替换
+            existing: dict[str, int] = {}
+            for i in range(block_start + 1, block_end):
+                if "=" in lines[i]:
+                    key = lines[i].split("=")[0].strip().lower()
+                    existing[key] = i
+            for key, val in fixes.items():
+                line_new = f"  {key} = {val}"
+                if key.lower() in existing:
+                    lines[existing[key.lower()]] = line_new
+                else:
+                    # 块里没有的参数, 插到闭合 / 之前
+                    lines.insert(block_end, line_new)
+                    block_end += 1
+            input_path.write_text("\n".join(lines), encoding="utf-8")
+        except Exception as e:
+            print(f"Warning: failed to patch QE input: {e}")
+
+    def _try_autofix(self, input_path: Path, error: str) -> dict[str, Any] | None:
+        """跑一次 AutoFixLoop, 命中规则就改 QE 输入返回修了啥. 没命中返回 None."""
+        try:
+            from huginn.execution.autofix import AutoFixLoop
+
+            current = self._read_input_params(input_path)
+            fixed = AutoFixLoop().apply_fix("qe_tool", error, current)
+            if not fixed:
+                return None
+            reasoning = fixed.pop("__auto_fix", None)
+            fixed.pop("__auto_fix_patterns_matched", None)
+            if not fixed:
+                return None
+            self._apply_input_fixes(input_path, fixed)
+            return {"fixes": fixed, "reasoning": reasoning}
+        except Exception:
+            return None
 
     def _parse_output_file(self, output_path: Path) -> dict[str, Any]:
         if not output_path.exists():

@@ -80,6 +80,13 @@ class LammpsToolInput(BaseModel):
         ge=1.0,
         description="For wait_job: max seconds to wait before returning (default 3600)",
     )
+    # 计算失败 / 物理审计报错时自动诊断 + 改脚本重试的次数. 0 = 关闭自愈.
+    max_auto_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="On failure or physics-audit error, auto-diagnose + patch script and retry up to N times",
+    )
 
     @model_validator(mode="after")
     def _check_action_fields(self) -> "LammpsToolInput":
@@ -344,18 +351,82 @@ class LammpsTool(HuginnTool):
         if args.num_processes > 1:
             cmd = ["mpiexec", "-n", str(args.num_processes)] + cmd
 
-        # Run LAMMPS
-        try:
-            sb_result = self.sandbox.run(
-                cmd,
-                cwd=str(work_dir_abs),
-                timeout=3600,
-            )
-            result = sb_result
+        # Run LAMMPS — 带 autofix 重试:
+        # 硬失败 (returncode!=0) 或物理审计报错 (温度爆炸 / 能量漂移) 都重试
+        autoheal_log: list[dict[str, Any]] = []
+        max_retries = args.max_auto_retries
+        result: Any = None
+        thermo_data: dict = {}
+        final_energy: float | None = None
+        warnings: list[str] = []
+        audit_report = None
+        # 软失败原因. returncode=0 但物理审计报错属于软失败,
+        # 这种情况 result.returncode==0, 不能当成功返回.
+        soft_failure_msg: str | None = None
 
-            # Parse log file for thermo data
-            log_path = work_dir / "log.lammps"
-            thermo_data, final_energy, warnings = self._parse_log(log_path)
+        try:
+            for attempt in range(max_retries + 1):
+                sb_result = self.sandbox.run(
+                    cmd,
+                    cwd=str(work_dir_abs),
+                    timeout=3600,
+                )
+                result = sb_result
+
+                # Parse log file for thermo data
+                log_path = work_dir / "log.lammps"
+                thermo_data, final_energy, warnings = self._parse_log(log_path)
+
+                # 判断这次跑完到底算成功还是失败:
+                # - returncode != 0 → 硬失败, stderr 诊断
+                # - returncode == 0 但物理审计报错 → 软失败,
+                #   LAMMPS 经常 exit=0 但轨迹是垃圾 (温度爆炸 / 能量漂移)
+                error: str | None = None
+                soft_failure_msg = None
+                if result.returncode != 0:
+                    error = result.stderr or ""
+                else:
+                    try:
+                        from huginn.execution.physics_auditor import PhysicsAuditor
+
+                        auditor = PhysicsAuditor()
+                        audit_report = auditor.audit(
+                            "lammps_tool",
+                            args.compute_action or args.action,
+                            {
+                                "thermo_data": thermo_data,
+                                "final_energy": final_energy,
+                            },
+                            args.model_dump(),
+                        )
+                        if audit_report.has_errors:
+                            errs = [
+                                f.message
+                                for f in audit_report.findings
+                                if f.severity == "error"
+                            ]
+                            error = f"Physics audit found errors: {errs}"
+                            soft_failure_msg = error
+                    except Exception:
+                        pass  # 审计本身挂了不能阻塞结果
+
+                if error is None:
+                    break  # 真正成功
+
+                # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
+                if attempt < max_retries:
+                    fixed = self._try_autofix(input_path_abs, error)
+                    if fixed:
+                        autoheal_log.append(
+                            {
+                                "attempt": attempt + 1,
+                                "error": error[:300],
+                                "fixes_applied": fixed["fixes"],
+                                "reasoning": fixed["reasoning"],
+                            }
+                        )
+                        continue
+                break  # 没修动或重试耗尽
 
             # Find trajectory file
             traj_path = None
@@ -366,15 +437,24 @@ class LammpsTool(HuginnTool):
                     break
 
             output = LammpsToolOutput(
-                log_path=str(log_path),
+                log_path=str(work_dir / "log.lammps"),
                 trajectory_path=traj_path,
                 thermo_data=thermo_data,
                 final_energy=final_energy,
                 warnings=warnings,
             )
 
-            success = result.returncode == 0
-            error = result.stderr[:500] if not success else None
+            # 最终成功判定: returncode==0 且没有遗留软失败 (物理审计报错)
+            ok = result.returncode == 0 and soft_failure_msg is None
+            error_out = (
+                None
+                if ok
+                else (
+                    result.stderr[:500]
+                    if result.returncode != 0
+                    else soft_failure_msg
+                )
+            )
 
             data = output.model_dump()
 
@@ -387,19 +467,29 @@ class LammpsTool(HuginnTool):
             # Physics audit — check thermo data for unphysical values.
             # LAMMPS can exit cleanly while the trajectory itself is garbage
             # (e.g. exploded temperatures, runaway pressure). Flag those here.
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit(
-                    "lammps_tool",
-                    args.compute_action or action,
-                    {"thermo_data": thermo_data, "final_energy": final_energy},
-                    args.model_dump(),
-                )
+            # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
+            if audit_report is not None:
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception:
-                pass  # audit is best-effort, never block the result
+            else:
+                try:
+                    from huginn.execution.physics_auditor import PhysicsAuditor
+
+                    auditor = PhysicsAuditor()
+                    audit_report = auditor.audit(
+                        "lammps_tool",
+                        args.compute_action or args.action,
+                        {
+                            "thermo_data": thermo_data,
+                            "final_energy": final_energy,
+                        },
+                        args.model_dump(),
+                    )
+                    data["physics_audit"] = audit_report.to_dict()
+                except Exception:
+                    pass  # audit is best-effort, never block the result
+
+            if autoheal_log:
+                data["autoheal_attempts"] = autoheal_log
 
             # 带上 provenance 快照, 事后能追溯参数/版本/环境
             # 注意: 在加 provenance 字段前先 snapshot 输出, 避免 output_hash 自指
@@ -414,8 +504,8 @@ class LammpsTool(HuginnTool):
 
             return ToolResult(
                 data=data,
-                success=success,
-                error=error,
+                success=ok,
+                error=error_out,
             )
 
         except subprocess.TimeoutExpired:
@@ -699,6 +789,62 @@ class LammpsTool(HuginnTool):
                 modified.append(f"{key} {new_value}")
 
         return "\n".join(modified)
+
+    def _read_script_params(self, input_path: Path) -> dict[str, Any]:
+        """读 input.lammps 解析关键参数 (timestep 等), 给 AutoFixLoop 当上下文."""
+        params: dict[str, Any] = {}
+        try:
+            for line in input_path.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                parts = s.split()
+                if not parts:
+                    continue
+                cmd = parts[0].lower()
+                # 只抓 AutoFixLoop 关心的几个命令: timestep / neighbor
+                if cmd == "timestep" and len(parts) > 1:
+                    try:
+                        params["timestep"] = float(parts[1])
+                    except ValueError:
+                        params["timestep"] = parts[1]
+                elif cmd == "neighbor" and len(parts) > 1:
+                    try:
+                        params["neighbor"] = float(parts[1])
+                    except ValueError:
+                        params["neighbor"] = parts[1]
+        except Exception:
+            pass
+        return params
+
+    def _try_autofix(
+        self, input_path: Path, error: str
+    ) -> dict[str, Any] | None:
+        """跑一次 AutoFixLoop, 命中规则就改 input.lammps 返回修了啥. 没命中返回 None."""
+        try:
+            from huginn.execution.autofix import AutoFixLoop
+
+            current = self._read_script_params(input_path)
+            fixed = AutoFixLoop().apply_fix("lammps_tool", error, current)
+            if not fixed:
+                return None
+            reasoning = fixed.pop("__auto_fix", None)
+            fixed.pop("__auto_fix_patterns_matched", None)
+            if not fixed:
+                return None
+            # _apply_script_fixes 会整行替换, 只喂实际变化的参数,
+            # 避免把无关命令行 (如 'neighbor 2.0 bin') 重写丢参数
+            changed = {k: v for k, v in fixed.items() if current.get(k) != v}
+            if not changed:
+                return None
+            str_fixes = {k: str(v) for k, v in changed.items()}
+            new_script = self._apply_script_fixes(
+                input_path.read_text(encoding="utf-8"), str_fixes
+            )
+            input_path.write_text(new_script, encoding="utf-8")
+            return {"fixes": changed, "reasoning": reasoning}
+        except Exception:
+            return None
 
     def _is_float(self, s: str) -> bool:
         try:

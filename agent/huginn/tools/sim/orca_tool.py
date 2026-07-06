@@ -171,6 +171,9 @@ class OrcaTool(HuginnTool):
         out_file = inp_file.with_suffix(".out")
         rc = -1
         stderr = ""
+        # 软失败原因. returncode=0 但 SCF 没收敛 / 优化没收敛都属于软失败,
+        # ORCA 也会静默返回 0, 不能当成功返回.
+        soft_failure_msg: str | None = None
 
         for attempt in range(args.max_auto_retries + 1):
             cmd = [self.orca_executable, inp_file.name]
@@ -186,12 +189,31 @@ class OrcaTool(HuginnTool):
             rc = self._get_returncode(sb_result)
             stderr = self._get_stderr(sb_result)
 
-            if rc == 0:
-                break
+            # 判断这次跑完到底算成功还是失败:
+            # - rc != 0 → 硬失败, stderr 诊断
+            # - rc == 0 但优化没收敛 / 没拿到能量 → 软失败, ORCA 也会静默返回 0
+            error: str | None = None
+            soft_failure_msg = None
+            if rc != 0:
+                error = stderr or ""
+            else:
+                # returncode=0 不代表收敛了, 查 .out 的优化 / SCF 状态
+                parsed_now = self._parse_out(out_file) if out_file.exists() else {}
+                if args.action == "opt" and not parsed_now.get("converged", False):
+                    # 优化没收敛: 没出现 OPTIMIZATION HAS CONVERGED
+                    error = "Optimization did not converge — OPTIMIZATION HAS NOT CONVERGED"
+                    soft_failure_msg = error
+                elif parsed_now.get("energy") is None:
+                    # 没拿到 FINAL SINGLE POINT ENERGY, SCF 大概率没收敛
+                    error = "SCF not converged — no FINAL SINGLE POINT ENERGY"
+                    soft_failure_msg = error
+
+            if error is None:
+                break  # 真正成功
 
             if attempt < args.max_auto_retries:
-                # also check the .out file for error messages
-                err_text = stderr or ""
+                # 硬失败时把 .out 尾部也带上, 帮 autofix 匹配错误模式
+                err_text = error or ""
                 if out_file.exists():
                     err_text += "\n" + out_file.read_text(
                         encoding="utf-8", errors="ignore"
@@ -206,11 +228,14 @@ class OrcaTool(HuginnTool):
                     })
                     continue
                 break
+            break  # 重试耗尽
 
         parsed = self._parse_out(out_file) if out_file.exists() else {}
 
+        # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 优化没收敛)
+        ok = rc == 0 and soft_failure_msg is None
         output = OrcaToolOutput(
-            status="completed" if rc == 0 else "failed",
+            status="completed" if ok else "failed",
             energy=parsed.get("energy"),
             converged=parsed.get("converged", False),
             optimization_steps=parsed.get("optimization_steps", 0),
@@ -227,8 +252,8 @@ class OrcaTool(HuginnTool):
 
         return ToolResult(
             data=data,
-            success=rc == 0,
-            error=stderr[:500] if rc != 0 else None,
+            success=ok,
+            error=None if ok else (stderr[:500] if rc != 0 else soft_failure_msg),
         )
 
     def _try_autofix(self, inp_file: Path, error: str) -> dict[str, Any] | None:
