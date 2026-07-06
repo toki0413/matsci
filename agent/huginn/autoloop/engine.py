@@ -177,6 +177,9 @@ class AutoloopEngine:
         self._kb = None
         # PerceptionLayer 懒加载 — 长生命周期, start() 后后台线程持续积累事件
         self._perception = None
+        # Plan store: 持久化 plan 到 plans.json, 跨会话可恢复. 懒加载,
+        # 跟 goal_scheduler 一套, 避免实例化时碰磁盘
+        self._plan_store = None
         # 进度跟踪: 默认走进程级单例, 跟 WorkflowEngine 共享, 让 /tasks
         # 路由能汇总所有引擎的进度. 测试时可注入独立 tracker 隔离.
         self.progress_tracker: ProgressTracker | None = None
@@ -532,6 +535,17 @@ class AutoloopEngine:
             return None
         return self._clarification_mgr
 
+    def _get_plan_store(self):
+        """懒加载 PlanStore. 不可用时返回 None, 调用方判空走老的纯 dict 路径."""
+        if self._plan_store is not None:
+            return self._plan_store
+        try:
+            from huginn.autoloop.plan_store import PlanStore
+            self._plan_store = PlanStore()
+        except Exception:
+            return None
+        return self._plan_store
+
     async def _maybe_clarify(
         self,
         checkpoint: str,
@@ -751,8 +765,11 @@ class AutoloopEngine:
                 continue
             print(f"  → Plan: {plan['mode']} | {plan['description']}")
 
-            # 高成本 plan 时问用户确认 (非阻塞, 超时走默认继续)
-            await self._maybe_clarify("plan", plan)
+            # 高成本 plan 时问用户确认. 有 plan_id 说明 _plan 里已经走过
+            # PlanStore 确认门了, 别重复问; 没 plan_id (PlanStore 不可用)
+            # 才走老的 fire-and-forget 提问
+            if not plan.get("plan_id"):
+                await self._maybe_clarify("plan", plan)
 
             # 预算: 后期迭代限制昂贵 mode. 拒绝时把可用 mode 写进 hint,
             # continue 到下一轮让 LLM 改提 plan. 降级后全程放行.
@@ -777,6 +794,16 @@ class AutoloopEngine:
                 print(f"  → Execution failed: {phase.error}")
                 continue
             print(f"  → Execution complete: {execution_result}")
+
+            # plan 跑完了, 标记 PlanStore 里的 plan 为 completed
+            _plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
+            if _plan_id:
+                try:
+                    store = self._get_plan_store()
+                    if store is not None:
+                        store.complete_plan(_plan_id)
+                except Exception:
+                    pass
 
             # gate: execute→validate — 必须有 mode (执行模式) 才放行
             if not self._check_gate(
@@ -1217,15 +1244,70 @@ class AutoloopEngine:
         return "dft_expert"
 
     async def _plan(self, hypothesis: str, context: dict[str, Any]) -> dict[str, Any] | None:
-        """Generate a plan from hypothesis."""
-        # Determine which mode to use: coder, workflow, or exploration
+        """Generate a plan from hypothesis and persist it to PlanStore.
+
+        以前只返回一个临时 dict, turn 结束就丢了. 现在往 PlanStore 落一份,
+        跨会话可恢复, 用户也能 confirm/reject. PlanStore 不可用时退回老行为.
+        """
         prompt = self._build_plan_prompt(hypothesis, context)
         try:
             response = await self._llm_chat(prompt, persona_name="default")
             plan = self._parse_plan(response)
-            return plan
         except Exception:
             return None
+
+        if not plan:
+            return None
+
+        # 落 PlanStore: 创建 plan → cost 确认门 → confirm/reject
+        plan_store = self._get_plan_store()
+        if plan_store is None:
+            return plan
+
+        try:
+            from huginn.autoloop.plan_store import PlanStep
+
+            steps = [
+                PlanStep(
+                    id="step_0",
+                    description=plan.get("description", ""),
+                    tool=plan.get("mode", ""),
+                )
+            ]
+            persisted = plan_store.create_plan(
+                objective=hypothesis,
+                steps=steps,
+                auto_confirm=False,
+                metadata={"mode": plan.get("mode", ""), "source": "autoloop"},
+            )
+
+            # cost 确认门: None = 不用问 (非高成本 mode / manager 不可用),
+            # 直接放行; 显式拒绝才拦. bool 和字符串都兼容 (测试 mock 常传 bool)
+            answer = await self._maybe_clarify("plan", plan)
+            if answer is None:
+                should_confirm = True
+            elif isinstance(answer, bool):
+                should_confirm = answer
+            elif isinstance(answer, str):
+                should_confirm = answer.lower().strip() not in (
+                    "no", "n", "cancel", "reject", "decline", "stop", "abort",
+                )
+            else:
+                should_confirm = bool(answer)
+
+            if should_confirm:
+                plan_store.confirm_plan(persisted.id)
+                plan_store.mark_executing(persisted.id)
+            else:
+                plan_store.reject_plan(persisted.id, reason="user declined")
+                return None
+
+            plan["plan_id"] = persisted.id
+        except Exception as e:
+            logger.warning("plan store persistence failed: %s", e)
+            # PlanStore 挂了不阻塞执行, 退回老的纯 dict 路径
+
+        return plan
 
     async def _execute(self, plan: dict[str, Any], context: dict[str, Any]) -> Any:
         """Execute the plan using the appropriate sub-engine."""
@@ -2239,6 +2321,26 @@ class AutoloopEngine:
                     importance=0.7,
                     tier="mid",
                 )
+            except Exception:
+                pass
+
+        # 把 plan 进度存进 long-term memory, 下次会话能接续
+        _plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
+        if _plan_id:
+            try:
+                store = self._get_plan_store()
+                if store is not None:
+                    persisted = store.get_plan(_plan_id)
+                    if persisted is not None:
+                        self.memory.store_plan_progress(
+                            plan_id=persisted.id,
+                            objective=persisted.objective,
+                            step_index=len(
+                                [s for s in persisted.steps if s.status == "done"]
+                            ),
+                            status=persisted.status,
+                            l1_coordinates=f"autoloop: {persisted.objective[:100]}",
+                        )
             except Exception:
                 pass
 

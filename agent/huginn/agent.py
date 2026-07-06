@@ -462,6 +462,23 @@ class HuginnAgent:
         self.enable_exploration = core.enable_exploration
         self.profile_id = core.profile_id
         self.thread_id = core.thread_id
+
+        # Unified session state — travels through every turn of the chat loop.
+        # Carries persona, plan, cognitive mode (double helix), and L1 coords.
+        # Lazy import keeps the module-load graph acyclic.
+        from huginn.session_state import UnifiedSessionState
+
+        self._session_state = UnifiedSessionState(
+            session_id=self.thread_id,
+            persona_name=getattr(self, "persona_name", "default"),
+            persona_system_prompt=self.system_prompt,
+        )
+
+        # Task reflector — runs after each tool call, pure rules, no LLM.
+        from huginn.reflection import TaskReflector
+
+        self._reflector = TaskReflector()
+
         self.tool_filter = set(t.tool_filter) if t.tool_filter else None
         self.agent_factory = core.agent_factory
         # Central tool scheduler — shared across parent + sub-agents when injected
@@ -1264,6 +1281,7 @@ class HuginnAgent:
         kg_text: str | None = None,
         include_history: bool | None = None,
         kb_text: str | None = None,
+        session_state: Any = None,
     ) -> list[Any]:
         """Dynamic input messages: history + memory + KG + KB + emotion + user.
 
@@ -1275,6 +1293,7 @@ class HuginnAgent:
             kg_text=kg_text,
             kb_text=kb_text,
             include_history=include_history,
+            session_state=session_state,
         )
 
     def _conversation_tree_history_to_messages(self) -> list[Any]:
@@ -1296,6 +1315,11 @@ class HuginnAgent:
         # Keep ContextBuilder in sync with the new cache builder
         if hasattr(self, "_ctx_builder"):
             self._ctx_builder._cache_builder = self._cache_builder
+
+    @property
+    def session_state(self) -> "UnifiedSessionState":
+        """Expose the unified session state for external access (e.g. routes)."""
+        return self._session_state
 
     def set_persona(
         self,
@@ -1739,6 +1763,23 @@ class HuginnAgent:
                         "name": getattr(msg, "name", None),
                     },
                 )
+                # Mirror the result into the unified session state so the
+                # post-turn reflector can scan for physics issues / plan steps.
+                # Heuristic success flag: most tool errors come back prefixed
+                # with "Error" — good enough for the rules-based reflector.
+                try:
+                    self._session_state.add_tool_result(
+                        {
+                            "tool_name": getattr(msg, "name", None) or "unknown",
+                            "content": msg.content,
+                            "success": not (
+                                isinstance(msg.content, str)
+                                and msg.content.startswith("Error")
+                            ),
+                        }
+                    )
+                except Exception:
+                    logger.debug("session_state tool tracking failed", exc_info=True)
                 # 单步模式: 工具结果落袋后置位, 让 chat() 在 yield 完这轮 state
                 # 之后停下来, 把控制权交回调用方.
                 if self._break_after_tool:
@@ -1925,6 +1966,38 @@ class HuginnAgent:
             {"thread_id": thread_id},
         )
 
+    def _init_session_continuity(self) -> None:
+        """Load previous session context at the start of a new session.
+
+        Cross-session continuity: pick up the last summary and any in-flight
+        plan so the agent remembers what was discussed last time. Both lookups
+        are best-effort — a missing/empty store just means we start fresh.
+        """
+        try:
+            ctx = self.memory.load_last_session_context()
+            if ctx and ctx.get("summary"):
+                self._session_state.last_session_summary = ctx["summary"]
+                self._session_state.last_session_id = ctx.get("session_id", "")
+                logger.info(
+                    "loaded last session context: %s...",
+                    ctx["summary"][:100],
+                )
+        except Exception:
+            logger.debug("session continuity load failed", exc_info=True)
+
+        try:
+            plan = self.memory.load_active_plan()
+            if plan and plan.get("status") not in ("completed", "abandoned"):
+                self._session_state.active_plan_objective = plan.get("objective", "")
+                self._session_state.active_plan_step_index = plan.get("step_index", 0)
+                logger.info(
+                    "resumed active plan: %s (step %d)",
+                    plan.get("objective", "")[:80],
+                    plan.get("step_index", 0),
+                )
+        except Exception:
+            logger.debug("active plan load failed", exc_info=True)
+
     async def chat(
         self,
         message: str,
@@ -1949,6 +2022,14 @@ class HuginnAgent:
         # been migrated to read from contextvars yet.
         self.thread_id = thread_id
         self._current_user_message = message
+
+        # First turn of a fresh session: pull in last-session summary and any
+        # in-flight plan so the loop starts with continuity. Every turn bumps
+        # the counter and resets the per-turn tool-result buffer for reflection.
+        if self._turn_count == 0:
+            self._init_session_continuity()
+        self._session_state.turns_count += 1
+        self._session_state.clear_turn_results()
 
         # ── Vision routing ──
         # Decide how to handle an attached image before the message
@@ -2064,7 +2145,10 @@ class HuginnAgent:
             memory_text = self._build_memory_text(query=message)
             kb_text = self._build_kb_text(query=message)
             messages = self._build_input_messages(
-                message, memory_text=memory_text, kb_text=kb_text
+                message,
+                memory_text=memory_text,
+                kb_text=kb_text,
+                session_state=self._session_state,
             )
 
             # NATIVE_LLM vision route: swap the last HumanMessage's text
@@ -2375,6 +2459,72 @@ class HuginnAgent:
                 # Scan the final assistant message for a phase-transition
                 # marker emitted by the LLM and apply it if valid.
                 if final_state is not None:
+                    # ── Task-after reflection ───────────────────────────
+                    # Scan this turn's tool results for physics issues, plan
+                    # advancement, and evolution signals. Pure rules, no LLM,
+                    # sub-millisecond. Failures here must never break the turn.
+                    if self._session_state.tool_results_this_turn:
+                        for tr in self._session_state.tool_results_this_turn:
+                            try:
+                                reflection = self._reflector.reflect(
+                                    tool_name=tr.get("tool_name", "unknown"),
+                                    tool_result=tr,
+                                    session_state=self._session_state,
+                                )
+                            except Exception:
+                                logger.debug("reflection failed", exc_info=True)
+                                continue
+
+                            # Trigger evolution on failure / success signals.
+                            if reflection.should_evolve:
+                                try:
+                                    from huginn.evolution.logger import (
+                                        ExecutionLogger,
+                                    )
+                                    from huginn.evolution.engine import (
+                                        EvolutionEngine,
+                                    )
+
+                                    ev_logger = ExecutionLogger()
+                                    # Feed the current tool result so the
+                                    # engine can pick it up internally.
+                                    ev_logger.log_tool_call(
+                                        tool_name=tr.get("tool_name", ""),
+                                        tool_input={},
+                                        result=tr.get("content", ""),
+                                        success=reflection.tool_succeeded,
+                                    )
+                                    ev_engine = EvolutionEngine(logger=ev_logger)
+                                    if reflection.evolve_signal == "failure":
+                                        ev_engine.evolve_from_failures()
+                                    elif reflection.evolve_signal == "success":
+                                        ev_engine.evolve_from_successes()
+                                except Exception:
+                                    logger.debug(
+                                        "evolution trigger failed", exc_info=True
+                                    )
+
+                            # Persist plan progress when a step is judged done.
+                            if (
+                                reflection.plan_step_completed
+                                and self._session_state.active_plan_id
+                            ):
+                                self._session_state.advance_step()
+                                try:
+                                    self.memory.store_plan_progress(
+                                        plan_id=self._session_state.active_plan_id,
+                                        objective=self._session_state.active_plan_objective,
+                                        step_index=self._session_state.active_plan_step_index,
+                                        status="in_progress",
+                                        l1_coordinates=self._session_state.l1_coordinates,
+                                    )
+                                except Exception:
+                                    logger.debug(
+                                        "plan progress store failed", exc_info=True
+                                    )
+
+                        self._session_state.clear_turn_results()
+
                     # 上下文超 70% 就自动 compact, 触发 PRE_COMPACT 钩子
                     await self._maybe_auto_compact(
                         final_state, turn_span, thread_id
@@ -2454,6 +2604,21 @@ class HuginnAgent:
                             "research-mode memory promote failed",
                             exc_info=True,
                         )
+                # Stash a session-state snapshot so the next session can pick
+                # up the L1 coordinates / plan position. Best-effort: a failed
+                # store just means next session starts without the breadcrumb.
+                try:
+                    snapshot = self._session_state.to_snapshot()
+                    self.memory.longterm.store(
+                        content=f"Session snapshot: {snapshot.get('l1_coordinates', 'no coordinates')}",
+                        category="conversation",
+                        tags=["session_snapshot"],
+                        source=f"session:{thread_id}",
+                        importance=0.6,
+                        tier="mid",
+                    )
+                except Exception:
+                    logger.debug("session snapshot save failed", exc_info=True)
                 pet.publish(PetMood.IDLE, "Ready", {"thread_id": thread_id})
                 self._turn_count += 1
                 if (
