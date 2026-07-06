@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.security import ContainerExecutor, SandboxError, get_executor
+from huginn.security import ContainerExecutor, SandboxError, SandboxExecutor, get_executor
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
@@ -167,68 +167,38 @@ class BashTool(HuginnTool):
                 success=result.success,
             )
 
-        # Local fallback: only allowed when HUGINN_ALLOW_LOCAL_BASH=1.
-        exe = shutil.which(input_data.command[0])
-        if exe is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Executable not found: {input_data.command[0]}",
-            )
-
-        try:
-            if input_data.stream or input_data.action == "stream":
-                stdout, stderr, returncode = self._stream_command(
-                    input_data.command, work_dir, input_data.timeout
+        # SandboxExecutor path — uses executable whitelist + work-dir validation.
+        if isinstance(executor, SandboxExecutor):
+            try:
+                result = executor.run(
+                    input_data.command,
+                    cwd=work_dir,
+                    timeout=input_data.timeout,
+                    capture_output=input_data.capture_output,
+                    text=True,
                 )
                 return ToolResult(
                     data={
                         "command": input_data.command,
-                        "returncode": returncode,
-                        "stdout": stdout,
-                        "stderr": stderr,
+                        "returncode": result.returncode,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
                         "message": (
                             "Command succeeded."
-                            if returncode == 0
+                            if result.returncode == 0
                             else "Command failed."
                         ),
+                        "sandbox": True,
                     },
-                    success=returncode == 0,
+                    success=result.returncode == 0,
                 )
-
-            result = subprocess.run(
-                input_data.command,
-                cwd=str(work_dir),
-                capture_output=input_data.capture_output,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=input_data.timeout,
-            )
-            return ToolResult(
-                data={
-                    "command": input_data.command,
-                    "returncode": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "message": (
-                        "Command succeeded."
-                        if result.returncode == 0
-                        else "Command failed."
-                    ),
-                },
-                success=result.returncode == 0,
-            )
-        except subprocess.TimeoutExpired as e:
-            return ToolResult(
-                data={
-                    "command": input_data.command,
-                    "returncode": -1,
-                    "stdout": e.stdout or "",
-                    "stderr": e.stderr or "",
-                    "message": f"Command timed out after {input_data.timeout}s.",
-                },
-                success=False,
-            )
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Bash tool failed: {e}")
+            except SandboxError as e:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Sandbox blocked command: {e}",
+                )
+            except Exception as e:
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"Sandbox execution failed: {e}",
+                )

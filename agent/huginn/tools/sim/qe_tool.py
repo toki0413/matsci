@@ -6,6 +6,7 @@ When QE is not installed, the tool falls back to input-export mode.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import shutil
 import subprocess
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class QuantumEspressoToolInput(BaseModel):
@@ -252,6 +255,7 @@ class QuantumEspressoTool(HuginnTool):
         # 软失败原因. returncode=0 但 SCF 没收敛属于软失败,
         # 这种情况 result returncode==0, 不能当成功返回.
         soft_failure_msg: str | None = None
+        audit_report = None
         max_retries = args.max_auto_retries
 
         for attempt in range(max_retries + 1):
@@ -277,6 +281,30 @@ class QuantumEspressoTool(HuginnTool):
                 if not parsed_now.get("converged", True):
                     error = "SCF did not converge — convergence not achieved"
                     soft_failure_msg = error
+                else:
+                    # SCF converged, run physics audit for soft failures
+                    try:
+                        from huginn.execution.physics_auditor import (
+                            PhysicsAuditor,
+                        )
+
+                        auditor = PhysicsAuditor()
+                        audit_report = auditor.audit(
+                            "qe_tool",
+                            args.calculation,
+                            parsed_now,
+                            args.model_dump(),
+                        )
+                        if audit_report.has_errors:
+                            errs = [
+                                f.message
+                                for f in audit_report.findings
+                                if f.severity == "error"
+                            ]
+                            error = f"Physics audit found errors: {errs}"
+                            soft_failure_msg = error
+                    except Exception:
+                        logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
             if error is None:
                 break  # 真正成功
@@ -311,6 +339,21 @@ class QuantumEspressoTool(HuginnTool):
         }
         if autoheal_log:
             data["autoheal_attempts"] = autoheal_log
+
+        # Physics audit — 循环里跑过审计就复用, 没跑过就补跑一次兜底
+        if audit_report is not None:
+            data["physics_audit"] = audit_report.to_dict()
+        else:
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit(
+                    "qe_tool", args.calculation, parsed, args.model_dump()
+                )
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(
             data=data,

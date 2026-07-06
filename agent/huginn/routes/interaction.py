@@ -85,7 +85,9 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
                     thinking=req.thinking,
                     max_tokens=req.max_tokens,
                 )
-                # sidecar serve 模式自动批准工具, 跟 /chat 行为一致
+                # sidecar serve 模式: 放行 ASK 工具, 但危险命令模式检查
+                # 仍在 adapter._check_permission 里生效, rm -rf / 这类
+                # 即使 auto_approve_all=True 也会被拦下
                 agent._permission_config.auto_approve_all = True
 
                 final_text = ""

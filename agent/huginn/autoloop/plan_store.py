@@ -17,8 +17,10 @@ Plan lifecycle:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import sys
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -126,6 +128,46 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@contextlib.contextmanager
+def _file_lock(path: Path):
+    """Cross-process lock for the plans file.
+
+    msvcrt.locking on Windows (blocks with retries), fcntl.flock on Unix
+    (blocks indefinitely). Prevents agent / autoloop / server processes
+    from racing on plans.json reads and writes.
+    """
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+
 class PlanStore:
     """Persistent plan store backed by a JSON file.
 
@@ -152,21 +194,31 @@ class PlanStore:
         if not self._path.exists():
             return
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
+            with _file_lock(self._path):
+                data = json.loads(self._path.read_text(encoding="utf-8"))
             for row in data.get("plans", []):
                 plan = Plan.from_dict(row)
                 self._plans[plan.id] = plan
-        except (json.JSONDecodeError, TypeError, KeyError):
-            # corrupt file — start fresh, don't crash the orchestrator
+        except (json.JSONDecodeError, TypeError, KeyError, OSError):
+            # corrupt file or lock failure — start fresh, don't crash
             pass
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {"plans": [p.to_dict() for p in self._plans.values()]}
-        self._path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+        # write to temp, fsync, then atomic rename — prevents half-written files
+        with _file_lock(self._path):
+            tmp = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(payload)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(str(tmp), str(self._path))
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                raise
 
     # ── CRUD ──────────────────────────────────────────────────────
 

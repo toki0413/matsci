@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 from typing import Any
 
 import click
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.text import Text
 
 from huginn import __version__
 from huginn.cli.context import CliContext, build_agent_from_ctx, init_mcp, shutdown_mcp
@@ -85,6 +89,26 @@ def _extract_diff_from_messages(messages: list) -> str | None:
     if not diff_chunks:
         return None
     return "\n".join(diff_chunks)
+
+
+def _ai_message_view(msg: Any) -> tuple[str, str, list[str]]:
+    """拆解 AIMessage 给渲染层用。
+
+    返回 (kind, text, tool_names):
+    - kind='thought': 带工具调用的推理, content 一般是 LLM 的思考/计划
+    - kind='answer': 纯文本回复, 作为最终答复正文
+    text 取 content 的文本部分; 多模态 content blocks 会被拍平成纯文本。
+    """
+    tcs = getattr(msg, "tool_calls", None) or []
+    content = msg.content
+    if isinstance(content, list):
+        # 多模态 content: 拼出 text blocks, 非 text 的(图片等)直接丢掉
+        content = "".join(
+            b.get("text", "") for b in content if isinstance(b, dict)
+        )
+    kind = "thought" if tcs else "answer"
+    names = [tc.get("name", "unknown") for tc in tcs]
+    return kind, content or "", names
 
 
 @click.command()
@@ -196,7 +220,8 @@ def _run_one_turn(
 ) -> None:
     """跑一轮对话: 解析 @ 引用 → 调 agent → 渲染结果。
 
-    单独抽出来是为了让交互循环和 --prompt headless 模式复用同一段逻辑。
+    优先走流式 (agent.chat async generator); 不支持就退回 invoke 阻塞模式。
+    交互循环和 --prompt headless 模式都复用这里。
     """
     if agent is None:
         ds.error("Agent not available. Please check configuration.")
@@ -211,13 +236,117 @@ def _run_one_turn(
             # 解析失败不阻塞对话, 用原始输入继续
             ds.warning(f"@ 引用解析失败 ({e}), 用原始输入继续")
 
+    thread_id = ctx.resume_thread_id or "default"
+
+    # agent.chat 是 async generator 才走流式; 否则降级到 invoke
+    chat_fn = getattr(agent, "chat", None)
+    if chat_fn is not None and inspect.isasyncgenfunction(chat_fn):
+        try:
+            _run_streaming_turn(ctx, agent, message, ds, thread_id)
+            return
+        except KeyboardInterrupt:
+            # Ctrl+C 只中断当前这轮生成, 不退出 chat 循环
+            ds.warning("[interrupted by user]")
+            return
+        except Exception as e:
+            # 流式挂了别直接抛, 降级到阻塞模式再试一次
+            ds.warning(f"流式输出异常 ({e}), 退回阻塞模式")
+
+    _run_blocking_turn(ctx, agent, message, ds, thread_id)
+
+
+def _run_streaming_turn(
+    ctx: CliContext,
+    agent: Any,
+    message: str,
+    ds: Any,
+    thread_id: str,
+) -> None:
+    """流式渲染一轮对话。
+
+    agent.chat() 用 stream_mode="values" 产出完整 state 快照, messages 列表是
+    累积的; 用 shown 记录已处理条数, 只渲染每轮新增的消息。
+    工具调用 / 思考过程走 console.print (留在 Live 区域上方), 回复正文走 Live
+    边到边显示, 结束后再用 Markdown 重新渲染最终答复。
+    """
+    console = ctx.console
+
+    async def _drive() -> tuple[str, list]:
+        shown = 0
+        assistant_parts: list[str] = []
+        final_messages: list = []
+        with Live(
+            Text("Thinking…", style="dim italic"),
+            console=console,
+            refresh_per_second=12,
+            transient=True,
+        ) as live:
+            async for state in agent.chat(message, thread_id=thread_id):
+                # 单步 / 思考循环终止标记: 拆出真实 state 再继续
+                if isinstance(state, dict) and (
+                    state.get("tool_break") or state.get("thought_loop_terminated")
+                ):
+                    state = state.get("state") or {}
+
+                if isinstance(state, dict):
+                    final_messages = state.get("messages", [])
+
+                new_msgs = final_messages[shown:]
+                shown = len(final_messages)
+                for msg in new_msgs:
+                    if isinstance(msg, AIMessage):
+                        kind, text, tool_names = _ai_message_view(msg)
+                        if kind == "thought":
+                            # 推理 / 计划: dim 显示, 不进 Live
+                            if text.strip():
+                                console.print(f"[dim italic]{text}[/dim italic]")
+                            for name in tool_names:
+                                console.print(
+                                    f"[dim]→ 调用 [bold]{name}[/bold][/dim]"
+                                )
+                        elif text:
+                            assistant_parts.append(text)
+                            live.update(Text(text, style="magenta"))
+                    elif isinstance(msg, ToolMessage):
+                        name = getattr(msg, "name", None) or "tool"
+                        ok = not (
+                            isinstance(msg.content, str)
+                            and msg.content.startswith("Error")
+                        )
+                        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                        console.print(f"{mark} {name}")
+
+        return "".join(assistant_parts), final_messages
+
+    final_text, final_messages = asyncio.run(_drive())
+
+    # 工具产生的文件改动以 diff 形式预览, 方便用户审阅
+    diff_text = _extract_diff_from_messages(final_messages)
+    if diff_text:
+        ds.info("文件改动预览:")
+        ds.render_diff(diff_text)
+
+    # 流式时只显示了纯文本, 结束后用 Markdown 重新渲染最终答复
+    if final_text.strip():
+        console.print()
+        console.print("[bold magenta]Huginn:[/bold magenta]")
+        console.print(Markdown(final_text))
+
+
+def _run_blocking_turn(
+    ctx: CliContext,
+    agent: Any,
+    message: str,
+    ds: Any,
+    thread_id: str,
+) -> None:
+    """阻塞模式: invoke 一次性拿结果。流式不可用时的降级路径。"""
     ds.info("Thinking...")
     try:
-        result = agent.invoke(message)
+        result = agent.invoke(message, thread_id=thread_id)
+        messages = result.get("messages", []) if isinstance(result, dict) else []
 
-        messages = result.get("messages", [])
-
-        # 工具产生的文件改动以 diff 形式预览, 方便用户审阅
+        # 工具产生的文件改动以 diff 形式预览
         diff_text = _extract_diff_from_messages(messages)
         if diff_text:
             ds.info("文件改动预览:")
@@ -226,13 +355,44 @@ def _run_one_turn(
         if messages:
             last_msg = messages[-1]
             content = (
-                last_msg.content
-                if hasattr(last_msg, "content")
-                else str(last_msg)
+                last_msg.content if hasattr(last_msg, "content") else str(last_msg)
             )
-            ds.render_message("assistant", content)
+            if not isinstance(content, str):
+                content = str(content)
+            # 阻塞模式也走 Markdown 渲染, 跟流式保持一致
+            ctx.console.print("[bold magenta]Huginn:[/bold magenta]")
+            ctx.console.print(Markdown(content))
         else:
             ds.info(str(result))
 
+    except KeyboardInterrupt:
+        # Ctrl+C 中断当前这轮, 不退出 chat 循环
+        ds.warning("[interrupted by user]")
     except Exception as e:
         ds.error(str(e))
+
+
+if __name__ == "__main__":
+    # 纯函数自检: AIMessage 分类逻辑, 不依赖 agent / Rich
+    class _FakeMsg:
+        def __init__(self, content, tool_calls=None):
+            self.content = content
+            self.tool_calls = tool_calls or []
+
+    # 纯文本回复 → answer
+    k, t, names = _ai_message_view(_FakeMsg("hello world"))
+    assert k == "answer" and t == "hello world" and names == [], (k, t, names)
+
+    # 带工具调用 → thought, 文本是推理过程
+    k, t, names = _ai_message_view(
+        _FakeMsg("先搜一下", tool_calls=[{"name": "search", "args": {}}])
+    )
+    assert k == "thought" and t == "先搜一下" and names == ["search"], (k, t, names)
+
+    # 多模态 content blocks → 拍平成纯文本
+    k, t, _ = _ai_message_view(
+        _FakeMsg([{"type": "text", "text": "hi"}, {"type": "image"}])
+    )
+    assert k == "answer" and t == "hi", (k, t)
+
+    print("chat.py self-check OK")

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import re
 import subprocess
@@ -30,6 +31,7 @@ except ImportError:
     huginn_ext = None
     _HAS_HUGINN_EXT = False
 
+logger = logging.getLogger(__name__)
 
 # submit_async 实际可以跑的 LAMMPS 计算类型
 _LAMMPS_COMPUTE_ACTIONS = ("run", "minimize", "equilibrate")
@@ -181,7 +183,7 @@ class LammpsTool(HuginnTool):
             if exe:
                 return exe
         except Exception:
-            pass
+            logger.debug("suppressed in _find_lammps", exc_info=True)
 
         # Check common Windows locations (with glob for unicode paths)
         patterns = [
@@ -291,7 +293,7 @@ class LammpsTool(HuginnTool):
                     "lammps_tool", args.model_dump(), output=dict(analysis)
                 ).to_dict()
             except Exception:
-                pass
+                logger.debug("suppressed in estimate_cost", exc_info=True)
             return ToolResult(
                 data=analysis,
                 success="error" not in analysis,
@@ -432,7 +434,7 @@ class LammpsTool(HuginnTool):
                             error = f"Physics audit found errors: {errs}"
                             soft_failure_msg = error
                     except Exception:
-                        pass  # 审计本身挂了不能阻塞结果
+                        logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
                 if error is None:
                     break  # 真正成功
@@ -510,7 +512,7 @@ class LammpsTool(HuginnTool):
                     )
                     data["physics_audit"] = audit_report.to_dict()
                 except Exception:
-                    pass  # audit is best-effort, never block the result
+                    logger.debug("audit is best-effort, never block the result", exc_info=True)
 
             if autoheal_log:
                 data["autoheal_attempts"] = autoheal_log
@@ -524,7 +526,7 @@ class LammpsTool(HuginnTool):
                     "lammps_tool", args.model_dump(), output=dict(data)
                 ).to_dict()
             except Exception:
-                pass  # provenance 失败不能把计算结果带挂
+                logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
 
             return ToolResult(
                 data=data,
@@ -726,7 +728,7 @@ class LammpsTool(HuginnTool):
                         if numeric_count >= len(parts) - 1:
                             data_rows.append([self._to_float_or_str(p) for p in parts])
                     except ValueError:
-                        pass
+                        logger.debug("suppressed in _parse_log", exc_info=True)
 
             if data_rows and columns:
                 # Transpose: columns[0] is Step, columns[1] is Temp, etc.
@@ -995,7 +997,7 @@ class LammpsTool(HuginnTool):
                     except ValueError:
                         params["neighbor"] = parts[1]
         except Exception:
-            pass
+            logger.debug("suppressed in _read_script_params", exc_info=True)
         return params
 
     def _try_autofix(
@@ -1066,7 +1068,7 @@ class LammpsTool(HuginnTool):
                 if "error" not in result:
                     return result
             except Exception:
-                pass
+                logger.debug("suppressed in parse_trajectory", exc_info=True)
 
         return self._parse_trajectory_python(traj_path)
 

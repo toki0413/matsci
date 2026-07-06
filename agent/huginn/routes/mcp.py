@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import traceback
 from pathlib import Path
@@ -72,33 +73,50 @@ async def connect_mcp_server(
         get_context().mcp_manager = MCPClientManager()
 
     name = params.get("name", "")
-    command = params.get("command", "python")
-    args = params.get("args", [])
-    env = params.get("env")
     if not name:
         return {"success": False, "error": "name is required"}
 
-    # Command whitelist: only allow known-safe interpreters
-    _ALLOWED_COMMANDS = {"python", "python3", "node", "npx", "uvx"}
-    if command not in _ALLOWED_COMMANDS:
-        return {
-            "success": False,
-            "error": f"Command '{command}' not in allowed list: {_ALLOWED_COMMANDS}",
-        }
+    transport = params.get("transport", "stdio")
 
     try:
         from huginn.mcp_client import MCPServerConfig
-        from huginn.tools.mcp_adapter import register_mcp_tools
+        from huginn.tools.mcp_adapter import register_mcp_prompts, register_mcp_tools
 
-        await get_context().mcp_manager.connect(
-            MCPServerConfig(
-                name=name,
-                command=command,
-                args=args,
-                env=env,
+        if transport == "sse":
+            # SSE spawns no local process, so the command whitelist doesn't
+            # apply — we just need a reachable URL.
+            url = params.get("url")
+            if not url:
+                return {
+                    "success": False,
+                    "error": "url is required for SSE transport",
+                }
+            await get_context().mcp_manager.connect(
+                MCPServerConfig(
+                    name=name, command="", args=[], transport="sse", url=url
+                )
             )
-        )
+        else:
+            command = params.get("command", "python")
+            args = params.get("args", [])
+            env = params.get("env")
+
+            # Command whitelist: only allow known-safe interpreters
+            _ALLOWED_COMMANDS = {"python", "python3", "node", "npx", "uvx"}
+            if command not in _ALLOWED_COMMANDS:
+                return {
+                    "success": False,
+                    "error": f"Command '{command}' not in allowed list: {_ALLOWED_COMMANDS}",
+                }
+
+            await get_context().mcp_manager.connect(
+                MCPServerConfig(name=name, command=command, args=args, env=env)
+            )
+
         registered = register_mcp_tools(get_context().mcp_manager, server_name=name)
+        # Prompts are optional; failure to list them shouldn't sink the connect.
+        with contextlib.suppress(Exception):
+            await register_mcp_prompts(get_context().mcp_manager, server_name=name)
         return {
             "success": True,
             "server": name,
@@ -147,11 +165,13 @@ async def reconnect_mcp_server(name: str) -> dict[str, Any]:
         return {"success": False, "error": "MCP manager not initialized"}
 
     try:
-        from huginn.tools.mcp_adapter import register_mcp_tools
+        from huginn.tools.mcp_adapter import register_mcp_prompts, register_mcp_tools
 
         success = await mgr.reconnect(name)
         if success:
             registered = register_mcp_tools(mgr, server_name=name)
+            with contextlib.suppress(Exception):
+                await register_mcp_prompts(mgr, server_name=name)
             return {
                 "success": True,
                 "server": name,
@@ -228,5 +248,69 @@ async def connect_mcp_batch(
                 {"name": name, "ok": ok} for name, ok in results.items()
             ],
         }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/mcp/prompts")
+async def list_mcp_prompts() -> dict[str, Any]:
+    """List prompts exposed by every connected MCP server.
+
+    Returns ``{prompts: {server_name: [{name, description, arguments}, ...]}}``.
+    """
+    mgr = get_context().mcp_manager
+    if mgr is None:
+        return {"prompts": {}}
+    try:
+        return {"prompts": await mgr.list_prompts()}
+    except Exception as e:
+        logger.error("list_mcp_prompts failed", exc_info=True)
+        return {"prompts": {}, "error": str(e)}
+
+
+@router.post("/mcp/prompts/{name}/get")
+async def get_mcp_prompt(
+    name: str, args: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Render a prompt by name from the first server that has it.
+
+    Body is the prompt's arguments (may be empty). Returns the concatenated
+    message text under ``content``.
+    """
+    mgr = get_context().mcp_manager
+    if mgr is None:
+        return {"success": False, "error": "MCP manager not initialized"}
+    try:
+        text = await mgr.get_prompt(name, args)
+        return {"success": True, "prompt": name, "content": text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/mcp/resources/subscribe")
+async def subscribe_mcp_resource(
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Subscribe to updates for an MCP resource URI.
+
+    Body: ``{"uri": "..."}``. HTTP can't hold a client callback open, so this
+    establishes the subscription on every connected server and logs updates
+    server-side. In-process callers that need push delivery should call
+    ``mcp_manager.subscribe_resource(uri, callback)`` directly.
+    """
+    mgr = get_context().mcp_manager
+    if mgr is None:
+        return {"success": False, "error": "MCP manager not initialized"}
+
+    uri = params.get("uri")
+    if not uri:
+        return {"success": False, "error": "uri is required"}
+
+    async def _log_update(changed_uri: str) -> None:
+        logger.info("MCP resource updated: %s", changed_uri)
+
+    try:
+        await mgr.subscribe_resource(uri, _log_update)
+        return {"success": True, "uri": uri}
     except Exception as e:
         return {"success": False, "error": str(e)}

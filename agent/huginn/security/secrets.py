@@ -66,9 +66,24 @@ class EnvSecretBackend(SecretBackend):
             self._load_persisted()
 
     def _load_persisted(self) -> None:
+        import os
         try:
-            with open(self._persist_file, encoding="utf-8") as f:
-                self._store = json.load(f)
+            with open(self._persist_file, "rb") as f:
+                raw = f.read()
+            # Try encrypted format first, fall back to legacy plaintext
+            try:
+                from cryptography.fernet import Fernet
+                key_path = os.path.join(
+                    os.path.dirname(self._persist_file), ".secret_key"
+                )
+                with open(key_path, "rb") as kf:
+                    key = kf.read()
+                fernet = Fernet(key)
+                decrypted = fernet.decrypt(raw)
+                self._store = json.loads(decrypted)
+            except Exception:
+                # Legacy plaintext — migrate on next save
+                self._store = json.loads(raw.decode("utf-8"))
             # Merge into env so other code sees them
             for k, v in self._store.items():
                 os.environ.setdefault(k, v)
@@ -76,9 +91,36 @@ class EnvSecretBackend(SecretBackend):
             self._store = {}
 
     def _save_persisted(self) -> None:
-        if self._persist_file:
-            with open(self._persist_file, "w", encoding="utf-8") as f:
-                json.dump(self._store, f, indent=2)
+        if not self._persist_file:
+            return
+        # Encrypt at rest — never write secrets as plaintext JSON.
+        from cryptography.fernet import Fernet
+        import tempfile, os
+        key_path = os.path.join(os.path.dirname(self._persist_file), ".secret_key")
+        try:
+            if os.path.exists(key_path):
+                with open(key_path, "rb") as f:
+                    key = f.read()
+            else:
+                key = Fernet.generate_key()
+                with open(key_path, "wb") as f:
+                    f.write(key)
+                os.chmod(key_path, 0o600)
+            fernet = Fernet(key)
+            payload = json.dumps(self._store).encode("utf-8")
+            encrypted = fernet.encrypt(payload)
+            # Atomic write
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self._persist_file))
+            try:
+                os.write(fd, encrypted)
+                os.close(fd)
+                os.replace(tmp, self._persist_file)
+            except Exception:
+                os.close(fd) if not os.get_inheritable(fd) else None
+                os.unlink(tmp)
+                raise
+        except Exception as e:
+            logger.error("Failed to encrypt persisted secrets: %s", e)
 
     def get(self, name: str) -> str | None:
         return os.environ.get(name)

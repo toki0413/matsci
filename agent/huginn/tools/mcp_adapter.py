@@ -202,6 +202,53 @@ class MCPToolAdapter(HuginnTool):
             return ToolResult(data=None, success=False, error=f"MCP tool error: {e}")
 
 
+class MCPPromptAdapter(HuginnTool):
+    """Wraps an MCP prompt as a HuginnTool so the agent can render it.
+
+    Prompts aren't tools in the MCP sense, but exposing them through the tool
+    registry lets the agent call them like any other capability: the rendered
+    message text comes back as the tool result and can be fed into context.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        arguments: list[dict[str, Any]],
+        client_manager: MCPClientManager,
+    ):
+        self._prompt_name = name
+        self._client_manager = client_manager
+        # Prefix so prompt adapters never collide with same-named MCP tools.
+        self.name = f"prompt_{name}"
+        self.description = description or f"MCP prompt: {name}"
+        # Prompt arguments are always strings in the MCP spec.
+        properties = {
+            a["name"]: {"type": "string", "description": a.get("description", "")}
+            for a in arguments
+        }
+        required = [a["name"] for a in arguments if a.get("required")]
+        self.input_schema = _schema_to_pydantic(
+            {"type": "object", "properties": properties, "required": required},
+            f"{name}PromptInput",
+        )
+
+    def is_read_only(self, args: BaseModel) -> bool:
+        # Rendering a prompt only produces text, never mutates state.
+        return True
+
+    async def call(self, args: BaseModel, context: ToolContext) -> ToolResult:
+        try:
+            arguments = args.model_dump(exclude_none=True)
+            text = await self._client_manager.get_prompt(self._prompt_name, arguments)
+            return ToolResult(
+                data={"prompt": self._prompt_name, "content": text},
+                success=True,
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"MCP prompt error: {e}")
+
+
 def register_mcp_tools(
     client_manager: MCPClientManager,
     server_name: str | None = None,
@@ -253,3 +300,38 @@ def register_mcp_tools(
         )
 
     return tools
+
+
+async def register_mcp_prompts(
+    client_manager: MCPClientManager,
+    server_name: str | None = None,
+) -> list[HuginnTool]:
+    """Discover MCP prompts and register each as a HuginnTool.
+
+    Async because :meth:`MCPClientManager.list_prompts` is. When *server_name*
+    is given, only prompts from that server are registered (used during
+    reconnect). Returns the list of registered prompt adapters.
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    prompts_by_server = await client_manager.list_prompts()
+    adapters: list[HuginnTool] = []
+    for srv, prompts in prompts_by_server.items():
+        if server_name and srv != server_name:
+            continue
+        for p in prompts:
+            adapter = MCPPromptAdapter(
+                name=p["name"],
+                description=p.get("description", ""),
+                arguments=p.get("arguments", []),
+                client_manager=client_manager,
+            )
+            ToolRegistry.register(adapter)
+            adapters.append(adapter)
+
+    if adapters:
+        logger.info(
+            f"Registered {len(adapters)} MCP prompt(s) "
+            f"from server '{server_name or 'all'}'"
+        )
+    return adapters

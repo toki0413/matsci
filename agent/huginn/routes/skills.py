@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+import tempfile
+import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from huginn.server_core import get_agent_factory, get_memory_manager
 from huginn.skills.base import DeclarativeSkillExecutor
 from huginn.skills.registry import SkillRegistry
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["skills"])
 
@@ -72,3 +78,66 @@ async def execute_skill(params: dict[str, Any]) -> dict[str, Any]:
             if isinstance(v, safe_types)
         }
     return result
+
+
+@router.post("/skills/import")
+async def import_skill(
+    file: UploadFile | None = File(None),
+    path: str | None = Form(None),
+    platform: str = Form("auto"),
+) -> dict[str, Any]:
+    """导入 OpenClaw / Hermes / Huginn 格式的技能文件或目录。
+
+    两种用法二选一：
+    - 上传单个 SKILL.md（multipart file 字段）
+    - 给服务器本地路径 path（文件或目录均可）
+    platform 默认 auto，按 frontmatter 自动识别来源。
+    导入成功的技能会注册进 SkillRegistry，立刻能在 GET /skills 里看到。
+    """
+    from huginn.plugins.skill_importer import SkillImporter
+
+    importer = SkillImporter()
+    skills = []
+
+    if file is not None:
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="上传文件为空")
+        # 落临时文件再交给导入器，和 document.py 一个套路
+        tmp = Path(tempfile.gettempdir()) / f"skill_{uuid.uuid4().hex}.md"
+        try:
+            tmp.write_bytes(raw)
+            skills = [importer.import_file(tmp, platform)]
+        finally:
+            tmp.unlink(missing_ok=True)
+    elif path:
+        p = Path(path)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail=f"路径不存在: {path}")
+        if p.is_dir():
+            skills = importer.import_directory(p, platform)
+        else:
+            skills = [importer.import_file(p, platform)]
+    else:
+        raise HTTPException(
+            status_code=400, detail="需要上传文件或提供 path 参数"
+        )
+
+    for s in skills:
+        SkillRegistry.register(s)
+
+    logger.info("从 %s 导入 %d 个技能", path or file.filename, len(skills))
+    return {
+        "count": len(skills),
+        "imported": [
+            {
+                "name": s.name,
+                "description": s.description,
+                "platform": s.metadata.get("platform", "unknown"),
+                "steps": len(s.steps),
+                "required_tools": s.required_tools,
+                "tags": s.tags,
+            }
+            for s in skills
+        ],
+    }

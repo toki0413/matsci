@@ -100,6 +100,16 @@ class PhysicsAuditor:
         elif tool_name in ("qe_tool", "cp2k_tool"):
             # QE/CP2K share similar energy/convergence semantics with VASP
             self._audit_vasp(report, action, parsed, input_params)
+        elif tool_name == "gaussian_tool":
+            self._audit_gaussian(report, action, parsed, input_params)
+        elif tool_name == "orca_tool":
+            self._audit_orca(report, action, parsed, input_params)
+        elif tool_name == "gromacs_tool":
+            self._audit_gromacs(report, action, parsed, input_params)
+        elif tool_name == "abaqus_tool":
+            self._audit_abaqus(report, action, parsed, input_params)
+        elif tool_name == "comsol_tool":
+            self._audit_comsol(report, action, parsed, input_params)
         else:
             # Unknown tool, skip
             pass
@@ -348,6 +358,593 @@ class PhysicsAuditor:
                     expected_range="numeric energy value",
                 )
             )
+
+    # ── Gaussian / quantum chemistry checks ───────────────────────
+
+    def _audit_gaussian(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            energy = parsed.get("energy")
+            frequencies = parsed.get("frequencies", [])
+            scf_failure = parsed.get("scf_convergence_failure", False)
+            charge = parsed.get("charge", params.get("charge"))
+            multiplicity = parsed.get("multiplicity", params.get("multiplicity"))
+
+            # 1. SCF non-convergence
+            if scf_failure:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message="SCF failed to converge — electronic structure is unreliable",
+                        field="scf_convergence",
+                        value=True,
+                        expected_range="converged SCF",
+                    )
+                )
+
+            # 2. Imaginary frequencies (negative eigenvalues in freq calc).
+            # Small negative (~< 50 cm^-1) is often numerical noise; large
+            # negative means the structure is a saddle point, not a minimum.
+            if frequencies and action == "freq":
+                imaginary = [f for f in frequencies if f < 0]
+                if imaginary:
+                    most_negative = min(imaginary)
+                    if most_negative < -100:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="error",
+                                category="unphysical_value",
+                                message=(
+                                    f"Large imaginary frequency ({most_negative:.1f} cm^-1) — "
+                                    "structure is a saddle point, not a true minimum"
+                                ),
+                                field="frequencies",
+                                value=most_negative,
+                                expected_range="> 0 cm^-1 for a true minimum",
+                            )
+                        )
+                    elif most_negative < -10:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="warning",
+                                category="unphysical_value",
+                                message=(
+                                    f"Small imaginary frequency ({most_negative:.1f} cm^-1) — "
+                                    "likely numerical noise or incomplete optimization"
+                                ),
+                                field="frequencies",
+                                value=most_negative,
+                                expected_range="> 0 cm^-1 for a true minimum",
+                            )
+                        )
+
+            # 3. Energy magnitude sanity — Gaussian reports Hartrees.
+            # Bound molecules should have negative energy; extremely negative
+            # suggests wrong pseudopotential/basis or wrong atom count.
+            if energy is not None:
+                if energy > 0:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                f"SCF energy is positive ({energy:.4f} Hartree) — "
+                                "check charge/multiplicity or basis set"
+                            ),
+                            field="energy",
+                            value=energy,
+                            expected_range="< 0 Hartree for bound molecules",
+                        )
+                    )
+                elif energy < -50000:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                f"SCF energy extremely negative ({energy:.4f} Hartree) — "
+                                "check basis set or atom count"
+                            ),
+                            field="energy",
+                            value=energy,
+                            expected_range="-2000 to 0 Hartree for typical molecules",
+                        )
+                    )
+
+            # 4. Charge/multiplicity consistency
+            if multiplicity is not None:
+                try:
+                    m = int(multiplicity)
+                    if m < 1:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="error",
+                                category="parameter_mismatch",
+                                message=f"Multiplicity {m} is invalid — must be >= 1",
+                                field="multiplicity",
+                                value=m,
+                                expected_range=">= 1",
+                            )
+                        )
+                    elif m > 7:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="warning",
+                                category="parameter_mismatch",
+                                message=(
+                                    f"High spin multiplicity ({m}) — verify intended "
+                                    "(e.g. transition metal cluster)"
+                                ),
+                                field="multiplicity",
+                                value=m,
+                                expected_range="1-7 for typical molecules",
+                            )
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+            if charge is not None:
+                try:
+                    q = int(charge)
+                    if abs(q) > 10:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="warning",
+                                category="parameter_mismatch",
+                                message=f"Extreme charge ({q:+d}) — verify charge state is intended",
+                                field="charge",
+                                value=q,
+                                expected_range="-10 to +10 for typical molecules",
+                            )
+                        )
+                except (ValueError, TypeError):
+                    pass
+        except Exception:
+            logger.debug("gaussian audit failed", exc_info=True)
+
+    # ── ORCA / quantum chemistry checks ───────────────────────────
+
+    def _audit_orca(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            energy = parsed.get("energy")
+            frequencies = parsed.get("frequencies", [])
+            converged = parsed.get("converged", False)
+            opt_steps = parsed.get("optimization_steps", 0)
+
+            # 1. SCF non-convergence — no FINAL SINGLE POINT ENERGY means SCF failed
+            if energy is None and action in ("sp", "opt", "freq"):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message="No FINAL SINGLE POINT ENERGY — SCF likely did not converge",
+                        field="energy",
+                        value=None,
+                        expected_range="finite energy value",
+                    )
+                )
+
+            # 2. Imaginary frequencies (same logic as Gaussian)
+            if frequencies and action == "freq":
+                imaginary = [f for f in frequencies if f < 0]
+                if imaginary:
+                    most_negative = min(imaginary)
+                    if most_negative < -100:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="error",
+                                category="unphysical_value",
+                                message=(
+                                    f"Large imaginary frequency ({most_negative:.1f} cm^-1) — "
+                                    "structure is a saddle point, not a true minimum"
+                                ),
+                                field="frequencies",
+                                value=most_negative,
+                                expected_range="> 0 cm^-1 for a true minimum",
+                            )
+                        )
+                    elif most_negative < -10:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="warning",
+                                category="unphysical_value",
+                                message=(
+                                    f"Small imaginary frequency ({most_negative:.1f} cm^-1) — "
+                                    "likely numerical noise or incomplete optimization"
+                                ),
+                                field="frequencies",
+                                value=most_negative,
+                                expected_range="> 0 cm^-1 for a true minimum",
+                            )
+                        )
+
+            # 3. Energy magnitude sanity (Hartrees, same range as Gaussian)
+            if energy is not None:
+                if energy > 0:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                f"Energy is positive ({energy:.4f} Hartree) — "
+                                "check charge/multiplicity or basis set"
+                            ),
+                            field="energy",
+                            value=energy,
+                            expected_range="< 0 Hartree for bound molecules",
+                        )
+                    )
+                elif energy < -50000:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                f"Energy extremely negative ({energy:.4f} Hartree) — "
+                                "check basis set or atom count"
+                            ),
+                            field="energy",
+                            value=energy,
+                            expected_range="-2000 to 0 Hartree for typical molecules",
+                        )
+                    )
+
+            # 4. Optimization suspicious — too many steps without converging
+            if action == "opt" and not converged and opt_steps > 50:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="convergence_suspicious",
+                        message=(
+                            f"Optimization ran {opt_steps} steps without converging — "
+                            "check initial geometry or convergence thresholds"
+                        ),
+                        field="optimization_steps",
+                        value=opt_steps,
+                        expected_range="< 50 steps for typical optimizations",
+                    )
+                )
+        except Exception:
+            logger.debug("orca audit failed", exc_info=True)
+
+    # ── GROMACS / MD checks ────────────────────────────────────────
+
+    def _audit_gromacs(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            md_log = parsed.get("md_log_data", {})
+            stdout = str(parsed.get("stdout", ""))
+            stderr = str(parsed.get("stderr", ""))
+            full_text = (stdout + "\n" + stderr).lower()
+
+            # 1. LINCS/SHAKE constraint warnings
+            lincs = md_log.get("lincs_warnings", 0)
+            if lincs > 0:
+                severity = "error" if lincs > 10 else "warning"
+                report.findings.append(
+                    PhysicsFinding(
+                        severity=severity,
+                        category="convergence_suspicious",
+                        message=(
+                            f"{lincs} LINCS warning(s) — constraint violations, "
+                            "timestep may be too large"
+                        ),
+                        field="lincs_warnings",
+                        value=lincs,
+                        expected_range="0",
+                    )
+                )
+
+            shake = md_log.get("shake_warnings", 0)
+            if shake > 0:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="convergence_suspicious",
+                        message=f"{shake} SHAKE warning(s) — constraint violations",
+                        field="shake_warnings",
+                        value=shake,
+                        expected_range="0",
+                    )
+                )
+
+            # 2. Neighbor list warnings
+            nl_warnings = md_log.get("neighbor_list_warnings", 0)
+            if nl_warnings > 0:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="convergence_suspicious",
+                        message=(
+                            f"{nl_warnings} neighbor list warning(s) — "
+                            "check nstlist or cutoff distance"
+                        ),
+                        field="neighbor_list_warnings",
+                        value=nl_warnings,
+                        expected_range="0",
+                    )
+                )
+
+            # 3. Temperature spikes
+            temps = md_log.get("temperatures", [])
+            if temps:
+                max_temp = max(temps)
+                if max_temp > 10000:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                f"Temperature reached {max_temp:.0f} K — "
+                                "system likely destabilized"
+                            ),
+                            field="temperature",
+                            value=max_temp,
+                            expected_range="< 10000 K for condensed matter",
+                        )
+                    )
+
+            # 4. Pressure extremes
+            presses = md_log.get("pressures", [])
+            if presses:
+                max_press = max(abs(p) for p in presses)
+                if max_press > 100000:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                f"Pressure reached {max_press:.0f} bar — extremely high"
+                            ),
+                            field="pressure",
+                            value=max_press,
+                            expected_range="< 100000 bar for typical simulations",
+                        )
+                    )
+
+            # 5. Energy drift — NVE should conserve total energy.
+            # Compare the average of the first half to the second half; a
+            # shift > 1% is a red flag for timestep or thermostat issues.
+            energies = md_log.get("energies", [])
+            if len(energies) >= 10:
+                half = len(energies) // 2
+                early_avg = sum(energies[:half]) / half
+                late_avg = sum(energies[half:]) / (len(energies) - half)
+                drift = abs(late_avg - early_avg)
+                if early_avg != 0 and abs(drift / early_avg) > 0.01:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="thermodynamic_violation",
+                            message=(
+                                f"Energy drift {drift:.4f} kJ/mol "
+                                f"({abs(drift / early_avg) * 100:.2f}% of average) — "
+                                "check timestep or thermostat"
+                            ),
+                            field="total_energy",
+                            value=drift,
+                            expected_range="< 1% drift for NVE",
+                        )
+                    )
+
+            # 6. NaN/Inf blowup
+            if md_log.get("has_nan", False) or "nan" in full_text or "inf" in full_text:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="unphysical_value",
+                        message="NaN or Inf detected in output — simulation has blown up",
+                        field="output",
+                        value="NaN/Inf",
+                        expected_range="finite numbers",
+                    )
+                )
+        except Exception:
+            logger.debug("gromacs audit failed", exc_info=True)
+
+    # ── Abaqus / FEA checks ────────────────────────────────────────
+
+    def _audit_abaqus(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            stdout = str(parsed.get("stdout", ""))
+            stderr = str(parsed.get("stderr", ""))
+            text = (stdout + "\n" + stderr).upper()
+
+            # 1. Non-convergence — Abaqus prints these in .msg/stdout
+            if any(kw in text for kw in [
+                "CONVERGENCE IS JUDGED UNSATISFACTORY",
+                "HAS NOT CONVERGED",
+                "TOO MANY ATTEMPTS",
+                "ABORTED",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message=(
+                            "Abaqus analysis did not converge — check step controls, "
+                            "mesh, or material model"
+                        ),
+                        field="convergence",
+                        value="failed",
+                        expected_range="converged",
+                    )
+                )
+
+            # 2. Excessive plastic strain — material curve exceeded
+            if "PLASTIC STRAIN" in text and "EXCEED" in text:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="unphysical_value",
+                        message=(
+                            "Plastic strain exceeds material limit — check material "
+                            "data or load magnitude"
+                        ),
+                        field="plastic_strain",
+                        value="exceeded",
+                        expected_range="within material curve",
+                    )
+                )
+
+            # 3. Zero-energy modes / hourglass — under-integrated elements
+            if any(kw in text for kw in ["HOURGLASS", "ZERO ENERGY MODE"]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="unphysical_value",
+                        message=(
+                            "Zero-energy (hourglass) modes detected — consider "
+                            "enhanced strain formulation or refined mesh"
+                        ),
+                        field="hourglass",
+                        value="detected",
+                        expected_range="none",
+                    )
+                )
+
+            # 4. Contact penetration anomalies
+            if "OVERCLOSURE" in text and "WARNING" in text:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="convergence_suspicious",
+                        message=(
+                            "Contact overclosure warnings — check contact stiffness "
+                            "or penalty settings"
+                        ),
+                        field="contact",
+                        value="overclosure",
+                        expected_range="no excessive overclosure",
+                    )
+                )
+
+            # 5. Excessive iterations / cutbacks — near limit point
+            if "TOO MANY ITERATIONS" in text or "CUT BACK" in text:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="convergence_suspicious",
+                        message=(
+                            "Excessive iterations or cutbacks — solution may be "
+                            "near a limit point"
+                        ),
+                        field="iterations",
+                        value="excessive",
+                        expected_range="within step limits",
+                    )
+                )
+        except Exception:
+            logger.debug("abaqus audit failed", exc_info=True)
+
+    # ── COMSOL / FEA checks ────────────────────────────────────────
+
+    def _audit_comsol(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            stdout = str(parsed.get("stdout", ""))
+            stderr = str(parsed.get("stderr", ""))
+            text = (stdout + "\n" + stderr).lower()
+
+            # 1. Non-convergence
+            if any(kw in text for kw in [
+                "did not converge",
+                "not converged",
+                "convergence failure",
+                "failed to converge",
+                "non-converged",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message=(
+                            "COMSOL solver did not converge — check mesh, BCs, "
+                            "or solver settings"
+                        ),
+                        field="convergence",
+                        value="failed",
+                        expected_range="converged",
+                    )
+                )
+
+            # 2. Mesh quality warnings
+            if any(kw in text for kw in [
+                "mesh quality",
+                "inverted element",
+                "mesh element quality",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="unphysical_value",
+                        message=(
+                            "Mesh quality warnings — solution accuracy may be compromised"
+                        ),
+                        field="mesh",
+                        value="poor quality",
+                        expected_range="good mesh quality",
+                    )
+                )
+
+            # 3. Solution divergence
+            if any(kw in text for kw in ["diverged", "divergence"]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="unphysical_value",
+                        message=(
+                            "Solution divergence detected — check solver stability "
+                            "or physics settings"
+                        ),
+                        field="solution",
+                        value="diverged",
+                        expected_range="converged",
+                    )
+                )
+
+            # 4. NaN/Inf in solution
+            if any(kw in text for kw in ["nan", "inf", "not-a-number"]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="unphysical_value",
+                        message="NaN or Inf detected in COMSOL output — solution is invalid",
+                        field="solution",
+                        value="NaN/Inf",
+                        expected_range="finite numbers",
+                    )
+                )
+        except Exception:
+            logger.debug("comsol audit failed", exc_info=True)
 
     # ── helpers ────────────────────────────────────────────────────
 
