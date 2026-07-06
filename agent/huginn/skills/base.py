@@ -78,6 +78,9 @@ class SkillDefinition:
     required_tools: list[str] = field(default_factory=list)
     estimated_cost: dict[str, float] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
+    # 平台相关字段（when_to_use / paths / model / effort / 原始正文等）。
+    # 导入器把外来格式里 Huginn 没有的字段塞这里，导出时再取出来。
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_prompt(self) -> str:
         """Generate a natural language description for the LLM."""

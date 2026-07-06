@@ -6,6 +6,8 @@ message. Supports md_run, energy_minimize, and trajectory analysis.
 
 from __future__ import annotations
 
+import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +18,8 @@ from pydantic import BaseModel, Field
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class GromacsToolInput(BaseModel):
@@ -131,18 +135,36 @@ class GromacsTool(HuginnTool):
                 timeout=3600.0,
             )
             success = result.returncode == 0
+            data = {
+                "action": "md_run",
+                "returncode": result.returncode,
+                "nsteps": input_data.nsteps,
+                "stdout": result.stdout[-2000:] if result.stdout else "",
+                "stderr": result.stderr[-2000:] if result.stderr else "",
+                "message": (
+                    "MD run completed." if success
+                    else f"MD run failed (exit {result.returncode})."
+                ),
+            }
+
+            # Pull thermo data and warnings from the GROMACS .log file
+            log_path = tpr.with_suffix(".log")
+            data["md_log_data"] = self._parse_md_log(log_path)
+
+            # Physics audit — temperature spikes, LINCS warnings, energy drift, etc.
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit(
+                    "gromacs_tool", "md_run", data, input_data.model_dump()
+                )
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                logger.debug("audit failure can't block result delivery", exc_info=True)
+
             return ToolResult(
-                data={
-                    "action": "md_run",
-                    "returncode": result.returncode,
-                    "nsteps": input_data.nsteps,
-                    "stdout": result.stdout[-2000:] if result.stdout else "",
-                    "stderr": result.stderr[-2000:] if result.stderr else "",
-                    "message": (
-                        "MD run completed." if success
-                        else f"MD run failed (exit {result.returncode})."
-                    ),
-                },
+                data=data,
                 success=success,
                 error=None if success else f"gmx mdrun failed: {result.stderr[:300]}",
             )
@@ -186,17 +208,34 @@ class GromacsTool(HuginnTool):
                 timeout=3600.0,
             )
             success = result.returncode == 0
+            data = {
+                "action": "energy_minimize",
+                "returncode": result.returncode,
+                "nsteps": input_data.nsteps,
+                "stdout": result.stdout[-2000:] if result.stdout else "",
+                "stderr": result.stderr[-2000:] if result.stderr else "",
+                "message": (
+                    "Energy minimization completed." if success
+                    else f"EM failed (exit {result.returncode})."
+                ),
+            }
+
+            # Log parsing + physics audit (catch NaN/Inf, warnings even for EM)
+            log_path = tpr.with_suffix(".log")
+            data["md_log_data"] = self._parse_md_log(log_path)
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit(
+                    "gromacs_tool", "energy_minimize", data, input_data.model_dump()
+                )
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                logger.debug("audit failure can't block result delivery", exc_info=True)
+
             return ToolResult(
-                data={
-                    "action": "energy_minimize",
-                    "returncode": result.returncode,
-                    "nsteps": input_data.nsteps,
-                    "stdout": result.stdout[-2000:] if result.stdout else "",
-                    "message": (
-                        "Energy minimization completed." if success
-                        else f"EM failed (exit {result.returncode})."
-                    ),
-                },
+                data=data,
                 success=success,
                 error=None if success else f"gmx mdrun (EM) failed: {result.stderr[:300]}",
             )
@@ -271,3 +310,51 @@ class GromacsTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error="Trajectory analysis timed out."
             )
+
+    def _parse_md_log(self, log_path: Path) -> dict[str, Any]:
+        """Extract thermo data and warnings from a GROMACS .log file.
+
+        The .log is created by gmx mdrun alongside the trajectory. We pull
+        temperature/pressure/energy series plus counts of LINCS/SHAKE and
+        neighbor-list warnings so the auditor can flag instabilities.
+        """
+        data: dict[str, Any] = {
+            "temperatures": [],
+            "pressures": [],
+            "energies": [],
+            "lincs_warnings": 0,
+            "shake_warnings": 0,
+            "neighbor_list_warnings": 0,
+            "has_nan": False,
+        }
+        if not log_path.exists():
+            return data
+        try:
+            content = log_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return data
+
+        data["lincs_warnings"] = content.count("LINCS WARNING")
+        data["shake_warnings"] = content.count("SHAKE")
+        # "neighbor list" appears in routine header text too, so only count
+        # lines that look like actual performance warnings
+        nl_lines = re.findall(r"neighbor list.*exceed|update.*timesteps",
+                              content, re.IGNORECASE)
+        data["neighbor_list_warnings"] = len(nl_lines)
+
+        if re.search(r"\bnan\b|\binf\b", content, re.IGNORECASE):
+            data["has_nan"] = True
+
+        # Temperature — GROMACS prints "Temperature = 300.0" or similar
+        temps = re.findall(r"Temperature\s*=?\s*([\d.]+)", content)
+        data["temperatures"] = [float(t) for t in temps if float(t) > 0]
+
+        # Pressure
+        presses = re.findall(r"(?:Pres|Pressure)\s*=?\s*([-\d.]+)", content)
+        data["pressures"] = [float(p) for p in presses]
+
+        # Total energy
+        energies = re.findall(r"Total Energy\s*=?\s*([-\d.]+)", content)
+        data["energies"] = [float(e) for e in energies]
+
+        return data

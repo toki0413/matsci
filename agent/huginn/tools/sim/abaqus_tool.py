@@ -8,6 +8,7 @@ that can be run via `abaqus cae noGUI=script.py` or sent to the MCP server.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -18,6 +19,8 @@ from pydantic import BaseModel, Field, model_validator
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class StaticGeneralSpec(BaseModel):
@@ -193,7 +196,7 @@ class AbaqusTool(HuginnTool):
                         success=False,
                         error="run action requires an existing script_path.",
                     )
-                return self._execute_script(script_path, work_dir)
+                return self._execute_script(script_path, work_dir, action="run")
 
             # 5 个新 action: 生成脚本 + 可选执行
             script_generators = {
@@ -215,7 +218,7 @@ class AbaqusTool(HuginnTool):
             script_path = work_dir / f"{prefix}.py"
             script_path.write_text(script, encoding="utf-8")
 
-            exec_result = self._execute_script(script_path, work_dir)
+            exec_result = self._execute_script(script_path, work_dir, action=input_data.action)
             data = exec_result.data or {}
             data["script_path"] = str(script_path)
             data["action"] = input_data.action
@@ -238,13 +241,15 @@ class AbaqusTool(HuginnTool):
         script = self._generate_import_script(args, objects)
         script_path.write_text(script, encoding="utf-8")
 
-        exec_result = self._execute_script(script_path, work_dir)
+        exec_result = self._execute_script(script_path, work_dir, action="import_packing")
         data = exec_result.data or {}
         data["script_path"] = str(script_path)
         data["objects_imported"] = len(objects)
         return ToolResult(data=data, success=exec_result.success)
 
-    def _execute_script(self, script_path: Path, work_dir: Path) -> ToolResult:
+    def _execute_script(
+        self, script_path: Path, work_dir: Path, action: str = "run"
+    ) -> ToolResult:
         """Run an Abaqus Python script via CLI, or fall back to export."""
         if not self.abaqus_executable:
             return ToolResult(
@@ -269,19 +274,28 @@ class AbaqusTool(HuginnTool):
         result = self.sandbox.run(cmd, cwd=work_dir, config=cfg)
 
         success = result.returncode == 0
-        return ToolResult(
-            data={
-                "abaqus_available": True,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "message": (
-                    "Abaqus execution completed."
-                    if success
-                    else "Abaqus execution failed; see stderr."
-                ),
-            },
-            success=success,
-        )
+        data = {
+            "abaqus_available": True,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "message": (
+                "Abaqus execution completed."
+                if success
+                else "Abaqus execution failed; see stderr."
+            ),
+        }
+
+        # Physics audit — convergence, hourglass, plastic strain, contact issues
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit("abaqus_tool", action, data, {})
+            data["physics_audit"] = audit_report.to_dict()
+        except Exception:
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        return ToolResult(data=data, success=success)
 
     def _load_packing_data(
         self, packing_data: dict[str, Any] | str | None, work_dir: Path

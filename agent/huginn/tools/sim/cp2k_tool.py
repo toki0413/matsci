@@ -6,6 +6,7 @@ When CP2K is not installed, the tool falls back to input-export mode.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -17,6 +18,8 @@ from huginn.phases import ResearchPhase
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class Cp2kToolInput(BaseModel):
@@ -229,18 +232,32 @@ class Cp2kTool(HuginnTool):
 
         parsed = self._parse_output_file(output_path)
         success = result.get("returncode", -1) == 0
+        data = {
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+            "cp2k_available": True,
+            "parsed": parsed,
+            "message": (
+                "CP2K execution completed."
+                if success
+                else "CP2K execution failed; see output."
+            ),
+        }
+
+        # Physics audit — CP2K shares DFT energy/convergence semantics with VASP
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit(
+                "cp2k_tool", args.run_type, parsed, args.model_dump()
+            )
+            data["physics_audit"] = audit_report.to_dict()
+        except Exception:
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
         return ToolResult(
-            data={
-                "input_path": str(input_path),
-                "output_path": str(output_path),
-                "cp2k_available": True,
-                "parsed": parsed,
-                "message": (
-                    "CP2K execution completed."
-                    if success
-                    else "CP2K execution failed; see output."
-                ),
-            },
+            data=data,
             success=success,
         )
 

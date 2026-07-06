@@ -133,7 +133,7 @@ def _breaker_blocked(tool_name: str) -> dict[str, Any] | None:
                 "_circuit_open": True,
             }
     except Exception:
-        pass
+        logger.debug("suppressed in _breaker_blocked", exc_info=True)
     return None
 
 
@@ -160,7 +160,7 @@ def _record_outcome(
             tool_name, success, duration_sec, cache_hit=False, error=error
         )
     except Exception:
-        pass
+        logger.debug("suppressed in _record_outcome", exc_info=True)
 
 
 def _record_cache_hit(tool_name: str) -> None:
@@ -174,7 +174,7 @@ def _record_cache_hit(tool_name: str) -> None:
             tool_name, True, 0.0, cache_hit=True
         )
     except Exception:
-        pass
+        logger.debug("suppressed in _record_cache_hit", exc_info=True)
 
 
 class ToolAdapter:
@@ -267,7 +267,12 @@ class ToolAdapter:
             )
 
         def _check_permission(input_data: BaseModel) -> tuple[bool, str | None]:
-            """Return (approved, reason_or_none)."""
+            """Return (approved, reason_or_none).
+
+            Dangerous-command patterns are checked FIRST, before any
+            auto_approve_all bypass — yolo mode must never silently
+            execute rm -rf / or equivalent.
+            """
             name = tool.name
             mode = permission_config.get_mode(name)
             scope = tool.constraint_scope
@@ -283,6 +288,39 @@ class ToolAdapter:
                 if boundary_state.require_confirmation and mode == PermissionMode.AUTO:
                     mode = PermissionMode.ASK
 
+            # Dangerous pattern check — overrides auto_approve_all.
+            # This is the last-resort guard against catastrophic commands.
+            args = input_data.model_dump() if hasattr(input_data, "model_dump") else {}
+            from huginn.permissions import PermissionChecker
+            checker = PermissionChecker(permission_config)
+            is_dangerous, matched = checker._check_dangerous(name, args)
+            if is_dangerous:
+                reason = (
+                    f"Tool '{name}' matches dangerous pattern '{matched}' — "
+                    "requires explicit approval even in auto-approve mode"
+                )
+                if approval_callback is not None:
+                    if approval_callback(name, reason):
+                        return True, None
+                    return False, f"User denied: {reason}"
+                return False, reason
+
+            # Second layer: command_filter for broader pattern coverage
+            if name == "bash_tool":
+                from huginn.security.command_filter import check_command_safety
+                cmd = args.get("command", [])
+                safety = check_command_safety(cmd)
+                if not safety.is_safe:
+                    reason = (
+                        f"Command blocked by safety filter (pattern: "
+                        f"{safety.matched_pattern}). Requires explicit approval."
+                    )
+                    if approval_callback is not None:
+                        if approval_callback(name, reason):
+                            return True, None
+                        return False, f"User denied: {reason}"
+                    return False, reason
+
             if permission_config.auto_approve_all or mode == PermissionMode.AUTO:
                 return True, None
 
@@ -294,7 +332,7 @@ class ToolAdapter:
                 if tool.is_destructive(input_data):
                     reasons.append("this operation is destructive")
             except Exception:
-                pass
+                logger.debug("suppressed in _check_permission", exc_info=True)
 
             try:
                 cost = tool.estimate_cost(input_data)
@@ -303,7 +341,7 @@ class ToolAdapter:
                     if cpu > 1:
                         reasons.append(f"estimated cost: {cpu:.1f} CPU hours")
             except Exception:
-                pass
+                logger.debug("suppressed in _check_permission", exc_info=True)
 
             reason = f"Tool '{name}' requires approval"
             if reasons:
@@ -326,7 +364,7 @@ class ToolAdapter:
                 if tool.is_destructive(input_data):
                     return f"工具 {tool.name} 将执行破坏性操作"
             except Exception:
-                pass
+                logger.debug("suppressed in _needs_confirmation", exc_info=True)
             try:
                 cost = tool.estimate_cost(input_data)
                 if cost:
@@ -335,7 +373,7 @@ class ToolAdapter:
                     if wt > 0.5 or cpu > 2:
                         return f"工具 {tool.name} 预计耗时 {wt:.1f}h ({cpu:.1f} CPU核时)"
             except Exception:
-                pass
+                logger.debug("suppressed in _needs_confirmation", exc_info=True)
             return None
 
         async def _ask_confirmation(
@@ -358,8 +396,8 @@ class ToolAdapter:
                 )
                 return answer == "确认执行"
             except Exception:
-                # ClarificationManager 不可用时不阻断
-                return True
+                logger.warning("ClarificationManager unavailable, failing closed")
+                return False
 
         def _build_inputs(
             **kwargs: Any,

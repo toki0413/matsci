@@ -298,7 +298,7 @@ class AutoloopEngine:
                     event_type.name, stage_name,
                 )
         except Exception:
-            pass
+            logger.debug("suppressed in _get_event_bus", exc_info=True)
 
     def _build_kb_text(self, query: str) -> str:
         """检索领域知识库, 把命中 chunk 拼成 prompt 上下文块. KB 没装、
@@ -751,7 +751,7 @@ class AutoloopEngine:
                     rationale=context.get("summary", ""),
                 )
             except Exception:
-                pass
+                logger.debug("suppressed in _get_plan_store", exc_info=True)
 
             # 3. Plan
             phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
@@ -803,7 +803,7 @@ class AutoloopEngine:
                     if store is not None:
                         store.complete_plan(_plan_id)
                 except Exception:
-                    pass
+                    logger.debug("suppressed in _get_plan_store", exc_info=True)
 
             # gate: execute→validate — 必须有 mode (执行模式) 才放行
             if not self._check_gate(
@@ -833,7 +833,7 @@ class AutoloopEngine:
                             evidence={"errors": validation.get("errors", "tests failed")},
                         )
             except Exception:
-                pass
+                logger.debug("suppressed in _get_plan_store", exc_info=True)
 
             # 连续失败计数: 通过则清零, 不通过则累加并在阈值时问用户
             _tests_ok = _extract_tests_passed(validation)
@@ -905,7 +905,7 @@ class AutoloopEngine:
                             )
                             print(f"  → GoalJudge gaps: {gap_hint}")
                     except Exception:
-                        pass
+                        logger.debug("suppressed in _get_plan_store", exc_info=True)
 
         # 7. Report
         total_time = time.time() - start_time
@@ -927,7 +927,7 @@ class AutoloopEngine:
         try:
             self.memory.promote_session_summary(tier="long")
         except Exception:
-            pass
+            logger.debug("suppressed in _get_plan_store", exc_info=True)
 
         # 轨迹落盘: 把 telemetry span 树 + 工具调用 + phase 决策写成 JSON
         # best-effort: 写失败不影响 return
@@ -1063,7 +1063,7 @@ class AutoloopEngine:
                     cwd=self.workspace, capture_output=True, text=True, timeout=10,
                 ).stdout
         except Exception:
-            pass
+            logger.debug("suppressed in _perceive_legacy", exc_info=True)
         error_patterns = []
         for log_file in self.workspace.rglob("*.log"):
             if log_file.stat().st_mtime > time.time() - 3600:
@@ -1072,7 +1072,7 @@ class AutoloopEngine:
                     if "ERROR" in content or "FAIL" in content:
                         error_patterns.append(f"{log_file.name}: {content[:200]}")
                 except Exception:
-                    pass
+                    logger.debug("suppressed in _perceive_legacy", exc_info=True)
         if not changed_files and not error_patterns:
             return None
         return {
@@ -1352,7 +1352,7 @@ class AutoloopEngine:
             from huginn.provenance import capture
             record.add_snapshot(capture(tool_name, input_params, output=output))
         except Exception:
-            pass
+            logger.debug("suppressed in _record_provenance", exc_info=True)
 
     async def _try_evolved_fix(
         self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]
@@ -1373,7 +1373,7 @@ class AutoloopEngine:
                     patched_desc, {"_evolved_fix": True}
                 )
         except Exception:
-            pass
+            logger.debug("suppressed in _record_provenance", exc_info=True)
         return None
 
     async def _execute_dynamic_workflow(
@@ -1503,7 +1503,7 @@ class AutoloopEngine:
                 "skipped": report.skipped,
             }
         except Exception:
-            pass
+            logger.debug("suppressed in _record_provenance", exc_info=True)
 
         # 数学结构校验: 守恒律 (Bourbaki) + 变分原理 (Lean) + 自动微分 (AutoDiff).
         # 把物理/化学结论还原成数学约束来验证, 而非只靠 reviewer 文字点评.
@@ -1645,7 +1645,7 @@ class AutoloopEngine:
                 try:
                     numerics[key] = float(val)
                 except (TypeError, ValueError):
-                    pass
+                    logger.debug("suppressed in _record_provenance", exc_info=True)
         lattice = result_data.get("lattice_params") or {}
         if isinstance(lattice, dict):
             for param in ("a", "b", "c"):
@@ -1654,7 +1654,7 @@ class AutoloopEngine:
                     try:
                         numerics[f"lattice_{param}"] = float(val)
                     except (TypeError, ValueError):
-                        pass
+                        logger.debug("suppressed in _record_provenance", exc_info=True)
 
         if not numerics:
             return {}
@@ -1894,7 +1894,7 @@ class AutoloopEngine:
             data = json.loads(resp.strip())
             return float(data.get("score", 0.5)), str(data.get("reason", ""))
         except (json.JSONDecodeError, ValueError):
-            pass
+            logger.debug("suppressed in _parse_verify_score", exc_info=True)
 
         # fallback: 正则抠数字
         m = re.search(r"([01]\.\d+|[01])\b", resp)
@@ -2079,7 +2079,7 @@ class AutoloopEngine:
                         len(quantities) > 0 and not has_error
                     )
             except Exception:
-                pass
+                logger.debug("suppressed in _parse_verify_score", exc_info=True)
 
         # 3. pde_classification — 跑 pde_classify, 比对 expected vs actual
         pde_coeffs = execution_result.get("pde_coefficients")
@@ -2105,7 +2105,7 @@ class AutoloopEngine:
                         "actual": actual,
                     }
             except Exception:
-                pass
+                logger.debug("suppressed in _parse_verify_score", exc_info=True)
 
         # 4. sobol_top_features — 跑 sobol_indices, top features (S_i>0.1) 必须
         # 被 hypothesis_features 覆盖
@@ -2143,7 +2143,7 @@ class AutoloopEngine:
                             "hypothesis_features": list(hypothesis_features),
                         }
             except Exception:
-                pass
+                logger.debug("suppressed in _parse_verify_score", exc_info=True)
 
         # 5. constraint_check — 跑 constraint_check, 所有先验通过 → all_passed
         expr = execution_result.get("expression")
@@ -2168,7 +2168,7 @@ class AutoloopEngine:
                         "violations": vr.data.get("violations", []),
                     }
             except Exception:
-                pass
+                logger.debug("suppressed in _parse_verify_score", exc_info=True)
 
         return evidence
 
@@ -2249,7 +2249,7 @@ class AutoloopEngine:
                 tier="mid",
             )
         except Exception:
-            pass
+            logger.debug("suppressed in _build_reviewer_prompt", exc_info=True)
 
         # 奖励回流: 把 R_phys 喂给 evolution engine, 驱动基于奖励的进化
         # 这是阶段4 单轨的核心闭环——物理校验分数真正影响 agent 后续行为
@@ -2291,7 +2291,7 @@ class AutoloopEngine:
                     content=summary_text.encode("utf-8"),
                 )
         except Exception:
-            pass
+            logger.debug("suppressed in _build_reviewer_prompt", exc_info=True)
 
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
         # 让 ProjectKnowledgeGraph 随实验增长而非只读展示.
@@ -2306,7 +2306,7 @@ class AutoloopEngine:
             )
             self.kg.save()
         except Exception:
-            pass
+            logger.debug("suppressed in _build_reviewer_prompt", exc_info=True)
 
         # Benchmark 失败回写: 把验证失败写入 memory, 下次 _plan 能读到.
         if isinstance(validation, dict) and not validation.get("tests_passed", True):
@@ -2322,7 +2322,7 @@ class AutoloopEngine:
                     tier="mid",
                 )
             except Exception:
-                pass
+                logger.debug("suppressed in _build_reviewer_prompt", exc_info=True)
 
         # 把 plan 进度存进 long-term memory, 下次会话能接续
         _plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
@@ -2342,7 +2342,7 @@ class AutoloopEngine:
                             l1_coordinates=f"autoloop: {persisted.objective[:100]}",
                         )
             except Exception:
-                pass
+                logger.debug("suppressed in _build_reviewer_prompt", exc_info=True)
 
     async def _report(self, objective: str, phases: list[LoopPhase], total_time: float) -> str | None:
         """Generate a final report summarizing the loop."""
@@ -2578,7 +2578,7 @@ Math depth guidance (treat physics/chemistry as mathematics):
             if patches:
                 patch_hints = "\nLearned patches:\n" + "\n".join(f"  - {p}" for p in patches[:3]) + "\n"
         except Exception:
-            pass
+            logger.debug("suppressed in _build_plan_prompt", exc_info=True)
 
         return f"""Given the hypothesis: "{hypothesis}"
 {kb_block}{kg_block}{math_block}{skill_hints}{patch_hints}
@@ -2631,7 +2631,7 @@ DESCRIPTION: <brief description of what to do>
                 )
             )
         except RuntimeError:
-            pass
+            logger.debug("suppressed in _run_phase", exc_info=True)
         # 包 telemetry span: 把 phase 级决策也记进轨迹, 回放时不止看 tool_call
         from huginn.telemetry import get_telemetry_collector
         span_cm = get_telemetry_collector().span(f"phase:{name}")
@@ -2647,7 +2647,7 @@ DESCRIPTION: <brief description of what to do>
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
             except Exception:
-                pass
+                logger.debug("suppressed in _run_phase", exc_info=True)
         phase.end_time = time.time()
         # fire-and-forget 发结束/失败事件
         try:
@@ -2666,7 +2666,7 @@ DESCRIPTION: <brief description of what to do>
                 )
             )
         except RuntimeError:
-            pass
+            logger.debug("suppressed in _run_phase", exc_info=True)
         return phase
 
     async def _run_phase_async(self, name: str, fn, *args) -> LoopPhase:
@@ -2691,7 +2691,7 @@ DESCRIPTION: <brief description of what to do>
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
             except Exception:
-                pass
+                logger.debug("suppressed in _run_phase", exc_info=True)
         phase.end_time = time.time()
         if phase.status == "completed":
             await self._dispatch_stage_event(

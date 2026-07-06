@@ -6,6 +6,7 @@ Supports both real VASP execution (if available) and mock mode.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import subprocess
 import time
@@ -28,6 +29,7 @@ except ImportError:
     huginn_ext = None
     _HAS_HUGINN_EXT = False
 
+logger = logging.getLogger(__name__)
 
 # submit_async 实际可以跑的计算类型
 _COMPUTE_ACTIONS = ("relax", "scf", "band", "dos", "md", "phonon")
@@ -156,7 +158,7 @@ class VaspTool(HuginnTool):
                 if exe:
                     return exe
         except Exception:
-            pass
+            logger.debug("suppressed in _find_vasp", exc_info=True)
 
         return None
 
@@ -306,7 +308,7 @@ class VaspTool(HuginnTool):
                                 error = f"Physics audit found errors: {errs}"
                                 soft_failure_msg = error
                         except Exception:
-                            pass  # 审计本身挂了不能阻塞结果
+                            logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
                 if error is None:
                     break  # 真正成功
@@ -370,7 +372,7 @@ class VaspTool(HuginnTool):
                     )
                     data["physics_audit"] = audit_report.to_dict()
                 except Exception:
-                    pass  # audit failure can't block result delivery
+                    logger.debug("audit failure can't block result delivery", exc_info=True)
 
             # 带上 provenance 快照, 事后能追溯参数/版本/环境
             try:
@@ -380,7 +382,7 @@ class VaspTool(HuginnTool):
                     "vasp_tool", args.model_dump(), output=dict(data)
                 ).to_dict()
             except Exception:
-                pass  # provenance 失败不能把计算结果带挂
+                logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
 
             return ToolResult(
                 data=data,
@@ -428,10 +430,10 @@ class VaspTool(HuginnTool):
                     num = float(v)
                     v = int(num) if num == int(num) else num  # type: ignore[assignment]
                 except ValueError:
-                    pass
+                    logger.debug("suppressed in _read_incar_params", exc_info=True)
                 params[k] = v
         except Exception:
-            pass
+            logger.debug("suppressed in _read_incar_params", exc_info=True)
         return params
 
     def _try_autofix(self, work_dir: Path, stderr: str) -> dict[str, Any] | None:
@@ -618,7 +620,7 @@ class VaspTool(HuginnTool):
                 if "error" not in result:
                     return result
             except Exception:
-                pass
+                logger.debug("suppressed in _parse_outcar", exc_info=True)
 
         return self._parse_outcar_python(outcar_path)
 
@@ -658,7 +660,7 @@ class VaspTool(HuginnTool):
             result["converged"] = bool(oc.converged)
             result["parse_source"] = "pymatgen"
         except Exception:
-            pass  # pymatgen 没装或解析失败, 走下面的 regex
+            logger.debug("pymatgen 没装或解析失败, 走下面的 regex", exc_info=True)
 
         try:
             content = outcar_path.read_text(encoding="utf-8", errors="ignore")
@@ -780,12 +782,12 @@ class VaspTool(HuginnTool):
                 result["cbm"] = float(cbm) if cbm is not None else None
                 result["vbm"] = float(vbm) if vbm is not None else None
             except Exception:
-                pass
+                logger.debug("suppressed in _parse_vasprun_quick", exc_info=True)
             result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
             result["parse_source"] = "pymatgen_vasprun"
             return result
         except Exception:
-            pass  # pymatgen 没装或解析失败, 走 ElementTree
+            logger.debug("pymatgen 没装或解析失败, 走 ElementTree", exc_info=True)
 
         try:
             tree = ET.parse(vasprun_path)
@@ -857,7 +859,7 @@ class VaspTool(HuginnTool):
                 "vasp_tool", args.model_dump(), output=dict(data)
             ).to_dict()
         except Exception:
-            pass
+            logger.debug("suppressed in _mock_result", exc_info=True)
 
         return ToolResult(
             data=data,

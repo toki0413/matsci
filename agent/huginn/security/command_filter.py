@@ -28,6 +28,15 @@ _BLOCKED_PATTERNS: list[str] = [
     r">\s*/dev/sda",
     r"chmod\s+-R\s+777\s+/",
     r"chown\s+-R\s+.*\s+/",
+    # Windows dangerous patterns
+    r"\bformat\s+[a-z]:",
+    r"\bdel\s+/[fsq]\b",
+    r"\brmdir\s+/s\b",
+    r"\brd\s+/s\b",
+    r"powershell\s+-enc\b",
+    r"\bnc\s+-[elp]",
+    r"netcat\b",
+    r"crontab\s+-[er]",
 ]
 
 

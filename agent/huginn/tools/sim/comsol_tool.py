@@ -7,6 +7,7 @@ returns the generated COMSOL Java script so the user can run it manually.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class BoundaryCondition(BaseModel):
@@ -331,7 +334,7 @@ public class {prefix} {{
         script = self._generate_packing_import_script(prefix, objects)
         script_path.write_text(script, encoding="utf-8")
 
-        exec_result = self._execute_script(script_path, prefix, work_dir)
+        exec_result = self._execute_script(script_path, prefix, work_dir, action="import_packing")
         data = exec_result.data or {}
         data["script_path"] = str(script_path)
         data["objects_imported"] = len(objects)
@@ -392,10 +395,11 @@ public class {prefix} {{
         self, args: ComsolToolInput, work_dir: Path, script_path: Path
     ) -> ToolResult:
         """Run the generated COMSOL script via CLI, or fall back to script export."""
-        return self._execute_script(script_path, args.output_prefix, work_dir)
+        return self._execute_script(script_path, args.output_prefix, work_dir, action=args.action)
 
     def _execute_script(
-        self, script_path: Path, output_prefix: str, work_dir: Path
+        self, script_path: Path, output_prefix: str, work_dir: Path,
+        action: str = "run",
     ) -> ToolResult:
         """Run an existing COMSOL Java script via CLI, or fall back to export."""
         base_data = {"script_path": str(script_path)}
@@ -435,21 +439,30 @@ public class {prefix} {{
         result = self.sandbox.run(cmd, cwd=work_dir, config=cfg)
 
         success = result.returncode == 0
-        return ToolResult(
-            data={
-                **base_data,
-                "mph_path": str(mph_path) if mph_path.exists() else None,
-                "comsol_available": True,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "message": (
-                    "COMSOL execution completed."
-                    if success
-                    else "COMSOL execution failed; see stderr."
-                ),
-            },
-            success=success,
-        )
+        data = {
+            **base_data,
+            "mph_path": str(mph_path) if mph_path.exists() else None,
+            "comsol_available": True,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "message": (
+                "COMSOL execution completed."
+                if success
+                else "COMSOL execution failed; see stderr."
+            ),
+        }
+
+        # Physics audit — convergence, mesh quality, divergence, NaN/Inf
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit("comsol_tool", action, data, {})
+            data["physics_audit"] = audit_report.to_dict()
+        except Exception:
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        return ToolResult(data=data, success=success)
 
     def _parse_results(self, args: ComsolToolInput, work_dir: Path) -> ToolResult:
         """Parse COMSOL-exported CSV/TXT result files."""

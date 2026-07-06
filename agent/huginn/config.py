@@ -33,7 +33,7 @@ def _parse_queue_map(value: str | None) -> dict[str, str]:
         if isinstance(parsed, dict):
             return {str(k): str(v) for k, v in parsed.items()}
     except json.JSONDecodeError:
-        pass
+        logger.debug("suppressed in _parse_queue_map", exc_info=True)
     result: dict[str, str] = {}
     for part in value.split(","):
         if "=" in part:
@@ -85,12 +85,12 @@ def _file_lock(path: pathlib.Path):
                 import fcntl
                 fcntl.flock(fd, fcntl.LOCK_UN)
         except OSError:
-            pass
+            logger.debug("suppressed in _file_lock", exc_info=True)
         os.close(fd)
         try:
             lock_path.unlink()
         except OSError:
-            pass
+            logger.debug("suppressed in _file_lock", exc_info=True)
 
 
 def _would_lose_auth_state(cached: HuginnConfig, fresh: HuginnConfig) -> bool:
@@ -142,7 +142,7 @@ def _backup_before_save(path: pathlib.Path) -> None:
         try:
             old.unlink()
         except OSError:
-            pass
+            logger.debug("suppressed in _backup_before_save", exc_info=True)
 
 
 def _check_disk_freshness(path: pathlib.Path | None) -> bool:
@@ -194,7 +194,7 @@ def _atomic_write(
         try:
             tmp_path.unlink()
         except OSError:
-            pass
+            logger.debug("suppressed in _atomic_write", exc_info=True)
         raise
 
 
@@ -779,7 +779,7 @@ class HuginnConfig:
             if isinstance(data, dict):
                 return data
         except Exception:
-            pass
+            logger.debug("suppressed in _parse_thinking_env", exc_info=True)
         return None
 
     @staticmethod
@@ -802,7 +802,7 @@ class HuginnConfig:
             if isinstance(data, list):
                 return [ModelConfig(**item) for item in data]
         except Exception:
-            pass
+            logger.debug("suppressed in _parse_models_env", exc_info=True)
         return []
 
     @staticmethod
@@ -815,7 +815,7 @@ class HuginnConfig:
             if isinstance(data, list):
                 return [AgentProfileConfig(**item) for item in data]
         except Exception:
-            pass
+            logger.debug("suppressed in _parse_agents_env", exc_info=True)
         return []
 
     @staticmethod

@@ -7,6 +7,7 @@ Falls back to mock mode when Gaussian is not installed.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -19,6 +20,8 @@ from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
+
+logger = logging.getLogger(__name__)
 
 
 # autofix 返回的 symbolic key -> Gaussian route section keyword
@@ -176,6 +179,7 @@ class GaussianTool(HuginnTool):
         # 软失败原因. returncode=0 但 SCF 没收敛 / 优化没收敛都属于软失败,
         # Gaussian 经常静默返回 0, 不能当成功返回.
         soft_failure_msg: str | None = None
+        audit_report = None
 
         for attempt in range(args.max_auto_retries + 1):
             cmd = [self.gaussian_executable, gjf_file.name]
@@ -212,6 +216,31 @@ class GaussianTool(HuginnTool):
                     error = "Optimization did not converge"
                     soft_failure_msg = error
                 # sp 只要有能量就算成功, 不查优化收敛
+                else:
+                    # SCF/opt 收敛了, 再过一遍物理审计,
+                    # 抓 imaginary freq / 能量异常之类的 "成功但不可信"
+                    try:
+                        from huginn.execution.physics_auditor import (
+                            PhysicsAuditor,
+                        )
+
+                        auditor = PhysicsAuditor()
+                        audit_report = auditor.audit(
+                            "gaussian_tool",
+                            args.action,
+                            parsed_now,
+                            args.model_dump(),
+                        )
+                        if audit_report.has_errors:
+                            errs = [
+                                f.message
+                                for f in audit_report.findings
+                                if f.severity == "error"
+                            ]
+                            error = f"Physics audit found errors: {errs}"
+                            soft_failure_msg = error
+                    except Exception:
+                        logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
             if error is None:
                 break  # 真正成功
@@ -250,6 +279,21 @@ class GaussianTool(HuginnTool):
         data["parsed"] = parsed
         if autoheal_log:
             data["autoheal_attempts"] = autoheal_log
+
+        # Physics audit — 循环里跑过审计就复用, 没跑过就补跑一次兜底
+        if audit_report is not None:
+            data["physics_audit"] = audit_report.to_dict()
+        else:
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit(
+                    "gaussian_tool", args.action, parsed, args.model_dump()
+                )
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(
             data=data,
@@ -419,6 +463,14 @@ class GaussianTool(HuginnTool):
         if "Convergence failure" in content:
             result["converged"] = False
             result["scf_convergence_failure"] = True
+
+        # Charge and multiplicity — printed in the standard orientation section
+        charge_match = re.search(r"Charge\s*=\s*(-?\d+)", content)
+        if charge_match:
+            result["charge"] = int(charge_match.group(1))
+        mult_match = re.search(r"Multiplicity\s*=\s*(\d+)", content)
+        if mult_match:
+            result["multiplicity"] = int(mult_match.group(1))
 
         return result
 

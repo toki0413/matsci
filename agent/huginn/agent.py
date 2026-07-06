@@ -2162,7 +2162,7 @@ class HuginnAgent:
             scanner = SecretScanner()
             message = scanner.redact_pii(message)
         except Exception:
-            pass
+            logger.debug("PII scanner unavailable, skipping redaction", exc_info=True)
 
         # Store user message in memory and in the branch tree.
         self.memory.add_message("user", message)
@@ -2569,7 +2569,7 @@ class HuginnAgent:
                                 self._csm._state = CognitiveState.S4_CONSTRUCT
                                 logger.info("synced plan from PlanStore: %s", p.id)
                         except Exception:
-                            pass
+                            logger.debug("PlanStore sync failed", exc_info=True)
 
                     # ── Task-after reflection ───────────────────────────
                     # Scan this turn's tool results for physics issues, plan

@@ -24,6 +24,27 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+# SSE transport lives in mcp.client.sse; older releases may not ship it, so
+# import defensively and fall back to None — connect() raises a clear error
+# if someone actually asks for SSE on a build that lacks it.
+try:
+    from mcp.client.sse import sse_client as _sse_client
+except ImportError:  # pragma: no cover - depends on installed mcp version
+    _sse_client = None
+
+# Notification types used to fan out resource-update events to subscribers.
+# Wrapped the same way for forward compatibility.
+try:
+    import anyio.lowlevel as _anyio_lowlevel
+    from mcp.types import (
+        ResourceUpdatedNotification as _ResourceUpdatedNotification,
+        ServerNotification as _ServerNotification,
+    )
+except ImportError:  # pragma: no cover
+    _anyio_lowlevel = None
+    _ResourceUpdatedNotification = None
+    _ServerNotification = None
+
 logger = logging.getLogger(__name__)
 
 # Reconnection defaults
@@ -43,6 +64,9 @@ class MCPServerConfig:
     command: str
     args: list[str]
     env: dict[str, str] | None = None
+    # "stdio" (default) or "sse". SSE ignores command/args and uses url instead.
+    transport: str = "stdio"
+    url: str | None = None  # SSE endpoint, required when transport == "sse"
 
 
 @dataclass
@@ -86,6 +110,8 @@ class MCPClientManager:
         self._consecutive_errors: dict[str, int] = {}
         # 连接缓存：cache_key -> server_name，避免重复握手
         self._connection_cache: dict[str, str] = {}
+        # Resource subscription callbacks: uri -> [callback, ...]
+        self._resource_callbacks: dict[str, list[Any]] = {}
 
     # ------------------------------------------------------------------ #
     # Registry API (sync, used by tests and CLI)
@@ -116,6 +142,8 @@ class MCPClientManager:
             command=cfg.get("command", "python"),
             args=cfg.get("args", []),
             env=cfg.get("env"),
+            transport=cfg.get("transport", "stdio"),
+            url=cfg.get("url"),
         )
 
         try:
@@ -167,7 +195,7 @@ class MCPClientManager:
     # Async connection API
     # ------------------------------------------------------------------ #
     async def connect(self, config: MCPServerConfig) -> None:
-        """Connect to an MCP server via stdio."""
+        """Connect to an MCP server via stdio or SSE (see config.transport)."""
         async with self._lock:
             if config.name in self._sessions:
                 logger.warning(f"MCP server '{config.name}' already connected")
@@ -182,16 +210,34 @@ class MCPClientManager:
                 k: v for k, v in self._tool_index.items() if v.server_name != config.name
             }
 
-            params = StdioServerParameters(
-                command=config.command,
-                args=config.args,
-                env=config.env,
-            )
-
             try:
-                client = stdio_client(params)
+                if config.transport == "sse":
+                    if _sse_client is None:
+                        raise RuntimeError(
+                            "SSE transport requested but mcp.client.sse is unavailable; "
+                            "upgrade the mcp package or use stdio"
+                        )
+                    if not config.url:
+                        raise ValueError(
+                            f"SSE server '{config.name}' requires a url"
+                        )
+                    client = _sse_client(config.url)
+                else:
+                    params = StdioServerParameters(
+                        command=config.command,
+                        args=config.args,
+                        env=config.env,
+                    )
+                    client = stdio_client(params)
+
                 read_stream, write_stream = await client.__aenter__()
-                session = ClientSession(read_stream, write_stream)
+                # Hand in a message handler so resource-update notifications
+                # reach subscribers; see _make_message_handler.
+                session = ClientSession(
+                    read_stream,
+                    write_stream,
+                    message_handler=self._make_message_handler(),
+                )
                 await session.__aenter__()
             except Exception:
                 with contextlib.suppress(Exception):
@@ -231,6 +277,18 @@ class MCPClientManager:
                     await client.__aexit__(None, None, None)
                 logger.error(f"Failed to connect to MCP server '{config.name}': {e}")
                 raise
+
+    async def connect_sse(self, name: str, url: str) -> None:
+        """Connect to an SSE/HTTP MCP server by URL.
+
+        Thin wrapper over :meth:`connect` that builds an SSE config so callers
+        don't have to construct MCPServerConfig themselves.
+        """
+        await self.connect(
+            MCPServerConfig(
+                name=name, command="", args=[], transport="sse", url=url
+            )
+        )
 
     async def disconnect(self, name: str) -> None:
         """Disconnect a specific MCP server."""
@@ -320,6 +378,132 @@ class MCPClientManager:
             except Exception:
                 continue
         raise ValueError(f"Resource '{uri}' not found on any connected server")
+
+    # ------------------------------------------------------------------ #
+    # Prompts
+    # ------------------------------------------------------------------ #
+
+    async def list_prompts(self) -> dict[str, list]:
+        """List prompts advertised by every connected server.
+
+        Returns ``{server_name: [{name, description, arguments}, ...]}``.
+        Servers that don't support prompts (or error out) are skipped, the
+        same tolerant style as :meth:`read_resource`.
+        """
+        result: dict[str, list] = {}
+        for name, session in self._sessions.items():
+            try:
+                prompts = await session.list_prompts()
+            except Exception as e:
+                logger.debug(f"list_prompts failed on '{name}': {e}")
+                continue
+            result[name] = [
+                {
+                    "name": p.name,
+                    "description": p.description or "",
+                    "arguments": [
+                        {
+                            "name": a.name,
+                            "description": a.description or "",
+                            "required": bool(a.required),
+                        }
+                        for a in (p.arguments or [])
+                    ],
+                }
+                for p in prompts.prompts
+            ]
+        return result
+
+    async def get_prompt(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> str:
+        """Get a prompt by name from the first server that exposes it.
+
+        Returns the concatenated message text. Raises ``ValueError`` if no
+        connected server has the prompt.
+        """
+        for srv, session in self._sessions.items():
+            try:
+                result = await session.get_prompt(name, arguments or {})
+            except Exception as e:
+                logger.debug(f"get_prompt '{name}' failed on '{srv}': {e}")
+                continue
+            parts: list[str] = []
+            for msg in result.messages:
+                content = msg.content
+                text = getattr(content, "text", None)
+                parts.append(text if text is not None else str(content))
+            return "\n\n".join(parts)
+        raise ValueError(f"Prompt '{name}' not found on any connected server")
+
+    # ------------------------------------------------------------------ #
+    # Resource subscriptions
+    # ------------------------------------------------------------------ #
+
+    async def subscribe_resource(self, uri: str, callback: Any) -> None:
+        """Subscribe to updates for *uri* on all connected servers.
+
+        *callback* is invoked with the uri whenever the server emits a
+        ``resources/updated`` notification. It may be sync or async, and
+        multiple callbacks per uri are allowed. The subscription request is
+        best-effort per server — servers without resource support are skipped.
+        """
+        callbacks = self._resource_callbacks.setdefault(uri, [])
+        if callback not in callbacks:
+            callbacks.append(callback)
+        for name, session in self._sessions.items():
+            try:
+                await session.subscribe_resource(uri)
+            except Exception as e:
+                logger.debug(f"subscribe_resource failed on '{name}': {e}")
+
+    async def unsubscribe_resource(self, uri: str) -> None:
+        """Stop receiving updates for *uri* and drop all registered callbacks."""
+        self._resource_callbacks.pop(uri, None)
+        for name, session in self._sessions.items():
+            try:
+                await session.unsubscribe_resource(uri)
+            except Exception as e:
+                logger.debug(f"unsubscribe_resource failed on '{name}': {e}")
+
+    async def _dispatch_resource_update(self, uri: str) -> None:
+        """Fan a resource-update notification out to every registered callback.
+
+        Failures are isolated per callback so one bad subscriber can't starve
+        the rest or kill the session's receive loop.
+        """
+        for cb in list(self._resource_callbacks.get(uri, [])):
+            try:
+                res = cb(uri)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                logger.debug("resource callback raised", exc_info=True)
+
+    def _make_message_handler(self):
+        """Build a per-session message handler.
+
+        Replaces mcp's default handler (which only checkpoints) so that
+        ``notifications/resources/updated`` actually reaches subscribers via
+        :meth:`_dispatch_resource_update`. Other notifications still fall
+        through to the cooperative checkpoint so scheduling stays intact.
+        """
+
+        async def handler(message):
+            try:
+                if (
+                    _ServerNotification is not None
+                    and _ResourceUpdatedNotification is not None
+                    and isinstance(message, _ServerNotification)
+                    and isinstance(message.root, _ResourceUpdatedNotification)
+                ):
+                    await self._dispatch_resource_update(str(message.root.params.uri))
+            except Exception:
+                logger.debug("resource update dispatch failed", exc_info=True)
+            if _anyio_lowlevel is not None:
+                await _anyio_lowlevel.checkpoint()
+
+        return handler
 
     def is_connected(self, name: str) -> bool:
         return name in self._initialized
@@ -505,6 +689,10 @@ class MCPClientManager:
 
         按 (name, command, args, env) 的 hash 做 cache key，
         如果已有相同配置的活跃连接则直接返回 session。
+
+        ponytail: cache key 不含 transport/url，所以 SSE server 只靠 name
+        区分。正常使用下 name 唯一所以安全；若同名 SSE server 换了 URL，
+        升级路径是把 config.transport / config.url 也并入 _compute_cache_key。
         """
         args_tuple = tuple(config.args)
         env_tuple = tuple(sorted((config.env or {}).items()))

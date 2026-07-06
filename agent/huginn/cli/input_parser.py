@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 # 网页抓取的字符上限, 太长会把上下文撑爆
@@ -49,11 +52,33 @@ def _read_file(path: Path) -> str:
         return f"<failed to read {path}: {e}>"
 
 
+def _is_safe_url(url: str) -> bool:
+    """Block SSRF attempts — private IPs, loopback, link-local, cloud metadata."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        # Resolve and check IP
+        addr_info = socket.getaddrinfo(hostname, None)
+        for family, _, _, _, sockaddr in addr_info:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def _fetch_url(url: str) -> str:
     """抓一个 URL 的文本内容, 截断到 _URL_MAX_CHARS。
 
-    抓不到就返回提示文本, 不抛异常。
+    SSRF 防护: 拒绝私有 IP / loopback / link-local / 云元数据端点。
     """
+    if not _is_safe_url(url):
+        return f"<blocked SSRF attempt: {url}>"
     try:
         req = Request(url, headers={"User-Agent": "huginn-agent/1.0"})
         with urlopen(req, timeout=_URL_TIMEOUT) as resp:
