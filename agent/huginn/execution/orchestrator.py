@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.execution.compute_router import ComputeRouter
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +45,8 @@ class StageResult:
     retry_count: int = 0
     auto_fixed: bool = False
     fix_applied: str | None = None
+    execution_target: str | None = None
+    route_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -86,9 +90,9 @@ class ExecutionOrchestrator:
         self.tool_registry = tool_registry or {}
         self.enable_autofix = enable_autofix
         self.max_retries = max_retries
-        # Optional ComputeRouter — when set, _execute_stage annotates params
-        # with execution_target so tools know whether to run locally or on HPC.
-        self.compute_router = compute_router
+        # ComputeRouter — auto-selects local vs HPC. Default instance so
+        # route() always runs even when caller doesn't inject one.
+        self.compute_router = compute_router or ComputeRouter()
         self._execution_history: list[WorkflowExecutionRecord] = []
 
     def register_tool(self, name: str, fn: Callable) -> None:
@@ -214,13 +218,22 @@ class ExecutionOrchestrator:
         # Substitute dependency outputs into params
         params = self._resolve_param_refs(params, previous_results)
 
-        # ComputeRouter: auto-select local vs HPC execution target
+        # ComputeRouter: auto-select local vs HPC execution target.
+        # Decision is stored on the StageResult, not injected into params —
+        # most tools don't accept **kwargs and would choke on extra keys.
+        _route_target: str | None = None
+        _route_reason: str | None = None
         if self.compute_router is not None:
             try:
-                route = self.compute_router.route(tool_name, action, params)
-                params["execution_target"] = route.target
-                params["_route_reason"] = route.reason
-                logger.debug("stage %s routed to %s: %s", stage_id, route.target, route.reason)
+                _route = self.compute_router.route(tool_name, action, params)
+                _route_target = _route.target
+                _route_reason = _route.reason
+                logger.debug(
+                    "stage %s routed to %s: %s",
+                    stage_id,
+                    _route_target,
+                    _route_reason,
+                )
             except Exception:
                 pass  # routing failure shouldn't block execution
 
@@ -239,6 +252,8 @@ class ExecutionOrchestrator:
                 started_at=started,
                 finished_at=datetime.now().isoformat(),
                 walltime_seconds=time.time() - t0,
+                execution_target=_route_target,
+                route_reason=_route_reason,
             )
 
         try:
@@ -259,6 +274,8 @@ class ExecutionOrchestrator:
                 finished_at=datetime.now().isoformat(),
                 walltime_seconds=walltime,
                 retry_count=retry_count,
+                execution_target=_route_target,
+                route_reason=_route_reason,
             )
         except Exception as e:
             walltime = time.time() - t0
@@ -272,6 +289,8 @@ class ExecutionOrchestrator:
                 finished_at=datetime.now().isoformat(),
                 walltime_seconds=walltime,
                 retry_count=retry_count,
+                execution_target=_route_target,
+                route_reason=_route_reason,
             )
 
     # ------------------------------------------------------------------

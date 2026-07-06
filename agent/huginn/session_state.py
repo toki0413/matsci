@@ -99,6 +99,9 @@ class UnifiedSessionState:
     # to inject the dual-mode attention prompt into the LLM messages.
     _cognitive_prompt: str = ""
 
+    # Tool preferences from CSM — context_builder reads this to hint the LLM
+    _tool_preferences: dict = field(default_factory=dict)
+
     tool_results_this_turn: list[dict[str, Any]] = field(default_factory=list)
     # Results from the current turn's tool calls, for reflection.
 

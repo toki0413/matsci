@@ -643,6 +643,10 @@ class HuginnAgent:
         # research 模式: 更高 recursion limit, 启用研究日志, 验证用独立 LLM.
         self._mode: str = "chat"
 
+        # Shared EvolutionEngine — lazy-init so reflection accumulates history
+        # across turns instead of starting fresh (and losing context) each time.
+        self._evolution_engine: Any | None = None
+
         # Initialize ContextBuilder now that all dependencies are set.
         # This delegates memory/KG/KB/emotion/history assembly out of the
         # god-class, reducing agent.py footprint and making the pipeline
@@ -661,6 +665,21 @@ class HuginnAgent:
             conversation_tree=self._conversation_tree,
             cache_builder=self._cache_builder,
         )
+
+    def _get_evolution_engine(self):
+        """Lazy-init and reuse a single EvolutionEngine.
+
+        The engine wraps an ExecutionLogger that persists to disk, so the
+        first call loads any existing history. Subsequent calls return the
+        same instance — tool-call history accumulates across turns instead
+        of being wiped each time.
+        """
+        if self._evolution_engine is None:
+            from huginn.evolution.engine import EvolutionEngine
+            from huginn.evolution.logger import ExecutionLogger
+
+            self._evolution_engine = EvolutionEngine(logger=ExecutionLogger())
+        return self._evolution_engine
 
     def _make_summarizer(self):
         """Create an async callable for conversation summarization.
@@ -2087,6 +2106,9 @@ class HuginnAgent:
 
         # Sync CSM state → session_state so context_builder can read it
         self._session_state._cognitive_prompt = self._csm.get_attention_prompt()
+        # Sync tool preferences to session_state for context injection
+        tool_pref = self._csm.get_tool_preference()
+        self._session_state._tool_preferences = tool_pref
         self._session_state.l1_coordinates = self._csm.l1_coordinates
         # Track user goal
         self._session_state.user_goals_history.append(message[:200])
@@ -2133,6 +2155,14 @@ class HuginnAgent:
 
         if self.privacy_redact_secrets:
             message = redact_secrets(message)
+
+        # PII redaction alongside secret scanning
+        try:
+            from huginn.privacy.scanner import SecretScanner
+            scanner = SecretScanner()
+            message = scanner.redact_pii(message)
+        except Exception:
+            pass
 
         # Store user message in memory and in the branch tree.
         self.memory.add_message("user", message)
@@ -2560,21 +2590,20 @@ class HuginnAgent:
                             # Trigger evolution on failure / success signals.
                             if reflection.should_evolve:
                                 try:
-                                    from huginn.evolution.logger import (
-                                        ExecutionLogger,
-                                    )
-                                    from huginn.evolution.engine import (
-                                        EvolutionEngine,
-                                    )
-
-                                    ev_logger = ExecutionLogger()
-                                    ev_logger.log_tool_call(
+                                    ev_engine = self._get_evolution_engine()
+                                    _content = tr.get("content", "")
+                                    ev_engine.logger.log_tool_call(
+                                        session_id=self._session_state.session_id
+                                        or "default",
                                         tool_name=tr.get("tool_name", ""),
                                         tool_input={},
-                                        result=tr.get("content", ""),
-                                        success=reflection.tool_succeeded,
+                                        result=_content
+                                        if reflection.tool_succeeded
+                                        else None,
+                                        error=None
+                                        if reflection.tool_succeeded
+                                        else str(_content),
                                     )
-                                    ev_engine = EvolutionEngine(logger=ev_logger)
                                     if reflection.evolve_signal == "failure":
                                         ev_engine.evolve_from_failures()
                                     elif reflection.evolve_signal == "success":
@@ -2623,6 +2652,15 @@ class HuginnAgent:
                                     logger.debug(
                                         "plan progress store failed", exc_info=True
                                     )
+
+                            # If reflection says we need user input, set pending confirmation
+                            if reflection.needs_user_input:
+                                self._session_state.request_confirmation(
+                                    reflection.confirm_type or "continue",
+                                    f"Tool '{tr.get('tool_name', 'unknown')}' reported issues. "
+                                    f"Continue or adjust approach?"
+                                )
+                                self._csm.request_confirmation(reflection.confirm_type or "continue")
 
                         self._session_state.clear_turn_results()
 

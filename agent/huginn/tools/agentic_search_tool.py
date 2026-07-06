@@ -28,9 +28,11 @@ Cost tier is "none" (not a CPU/GPU-heavy simulation) — gated by phase
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 import re
+import socket
 import urllib.parse
 import urllib.request
 from typing import Any, Awaitable, Callable
@@ -178,6 +180,25 @@ def _synthesize(findings: list[dict[str, Any]], question: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _is_safe_url(url: str) -> bool:
+    """Block non-public URLs to prevent SSRF."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        try:
+            ip = socket.getaddrinfo(hostname, None)[0][4][0]
+            ip_obj = ipaddress.ip_address(ip)
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
+                return False
+        except (socket.gaierror, ValueError):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 class AgenticSearchInput(BaseModel):
     action: Literal["research", "quick"] = Field(
         default="research",
@@ -234,6 +255,8 @@ class AgenticSearchTool(HuginnTool):
         return res.data.get("results", [])
 
     async def _default_fetch(self, url: str, max_chars: int) -> str | None:
+        if not _is_safe_url(url):
+            return None
         try:
             req = urllib.request.Request(
                 url, headers={"User-Agent": "Mozilla/5.0 (compatible; HuginnAgent/1.0)"}
