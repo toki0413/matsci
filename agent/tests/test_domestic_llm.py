@@ -33,7 +33,7 @@ class TestDomesticProviders:
                 "deepseek",
                 "DEEPSEEK_API_KEY",
                 "https://api.deepseek.com",
-                "deepseek-chat",
+                "deepseek-v4-flash",
             ),
             (
                 "siliconflow",
@@ -45,7 +45,7 @@ class TestDomesticProviders:
                 "moonshot",
                 "MOONSHOT_API_KEY",
                 "https://api.moonshot.cn/v1",
-                "moonshot-v1-8k",
+                "kimi-k2.6",
             ),
             (
                 "zhipu",
@@ -63,7 +63,7 @@ class TestDomesticProviders:
                 "dashscope",
                 "DASHSCOPE_API_KEY",
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "qwen-max",
+                "qwen3.5-plus",
             ),
             (
                 "qianfan",
