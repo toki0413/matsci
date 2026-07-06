@@ -479,6 +479,13 @@ class HuginnAgent:
 
         self._reflector = TaskReflector()
 
+        # Cognitive state machine — S0-S6 double helix state machine.
+        # Drives mode switching (discovery ↔ construction) and L1 coordinate
+        # accumulation. The agent syncs its output to _session_state each turn.
+        from huginn.cognitive_engine import CognitiveStateMachine
+
+        self._csm = CognitiveStateMachine()
+
         self.tool_filter = set(t.tool_filter) if t.tool_filter else None
         self.agent_factory = core.agent_factory
         # Central tool scheduler — shared across parent + sub-agents when injected
@@ -1321,6 +1328,16 @@ class HuginnAgent:
         """Expose the unified session state for external access (e.g. routes)."""
         return self._session_state
 
+    @property
+    def cognitive_state(self) -> str:
+        """Current S0-S6 cognitive state (read-only)."""
+        return self._csm.state.value if hasattr(self, "_csm") else "s0_blank"
+
+    @property
+    def l1_coordinates(self) -> str:
+        """Current L1 structural coordinates (read-only)."""
+        return self._csm.l1_coordinates if hasattr(self, "_csm") else ""
+
     def set_persona(
         self,
         persona: Persona | None = None,
@@ -1966,6 +1983,19 @@ class HuginnAgent:
             {"thread_id": thread_id},
         )
 
+    def _build_compact_summary(self) -> str:
+        """Build the existing_summary for the summarizer, prepending L1 coords.
+
+        When the conversation gets compressed, the L1 structural coordinates
+        must survive — they're the agent's 'position on the structure manifold'.
+        Prepending them to the summary ensures the summarizer includes them.
+        """
+        base = self._conversation_summary or ""
+        l1 = self._csm.l1_coordinates if hasattr(self, "_csm") else ""
+        if l1:
+            return f"[Structural Position: {l1}]\n{base}"
+        return base
+
     def _init_session_continuity(self) -> None:
         """Load previous session context at the start of a new session.
 
@@ -1973,11 +2003,19 @@ class HuginnAgent:
         plan so the agent remembers what was discussed last time. Both lookups
         are best-effort — a missing/empty store just means we start fresh.
         """
+        # Start the cognitive state machine for this session
+        self._csm.start_session()
+
         try:
             ctx = self.memory.load_last_session_context()
             if ctx and ctx.get("summary"):
                 self._session_state.last_session_summary = ctx["summary"]
                 self._session_state.last_session_id = ctx.get("session_id", "")
+                # Restore L1 coordinates from previous session
+                l1 = ctx.get("l1_coordinates", "")
+                if l1:
+                    self._csm.l1_coordinates = l1
+                    self._session_state.l1_coordinates = l1
                 logger.info(
                     "loaded last session context: %s...",
                     ctx["summary"][:100],
@@ -1988,12 +2026,22 @@ class HuginnAgent:
         try:
             plan = self.memory.load_active_plan()
             if plan and plan.get("status") not in ("completed", "abandoned"):
-                self._session_state.active_plan_objective = plan.get("objective", "")
-                self._session_state.active_plan_step_index = plan.get("step_index", 0)
+                plan_id = plan.get("plan_id", "")
+                objective = plan.get("objective", "")
+                step_index = plan.get("step_index", 0)
+                # Restore plan into session_state — this also switches
+                # cognitive mode to CONSTRUCT and phase to EXECUTE.
+                if plan_id and objective:
+                    self._session_state.set_plan(plan_id, objective)
+                    self._session_state.active_plan_step_index = step_index
+                    # Transition CSM to construct mode to match
+                    from huginn.cognitive_engine import CognitiveState, TransitionSignal
+                    self._csm._state = CognitiveState.S4_CONSTRUCT
+                    self._csm.l1_coordinates = plan.get("l1_coordinates", "")
                 logger.info(
                     "resumed active plan: %s (step %d)",
-                    plan.get("objective", "")[:80],
-                    plan.get("step_index", 0),
+                    objective[:80],
+                    step_index,
                 )
         except Exception:
             logger.debug("active plan load failed", exc_info=True)
@@ -2028,6 +2076,21 @@ class HuginnAgent:
         # the counter and resets the per-turn tool-result buffer for reflection.
         if self._turn_count == 0:
             self._init_session_continuity()
+
+        # Drive the cognitive state machine with user input.
+        # First user message = user_goal signal; subsequent = new_question.
+        from huginn.cognitive_engine import TransitionSignal
+        if self._turn_count == 0:
+            self._csm.transition(TransitionSignal("user_goal", {"goal": message}))
+        else:
+            self._csm.transition(TransitionSignal("new_question", {"message": message}))
+
+        # Sync CSM state → session_state so context_builder can read it
+        self._session_state._cognitive_prompt = self._csm.get_attention_prompt()
+        self._session_state.l1_coordinates = self._csm.l1_coordinates
+        # Track user goal
+        self._session_state.user_goals_history.append(message[:200])
+
         self._session_state.turns_count += 1
         self._session_state.clear_turn_results()
 
@@ -2245,7 +2308,7 @@ class HuginnAgent:
                             adaptive_budget,
                             keep_last_n=adaptive_kln,
                             summarizer=summarizer,
-                            existing_summary=self._conversation_summary,
+                            existing_summary=self._build_compact_summary(),
                         )
                     )
                 else:
@@ -2459,6 +2522,25 @@ class HuginnAgent:
                 # Scan the final assistant message for a phase-transition
                 # marker emitted by the LLM and apply it if valid.
                 if final_state is not None:
+                    # ── PlanStore sync ──────────────────────────────────
+                    # If the autoloop engine (running inside a tool call)
+                    # created a plan in PlanStore, sync it to session_state
+                    # so the cognitive state machine and context builder know
+                    # we're in execution mode. Best-effort, never blocks.
+                    if not self._session_state.active_plan_id:
+                        try:
+                            from huginn.autoloop.plan_store import PlanStore
+                            ps = PlanStore()
+                            executing = ps.list_plans(status="executing")
+                            if executing:
+                                p = executing[-1]  # most recent
+                                self._session_state.set_plan(p.id, p.objective)
+                                from huginn.cognitive_engine import CognitiveState
+                                self._csm._state = CognitiveState.S4_CONSTRUCT
+                                logger.info("synced plan from PlanStore: %s", p.id)
+                        except Exception:
+                            pass
+
                     # ── Task-after reflection ───────────────────────────
                     # Scan this turn's tool results for physics issues, plan
                     # advancement, and evolution signals. Pure rules, no LLM,
@@ -2486,8 +2568,6 @@ class HuginnAgent:
                                     )
 
                                     ev_logger = ExecutionLogger()
-                                    # Feed the current tool result so the
-                                    # engine can pick it up internally.
                                     ev_logger.log_tool_call(
                                         tool_name=tr.get("tool_name", ""),
                                         tool_input={},
@@ -2503,6 +2583,27 @@ class HuginnAgent:
                                     logger.debug(
                                         "evolution trigger failed", exc_info=True
                                     )
+
+                            # Drive the cognitive state machine with the
+                            # reflection result. This is where tool failures
+                            # trigger S4→S6 (feedback) transitions, and L1
+                            # coordinates get updated with structural position.
+                            try:
+                                sig_type = reflection.to_transition_signal()
+                                if sig_type:
+                                    from huginn.cognitive_engine import TransitionSignal as TS
+                                    self._csm.transition(TS(sig_type, {
+                                        "tool_name": tr.get("tool_name", ""),
+                                        "objective": self._session_state.active_plan_objective,
+                                        "step": str(self._session_state.active_plan_step_index + 1),
+                                        "result_summary": str(tr.get("content", ""))[:100],
+                                    }))
+                                    # Sync CSM l1_coords back to session_state
+                                    self._session_state.l1_coordinates = self._csm.l1_coordinates
+                                    # Update cognitive prompt if mode changed
+                                    self._session_state._cognitive_prompt = self._csm.get_attention_prompt()
+                            except Exception:
+                                logger.debug("CSM transition failed", exc_info=True)
 
                             # Persist plan progress when a step is judged done.
                             if (
@@ -2605,14 +2706,24 @@ class HuginnAgent:
                             exc_info=True,
                         )
                 # Stash a session-state snapshot so the next session can pick
-                # up the L1 coordinates / plan position. Best-effort: a failed
-                # store just means next session starts without the breadcrumb.
+                # up the L1 coordinates / plan position / cognitive state.
+                # Best-effort: a failed store just means next session starts
+                # without the breadcrumb.
                 try:
+                    # Sync CSM l1_coords to session_state before snapshot
+                    self._session_state.l1_coordinates = self._csm.l1_coordinates
                     snapshot = self._session_state.to_snapshot()
+                    # Merge CSM snapshot (state + l1_coords + history)
+                    csm_snap = self._csm.get_snapshot()
+                    snapshot["cognitive_state"] = csm_snap.get("state", "s0_blank")
+                    tags = ["session_snapshot"]
+                    l1 = csm_snap.get("l1_coordinates", "")
+                    if l1:
+                        tags.append(f"l1:{l1[:200]}")  # tag for retrieval
                     self.memory.longterm.store(
-                        content=f"Session snapshot: {snapshot.get('l1_coordinates', 'no coordinates')}",
+                        content=f"Session snapshot: {snapshot.get('l1_coordinates', 'no coordinates')} | cognitive_state: {snapshot.get('cognitive_state', '?')}",
                         category="conversation",
-                        tags=["session_snapshot"],
+                        tags=tags,
                         source=f"session:{thread_id}",
                         importance=0.6,
                         tier="mid",

@@ -174,10 +174,19 @@ class MemoryManager:
             if entries:
                 entry = entries[0]
                 content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
+                # try to extract l1_coordinates from tags or content
+                l1_coords = ""
+                if isinstance(entry, dict):
+                    tags = entry.get("tags", [])
+                    if isinstance(tags, list):
+                        for tag in tags:
+                            if tag.startswith("l1:"):
+                                l1_coords = tag[3:]
+                                break
                 return {
                     "summary": content,
                     "session_id": entry.get("source", "") if isinstance(entry, dict) else "",
-                    "l1_coordinates": "",
+                    "l1_coordinates": l1_coords,
                 }
         except Exception:
             pass
@@ -234,10 +243,17 @@ class MemoryManager:
                         if ":" in segment:
                             key, _, val = segment.partition(":")
                             parts[key.strip().lower()] = val.strip()
+                    # plan_id is stored in the source field as "plan:{plan_id}"
+                    plan_id = ""
+                    source = entry.get("source", "") if isinstance(entry, dict) else ""
+                    if source.startswith("plan:"):
+                        plan_id = source[5:]
                     return {
+                        "plan_id": plan_id,
                         "objective": parts.get("plan", ""),
                         "step_index": int(parts.get("step", "0")) if parts.get("step", "").isdigit() else 0,
                         "status": parts.get("status", ""),
+                        "l1_coordinates": parts.get("position", ""),
                         "content": content,
                     }
         except Exception:
