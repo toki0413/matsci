@@ -156,6 +156,94 @@ class MemoryManager:
             )
         return "\n".join(lines)
 
+    # --- Cross-session continuity ---
+
+    def load_last_session_context(self) -> dict[str, Any]:
+        """Load the most recent session summary for cross-session continuity.
+
+        Called at the start of a new session to restore context from the
+        previous conversation. Returns a dict with 'summary', 'session_id',
+        and 'l1_coordinates' if available.
+        """
+        try:
+            entries = self.longterm.retrieve(
+                query="session summary",
+                category="conversation",
+                top_k=1,
+            )
+            if entries:
+                entry = entries[0]
+                content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
+                return {
+                    "summary": content,
+                    "session_id": entry.get("source", "") if isinstance(entry, dict) else "",
+                    "l1_coordinates": "",
+                }
+        except Exception:
+            pass
+        return {"summary": "", "session_id": "", "l1_coordinates": ""}
+
+    def store_plan_progress(
+        self,
+        plan_id: str,
+        objective: str,
+        step_index: int,
+        status: str,
+        l1_coordinates: str = "",
+    ) -> str:
+        """Record plan progress in long-term memory.
+
+        Lets the next session pick up where we left off — the agent can
+        recall 'you were on step 2 of 3 for the GaN band structure calc.'
+        """
+        content = (
+            f"Plan: {objective} | "
+            f"Step: {step_index} | Status: {status}"
+        )
+        if l1_coordinates:
+            content += f" | Position: {l1_coordinates}"
+        return self.longterm.store(
+            content=content,
+            category="plan",
+            tags=["plan_progress", plan_id],
+            source=f"plan:{plan_id}",
+            importance=0.7,
+            tier="mid",
+        )
+
+    def load_active_plan(self) -> dict[str, Any] | None:
+        """Load the most recent active plan from long-term memory.
+
+        Called at session start to check whether an unfinished plan from
+        a previous session should be resumed.
+        """
+        try:
+            entries = self.longterm.retrieve(
+                query="plan progress",
+                category="plan",
+                top_k=1,
+            )
+            if entries:
+                entry = entries[0] if isinstance(entries, list) else entries
+                if isinstance(entry, dict):
+                    content = entry.get("content", "")
+                    # Stored format: "Plan: X | Step: N | Status: S | Position: P"
+                    parts = {}
+                    for segment in content.split("|"):
+                        segment = segment.strip()
+                        if ":" in segment:
+                            key, _, val = segment.partition(":")
+                            parts[key.strip().lower()] = val.strip()
+                    return {
+                        "objective": parts.get("plan", ""),
+                        "step_index": int(parts.get("step", "0")) if parts.get("step", "").isdigit() else 0,
+                        "status": parts.get("status", ""),
+                        "content": content,
+                    }
+        except Exception:
+            pass
+        return None
+
     # --- Session promotion ---
 
     def promote_tool_result(self, name: str, result: dict[str, Any]) -> None:

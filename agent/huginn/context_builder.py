@@ -256,6 +256,49 @@ class ContextBuilder:
                 )
         return messages
 
+    # ── Plan & session continuity ──────────────────────────────────
+
+    def build_plan_text(self, session_state=None) -> str:
+        """Inject active plan context so the LLM knows where we are in the plan.
+
+        Without this the model has no idea it's supposed to be executing
+        step 2 of 3 — the plan-aware piece of loop engineering.
+        """
+        if session_state is None or not getattr(session_state, "active_plan_id", None):
+            return ""
+
+        parts = ["### Current Plan"]
+        parts.append(f"Objective: {session_state.active_plan_objective}")
+        parts.append(f"Step: {session_state.active_plan_step_index + 1}")
+        if session_state.l1_coordinates:
+            parts.append(f"Position: {session_state.l1_coordinates}")
+        parts.append(f"Cognitive mode: {session_state.cognitive_mode.value}")
+        parts.append("### End Current Plan")
+        return "\n".join(parts)
+
+    def build_session_continuity(self, session_state=None) -> str:
+        """Inject previous session summary for cross-session continuity.
+
+        Each new session would otherwise start blank — this surfaces
+        what was discussed last time and the user's recent goals so the
+        LLM can reference prior work.
+        """
+        if session_state is None:
+            return ""
+
+        parts = []
+        if getattr(session_state, "last_session_summary", ""):
+            parts.append("### Previous Session")
+            parts.append(session_state.last_session_summary)
+            parts.append("### End Previous Session")
+        if getattr(session_state, "user_goals_history", []):
+            recent_goals = session_state.user_goals_history[-5:]
+            parts.append("### Your Recent Goals")
+            for i, goal in enumerate(recent_goals, 1):
+                parts.append(f"{i}. {goal}")
+            parts.append("### End Recent Goals")
+        return "\n\n".join(parts) if parts else ""
+
     # ── Full input messages ────────────────────────────────────────
 
     def build_input_messages(
@@ -266,11 +309,13 @@ class ContextBuilder:
         kg_text: str | None = None,
         kb_text: str | None = None,
         include_history: bool | None = None,
+        session_state: Any = None,
     ) -> list[Any]:
         """Assemble the full input message list for an LLM call.
 
         Combines: system prompt (via cache builder) + conversation history
-        + memory + KG + KB + emotion + current user message.
+        + memory + KG + KB + emotion + plan status + session continuity
+        + current user message.
         """
         if memory_text is None:
             memory_text = self.build_memory_text(query=message)
@@ -298,5 +343,16 @@ class ContextBuilder:
         if emotion_text:
             from langchain_core.messages import SystemMessage
             messages.insert(-1, SystemMessage(content=emotion_text, id="ctx_emotion"))
+
+        # Plan + cross-session context sit right before the user message,
+        # mirroring how emotion text is injected above.
+        plan_text = self.build_plan_text(session_state)
+        if plan_text:
+            from langchain_core.messages import SystemMessage
+            messages.insert(-1, SystemMessage(content=plan_text, id="ctx_plan"))
+        continuity_text = self.build_session_continuity(session_state)
+        if continuity_text:
+            from langchain_core.messages import SystemMessage
+            messages.insert(-1, SystemMessage(content=continuity_text, id="ctx_continuity"))
 
         return messages
