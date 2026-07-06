@@ -7,9 +7,11 @@ arXiv / S2 / CrossRef / OpenAlex / PubMed / DOAJ / CORE 各自独立函数,
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import re
+import socket
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -29,6 +31,25 @@ from ._http import (
 # arXiv Atom feed 命名空间
 _ARXIV_NS = {"atom": "http://www.w3.org/2005/Atom"}
 _ARXIV_DOI_NS = "{http://arxiv.org/schemas/atom}doi"
+
+
+def _is_safe_url(url: str) -> bool:
+    """Block non-public URLs to prevent SSRF."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        try:
+            ip = socket.getaddrinfo(hostname, None)[0][4][0]
+            ip_obj = ipaddress.ip_address(ip)
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
+                return False
+        except (socket.gaierror, ValueError):
+            return False
+        return True
+    except Exception:
+        return False
 
 
 # ───────────────────────── 去重 / 规范化 ─────────────────────────
@@ -578,6 +599,8 @@ async def _search_core(
         url += f'&year_created_max={year_to}-12-31'
 
     def _fetch() -> dict[str, Any]:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT, **headers_extra})
         with _OPENER.open(req, timeout=_timeout()) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -745,6 +768,8 @@ async def _search_zenodo(
         url += f"&publication_date={date_filter}"
 
     def _fetch() -> dict[str, Any]:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=45) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -833,6 +858,8 @@ async def _search_openaire(
         url += f"&untilDateAccepted={year_to}-12-31"
 
     def _fetch() -> dict[str, Any]:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -984,6 +1011,8 @@ async def _search_cod(
     )
 
     def _fetch(url: str) -> Any:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=20) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -1091,6 +1120,8 @@ async def _search_materials_cloud(
     )
 
     def _fetch() -> dict[str, Any]:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -1191,6 +1222,8 @@ async def _search_nomad(
     )
 
     def _fetch() -> dict[str, Any]:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -1296,6 +1329,8 @@ async def _search_datacite(
         url += f"&filter=publicationYear<={year_to}"
 
     def _fetch() -> dict[str, Any]:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -1400,6 +1435,8 @@ async def _search_materials_project(
     # year filtering not supported by MP; skip silently
 
     def _fetch() -> Any:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -1495,6 +1532,8 @@ async def _opencitations_references(
     url = f"https://opencitations.net/index/coci/api/v1/references/{encoded}"
 
     def _fetch() -> Any:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=20) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -1546,6 +1585,8 @@ async def _opencitations_citations(
     url = f"https://opencitations.net/index/coci/api/v1/citations/{encoded}"
 
     def _fetch() -> Any:
+        if not _is_safe_url(url):
+            raise RuntimeError("URL blocked by SSRF protection")
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         with _OPENER.open(req, timeout=20) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))

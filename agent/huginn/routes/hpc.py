@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import defaultdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from huginn.hpc.client import HPCClient, HPCConfig
 from huginn.security.auth import require_admin_key
@@ -23,6 +26,22 @@ from huginn.security.auth import require_admin_key
 router = APIRouter(tags=["hpc"], dependencies=[Depends(require_admin_key)])
 
 logger = logging.getLogger(__name__)
+
+# Simple in-memory rate limiter for HPC job submission
+_hpc_submit_timestamps: dict[str, list[float]] = defaultdict(list)
+_HPC_RATE_LIMIT_PER_MINUTE = 10  # max 10 submissions per minute per user
+
+
+def _check_hpc_rate_limit(user_id: str = "default") -> bool:
+    now = time.time()
+    cutoff = now - 60.0
+    timestamps = _hpc_submit_timestamps[user_id]
+    # Remove old entries
+    _hpc_submit_timestamps[user_id] = [t for t in timestamps if t > cutoff]
+    if len(_hpc_submit_timestamps[user_id]) >= _HPC_RATE_LIMIT_PER_MINUTE:
+        return False
+    _hpc_submit_timestamps[user_id].append(now)
+    return True
 
 
 def _resolve_hpc_config(params: dict[str, Any]) -> tuple[HPCConfig | None, str | None]:
@@ -94,6 +113,12 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
     支持增强的队列参数: priority / depends_on / dependency_type /
     array_spec / walltime_estimate, 老的调用不传这些字段照常工作。
     """
+    if not _check_hpc_rate_limit():
+        return JSONResponse(
+            status_code=429,
+            content={"success": False, "error": "Rate limit exceeded: max 10 HPC submissions per minute"},
+        )
+
     command = params.get("command", "")
     if not isinstance(command, str) or not command.strip():
         return {"success": False, "error": "command is required and must be a non-empty string"}

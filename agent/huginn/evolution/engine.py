@@ -13,6 +13,7 @@ We evolve these COMPONENTS, not the LLM weights.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,6 +21,11 @@ from pathlib import Path
 from typing import Any
 
 from .logger import ExecutionLogger
+
+# Hard cap on learned rules. Beyond this the lowest-confidence ones get
+# evicted to keep the rule set manageable and evaluation fast.
+MAX_RULES = 100
+_CONFIDENCE_FLOOR = 0.3
 
 
 @dataclass
@@ -85,6 +91,9 @@ class EvolutionEngine:
         )
         self.rules: list[EvolutionRule] = []
         self.skills: list[SkillTemplate] = []
+        # File-level lock — _save_rules / _save_skills / _load_rules can be
+        # called from background reflection threads, so we serialize disk access.
+        self._lock = threading.Lock()
         self._load_rules()
         self._load_skills()
 
@@ -93,19 +102,21 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def _load_rules(self) -> None:
-        if self.rules_path.exists():
-            with self.rules_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-                self.rules = [EvolutionRule(**r) for r in data]
+        with self._lock:
+            if self.rules_path.exists():
+                with self.rules_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.rules = [EvolutionRule(**r) for r in data]
 
     def _save_rules(self) -> None:
-        with self.rules_path.open("w", encoding="utf-8") as f:
-            json.dump(
-                [self._rule_to_dict(r) for r in self.rules],
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
+        with self._lock:
+            with self.rules_path.open("w", encoding="utf-8") as f:
+                json.dump(
+                    [self._rule_to_dict(r) for r in self.rules],
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
 
     def _rule_to_dict(self, rule: EvolutionRule) -> dict[str, Any]:
         return {
@@ -128,13 +139,14 @@ class EvolutionEngine:
                 self.skills = [SkillTemplate(**s) for s in data]
 
     def _save_skills(self) -> None:
-        with self.skills_path.open("w", encoding="utf-8") as f:
-            json.dump(
-                [self._skill_to_dict(s) for s in self.skills],
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
+        with self._lock:
+            with self.skills_path.open("w", encoding="utf-8") as f:
+                json.dump(
+                    [self._skill_to_dict(s) for s in self.skills],
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
 
     def _skill_to_dict(self, skill: SkillTemplate) -> dict[str, Any]:
         return {
@@ -150,6 +162,13 @@ class EvolutionEngine:
             "success_count": skill.success_count,
             "created_at": skill.created_at,
         }
+
+    def _prune_rules(self) -> None:
+        """Evict stale rules: drop confidence < floor, then enforce MAX_RULES."""
+        self.rules = [r for r in self.rules if r.confidence >= _CONFIDENCE_FLOOR]
+        if len(self.rules) > MAX_RULES:
+            self.rules.sort(key=lambda r: r.confidence, reverse=True)
+            del self.rules[MAX_RULES:]
 
     # ------------------------------------------------------------------
     # Core Evolution Cycles
@@ -185,6 +204,7 @@ class EvolutionEngine:
                 new_rules.append(rule)
 
         if new_rules:
+            self._prune_rules()
             self._save_rules()
         return new_rules
 
@@ -261,6 +281,7 @@ class EvolutionEngine:
                     new_rules.append(rule)
 
         if new_rules:
+            self._prune_rules()
             self._save_rules()
         return new_rules
 
@@ -349,6 +370,7 @@ class EvolutionEngine:
         if new_skills:
             self._save_skills()
         if new_rules:
+            self._prune_rules()
             self._save_rules()
         return {
             "high_reward_skills": [self._skill_to_dict(s) for s in new_skills],

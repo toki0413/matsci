@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -273,9 +274,10 @@ class KnowledgeDistiller:
         if sobkso_chunks_path is None:
             # Try to find Sobko chunks
             candidates = [
-                "C:/Users/wanzh/Sobko_MCP_project/chroma_db/chunks.jsonl",
-                "C:/Users/wanzh/Desktop/Sobko_MCP_project/chroma_db/chunks.jsonl",
+                os.environ.get("HUGINN_KB_CHUNKS_PATH", ""),
+                os.path.join(os.environ.get("HUGINN_CACHE_DIR", ".huginn"), "kb_chunks.jsonl"),
             ]
+            candidates = [c for c in candidates if c]  # filter empty
             for c in candidates:
                 if Path(c).exists():
                     sobkso_chunks_path = c

@@ -319,6 +319,21 @@ class ContextBuilder:
         prompt = getattr(session_state, "_cognitive_prompt", "")
         return prompt if prompt else ""
 
+    def build_tool_preference_hint(self, session_state=None) -> str:
+        """Inject tool preference hints based on cognitive state."""
+        if session_state is None:
+            return ""
+        prefs = getattr(session_state, "_tool_preferences", {})
+        if not prefs or (not prefs.get("prefer") and not prefs.get("deprioritize")):
+            return ""
+        parts = ["### Tool Preference Hint (cognitive state driven)"]
+        if prefs.get("prefer"):
+            parts.append(f"Prefer: {', '.join(prefs['prefer'])}")
+        if prefs.get("deprioritize"):
+            parts.append(f"Deprioritize: {', '.join(prefs['deprioritize'])}")
+        parts.append("### End Tool Preference Hint")
+        return "\n".join(parts)
+
     def build_evolution_rules(self) -> str:
         """Inject learned evolution rules into context.
 
@@ -419,6 +434,12 @@ class ContextBuilder:
         if cognitive_text:
             from langchain_core.messages import SystemMessage
             messages.insert(-1, SystemMessage(content=cognitive_text, id="ctx_cognitive"))
+
+        # Tool preference hint — cognitive state driven advisory
+        tool_hint = self.build_tool_preference_hint(session_state)
+        if tool_hint:
+            from langchain_core.messages import SystemMessage
+            messages.insert(-1, SystemMessage(content=tool_hint, id="ctx_tool_hint"))
 
         # Evolution rules — lessons from past failures/successes
         evolution_text = self.build_evolution_rules()
