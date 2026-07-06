@@ -469,6 +469,7 @@ class AnomalyDetectionHook:
                     unresolved_dimensions=[
                         f"为什么 {param}={val_f:.3f}Å 而非标准 {std:.2f}Å？"
                         "单位混淆(Å vs nm)? 文件读错? 结构本身就有问题?"
+                        " 或者是新颖结构/相——需独立计算验证"
                     ],
                 ))
         return out

@@ -10,7 +10,10 @@ Every tool is self-contained with:
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+import contextvars
+import hashlib
+from abc import ABC
+from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
@@ -27,6 +30,44 @@ from huginn.types import (
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
+
+
+# ── provenance collector (context var) ─────────────────────────────────────
+# The autoloop / engine sets a collector (any object with .append) for the
+# duration of a run via set_provenance_collector. HuginnTool.call() then drops
+# a ProvenanceSnapshot into it after every tool execution, so every tool gets
+# traced without each subclass repeating the capture boilerplate. Defaults to
+# None -> no capture, which keeps standalone tool calls zero-cost.
+_provenance_collector: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "provenance_collector", default=None
+)
+
+
+def set_provenance_collector(collector: list | None) -> None:
+    """Bind a collector list for the current async context (engine.run sets this)."""
+    _provenance_collector.set(collector)
+
+
+def get_provenance_collector() -> list | None:
+    return _provenance_collector.get()
+
+
+def _serialize_tool_args(args: Any) -> dict[str, Any]:
+    """Flatten whatever a tool received as input into a JSON-ish dict for hashing.
+
+    Most tools get a Pydantic model (model_dump), some get a plain dict, and a
+    few pass arbitrary objects — the str() fallback keeps the hash stable
+    without crashing the snapshot path.
+    """
+    if hasattr(args, "model_dump"):
+        try:
+            dumped = args.model_dump()
+            return dumped if isinstance(dumped, dict) else {"value": dumped}
+        except Exception:
+            return {"args": str(args)}
+    if isinstance(args, dict):
+        return dict(args)
+    return {"args": str(args)}
 
 
 class HuginnTool(ABC, Generic[InputT, OutputT]):
@@ -138,10 +179,67 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
         p = self.profile if self.profile is not None else self._default_profile()
         return p.heavy_actions
 
-    @abstractmethod
+    async def _execute(self, args: InputT, context: ToolContext) -> ToolResult:
+        """Actual tool logic. New tools override this and get provenance for free.
+
+        Legacy tools still override ``call`` directly — that keeps working, they
+        just opt out of the automatic snapshot below (and keep doing their own
+        capture where they already do, e.g. vasp/lammps).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _execute() or override call()"
+        )
+
     async def call(self, args: InputT, context: ToolContext) -> ToolResult:
-        """Execute the tool. Must be implemented by subclasses."""
-        ...
+        """Execute the tool and capture provenance.
+
+        Subclasses normally override ``_execute`` (not this method) so the
+        snapshot wrapper here runs for free. Tools that already override
+        ``call`` keep working unchanged — their override shadows this wrapper,
+        so existing manual provenance capture (vasp_tool / lammps_tool) is
+        untouched and never double-captured.
+        """
+        result = await self._execute(args, context)
+        try:
+            self._capture_provenance(args, result)
+        except Exception:
+            # provenance is best-effort: never let it sink a good result
+            pass
+        return result
+
+    def _capture_provenance(self, args: Any, result: ToolResult) -> Any:
+        """Append a ProvenanceSnapshot to the active collector, if any.
+
+        Lightweight by design: respects the ``provenance`` feature flag and
+        skips the heavy software-version sweep that ``huginn.provenance.capture``
+        does (that one imports ~10 packages), so it's cheap to run on every
+        tool call. Returns the snapshot or None when capture is off.
+        """
+        try:
+            from huginn.feature_flags import FeatureFlags
+            if not FeatureFlags.shared().is_enabled("provenance"):
+                return None
+        except Exception:
+            # flag layer down — keep capturing, provenance is opt-out not opt-in
+            pass
+
+        collector = get_provenance_collector()
+        if collector is None:
+            return None
+
+        from huginn.provenance import ProvenanceSnapshot
+
+        params = _serialize_tool_args(args)
+        out_repr = result.to_dict() if hasattr(result, "to_dict") else str(result)
+        snapshot = ProvenanceSnapshot(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            tool_name=self.name,
+            tool_version=getattr(self, "version", "1.0"),
+            input_params=params,
+            output_hash=hashlib.sha256(str(out_repr).encode("utf-8")).hexdigest()[:16],
+        )
+        collector.append(snapshot)
+        return snapshot
 
     async def check_permissions(
         self, args: InputT, context: ToolContext

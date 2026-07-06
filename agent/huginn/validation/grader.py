@@ -15,6 +15,11 @@ from typing import Any, Callable
 
 from huginn.execution.physics_auditor import AuditReport, PhysicsAuditor
 from huginn.validation.dimensional import DimensionalCheckResult, DimensionalValidator
+from huginn.validation.innovation_signal import (
+    DeviationLevel,
+    InnovationSignal,
+    InnovationSignalDetector,
+)
 from huginn.validation.research import RedTeamReviewer
 
 
@@ -236,6 +241,102 @@ class BenchGrader:
         return self.evaluate(data)
 
 
+class LiteratureGrader:
+    """Compare agent results against literature consensus.
+
+    Reads ``data["literature_comparison"]`` — a dict of property_name ->
+    InnovationSignal (or its dict form) — that _validate populates via
+    benchmark_lookup + InnovationSignalDetector.
+
+    Scoring:
+      - within 2 sigma  -> 1.0 (agrees with literature)
+      - 2-3 sigma       -> 0.5 (interesting, worth investigating)
+      - > 3 sigma AND physically implausible -> 0.0 (likely error)
+      - > 2 sigma but innovation_signal=True -> 0.5 (don't punish discoveries)
+
+    If no literature_comparison data is present, returns a neutral 1.0.
+    """
+
+    name = "literature"
+
+    def __init__(self, detector: InnovationSignalDetector | None = None) -> None:
+        self._detector = detector or InnovationSignalDetector()
+
+    def evaluate(self, data: dict[str, Any]) -> GraderResult:
+        lit = data.get("literature_comparison")
+        if not lit or not isinstance(lit, dict):
+            return GraderResult(
+                name=self.name, score=1.0, passed=True,
+                message="no literature data for comparison",
+            )
+
+        scores: list[float] = []
+        checks: list[dict[str, Any]] = []
+        for prop, sig in lit.items():
+            signal = self._coerce_signal(prop, sig)
+            if signal is None:
+                continue
+            s = self._score_one(signal)
+            scores.append(s)
+            checks.append({
+                "property": prop,
+                "deviation_sigma": signal.deviation_sigma,
+                "level": signal.level.name,
+                "innovation_signal": signal.is_innovation_signal,
+                "score": s,
+            })
+
+        if not scores:
+            return GraderResult(
+                name=self.name, score=1.0, passed=True,
+                message="literature_comparison present but no valid signals",
+            )
+        overall = round(sum(scores) / len(scores), 4)
+        # passed=True: literature comparison never hard-fails validation.
+        # A low score just means "look closer", not "reject".
+        return GraderResult(
+            name=self.name, score=overall, passed=True,
+            checks=checks,
+            message=f"{len(scores)} property(ies) compared to literature",
+        )
+
+    def __call__(self, data: dict[str, Any]) -> GraderResult:
+        return self.evaluate(data)
+
+    @staticmethod
+    def _coerce_signal(prop: str, sig: Any) -> InnovationSignal | None:
+        """Accept either an InnovationSignal object or a plain dict."""
+        if isinstance(sig, InnovationSignal):
+            return sig
+        if isinstance(sig, dict):
+            try:
+                return InnovationSignal(
+                    property_name=sig.get("property_name", prop),
+                    agent_value=float(sig.get("agent_value", 0)),
+                    literature_consensus=float(sig.get("literature_consensus", 0)),
+                    literature_spread=float(sig.get("literature_spread", 0)),
+                    deviation_sigma=float(sig.get("deviation_sigma", 0)),
+                    level=DeviationLevel[sig.get("level", "NEGLIGIBLE")],
+                    possible_explanations=sig.get("possible_explanations", []),
+                    is_innovation_signal=bool(sig.get("is_innovation_signal", False)),
+                )
+            except (KeyError, TypeError, ValueError):
+                return None
+        return None
+
+    @staticmethod
+    def _score_one(sig: InnovationSignal) -> float:
+        # Innovation signal: don't penalize potential discoveries
+        if sig.is_innovation_signal:
+            return 0.5
+        if sig.deviation_sigma < 2.0:
+            return 1.0
+        if sig.deviation_sigma < 3.0:
+            return 0.5
+        # > 3 sigma and not an innovation signal -> physically implausible
+        return 0.0
+
+
 class GraderRegistry:
     """注册多个 Grader, 统一跑 evaluate_all 拿同构结果."""
 
@@ -257,11 +358,12 @@ class GraderRegistry:
 
 
 def default_registry() -> GraderRegistry:
-    """预注册 physics + dimensional + hallucination 三个内置 grader."""
+    """预注册 physics + dimensional + hallucination + literature 四个内置 grader."""
     reg = GraderRegistry()
     reg.register("physics", PhysicsGrader())
     reg.register("dimensional", DimensionalGrader())
     reg.register("hallucination", HallucinationGrader())
+    reg.register("literature", LiteratureGrader())
     return reg
 
 
@@ -272,6 +374,7 @@ __all__ = [
     "RedTeamGrader",
     "HallucinationGrader",
     "BenchGrader",
+    "LiteratureGrader",
     "GraderRegistry",
     "default_registry",
 ]
