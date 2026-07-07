@@ -1236,26 +1236,16 @@ class LammpsTool(HuginnTool):
             box_vec = np.array([lx, ly, lz])
 
             # Compute pairwise distances with minimum image convention.
-            # For large systems, chunk over i to bound memory usage.
-            all_dists = []
-            chunk = max(1, min(2000, 5_000_000 // max(n, 1)))
-            for start in range(0, n, chunk):
-                end = min(start + chunk, n)
-                d = pos[end:, :] - pos[start:end, np.newaxis, :]  # (chunk, rest, 3)
-                # Minimum image convention
-                d -= box_vec * np.round(d / box_vec)
-                r = np.sqrt((d ** 2).sum(axis=2))  # (chunk, rest)
-                mask = (r > 0) & (r < r_max)
-                all_dists.append(r[mask])
+            # ponytail: O(n²) memory — fine for n<10k, chunk for larger systems.
+            d = pos[np.newaxis, :, :] - pos[:, np.newaxis, :]  # (n, n, 3)
+            d -= box_vec * np.round(d / box_vec)
+            r = np.sqrt((d ** 2).sum(axis=2))  # (n, n)
+            mask = (r > 0) & (r < r_max)
+            distances = r[mask]
 
-            if all_dists:
-                distances = np.concatenate(all_dists)
-            else:
-                distances = np.array([])
-
-            # Bin distances into histogram (each pair counted twice for i<->j)
+            # Bin distances — full matrix counts each pair twice (i,j)+(j,i).
             g, _ = np.histogram(distances, bins=bins, range=(0, r_max))
-            g = g.astype(np.float64) * 2.0
+            g = g.astype(np.float64)
 
             # Normalize
             volume = lx * ly * lz
