@@ -46,6 +46,7 @@ jobs:
             pip install toml croniter fastapi uvicorn
             pip install langchain-openai langgraph-checkpoint-sqlite
           fi
+          pip install psutil pulp cvxpy anthropic langchain-ollama
           # Stress test clients (not pulled in by the app deps).
           pip install httpx websockets
 
