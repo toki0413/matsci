@@ -60,11 +60,7 @@ fn read_last_lines(path: &Path, n: usize) -> Result<Vec<String>, std::io::Error>
     }
 
     let text = String::from_utf8_lossy(&buf);
-    let mut lines: Vec<&str> = text.lines().collect();
-    // lines() skips a trailing empty line; account for a trailing newline.
-    if !buf.is_empty() && buf.last() == Some(&b'\n') {
-        lines.push("");
-    }
+    let lines: Vec<&str> = text.lines().collect();
 
     let start = lines.len().saturating_sub(n);
     Ok(lines[start..].iter().map(|s| s.to_string()).collect())

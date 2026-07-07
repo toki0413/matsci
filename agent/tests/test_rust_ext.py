@@ -59,9 +59,10 @@ def test_top_k_basic() -> None:
 
 
 def test_run_sandboxed_echo() -> None:
+    # echo is a shell builtin on Windows — use python instead.
     result = huginn_ext.sandbox.run_sandboxed(
-        "echo",
-        args=["hello", "sandbox"],
+        "python",
+        args=["-c", "print('hello sandbox')"],
         timeout=5.0,
     )
     assert result["success"] is True
@@ -71,7 +72,7 @@ def test_run_sandboxed_echo() -> None:
 def test_run_sandboxed_rejects_shell_meta() -> None:
     with pytest.raises(ValueError):
         huginn_ext.sandbox.run_sandboxed(
-            "echo",
-            args=["foo; bar"],
+            "python",
+            args=["-c", "import os; os.system('foo; bar')"],
             timeout=5.0,
         )
