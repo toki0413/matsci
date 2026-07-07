@@ -10,8 +10,8 @@ from typing import Any
 
 import numpy as np
 from scipy.sparse.linalg import eigsh
-from skfem import Basis, ElementTriP1, asm
-from skfem.models.elasticity import linear_elasticity, lame_parameters
+from skfem import Basis, ElementTriP2, ElementVector, asm
+from skfem.models.elasticity import linear_elasticity, plane_stress
 
 from huginn.types import ToolResult
 
@@ -34,9 +34,9 @@ def buckling(args: Any) -> ToolResult:
     rho = material.get("rho", 7850.0)
     thickness = material.get("thickness", 1.0)
 
-    lam, mu = lame_parameters(E, nu)
+    lam, mu = plane_stress(E, nu)
 
-    e = ElementTriP1()
+    e = ElementVector(ElementTriP2())
     basis = Basis(m, e)
 
     # 刚度矩阵
@@ -57,8 +57,8 @@ def buckling(args: Any) -> ToolResult:
     for bc in bcs:
         region = bc.get("region", "left")
         region_facets = boundary_facets.get(region, [])
-        if region_facets:
-            region_nodes = np.unique(m.t[:, m.facets[:, region_facets].flatten()].flatten())
+        if len(region_facets):
+            region_nodes = np.unique(m.facets[:, region_facets])
             for node in region_nodes:
                 for dof_idx in bc.get("dofs", [0, 1]):
                     fixed_dofs.append(basis.nodal_dofs[dof_idx][node])

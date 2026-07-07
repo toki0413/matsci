@@ -8,6 +8,8 @@ all code paths without installing the actual software.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +25,12 @@ from huginn.tools.vasp_tool import VaspTool, VaspToolInput
 from huginn.types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
+
+_LAMMPS_AVAILABLE = bool(
+    os.environ.get("LAMMPS_EXECUTABLE")
+    or shutil.which("lmp")
+    or shutil.which("lammps")
+)
 
 
 # ── VASP ──
@@ -205,6 +213,7 @@ class TestLammpsTool:
         assert tool.lammps_executable == "/usr/bin/lmp"
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(not _LAMMPS_AVAILABLE, reason="LAMMPS executable not installed")
     async def test_generate_input(self, tmp_path: Path):
         tool = LammpsTool(lammps_executable=None)
         script_path = tmp_path / "lmp.in"
@@ -220,6 +229,7 @@ class TestLammpsTool:
         assert result.success is True
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(not _LAMMPS_AVAILABLE, reason="LAMMPS executable not installed")
     async def test_run_md_mock(self, tmp_path: Path):
         tool = LammpsTool(lammps_executable=None)
         script_path = tmp_path / "lmp.in"

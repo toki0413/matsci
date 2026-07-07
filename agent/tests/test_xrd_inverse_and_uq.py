@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import math
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,12 @@ from huginn.tools.sci.xrd_sim_tool import XrdSimTool
 from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 from huginn.tools.sim.vasp_tool import VaspTool, VaspToolInput
 from huginn.types import ToolContext
+
+_LAMMPS_AVAILABLE = bool(
+    os.environ.get("LAMMPS_EXECUTABLE")
+    or shutil.which("lmp")
+    or shutil.which("lammps")
+)
 
 # Cu Kα, the tool default — kept explicit so the Bragg math below stays readable.
 WAVELENGTH = 1.5406
@@ -139,6 +147,7 @@ class TestVaspUqHint:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not _LAMMPS_AVAILABLE, reason="LAMMPS executable not installed")
 class TestLammpsUqHint:
     async def test_lammps_result_contains_uq_hint(self, tmp_path):
         """LAMMPS (mock 模式) 结果应带 uq_hint, 建议用 GP 拟合 MSD-vs-time."""

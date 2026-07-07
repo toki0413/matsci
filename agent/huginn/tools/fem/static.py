@@ -11,13 +11,14 @@ import numpy as np
 from skfem import (
     Basis,
     BilinearForm,
-    ElementTriP1,
+    ElementTriP2,
+    ElementVector,
     LinearForm,
     asm,
     condense,
     solve,
 )
-from skfem.models.elasticity import linear_elasticity, lame_parameters
+from skfem.models.elasticity import linear_elasticity, plane_stress
 
 from huginn.types import ToolResult
 
@@ -41,12 +42,11 @@ def static_linear(args: Any) -> ToolResult:
     rho = material.get("rho", 7850.0)
     thickness = material.get("thickness", 1.0)
 
-    # 平面应力 (默认): lam = E*nu/((1+nu)*(1-2*nu)) 不适用, 用平面应力公式
-    # scikit-fem lame_parameters 给 3D Lame 参数; 平面应力需特殊处理
-    # 简化: 用平面应力 D 矩阵对应的 Lame 参数
-    lam, mu = lame_parameters(E, nu)
+    # plane_stress gives the correct 2D Lame parameters for plane stress analysis
+    lam, mu = plane_stress(E, nu)
 
-    e = ElementTriP1()
+    # P2 (quadratic) elements: P1 is too stiff for bending and gives <50% of analytical
+    e = ElementVector(ElementTriP2())
     basis = Basis(m, e)
 
     # 组装刚度矩阵
@@ -65,10 +65,8 @@ def static_linear(args: Any) -> ToolResult:
         if ltype == "point":
             # 集中力: 在 region 边界节点上加力
             region_facets = boundary_facets.get(region, [])
-            if region_facets:
-                # 取该 region 的节点
-                region_nodes = np.unique(m.t[:, m.facets[:, region_facets].flatten()].flatten())
-                # 在 y 方向 (DOF 1) 加力
+            if len(region_facets):
+                region_nodes = np.unique(m.facets[:, region_facets])
                 for node in region_nodes:
                     dofs_y = basis.nodal_dofs[1][node:node+1]
                     f[dofs_y] += value / max(len(region_nodes), 1)
@@ -76,9 +74,8 @@ def static_linear(args: Any) -> ToolResult:
         elif ltype == "pressure":
             # 均布压力: 用 LinearForm 在 region 边界积分
             region_facets = boundary_facets.get(region, [])
-            if region_facets:
-                # 简化: 把压力分摊到 region 节点
-                region_nodes = np.unique(m.t[:, m.facets[:, region_facets].flatten()].flatten())
+            if len(region_facets):
+                region_nodes = np.unique(m.facets[:, region_facets])
                 for node in region_nodes:
                     dofs_y = basis.nodal_dofs[1][node:node+1]
                     f[dofs_y] += value * thickness / max(len(region_nodes), 1)
@@ -89,8 +86,8 @@ def static_linear(args: Any) -> ToolResult:
     for bc in bcs:
         region = bc.get("region", "left")
         region_facets = boundary_facets.get(region, [])
-        if region_facets:
-            region_nodes = np.unique(m.t[:, m.facets[:, region_facets].flatten()].flatten())
+        if len(region_facets):
+            region_nodes = np.unique(m.facets[:, region_facets])
             for node in region_nodes:
                 for dof_idx in bc.get("dofs", [0, 1]):
                     fixed_dofs.append(basis.nodal_dofs[dof_idx][node])

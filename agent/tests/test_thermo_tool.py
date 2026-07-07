@@ -12,6 +12,8 @@ import asyncio
 import math
 import typing
 
+import pytest
+
 from huginn.tools import thermo_tool as thermo_mod
 from huginn.tools.thermo_tool import ThermoTool, ThermoToolInput
 from huginn.types import ToolContext
@@ -25,6 +27,7 @@ def _run(args: ThermoToolInput):
 
 # ── 纯组分物性查询 (需要 thermo 库) ─────────────────────────────────
 def test_water_basic_properties():
+    pytest.importorskip("thermo")  # heavy dep, skip if not installed
     res = _run(ThermoToolInput(action="properties", compound="water"))
     assert res.success, res.error
     props = res.data["properties"]
