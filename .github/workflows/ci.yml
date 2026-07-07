@@ -37,6 +37,7 @@ jobs:
       - name: Run tests
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
+          HUGINN_RATE_LIMIT_PER_MINUTE: "0"
         run: |
           cd agent
           # CI can't install heavy deps (torch, jax, easyocr, dscribe, gpytorch).
