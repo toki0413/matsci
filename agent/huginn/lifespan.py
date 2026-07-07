@@ -35,10 +35,9 @@ async def _connect_mcp_server(
 ) -> bool:
     """Connect to a single MCP server with timeout and full error containment."""
     try:
-        async with asyncio.timeout(timeout):
-            await manager.connect(config)
+        await asyncio.wait_for(manager.connect(config), timeout=timeout)
         return True
-    except TimeoutError:
+    except asyncio.TimeoutError:
         logger.info(f"[MCP] Warning: {name} connection timed out ({timeout}s)")
     except Exception as e:
         logger.info(f"[MCP] Warning: failed to connect to {name}: {e}")
@@ -135,6 +134,8 @@ async def _load_star_plugins() -> None:
     starting.
     """
     try:
+        from pathlib import Path
+
         from huginn.plugins.loader import PluginLoader
 
         base = Path(__file__).resolve().parent  # huginn/
