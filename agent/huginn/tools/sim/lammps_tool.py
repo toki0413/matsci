@@ -294,6 +294,8 @@ class LammpsTool(HuginnTool):
                 ).to_dict()
             except Exception:
                 logger.debug("suppressed in estimate_cost", exc_info=True)
+            # 轨迹里有 MSD, 提示 agent 用 GP 量化扩散系数的不确定性
+            analysis["uq_hint"] = self._uq_hint()
             return ToolResult(
                 data=analysis,
                 success="error" not in analysis,
@@ -306,6 +308,7 @@ class LammpsTool(HuginnTool):
                     "lammps_available": False,
                     "message": "LAMMPS executable not found. Input script saved; results are mock data for demonstration.",
                     "output_prefix": args.output_prefix,
+                    "uq_hint": self._uq_hint(),
                 },
                 success=True,
             )
@@ -528,6 +531,9 @@ class LammpsTool(HuginnTool):
             except Exception:
                 logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
 
+            # 提示 agent 用 GP 拟合 MSD-vs-time, 量化扩散系数不确定性
+            data["uq_hint"] = self._uq_hint()
+
             return ToolResult(
                 data=data,
                 success=ok,
@@ -696,6 +702,22 @@ class LammpsTool(HuginnTool):
             job["finished_at"] = time.time()
 
         return self._handle_poll_job(args)
+
+    def _uq_hint(self) -> dict[str, Any]:
+        """提示 agent 用 numerical_tool 的 GP 拟合 MSD-vs-time 做不确定性量化."""
+        return {
+            "tool": "numerical_tool",
+            "action": "gp",
+            "suggestion": (
+                "Consider calling numerical_tool with action='gp' to fit a Gaussian "
+                "Process to the MSD-vs-time trajectory for uncertainty quantification "
+                "of the diffusion coefficient."
+            ),
+            "data_mapping": {
+                "X": "time (trajectory timesteps)",
+                "y": "msd (mean squared displacement)",
+            },
+        }
 
     def _parse_log(self, log_path: Path) -> tuple[dict, float | None, list[str]]:
         """Parse LAMMPS log file for thermodynamic data."""

@@ -28,6 +28,7 @@ class NumericalToolInput(BaseModel):
         "constrained_minimize",
         "root",
         "curve_fit",
+        "eos_fit",
         "integrate",
         "linear_solve",
         "eigenvalues",
@@ -122,6 +123,14 @@ class NumericalToolInput(BaseModel):
             "Variables: x[0], x[1], ... or named vectors."
         ),
     )
+
+    # ── EOS fitting ──
+    eos_type: Literal["birch_murnaghan", "murnaghan", "vinet"] = Field(
+        default="birch_murnaghan",
+        description="Equation of state type for eos_fit.",
+    )
+    volumes: list[float] | None = Field(default=None, description="Volume data points (Å³)")
+    energies: list[float] | None = Field(default=None, description="Energy data points (eV)")
 
     # Solver options
     method: str | None = Field(default=None)
@@ -276,6 +285,10 @@ class NumericalTool(HuginnTool):
             return ValidationResult(
                 result=False, message="convex requires convex_problem (problem description)."
             )
+        if args.action == "eos_fit" and (args.volumes is None or args.energies is None):
+            return ValidationResult(
+                result=False, message="eos_fit requires volumes and energies."
+            )
         return ValidationResult(result=True)
 
     async def call(
@@ -297,6 +310,8 @@ class NumericalTool(HuginnTool):
                 return self._milp(input_data)
             if input_data.action == "convex":
                 return self._convex(input_data)
+            if input_data.action == "eos_fit":
+                return self._eos_fit(input_data)
 
             from huginn.utils.numerical import (
                 eigenvalues,
@@ -775,6 +790,175 @@ class NumericalTool(HuginnTool):
             success=False,
             error=f"Convex optimization did not converge: {prob.status}",
         )
+
+    # ── Equation of State fitting ───────────────────────────────────
+
+    # 1 eV/Å³ = 160.21766208 GPa
+    _EV_PER_A3_TO_GPA = 160.21766208
+
+    def _eos_fit(self, args: NumericalToolInput) -> ToolResult:
+        """Fit an equation of state to energy-volume data.
+
+        Supports third-order Birch-Murnaghan, Murnaghan, and Vinet EOS.
+        All internal math uses eV and Å³; B0 is reported in both eV/Å³ and GPa.
+        """
+        if not args.volumes or not args.energies:
+            return ToolResult(
+                data=None, success=False,
+                error="eos_fit requires volumes and energies.",
+            )
+        if len(args.volumes) != len(args.energies):
+            return ToolResult(
+                data=None, success=False,
+                error="volumes and energies must have the same length.",
+            )
+        if len(args.volumes) < 4:
+            return ToolResult(
+                data=None, success=False,
+                error=f"EOS fit needs ≥4 points, got {len(args.volumes)}.",
+            )
+
+        try:
+            from scipy.optimize import curve_fit
+        except ImportError:
+            return ToolResult(
+                data=None, success=False,
+                error="scipy is required for eos_fit.",
+            )
+
+        V = np.asarray(args.volumes, dtype=float)
+        E = np.asarray(args.energies, dtype=float)
+
+        # sort by volume so gradient estimation is sane
+        order = np.argsort(V)
+        V, E = V[order], E[order]
+
+        # ── initial guesses from the data itself ──
+        i_min = int(np.argmin(E))
+        V0_guess = float(V[i_min])
+        E0_guess = float(E[i_min])
+        # B0 ~ V0 * d²E/dV² at the minimum (eV/Å³)
+        # np.gradient handles non-uniform spacing
+        if len(V) >= 3:
+            d2E = np.gradient(np.gradient(E, V), V)
+            B0_guess = max(V0_guess * float(d2E[i_min]), 1e-4)
+        else:
+            B0_guess = 1e-3
+        B0p_guess = 4.0  # typical value for crystalline solids
+
+        eos_type = args.eos_type
+        eos_func = self._get_eos_function(eos_type)
+        if eos_func is None:
+            return ToolResult(
+                data=None, success=False,
+                error=f"Unknown EOS type: {eos_type}",
+            )
+
+        p0 = [E0_guess, V0_guess, B0_guess, B0p_guess]
+        # keep V0 inside the data range, B0 positive, B0' physical
+        bounds = (
+            [-np.inf, float(V.min()) * 0.5, 1e-8, 0.1],
+            [np.inf, float(V.max()) * 2.0, np.inf, 20.0],
+        )
+
+        try:
+            popt, pcov = curve_fit(eos_func, V, E, p0=p0, bounds=bounds, maxfev=10000)
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False,
+                error=f"EOS curve_fit failed: {e}",
+            )
+
+        E0_fit, V0_fit, B0_fit, B0p_fit = (float(x) for x in popt)
+        perr = np.sqrt(np.diag(pcov))
+
+        # R²
+        E_pred = eos_func(V, *popt)
+        ss_res = float(np.sum((E - E_pred) ** 2))
+        ss_tot = float(np.sum((E - np.mean(E)) ** 2))
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 1e-30 else 1.0
+
+        # smooth curve for plotting
+        V_smooth = np.linspace(float(V.min()), float(V.max()), 200)
+        E_smooth = eos_func(V_smooth, *popt)
+
+        B0_gpa = B0_fit * self._EV_PER_A3_TO_GPA
+
+        return ToolResult(
+            data={
+                "eos_type": eos_type,
+                "E0": E0_fit,
+                "V0": V0_fit,
+                "B0_GPa": B0_gpa,
+                "B0_eV_per_A3": B0_fit,
+                "B0_prime": B0p_fit,
+                "r_squared": r_squared,
+                "parameters": {
+                    "E0": E0_fit,
+                    "V0": V0_fit,
+                    "B0": B0_fit,
+                    "B0_prime": B0p_fit,
+                },
+                "uncertainties": {
+                    "E0": float(perr[0]),
+                    "V0": float(perr[1]),
+                    "B0": float(perr[2]),
+                    "B0_prime": float(perr[3]),
+                },
+                "fit_curve": {
+                    "volumes": V_smooth.tolist(),
+                    "energies": E_smooth.tolist(),
+                },
+                "input_data": {
+                    "volumes": V.tolist(),
+                    "energies": E.tolist(),
+                },
+                "message": (
+                    f"{eos_type} EOS fit: B0={B0_gpa:.2f} GPa, "
+                    f"V0={V0_fit:.4f} Å³, E0={E0_fit:.6f} eV, "
+                    f"B0'={B0p_fit:.3f}, R²={r_squared:.6f}"
+                ),
+            },
+            success=True,
+        )
+
+    @staticmethod
+    def _get_eos_function(eos_type: str):
+        """Return the EOS callable f(V, E0, V0, B0, B0p) or None if unknown.
+
+        B0 is in eV/Å³ internally; V in Å³; E in eV.
+        """
+        if eos_type == "birch_murnaghan":
+            # 3rd-order BM: x = η²-1, η = (V/V0)^(1/3)
+            # E = E0 + 9*B0*V0/16 * [x³*(B0'-4) + 2x²]
+            def eos(V, E0, V0, B0, B0p):
+                eta = (V / V0) ** (1.0 / 3.0)
+                x = eta ** 2 - 1.0
+                return E0 + (9.0 / 16.0) * B0 * V0 * (
+                    x ** 3 * (B0p - 4.0) + 2.0 * x ** 2
+                )
+            return eos
+
+        if eos_type == "murnaghan":
+            def eos(V, E0, V0, B0, B0p):
+                r = V0 / V
+                return E0 + (B0 * V0 / B0p) * (
+                    r ** (B0p - 1.0) / (B0p - 1.0)
+                    - B0p / (B0p - 1.0)
+                    + V / V0
+                )
+            return eos
+
+        if eos_type == "vinet":
+            def eos(V, E0, V0, B0, B0p):
+                eta = (V / V0) ** (1.0 / 3.0)
+                xi = 1.5 * (B0p - 1.0) * (1.0 - eta)
+                return E0 + 4.0 * B0 * V0 / (B0p - 1.0) ** 2 * (
+                    1.0 - (1.0 - xi) * np.exp(xi)
+                )
+            return eos
+
+        return None
 
     # ── Shared helpers ──────────────────────────────────────────────
 

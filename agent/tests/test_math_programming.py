@@ -11,7 +11,12 @@ from huginn.types import ToolResult
 def _run(tool: NumericalTool, args: dict) -> ToolResult:
     """Run the tool synchronously (call is async)."""
     import asyncio
-    return asyncio.get_event_loop().run_until_complete(tool.call(args))
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(tool.call(args))
 
 
 @pytest.fixture
