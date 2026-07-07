@@ -43,6 +43,7 @@ class VaspToolInput(BaseModel):
         "dos",
         "md",
         "phonon",
+        "eos",
         "submit_async",
         "poll_job",
         "wait_job",
@@ -81,11 +82,15 @@ class VaspToolInput(BaseModel):
         le=5,
         description="On failure, auto-diagnose + patch INCAR and retry up to N times",
     )
+    # eos action 专用: 指定拟合哪种状态方程
+    eos_type: Literal["birch_murnaghan", "murnaghan", "vinet"] | None = Field(
+        default=None, description="For eos action: which EOS to fit."
+    )
 
     @model_validator(mode="after")
     def _check_action_fields(self) -> "VaspToolInput":
         """不同 action 需要不同字段, 在 schema 层兜底, 别等 call() 才挂."""
-        if self.action in _COMPUTE_ACTIONS or self.action == "submit_async":
+        if self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos"):
             if not self.working_dir:
                 raise ValueError(
                     f"action '{self.action}' requires 'working_dir'"
@@ -183,6 +188,17 @@ class VaspTool(HuginnTool):
             # job_id 在 schema 层已经强制非空, 这里直接放行
             return ValidationResult(result=True)
 
+        if args.action == "eos":
+            # eos 只需要 working_dir 存在, 不检查 POSCAR
+            vr = HandleValidator.validate(HandleType.FILE_PATH, args.working_dir, context)
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Working directory not found: {args.working_dir}",
+                    error_code=404,
+                )
+            return ValidationResult(result=True)
+
         vr = HandleValidator.validate(HandleType.FILE_PATH, args.working_dir, context)
         if not vr.result:
             return ValidationResult(
@@ -209,6 +225,9 @@ class VaspTool(HuginnTool):
             return self._handle_poll_job(args)
         if args.action == "wait_job":
             return await self._handle_wait_job(args)
+
+        if args.action == "eos":
+            return await self._eos(args, context)
 
         work_dir = Path(args.working_dir)
         if not work_dir.exists():
@@ -383,6 +402,9 @@ class VaspTool(HuginnTool):
                 ).to_dict()
             except Exception:
                 logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+
+            # 提示 agent 可以链式调 numerical_tool 做 GP 不确定性量化
+            data["uq_hint"] = self._uq_hint()
 
             return ToolResult(
                 data=data,
@@ -608,6 +630,61 @@ class VaspTool(HuginnTool):
             job["finished_at"] = time.time()
 
         return self._handle_poll_job(args)
+
+    async def _eos(self, args: VaspToolInput, context: ToolContext) -> ToolResult:
+        """批量读取不同体积的 SCF 结果, 拟合 EOS.
+
+        working_dir 下每个子目录包含一个已完成 SCF 的 OUTCAR.
+        从每个 OUTCAR 解析 volume + energy, 然后调 numerical_tool 做拟合.
+        """
+        work_dir = Path(args.working_dir)
+        if not work_dir.exists():
+            return ToolResult(
+                data=None, success=False,
+                error=f"Working directory not found: {work_dir}",
+            )
+
+        ev_points: list[tuple[float, float]] = []
+        for subdir in sorted(work_dir.iterdir()):
+            if not subdir.is_dir():
+                continue
+            outcar = subdir / "OUTCAR"
+            if not outcar.exists():
+                continue
+            parsed = self._parse_outcar(outcar)
+            vol = parsed.get("volume")
+            en = parsed.get("energy")
+            if vol is not None and en is not None:
+                ev_points.append((float(vol), float(en)))
+
+        if len(ev_points) < 4:
+            return ToolResult(
+                data=None, success=False,
+                error=f"EOS fit needs ≥4 points with volume+energy, found {len(ev_points)}.",
+            )
+
+        ev_points.sort()
+        volumes, energies = zip(*ev_points)
+
+        from huginn.tools.numerical_tool import NumericalTool
+
+        num_tool = NumericalTool()
+        eos_result = await num_tool.call({
+            "action": "eos_fit",
+            "volumes": list(volumes),
+            "energies": list(energies),
+            "eos_type": args.eos_type or "birch_murnaghan",
+        })
+
+        return ToolResult(
+            data={
+                "eos_fit": eos_result.data,
+                "ev_points": [{"volume": v, "energy": e} for v, e in ev_points],
+                "n_points": len(ev_points),
+            },
+            success=eos_result.success,
+            error=eos_result.error,
+        )
 
     def _parse_outcar(self, outcar_path: Path) -> dict[str, Any]:
         """Parse OUTCAR for key physical quantities.
@@ -861,11 +938,30 @@ class VaspTool(HuginnTool):
         except Exception:
             logger.debug("suppressed in _mock_result", exc_info=True)
 
+        # mock 结果也带 uq_hint, 让 agent 能练习链式调用
+        data["uq_hint"] = self._uq_hint()
+
         return ToolResult(
             data=data,
             success=True,
             error=None,
         )
+
+    def _uq_hint(self) -> dict[str, Any]:
+        """提示 agent 用 numerical_tool 的 GP 做 VASP 结果的不确定性量化."""
+        return {
+            "tool": "numerical_tool",
+            "action": "gp",
+            "suggestion": (
+                "Consider calling numerical_tool with action='gp' to fit a Gaussian "
+                "Process to your energy/property data for uncertainty quantification. "
+                "Pass the VASP results as (X, y) training data."
+            ),
+            "data_mapping": {
+                "X": "lattice_parameters or volumes",
+                "y": "energy or bandgap",
+            },
+        }
 
     def _modify_incar(self, incar_path: Path, overrides: dict) -> None:
         """Modify INCAR file with override values."""

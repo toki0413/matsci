@@ -7,6 +7,7 @@ Complementary to characterization_tool (which only processes experimental data).
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -19,7 +20,9 @@ from huginn.types import ToolContext, ToolResult, ValidationResult
 
 
 class XrdSimToolInput(BaseModel):
-    action: Literal["simulate_xrd", "parse_pattern", "compare_patterns", "index_peaks"] = Field(
+    action: Literal[
+        "simulate_xrd", "parse_pattern", "compare_patterns", "index_peaks", "inverse_design"
+    ] = Field(
         ..., description="XRD action to perform."
     )
     file_path: str | None = Field(
@@ -51,6 +54,14 @@ class XrdSimToolInput(BaseModel):
     peaks: list[float] | None = Field(
         default=None,
         description="Observed peak 2θ positions for index_peaks.",
+    )
+    target_peaks: list[float] | None = Field(
+        default=None,
+        description="Target 2θ peak positions for inverse_design.",
+    )
+    lattice_params_guess: list[float] | None = Field(
+        default=None,
+        description="Initial guess for lattice parameters [a, b, c, α, β, γ].",
     )
 
 
@@ -99,6 +110,12 @@ class XrdSimTool(HuginnTool):
                     result=False,
                     message="index_peaks requires peaks and (file_path or structure_str).",
                 )
+        if args.action == "inverse_design":
+            if not args.target_peaks:
+                return ValidationResult(
+                    result=False,
+                    message="inverse_design requires target_peaks (list of target 2θ peak positions).",
+                )
         return ValidationResult(result=True)
 
     async def call(
@@ -114,6 +131,8 @@ class XrdSimTool(HuginnTool):
             return self._compare_patterns(input_data, context)
         elif input_data.action == "index_peaks":
             return self._index_peaks(input_data, context)
+        elif input_data.action == "inverse_design":
+            return self._inverse_design(input_data, context)
         return ToolResult(data=None, success=False, error=f"Unknown action: {input_data.action}")
 
     def _check_path(self, file_path: str | None, context: ToolContext | None) -> ToolResult | None:
@@ -411,6 +430,98 @@ class XrdSimTool(HuginnTool):
                 "structure": struct.composition.reduced_formula,
                 "n_indexed": sum(1 for p in indexed if p["hkl"] is not None),
                 "n_observed": len(observed),
+            },
+            success=True,
+        )
+
+    # 立方晶系逆设计用到的前三个允许反射.
+    # ponytail: 只支持立方晶系; 四方/六方 (a, c 两变量) 留作后续扩展,
+    # 届时把 _CUBIC_HKLS 换成按晶系分发的查找表即可.
+    _CUBIC_HKLS = [(1, 1, 1), (2, 0, 0), (2, 2, 0)]
+
+    def _inverse_design(
+        self, input_data: XrdSimToolInput, context: ToolContext | None = None
+    ) -> ToolResult:
+        """逆设计: 给定目标 2θ 峰位, 反推晶格常数.
+
+        立方晶系下 d = a/√(h²+k²+l²), 再由 Bragg 定律 2θ = 2·arcsin(λ/2d)
+        得到峰位. 把目标峰按顺序匹配到 (111)/(200)/(220), 用 Nelder-Mead
+        最小化 Σ(2θ_sim - 2θ_target)² 求最优 a.
+        """
+        targets = input_data.target_peaks
+        if not targets:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="inverse_design requires target_peaks (list of target 2θ peak positions).",
+            )
+
+        try:
+            from scipy.optimize import minimize
+        except ImportError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="scipy is required for inverse_design. Install with: pip install scipy",
+            )
+
+        wl = input_data.wavelength
+        allowed = self._CUBIC_HKLS
+        n = min(len(targets), len(allowed))
+        inv_sq = [math.sqrt(h * h + k * k + l * l) for h, k, l in allowed[:n]]
+        tgt = [float(t) for t in targets[:n]]
+
+        def two_theta(a: float, s: float) -> float:
+            # a 太小会让 λ/(2d) ≥ 1, arcsin 无定义, 夹到边界外给个大角度惩罚.
+            arg = wl * s / (2.0 * a)
+            if arg >= 1.0:
+                return 180.0
+            return math.degrees(2.0 * math.asin(arg))
+
+        def objective(x):
+            a = float(x[0])
+            if a <= 0.0:
+                return 1e6
+            return sum((two_theta(a, s) - t) ** 2 for s, t in zip(inv_sq, tgt))
+
+        # 初始猜测: 用户给的 lattice_params_guess[0], 否则用 5.0Å (常见金属区间).
+        a0 = 5.0
+        if input_data.lattice_params_guess and input_data.lattice_params_guess[0] > 0:
+            a0 = float(input_data.lattice_params_guess[0])
+
+        res = minimize(
+            objective,
+            [a0],
+            method="Nelder-Mead",
+            options={"xatol": 1e-5, "fatol": 1e-10, "maxiter": 5000},
+        )
+        a_opt = float(res.x[0])
+
+        sim_peaks = []
+        sse = 0.0
+        for (h, k, l), s, t in zip(allowed[:n], inv_sq, tgt):
+            tt = two_theta(a_opt, s)
+            sse += (tt - t) ** 2
+            sim_peaks.append({
+                "hkl": [h, k, l],
+                "two_theta": round(tt, 4),
+                "target_two_theta": round(t, 4),
+                "delta": round(tt - t, 4),
+            })
+        rmse = math.sqrt(sse / n) if n else 0.0
+
+        return ToolResult(
+            data={
+                "lattice_system": "cubic",
+                "lattice_a": round(a_opt, 6),
+                "lattice_parameters": [round(a_opt, 6)] * 3 + [90.0, 90.0, 90.0],
+                "match_error": round(rmse, 6),
+                "sse": round(sse, 6),
+                "simulated_peaks": sim_peaks,
+                "target_peaks": tgt,
+                "wavelength": wl,
+                "n_peaks": n,
+                "converged": bool(res.success),
             },
             success=True,
         )
