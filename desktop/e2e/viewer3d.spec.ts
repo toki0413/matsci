@@ -21,8 +21,8 @@ test.describe('3D viewer', () => {
 
   test('can navigate to the 3D structure panel', async ({ page }) => {
     await page.goto('/');
-    // Sidebar entry whose label is "Structure" (icon + text button).
-    await page.getByRole('button', { name: 'Structure', exact: true }).click();
+    // Sidebar entry whose label is "Structure" (icon + text tab).
+    await page.getByRole('tab', { name: 'Structure', exact: true }).click();
     // Empty-state copy from StructureViewer -- confirms the panel mounted.
     await expect(page.getByText('No structure loaded')).toBeVisible({ timeout: 10_000 });
   });
