@@ -417,7 +417,11 @@ class RemoteExecutor:
         try:
             self._client.download_file(remote_archive, str(local_archive))
             with tarfile.open(local_archive, "r:gz") as tar:
-                tar.extractall(path=local_dir, filter="fully_trusted")
+                # filter= was added in 3.12; fall back on older runtimes.
+                try:
+                    tar.extractall(path=local_dir, filter="fully_trusted")
+                except TypeError:
+                    tar.extractall(path=local_dir)
         finally:
             local_archive.unlink(missing_ok=True)
 

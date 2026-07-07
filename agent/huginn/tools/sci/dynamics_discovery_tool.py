@@ -242,12 +242,21 @@ class DynamicsDiscoveryTool(HuginnTool):
     def _solve(
         self, Theta: np.ndarray, dXdt: np.ndarray, threshold: float
     ) -> np.ndarray:
-        """在已归一化的库上跑稀疏回归 (Lasso 优先, STLSQ 兜底)."""
+        """在已归一化的库上跑稀疏回归 (Lasso 优先, STLSQ 兜底).
+
+        threshold 是相对阈值 (保留 |coef| >= threshold * max|coef| 的项),
+        Lasso 只用很小的 alpha 做数值稳定, 真正的稀疏化交给 _threshold().
+        之前把 threshold 直接当 Lasso alpha 用, 0.05 的 alpha 对 y=2x 这种
+        简单关系都过度收缩到 1.48.
+        """
         try:
             from sklearn.linear_model import Lasso  # type: ignore
 
-            alpha = max(threshold, 1e-4)
-            model = Lasso(alpha=alpha, fit_intercept=False, max_iter=20000)
+            # alpha 要小: Lasso 只负责 mild regularization, 真正的稀疏化
+            # 由 _threshold() 按相对阈值做. 1e-4 是 sklearn 文档推荐的
+            # 下限, 再小数值上和 OLS 没区别.
+            alpha = 1e-4
+            model = Lasso(alpha=alpha, fit_intercept=False, max_iter=50000)
             Xi = np.zeros((Theta.shape[1], dXdt.shape[1]))
             for j in range(dXdt.shape[1]):
                 model.fit(Theta, dXdt[:, j])

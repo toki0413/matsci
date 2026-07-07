@@ -349,8 +349,13 @@ class InterpretableMLTool(HuginnTool):
                 obs = likelihood(model(torch.tensor(X_new, dtype=torch.float32, device=device)))
                 mu = obs.mean.cpu().numpy()
                 sigma = obs.stddev.cpu().numpy()
-        except Exception:
-            # Any training/prediction hiccup falls back to the numpy backend.
+        except Exception as exc:
+            # gpytorch 依赖 torch 版本兼容, 训练/预测出错时降级到 numpy.
+            # 记 warning 方便排查, 不吞异常.
+            import logging
+            logging.getLogger(__name__).warning(
+                "gpytorch GP failed, falling back to numpy: %s", exc
+            )
             return None
 
         lower = mu - z * sigma
