@@ -400,24 +400,22 @@ class VectorStore:
             return extract_text_with_ocr(path.name, path.read_bytes())
 
         if suffix == ".pdf":
+            # Use pymupdf for consistency with knowledge.store._extract_text.
             try:
-                import PyPDF2
-
-                text = ""
-                with open(path, "rb") as f:
-                    reader = PyPDF2.PdfReader(f)
-                    for page in reader.pages:
-                        text += page.extract_text() or ""
-                # Fall back to OCR for scanned/image-based PDFs.
-                if not text.strip():
-                    ocr_text = extract_text_with_ocr(path.name, path.read_bytes())
-                    if ocr_text.strip():
-                        return ocr_text
-                return text
+                import fitz  # pymupdf
             except ImportError as err:
-                raise ImportError(
-                    "PyPDF2 not installed. Run: pip install PyPDF2"
+                raise RuntimeError(
+                    "PDF support requires pymupdf. Install: pip install pymupdf"
                 ) from err
+            doc = fitz.open(stream=path.read_bytes(), filetype="pdf")
+            parts = [page.get_text() for page in doc]
+            text = "\n".join(parts)
+            # Fall back to OCR for scanned/image-based PDFs.
+            if not text.strip():
+                ocr_text = extract_text_with_ocr(path.name, path.read_bytes())
+                if ocr_text.strip():
+                    return ocr_text
+            return text
 
         elif suffix in {".json"}:
             with open(path, encoding="utf-8") as f:

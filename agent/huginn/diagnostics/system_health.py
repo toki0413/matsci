@@ -200,6 +200,12 @@ class SystemHealthMonitor:
 
     def snapshot(self) -> SystemMetrics:
         """当前系统资源快照。后台线程没跑就现场采一次。"""
+        # 先看缓存：测试里直接注入 _latest 就能用，psutil 没装也不受影响。
+        # 生产环境 psutil 不可用时 _latest 一定是 None（start() 直接 no-op），
+        # 所以这里不会返回脏数据。
+        with self._lock:
+            if self._latest is not None:
+                return self._latest
         if not _PSUTIL_OK:
             return SystemMetrics(
                 timestamp=time.time(),
@@ -211,9 +217,6 @@ class SystemHealthMonitor:
                 swap_used_mb=0.0,
                 psutil_available=False,
             )
-        with self._lock:
-            if self._latest is not None:
-                return self._latest
         # 后台线程没启动，现场采一次
         metrics = self._collect()
         with self._lock:

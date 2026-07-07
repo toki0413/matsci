@@ -39,6 +39,8 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "database_tool",
         "materials_database_tool",
         "autodiff_tool",
+        "interpretable_ml_tool",
+        "dynamics_discovery_tool",
     },
     ResearchPhase.PLANNING: _CORE_TOOLS | {
         "structure_tool",
@@ -49,6 +51,8 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "packing_tool",
         "tda",
         "multi_fidelity_tool",
+        "model3d_tool",
+        "thermo_tool",
     },
     ResearchPhase.EXECUTION: _CORE_TOOLS | {
         "vasp_tool",
@@ -69,6 +73,12 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "packing_tool",
         "workflow_tool",
         "wetlab_rpc_tool",
+        "gaussian_tool",
+        "orca_tool",
+        "transolver_tool",
+        "convergence_test_tool",
+        "model3d_tool",
+        "thermo_tool",
     },
     ResearchPhase.VALIDATION: _CORE_TOOLS | {
         "validate_tool",
@@ -88,6 +98,10 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "tda",
         "xrd_sim_tool",
         "multi_fidelity_tool",
+        "model3d_tool",
+        "thermo_tool",
+        "interpretable_ml_tool",
+        "dynamics_discovery_tool",
     },
     ResearchPhase.REPORTING: _CORE_TOOLS | {
         "report_tool",
@@ -96,6 +110,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "symbolic_math_tool",
         "extract_tool",
         "xrd_sim_tool",
+        "model3d_tool",
     },
     ResearchPhase.OPEN: None,
 }
@@ -110,6 +125,10 @@ _FROZEN_HEAVY_TOOLS: set[str] = {
     "openfoam_tool",
     "ml_potential_tool",
     "gromacs_tool",
+    "gaussian_tool",
+    "orca_tool",
+    "transolver_tool",
+    "convergence_test_tool",
 }
 
 _FROZEN_LIGHT_TOOLS: set[str] = {
@@ -131,6 +150,9 @@ _FROZEN_LIGHT_TOOLS: set[str] = {
     "phase_tool",
     "workflow_tool",
     "multi_fidelity_tool",
+    "thermo_tool",
+    "interpretable_ml_tool",
+    "dynamics_discovery_tool",
 }
 
 _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {
@@ -174,6 +196,25 @@ _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {
         "symbolic_math_tool",
         "numerical_tool",
     ],
+    "gaussian_tool": [
+        "materials_database_tool",
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
+    "orca_tool": [
+        "materials_database_tool",
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
+    "transolver_tool": [
+        "numerical_tool",
+        "symbolic_math_tool",
+    ],
+    "convergence_test_tool": [
+        "materials_database_tool",
+        "symbolic_math_tool",
+        "numerical_tool",
+    ],
 }
 
 _FROZEN_CONSTRAINT_SCOPES: dict[str, str] = {
@@ -190,6 +231,11 @@ _FROZEN_CONSTRAINT_SCOPES: dict[str, str] = {
     "fenics_tool": "fem",
     "elmer_tool": "fem",
     "gromacs_tool": "md",
+    "gaussian_tool": "qc",
+    "orca_tool": "qc",
+    "transolver_tool": "pde",
+    "convergence_test_tool": "dft",
+    "mechanical_tool": "mechanical",
 }
 
 

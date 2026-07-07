@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -59,7 +59,7 @@ def test_decay_toward_baseline(tmp_path: Path) -> None:
     assert high_state.valence > 0.5
 
     # Simulate 24 hours passing by back-dating the last timestamp.
-    tracker._state.timestamp = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    tracker._state.timestamp = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     decayed = tracker.current_state()
     assert decayed.valence < high_state.valence
     assert decayed.fatigue < high_state.fatigue
@@ -86,7 +86,7 @@ def test_trajectory_returns_recent_events(tmp_path: Path) -> None:
 
 def test_emotion_event_round_trip() -> None:
     event = EmotionEvent(
-        timestamp=datetime.now(UTC).isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         source="user",
         type="praise",
         deltas={"valence": 0.1},

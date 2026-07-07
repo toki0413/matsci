@@ -287,7 +287,8 @@ class TestAbaqusTool:
             tool = AbaqusTool()
         assert tool.abaqus_executable == "/usr/bin/abaqus"
 
-    def test_import_packing(self, tmp_path: Path):
+    def test_import_packing(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(AbaqusTool, "_find_abaqus", lambda self: None)
         tool = AbaqusTool(abaqus_executable=None)
         packing = {"objects": [{"center": [0, 0, 0], "radius": 1.0}]}
         result = tool.call(
@@ -303,7 +304,8 @@ class TestAbaqusTool:
         assert result.success is True
         assert (tmp_path / "abaqus.py").exists()
 
-    def test_run_no_script(self, tmp_path: Path):
+    def test_run_no_script(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(AbaqusTool, "_find_abaqus", lambda self: None)
         tool = AbaqusTool(abaqus_executable=None)
         result = tool.call(
             {"action": "run", "working_dir": str(tmp_path)}, CTX
