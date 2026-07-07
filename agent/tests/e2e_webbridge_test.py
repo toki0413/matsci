@@ -14,11 +14,29 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 FRONTEND_DIR = PROJECT_ROOT.parent / "desktop" / "dist"
 HUGINN_EXE = PROJECT_ROOT / "dist" / "huginn-agent" / "huginn-agent.exe"
 WEBBRIDGE_URL = "http://127.0.0.1:10086/command"
 SESSION = "huginn-e2e-test"
+
+
+def _webbridge_available() -> bool:
+    """Quick probe — is the webbridge daemon listening?"""
+    try:
+        req = urllib.request.Request(WEBBRIDGE_URL, data=b"{}",
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=2)
+        return True
+    except Exception:
+        return False
+
+
+_WEBBRIDGE_OK = _webbridge_available()
+pytestmark = pytest.mark.skipif(not _WEBBRIDGE_OK,
+                                reason="webbridge daemon not running on this machine")
 
 
 def webbridge(action: str, args: dict | None = None) -> dict:
