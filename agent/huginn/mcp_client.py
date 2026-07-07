@@ -523,8 +523,9 @@ class MCPClientManager:
         if not session:
             return False
         try:
-            async with asyncio.timeout(_HEALTH_CHECK_TIMEOUT):
-                await session.list_tools()
+            await asyncio.wait_for(
+                session.list_tools(), timeout=_HEALTH_CHECK_TIMEOUT
+            )
             self._last_health_check[name] = time.monotonic()
             return True
         except Exception:
