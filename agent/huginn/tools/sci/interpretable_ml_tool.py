@@ -1,6 +1,6 @@
 """Interpretable ML closed-loop tool.
 
-Three actions that compose into a discovery -> uncertainty -> validation loop:
+Four actions that compose into a discovery -> uncertainty -> validation loop:
 
   symbolic_regression  discover a closed-form equation y = f(X) from data via
                        a candidate function library + sparse regression (the
@@ -9,11 +9,15 @@ Three actions that compose into a discovery -> uncertainty -> validation loop:
                        gpytorch when available, otherwise the in-repo NumPyGP.
   validate_structure   Bourbaki-style check of a discovered equation: dimensional
                        consistency, symmetry, and conservation-law heuristics.
+  sr_guided_gp         SR trend as the GP mean function: run symbolic_regression,
+                       then fit a GP on the SR residuals so the closed form
+                       carries the bulk trend and the GP only explains the
+                       residual structure. Combined prediction = SR + GP.
 
 The outputs of symbolic_regression (terms, coefficients, equation) feed straight
 into validate_structure; gaussian_process runs on the same (X, y) to bound how
-much the surrogate trusts the fit. Each action stands alone, so they can also be
-called independently.
+much the surrogate trusts the fit. sr_guided_gp closes the loop between them.
+Each action stands alone, so they can also be called independently.
 
 Heavy deps (pysr, gpytorch, sympy) are imported lazily so the tool loads and the
 non-dependent paths work without them.
@@ -32,15 +36,24 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.sci.dynamics_discovery_tool import DynamicsDiscoveryTool
 from huginn.tools.sci.gp_tool import NumPyGP
 from huginn.types import ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class InterpretableMLInput(BaseModel):
-    action: Literal["symbolic_regression", "gaussian_process", "validate_structure"] = Field(
+    action: Literal[
+        "symbolic_regression",
+        "gaussian_process",
+        "validate_structure",
+        "sr_guided_gp",
+    ] = Field(
         ...,
         description=(
             "symbolic_regression: discover y=f(X); "
             "gaussian_process: GP fit + uncertainty; "
-            "validate_structure: Bourbaki-style structural check"
+            "validate_structure: Bourbaki-style structural check; "
+            "sr_guided_gp: SR trend as GP mean function, GP models the residual"
         ),
     )
     # ── data (symbolic_regression / gaussian_process) ──
@@ -162,6 +175,8 @@ class InterpretableMLTool(HuginnTool):
             return self._gaussian_process(args)
         if args.action == "validate_structure":
             return self._validate_structure(args)
+        if args.action == "sr_guided_gp":
+            return self._sr_guided_gp(args)
         return ToolResult(data=None, success=False, error=f"unknown action: {args.action}")
 
     # ── symbolic regression (SINDy on y = f(X)) ───────────────────
@@ -367,6 +382,82 @@ class InterpretableMLTool(HuginnTool):
             # Common levels hard-coded so we still work without scipy.
             table = {0.90: 1.645, 0.95: 1.96, 0.99: 2.576}
             return table.get(round(confidence, 2), 1.96)
+
+    # ── SR-guided GP: symbolic trend as the mean, GP on residuals ──
+
+    def _sr_guided_gp(self, args: InterpretableMLInput) -> ToolResult:
+        # SR discovers the deterministic trend; GP only has to explain what the
+        # closed form leaves on the table, so its hyperparameters are not asked
+        # to model both the bulk trend and the fine structure at once.
+        sr_result = self._symbolic_regression(args)
+        if not sr_result.success:
+            return sr_result
+
+        # Reload (X, y) to rebuild the SR design matrix and residualize.
+        try:
+            X, y, feats = self._load_xy(args)
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
+
+        terms = sr_result.data["terms"]
+        coefs = np.asarray(sr_result.data["coefficients"], dtype=float)
+
+        # The library builder is deterministic, so re-running it with the same
+        # args reproduces the column order SR used — Theta lines up 1:1 with
+        # the stored coefficients, no refit needed.
+        _, Theta = self._sindy._build_library(
+            X, args.max_order, args.include_trig, args.include_exp
+        )
+        sr_pred = Theta @ coefs
+        residuals = y - sr_pred
+
+        # Swap the target column for the residual series and hand the whole
+        # thing back to the existing gaussian_process path — that keeps the
+        # gpytorch/numpy fallback, X_new handling, and CI bookkeeping in one
+        # place instead of duplicating it here.
+        target_key = args.target_column or "y"
+        resid_data = {feat: X[:, i].tolist() for i, feat in enumerate(feats)}
+        resid_data[target_key] = residuals.tolist()
+        gp_args = args.model_copy(update={"data_json": resid_data, "data_file": None})
+        gp_result = self._gaussian_process(gp_args)
+        if not gp_result.success:
+            return gp_result
+
+        # Combined prediction = SR trend (deterministic) + GP residual
+        # correction (with its uncertainty band). SR contributes no variance,
+        # so the combined CI is just the GP band shifted by the SR mean.
+        X_new = np.asarray(args.X_new, dtype=float) if args.X_new else X
+        _, Theta_new = self._sindy._build_library(
+            X_new, args.max_order, args.include_trig, args.include_exp
+        )
+        sr_mean_new = Theta_new @ coefs
+        gp_mean = np.asarray(gp_result.data["mean"], dtype=float)
+        gp_lower = np.asarray(gp_result.data["lower"], dtype=float)
+        gp_upper = np.asarray(gp_result.data["upper"], dtype=float)
+
+        combined_mean = sr_mean_new + gp_mean
+        combined_lower = sr_mean_new + gp_lower
+        combined_upper = sr_mean_new + gp_upper
+
+        r2 = sr_result.data.get("r2", 0.0)
+        return ToolResult(
+            data={
+                "sr_equation": sr_result.data,
+                "gp_residuals": gp_result.data,
+                "sr_mean": sr_mean_new.tolist(),
+                "combined_mean": combined_mean.tolist(),
+                "combined_lower": combined_lower.tolist(),
+                "combined_upper": combined_upper.tolist(),
+                "combined_approach": "SR mean + GP residual",
+                "interpretation": (
+                    f"SR found {len(terms)} terms (R2={r2:.3f}); "
+                    f"GP models the residual structure with confidence intervals."
+                ),
+                "n_samples": int(X.shape[0]),
+                "n_predict": int(len(X_new)),
+            },
+            success=True,
+        )
 
     # ── Bourbaki-style structure validation ──────────────────────
 
@@ -607,7 +698,7 @@ class InterpretableMLTool(HuginnTool):
                         "detail": "equation is an identity (LHS - RHS = 0)",
                     }
             except Exception:
-                pass
+                logger.debug("simplify failed", exc_info=True)
         # Structural heuristic: presence of a time derivative or divergence term
         # in the free symbols' naming (d/dt, div, ∇) is a soft signal.
         names = [str(s) for s in symbols]

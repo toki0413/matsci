@@ -24,6 +24,9 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 # workflow_template → 实际跑计算用的 tool 名
@@ -430,7 +433,7 @@ class MaterialsAutoResearchTool(HuginnTool):
                         if bg:
                             return float(bg.group(1)), "从 vasprun.xml 兜底取值"
                     except Exception:
-                        pass
+                        logger.debug("read text failed", exc_info=True)
 
         return None, "未能提取指标 (可能 VASP 未真正执行或结果缺失)"
 

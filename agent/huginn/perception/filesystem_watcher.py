@@ -17,6 +17,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -62,7 +65,7 @@ class FilesystemWatcher:
                 self._observer.stop()
                 self._observer.join(timeout=2.0)
             except Exception:
-                pass
+                logger.debug("stop failed", exc_info=True)
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
@@ -84,7 +87,7 @@ class FilesystemWatcher:
             try:
                 handler(event)
             except Exception:
-                pass
+                logger.debug("handler failed", exc_info=True)
 
     # ── Watchdog backend ───────────────────────────────────────
 

@@ -186,7 +186,7 @@ class ContextBuilder:
                         if related:
                             lines.append(f"    ↳ Memory: {related[:200]}")
                     except Exception:
-                        pass
+                        logger.debug("recall for prompt failed", exc_info=True)
 
             if not lines:
                 return ""

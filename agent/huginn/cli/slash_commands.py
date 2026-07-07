@@ -12,6 +12,9 @@ import subprocess
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 def _get_console(console: Any | None = None):
@@ -232,7 +235,7 @@ def _detect_server_url() -> str | None:
             if resp.status == 200:
                 return default
     except Exception:
-        pass
+        logger.debug("detect server url failed", exc_info=True)
     return None
 
 

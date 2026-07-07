@@ -310,12 +310,12 @@ class KernelSession:
             try:
                 self._kc.stop_channels()
             except Exception:
-                pass
+                logger.debug("stop channels failed", exc_info=True)
         if self._km is not None:
             try:
                 self._km.shutdown_kernel(now=True)
             except Exception:
-                pass
+                logger.debug("shutdown kernel failed", exc_info=True)
         if self._state_file and os.path.exists(self._state_file):
             try:
                 os.remove(self._state_file)

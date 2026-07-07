@@ -207,7 +207,7 @@ class AnomalyLLMHook:
         try:
             user_msg = str(ctx.metadata.get("user_message", "") or "")
         except Exception:
-            pass
+            logger.debug("get failed", exc_info=True)
         user_msg = user_msg[:_MAX_ARG_CHARS]
 
         user_prompt = f"工具名: {ctx.tool_name}\n入参: {args_text}\n返回: {result_text}\n"
@@ -278,14 +278,14 @@ class AnomalyLLMHook:
         try:
             thread_id = str(ctx.metadata.get("thread_id", "") or "")
         except Exception:
-            pass
+            logger.debug("get failed", exc_info=True)
         # user_message 也存一份, 方便事后排查"用户给的值"和"工具返回的值"
         # 到底哪里冲突. 截断避免 context_snapshot 爆炸.
         user_msg = ""
         try:
             user_msg = str(ctx.metadata.get("user_message", "") or "")[:_MAX_ARG_CHARS]
         except Exception:
-            pass
+            logger.debug("get failed", exc_info=True)
 
         self._store.log(
             Anomaly(
@@ -320,7 +320,7 @@ class AnomalyLLMHook:
         try:
             thread_id = str(ctx.metadata.get("thread_id", "") or "")
         except Exception:
-            pass
+            logger.debug("get failed", exc_info=True)
         return f"{thread_id}:{ctx.tool_name}" if thread_id else ctx.tool_name
 
     @staticmethod

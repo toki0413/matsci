@@ -40,6 +40,7 @@ import json
 import logging
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -280,6 +281,7 @@ class ConjectureGenerator:
         source_problem: str,
         source_domain: str,
         model: Any = None,
+        domain_context: str | None = None,
     ) -> dict[str, Any]:
         """从已知问题抽取抽象结构模式.
 
@@ -287,11 +289,15 @@ class ConjectureGenerator:
              → pattern: "杂质引入 提升 电子输运性质"
 
         model 传入且非 mock 时调 LLM 做更丰富的提取, 否则走关键词模板.
+        domain_context 是从 KG 查到的源领域上下文, 传给 LLM 做提示增强;
+        走模板时忽略它 (模板靠关键词, 不需要额外上下文).
         结果写 research_log (OPEN_QUESTION).
         """
         if model is not None and self._is_real_model(model):
             try:
-                result = self._llm_extract(source_problem, source_domain, model)
+                result = self._llm_extract(
+                    source_problem, source_domain, model, domain_context
+                )
             except Exception:
                 logger.debug("LLM extract failed, fallback to template", exc_info=True)
                 result = self._template_extract(source_problem, source_domain)
@@ -317,6 +323,7 @@ class ConjectureGenerator:
                 "source_problem": source_problem,
                 "source_domain": source_domain,
                 "method": result.get("method"),
+                "has_kg_context": bool(domain_context),
             },
         )
         result["log_id"] = log_id
@@ -427,6 +434,8 @@ class ConjectureGenerator:
         result["log_id"] = log_id
         result["parent_log_id"] = parent_id
         self._last_conjecture = result
+        # 写回 KG: 猜想作为 FACT 节点, 连上源/目标领域. 失败不影响主流程
+        result["kg_node_id"] = self._write_conjecture_to_kg(result, transfer_result)
         return result
 
     def run(
@@ -445,7 +454,11 @@ class ConjectureGenerator:
 
         prompt_level 透传给 generate_conjecture (0/1/2, 默认 1).
         """
-        pattern = self.extract_pattern(source_problem, source_domain, model)
+        # 先从 KG 捞源领域相关实体, 给模式提取多一份上下文 (KG 没建也无所谓)
+        domain_context = self._fetch_domain_context(source_domain)
+        pattern = self.extract_pattern(
+            source_problem, source_domain, model, domain_context=domain_context
+        )
         transfer = self.transfer_domain(pattern, target_domain, model)
         conjecture = self.generate_conjecture(
             transfer, model,
@@ -622,11 +635,16 @@ class ConjectureGenerator:
     # ── LLM enhanced ────────────────────────────────────────────────
 
     def _llm_extract(
-        self, source_problem: str, source_domain: str, model: Any
+        self, source_problem: str, source_domain: str, model: Any,
+        domain_context: str | None = None,
     ) -> dict[str, Any]:
         """调 LLM 做模式提取, 返回结构化结果."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        # KG 查到的领域上下文拼进 prompt, 帮 LLM 落到已知实体上
+        context_block = ""
+        if domain_context:
+            context_block = f"\nKnown domain context from KG:\n{domain_context}\n"
         messages = [
             SystemMessage(content=(
                 "You are a materials science pattern extractor. "
@@ -640,6 +658,7 @@ class ConjectureGenerator:
             HumanMessage(content=(
                 f"Source problem: {source_problem}\n"
                 f"Source domain: {source_domain}\n"
+                f"{context_block}"
                 f"Extract the abstract pattern."
             )),
         ]
@@ -904,6 +923,78 @@ class ConjectureGenerator:
             logger.debug("research log write failed", exc_info=True)
             return None
 
+    def _write_conjecture_to_kg(
+        self, result: dict[str, Any], transfer_result: dict[str, Any]
+    ) -> str | None:
+        """把猜想写进知识图谱, 返回节点 id.
+
+        猜想作为 FACT 节点, 两条边串起跨域关系:
+          source MATERIAL --DERIVED_FROM--> conjecture --APPLIES--> target MATERIAL
+        任何一步炸了都返回 None, 不影响猜想生成主流程.
+        """
+        try:
+            from huginn.kg.entities import EntityType, Relation
+
+            kg = get_kg()
+            if kg is None:
+                return None
+
+            statement = result.get("statement", "")
+            source_domain = transfer_result.get("source_domain", "")
+            target_domain = transfer_result.get("target_domain", "")
+
+            conjecture_id = kg.add_entity(
+                label=statement[:80] or "cross-domain conjecture",
+                entity_type=EntityType.FACT,
+                source="conjecture",
+                confidence=0.6,
+                prediction=result.get("prediction", ""),
+                rationale=result.get("rationale", ""),
+                confidence_level=result.get("confidence", "medium"),
+            )
+
+            # 源领域 MATERIAL --DERIVED_FROM--> 猜想
+            if source_domain:
+                src_id = kg.add_entity(
+                    source_domain, EntityType.MATERIAL, source="conjecture"
+                )
+                kg.add_relation(
+                    src_id, Relation.DERIVED_FROM, conjecture_id, source="conjecture"
+                )
+
+            # 猜想 --APPLIES--> 目标领域 MATERIAL
+            if target_domain:
+                dst_id = kg.add_entity(
+                    target_domain, EntityType.MATERIAL, source="conjecture"
+                )
+                kg.add_relation(
+                    conjecture_id, Relation.APPLIES, dst_id, source="conjecture"
+                )
+
+            kg.save()
+            return conjecture_id
+        except Exception:
+            logger.debug("conjecture KG write-back failed", exc_info=True)
+            return None
+
+    def _fetch_domain_context(self, domain: str) -> str | None:
+        """从 KG 查源领域相关实体, 拼成文本给模式提取用.
+
+        查不到或 KG 不可用就返回 None, 让 extract_pattern 走默认流程.
+        """
+        try:
+            kg = get_kg()
+            if kg is None:
+                return None
+            result = kg.query(domain, depth=1, top_k=8)
+            nodes = result.get("nodes") or []
+            if not nodes:
+                return None
+            return kg.to_text({n["id"] for n in nodes})
+        except Exception:
+            logger.debug("KG domain context fetch failed", exc_info=True)
+            return None
+
 
 # ── 领域知识查表 ──────────────────────────────────────────────────────
 
@@ -938,6 +1029,28 @@ def get_conjecture_generator() -> ConjectureGenerator:
                 _conjecture_generator_singleton = ConjectureGenerator()
                 logger.info("conjecture generator singleton initialized")
     return _conjecture_generator_singleton
+
+
+# KG 单例: 跟 get_research_log 一样的套路, 落在 ~/.huginn.
+# 不可用 (networkx 缺失、目录没权限) 时返回 None, 调用方自己兜底.
+_kg_singleton: Any = None
+_kg_singleton_lock = threading.Lock()
+
+
+def get_kg() -> Any:
+    """拿模块级单例 ProjectKnowledgeGraph. 线程安全懒加载, 不可用时返回 None."""
+    global _kg_singleton
+    if _kg_singleton is None:
+        with _kg_singleton_lock:
+            if _kg_singleton is None:
+                try:
+                    from huginn.kg.graph import ProjectKnowledgeGraph
+
+                    _kg_singleton = ProjectKnowledgeGraph(Path.home() / ".huginn")
+                except Exception:
+                    logger.debug("KG singleton init failed", exc_info=True)
+                    return None
+    return _kg_singleton
 
 
 __all__ = ["ConjectureGenerator", "get_conjecture_generator"]

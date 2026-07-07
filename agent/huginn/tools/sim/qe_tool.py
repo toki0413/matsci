@@ -397,7 +397,7 @@ class QuantumEspressoTool(HuginnTool):
                     pass
                 params[k] = v
         except Exception:
-            pass
+            logger.debug("read input params failed", exc_info=True)
         return params
 
     def _apply_input_fixes(self, input_path: Path, fixes: dict[str, Any]) -> None:

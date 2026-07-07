@@ -829,7 +829,7 @@ class MCPClientManager:
                     loop = asyncio.new_event_loop()
                     loop.run_until_complete(self.disconnect_all())
             except Exception:
-                pass
+                logger.debug("get running loop failed", exc_info=True)
 
 
 # Module-level default manager for tests and CLI integration

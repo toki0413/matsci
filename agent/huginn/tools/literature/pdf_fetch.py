@@ -140,7 +140,7 @@ async def _playwright_fetch(
             try:
                 await page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
-                pass  # 有些站永远不 idle, 不强求
+                logger.debug("wait for load state failed", exc_info=True)  # 有些站永远不 idle, 不强求
             await asyncio.sleep(wait_sec)
 
             # Cloudflare 自动挑战等待: 标题含 "just a moment"/"请稍候" 说明在挑战,

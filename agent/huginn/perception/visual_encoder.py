@@ -21,6 +21,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
+import logging
+logger = logging.getLogger(__name__)
+
 
 # ImageNet stats — works fine for ResNet, CLIP and I-JEPA pretraining.
 # Keeping them as module constants avoids re-allocating on every call.
@@ -144,7 +147,7 @@ class _IJEPABackend(_Backend):
         try:
             del self._model
         except Exception:
-            pass
+            logger.debug("close failed", exc_info=True)
         self._model = None  # type: ignore[assignment]
 
 
@@ -181,7 +184,7 @@ class _CLIPBackend(_Backend):
         try:
             del self._model
         except Exception:
-            pass
+            logger.debug("close failed", exc_info=True)
         self._model = None  # type: ignore[assignment]
 
 
@@ -238,7 +241,7 @@ class _ResNetBackend(_Backend):
         try:
             del self._model
         except Exception:
-            pass
+            logger.debug("close failed", exc_info=True)
         self._model = None  # type: ignore[assignment]
 
 
@@ -404,4 +407,4 @@ def reset_encoder() -> None:
         try:
             enc._backend.close()  # noqa: SLF001
         except Exception:
-            pass
+            logger.debug("close failed", exc_info=True)

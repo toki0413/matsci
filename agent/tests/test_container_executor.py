@@ -35,26 +35,28 @@ class TestContainerExecutor:
         assert result.success is False
         assert "not found in PATH" in result.stderr
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="apptainer args differ")
+    @pytest.mark.skipif(sys.platform == "win32", reason="docker not available in test env")
     def test_build_command_docker(self):
         exe = ContainerExecutor(runtime="docker", image="huginn/sandbox")
+        cwd = Path("C:/tmp/ws") if sys.platform == "win32" else Path("/tmp/ws")
         cmd = exe._build_command(
-            "docker", ["python", "-c", "print(1)"], Path("/tmp/ws"), {"FOO": "bar"}
+            "docker", ["python", "-c", "print(1)"], cwd, {"FOO": "bar"}
         )
         assert cmd[0] == "docker"
         assert "run" in cmd
         assert "--rm" in cmd
-        assert "/tmp/ws:/huginn_work" in cmd
+        assert f"{cwd}:{exe.workdir_mount}" in cmd
         assert "FOO=bar" in cmd
         assert cmd[-3:] == ["python", "-c", "print(1)"]
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="apptainer args differ")
+    @pytest.mark.skipif(sys.platform == "win32", reason="apptainer not available on Windows")
     def test_build_command_apptainer(self):
         exe = ContainerExecutor(runtime="apptainer", image="sandbox.sif")
+        cwd = Path("C:/tmp/ws") if sys.platform == "win32" else Path("/tmp/ws")
         cmd = exe._build_command(
-            "apptainer", ["python", "-c", "print(1)"], Path("/tmp/ws"), {"FOO": "bar"}
+            "apptainer", ["python", "-c", "print(1)"], cwd, {"FOO": "bar"}
         )
         assert cmd[0] == "apptainer"
         assert "exec" in cmd
-        assert "/tmp/ws:/huginn_work" in cmd
+        assert f"{cwd}:{exe.workdir_mount}" in cmd
         assert "sandbox.sif" in cmd

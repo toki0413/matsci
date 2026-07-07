@@ -15,6 +15,9 @@ from huginn.agents.factory import AgentFactory
 from huginn.autoloop.plan_store import Plan, PlanStep, PlanStore
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryManager
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -174,7 +177,7 @@ class Orchestrator:
             if steps:
                 return steps
         except Exception:
-            pass
+            logger.debug("loads failed", exc_info=True)
         # Fallback: single step for lead agent
         return [PlanStep(id="s1", description=text or objective, agent_id="lead")]
 
@@ -211,7 +214,7 @@ class Orchestrator:
             try:
                 self.plan_store.update_step(plan_id, task.task_id, **fields)
             except Exception:
-                pass
+                logger.debug("update step failed", exc_info=True)
 
     def _parse_plan(self, objective: str, raw: str) -> TaskPlan:
         """Parse legacy planner output into a TaskPlan, with fallback."""

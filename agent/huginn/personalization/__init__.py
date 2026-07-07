@@ -17,6 +17,9 @@ from huginn.personalization.taste_profile import (
     load_profile,
 )
 from huginn.personalization.user_style import StyleLearner, UserStyleProfile
+import logging
+logger = logging.getLogger(__name__)
+
 
 __all__ = [
     "StyleLearner",
@@ -67,7 +70,7 @@ def _default_storage_path() -> str:
             p.parent.mkdir(parents=True, exist_ok=True)
             return str(p)
     except Exception:
-        pass
+        logger.debug("default storage path failed", exc_info=True)
     return ":memory:"
 
 

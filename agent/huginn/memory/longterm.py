@@ -645,7 +645,7 @@ class LongTermMemory:
                             0, (expires - datetime.now()).total_seconds() / 3600
                         )
                     except Exception:
-                        pass
+                        logger.debug("fromisoformat failed", exc_info=True)
                 self.store(
                     content=item["content"],
                     category=item.get("category", "fact"),
@@ -801,7 +801,7 @@ class LongTermMemory:
                             "content_preview": (entry.get("content") or "")[:80],
                         })
                 except Exception:
-                    pass
+                    logger.debug("lint failed", exc_info=True)
 
         # 3. Find stale: long-tier entries not accessed in 30+ days
         for entry in all_entries:
@@ -821,7 +821,7 @@ class LongTermMemory:
                             "content_preview": (entry.get("content") or "")[:80],
                         })
                 except Exception:
-                    pass
+                    logger.debug("lint failed", exc_info=True)
 
         # 4. Find low confidence distilled knowledge
         for entry in all_entries:

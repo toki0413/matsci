@@ -25,6 +25,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, Response
 
 from huginn.security.auth import require_admin_key
+import logging
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter(tags=["diagnostics"])
 
@@ -99,7 +102,7 @@ def _collect_system_metrics() -> dict[str, Any]:
                 "load_avg": snapshot.load_avg,
             }
     except Exception:
-        pass
+        logger.debug("collect system metrics failed", exc_info=True)
 
     # Fallback: basic process info (cross-platform)
     try:

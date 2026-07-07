@@ -90,7 +90,7 @@ def count_tokens(text: str, model_name: str | None = None) -> int:
         try:
             return len(encoder.encode(text))
         except Exception:
-            pass
+            logger.debug("encode failed", exc_info=True)
     return rough_token_count_for_text(text)
 
 

@@ -17,6 +17,9 @@ from huginn.models.registry import ModelRegistry
 from huginn.persona_emotion import EmotionTracker
 from huginn.personas import PersonaManager
 from huginn.project_context import load_project_context
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class AgentFactory:
@@ -144,7 +147,7 @@ class AgentFactory:
                 if ctx.strip():
                     prompt = f"{prompt}\n\n# Project Context\n\n{ctx}"
             except Exception:
-                pass
+                logger.debug("load project context failed", exc_info=True)
 
         emotion_tracker = EmotionTracker(
             profile.persona, workspace=self.config.workspace

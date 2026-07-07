@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from huginn.prompts import HUGINN_SYSTEM_PROMPT, MATH_DEPTH_GUIDE
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -169,7 +172,7 @@ class PersonaManager:
                 if data.get("default_persona"):
                     self._default_name = data["default_persona"]
             except Exception:
-                pass
+                logger.debug("loads failed", exc_info=True)
 
         # Skill personas override JSON-defined personas of the same name.
         for name, persona in scan_persona_skills(*self._skill_dirs).items():

@@ -232,7 +232,7 @@ def _parse_cif(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, 
     try:
         return _parse_via_pymatgen(text, "cif")
     except Exception:
-        pass
+        logger.debug("parse via pymatgen failed", exc_info=True)
 
     # 正则兜底: 提取 _cell_length_a 等和 _atom_site 数据
     def _g(pat: str) -> float | None:

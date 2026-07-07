@@ -517,6 +517,7 @@ class LiteratureTool(HuginnTool):
                     "spread": None,
                     "n_papers_searched": 0,
                     "n_papers_with_values": 0,
+                    "kb_written": 0,
                     "message": "没搜到相关文献",
                 },
                 success=True,
@@ -600,6 +601,27 @@ class LiteratureTool(HuginnTool):
                     "range": round(max(vals) - min(vals), 6),
                 }
 
+        # 把抽到的文献报道值写回知识库，下次同体系查询能直接命中
+        kb_written = 0
+        try:
+            from huginn.knowledge.store import get_knowledge_base
+            kb = get_knowledge_base()
+            for rv in reported:
+                doi = rv.get("doi") or ""
+                title = rv.get("source_paper") or ""
+                text = (
+                    f"{args.system} | {args.property} = {rv['value']} {rv['unit']}\n"
+                    f"method: {rv.get('method', '')}\n"
+                    f"source: {title}\n"
+                    f"doi: {doi}\n"
+                    f"year: {rv.get('year', '')}\n"
+                )
+                meta = {"doi": doi, "title": title, "source": "benchmark_lookup"}
+                kb.add_text(text, filename="benchmark_lookup", metadata=meta)
+                kb_written += 1
+        except Exception as exc:
+            logger.warning("benchmark_lookup KB 写回失败: %s", exc)
+
         return ToolResult(
             data={
                 "action": "benchmark_lookup",
@@ -611,6 +633,7 @@ class LiteratureTool(HuginnTool):
                 "spread": spread,
                 "n_papers_searched": len(papers),
                 "n_papers_with_values": len(reported),
+                "kb_written": kb_written,
             },
             success=True,
         )

@@ -309,7 +309,7 @@ class ToolCache:
                 )
                 conn.commit()
         except Exception:
-            pass
+            logger.debug("connect failed", exc_info=True)
 
 
 # ---- 装饰器 ----

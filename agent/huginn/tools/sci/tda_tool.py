@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class TDAToolInput(BaseModel):
@@ -247,7 +250,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
             except ImportError:
                 pass
             except Exception:
-                pass
+                logger.debug("persistence diagram failed", exc_info=True)
 
         # 3) scipy fallback — exact H0, approximate higher dimensions
         if pairs is None:

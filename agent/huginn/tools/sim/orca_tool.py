@@ -336,7 +336,7 @@ class OrcaTool(HuginnTool):
                     for token in s.lstrip("!").split():
                         params[token.lower()] = True
         except Exception:
-            pass
+            logger.debug("read text failed", exc_info=True)
         return params
 
     def _apply_input_overrides(self, inp_path: Path, overrides: dict) -> None:

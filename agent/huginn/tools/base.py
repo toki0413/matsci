@@ -28,6 +28,10 @@ from huginn.types import (
     ValidationResult,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -146,7 +150,7 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
                     # 非侵入式: 记录不匹配但不阻塞
                     pass
             except Exception:
-                pass  # 校验失败不阻塞, 数据照传
+                logger.debug("format result failed", exc_info=True)  # 校验失败不阻塞, 数据照传
 
         return payload
 

@@ -7,6 +7,9 @@ import click
 from huginn import __version__
 from huginn.cli.context import console
 from huginn.pet import get_pet_avatar
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 @click.command()
@@ -20,18 +23,18 @@ def version() -> None:
 
         console.print(f"  langchain: {langchain.__version__}")
     except Exception:
-        pass
+        logger.debug("version failed", exc_info=True)
 
     try:
         import langgraph
 
         console.print(f"  langgraph: {langgraph.__version__}")
     except Exception:
-        pass
+        logger.debug("version failed", exc_info=True)
 
     try:
         import pydantic
 
         console.print(f"  pydantic: {pydantic.__version__}")
     except Exception:
-        pass
+        logger.debug("version failed", exc_info=True)

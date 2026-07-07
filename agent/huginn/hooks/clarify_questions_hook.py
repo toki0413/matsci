@@ -137,7 +137,7 @@ class ClarifyQuestionsHook:
             try:
                 thread_id = str(ctx.metadata.get("thread_id", "") or "")
             except Exception:
-                pass
+                logger.debug("get failed", exc_info=True)
             if thread_id:
                 last = self._last_asked.get(thread_id, 0)
                 if time.time() - last < self._COOLDOWN_SEC:

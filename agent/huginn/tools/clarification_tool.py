@@ -20,6 +20,9 @@ from huginn.interaction.clarification import (
 )
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class ClarificationInput(BaseModel):
@@ -210,7 +213,7 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
                     side_effects=["clarification disabled by feature flag"],
                 )
         except Exception:
-            pass
+            logger.debug("call failed", exc_info=True)
 
         thread_id = getattr(context, "session_id", None) or "default"
 

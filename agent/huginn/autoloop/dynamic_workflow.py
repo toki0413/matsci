@@ -29,6 +29,9 @@ from typing import Any
 
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 def _now_iso() -> str:
@@ -203,12 +206,12 @@ def _serialize(obj: Any) -> Any:
         try:
             return obj.to_dict()
         except Exception:
-            pass
+            logger.debug("to dict failed", exc_info=True)
     if hasattr(obj, "__dict__"):
         try:
             return {k: _serialize(v) for k, v in vars(obj).items() if not k.startswith("_")}
         except Exception:
-            pass
+            logger.debug("serialize failed", exc_info=True)
     return str(obj)
 
 

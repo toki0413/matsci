@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 GateStatus = Literal["pending", "approved", "blocked", "rejected"]
@@ -309,7 +312,7 @@ class PhaseGateHook:
                         reviewer="reviewer",
                     )
             except Exception:
-                pass
+                logger.debug("reviewer fn failed", exc_info=True)
 
         return PhaseGate(
             from_phase=from_phase,

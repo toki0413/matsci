@@ -6,6 +6,7 @@ file so the user can run it manually in an Elmer environment.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +17,8 @@ from pydantic import BaseModel, Field
 from huginn.security import SandboxError, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class ElmerToolInput(BaseModel):
@@ -138,19 +141,31 @@ class ElmerTool(HuginnTool):
                 timeout=600.0,
             )
             success = result.returncode == 0
+            data = {
+                "action": "solve_sif",
+                "returncode": result.returncode,
+                "stdout": result.stdout[-2000:] if result.stdout else "",
+                "stderr": result.stderr[-2000:] if result.stderr else "",
+                "sif_path": str(sif_path),
+                "working_dir": str(work_dir),
+                "message": (
+                    "Elmer solve completed." if success
+                    else f"Elmer solve failed (exit {result.returncode})."
+                ),
+            }
+
+            # Physics audit — convergence, singular matrix, NaN/Inf
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit("elmer_tool", "solve_sif", data, {})
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                logger.debug("audit failure can't block result delivery", exc_info=True)
+
             return ToolResult(
-                data={
-                    "action": "solve_sif",
-                    "returncode": result.returncode,
-                    "stdout": result.stdout[-2000:] if result.stdout else "",
-                    "stderr": result.stderr[-2000:] if result.stderr else "",
-                    "sif_path": str(sif_path),
-                    "working_dir": str(work_dir),
-                    "message": (
-                        "Elmer solve completed." if success
-                        else f"Elmer solve failed (exit {result.returncode})."
-                    ),
-                },
+                data=data,
                 success=success,
                 error=None if success else f"Elmer solve failed: {result.stderr[:300]}",
             )

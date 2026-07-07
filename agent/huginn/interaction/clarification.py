@@ -25,6 +25,9 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -173,7 +176,7 @@ class ClarificationManager:
             try:
                 return self._llm_generate_question(model, qtype, phase, summary, context)
             except Exception:
-                pass  # 降级到模板
+                logger.debug("llm generate question failed", exc_info=True)  # 降级到模板
 
         # 模板兜底
         return self._template_question(qtype, summary, context)

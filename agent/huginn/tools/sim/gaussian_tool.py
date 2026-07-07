@@ -350,7 +350,7 @@ class GaussianTool(HuginnTool):
                             params[token.lower()] = True
                     break
         except Exception:
-            pass
+            logger.debug("read text failed", exc_info=True)
         return params
 
     def _apply_route_overrides(self, gjf_path: Path, overrides: dict) -> None:

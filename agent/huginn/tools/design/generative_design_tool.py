@@ -240,7 +240,7 @@ class GenerativeDesignTool(HuginnTool):
                 if new_files:
                     output_files = list(set(output_files + new_files))
             except Exception:
-                pass
+                logger.debug("iterdir failed", exc_info=True)
 
             return ToolResult(
                 data={

@@ -30,6 +30,10 @@ from huginn.workflows.stages import (
     WorkflowResult,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # Re-export dataclasses so existing imports keep working.
 __all__ = [
     "WorkflowEngine",
@@ -549,7 +553,7 @@ class WorkflowEngine:
                 if memories:
                     tool_input["__memory_context"] = memories
             except Exception:
-                pass
+                logger.debug("retrieve failed", exc_info=True)
 
         return tool_input, None
 
@@ -628,7 +632,7 @@ class WorkflowEngine:
                             self._apply_fixes_to_stage(stage, fixes, software)
 
             except Exception:
-                pass  # Silently ignore diagnosis errors
+                logger.debug("diagnose and fix failed", exc_info=True)  # Silently ignore diagnosis errors
 
         # Also query Sobko knowledge base for additional context
         rag_tool = self.registry.get("rag_tool")
@@ -648,7 +652,7 @@ class WorkflowEngine:
                         kb_hints = [r.get("text", "")[:200] for r in results[:2]]
                         stage.tool_input["__sobko_hints"] = kb_hints
             except Exception:
-                pass
+                logger.debug("diagnose and fix failed", exc_info=True)
 
     def _detect_software_from_stage(self, stage: ComputationalStage) -> str | None:
         """Detect which software this stage uses."""

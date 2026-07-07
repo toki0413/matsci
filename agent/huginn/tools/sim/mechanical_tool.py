@@ -13,6 +13,7 @@ Formula references:
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Literal
 
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 # Common powder materials: theoretical density (kg/m³), compressibility K (Pa⁻¹),
@@ -239,12 +242,27 @@ class MechanicalTool(HuginnTool):
                 error=f"Unknown action: {args.action}",
             )
         try:
-            return handler(args)
+            result = handler(args)
         except Exception as exc:
             return ToolResult(
                 data=None, success=False,
                 error=f"{args.action} failed: {exc}",
             )
+
+        # Physics audit — stress vs yield, strain, safety factor, fatigue life
+        if result.data:
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit(
+                    "mechanical_tool", args.action, result.data, args.model_dump()
+                )
+                result.data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        return result
 
     # ── stress_analysis ───────────────────────────────────────────
 
