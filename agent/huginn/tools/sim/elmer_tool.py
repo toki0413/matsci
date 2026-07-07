@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.security import SandboxExecutor
+from huginn.security import SandboxError, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
@@ -130,7 +130,7 @@ class ElmerTool(HuginnTool):
             )
 
         try:
-            result = subprocess.run(
+            result = self.sandbox.run(
                 ["ElmerSolver", str(sif_path)],
                 cwd=str(work_dir),
                 capture_output=True,
@@ -153,6 +153,10 @@ class ElmerTool(HuginnTool):
                 },
                 success=success,
                 error=None if success else f"Elmer solve failed: {result.stderr[:300]}",
+            )
+        except SandboxError as e:
+            return ToolResult(
+                data=None, success=False, error=f"Elmer solve blocked by sandbox: {e}"
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -224,7 +228,7 @@ class ElmerTool(HuginnTool):
 
         try:
             # ElmerGrid 格式: ElmerGrid 14 2 <mesh_dir> [output_dir]
-            result = subprocess.run(
+            result = self.sandbox.run(
                 ["ElmerGrid", "14", "2", str(mesh_path), "2", str(work_dir / "elmer_mesh")],
                 cwd=str(work_dir),
                 capture_output=True,
@@ -245,6 +249,10 @@ class ElmerTool(HuginnTool):
                 },
                 success=success,
                 error=None if success else f"ElmerGrid failed: {result.stderr[:300]}",
+            )
+        except SandboxError as e:
+            return ToolResult(
+                data=None, success=False, error=f"ElmerGrid blocked by sandbox: {e}"
             )
         except subprocess.TimeoutExpired:
             return ToolResult(

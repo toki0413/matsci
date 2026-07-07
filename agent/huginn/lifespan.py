@@ -253,7 +253,7 @@ async def _wal_checkpoint_all() -> None:
         if mem_db:
             db_paths.append(Path(mem_db))
     except Exception:
-        pass
+        logger.debug("long-term memory db 路径解析失败", exc_info=True)
 
     # Checkpointer
     try:
@@ -262,7 +262,7 @@ async def _wal_checkpoint_all() -> None:
         if ckpt:
             db_paths.append(Path(ckpt))
     except Exception:
-        pass
+        logger.debug("checkpointer 路径解析失败", exc_info=True)
 
     # Research log
     try:
@@ -273,7 +273,7 @@ async def _wal_checkpoint_all() -> None:
             if db_path:
                 db_paths.append(Path(db_path))
     except Exception:
-        pass
+        logger.debug("research log db 路径解析失败", exc_info=True)
 
     for db_path in db_paths:
         if not db_path.exists():

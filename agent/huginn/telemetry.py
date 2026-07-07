@@ -8,6 +8,7 @@ and can be exported to logs, pet bus, or OpenTelemetry later.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from collections import defaultdict
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _get_process_memory_mb() -> float:
@@ -33,7 +36,7 @@ def _get_process_memory_mb() -> float:
 
         return psutil.Process().memory_info().rss / 1024.0 / 1024.0
     except Exception:
-        pass
+        logger.debug("psutil 不可用, 尝试下一个内存采样方式", exc_info=True)
 
     # resource is stdlib on Unix; ru_maxrss is KB on Linux, bytes on macOS.
     try:
@@ -41,7 +44,7 @@ def _get_process_memory_mb() -> float:
 
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     except Exception:
-        pass
+        logger.debug("resource 模块不可用, 尝试下一个内存采样方式", exc_info=True)
 
     # tracemalloc only sees Python-level allocations, not native extensions,
     # but it's a usable fallback when the others are unavailable.
@@ -52,7 +55,7 @@ def _get_process_memory_mb() -> float:
             current, _ = tracemalloc.get_traced_memory()
             return current / 1024.0 / 1024.0
     except Exception:
-        pass
+        logger.debug("tracemalloc 当前内存采样失败", exc_info=True)
 
     return 0.0
 
@@ -71,7 +74,7 @@ def _get_peak_memory_mb(start_mb: float, end_mb: float) -> float:
             _, peak = tracemalloc.get_traced_memory()
             return peak / 1024.0 / 1024.0
     except Exception:
-        pass
+        logger.debug("tracemalloc 峰值内存采样失败", exc_info=True)
     return max(start_mb, end_mb)
 
 
@@ -212,7 +215,7 @@ class TelemetryCollector:
                 snapshot["traced_current_mb"] = current / 1024.0 / 1024.0
                 snapshot["traced_peak_mb"] = peak / 1024.0 / 1024.0
         except Exception:
-            pass
+            logger.debug("memory_snapshot tracemalloc 采样失败", exc_info=True)
         return snapshot
 
     def clear(self) -> None:

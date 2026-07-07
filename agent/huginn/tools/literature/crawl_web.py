@@ -157,7 +157,7 @@ def _list_sessions() -> list[dict[str, Any]]:
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                logger.debug("provider meta.json 读取失败", exc_info=True)
         out.append({
             "provider": provider,
             "label": _PROVIDERS[provider]["label"],
@@ -177,7 +177,7 @@ def _save_session_meta(provider: str, **fields: Any) -> None:
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            logger.debug("provider meta.json 读取失败", exc_info=True)
     meta.update(fields)
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -300,7 +300,7 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
                 page_title = (await page.title()) or ""
                 page_text_lower = ((await page.content()) or "").lower()[:3000]
             except Exception:
-                pass
+                logger.debug("读取页面 title/content 失败", exc_info=True)
             title_lower = page_title.lower()
             is_bot_page = (
                 any(k in page_text_lower for k in bot_keywords)
@@ -339,7 +339,7 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
         try:
             await context.close()
         except Exception:
-            pass
+            logger.debug("context.close 收尾失败", exc_info=True)
 
     return {
         "provider": provider,
@@ -510,7 +510,7 @@ async def crawl_direct(url: str, max_results: int) -> ToolResult:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 _save_session_meta(provider, n_crawls=meta.get("n_crawls", 0) + 1)
             except Exception:
-                pass
+                logger.debug("更新 crawl 计数失败", exc_info=True)
 
     data: dict[str, Any] = {
         "action": "crawl_web",

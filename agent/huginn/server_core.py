@@ -162,7 +162,7 @@ async def get_agent() -> HuginnAgent:
         if agent is not None and getattr(agent, "memory", None) is not None:
             agent.memory.set_llm(getattr(agent, "model", None))
     except Exception:
-        pass
+        logger.debug("把 agent LLM 接到 memory manager 失败", exc_info=True)
 
     return get_context().agent
 
@@ -265,7 +265,7 @@ def get_image_index():
         try:
             workspace = get_context().config.workspace or "."
         except Exception:
-            pass
+            logger.debug("读取 workspace 失败, 用默认 '.'", exc_info=True)
         store_path = Path(workspace) / ".huginn" / "visual_index.json"
         _image_index = ImageIndex(store_path=store_path)
     return _image_index
@@ -292,7 +292,7 @@ def _current_user_id(conn: Any) -> str | None:
             if uid:
                 return uid
     except Exception:
-        pass
+        logger.debug("从 request.state 提取 user_id 失败", exc_info=True)
 
     # WebSocket / fallback: pull the bearer token from headers and decode it.
     try:
@@ -307,7 +307,7 @@ def _current_user_id(conn: Any) -> str | None:
             claims = _decode_token(token)
             return claims.get("sub")
     except Exception:
-        pass
+        logger.debug("从 bearer token 提取 user_id 失败", exc_info=True)
     return None
 
 
@@ -494,7 +494,7 @@ def _server_allows_tool(tool_name: str, input_data: Any) -> tuple[bool, str | No
         if tool_name in _EDIT_TOOLS or getattr(input_data, "destructive", False):
             reasons.append("this operation is destructive")
     except Exception:
-        pass
+        logger.debug("destructive 标记检查失败", exc_info=True)
 
     reason = f"Tool '{tool_name}' requires approval"
     if reasons:

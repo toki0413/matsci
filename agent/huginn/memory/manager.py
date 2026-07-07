@@ -7,6 +7,7 @@ promotion of important session data to long-term storage.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from huginn.memory.session import SessionContext, ToolCallRecord
 from huginn.memory.truncation import truncate_entrypoint
 from huginn.memory.types import MemoryType
 from huginn.types import AgentMessage, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -189,7 +192,7 @@ class MemoryManager:
                     "l1_coordinates": l1_coords,
                 }
         except Exception:
-            pass
+            logger.debug("load_last_session_context 失败", exc_info=True)
         return {"summary": "", "session_id": "", "l1_coordinates": ""}
 
     def store_plan_progress(
@@ -257,7 +260,7 @@ class MemoryManager:
                         "content": content,
                     }
         except Exception:
-            pass
+            logger.debug("load_active_plan 失败", exc_info=True)
         return None
 
     # --- Session promotion ---
@@ -396,7 +399,7 @@ class MemoryManager:
                     tier="long",
                 )
         except Exception:
-            pass
+            logger.debug("session 摘要蒸馏失败", exc_info=True)
 
         # LLM-based insight extraction — only runs if an LLM was wired in
         try:
@@ -411,7 +414,7 @@ class MemoryManager:
                     tier="long",
                 )
         except Exception:
-            pass
+            logger.debug("LLM 洞察提取失败", exc_info=True)
 
         return entry_id
 
@@ -534,7 +537,7 @@ class MemoryManager:
             if text and len(text) > 10:
                 return text
         except Exception:
-            pass
+            logger.debug("LLM 调用失败, 跳过洞察提取", exc_info=True)
         return None
 
     def log_episode(self, content: str, importance: float = 0.5) -> str:

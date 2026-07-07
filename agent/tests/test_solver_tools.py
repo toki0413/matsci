@@ -1,4 +1,4 @@
-"""Tests for FenicsTool, ElmerTool, GromacsTool — solver tools with mock subprocess."""
+"""Tests for FenicsTool, ElmerTool, GromacsTool — solver tools with mock sandbox."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def ctx(tmp_path):
 
 
 def _mock_subprocess(returncode=0, stdout="", stderr=""):
-    """Create a mock subprocess result."""
+    """Create a mock sandbox result (fields match SandboxResult closely enough)."""
     return type("R", (), {
         "returncode": returncode,
         "stdout": stdout,
@@ -62,9 +62,9 @@ class TestFenicsTool:
         assert "script_path" in result.data
 
     def test_solve_pde_fenics_available(self, tool, ctx):
-        """FEniCS installed → subprocess.run called."""
+        """FEniCS installed → sandbox.run called."""
         with patch("huginn.tools.sim.fenics_tool._fenics_available", return_value=True), \
-             patch("huginn.tools.sim.fenics_tool.subprocess.run") as mock_run:
+             patch.object(tool.sandbox, "run") as mock_run:
             mock_run.return_value = _mock_subprocess(0, "Solved!", "")
             result = tool.call(
                 {
@@ -135,9 +135,9 @@ class TestElmerTool:
         assert "sif_path" in result.data
 
     def test_solve_sif_elmer_available(self, tool, ctx):
-        """ElmerSolver installed → subprocess.run called."""
+        """ElmerSolver installed → sandbox.run called."""
         with patch("huginn.tools.sim.elmer_tool._elmer_available", return_value=True), \
-             patch("huginn.tools.sim.elmer_tool.subprocess.run") as mock_run:
+             patch.object(tool.sandbox, "run") as mock_run:
             mock_run.return_value = _mock_subprocess(0, "ELMER SOLVER DONE", "")
             result = tool.call(
                 {
@@ -219,11 +219,11 @@ class TestGromacsTool:
         assert result.data["status"] == "skipped"
 
     def test_md_run_gmx_available(self, tool, ctx, tmp_path):
-        """gmx installed → subprocess.run called."""
+        """gmx installed → sandbox.run called."""
         tpr = tmp_path / "run.tpr"
         tpr.write_text("mock")
         with patch("huginn.tools.sim.gromacs_tool._gmx_available", return_value=True), \
-             patch("huginn.tools.sim.gromacs_tool.subprocess.run") as mock_run:
+             patch.object(tool.sandbox, "run") as mock_run:
             mock_run.return_value = _mock_subprocess(0, "Finished!", "")
             result = tool.call(
                 {"action": "md_run", "tpr_file": str(tpr), "nsteps": 100, "working_dir": ctx.workspace},
