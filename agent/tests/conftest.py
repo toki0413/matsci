@@ -19,6 +19,8 @@ os.environ.setdefault("HUGINN_DEV_MODE", "1")
 # Tests that verify auth behavior override these via monkeypatch.
 os.environ.setdefault("HUGINN_API_KEY", "test-key")
 os.environ.setdefault("HUGINN_HPC_HOST", "testhost")
+# Disable per-IP rate limiting so fast test suites (3.12/3.13) don't get 429s
+os.environ.setdefault("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
 # Redirect ~/.huginn writes to a test-local dir so tool_cache.sqlite and
 # memory.db don't fail with "unable to open database file" in sandboxed envs.
 _TEST_CACHE_DIR = str(Path(__file__).parent / ".test_cache")
