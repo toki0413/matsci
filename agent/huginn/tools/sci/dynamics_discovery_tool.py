@@ -29,7 +29,7 @@ from huginn.types import ToolContext, ToolResult
 class DynamicsDiscoveryInput(BaseModel):
     action: str = Field(
         default="discover",
-        description="discover | validate",
+        description="discover | validate | load_lammps_dump",
     )
     # 数据来源: 二选一
     data_file: str | None = Field(
@@ -367,6 +367,8 @@ class DynamicsDiscoveryTool(HuginnTool):
             return self._discover(args)
         if args.action == "validate":
             return self._validate(args)
+        if args.action == "load_lammps_dump":
+            return self._load_lammps_dump(args)
         return ToolResult(
             data=None, success=False, error=f"unknown action: {args.action}"
         )
@@ -486,6 +488,139 @@ class DynamicsDiscoveryTool(HuginnTool):
             },
             success=True,
         )
+
+    # ── LAMMPS dump → 动力学发现 ─────────────────────────────────────
+
+    @staticmethod
+    def _parse_lammps_dump(path: Path) -> list[dict]:
+        """解析标准 LAMMPS dump 轨迹, 返回每帧 {timestep, columns, atoms}.
+
+        dump 帧内小节顺序固定: TIMESTEP / NUMBER OF ATOMS / BOX BOUNDS /
+        ATOMS. 用 marker 跳过 BOX BOUNDS 那几行, 不假设 box 行数 (偶尔有
+        triclinic 的 tilt 因子多出一行). 只依赖 numpy + 文本解析.
+        """
+        lines = path.read_text(encoding="utf-8").splitlines()
+        frames: list[dict] = []
+        i, n = 0, len(lines)
+        while i < n:
+            if not lines[i].startswith("ITEM: TIMESTEP"):
+                i += 1
+                continue
+            ts = int(lines[i + 1])
+            # 找 NUMBER OF ATOMS
+            j = i + 2
+            while j < n and "NUMBER OF ATOMS" not in lines[j]:
+                j += 1
+            if j >= n:
+                break
+            n_atoms = int(lines[j + 1])
+            # 找 ATOMS header (跳过 BOX BOUNDS, 行数不固定)
+            k = j + 2
+            while k < n and "ITEM: ATOMS" not in lines[k]:
+                k += 1
+            if k >= n:
+                break
+            cols = lines[k].split("ATOMS", 1)[1].strip().split()
+            start = k + 1
+            rows = lines[start : start + n_atoms]
+            atoms = np.array(
+                [[float(v) for v in r.split()] for r in rows], dtype=np.float64
+            )
+            frames.append({"timestep": ts, "columns": cols, "atoms": atoms})
+            i = start + n_atoms
+        return frames
+
+    @staticmethod
+    def _extract_lammps_quantities(
+        frames: list[dict],
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        """从轨迹帧抽 (t, Y, col_names).
+
+        Y 列 = [avg_speed, msd, kinetic_energy]:
+          - avg_speed: 平均速度模 <|v|>
+          - msd: 均方位移 <|r(t)-r(0)|^2>
+          - kinetic_energy: 0.5 * sum(m * |v|^2), 无 mass 列则 m=1 (LJ 约化单位常见)
+        """
+        if not frames:
+            raise ValueError("no frames parsed from dump")
+        cols = frames[0]["columns"]
+
+        def idx(name: str) -> int:
+            return cols.index(name) if name in cols else -1
+
+        vx_i, vy_i, vz_i = idx("vx"), idx("vy"), idx("vz")
+        if min(vx_i, vy_i, vz_i) < 0:
+            raise ValueError(
+                f"dump missing vx/vy/vz columns; got {cols}. "
+                "dump 需带速度 (dump custom ... vx vy vz)"
+            )
+        # MSD 优先用 unwrapped 坐标, 否则周期边界会让位移跳变
+        # ponytail: 没有 xu/yu/zu 时用 wrapped x/y/z, 大位移下 MSD 会偏小,
+        #           升级路径: 让用户在 LAMMPS 里 dump xu yu zu
+        px = "xu" if "xu" in cols else "x"
+        py = "yu" if "yu" in cols else "y"
+        pz = "zu" if "zu" in cols else "z"
+        px_i, py_i, pz_i = idx(px), idx(py), idx(pz)
+        mass_i = idx("mass")
+
+        ref = frames[0]["atoms"][:, [px_i, py_i, pz_i]]
+        nf = len(frames)
+        t = np.empty(nf)
+        Y = np.empty((nf, 3))
+        for fi, fr in enumerate(frames):
+            a = fr["atoms"]
+            v = a[:, [vx_i, vy_i, vz_i]]
+            t[fi] = float(fr["timestep"])
+            Y[fi, 0] = float(np.mean(np.sqrt(np.sum(v * v, axis=1))))
+            disp = a[:, [px_i, py_i, pz_i]] - ref
+            Y[fi, 1] = float(np.mean(np.sum(disp * disp, axis=1)))
+            m = a[:, mass_i] if mass_i >= 0 else 1.0
+            Y[fi, 2] = float(0.5 * np.sum(m * np.sum(v * v, axis=1)))
+        return t, Y, ["avg_speed", "msd", "kinetic_energy"]
+
+    def _load_lammps_dump(self, args: DynamicsDiscoveryInput) -> ToolResult:
+        """读 LAMMPS dump -> 抽物理量 -> 复用 _discover 跑 SINDy 方程发现."""
+        if not args.data_file:
+            return ToolResult(
+                data=None, success=False,
+                error="load_lammps_dump needs data_file (dump 路径)",
+            )
+        path = Path(args.data_file)
+        if not path.exists():
+            return ToolResult(
+                data=None, success=False, error=f"dump file not found: {path}"
+            )
+        try:
+            frames = self._parse_lammps_dump(path)
+            t, Y, col_names = self._extract_lammps_quantities(frames)
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False, error=f"dump parse failed: {e}"
+            )
+
+        # 提取出的物理量塞进 data_json, 复用 discover 的 SINDy 流程
+        payload: dict[str, list[float]] = {"t": t.tolist()}
+        for j, name in enumerate(col_names):
+            payload[name] = Y[:, j].tolist()
+        discover_args = args.model_copy(
+            update={"action": "discover", "data_json": payload, "data_file": None}
+        )
+        res = self._discover(discover_args)
+        if not res.success:
+            return res
+        # 补上原始物理量, 下游可以直接拿来画图/分析
+        res.data["lammps_quantities"] = {
+            "timesteps": t.tolist(),
+            "avg_speed": Y[:, 0].tolist(),
+            "msd": Y[:, 1].tolist(),
+            "kinetic_energy": Y[:, 2].tolist(),
+            "n_frames": len(frames),
+            "note": (
+                "t 取 LAMMPS timestep 值; 无 mass 列时动能按 m=1 算. "
+                "MSD 用 unwrapped 坐标 (xu/yu/zu), 没有则退回 wrapped."
+            ),
+        }
+        return res
 
     def estimate_cost(self, args: DynamicsDiscoveryInput) -> dict[str, float] | None:
         # 纯本地最小二乘, 开销可忽略
