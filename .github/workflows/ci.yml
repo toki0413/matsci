@@ -42,4 +42,4 @@ jobs:
           # CI can't install heavy deps (torch, jax, easyocr, dscribe, gpytorch).
           # Coverage is reported but not gated — threshold enforced locally
           # where all optional deps are installed.
-          pytest -q --cov=huginn --cov-report=term-missing --cov-fail-under=0
+          pytest -q --cov-fail-under=0
