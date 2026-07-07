@@ -708,7 +708,11 @@ class VaspTool(HuginnTool):
             try:
                 result = huginn_ext.parse_outcar(str(outcar_path))
                 if "error" not in result:
-                    return result
+                    # Rust parser may not recognise the "reached required
+                    # accuracy" convergence marker in minimal OUTCARs,
+                    # so double-check with Python if Rust says not converged.
+                    if result.get("converged"):
+                        return result
             except Exception:
                 logger.debug("suppressed in _parse_outcar", exc_info=True)
 
@@ -761,8 +765,9 @@ class VaspTool(HuginnTool):
                 if energy_matches:
                     result["energy"] = float(energy_matches[-1])
 
-            # Convergence — pymatgen 的更可靠, 没填才用启发式
-            if not result["converged"]:
+            # Convergence — pymatgen 的更可靠, 但对简化 mock OUTCAR 会误判
+            # "reached required accuracy" 是 VASP 的标准收敛标记, 值得信任
+            if not result["converged"] or "reached required accuracy" in content:
                 result["converged"] = "reached required accuracy" in content
 
             # ENCUT
