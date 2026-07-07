@@ -40,6 +40,27 @@ class SandboxConfig:
             "mpirun",
             "packmol",
             "uv",
+            # MD / quantum chemistry
+            "gmx",
+            "gmx_mpi",
+            "gaussian",
+            "g16",
+            "orca",
+            "cp2k",
+            "pw.x",
+            "cp.x",
+            "qe",
+            # FEM / CFD
+            "ElmerSolver",
+            "ElmerGrid",
+            "ElmerSolver_mpi",
+            "freefem",
+            # LaTeX / docs
+            "pdflatex",
+            "xelatex",
+            "lualatex",
+            "bibtex",
+            "latexmk",
         }
     )
 

@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.security import SandboxExecutor
+from huginn.security import SandboxError, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
@@ -39,16 +39,18 @@ class FenicsToolInput(BaseModel):
     )
 
 
-def _fenics_available() -> bool:
+def _fenics_available(sandbox: SandboxExecutor) -> bool:
     """Check if dolfin (FEniCS) is importable."""
     try:
-        result = subprocess.run(
+        result = sandbox.run(
             ["python", "-c", "import dolfin; print(dolfin.__version__)"],
             capture_output=True,
             text=True,
             timeout=10.0,
         )
         return result.returncode == 0
+    except SandboxError:
+        return False
     except Exception:
         return False
 
@@ -112,7 +114,7 @@ class FenicsTool(HuginnTool):
         script_path = work_dir / "fenics_solve.py"
         script_path.write_text(input_data.script, encoding="utf-8")
 
-        if not _fenics_available():
+        if not _fenics_available(self.sandbox):
             return ToolResult(
                 data={
                     "action": "solve_pde",
@@ -127,7 +129,7 @@ class FenicsTool(HuginnTool):
             )
 
         try:
-            result = subprocess.run(
+            result = self.sandbox.run(
                 ["python", str(script_path)],
                 cwd=str(work_dir),
                 capture_output=True,
@@ -149,6 +151,10 @@ class FenicsTool(HuginnTool):
                 },
                 success=success,
                 error=None if success else f"FEniCS solve failed: {result.stderr[:300]}",
+            )
+        except SandboxError as e:
+            return ToolResult(
+                data=None, success=False, error=f"FEniCS solve blocked by sandbox: {e}"
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -179,7 +185,7 @@ class FenicsTool(HuginnTool):
         """)
 
         try:
-            result = subprocess.run(
+            result = self.sandbox.run(
                 ["python", "-c", info_script],
                 cwd=str(work_dir),
                 capture_output=True,
@@ -204,6 +210,10 @@ class FenicsTool(HuginnTool):
             return ToolResult(
                 data={"action": "mesh_info", **info},
                 success=True,
+            )
+        except SandboxError as e:
+            return ToolResult(
+                data=None, success=False, error=f"FEniCS mesh query blocked by sandbox: {e}"
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -264,7 +274,7 @@ class FenicsTool(HuginnTool):
                     print("diff_rel", d)
             """)
             try:
-                result = subprocess.run(
+                result = self.sandbox.run(
                     ["python", "-c", script],
                     cwd=str(work_dir),
                     capture_output=True,

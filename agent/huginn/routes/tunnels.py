@@ -287,7 +287,7 @@ class _TunnelWorker:
             try:
                 self._transport.close()
             except Exception:
-                pass
+                logger.debug("transport.close 收尾失败", exc_info=True)
             self._transport = None
 
         # 等线程退出, 不死等
@@ -447,7 +447,7 @@ class _TunnelWorker:
                 self.record.remote_host, remote_port
             )
         except Exception:
-            pass
+            logger.debug("cancel_port_forward 失败", exc_info=True)
 
     def _pump(self, sock: socket.socket, chan: Any) -> None:
         """在 socket 和 paramiko channel 之间双向搬运数据, 直到任一端断开。"""

@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.security import SandboxExecutor
+from huginn.security import SandboxError, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
@@ -123,7 +123,7 @@ class GromacsTool(HuginnTool):
             )
 
         try:
-            result = subprocess.run(
+            result = self.sandbox.run(
                 [
                     "gmx", "mdrun",
                     "-deffnm", str(tpr.with_suffix("")),
@@ -168,6 +168,10 @@ class GromacsTool(HuginnTool):
                 success=success,
                 error=None if success else f"gmx mdrun failed: {result.stderr[:300]}",
             )
+        except SandboxError as e:
+            return ToolResult(
+                data=None, success=False, error=f"MD run blocked by sandbox: {e}"
+            )
         except subprocess.TimeoutExpired:
             return ToolResult(
                 data=None, success=False, error="MD run timed out (3600s)."
@@ -196,7 +200,7 @@ class GromacsTool(HuginnTool):
             )
 
         try:
-            result = subprocess.run(
+            result = self.sandbox.run(
                 [
                     "gmx", "mdrun",
                     "-deffnm", str(tpr.with_suffix("")),
@@ -238,6 +242,10 @@ class GromacsTool(HuginnTool):
                 data=data,
                 success=success,
                 error=None if success else f"gmx mdrun (EM) failed: {result.stderr[:300]}",
+            )
+        except SandboxError as e:
+            return ToolResult(
+                data=None, success=False, error=f"Energy minimization blocked by sandbox: {e}"
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -281,7 +289,7 @@ class GromacsTool(HuginnTool):
 
         try:
             # 自动选组 0 (System/Backbone)
-            result = subprocess.run(
+            result = self.sandbox.run(
                 cmd,
                 cwd=str(work_dir),
                 capture_output=True,
@@ -305,6 +313,10 @@ class GromacsTool(HuginnTool):
                 },
                 success=success,
                 error=None if success else f"gmx {input_data.analysis_type} failed: {result.stderr[:300]}",
+            )
+        except SandboxError as e:
+            return ToolResult(
+                data=None, success=False, error=f"Trajectory analysis blocked by sandbox: {e}"
             )
         except subprocess.TimeoutExpired:
             return ToolResult(

@@ -9,11 +9,14 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from huginn.utils.cache import TimedLRUCache
+
+logger = logging.getLogger(__name__)
 
 
 def _embedding_model_cached() -> bool:
@@ -247,7 +250,7 @@ class VectorStore:
                         )
                     return output[:top_k]
             except Exception:
-                pass
+                logger.debug("ChromaDB 原生 query 失败, 降级到全量 top-k", exc_info=True)
 
             # Fallback: Rust-accelerated exact top-k over all stored embeddings.
             # Only used when native query fails (e.g., HNSW index not built yet).
@@ -285,7 +288,7 @@ class VectorStore:
                             )
                         return output[:top_k]
             except Exception:
-                pass
+                logger.debug("全量 top-k fallback 失败", exc_info=True)
 
             return []
 

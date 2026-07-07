@@ -592,7 +592,7 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                             await websocket.send_json({"type": "done"})
                             break
                     except Exception:
-                        pass
+                        logger.debug("轮询作业状态失败", exc_info=True)
             except WebSocketDisconnect:
                 break
     except WebSocketDisconnect:
@@ -602,9 +602,9 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
         try:
             await websocket.send_json({"type": "error", "error": str(exc)})
         except Exception:
-            pass
+            logger.debug("发送错误消息失败", exc_info=True)
     finally:
         try:
             await websocket.close()
         except Exception:
-            pass
+            logger.debug("websocket.close 收尾失败", exc_info=True)

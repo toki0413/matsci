@@ -645,63 +645,11 @@ class AutoloopEngine:
         success_criteria 是否满足, 满足则提前停循环并在 scheduler 里标记
         completed. 没传 goal 行为不变.
         """
-        run_id = f"loop_{uuid.uuid4().hex[:8]}"
-        start_time = time.time()
-        phases: list[LoopPhase] = []
-
-        # provenance: 串起本次 run 的 tool chain, 结束时 append 到 .huginn/provenance.jsonl.
-        # _execute 每跑一次工具往 record add_snapshot, 这里只建壳子.
-        # 跟 _iteration/_budget 同一套路: 实例属性, 不支持并发 run.
-        from huginn.provenance import ProvenanceLogger, ProvenanceRecord
-        provenance_logger = ProvenanceLogger(
-            self.workspace / ".huginn" / "provenance.jsonl"
+        run_id, provenance_record, run_collector = self._prepare_run(
+            objective, progressive_budget, goal
         )
-        provenance_record = ProvenanceRecord(
-            run_id=run_id,
-            objective=objective,
-            timestamps={"start": datetime.now().isoformat()},
-        )
-        self._provenance_record = provenance_record
-
-        # 给本次 run 挂一个独立的 telemetry collector, _run_phase 会往里写 span.
-        # run 结束时落盘到 .huginn/trajectories/, 让 replay 命令能回放.
-        from huginn.telemetry import TelemetryCollector, set_telemetry_collector
-        run_collector = TelemetryCollector()
-        set_telemetry_collector(run_collector)
-
-        self._iteration = 0
-        self._should_stop = False
-        self._consecutive_failures = 0
-
-        # Goal: 激活后每轮 learn 查 completion, 满足则提前停.
-        # scheduler 可能为 None (测试不传), 这时只做内存检查不持久化.
-        if goal is not None and goal.status == "pending":
-            goal.status = "active"
-            if self._goal_scheduler is not None:
-                self._goal_scheduler.update_goal(goal.id, status="active")
-
-        # 渐进预算: 后期迭代限制昂贵 mode (workflow=DFT). 每档有拒绝额度,
-        # 用尽后 _budget_degraded=True 全程放行, 避免卡死.
-        self._budget = ProgressiveBudget.default() if progressive_budget else None
-        self._budget_rejects: dict[str, int] = {}
-        self._budget_degraded = False
-
-        # 投机执行: 拿 top-3 意图, 高置信度时预热工具缓存
-        # 预测只是 hint, 不强制, LLM 可以无视
-        self._speculator_hint = ""
-        try:
-            from huginn.agents.speculator import on_turn_start
-
-            spec_result = on_turn_start(objective)
-            self._speculator_hint = spec_result.get("hint", "")
-            if spec_result.get("predictions"):
-                print(f"[Autoloop] Speculator: {self._speculator_hint}")
-        except Exception as exc:
-            print(f"[Autoloop] Speculator skipped: {exc}")
-
-        # 进度跟踪: 每轮迭代 6 个阶段 + 最终 report, 总步数按迭代数算
-        tracker = self.progress_tracker or get_progress_tracker()
-        total_steps = max_iterations * 6 + 1  # 6 phase/iter + 1 report
+        tracker = get_progress_tracker()
+        total_steps = max_iterations * 6 + 1
         progress_task_id = f"autoloop:{run_id}"
         tracker.start_task(
             task_id=progress_task_id,
@@ -712,6 +660,7 @@ class AutoloopEngine:
             metadata={"run_id": run_id, "objective": objective[:200]},
         )
         completed_steps = 0
+        phases: list[LoopPhase] = []
 
         while self._iteration < max_iterations and not self._should_stop:
             self._iteration += 1
@@ -907,8 +856,68 @@ class AutoloopEngine:
                     except Exception:
                         logger.debug("suppressed in _get_plan_store", exc_info=True)
 
-        # 7. Report
-        total_time = time.time() - start_time
+        # 7. Report + finalize
+        return await self._finalize_run(
+            objective, phases, run_id, provenance_record,
+            run_collector, tracker, progress_task_id, completed_steps,
+        )
+
+    def _prepare_run(
+        self, objective: str, progressive_budget: bool, goal: Goal | None
+    ) -> tuple[str, Any, Any]:
+        """Set up run state: provenance, telemetry, budget, speculator."""
+        run_id = f"loop_{uuid.uuid4().hex[:8]}"
+        self._run_start_time = time.time()
+
+        from huginn.provenance import ProvenanceLogger, ProvenanceRecord
+        provenance_logger = ProvenanceLogger(
+            self.workspace / ".huginn" / "provenance.jsonl"
+        )
+        provenance_record = ProvenanceRecord(
+            run_id=run_id,
+            objective=objective,
+            timestamps={"start": datetime.now().isoformat()},
+        )
+        self._provenance_record = provenance_record
+        self._provenance_logger = provenance_logger
+
+        from huginn.telemetry import TelemetryCollector, set_telemetry_collector
+        run_collector = TelemetryCollector()
+        set_telemetry_collector(run_collector)
+
+        self._iteration = 0
+        self._should_stop = False
+        self._consecutive_failures = 0
+
+        if goal is not None and goal.status == "pending":
+            goal.status = "active"
+            if self._goal_scheduler is not None:
+                self._goal_scheduler.update_goal(goal.id, status="active")
+
+        self._budget = ProgressiveBudget.default() if progressive_budget else None
+        self._budget_rejects: dict[str, int] = {}
+        self._budget_degraded = False
+
+        self._speculator_hint = ""
+        try:
+            from huginn.agents.speculator import on_turn_start
+            spec_result = on_turn_start(objective)
+            self._speculator_hint = spec_result.get("hint", "")
+            if spec_result.get("predictions"):
+                print(f"[Autoloop] Speculator: {self._speculator_hint}")
+        except Exception as exc:
+            print(f"[Autoloop] Speculator skipped: {exc}")
+
+        return run_id, provenance_record, run_collector
+
+    async def _finalize_run(
+        self, objective: str, phases: list[LoopPhase],
+        run_id: str, provenance_record: Any,
+        run_collector: Any, tracker: Any, progress_task_id: str,
+        completed_steps: int,
+    ) -> AutoloopResult:
+        """Report, save trajectory, judge goal, write provenance + FAIR metadata."""
+        total_time = time.time() - getattr(self, "_run_start_time", time.time())
         report_phase = await self._run_phase_async(
             "report", self._report, objective, phases, total_time
         )
@@ -917,86 +926,65 @@ class AutoloopEngine:
         tracker.update(progress_task_id, current_step=completed_steps,
                        current_label=f"report ({report_phase.status})")
 
-        # 标记完成: 只要 report 跑完就算 completed, 即使中间有 phase failed
         if report_phase.status == "completed":
             tracker.complete(progress_task_id, result={"report_path": report_phase.result})
         else:
             tracker.fail(progress_task_id, f"report phase failed: {report_phase.error}")
 
-        # 会话结束: 把 session 摘要提升到 long-term memory, 下次 RAG 能检索到
+        # session summary → long-term memory
         try:
             self.memory.promote_session_summary(tier="long")
         except Exception:
-            logger.debug("suppressed in _get_plan_store", exc_info=True)
+            logger.debug("session summary promotion failed", exc_info=True)
 
-        # 轨迹落盘: 把 telemetry span 树 + 工具调用 + phase 决策写成 JSON
-        # best-effort: 写失败不影响 return
+        # trajectory
         trajectory_path = None
         trajectory_data = None
         try:
             from huginn.telemetry import save_trajectory, load_trajectory
             traj_dir = self.workspace / ".huginn" / "trajectories"
             trajectory_path = traj_dir / f"{run_id}.json"
-            save_trajectory(
-                run_collector,
-                trajectory_path,
-                metadata={
-                    "run_id": run_id,
-                    "objective": objective[:200],
-                    "phases": [p.name for p in phases],
-                    "total_time": total_time,
-                },
-            )
+            save_trajectory(run_collector, trajectory_path, metadata={
+                "run_id": run_id, "objective": objective[:200],
+                "phases": [p.name for p in phases], "total_time": total_time,
+            })
             trajectory_data = load_trajectory(trajectory_path)
         except Exception:
             trajectory_path = None
 
-        # 端到端目标达成判定: 拿原始 objective + 轨迹 + 最终 report 做 LLM 判定
-        # 没有 verification LLM 时降级到规则判定
+        # goal judgment
         goal_achieved = None
         goal_judgment = None
         try:
             from huginn.evaluation.goal_judge import GoalJudge
-            # report_phase.result 是最终报告路径或文本
             final_output = str(report_phase.result or "")
             judge = GoalJudge(llm=self.verification_model or self.model)
             goal_judgment = judge.judge(
-                objective=objective,
-                trajectory=trajectory_data,
+                objective=objective, trajectory=trajectory_data,
                 final_output=final_output,
             )
             goal_achieved = goal_judgment.get("achieved")
         except Exception as e:
             print(f"[Autoloop] GoalJudge skipped: {e}")
 
-        # provenance 落盘: 把整条 tool chain append 到 JSONL, 失败不阻断返回
+        # provenance
         provenance_path = None
         try:
             provenance_record.timestamps["end"] = datetime.now().isoformat()
-            provenance_logger.log(provenance_record)
-            provenance_path = str(provenance_logger.path)
+            self._provenance_logger.log(provenance_record)
+            provenance_path = str(self._provenance_logger.path)
         except Exception:
             provenance_path = None
 
-        # FAIR metadata: generate schema.org/Dataset JSON-LD so the run
-        # output is findable / citable. Best-effort — failure here doesn't
-        # affect the returned result.
+        # FAIR metadata
         try:
-            from huginn.export.fair_metadata import (
-                generate_dataset_metadata,
-                write_fair_jsonld,
-            )
-
-            # Collect result data from completed phases for variableMeasured.
+            from huginn.export.fair_metadata import generate_dataset_metadata, write_fair_jsonld
             run_results: dict[str, Any] = {}
             for ph in phases:
                 if ph.result and isinstance(ph.result, dict):
                     run_results.update(ph.result)
-
             fair_metadata = generate_dataset_metadata(
-                run_id=run_id,
-                objective=objective,
-                results=run_results,
+                run_id=run_id, objective=objective, results=run_results,
                 provenance={
                     "report_path": str(report_phase.result) if report_phase.result else None,
                     "trajectory_path": str(trajectory_path) if trajectory_path else None,

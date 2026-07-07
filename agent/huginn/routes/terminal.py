@@ -178,11 +178,11 @@ async def terminal_websocket(websocket: WebSocket):
         try:
             channel.close()
         except Exception:
-            pass
+            logger.debug("channel.close 收尾失败", exc_info=True)
         try:
             await websocket.close()
         except Exception:
-            pass
+            logger.debug("websocket.close 收尾失败", exc_info=True)
 
 
 # ── 内部工具函数 ─────────────────────────────────────────────────
