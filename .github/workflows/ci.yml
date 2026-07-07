@@ -35,6 +35,8 @@ jobs:
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
 
       - name: Run tests
+        env:
+          HUGINN_RATE_LIMIT_ENABLED: "false"
         run: |
           cd agent
           # CI can't install heavy deps (torch, jax, easyocr, dscribe, gpytorch).
