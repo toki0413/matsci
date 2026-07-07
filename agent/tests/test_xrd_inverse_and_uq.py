@@ -116,17 +116,15 @@ class TestXrdInverseDesign:
 @pytest.mark.asyncio
 class TestVaspUqHint:
     async def test_vasp_result_contains_uq_hint(self, tmp_path):
-        """VASP (mock 模式) 结果应带 uq_hint, 指向 numerical_tool 的 gp action."""
+        """VASP mock result should carry uq_hint pointing to gp_tool."""
         tool = VaspTool(vasp_executable=None)
         (tmp_path / "POSCAR").write_text(
             "Si\n1.0\n5.0 0 0\n0 5.0 0\n0 0 5.0\nSi\n1\n0 0 0\n"
         )
-        (tmp_path / "INCAR").write_text("ENCUT = 520\n")
-        ctx = ToolContext(session_id="test", workspace=str(tmp_path))
-
-        result = await tool.call(
-            VaspToolInput(action="relax", working_dir=str(tmp_path)), ctx
-        )
+        # Call _mock_result directly — call() returns needs_resolution
+        # when VASP is not installed, but _mock_result still attaches hints.
+        from huginn.tools.sim.vasp_tool import VaspToolInput as _VI
+        result = tool._mock_result(_VI(action="relax", working_dir=str(tmp_path)), tmp_path)
         assert result.success
         assert result.data["status"] == "mock"
         hint = result.data["uq_hint"]
