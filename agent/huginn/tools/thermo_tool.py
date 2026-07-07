@@ -89,6 +89,7 @@ class ThermoToolInput(BaseModel):
         "phase_equilibrium",
         "mixture",
         "phase_diagram",
+        "md_thermo",
     ] = (
         Field(
             ...,
@@ -97,7 +98,8 @@ class ThermoToolInput(BaseModel):
                 "thermodynamic: 指定 T/P 下的焓/熵/Gibbs/热容等; "
                 "phase_equilibrium: 混合物泡点/露点; "
                 "mixture: 指定组成下混合物的物性; "
-                "phase_diagram: 构建凸包相图 (需 pymatgen)"
+                "phase_diagram: 构建凸包相图 (需 pymatgen); "
+                "md_thermo: 从 MD 轨迹时序数据计算热容/自由能等 (涨落公式, 需 numpy)"
             ),
         )
     )
@@ -150,15 +152,42 @@ class ThermoToolInput(BaseModel):
             "If None, no plot is generated."
         ),
     )
+    # md_thermo: 从 MD 轨迹时序数据算热力学量, 输入可直接取自 LAMMPS thermo_data
+    md_time_series: dict | None = Field(
+        default=None,
+        description=(
+            "MD time series data for md_thermo action. "
+            "Expected keys: 'time' (list[float]), 'temperature' (list[float]), "
+            "'kinetic_energy' (list[float]), 'potential_energy' (list[float]). "
+            "Can be taken from LAMMPS thermo_data output."
+        ),
+    )
+    n_atoms: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Atom count for md_thermo (Cv 涨落公式需要 N 归一化). "
+            "If omitted, falls back to md_time_series['n_atoms'] then 1."
+        ),
+    )
 
     @model_validator(mode="after")
-    def _check_required_fields(self) -> "ThermoToolInput":
+    def _check_required_fields(self) -> ThermoToolInput:
         """按 action 校验必填字段, 缺了直接在 schema 层报错."""
         if self.action == "phase_diagram":
             if not self.entries:
                 raise ValueError(
                     "action 'phase_diagram' requires 'entries' "
                     "(list of {composition, energy} dicts)"
+                )
+            return self
+
+        if self.action == "md_thermo":
+            if not self.md_time_series:
+                raise ValueError(
+                    "action 'md_thermo' requires 'md_time_series' "
+                    "(dict with 'temperature'/'kinetic_energy'/'potential_energy' "
+                    "or LAMMPS aliases 'temp'/'kineng'/'poteng')"
                 )
             return self
 
@@ -224,7 +253,8 @@ class ThermoTool(HuginnTool):
         "基于 thermo 库 (pip install thermo), 无需联网. "
         "Actions: properties (纯组分基本物性), thermodynamic (指定 T/P 物性), "
         "phase_equilibrium (混合物泡露点), mixture (混合物物性), "
-        "phase_diagram (凸包相图, 需 pymatgen)."
+        "phase_diagram (凸包相图, 需 pymatgen), "
+        "md_thermo (从 MD 时序算热容/自由能, 需 numpy)."
     )
     input_schema = ThermoToolInput
     output_schema = ThermoToolOutput
@@ -244,6 +274,10 @@ class ThermoTool(HuginnTool):
         # phase_diagram 用的是 pymatgen, 不依赖 thermo 库, 单独走
         if args.action == "phase_diagram":
             return await self._handle_phase_diagram(args, context)
+
+        # md_thermo 只用 numpy 涨落公式, 也不依赖 thermo 库
+        if args.action == "md_thermo":
+            return await self._md_thermo(args, context)
 
         if not _thermo_available():
             return ToolResult(
@@ -537,6 +571,154 @@ class ThermoTool(HuginnTool):
             action="phase_diagram",
             properties=result,
             conditions={"n_entries": len(comp_entries)},
+            warnings=[],
+        )
+        return ToolResult(data=output.model_dump(), success=True)
+
+    async def _md_thermo(
+        self, args: ThermoToolInput, context: ToolContext
+    ) -> ToolResult:
+        """从 MD 轨迹时序数据计算热力学量 (Cv / 自由能 / 能量涨落).
+
+        把 LAMMPS thermo 输出的 KE/PE/T 时序转成统计力学量. 全部基于
+        涨落公式, 不做积分也不拟合, 纯 numpy 均值/方差. thermo 库不需要.
+        """
+        import numpy as np
+
+        # 物理常数: k_B [eV/K], 1 eV/particle -> J/mol
+        KB = 8.617333e-5
+        EV_TO_J_MOL = 96485.0
+        T_REF = 300.0  # Helmholtz 近似里的参考温度
+
+        raw = args.md_time_series or {}
+
+        def _resolve(*keys: str) -> np.ndarray | None:
+            # 同一个量在 LAMMPS thermo 里列名不统一, 依次试一遍别名
+            for k in keys:
+                v = raw.get(k)
+                if v is not None:
+                    return np.asarray(v, dtype=float)
+            return None
+
+        temp = _resolve("temperature", "temp", "t")
+        ke = _resolve("kinetic_energy", "kineng", "ke")
+        pe = _resolve("potential_energy", "poteng", "pe")
+        total = _resolve("total_energy", "toteng", "etotal", "te")
+        # time 仅回显, 不参与计算 (step 也能当时间轴用)
+        _time = _resolve("time", "step")  # noqa: F841
+
+        if temp is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    "md_thermo needs a temperature series "
+                    "('temperature' or LAMMPS alias 'temp')"
+                ),
+            )
+
+        # 总能量: 优先用 LAMMPS 直接给的 TotEng, 没有就 KE+PE 拼
+        if total is None and ke is not None and pe is not None:
+            total = ke + pe
+        elif total is None and pe is not None:
+            # NVT thermostat 下 KE 波动由 thermostat 吸收, 用 PE 涨落也算得动
+            total = pe
+
+        # 对齐长度 (LAMMPS thermo 列本应等长, 这里防一手长度不齐)
+        arrays = [a for a in (temp, ke, pe, total) if a is not None]
+        n = min(a.size for a in arrays) if arrays else temp.size
+        temp = temp[:n]
+        if ke is not None:
+            ke = ke[:n]
+        if pe is not None:
+            pe = pe[:n]
+        if total is not None:
+            total = total[:n]
+
+        # 原子数: 显式 > md_time_series 内嵌 > 1
+        n_atoms = args.n_atoms
+        if n_atoms is None:
+            n_atoms = int(raw.get("n_atoms", 1) or 1)
+        if n_atoms < 1:
+            n_atoms = 1
+
+        avg_t = float(np.mean(temp))
+        std_t = float(np.std(temp))
+
+        result: dict[str, Any] = {
+            "avg_temperature": avg_t,
+            "std_temperature": std_t,
+            "n_samples": int(n),
+            "n_atoms": n_atoms,
+        }
+        if ke is not None:
+            result["avg_kinetic"] = float(np.mean(ke))
+        if pe is not None:
+            result["avg_potential"] = float(np.mean(pe))
+
+        cv_eV_K: float | None = None
+        method = "fluctuation_formula"
+        note = ""
+
+        if total is not None and n > 1:
+            avg_e = float(np.mean(total))
+            var_e = float(np.var(total))  # <E^2> - <E>^2
+            std_e = float(np.std(total))
+            result["avg_total"] = avg_e
+            result["std_total"] = std_e
+
+            # Cv (per atom) = <dE^2> / (k_B * T^2 * N),  eV/K
+            if avg_t > 0 and var_e > 0:
+                cv_eV_K = var_e / (KB * avg_t * avg_t * n_atoms)
+                note = "Cv from energy fluctuations: (<E^2>-<E>^2)/(k_B*T^2*N)"
+            else:
+                note = (
+                    "energy variance or temperature non-positive; "
+                    "Cv from energy skipped"
+                )
+        else:
+            result["avg_total"] = None
+            result["std_total"] = None
+
+        # 温度涨落兜底: 只在能量涨落不可用时才用
+        # per-atom 近似 k_B * <dT^2>/<T>^2; NVT 下温度几乎不涨, 仅作 fallback
+        if cv_eV_K is None and std_t > 0 and avg_t > 0:
+            cv_eV_K = KB * (std_t * std_t) / (avg_t * avg_t)
+            method = "temperature_fluctuation_approx"
+            note = (
+                "Cv approximated from temperature fluctuations "
+                "(k_B*<dT^2>/<T>^2); energy-based value unavailable"
+            )
+
+        if cv_eV_K is not None:
+            result["cv_eV_K"] = cv_eV_K
+            result["cv_j_mol_k"] = cv_eV_K * EV_TO_J_MOL
+        else:
+            result["cv_eV_K"] = None
+            result["cv_j_mol_k"] = None
+
+        # Helmholtz 自由能: F = <E> - T*S, S ~ Cv_total * ln(T/T_ref)
+        # 没有配分函数只能粗估; 需要总能量和 (per-atom) Cv 推出总 Cv
+        avg_e = result.get("avg_total")
+        if (
+            avg_e is not None
+            and cv_eV_K is not None
+            and avg_t > 0
+            and avg_t != T_REF  # ln(1)=0 时 S=0, 没意义
+        ):
+            cv_total = cv_eV_K * n_atoms  # eV/K, 整个体系
+            s_est = cv_total * float(np.log(avg_t / T_REF))
+            result["helmholtz_free_energy_eV"] = avg_e - avg_t * s_est
+        else:
+            result["helmholtz_free_energy_eV"] = None
+
+        result["method"] = method
+        result["note"] = note
+
+        output = ThermoToolOutput(
+            action="md_thermo",
+            properties=result,
+            conditions={"n_atoms": n_atoms, "n_samples": int(n)},
             warnings=[],
         )
         return ToolResult(data=output.model_dump(), success=True)

@@ -143,6 +143,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.sim.transolver_tool", "TransolverTool"),
         ("huginn.tools.sim.mechanical_tool", "MechanicalTool"),
         ("huginn.tools.sim.convergence_test_tool", "ConvergenceTestTool"),
+        ("huginn.tools.sim.resolve_executable_tool", "ResolveExecutableTool"),
         # ── sci/ ──
         ("huginn.tools.symbolic_regression_tool", "SymbolicRegressionTool"),
         ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),

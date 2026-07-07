@@ -164,7 +164,17 @@ class GaussianTool(HuginnTool):
         if self.gaussian_executable:
             return await self._run_gaussian(args, work_dir, gjf_file)
 
-        return self._mock_result(args, work_dir)
+        from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+        resolution = resolve_executable("gaussian")
+        if isinstance(resolution, str):
+            self.gaussian_executable = resolution
+            return await self._run_gaussian(args, work_dir, gjf_file)
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Gaussian executable not found. {resolution.install_hint}",
+            metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
+        )
 
     # ── execution ──────────────────────────────────────────────────
 

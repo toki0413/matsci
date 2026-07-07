@@ -253,8 +253,19 @@ class VaspTool(HuginnTool):
         if self.vasp_executable:
             return await self._run_vasp(args, work_dir)
 
-        # Mock mode: return synthetic results
-        return self._mock_result(args, work_dir)
+        # 找不到可执行文件 — 返回 resolution request 让上层问用户
+        from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+
+        resolution = resolve_executable("vasp")
+        if isinstance(resolution, str):
+            self.vasp_executable = resolution
+            return await self._run_vasp(args, work_dir)
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"VASP executable not found. {resolution.install_hint}",
+            metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
+        )
 
     async def _run_vasp(self, args: VaspToolInput, work_dir: Path) -> ToolResult:
         """Execute real VASP calculation, 自动诊断+改 INCAR 重试."""
@@ -403,8 +414,10 @@ class VaspTool(HuginnTool):
             except Exception:
                 logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
 
-            # 提示 agent 可以链式调 numerical_tool 做 GP 不确定性量化
+            # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
             data["uq_hint"] = self._uq_hint()
+            # 告知下游工具 (xrd_sim/descriptor/symmetry) 可以从哪里读优化结构
+            data["structure_file_hint"] = self._structure_file_hint(work_dir)
 
             return ToolResult(
                 data=data,
@@ -940,6 +953,7 @@ class VaspTool(HuginnTool):
 
         # mock 结果也带 uq_hint, 让 agent 能练习链式调用
         data["uq_hint"] = self._uq_hint()
+        data["structure_file_hint"] = self._structure_file_hint(work_dir)
 
         return ToolResult(
             data=data,
@@ -948,12 +962,12 @@ class VaspTool(HuginnTool):
         )
 
     def _uq_hint(self) -> dict[str, Any]:
-        """提示 agent 用 numerical_tool 的 GP 做 VASP 结果的不确定性量化."""
+        """提示 agent 用 gp_tool 做 VASP 结果的不确定性量化."""
         return {
-            "tool": "numerical_tool",
-            "action": "gp",
+            "tool": "gp_tool",
+            "action": "fit",
             "suggestion": (
-                "Consider calling numerical_tool with action='gp' to fit a Gaussian "
+                "Consider calling gp_tool with action='fit' to fit a Gaussian "
                 "Process to your energy/property data for uncertainty quantification. "
                 "Pass the VASP results as (X, y) training data."
             ),
@@ -961,6 +975,32 @@ class VaspTool(HuginnTool):
                 "X": "lattice_parameters or volumes",
                 "y": "energy or bandgap",
             },
+        }
+
+    def _structure_file_hint(self, work_dir: Path) -> dict[str, Any]:
+        """告知下游化学工具 (xrd_sim/descriptor/symmetry) 优化后结构的文件路径.
+
+        VASP relax/static 会在 working_dir 下写 CONTCAR (优化后结构),
+        agent 可以把 xrd_sim_tool/descriptor_tool/symmetry_tool 的
+        file_path 参数指向这个路径, 直接完成 DFT→化学分析的数据传递.
+        """
+        contcar = work_dir / "CONTCAR"
+        return {
+            "type": "vasp_optimized_structure",
+            "path": str(contcar),
+            "format": "POSCAR/CONTCAR",
+            "exists": contcar.exists(),
+            "downstream_tools": [
+                "xrd_sim_tool (action='simulate_xrd', file_path=<CONTCAR path>)",
+                "descriptor_tool (action='compute', structure_file=<CONTCAR path>)",
+                "symmetry_tool (action='analyze', file_path=<CONTCAR path>)",
+            ],
+            "note": (
+                "Pass this path as 'file_path' to xrd_sim_tool, descriptor_tool, "
+                "or symmetry_tool to analyze the DFT-optimized structure."
+            ) if contcar.exists() else (
+                "CONTCAR not found — VASP may not have completed a structural optimization."
+            ),
         }
 
     def _modify_incar(self, incar_path: Path, overrides: dict) -> None:

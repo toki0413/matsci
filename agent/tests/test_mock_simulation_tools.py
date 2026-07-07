@@ -53,18 +53,24 @@ class TestVaspTool:
         assert "POSCAR" in result.error
 
     @pytest.mark.asyncio
-    async def test_mock_relax_with_poscar(self, tmp_path: Path):
+    async def test_no_executable_returns_resolution_request(self, tmp_path: Path):
+        """Without VASP installed, tool returns needs_resolution instead of mock data."""
         tool = VaspTool(vasp_executable=None)
         (tmp_path / "POSCAR").write_text("Si\n1.0\n5.0 0 0\n0 5.0 0\n0 0 5.0\nSi\n1\n0 0 0\n")
         (tmp_path / "INCAR").write_text("ENCUT = 520\n")
         result = await tool.call(
             VaspToolInput(action="relax", working_dir=str(tmp_path)), CTX
         )
-        assert result.success is True
-        assert result.data["status"] == "mock"
+        assert result.success is False
+        assert result.metadata.get("needs_resolution") is True
+        req = result.metadata["resolution_request"]
+        assert req["tool_name"] == "vasp"
+        assert req["license_required"] is True
+        assert "提供本地安装路径" in req["options"]
 
     @pytest.mark.asyncio
     async def test_incar_overrides(self, tmp_path: Path):
+        """INCAR overrides are written even when executable is missing."""
         tool = VaspTool(vasp_executable=None)
         (tmp_path / "POSCAR").write_text("Si\n1.0\n5.0 0 0\n0 5.0 0\n0 0 5.0\nSi\n1\n0 0 0\n")
         incar = tmp_path / "INCAR"
@@ -75,7 +81,7 @@ class TestVaspTool:
             ),
             CTX,
         )
-        assert result.success is True
+        # File writing happens before executable check
         assert "ENCUT = 600" in incar.read_text()
 
     def test_estimate_cost(self):

@@ -26,6 +26,7 @@ class DescriptorInput(BaseModel):
         "acsf",
         "coulomb_matrix",
         "ibp",
+        "select",
     ] = Field(...)
     formula: str | None = Field(default=None, description="Chemical formula")
     structure_file: str | None = Field(
@@ -93,6 +94,25 @@ class DescriptorInput(BaseModel):
         default=None, description="Random seed for reproducibility"
     )
 
+    # Feature selection — rank descriptors by external importance scores
+    feature_importances: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Feature importance scores for select action. "
+            "Keys are feature names, values are importance scores "
+            "(e.g., Sobol indices from symbolic_regression_tool)."
+        ),
+    )
+    descriptor_names: list[str] | None = Field(
+        default=None,
+        description="Names of descriptors to rank. If None, use all keys from feature_importances.",
+    )
+    top_k: int = Field(default=10, description="Number of top descriptors to return for select action.")
+    threshold: float | None = Field(
+        default=None,
+        description="Importance threshold. Only return descriptors above this score.",
+    )
+
 
 class DescriptorOutput(BaseModel):
     action: str
@@ -121,6 +141,8 @@ class DescriptorTool(HuginnTool):
 
     async def call(self, args: DescriptorInput, context: ToolContext) -> ToolResult:
         try:
+            if args.action == "select":
+                return self._select(args)
             if args.action == "composition":
                 features, warnings = self._composition_features(args)
             elif args.action == "soap":
@@ -637,6 +659,69 @@ class DescriptorTool(HuginnTool):
             "alpha_trace": alpha_trace,
             "alpha_final": float(alpha),
         }, []
+
+    # ------------------------------------------------------------------ #
+    # select — rank descriptors by external importance (SR / Sobol pipeline)
+    # ------------------------------------------------------------------ #
+
+    def _select(self, args: DescriptorInput) -> ToolResult:
+        """Rank descriptors by external importance scores.
+
+        Consumes output from symbolic_regression_tool.sobol_indices (or any
+        feature_importance map) and returns a ranked, thresholded list ready
+        to feed back into ML feature selection.
+        """
+        importances = args.feature_importances or {}
+        if not importances:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="feature_importances is required for select action.",
+            )
+
+        # Restrict to a caller-specified subset if asked
+        if args.descriptor_names:
+            wanted = set(args.descriptor_names)
+            importances = {k: v for k, v in importances.items() if k in wanted}
+
+        # Sort by absolute importance, biggest first
+        ranked = sorted(importances.items(), key=lambda x: abs(x[1]), reverse=True)
+
+        if args.threshold is not None:
+            ranked = [(n, s) for n, s in ranked if abs(s) >= args.threshold]
+
+        top = ranked[: args.top_k]
+
+        # Normalise so scores from different sources are comparable, and
+        # track how much variance the top-k set explains cumulatively.
+        total = sum(abs(s) for _, s in ranked) or 1.0
+        cumulative = 0.0
+        selected = []
+        for name, score in top:
+            cumulative += abs(score) / total
+            selected.append(
+                {
+                    "descriptor": name,
+                    "importance": float(score),
+                    "normalized_importance": float(abs(score) / total),
+                    "cumulative_importance": float(cumulative),
+                }
+            )
+
+        return ToolResult(
+            data={
+                "selected_descriptors": selected,
+                "n_total": len(ranked),
+                "n_selected": len(top),
+                "ranking_method": "importance_score",
+                "source": "external (e.g., sobol_indices from symbolic_regression_tool)",
+                "suggestion": (
+                    "Use these top descriptors as input features for ML models. "
+                    "Descriptors with cumulative_importance > 0.95 capture most of the variance."
+                ),
+            },
+            success=True,
+        )
 
     # ------------------------------------------------------------------ #
     # helpers for building ASE Atoms from the various inputs

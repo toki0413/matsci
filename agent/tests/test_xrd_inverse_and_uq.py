@@ -130,10 +130,14 @@ class TestVaspUqHint:
         assert result.success
         assert result.data["status"] == "mock"
         hint = result.data["uq_hint"]
-        assert hint["tool"] == "numerical_tool"
-        assert hint["action"] == "gp"
+        assert hint["tool"] == "gp_tool"
+        assert hint["action"] == "fit"
         assert "Gaussian" in hint["suggestion"]
         assert "X" in hint["data_mapping"] and "y" in hint["data_mapping"]
+        # structure_file_hint should point to CONTCAR
+        sf_hint = result.data["structure_file_hint"]
+        assert sf_hint["path"].endswith("CONTCAR")
+        assert "xrd_sim_tool" in str(sf_hint["downstream_tools"])
 
 
 @pytest.mark.asyncio
@@ -153,8 +157,8 @@ class TestLammpsUqHint:
         )
         assert result.success
         hint = result.data["uq_hint"]
-        assert hint["tool"] == "numerical_tool"
-        assert hint["action"] == "gp"
+        assert hint["tool"] == "gp_tool"
+        assert hint["action"] == "fit"
         # 建议应该提到 MSD / 扩散相关的内容
         assert "msd" in hint["suggestion"].lower() or "diffusion" in hint["suggestion"].lower()
         assert hint["data_mapping"]["y"] == "msd (mean squared displacement)"
