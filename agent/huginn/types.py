@@ -52,15 +52,19 @@ class ToolResult:
     error: str | None = None
     new_messages: list[dict] = field(default_factory=list)
     side_effects: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a JSON-serializable dict (CLI-Anything --json contract)."""
-        return {
+        d = {
             "data": _jsonify(self.data),
             "success": self.success,
             "error": self.error,
             "side_effects": list(self.side_effects),
         }
+        if self.metadata:
+            d["metadata"] = _jsonify(self.metadata)
+        return d
 
     def to_json(self, **kwargs: Any) -> str:
         import json

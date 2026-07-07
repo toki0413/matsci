@@ -303,15 +303,18 @@ class LammpsTool(HuginnTool):
             )
 
         if not self.lammps_executable:
-            return ToolResult(
-                data={
-                    "lammps_available": False,
-                    "message": "LAMMPS executable not found. Input script saved; results are mock data for demonstration.",
-                    "output_prefix": args.output_prefix,
-                    "uq_hint": self._uq_hint(),
-                },
-                success=True,
-            )
+            from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+
+            resolution = resolve_executable("lammps")
+            if isinstance(resolution, str):
+                self.lammps_executable = resolution
+            else:
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"LAMMPS executable not found. {resolution.install_hint}",
+                    metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
+                )
 
         # Determine working directory
         if args.working_dir:
@@ -704,12 +707,12 @@ class LammpsTool(HuginnTool):
         return self._handle_poll_job(args)
 
     def _uq_hint(self) -> dict[str, Any]:
-        """提示 agent 用 numerical_tool 的 GP 拟合 MSD-vs-time 做不确定性量化."""
+        """提示 agent 用 gp_tool 拟合 MSD-vs-time 做不确定性量化."""
         return {
-            "tool": "numerical_tool",
-            "action": "gp",
+            "tool": "gp_tool",
+            "action": "fit",
             "suggestion": (
-                "Consider calling numerical_tool with action='gp' to fit a Gaussian "
+                "Consider calling gp_tool with action='fit' to fit a Gaussian "
                 "Process to the MSD-vs-time trajectory for uncertainty quantification "
                 "of the diffusion coefficient."
             ),

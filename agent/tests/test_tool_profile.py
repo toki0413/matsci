@@ -53,6 +53,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "multi_fidelity_tool",
         "model3d_tool",
         "thermo_tool",
+        "resolve_executable_tool",
     },
     ResearchPhase.EXECUTION: _CORE_TOOLS | {
         "vasp_tool",
@@ -153,6 +154,7 @@ _FROZEN_LIGHT_TOOLS: set[str] = {
     "thermo_tool",
     "interpretable_ml_tool",
     "dynamics_discovery_tool",
+    "resolve_executable_tool",
 }
 
 _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {

@@ -460,6 +460,10 @@ class ToolAdapter:
             else:
                 data = {"error": result.error or "Unknown error"}
 
+            # Pass through resolution requests so the agent loop can ask the user.
+            if result.metadata.get("needs_resolution"):
+                data["metadata"] = result.metadata
+
             data = _sanitize_and_compress(data)
             return data
 

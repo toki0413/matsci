@@ -162,7 +162,17 @@ class OrcaTool(HuginnTool):
         if self.orca_executable:
             return await self._run_orca(args, work_dir, inp_file)
 
-        return self._mock_result(args, work_dir)
+        from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+        resolution = resolve_executable("orca")
+        if isinstance(resolution, str):
+            self.orca_executable = resolution
+            return await self._run_orca(args, work_dir, inp_file)
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"ORCA executable not found. {resolution.install_hint}",
+            metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
+        )
 
     # ── execution ──────────────────────────────────────────────────
 
