@@ -54,7 +54,7 @@ class TestDetectImage:
 
 class TestRouteVision:
     def test_vision_model_with_image(self):
-        assert route_vision("gpt-4o", True) == VisionRoute.NATIVE_LLM
+        assert route_vision("gpt-4o", True) == VisionRoute.BOTH
 
     def test_non_vision_model_with_image(self):
         assert route_vision("deepseek-chat", True) == VisionRoute.CV_TOOLS
@@ -70,7 +70,7 @@ class TestRouteVision:
         assert route_vision("totally-unknown-model-xyz", True) == VisionRoute.CV_TOOLS
 
     def test_claude_vision(self):
-        assert route_vision("claude-3-5-sonnet-20241022", True) == VisionRoute.NATIVE_LLM
+        assert route_vision("claude-3-5-sonnet-20241022", True) == VisionRoute.BOTH
 
 
 # ── build_multimodal_content ─────────────────────────────────────
@@ -143,10 +143,22 @@ class TestVisionRouter:
         router = VisionRouter()
         assert router.route("gpt-4o", "just a text message") == VisionRoute.TEXT_ONLY
 
-    def test_route_native_llm_for_vision_model(self):
+    def test_route_both_for_vision_model(self):
         router = VisionRouter()
-        assert router.route("gpt-4o", "see /data/img.png") == VisionRoute.NATIVE_LLM
+        assert router.route("gpt-4o", "see /data/img.png") == VisionRoute.BOTH
 
     def test_route_cv_tools_for_text_model(self):
         router = VisionRouter()
         assert router.route("deepseek-chat", "see /data/img.png") == VisionRoute.CV_TOOLS
+
+    def test_coordinate_returns_content_and_hints(self, tmp_path):
+        # coordinate() should return (multimodal_content, cv_hints_text)
+        img = tmp_path / "sem_test.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        router = VisionRouter()
+        content, hints = router.coordinate("describe this", img)
+        assert isinstance(content, list)
+        assert len(content) == 2  # text + image_url
+        assert isinstance(hints, str)
+        # CV pre-analysis should mention image stats or skip gracefully
+        assert "CV pre-analysis" in hints or "skipped" in hints

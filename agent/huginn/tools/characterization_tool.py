@@ -131,6 +131,16 @@ class CharacterizationTool(HuginnTool):
 
         results.sort(key=lambda p: p["intensity"], reverse=True)
         data = {"peaks": results, "n_peaks": len(results)}
+        # 给 agent 一个链式调用 xrd_sim_tool.index_peaks 的提示，避免两个工具各自孤立
+        peak_positions = [round(p["2theta"], 4) for p in results]
+        data["auto_indexing_hint"] = {
+            "peaks": [{"two_theta": p["2theta"], "intensity": p["intensity"]} for p in results],
+            "peak_positions": peak_positions,
+            "next_action": (
+                f"检测到 {len(results)} 个峰，可调用 xrd_sim_tool 的 index_peaks "
+                "action (传 peaks=peak_positions + 结构文件) 进行指标化"
+            ),
+        }
         self._maybe_save(args.output_path, data)
         return ToolResult(data=data)
 

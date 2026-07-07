@@ -235,7 +235,7 @@ class ExecutionOrchestrator:
                     _route_reason,
                 )
             except Exception:
-                pass  # routing failure shouldn't block execution
+                logger.debug("route failed", exc_info=True)  # routing failure shouldn't block execution
 
         started = datetime.now().isoformat()
         t0 = time.time()
@@ -318,7 +318,7 @@ class ExecutionOrchestrator:
                 failed_result.fix_applied = str(fixed_params)
                 return True
         except Exception:
-            pass
+            logger.debug("attempt autofix failed", exc_info=True)
         return False
 
     # ------------------------------------------------------------------

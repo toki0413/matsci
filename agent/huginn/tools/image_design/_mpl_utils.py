@@ -34,7 +34,7 @@ def setup_matplotlib() -> None:
             try:
                 font_manager.fontManager.addfont(candidate)
             except Exception:
-                pass
+                logger.debug("addfont failed", exc_info=True)
 
     plt.rcParams["font.family"] = "Arial"
     plt.rcParams["font.size"] = 20

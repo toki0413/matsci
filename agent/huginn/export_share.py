@@ -279,7 +279,7 @@ class ExportShareManager:
                     stats.graph_nodes = len(data.get("nodes", []))
                     stats.graph_edges = len(data.get("links", []))
                 except Exception:
-                    pass
+                    logger.debug("loads failed", exc_info=True)
             return
 
         try:
@@ -847,7 +847,7 @@ class ExportShareManager:
                             conn.execute("DELETE FROM memories")
                             conn.commit()
                     except Exception:
-                        pass
+                        logger.debug("connect failed", exc_info=True)
                 # 写到临时文件再用 import_ 方法
                 with tempfile.NamedTemporaryFile(
                     mode="w", suffix=".json", delete=False, encoding="utf-8"
@@ -878,7 +878,7 @@ class ExportShareManager:
                         if ids:
                             kb.collection.delete(ids=ids)
                     except Exception:
-                        pass
+                        logger.debug("get failed", exc_info=True)
                 chunks = payload["knowledge"].get("chunks", [])
                 batch_ids: list[str] = []
                 batch_docs: list[str] = []

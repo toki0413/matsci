@@ -7,6 +7,7 @@ Python script that the user can run manually in a FEniCS environment.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import textwrap
@@ -18,6 +19,8 @@ from pydantic import BaseModel, Field
 from huginn.security import SandboxError, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class FenicsToolInput(BaseModel):
@@ -137,18 +140,30 @@ class FenicsTool(HuginnTool):
                 timeout=300.0,
             )
             success = result.returncode == 0
+            data = {
+                "action": "solve_pde",
+                "returncode": result.returncode,
+                "stdout": result.stdout[-2000:] if result.stdout else "",
+                "stderr": result.stderr[-2000:] if result.stderr else "",
+                "working_dir": str(work_dir),
+                "message": (
+                    "FEniCS solve completed." if success
+                    else f"FEniCS solve failed (exit {result.returncode})."
+                ),
+            }
+
+            # Physics audit — NaN/Inf, Newton solver convergence, BC issues
+            try:
+                from huginn.execution.physics_auditor import PhysicsAuditor
+
+                auditor = PhysicsAuditor()
+                audit_report = auditor.audit("fenics_tool", "solve_pde", data, {})
+                data["physics_audit"] = audit_report.to_dict()
+            except Exception:
+                logger.debug("audit failure can't block result delivery", exc_info=True)
+
             return ToolResult(
-                data={
-                    "action": "solve_pde",
-                    "returncode": result.returncode,
-                    "stdout": result.stdout[-2000:] if result.stdout else "",
-                    "stderr": result.stderr[-2000:] if result.stderr else "",
-                    "working_dir": str(work_dir),
-                    "message": (
-                        "FEniCS solve completed." if success
-                        else f"FEniCS solve failed (exit {result.returncode})."
-                    ),
-                },
+                data=data,
                 success=success,
                 error=None if success else f"FEniCS solve failed: {result.stderr[:300]}",
             )
@@ -305,20 +320,29 @@ class FenicsTool(HuginnTool):
 
         valid = [d for d in diffs if d == d]
         converged = len(valid) > 0 and all(d < 0.01 for d in valid)
-        return ToolResult(
-            data={
-                "action": "convergence_check",
-                "n_solutions": len(sol_files),
-                "differences": diffs,
-                "method": method_used,
-                "converged": converged,
-                "message": (
-                    "Convergence check complete — all L2 differences < 1e-2."
-                    if converged
-                    else "Convergence check complete — some differences exceed tolerance."
-                    if valid
-                    else "No valid differences computed (check solution file format)."
-                ),
-            },
-            success=True,
-        )
+        data = {
+            "action": "convergence_check",
+            "n_solutions": len(sol_files),
+            "differences": diffs,
+            "method": method_used,
+            "converged": converged,
+            "message": (
+                "Convergence check complete — all L2 differences < 1e-2."
+                if converged
+                else "Convergence check complete — some differences exceed tolerance."
+                if valid
+                else "No valid differences computed (check solution file format)."
+            ),
+        }
+
+        # Physics audit — mesh convergence, NaN in differences
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit("fenics_tool", "convergence_check", data, {})
+            data["physics_audit"] = audit_report.to_dict()
+        except Exception:
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        return ToolResult(data=data, success=True)

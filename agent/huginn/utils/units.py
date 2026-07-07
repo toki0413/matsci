@@ -30,8 +30,20 @@ try:
     ureg.formatter.default_format = "~P"  # compact pretty format
 
     # Common materials science unit aliases
-    ureg.define("@alias electronvolt = eV")
-    ureg.define("@alias angstrom = ang = Å")
+    # pint dropped electronvolt from defaults in recent versions — define it
+    # before aliasing so @alias doesn't KeyError on fresh installs.
+    try:
+        ureg.define("electronvolt = 1.602176634e-19 * J = eV")
+    except Exception:
+        pass  # already defined in this registry
+    try:
+        ureg.define("@alias electronvolt = eV")
+    except Exception:
+        pass
+    try:
+        ureg.define("@alias angstrom = ang = Å")
+    except Exception:
+        pass
     _pint_available = True
 except ImportError:
     logger.debug("pint not available — using lightweight fallback unit registry")

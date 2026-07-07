@@ -2117,14 +2117,14 @@ class HuginnAgent:
         self._session_state.clear_turn_results()
 
         # ── Vision routing ──
-        # Decide how to handle an attached image before the message
-        # reaches the LLM. NATIVE_LLM → multimodal content blocks;
-        # CV_TOOLS → prepend a text description so a text-only model
-        # still knows an image was attached; TEXT_ONLY → no change.
+        # BOTH: vision LLM gets raw image + CV pre-analysis as system hint
+        # CV_TOOLS: text-only model gets CV context prepended to message
+        # TEXT_ONLY: no image, zero overhead
         from huginn.vision.router import VisionRoute, VisionRouter
 
         _vision_route = VisionRoute.TEXT_ONLY
         _vision_content: list[dict] | None = None
+        _cv_hints: str | None = None
         if image_path:
             _vr = VisionRouter(
                 visual_encoder=getattr(self, "_visual_encoder", None),
@@ -2132,8 +2132,8 @@ class HuginnAgent:
             )
             model_name = getattr(self.model, "model", None) or getattr(self.model, "model_name", "")
             _vision_route = _vr.route(model_name, message or image_path)
-            if _vision_route == VisionRoute.NATIVE_LLM:
-                _vision_content = _vr.build_content(message, image_path)
+            if _vision_route == VisionRoute.BOTH:
+                _vision_content, _cv_hints = _vr.coordinate(message, image_path, model_name)
             elif _vision_route == VisionRoute.CV_TOOLS:
                 cv_ctx = _vr.build_context(image_path)
                 message = f"{cv_ctx}\n\n{message}"
@@ -2258,6 +2258,8 @@ class HuginnAgent:
             # metadata 里塞多段, list 就用换行拼起来. 位置跟 emotion_text
             # 一致(-1 之前), 顺序保持 system / emotion / guidance / user.
             # Stable ID 确保每轮替换而非累积.
+            if _cv_hints:
+                messages.insert(-1, SystemMessage(content=_cv_hints, id="ctx_cv_hints"))
             if prompt_guidance:
                 guidance_text = (
                     "\n\n".join(prompt_guidance)

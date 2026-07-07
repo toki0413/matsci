@@ -111,7 +111,7 @@ def tem_lattice(args: "ImageAnalysisInput") -> ToolResult:
             for i in order:
                 peak_2d.append({"y": int(ys[i]), "x": int(xs[i]), "power": float(vals[i])})
     except Exception:
-        pass
+        logger.debug("tem lattice failed", exc_info=True)
 
     if d_entries:
         summary = (

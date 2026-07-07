@@ -110,6 +110,16 @@ class PhysicsAuditor:
             self._audit_abaqus(report, action, parsed, input_params)
         elif tool_name == "comsol_tool":
             self._audit_comsol(report, action, parsed, input_params)
+        elif tool_name == "openfoam_tool":
+            self._audit_openfoam(report, action, parsed, input_params)
+        elif tool_name == "fenics_tool":
+            self._audit_fenics(report, action, parsed, input_params)
+        elif tool_name == "elmer_tool":
+            self._audit_elmer(report, action, parsed, input_params)
+        elif tool_name == "transolver_tool":
+            self._audit_transolver(report, action, parsed, input_params)
+        elif tool_name == "mechanical_tool":
+            self._audit_mechanical(report, action, parsed, input_params)
         else:
             # Unknown tool, skip
             pass
@@ -946,6 +956,521 @@ class PhysicsAuditor:
         except Exception:
             logger.debug("comsol audit failed", exc_info=True)
 
+    # ── OpenFOAM / CFD checks ─────────────────────────────────────
+
+    def _audit_openfoam(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            log_data = parsed.get("parsed", {})
+            stdout = str(parsed.get("stdout", ""))
+            stderr = str(parsed.get("stderr", ""))
+            text = (stdout + "\n" + stderr).lower()
+
+            # 1. Courant number too high — transient solvers need Co < 1.
+            # OpenFOAM logs print "Courant Number mean: X max: Y" each step.
+            courant_maxes: list[float] = []
+            for line in text.splitlines():
+                if "courant number mean:" in line and "max:" in line:
+                    try:
+                        val = line.split("max:")[-1].strip().split()[0]
+                        courant_maxes.append(float(val))
+                    except (ValueError, IndexError):
+                        pass
+            if courant_maxes:
+                max_co = max(courant_maxes)
+                if max_co > 1.0:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="error" if max_co > 10 else "warning",
+                            category="convergence_suspicious",
+                            message=(
+                                f"Courant number max={max_co:.2f} exceeds 1 — "
+                                "timestep too large for transient solver"
+                            ),
+                            field="courant_number",
+                            value=max_co,
+                            expected_range="< 1 for explicit, < 10 for implicit",
+                        )
+                    )
+
+            # 2. NaN / Inf / divergence in solution
+            if any(kw in text for kw in ["nan", "inf", "divergence", "diverged"]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="unphysical_value",
+                        message="NaN/Inf or divergence detected in OpenFOAM output",
+                        field="solution",
+                        value="NaN/Inf/divergence",
+                        expected_range="finite, converged",
+                    )
+                )
+
+            # 3. Solver crashed — FOAM FATAL ERROR or segfault
+            if any(kw in text for kw in [
+                "foam fatal error",
+                "segmentation fault",
+                "aborted",
+                "floating point exception",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message="OpenFOAM solver crashed — check case setup",
+                        field="solver",
+                        value="crashed",
+                        expected_range="clean exit",
+                    )
+                )
+
+            # 4. Residuals not decreasing — final residuals still high
+            residuals = log_data.get("final_residuals", {})
+            for var, val in residuals.items():
+                try:
+                    fv = float(val)
+                except (ValueError, TypeError):
+                    continue
+                if fv > 0.1:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="convergence_suspicious",
+                            message=(
+                                f"Final residual for {var} is high ({fv:.2e}) — "
+                                "solution may not be converged"
+                            ),
+                            field=f"residual_{var}",
+                            value=fv,
+                            expected_range="< 1e-4 for converged solution",
+                        )
+                    )
+
+            # 5. Mesh quality issues
+            if any(kw in text for kw in [
+                "skewness",
+                "non-orthogonality",
+                "mesh quality",
+                "high aspect ratio",
+                "negative volume",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="unphysical_value",
+                        message=(
+                            "Mesh quality issues detected — solution accuracy "
+                            "may be compromised"
+                        ),
+                        field="mesh",
+                        value="poor quality",
+                        expected_range="good mesh quality",
+                    )
+                )
+
+            # 6. Did not reach endTime
+            if not log_data.get("converged", False) and action == "run":
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="convergence_suspicious",
+                        message=(
+                            "OpenFOAM solver did not reach endTime — check log "
+                            "for early termination"
+                        ),
+                        field="converged",
+                        value=False,
+                        expected_range="True",
+                    )
+                )
+        except Exception:
+            logger.debug("openfoam audit failed", exc_info=True)
+
+    # ── FEniCS / FEM checks ───────────────────────────────────────
+
+    def _audit_fenics(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            stdout = str(parsed.get("stdout", ""))
+            stderr = str(parsed.get("stderr", ""))
+            text = (stdout + "\n" + stderr).lower()
+
+            # 1. NaN/Inf in solution — solver diverged
+            if any(kw in text for kw in ["nan", "inf", "not a number"]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="unphysical_value",
+                        message="NaN or Inf detected in FEniCS output — solution diverged",
+                        field="solution",
+                        value="NaN/Inf",
+                        expected_range="finite numbers",
+                    )
+                )
+
+            # 2. Newton solver non-convergence
+            if any(kw in text for kw in [
+                "newton solver did not converge",
+                "max iterations",
+                "failed to converge",
+                "did not converge",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message=(
+                            "Newton solver did not converge — check nonlinearity, "
+                            "BCs, or mesh"
+                        ),
+                        field="convergence",
+                        value="failed",
+                        expected_range="converged",
+                    )
+                )
+
+            # 3. Boundary condition inconsistency
+            if any(kw in text for kw in [
+                "boundary condition",
+                "dirichletbc",
+                "overlapping",
+                "inconsistent",
+            ]) and ("warning" in text or "error" in text):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="parameter_mismatch",
+                        message="Boundary condition issues detected — check BC definitions",
+                        field="boundary_conditions",
+                        value="inconsistent",
+                        expected_range="consistent BCs",
+                    )
+                )
+
+            # 4. convergence_check action — differences not below tolerance
+            if action == "convergence_check":
+                diffs = parsed.get("differences", [])
+                converged = parsed.get("converged", False)
+                if diffs and not converged:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="convergence_suspicious",
+                            message=(
+                                "Mesh convergence check failed — solution may not "
+                                "be mesh-independent"
+                            ),
+                            field="converged",
+                            value=converged,
+                            expected_range="True (differences < 1e-2)",
+                        )
+                    )
+                # NaN in differences means file format / load error
+                if any(d != d for d in diffs):
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                "NaN in convergence differences — solution file "
+                                "format may be wrong"
+                            ),
+                            field="differences",
+                            value="NaN",
+                            expected_range="finite numbers",
+                        )
+                    )
+        except Exception:
+            logger.debug("fenics audit failed", exc_info=True)
+
+    # ── Elmer / FEM checks ────────────────────────────────────────
+
+    def _audit_elmer(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            stdout = str(parsed.get("stdout", ""))
+            stderr = str(parsed.get("stderr", ""))
+            text = (stdout + "\n" + stderr).lower()
+
+            # 1. Non-convergence
+            if any(kw in text for kw in [
+                "did not converge",
+                "not converged",
+                "convergence failed",
+                "failed to converge",
+                "no convergence",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message=(
+                            "Elmer solver did not converge — check mesh, BCs, "
+                            "or solver settings"
+                        ),
+                        field="convergence",
+                        value="failed",
+                        expected_range="converged",
+                    )
+                )
+
+            # 2. Singular / ill-conditioned matrix
+            if any(kw in text for kw in [
+                "singular",
+                "ill-conditioned",
+                "zero pivot",
+                "numerically singular",
+            ]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="convergence_suspicious",
+                        message=(
+                            "Singular or ill-conditioned matrix — check BCs or "
+                            "mesh quality"
+                        ),
+                        field="matrix",
+                        value="singular",
+                        expected_range="well-conditioned",
+                    )
+                )
+
+            # 3. NaN/Inf in solution
+            if any(kw in text for kw in ["nan", "inf", "not-a-number"]):
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error",
+                        category="unphysical_value",
+                        message="NaN or Inf detected in Elmer output — solution is invalid",
+                        field="solution",
+                        value="NaN/Inf",
+                        expected_range="finite numbers",
+                    )
+                )
+        except Exception:
+            logger.debug("elmer audit failed", exc_info=True)
+
+    # ── Transolver / neural surrogate checks ──────────────────────
+
+    def _audit_transolver(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            train_loss = parsed.get("train_loss", [])
+
+            # 1. NaN/Inf in loss (train action)
+            if train_loss:
+                if any(l != l for l in train_loss):
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="error",
+                            category="unphysical_value",
+                            message=(
+                                "NaN detected in training loss — gradient "
+                                "explosion or bad data"
+                            ),
+                            field="train_loss",
+                            value="NaN",
+                            expected_range="finite numbers",
+                        )
+                    )
+                if any(abs(l) == float("inf") for l in train_loss):
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="error",
+                            category="unphysical_value",
+                            message="Inf detected in training loss — gradient explosion",
+                            field="train_loss",
+                            value="Inf",
+                            expected_range="finite numbers",
+                        )
+                    )
+
+                # 2. Loss not decreasing — compare first half to second half
+                if len(train_loss) >= 4:
+                    half = len(train_loss) // 2
+                    early_avg = sum(train_loss[:half]) / half
+                    late_avg = sum(train_loss[half:]) / (len(train_loss) - half)
+                    if early_avg > 0 and late_avg > early_avg * 1.5:
+                        report.findings.append(
+                            PhysicsFinding(
+                                severity="warning",
+                                category="convergence_suspicious",
+                                message=(
+                                    f"Training loss not decreasing (early="
+                                    f"{early_avg:.4e}, late={late_avg:.4e}) — "
+                                    "check learning rate or data"
+                                ),
+                                field="train_loss",
+                                value=late_avg,
+                                expected_range="decreasing over epochs",
+                            )
+                        )
+
+                # 3. Gradient explosion — loss value itself blew up
+                finite_losses = [abs(l) for l in train_loss if l == l and abs(l) != float("inf")]
+                if finite_losses and max(finite_losses) > 1e6:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="error",
+                            category="unphysical_value",
+                            message=(
+                                f"Loss reached {max(finite_losses):.2e} — likely "
+                                "gradient explosion, add gradient clipping"
+                            ),
+                            field="train_loss",
+                            value=max(finite_losses),
+                            expected_range="< 1e6",
+                        )
+                    )
+
+            # 4. NaN in predictions (predict action)
+            predictions = parsed.get("predictions", [])
+            if predictions:
+                flat = [
+                    v
+                    for row in predictions
+                    for v in (row if isinstance(row, list) else [row])
+                ]
+                if any(v != v for v in flat):
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="error",
+                            category="unphysical_value",
+                            message=(
+                                "NaN in model predictions — checkpoint may be "
+                                "corrupted or input out of distribution"
+                            ),
+                            field="predictions",
+                            value="NaN",
+                            expected_range="finite numbers",
+                        )
+                    )
+
+            # 5. Checkpoint mismatch — scan warnings
+            warnings = parsed.get("warnings", [])
+            for w in warnings:
+                wl = str(w).lower()
+                if "checkpoint" in wl or "mismatch" in wl or "missing keys" in wl:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="parameter_mismatch",
+                            message=f"Checkpoint issue: {w}",
+                            field="checkpoint",
+                            value=w,
+                            expected_range="matching checkpoint",
+                        )
+                    )
+        except Exception:
+            logger.debug("transolver audit failed", exc_info=True)
+
+    # ── Mechanical / analytical checks ────────────────────────────
+
+    def _audit_mechanical(
+        self,
+        report: AuditReport,
+        action: str,
+        parsed: dict[str, Any],
+        params: dict[str, Any],
+    ) -> None:
+        try:
+            # 1. Stress exceeding material yield
+            max_stress = parsed.get("max_stress") or parsed.get("thermal_stress")
+            material_props = params.get("material_props", {})
+            yield_strength = material_props.get("yield_strength", 0.0)
+
+            if max_stress is not None and yield_strength > 0:
+                if abs(max_stress) > yield_strength:
+                    ratio = abs(max_stress) / yield_strength
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="error" if ratio > 2 else "warning",
+                            category="unphysical_value",
+                            message=(
+                                f"Stress ({abs(max_stress):.2e} Pa) exceeds yield "
+                                f"strength ({yield_strength:.2e} Pa) — material will yield"
+                            ),
+                            field="max_stress",
+                            value=max_stress,
+                            expected_range=f"< {yield_strength:.2e} Pa (yield)",
+                        )
+                    )
+
+            # 2. Strain beyond failure threshold (20% is well past typical failure)
+            max_strain = parsed.get("max_strain")
+            if max_strain is not None and abs(max_strain) > 0.2:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="warning",
+                        category="unphysical_value",
+                        message=(
+                            f"Strain ({abs(max_strain):.4f}) exceeds typical failure "
+                            "threshold (0.2) — material failure likely"
+                        ),
+                        field="max_strain",
+                        value=max_strain,
+                        expected_range="< 0.2 (20%)",
+                    )
+                )
+
+            # 3. Safety factor < 1 — design will fail under load
+            safety_factor = parsed.get("safety_factor")
+            if safety_factor is not None and safety_factor < 1.0:
+                report.findings.append(
+                    PhysicsFinding(
+                        severity="error" if safety_factor < 0.5 else "warning",
+                        category="unphysical_value",
+                        message=(
+                            f"Safety factor {safety_factor:.2f} < 1 — design will "
+                            "fail under load"
+                        ),
+                        field="safety_factor",
+                        value=safety_factor,
+                        expected_range="> 1.0 for safe design",
+                    )
+                )
+
+            # 4. Fatigue life — very low cycles means LCF regime
+            fatigue_life = parsed.get("fatigue_life")
+            if fatigue_life is not None:
+                # inf means infinite life, which is fine
+                if fatigue_life != float("inf") and fatigue_life < 1000:
+                    report.findings.append(
+                        PhysicsFinding(
+                            severity="warning",
+                            category="unphysical_value",
+                            message=(
+                                f"Fatigue life {fatigue_life:.0f} cycles is very "
+                                "low — low-cycle fatigue regime"
+                            ),
+                            field="fatigue_life",
+                            value=fatigue_life,
+                            expected_range="> 1000 for high-cycle fatigue",
+                        )
+                    )
+        except Exception:
+            logger.debug("mechanical audit failed", exc_info=True)
+
     # ── helpers ────────────────────────────────────────────────────
 
     def _count_atoms(self, params: dict[str, Any]) -> int:
@@ -977,3 +1502,66 @@ class PhysicsAuditor:
                 except ValueError:
                     pass
         return 0
+
+
+if __name__ == "__main__":
+    # Smoke test — each new audit method should catch its target pathology.
+    a = PhysicsAuditor()
+
+    # OpenFOAM: high Courant + NaN
+    r = a.audit("openfoam_tool", "run", {
+        "parsed": {"converged": False, "final_residuals": {"Ux": 0.5}},
+        "stdout": "Courant Number mean: 0.5 max: 15.3\nnan detected",
+    })
+    assert r.has_errors, "openfoam: should flag high Courant + NaN"
+
+    # FEniCS: Newton divergence + NaN
+    r = a.audit("fenics_tool", "solve_pde", {
+        "stdout": "Newton solver did not converge",
+        "stderr": "RuntimeError: nan in solution",
+    })
+    assert r.has_errors, "fenics: should flag Newton non-convergence + NaN"
+
+    # Elmer: singular matrix
+    r = a.audit("elmer_tool", "solve_sif", {
+        "stdout": "Matrix is singular",
+        "stderr": "",
+    })
+    assert r.has_errors, "elmer: should flag singular matrix"
+
+    # Transolver: NaN in loss
+    r = a.audit("transolver_tool", "train", {
+        "train_loss": [1.0, float("nan"), 2.0],
+        "warnings": [],
+    })
+    assert r.has_errors, "transolver: should flag NaN in loss"
+
+    # Transolver: gradient explosion
+    r = a.audit("transolver_tool", "train", {
+        "train_loss": [1.0, 1e3, 2e6],
+        "warnings": [],
+    })
+    assert r.has_errors, "transolver: should flag gradient explosion"
+
+    # Mechanical: stress exceeds yield (3x → error severity)
+    r = a.audit("mechanical_tool", "stress_analysis", {
+        "max_stress": 7.5e8,
+        "max_strain": 0.0025,
+    }, {"material_props": {"yield_strength": 2.5e8}})
+    assert r.has_errors, "mechanical: should flag stress > yield"
+
+    # Mechanical: safety factor < 1
+    r = a.audit("mechanical_tool", "fatigue_life", {
+        "safety_factor": 0.4,
+        "fatigue_life": 500,
+    })
+    assert r.has_errors, "mechanical: should flag safety factor < 0.5"
+
+    # Clean results should produce no errors
+    r = a.audit("openfoam_tool", "run", {
+        "parsed": {"converged": True, "final_residuals": {"Ux": 1e-6}},
+        "stdout": "End\n",
+    })
+    assert not r.has_errors, "openfoam: clean run should have no errors"
+
+    print("All physics audit self-checks passed.")

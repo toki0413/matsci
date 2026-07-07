@@ -4,13 +4,18 @@ Fallback chain:
 1. Vision LLM (GPT-4o/Claude/Gemini) — direct multimodal
 2. Visual encoder + image index — "visual memory" for text LLM
 3. Image analysis tool — structured numerical analysis (SEM/TEM/XRD)
+
+When a vision LLM is available, BOTH paths fire: the LLM gets the raw image
+for semantic understanding, and CV pre-analysis runs in parallel to provide
+quantitative hints (image type, rough metrics) injected into the text prompt.
+This avoids the old either/or split where vision LLMs never got structured
+measurements and CV tools never got semantic context.
 """
 
 from __future__ import annotations
 
 import base64
 import mimetypes
-import os
 import re
 from enum import Enum
 from pathlib import Path
@@ -22,8 +27,6 @@ from huginn.models.registry import get_model_capabilities
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
 
 # Matches a filesystem-ish path ending in a known image extension.
-# Loose on purpose — we'd rather over-detect and let the caller verify
-# the file exists than miss a path the user pasted inline.
 _IMAGE_PATH_RE = re.compile(
     r'(?:[\w./\\-]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff|tif))',
     re.IGNORECASE,
@@ -35,6 +38,7 @@ class VisionRoute(Enum):
 
     NATIVE_LLM = "native_llm"
     CV_TOOLS = "cv_tools"
+    BOTH = "both"
     TEXT_ONLY = "text_only"
 
 
@@ -64,15 +68,16 @@ def detect_image_in_message(message: str | dict | list) -> bool:
 def route_vision(model_name: str | None, has_image: bool) -> VisionRoute:
     """Decide how to handle an image based on the active model's capabilities.
 
-    - No image at all → TEXT_ONLY (the common case, zero overhead).
-    - Image + vision-capable model → NATIVE_LLM (let the LLM see it directly).
-    - Image + text-only model → CV_TOOLS (fall back to encoder + analysis tool).
+    - No image at all -> TEXT_ONLY (the common case, zero overhead).
+    - Image + vision-capable model -> BOTH (LLM sees image + CV pre-analysis
+      runs in parallel to inject quantitative hints).
+    - Image + text-only model -> CV_TOOLS (fall back to encoder + analysis tool).
     """
     if not has_image:
         return VisionRoute.TEXT_ONLY
     caps = get_model_capabilities(model_name or "")
     if caps.vision:
-        return VisionRoute.NATIVE_LLM
+        return VisionRoute.BOTH
     return VisionRoute.CV_TOOLS
 
 
@@ -114,6 +119,79 @@ def build_multimodal_content(message: str, image_path: str | Path | bytes) -> li
     return blocks
 
 
+def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
+    """Fast CV pre-analysis: image type guess + basic stats.
+
+    Runs numpy-only feature extraction (~50ms, no LLM cost) to give the
+    vision LLM quantitative hints alongside the raw image. Falls back
+    gracefully if the image can't be loaded or numpy is unavailable.
+    """
+    if isinstance(image_path, (bytes, bytearray)):
+        return "[CV pre-analysis skipped: raw bytes, no path]"
+
+    p = Path(image_path)
+    if not p.is_file():
+        return f"[CV pre-analysis skipped: file not found: {image_path}]"
+
+    try:
+        import numpy as np
+        from huginn.tools.image_analysis._utils import load_gray
+    except ImportError:
+        return "[CV pre-analysis unavailable: numpy/Pillow not installed]"
+
+    try:
+        arr = load_gray(str(p))
+        mean_i = float(arr.mean())
+        std_i = float(arr.std())
+        p5, p50, p95 = np.percentile(arr, [5, 50, 95])
+
+        # Edge density — rough indicator of "busy" vs "smooth" image
+        edges = 0
+        try:
+            from scipy.ndimage import sobel
+            sx = sobel(arr, axis=0)
+            sy = sobel(arr, axis=1)
+            edges = int((np.hypot(sx, sy) > 50).sum())
+            total = arr.shape[0] * arr.shape[1]
+            edge_density = edges / total if total > 0 else 0.0
+        except Exception:
+            edge_density = -1.0
+
+        # Guess image type from extension + stats
+        ext = p.suffix.lower()
+        name_hint = p.stem.lower()
+        img_type = "unknown"
+        if any(kw in name_hint for kw in ("sem", "sem_photo", "fesem")):
+            img_type = "SEM"
+        elif any(kw in name_hint for kw in ("tem", "hrtem", "stem")):
+            img_type = "TEM"
+        elif any(kw in name_hint for kw in ("xrd", "diffraction")):
+            img_type = "XRD_plot"
+        elif any(kw in name_hint for kw in ("eds", "mapping")):
+            img_type = "EDS_map"
+        elif ext in (".csv", ".txt"):
+            img_type = "tabular_data"
+        elif edge_density > 0 and edge_density < 0.05:
+            img_type = "likely_microscopy_smooth"
+        elif edge_density > 0.15:
+            img_type = "likely_microscopy_busy_or_plot"
+
+        lines = [
+            f"[CV pre-analysis] image_type_guess={img_type}",
+            f"  shape={arr.shape[1]}x{arr.shape[0]}, mean={mean_i:.1f}, "
+            f"std={std_i:.1f}, percentiles(5/50/95)={p5:.0f}/{p50:.0f}/{p95:.0f}",
+        ]
+        if edge_density >= 0:
+            lines.append(f"  edge_density={edge_density:.4f} "
+                         f"({'busy' if edge_density > 0.1 else 'smooth'})")
+        lines.append(
+            "  Use image_analysis_tool for detailed SEM/TEM/EDS/particle metrics."
+        )
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"[CV pre-analysis failed: {exc}]"
+
+
 def build_cv_context(
     image_path: str | Path | bytes,
     visual_encoder: Any | None = None,
@@ -129,6 +207,11 @@ def build_cv_context(
        an image was attached and can call image_analysis_tool itself.
     """
     parts: list[str] = []
+
+    # ── CV pre-analysis (fast, always runs) ──
+    cv_hints = _cv_pre_analyze(image_path)
+    if cv_hints:
+        parts.append(cv_hints)
 
     # ── visual memory: similar-image search ──
     if visual_encoder is not None and image_index is not None:
@@ -199,3 +282,19 @@ class VisionRouter:
         self, message: str, image_path: str | Path | bytes
     ) -> list[dict]:
         return build_multimodal_content(message, image_path)
+
+    def coordinate(
+        self,
+        message: str,
+        image_path: str | Path | bytes,
+        model_name: str | None = None,
+    ) -> tuple[list[dict], str]:
+        """Run BOTH paths: multimodal content for LLM + CV pre-analysis text.
+
+        Returns (multimodal_content, cv_hints_text). The caller should inject
+        cv_hints_text as a SystemMessage alongside the multimodal content so
+        the vision LLM sees both the raw image and quantitative hints.
+        """
+        content = self.build_content(message, image_path)
+        cv_hints = _cv_pre_analyze(image_path)
+        return content, cv_hints

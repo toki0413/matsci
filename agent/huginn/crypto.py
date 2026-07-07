@@ -20,6 +20,9 @@ from typing import BinaryIO
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class CryptoVault:
@@ -337,7 +340,7 @@ class EncryptedDatabase:
                         try:
                             secure_erase_file(child)
                         except Exception:
-                            pass
+                            logger.debug("secure erase file failed", exc_info=True)
                 shutil.rmtree(self._temp_dir, ignore_errors=True)
             self._temp_dir = None
             self._plaintext_path = None

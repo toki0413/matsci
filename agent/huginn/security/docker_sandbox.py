@@ -18,6 +18,10 @@ from huginn.security.sandbox import (
     SandboxResult,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # docker SDK 是可选依赖，import 失败就走 subprocess 降级
 try:  # pragma: no cover - 看环境
     import docker  # type: ignore[import-untyped]
@@ -238,7 +242,7 @@ class DockerSandboxExecutor:
             try:
                 container.remove(force=True)
             except Exception:
-                pass
+                logger.debug("remove failed", exc_info=True)
             return self._fallback.run(
                 cmd,
                 cwd=cwd,
@@ -267,7 +271,7 @@ class DockerSandboxExecutor:
         try:
             container.remove(force=True)
         except Exception:
-            pass
+            logger.debug("remove failed", exc_info=True)
 
         if deadline_expired:
             returncode = -1

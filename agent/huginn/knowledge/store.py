@@ -12,6 +12,9 @@ from typing import Any
 import numpy as np
 
 from huginn.utils.cache import TimedLRUCache
+import logging
+logger = logging.getLogger(__name__)
+
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
@@ -412,7 +415,7 @@ class KnowledgeBase:
             try:
                 self._semantic_cache.flush()
             except Exception:
-                pass
+                logger.debug("flush failed", exc_info=True)
 
     def add_document(self, filename: str, content: bytes) -> dict[str, Any]:
         """Ingest a document, chunk it, and store embeddings.
@@ -587,7 +590,7 @@ class KnowledgeBase:
                 if hit is not None:
                     return hit
             except Exception:
-                pass  # 缓存查询出错不影响正常流程
+                logger.debug("get failed", exc_info=True)  # 缓存查询出错不影响正常流程
 
         cache_key = (text.strip(), top_k, domain)
         cached = self._query_cache.get(cache_key)
@@ -619,7 +622,7 @@ class KnowledgeBase:
             try:
                 self._semantic_cache.put(prompt=text.strip(), data=chunks)
             except Exception:
-                pass
+                logger.debug("put failed", exc_info=True)
 
         return chunks
 

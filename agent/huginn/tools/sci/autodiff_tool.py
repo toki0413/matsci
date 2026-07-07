@@ -21,6 +21,9 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class AutoDiffInput(BaseModel):
@@ -216,7 +219,7 @@ class AutoDiffTool(HuginnTool):
                     "method": "JAX autodiff",
                 }
             except Exception:
-                pass
+                logger.debug("jax fn failed", exc_info=True)
 
         if result is None:
             # Finite difference fallback

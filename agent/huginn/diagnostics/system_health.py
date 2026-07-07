@@ -260,7 +260,7 @@ class SystemHealthMonitor:
         try:
             psutil.cpu_percent(interval=None)
         except Exception:
-            pass
+            logger.debug("cpu percent failed", exc_info=True)
         while not self._stop_event.is_set():
             try:
                 metrics = self._collect()
@@ -295,7 +295,7 @@ class SystemHealthMonitor:
                     "total_gb": usage.total / 1024**3,
                 }
         except Exception:
-            pass
+            logger.debug("disk usage failed", exc_info=True)
 
         # loadavg 在 Windows 上不存在
         load_avg: tuple[float, float, float] | None = None

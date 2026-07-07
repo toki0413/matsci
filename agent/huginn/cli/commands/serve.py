@@ -18,6 +18,8 @@ from rich.panel import Panel
 from huginn.cli.context import CliContext
 from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
+logger = logging.getLogger(__name__)
+
 
 _log = logging.getLogger("huginn.serve")
 
@@ -58,7 +60,7 @@ def _setup_signal_handlers(pid_file: Path) -> None:
             try:
                 pid_file.unlink(missing_ok=True)
             except Exception:
-                pass
+                logger.debug("unlink failed", exc_info=True)
             sys.exit(0)
 
         _shutting_down = True
@@ -82,7 +84,7 @@ def _setup_signal_handlers(pid_file: Path) -> None:
             try:
                 pid_file.unlink(missing_ok=True)
             except Exception:
-                pass
+                logger.debug("unlink failed", exc_info=True)
             sys.exit(0)
 
         threading.Thread(target=_force_exit_after_timeout, daemon=True).start()

@@ -24,6 +24,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +212,7 @@ def _get_tool_version(tool_name: str) -> str:
         if tool_ver:
             return str(tool_ver)
     except Exception:
-        pass
+        logger.debug("get tool version failed", exc_info=True)
 
     return huginn_ver
 

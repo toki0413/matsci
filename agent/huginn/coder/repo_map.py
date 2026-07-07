@@ -21,6 +21,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from huginn.coder.symbol_index import Reference, Symbol, SymbolIndex
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 # ── tree-sitter 相关 ────────────────────────────────────────────────────
@@ -256,7 +259,7 @@ class _TreeSitterExtractor:
         try:
             parser = Parser(language=lang_obj)
         except Exception:
-            pass
+            logger.debug("Parser failed", exc_info=True)
         if parser is None:
             try:
                 parser = Parser()
@@ -282,7 +285,7 @@ class _TreeSitterExtractor:
         try:
             query = lang_obj.query(source)
         except Exception:
-            pass
+            logger.debug("query failed", exc_info=True)
         if query is None:
             try:
                 from tree_sitter import Query
@@ -402,7 +405,7 @@ class _TreeSitterExtractor:
                         node, name = item
                         result[name].append(node)
             except Exception:
-                pass
+                logger.debug("run captures failed", exc_info=True)
         return result
 
     def _node_text(self, node: Any, source: str) -> str:

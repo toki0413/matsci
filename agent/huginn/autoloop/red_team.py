@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+import logging
+logger = logging.getLogger(__name__)
+
 
 # Phase-gate 用的阶段名是字符串字面量, 不是 ResearchPhase enum
 # (见 phase_gate.py._DEFAULT_EVIDENCE_REQUIREMENTS)
@@ -123,7 +126,7 @@ class RedTeamReviewer:
             try:
                 findings.extend(self._llm_findings(from_phase, to_phase, evidence))
             except Exception:
-                pass  # LLM 挂了用规则结果
+                logger.debug("extend failed", exc_info=True)  # LLM 挂了用规则结果
 
         summary = self._build_summary(findings, transition)
         return RedTeamReport(transition=transition, findings=findings, summary=summary)

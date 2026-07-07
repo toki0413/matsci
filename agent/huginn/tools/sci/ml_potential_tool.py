@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 # 统一 MLIP 注册表: agent 可以查哪些 U-MLIP 可用 + 怎么导入
@@ -759,7 +762,7 @@ class MLPotentialTool(HuginnTool):
 
             n_atoms = len(read(args.structure_file))
         except Exception:
-            pass  # 读不了就用 1, energy_per_atom == energy
+            logger.debug("cross validate umlips failed", exc_info=True)  # 读不了就用 1, energy_per_atom == energy
 
         # ---- 按性质类型算统计量 ----
         warnings: list[str] = []

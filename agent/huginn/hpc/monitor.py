@@ -75,7 +75,7 @@ class JobMonitor:
             try:
                 client.disconnect()
             except Exception:
-                pass
+                logger.debug("disconnect failed", exc_info=True)
         self._client_cache.clear()
         logger.info("job monitor stopped")
 

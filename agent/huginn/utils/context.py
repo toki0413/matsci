@@ -242,6 +242,6 @@ async def summarize_compact_messages(
             compressed_tokens=estimate_message_tokens(compacted),
         )
     except Exception:
-        pass
+        logger.debug("summarize compact messages failed", exc_info=True)
 
     return compacted, summary_text

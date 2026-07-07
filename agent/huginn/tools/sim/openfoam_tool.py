@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -18,6 +19,8 @@ from pydantic import BaseModel, Field
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class BoundaryCondition(BaseModel):
@@ -756,20 +759,37 @@ boundaryField
 
         parsed = self._parse_log_file(log_path)
         success = solver_result.returncode == 0
-        return ToolResult(
-            data={
-                "case_dir": str(case_dir),
-                "log_path": str(log_path),
-                "openfoam_available": True,
-                "parsed": parsed,
-                "message": (
-                    "OpenFOAM execution completed."
-                    if success
-                    else "OpenFOAM solver failed; see log."
-                ),
-            },
-            success=success,
+        log_content = (
+            log_path.read_text(encoding="utf-8", errors="ignore")
+            if log_path.exists()
+            else ""
         )
+        data = {
+            "case_dir": str(case_dir),
+            "log_path": str(log_path),
+            "openfoam_available": True,
+            "parsed": parsed,
+            "stdout": log_content[-4000:],
+            "message": (
+                "OpenFOAM execution completed."
+                if success
+                else "OpenFOAM solver failed; see log."
+            ),
+        }
+
+        # Physics audit — Courant number, divergence, residuals, mesh quality
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit(
+                "openfoam_tool", args.action, data, args.model_dump()
+            )
+            data["physics_audit"] = audit_report.to_dict()
+        except Exception:
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        return ToolResult(data=data, success=success)
 
     def _set_fields(self, args: OpenFoamToolInput, case_dir: Path) -> ToolResult:
         """Write setFieldsDict and initial phase field from packing output."""

@@ -13,6 +13,9 @@ from pydantic import BaseModel, Field
 from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
 from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class RAGToolInput(BaseModel):
@@ -100,7 +103,7 @@ class RAGTool(HuginnTool):
                 self._kb = kb
                 return kb
         except Exception:
-            pass
+            logger.debug("resolve kb failed", exc_info=True)
         return None
 
     def is_read_only(self, args: RAGToolInput) -> bool:

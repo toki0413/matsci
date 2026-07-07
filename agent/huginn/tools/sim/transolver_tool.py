@@ -9,6 +9,7 @@ paths return a helpful install hint instead of crashing.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +17,8 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 # Transolver++ ships the model class as `Model` under models/Transolver_plus.py.
@@ -267,7 +270,19 @@ class TransolverTool(HuginnTool):
             predictions=preds,
             checkpoint_path=str(ckpt_path),
         )
-        return ToolResult(data=out.model_dump(), success=True)
+        data = out.model_dump()
+
+        # Physics audit — NaN in predictions, checkpoint mismatch
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit("transolver_tool", args.action, data, args.model_dump())
+            data["physics_audit"] = audit_report.to_dict()
+        except Exception:
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        return ToolResult(data=data, success=True)
 
     def _train(self, args: TransolverToolInput) -> ToolResult:
         if not args.coords or not args.features or not args.target:
@@ -296,7 +311,7 @@ class TransolverTool(HuginnTool):
                 model.load_state_dict(sd, strict=False)
                 warm_started = True
             except Exception:
-                pass
+                logger.debug("load failed", exc_info=True)
 
         try:
             x = self._to_tensor(args.features, device, torch.float32).unsqueeze(0)
@@ -337,7 +352,19 @@ class TransolverTool(HuginnTool):
             train_loss=losses,
             warnings=warnings,
         )
-        return ToolResult(data=out.model_dump(), success=True)
+        data = out.model_dump()
+
+        # Physics audit — loss divergence, NaN/Inf, gradient explosion
+        try:
+            from huginn.execution.physics_auditor import PhysicsAuditor
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit("transolver_tool", args.action, data, args.model_dump())
+            data["physics_audit"] = audit_report.to_dict()
+        except Exception:
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        return ToolResult(data=data, success=True)
 
     def estimate_cost(self, args: TransolverToolInput) -> dict[str, float] | None:
         if args.action == "train":

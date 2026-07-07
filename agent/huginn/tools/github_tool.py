@@ -23,6 +23,9 @@ from huginn.permissions import PermissionChecker, PermissionConfig
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
 from huginn.types import PermissionMode, ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class GithubToolInput(BaseModel):
@@ -70,7 +73,7 @@ def _infer_repo(work_dir: Path) -> str | None:
         if result.returncode == 0:
             return result.stdout.strip()
     except Exception:
-        pass
+        logger.debug("run failed", exc_info=True)
     return None
 
 

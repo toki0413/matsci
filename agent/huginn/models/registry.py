@@ -11,6 +11,9 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from huginn.config import HuginnConfig, ModelConfig, ThinkingIntensity
+import logging
+logger = logging.getLogger(__name__)
+
 
 ProviderT = Literal[
     "anthropic",
@@ -880,7 +883,7 @@ class ModelRegistry:
                     if not cfg.base_url and cred_info.get("base_url"):
                         cfg = replace(cfg, base_url=cred_info["base_url"])
             except Exception:
-                pass  # CredentialStore not available, fall through
+                logger.debug("get failed", exc_info=True)  # CredentialStore not available, fall through
 
         instance = create_langchain_model(
             provider=cfg.provider,  # type: ignore[arg-type]

@@ -32,6 +32,9 @@ from huginn.api.context import PluginContext
 from huginn.api.event import Event, LLMRequestEvent
 from huginn.api.filter import filter
 from huginn.api.star import Star
+import logging
+logger = logging.getLogger(__name__)
+
 
 # ── Rule text ────────────────────────────────────────────────────────
 # Adapted from DietrichGebert/ponytail SKILL.md (MIT license).
@@ -164,7 +167,7 @@ class PonytailStar(Star):
                 "history": self._state.history[-20:],  # cap history
             })
         except Exception:
-            pass
+            logger.debug("persist failed", exc_info=True)
 
     # ── LLM prompt injection ──────────────────────────────────────────
 

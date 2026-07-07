@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
+import logging
+logger = logging.getLogger(__name__)
+
 
 class BrowserAction(str, Enum):
     NAVIGATE = "navigate"
@@ -376,13 +379,13 @@ class BrowserTool(HuginnTool):
             try:
                 self._driver.quit()
             except Exception:
-                pass
+                logger.debug("quit failed", exc_info=True)
             self._driver = None
         if self._browser:
             try:
                 await self._browser.close()
             except Exception:
-                pass
+                logger.debug("close failed", exc_info=True)
             self._browser = None
         self._page = None
         self._context = None
@@ -390,7 +393,7 @@ class BrowserTool(HuginnTool):
             try:
                 await self._pw.stop()
             except Exception:
-                pass
+                logger.debug("stop failed", exc_info=True)
             self._pw = None
         self._connection_mode = "none"
 

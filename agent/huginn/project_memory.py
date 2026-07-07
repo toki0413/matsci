@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import functools
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
+
 
 AGENTS_MD_FILENAME = "AGENTS.md"
 
@@ -52,7 +55,7 @@ def load_project_context(workspace: str | Path) -> dict[str, str]:
         if project_name:
             ctx["project_name"] = project_name
     except Exception:
-        pass
+        logger.debug("Path failed", exc_info=True)
     return ctx
 
 

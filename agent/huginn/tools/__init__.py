@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from typing import Any
 
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry, register_tool
+
+logger = logging.getLogger(__name__)
+
 
 __all__ = ["HuginnTool", "ToolRegistry", "register_tool", "register_all_tools"]
 
@@ -213,7 +217,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
                         if _ctx is not None and _ctx.kb is not None:
                             kwargs["kb"] = _ctx.kb
                     except Exception:
-                        pass
+                        logger.debug("tool kwargs failed", exc_info=True)
 
             ToolRegistry.register(cls(**kwargs))
             registered.append(class_name)

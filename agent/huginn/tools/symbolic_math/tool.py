@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 class SymbolicMathInput(BaseModel):
@@ -255,5 +258,5 @@ class SymbolicMathTool(HuginnTool):
             if refs:
                 result.data["kb_verified_constants"] = refs
         except Exception:
-            pass
+            logger.debug("augment with kb constants failed", exc_info=True)
         return result

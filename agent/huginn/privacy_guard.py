@@ -511,7 +511,7 @@ class PrivacyGuard:
                     try:
                         msg.content = redacted  # type: ignore[misc]
                     except Exception:
-                        pass
+                        logger.debug("redact messages for cloud failed", exc_info=True)
                     out.append(msg)
             except Exception:
                 # 单条挂了不能影响其他消息
