@@ -184,6 +184,9 @@ class AutoloopEngine:
         self._iteration = 0
         # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户
         self._consecutive_failures = 0
+        # refine 循环计数: 防止 refute→refine 无限循环
+        self._refine_count = 0
+        self._max_refines = 8
         # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
         self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
@@ -560,6 +563,17 @@ class AutoloopEngine:
             return None
         return self._plan_store
 
+    def _get_refine_model(self):
+        """获取 refine 用的 LLM model, 优先用验证模型 (便宜档).
+
+        没有就用 None, hypothesis_graph.refine_failed 会走 findings 模板拼接.
+        """
+        try:
+            from huginn.llm_config import get_verification_model
+            return get_verification_model()
+        except Exception:
+            return None
+
     async def _maybe_clarify(
         self,
         checkpoint: str,
@@ -647,6 +661,7 @@ class AutoloopEngine:
         max_iterations: int = 20,
         progressive_budget: bool = True,
         goal: Goal | None = None,
+        max_refines: int = 8,
     ) -> AutoloopResult:
         """Run the full autonomous loop for the given objective.
 
@@ -655,10 +670,15 @@ class AutoloopEngine:
         迭代数收紧允许的 plan mode (见 ProgressiveBudget.default), False
         则全程放行, 行为跟提预算之前一致.
 
+        max_refines 控制 refute→refine 循环次数上限, 默认 8.
+        超过后不再生成修正假设, 避免在错误方向上反复迭代.
+
         goal 不为空时, 每轮 learn 后用 GoalScheduler.check_completion 查
         success_criteria 是否满足, 满足则提前停循环并在 scheduler 里标记
         completed. 没传 goal 行为不变.
         """
+        self._max_refines = max_refines
+        self._refine_count = 0
         run_id, provenance_record, run_collector = self._prepare_run(
             objective, progressive_budget, goal
         )
@@ -784,7 +804,7 @@ class AutoloopEngine:
             validation = phase.result
             print(f"  → Validation: {validation}")
 
-            # 更新假设图: tests_passed → support, 否则 → refute
+            # 更新假设图: tests_passed → support, 否则 → refute → refine
             try:
                 tests_passed = validation.get("tests_passed", False)
                 if _current_hyp_id is not None:
@@ -795,6 +815,27 @@ class AutoloopEngine:
                             _current_hyp_id,
                             evidence={"errors": validation.get("errors", "tests failed")},
                         )
+                        # refine 闭环: refute 后生成修正假设, 下轮迭代处理
+                        if self._refine_count < self._max_refines:
+                            try:
+                                new_hyp = self.hypothesis_graph.refine_failed(
+                                    _current_hyp_id,
+                                    evidence={"errors": validation.get("errors", "tests failed")},
+                                    model=self._get_refine_model(),
+                                )
+                                self._refine_count += 1
+                                logger.info(
+                                    "refine %d/%d: %s → %s",
+                                    self._refine_count, self._max_refines,
+                                    _current_hyp_id, new_hyp,
+                                )
+                            except Exception:
+                                logger.warning("refine_failed failed", exc_info=True)
+                        else:
+                            logger.warning(
+                                "max_refines (%d) reached, skipping refine for %s",
+                                self._max_refines, _current_hyp_id,
+                            )
             except Exception:
                 logger.warning("error in run: hypothesis_graph support/refute update failed", exc_info=True)
 

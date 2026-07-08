@@ -7,6 +7,12 @@ from huginn.security.audit import AuditEvent, AuditLogger
 from huginn.security.container_executor import ContainerExecutor
 from huginn.security.execution import allow_local_bash, get_executor
 from huginn.security.math_eval import safe_math_eval
+from huginn.security.policy_engine import (
+    PolicyDecision,
+    PolicyEngine,
+    PolicyRule,
+    evaluate_command_hook,
+)
 from huginn.security.rate_limiter import (
     RateLimitConfig,
     RateLimitExceeded,
@@ -50,6 +56,10 @@ __all__ = [
     "SafeEvalError",
     "validate_code",
     "RestrictedPythonError",
+    "PolicyEngine",
+    "PolicyRule",
+    "PolicyDecision",
+    "evaluate_command_hook",
     "ScriptRunner",
     "ScriptResult",
     "TokenRateLimiter",

@@ -145,6 +145,24 @@ class SandboxExecutor:
             raise SandboxError("String commands are forbidden — use list only")
 
         cfg = config or self.config
+
+        # Policy engine: declarative rules take priority over the
+        # legacy hardcoded whitelist.  deny -> block, allow -> skip
+        # whitelist, ask -> fall through to whitelist (backward compat).
+        from huginn.security.policy_engine import evaluate_command_hook
+
+        decision = evaluate_command_hook(cmd)
+        if decision.action == "deny":
+            raise SandboxError(
+                f"Blocked by security policy '{decision.matched_rule}': "
+                f"{decision.reason}"
+            )
+        if decision.action == "allow":
+            # Still verify the executable actually exists on disk
+            self._resolve_executable(cmd)
+            return
+
+        # "ask" or unmatched -> fall back to legacy whitelist
         exe_path = self._resolve_executable(cmd)
         exe_name = Path(exe_path).name.lower()
 

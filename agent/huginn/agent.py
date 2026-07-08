@@ -2025,6 +2025,77 @@ class HuginnAgent:
             {"thread_id": thread_id},
         )
 
+    async def _maybe_inject_synthetic_continue(
+        self,
+        final_state: dict[str, Any],
+        thread_id: str,
+    ) -> None:
+        """压缩后或工具边界结束时注入 synthetic Continue 消息.
+
+        OpenScience 启发: compaction 后注入 "Continue if you have next steps"
+        让循环自我接力. Huginn 额外带上 pipeline 状态, 让 agent 知道
+        当前在哪个阶段、下一步建议做什么.
+
+        触发条件:
+        1. final_state 最后一条消息是 ToolMessage (工具边界, 非最终回答)
+        2. 或刚刚做了 compaction
+        3. 且有 pending pipeline suggestions
+        """
+        try:
+            messages = final_state.get("messages", []) if final_state else []
+            if not messages:
+                return
+
+            from langchain_core.messages import ToolMessage, HumanMessage
+
+            last_msg = messages[-1] if messages else None
+            ended_at_tool = isinstance(last_msg, ToolMessage)
+
+            # 获取 pipeline 建议
+            pipeline_block = ""
+            try:
+                from huginn.provenance.pipeline import SimulationPipeline
+                pipeline = SimulationPipeline()
+                pipeline_block = pipeline.to_context_block()
+            except Exception:
+                pass
+
+            # 获取 provenance 摘要
+            prov_block = ""
+            try:
+                from huginn.provenance.registry import ProvenanceRegistry
+                prov_block = ProvenanceRegistry.shared().to_context_block()
+            except Exception:
+                pass
+
+            if not pipeline_block and not ended_at_tool:
+                return
+
+            # 构造 synthetic continue 消息
+            parts = ["[System] Continue if you have next steps."]
+            if pipeline_block:
+                parts.append(pipeline_block)
+            if prov_block:
+                parts.append(prov_block)
+            parts.append(
+                "If the pipeline suggests a next step, proceed with it. "
+                "If you've completed the task, summarize the results."
+            )
+            synthetic = HumanMessage(content="\n\n".join(parts))
+
+            # 注入到消息列表供下一轮使用
+            if hasattr(self, '_pending_synthetic_messages'):
+                self._pending_synthetic_messages.append(synthetic)
+            else:
+                self._pending_synthetic_messages = [synthetic]
+
+            logger.info(
+                "Synthetic Continue injected (tool_boundary=%s, has_pipeline=%s)",
+                ended_at_tool, bool(pipeline_block),
+            )
+        except Exception:
+            logger.debug("synthetic continue injection skipped", exc_info=True)
+
     def _build_compact_summary(self) -> str:
         """Build the existing_summary for the summarizer, prepending L1 coords.
 
@@ -2308,6 +2379,13 @@ class HuginnAgent:
             # Privacy guard: 发云端前脱敏 / local_only 时切本地模型.
             # 用 try/except 包住, guard 自己挂了不能带挂 LLM 调用.
             # RuntimeError (没本地模型) 单独往上抛, 让用户看到.
+            # synthetic Continue 消息: 上一轮工具边界/compaction 后注入的续跑指令
+            synthetic_msgs = getattr(self, '_pending_synthetic_messages', None)
+            if synthetic_msgs:
+                messages.extend(synthetic_msgs)
+                self._pending_synthetic_messages = []
+                logger.info("Injected %d synthetic Continue messages", len(synthetic_msgs))
+
             try:
                 from huginn.privacy_guard import PrivacyGuard
 
@@ -2693,6 +2771,13 @@ class HuginnAgent:
                     await self._maybe_auto_compact(
                         final_state, turn_span, thread_id
                     )
+
+                    # synthetic Continue: compaction 后或工具边界结束时注入续跑指令
+                    # (OpenScience 启发: 压缩后注入 "Continue if you have next steps")
+                    await self._maybe_inject_synthetic_continue(
+                        final_state, thread_id
+                    )
+
                     ai_content = self._extract_last_ai_content(final_state)
                     if ai_content:
                         # 个人定制: 基于实际对话学习用户语言偏好, 不瞎猜.

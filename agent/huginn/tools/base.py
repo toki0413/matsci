@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import sys
 from abc import ABC
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
@@ -34,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
+
+# values we treat as "no real description set, go read the .md file"
+_PLACEHOLDER_DESCRIPTIONS = frozenset({"", "todo", "placeholder", "tbd"})
 
 
 # ── provenance collector (context var) ─────────────────────────────────────
@@ -83,6 +88,10 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     name: str = ""
     description: str = ""
 
+    # .md description cache, keyed by tool name (qualname fallback).
+    # stops us re-statting the filesystem for every instance we spin up.
+    _description_cache: dict[str, str | None] = {}
+
     # 工具分类, 用于 tool_filter / UI 分组 / 日志统计
     # 取值: core / search / meta / sim / sci / design / cv / materials / misc
     category: str = "misc"
@@ -111,6 +120,64 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     # 后台任务标记 (AstrBot FunctionTool.is_background_task 模式)
     # True 时工具调用立即返回 task_id, 结果异步轮询
     is_background_task: bool = False
+
+    def __init__(self) -> None:
+        # Subclasses that hardcode their own description are left alone.
+        # Empty / placeholder -> fall back to a sibling .md file so the
+        # prompt text can be tweaked without redeploying the .py.
+        # ponytail: we load at construction, not at first attribute read.
+        # The registry instantiates a tool exactly when it needs the
+        # description, so this is lazy enough in practice; swap to a
+        # property if access-time laziness ever becomes a real need.
+        desc = self.description or ""
+        if desc.strip().lower() in _PLACEHOLDER_DESCRIPTIONS:
+            loaded = type(self)._load_description()
+            if loaded:
+                # instance attr shadows the empty class default
+                self.description = loaded
+
+    @classmethod
+    def _load_description(cls) -> str | None:
+        """Read the external .md description for this tool, if one exists.
+
+        Two lookup spots, first match wins:
+          1. beside the module that defines the class (foo.py -> foo.md)
+          2. the shared descriptions/ folder, keyed by the tool name
+
+        Cached per tool name so repeat instantiations skip the file read.
+        """
+        cache_key = cls.name or cls.__qualname__
+        cache = HuginnTool._description_cache
+        if cache_key in cache:
+            return cache[cache_key]
+
+        candidates: list[Path] = []
+
+        # co-located with the defining module
+        mod = sys.modules.get(cls.__module__)
+        mod_file = getattr(mod, "__file__", None) if mod is not None else None
+        if mod_file:
+            candidates.append(Path(mod_file).with_suffix(".md"))
+
+        # shared descriptions dir, keyed by tool name
+        if cls.name:
+            candidates.append(
+                Path(__file__).resolve().parent / "descriptions" / f"{cls.name}.md"
+            )
+
+        content: str | None = None
+        for path in candidates:
+            try:
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8").strip()
+                    content = text or None
+                    break
+            except OSError:
+                # unreadable / weird encoding -> try the next candidate
+                continue
+
+        cache[cache_key] = content
+        return content
 
     @staticmethod
     def _default_profile() -> ToolProfile:

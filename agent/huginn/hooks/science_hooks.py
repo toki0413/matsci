@@ -57,19 +57,27 @@ def _result_data(ctx: HookContext) -> dict:
 
 
 def _block(ctx: HookContext, reason: str) -> HookContext:
-    """设置 block 标记并返回 ctx."""
+    """设置 block 标记并返回 ctx. severity=blocking."""
     ctx.metadata["blocked_by_hook"] = True
     ctx.metadata["block_reason"] = reason
+    ctx.metadata["severity"] = "blocking"
     return ctx
 
 
-def _warn(ctx: HookContext, warning: str) -> None:
-    """加一条 warning 到 metadata, 不 block."""
+def _warn(ctx: HookContext, warning: str, severity: str = "minor") -> None:
+    """加一条 warning 到 metadata, 不 block.
+
+    severity 按 OpenScience provenance_review 的四级:
+      - blocking: 严重到应停止 (用 _block 代替)
+      - major:    影响结果可靠性, agent 应考虑修正
+      - minor:    值得注意但通常不影响结论
+      - info:     纯信息性, 记录但不需行动
+    """
     warnings = ctx.metadata.get("warnings")
     if not isinstance(warnings, list):
         warnings = []
         ctx.metadata["warnings"] = warnings
-    warnings.append(warning)
+    warnings.append({"severity": severity, "message": warning})
 
 
 # 声明式 hook 规则表 — 替代 9 个结构相同的模式匹配函数
@@ -540,7 +548,7 @@ async def enhanced_sampling_hook(ctx: HookContext) -> HookContext | None:
     # WHAM 未收敛时 warn
     converged = data.get("converged")
     if converged is False:
-        _warn(ctx, "WHAM 迭代未收敛, FES 可能不准确. 考虑增加 bin 数或迭代次数.")
+        _warn(ctx, "WHAM 迭代未收敛, FES 可能不准确. 考虑增加 bin 数或迭代次数.", "major")
 
     # FES 自由能范围过大时 warn
     fes_min = data.get("fes_min")
@@ -573,7 +581,7 @@ async def msm_validation_hook(ctx: HookContext) -> HookContext | None:
             if isinstance(row, list) and row:
                 row_sum = sum(row)
                 if row_sum < 0.9 or row_sum > 1.1:
-                    _warn(ctx, f"转移矩阵第 {i} 行和为 {row_sum:.4f}, 偏离 1.0, 检查微扰态划分.")
+                    _warn(ctx, f"转移矩阵第 {i} 行和为 {row_sum:.4f}, 偏离 1.0, 检查微扰态划分.", "major")
                     break
 
     # 隐含弛豫时间过短说明微扰态划分太粗
@@ -604,7 +612,7 @@ async def inverse_design_hook(ctx: HookContext) -> HookContext | None:
     best = data.get("best_score")
     initial = data.get("initial_score")
     if best is not None and initial is not None and best >= initial:
-        _warn(ctx, f"优化后最佳得分 {best:.4f} 未优于初始 {initial:.4f}, 可能陷入局部最优.")
+        _warn(ctx, f"优化后最佳得分 {best:.4f} 未优于初始 {initial:.4f}, 可能陷入局部最优.", "major")
 
     return None
 
@@ -682,7 +690,7 @@ async def neb_convergence_hook(ctx: HookContext) -> HookContext | None:
 
     converged = data.get("converged")
     if converged is False:
-        _warn(ctx, "NEB 路径未收敛, 考虑增加最大迭代次数或调整弹簧常数.")
+        _warn(ctx, "NEB 路径未收敛, 考虑增加最大迭代次数或调整弹簧常数.", "major")
 
     # 能垒为负说明起点比终点高, 可能路径方向反了
     barrier = data.get("barrier_ev")
@@ -704,12 +712,12 @@ async def gp_model_hook(ctx: HookContext) -> HookContext | None:
     # R² 过低说明模型拟合差
     r2 = data.get("r2_score")
     if r2 is not None and isinstance(r2, (int, float)) and r2 < 0.5:
-        _warn(ctx, f"GP 模型 R² = {r2:.4f} 偏低, 考虑增加核函数复杂度或训练数据.")
+        _warn(ctx, f"GP 模型 R² = {r2:.4f} 偏低, 考虑增加核函数复杂度或训练数据.", "major")
 
     # 超参数异常 (length_scale 过大说明模型没学到任何结构)
     ls = data.get("length_scale")
     if ls is not None and isinstance(ls, (int, float)) and ls > 100:
-        _warn(ctx, f"GP length_scale = {ls:.2f} 过大, 模型可能退化为常数预测.")
+        _warn(ctx, f"GP length_scale = {ls:.2f} 过大, 模型可能退化为常数预测.", "major")
 
     return None
 
@@ -791,6 +799,15 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("rag feedback hooks not available (non-fatal)")
 
+    # 文件系统级 undo: 仿真/文件工具执行前后拍快照, 支持 revert/unrevert.
+    # 幂等由 register_snapshot_hooks 内部的 _snapshot_hooks_registered 守护.
+    try:
+        from huginn.snapshot.integration import register_snapshot_hooks
+
+        register_snapshot_hooks(hm)
+    except ImportError:
+        logger.debug("snapshot hooks not available (non-fatal)")
+
     hm._science_hooks_registered = True
     logger.info(
         "Science hooks registered: vasp_convergence, lammps_stability, "
@@ -810,3 +827,4 @@ def register_science_hooks(hm: HookManager) -> None:
         "free_energy/enhanced_sampling→kinetics/motif/inverse→"
         "consensus→analysis"
     )
+
