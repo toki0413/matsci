@@ -194,6 +194,7 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.tools.materials_autoresearch_tool", "MaterialsAutoResearchTool"),
         # ── meta/ (可选) ──
         ("huginn.tools.nuwa_persona_tool", "NuwaPersonaTool"),
+        ("huginn.tools.subagent_tool", "SubagentTool"),
         # ── materials/ ──
         ("huginn.tools.materials_database_tool", "MaterialsDatabaseTool"),
         ("huginn.tools.experimental_data_tool", "ExperimentalDataTool"),

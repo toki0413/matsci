@@ -1,0 +1,291 @@
+# Default security policy for Huginn
+#
+# Inspired by Codex CLI's Starlark execpolicy, but using Python-native
+# rule evaluation (no Starlark dependency needed).
+#
+# Rules are evaluated top-to-bottom; first match wins.
+#   allow — proceed without prompting
+#   deny  — block immediately
+#   ask   — require user confirmation before proceeding
+#
+# If no rule matches, defaults.unmatched is used.
+#
+# Match conditions (all present conditions must pass — AND logic):
+#   executable:      list of allowed exe base names (case-insensitive)
+#   command_pattern: regex tested against the full command string
+#   workspace:       path prefix the cwd must start with (${VAR} expanded)
+#   env_required:   env vars that must be set for the rule to apply
+
+rules:
+  # ── Deny: destructive / unsafe patterns ──────────────────────────
+
+  - name: deny_rm_rf_root
+    match:
+      command_pattern: 'rm\s+(-rf|-fr)\s+(/|~|\*)'
+    action: deny
+    reason: "Recursive deletion of root, home, or wildcard"
+
+  - name: deny_mkfs
+    match:
+      command_pattern: 'mkfs\.\w+\s+/dev/'
+    action: deny
+    reason: "Formatting block devices"
+
+  - name: deny_dd_to_device
+    match:
+      command_pattern: 'dd\s+if=.*of=/dev/'
+    action: deny
+    reason: "Writing raw data to block devices"
+
+  - name: deny_shutdown_reboot
+    match:
+      command_pattern: '\b(shutdown|reboot|halt|poweroff)\b'
+    action: deny
+    reason: "System power control"
+
+  - name: deny_sudo
+    match:
+      command_pattern: '\bsudo\b'
+    action: deny
+    reason: "Privilege escalation"
+
+  - name: deny_fork_bomb
+    match:
+      command_pattern: ':\(\)\s*\{\s*:\|:\&\s*\}\s*;'
+    action: deny
+    reason: "Fork bomb pattern"
+
+  - name: deny_kill_init
+    match:
+      command_pattern: 'kill\s+-9\s+1\b'
+    action: deny
+    reason: "Killing PID 1"
+
+  - name: deny_killall
+    match:
+      command_pattern: '\bkillall\b'
+    action: deny
+    reason: "Mass process termination"
+
+  - name: deny_overwrite_device
+    match:
+      command_pattern: '>\s*/dev/sd'
+    action: deny
+    reason: "Overwriting block devices"
+
+  - name: deny_chmod_777_root
+    match:
+      command_pattern: 'chmod\s+-R\s+777\s+/'
+    action: deny
+    reason: "World-writable root filesystem"
+
+  - name: deny_chown_root
+    match:
+      command_pattern: 'chown\s+-R\s+.*\s+/'
+    action: deny
+    reason: "Recursive chown on root"
+
+  - name: deny_format_win
+    match:
+      command_pattern: '\bformat\s+[a-z]:'
+    action: deny
+    reason: "Windows disk format"
+
+  - name: deny_del_force_win
+    match:
+      command_pattern: '\bdel\s+/[fsq]\b'
+    action: deny
+    reason: "Force delete (Windows)"
+
+  - name: deny_rmdir_recursive_win
+    match:
+      command_pattern: '\b(rmdir|rd)\s+/s\b'
+    action: deny
+    reason: "Recursive directory removal (Windows)"
+
+  - name: deny_powershell_encoded
+    match:
+      command_pattern: 'powershell\s+-enc\b'
+    action: deny
+    reason: "Encoded PowerShell command"
+
+  - name: deny_netcat
+    match:
+      command_pattern: '\b(nc\s+-[elp]|netcat)\b'
+    action: deny
+    reason: "Netcat reverse shell / listener"
+
+  - name: deny_crontab_mod
+    match:
+      command_pattern: 'crontab\s+-[er]'
+    action: deny
+    reason: "Crontab modification"
+
+  # ── Ask: needs user confirmation ─────────────────────────────────
+
+  - name: ask_hpc_submit
+    match:
+      executable: ["sbatch", "qsub", "msub", "llsubmit"]
+    action: ask
+    reason: "HPC job submission — confirm before dispatching to scheduler"
+
+  - name: ask_network_transfer
+    match:
+      executable: ["curl", "wget", "scp", "rsync", "ftp", "sftp"]
+    action: ask
+    reason: "Network transfer — confirm before fetching/sending data"
+
+  - name: ask_pip_install
+    match:
+      command_pattern: '\bpip\s+install\b'
+    action: ask
+    reason: "Package installation — modifies environment"
+
+  - name: ask_uv_install
+    match:
+      command_pattern: '\buv\s+(pip\s+)?install\b'
+    action: ask
+    reason: "Package installation (uv) — modifies environment"
+
+  - name: ask_conda_modify
+    match:
+      command_pattern: '\bconda\s+(install|create|remove)\b'
+    action: ask
+    reason: "Conda environment modification"
+
+  - name: ask_pkg_manager
+    match:
+      command_pattern: '\b(apt|apt-get|yum|dnf)\s+(install|remove|purge)\b'
+    action: ask
+    reason: "System package modification"
+
+  # ── Allow: simulation tools (workspace-scoped via ${HUGINN_WORKSPACE}) ──
+
+  - name: allow_dft_vasp
+    match:
+      executable: ["vasp", "vasp_std", "vasp_gam", "vasp_ncl"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "VASP DFT simulation"
+
+  - name: allow_qe
+    match:
+      executable: ["pw.x", "cp.x", "qe", "ph.x", "pp.x", "projwfc.x"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "Quantum ESPRESSO"
+
+  - name: allow_cp2k
+    match:
+      executable: ["cp2k", "cp2k.popt", "cp2k.psmp"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "CP2K DFT/MD"
+
+  - name: allow_gaussian
+    match:
+      executable: ["gaussian", "g16", "g09"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "Gaussian quantum chemistry"
+
+  - name: allow_orca
+    match:
+      executable: ["orca"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "ORCA quantum chemistry"
+
+  - name: allow_gromacs
+    match:
+      executable: ["gmx", "gmx_mpi"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "GROMACS molecular dynamics"
+
+  - name: allow_lammps
+    match:
+      executable: ["lmp", "lammps"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "LAMMPS molecular dynamics"
+
+  - name: allow_packmol
+    match:
+      executable: ["packmol"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "Packmol molecular packing"
+
+  - name: allow_fem
+    match:
+      executable: ["ElmerSolver", "ElmerGrid", "ElmerSolver_mpi", "freefem"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "FEM/CFD solvers"
+
+  - name: allow_mpi
+    match:
+      executable: ["mpiexec", "mpirun"]
+      workspace: "${HUGINN_WORKSPACE}"
+    action: allow
+    reason: "MPI launcher"
+
+  # ── Allow: scripting / docs / core utils (no workspace restriction) ──
+
+  - name: allow_python
+    match:
+      executable: ["python", "python3"]
+    action: allow
+    reason: "Python interpreter"
+
+  - name: allow_uv
+    match:
+      executable: ["uv"]
+    action: allow
+    reason: "uv package runner"
+
+  - name: allow_lean
+    match:
+      executable: ["lean", "lake"]
+    action: allow
+    reason: "Lean theorem prover"
+
+  - name: allow_latex
+    match:
+      executable: ["pdflatex", "xelatex", "lualatex", "bibtex", "latexmk"]
+    action: allow
+    reason: "LaTeX document compilation"
+
+  - name: allow_core_utils
+    match:
+      executable:
+        - echo
+        - cat
+        - ls
+        - pwd
+        - printf
+        - "true"
+        - "false"
+        - test
+        - head
+        - tail
+        - wc
+        - sort
+        - cut
+        - tr
+        - grep
+        - find
+        - mkdir
+        - cp
+        - mv
+        - rm
+        - touch
+        - diff
+        - which
+        - env
+    action: allow
+    reason: "Standard core utilities"
+
+defaults:
+  unmatched: ask
