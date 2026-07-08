@@ -150,10 +150,23 @@ def _make_ws_approval_callback(websocket: WebSocket):
     auto-approves. Clients that want true interactive approval can send
     ``set_auto_approve=false`` to switch the cached agent into ASK mode
     and handle the request/reply flow themselves before the tool runs.
+
+    ponytail: auto-approve is a headless convenience; per-connection
+    interactive approval requires making this callback async (asyncio.Future
+    + client response handler). Upgrade path: wrap in create_task + Future
+    with 60s timeout, fall back to auto-approve on timeout.
     """
+
+    # Tools that warrant a client-visible warning when auto-approved.
+    # ponytail: minimal set, add tools as they prove dangerous in practice
+    _DANGEROUS_TOOLS = frozenset({
+        "bash_tool", "file_edit_tool", "multi_edit_tool",
+        "file_delete_tool", "git_tool", "terminal_tool",
+    })
 
     def callback(tool_name: str, reason: str) -> bool:
         request_id = uuid.uuid4().hex
+        is_dangerous = tool_name in _DANGEROUS_TOOLS
         try:
             loop = asyncio.get_running_loop()
             # Save the task reference to prevent GC from cancelling it
@@ -166,6 +179,7 @@ def _make_ws_approval_callback(websocket: WebSocket):
                         "tool_name": tool_name,
                         "reason": reason,
                         "auto_approved": True,
+                        "dangerous": is_dangerous,
                     }
                 )
             )
@@ -174,6 +188,14 @@ def _make_ws_approval_callback(websocket: WebSocket):
         except RuntimeError:
             # No running loop — fall back to plain auto-approve.
             pass
+
+        if is_dangerous:
+            logger.warning(
+                "Auto-approved dangerous tool '%s' (reason: %s). "
+                "Client should send set_auto_approve=false for interactive approval.",
+                tool_name, reason,
+            )
+
         return True
 
     return callback

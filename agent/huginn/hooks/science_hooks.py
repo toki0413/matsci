@@ -72,6 +72,97 @@ def _warn(ctx: HookContext, warning: str) -> None:
     warnings.append(warning)
 
 
+# 声明式 hook 规则表 — 替代 9 个结构相同的模式匹配函数
+# ponytail: rule table, switch to per-tool class if hook logic diverges
+_PATTERN_HOOK_RULES: list[dict[str, Any]] = [
+    {
+        "tools": ["qe_tool"],
+        "success_keywords": ["convergence has been achieved", "scf correction compared to forces"],
+        "fail_keywords": ["not converged", "too many iterations"],
+        "block_msg": "QE SCF 未收敛. 考虑增加 electron_maxstep 或调整 mixing_beta.",
+    },
+    {
+        "tools": ["cp2k_tool"],
+        "success_keywords": ["scf run converged"],
+        "fail_keywords": ["scf not converged"],
+        "block_msg": "CP2K SCF 未收敛. 考虑增加 max_scf 或调整 OT 方法参数.",
+    },
+    {
+        "tools": ["gaussian_tool"],
+        "success_keywords": ["normal termination"],
+        "fail_keywords": ["error termination", "l9999.exe"],
+        "block_msg": "Gaussian 异常终止. 检查输入文件/基组/内存/收敛阈值设置.",
+    },
+    {
+        "tools": ["orca_tool"],
+        "success_keywords": ["orca terminated normally"],
+        "fail_keywords": ["aborted", "fatal error"],
+        "block_msg": "ORCA 异常终止. 检查输入文件/基组/内存/SCF 设置.",
+    },
+    {
+        "tools": ["gromacs_tool"],
+        "success_keywords": [],
+        "fail_keywords": ["lost atoms", "system too unstable"],
+        "block_msg": "GROMACS 模拟不稳定 (丢原子). 考虑减小时间步或软化势能参数.",
+    },
+    {
+        "tools": ["abaqus_tool", "comsol_tool", "elmer_tool", "fenics_tool"],
+        "success_keywords": ["convergence", "solution completed"],
+        "fail_keywords": ["not converged", "singular matrix", "too many iterations"],
+        "block_msg": "{tool} 求解未收敛. 检查网格质量/边界条件/材料参数/载荷步长.",
+    },
+    {
+        "tools": ["openfoam_tool"],
+        "success_keywords": [],
+        "fail_keywords": ["floating point exception", "foam fatal error"],
+        "block_msg": "OpenFOAM 求解异常. 检查网格质量/边界条件/时间步长/离散格式.",
+    },
+    {
+        "tools": ["packing_tool"],
+        "success_keywords": ["success"],
+        "fail_keywords": ["overlap", "failed to pack"],
+        "block_msg": "Packmol 打包失败 (原子重叠或无法打包). 调整盒子尺寸或分子数量.",
+    },
+    {
+        "tools": ["lammps_tool"],
+        "success_keywords": [],
+        "fail_keywords": ["lost atoms"],
+        "block_msg": (
+            "LAMMPS simulation lost atoms — system became unstable. "
+            "Consider reducing timestep or using a softer potential."
+        ),
+    },
+]
+
+
+def _make_pattern_hook(rule: dict[str, Any]):
+    """根据规则 dict 生成一个 async POST_TOOL_USE hook.
+
+    逻辑: tool_name 匹配 → 提取文本 → 命中 fail 关键词则 block,
+    否则命中 success 关键词则放行. fail 优先于 success (避免 "not converged"
+    误匹配 success 的 "convergence" 子串).
+    """
+    tools = frozenset(rule["tools"])
+    success_kw = rule["success_keywords"]
+    fail_kw = rule["fail_keywords"]
+    raw_msg = rule["block_msg"]
+
+    async def _hook(ctx: HookContext) -> HookContext | None:
+        if ctx.tool_name not in tools:
+            return None
+        text = _extract_text(ctx)
+        for kw in fail_kw:
+            if kw in text:
+                msg = raw_msg.format(tool=ctx.tool_name) if "{tool}" in raw_msg else raw_msg
+                return _block(ctx, msg)
+        for kw in success_kw:
+            if kw in text:
+                return None
+        return None
+
+    return _hook
+
+
 # ── VASP 收敛性检查 ─────────────────────────────────────────────
 
 
@@ -116,27 +207,6 @@ async def vasp_convergence_hook(ctx: HookContext) -> HookContext | None:
     return None
 
 
-# ── LAMMPS 稳定性检查 ───────────────────────────────────────────
-
-
-async def lammps_stability_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 LAMMPS 是否丢原子或不稳定."""
-    if ctx.tool_name != "lammps_tool":
-        return None
-
-    result = ctx.result if isinstance(ctx.result, dict) else {}
-    text = str(result.get("result", result)).lower()
-
-    if "lost atoms" in text:
-        ctx.metadata["block_reason"] = (
-            "LAMMPS simulation lost atoms — system became unstable. "
-            "Consider reducing timestep or using a softer potential."
-        )
-        ctx.metadata["blocked_by_hook"] = True
-        return ctx
-    return None
-
-
 # ── 结构合理性检查 ───────────────────────────────────────────────
 
 
@@ -172,131 +242,6 @@ async def structure_sanity_hook(ctx: HookContext) -> HookContext | None:
                 )
                 ctx.metadata["blocked_by_hook"] = True
                 return ctx
-    return None
-
-
-# ── DFT 收敛检查族 ───────────────────────────────────────────────
-
-
-async def qe_convergence_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 Quantum ESPRESSO SCF 是否收敛."""
-    if ctx.tool_name != "qe_tool":
-        return None
-
-    text = _extract_text(ctx)
-    if "convergence has been achieved" in text or "scf correction compared to forces" in text:
-        return None
-    if "not converged" in text or "too many iterations" in text:
-        return _block(
-            ctx,
-            "QE SCF 未收敛. 考虑增加 electron_maxstep 或调整 mixing_beta.",
-        )
-    return None
-
-
-async def cp2k_convergence_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 CP2K SCF 是否收敛."""
-    if ctx.tool_name != "cp2k_tool":
-        return None
-
-    text = _extract_text(ctx)
-    if "scf run converged" in text:
-        return None
-    if "scf not converged" in text:
-        return _block(
-            ctx,
-            "CP2K SCF 未收敛. 考虑增加 max_scf 或调整 OT 方法参数.",
-        )
-    return None
-
-
-# ── 量子化学终止检查族 ───────────────────────────────────────────
-
-
-async def gaussian_termination_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 Gaussian 是否正常终止."""
-    if ctx.tool_name != "gaussian_tool":
-        return None
-
-    text = _extract_text(ctx)
-    if "normal termination" in text:
-        return None
-    if "error termination" in text or "l9999.exe" in text:
-        return _block(
-            ctx,
-            "Gaussian 异常终止. 检查输入文件/基组/内存/收敛阈值设置.",
-        )
-    return None
-
-
-async def orca_termination_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 ORCA 是否正常终止."""
-    if ctx.tool_name != "orca_tool":
-        return None
-
-    text = _extract_text(ctx)
-    if "orca terminated normally" in text:
-        return None
-    if "aborted" in text or "fatal error" in text:
-        return _block(
-            ctx,
-            "ORCA 异常终止. 检查输入文件/基组/内存/SCF 设置.",
-        )
-    return None
-
-
-# ── MD 稳定性检查族 ──────────────────────────────────────────────
-
-
-async def gromacs_stability_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 GROMACS 是否丢原子或不稳定.
-
-    "Finished mdrun" 表示正常完成; "Lost atoms" / "System too unstable" 则 block.
-    """
-    if ctx.tool_name != "gromacs_tool":
-        return None
-
-    text = _extract_text(ctx)
-    if "lost atoms" in text or "system too unstable" in text:
-        return _block(
-            ctx,
-            "GROMACS 模拟不稳定 (丢原子). 考虑减小时间步或软化势能参数.",
-        )
-    return None
-
-
-# ── FEM/CFD 求解器检查族 ─────────────────────────────────────────
-
-_FEM_TOOLS = frozenset({"abaqus_tool", "comsol_tool", "elmer_tool", "fenics_tool"})
-
-
-async def fem_solver_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 FEM 求解器 (Abaqus/COMSOL/Elmer/FEniCS) 是否收敛."""
-    if ctx.tool_name not in _FEM_TOOLS:
-        return None
-
-    text = _extract_text(ctx)
-    if "not converged" in text or "singular matrix" in text or "too many iterations" in text:
-        return _block(
-            ctx,
-            f"{ctx.tool_name} 求解未收敛. 检查网格质量/边界条件/材料参数/载荷步长.",
-        )
-    if "convergence" in text or "solution completed" in text:
-        return None
-    return None
-
-
-async def openfoam_residual_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 OpenFOAM 是否正常结束或出现致命错误."""
-    if ctx.tool_name != "openfoam_tool":
-        return None
-
-    text = _extract_text(ctx)
-    if "floating point exception" in text or "foam fatal error" in text:
-        return _block(
-            ctx,
-            "OpenFOAM 求解异常. 检查网格质量/边界条件/时间步长/离散格式.",
-        )
     return None
 
 
@@ -348,22 +293,6 @@ async def mechanical_property_hook(ctx: HookContext) -> HookContext | None:
                 f"弹性常数矩阵非正定: C[{i}][{i}] = {diag:.4f} <= 0. "
                 "检查计算参数或结构对称性.",
             )
-    return None
-
-
-async def packing_success_hook(ctx: HookContext) -> HookContext | None:
-    """POST_TOOL_USE: 检查 Packmol/packing 是否成功打包."""
-    if ctx.tool_name != "packing_tool":
-        return None
-
-    text = _extract_text(ctx)
-    if "overlap" in text or "failed to pack" in text:
-        return _block(
-            ctx,
-            "Packmol 打包失败 (原子重叠或无法打包). 调整盒子尺寸或分子数量.",
-        )
-    if "success" in text:
-        return None
     return None
 
 
@@ -796,24 +725,14 @@ def register_science_hooks(hm: HookManager) -> None:
     if getattr(hm, "_science_hooks_registered", False):
         return
 
-    # 原有三个 hook
+    # 原有三个 hook (vasp/structure 保留, 其余模式匹配走规则表)
     hm.register(POST_TOOL_USE, vasp_convergence_hook)
-    hm.register(POST_TOOL_USE, lammps_stability_hook)
     hm.register(POST_TOOL_USE, structure_sanity_hook)
-    # DFT 收敛检查族
-    hm.register(POST_TOOL_USE, qe_convergence_hook)
-    hm.register(POST_TOOL_USE, cp2k_convergence_hook)
-    # 量子化学终止检查族
-    hm.register(POST_TOOL_USE, gaussian_termination_hook)
-    hm.register(POST_TOOL_USE, orca_termination_hook)
-    # MD 稳定性检查族
-    hm.register(POST_TOOL_USE, gromacs_stability_hook)
-    # FEM/CFD 求解器检查族
-    hm.register(POST_TOOL_USE, fem_solver_hook)
-    hm.register(POST_TOOL_USE, openfoam_residual_hook)
+    # 模式匹配 hook: qe/cp2k/gaussian/orca/gromacs/fem/openfoam/packing/lammps
+    for rule in _PATTERN_HOOK_RULES:
+        hm.register(POST_TOOL_USE, _make_pattern_hook(rule))
     # 物理合理性检查族
     hm.register(POST_TOOL_USE, mechanical_property_hook)
-    hm.register(POST_TOOL_USE, packing_success_hook)
     hm.register(POST_TOOL_USE, energy_bound_hook)
     # 文件存在性验证
     hm.register(POST_TOOL_USE, output_file_existence_hook)
