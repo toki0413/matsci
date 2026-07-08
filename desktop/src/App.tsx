@@ -597,7 +597,6 @@ export default function App() {
   });
   const toggleSidebarGroup = (group: string) =>
     setSidebarGroups((prev) => ({ ...prev, [group]: !prev[group] }));
-  const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // reconnectTimeoutRef was used by the old native WS; ReconnectingWebSocket
   // handles its own reconnection internally now.
@@ -1973,22 +1972,24 @@ export default function App() {
         // Reset transient state that may be stale after reconnect
         setPendingClarifications([]);
         setIsStreaming(false);
+        // Reconnect drops in-flight replies: finalize the placeholder so
+        // it stops showing "typing..." instead of hanging forever.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.timestamp === "streaming"
+              ? { ...m, timestamp: formatTime(), content: m.content + "\n\n[连接中断，回复未完成]" }
+              : m
+          )
+        );
       },
     });
 
     ws.connect();
     wsClientRef.current = ws;
-    // Keep wsRef for backward compat with sendMessage()
-    wsRef.current = {
-      readyState: WebSocket.OPEN,
-      send: (data: string) => ws.send(data),
-      close: () => ws.close(),
-    } as unknown as WebSocket;
 
     return () => {
       ws.close();
       wsClientRef.current = null;
-      wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2346,7 +2347,7 @@ export default function App() {
       return;
     }
 
-    if (!wsClientRef.current && !wsRef.current) return;
+    if (!wsClientRef.current) return;
 
     const userMsg: Message = { role: "user", content, timestamp: formatTime() };
     setMessages((prev) => [...prev, userMsg]);
@@ -2357,8 +2358,6 @@ export default function App() {
     const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread });
     if (wsClientRef.current) {
       wsClientRef.current.send(payload);
-    } else if (wsRef.current) {
-      wsRef.current.send(payload);
     }
   };
 
@@ -2375,8 +2374,6 @@ export default function App() {
     });
     if (wsClientRef.current) {
       wsClientRef.current.send(payload);
-    } else if (wsRef.current) {
-      wsRef.current.send(payload);
     }
     // Add user's answer to chat
     setMessages((prev) => [
