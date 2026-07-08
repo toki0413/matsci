@@ -10,6 +10,7 @@ import {
 import Pet from "./Pet";
 import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import MessageContent from "./components/MessageContent";
 import { SettingsTabNav, ConfigField, PanelHeader } from "./components/SettingsPanel";
 // Tab panels only mount when their tab is active — lazy-load so the
@@ -2542,6 +2543,7 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-3">
+            <LanguageSwitcher />
             {activeTab === "chat" && (
               <button
                 onClick={() => { setChatSearchOpen((p) => !p); if (chatSearchOpen) setChatSearchQuery(""); }}
