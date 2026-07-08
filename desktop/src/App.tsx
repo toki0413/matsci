@@ -643,9 +643,17 @@ export default function App() {
   const [coderTask, setCoderTask] = useState("");
   const [coderAutoApprove, setCoderAutoApprove] = useState(false);
   const [coderMaxIters, setCoderMaxIters] = useState<number | "">("");
-  const [coderRunning, setCoderRunning] = useState(false);
-  const [coderResult, setCoderResult] = useState<string>("");
-  const [coderError, setCoderError] = useState("");
+  const coder = useToolRunner<string>({
+    endpoint: "/coder",
+    buildPayload: () => {
+      const body: Record<string, any> = { task: coderTask, auto_approve: coderAutoApprove };
+      if (coderMaxIters !== "") body.max_iterations = Number(coderMaxIters);
+      return body;
+    },
+    extractResult: (data) => data.final_answer || "Done.",
+    inputGuard: () => !!coderTask.trim(),
+    defaultError: "Coder run failed.",
+  });
 
   // Workbench features are now independent sidebar tabs (no more workbenchTab state)
 
@@ -693,16 +701,37 @@ export default function App() {
   const [executeStages, setExecuteStages] = useState("");
   const [executeWorkingDir, setExecuteWorkingDir] = useState(".");
   const [executeName, setExecuteName] = useState("execute");
-  const [executeRunning, setExecuteRunning] = useState(false);
-  const [executeResult, setExecuteResult] = useState<any>(null);
-  const [executeError, setExecuteError] = useState("");
+  const execute = useToolRunner<any>({
+    endpoint: "/execute",
+    buildPayload: () => {
+      let stages: any;
+      try { stages = JSON.parse(executeStages); } catch { throw new Error("Stages must be valid JSON."); }
+      return { stages, working_dir: executeWorkingDir, name: executeName };
+    },
+    extractResult: (data) => data,
+    inputGuard: () => !!executeStages.trim(),
+    defaultError: "Execution failed.",
+  });
 
   const [workflowTemplates, setWorkflowTemplates] = useState<string[]>([]);
   const [workflowTemplate, setWorkflowTemplate] = useState("");
   const [workflowArgs, setWorkflowArgs] = useState("");
-  const [workflowRunning, setWorkflowRunning] = useState(false);
-  const [workflowResult, setWorkflowResult] = useState<any>(null);
-  const [workflowError, setWorkflowError] = useState("");
+  const workflow = useToolRunner<any>({
+    endpoint: "/workflows/execute",
+    buildPayload: () => {
+      const args: Record<string, any> = {};
+      workflowArgs.split(" ").forEach((a) => {
+        if (!a.includes("=")) return;
+        const [k, v] = a.split("=");
+        try { args[k] = JSON.parse(v); } catch { args[k] = v; }
+      });
+      return { template: workflowTemplate, args };
+    },
+    extractResult: (data) => data,
+    isSuccess: (data) => !data.error,
+    inputGuard: () => !!workflowTemplate,
+    defaultError: "Workflow execution failed.",
+  });
 
   const [exploreObjective, setExploreObjective] = useState("");
   const [exploreMaxIters, setExploreMaxIters] = useState(20);
@@ -723,9 +752,18 @@ export default function App() {
   const [diagnoseSoftware, setDiagnoseSoftware] = useState("");
   const [diagnoseCalcType, setDiagnoseCalcType] = useState("");
   const [diagnoseContext, setDiagnoseContext] = useState("");
-  const [diagnoseRunning, setDiagnoseRunning] = useState(false);
-  const [diagnoseResult, setDiagnoseResult] = useState<any>(null);
-  const [diagnoseErrorMsg, setDiagnoseErrorMsg] = useState("");
+  const diagnose = useToolRunner<any>({
+    endpoint: "/diagnose",
+    buildPayload: () => ({
+      error_message: diagnoseError,
+      software: diagnoseSoftware || undefined,
+      calculation_type: diagnoseCalcType || undefined,
+      context: diagnoseContext || undefined,
+    }),
+    extractResult: (data) => data.data,
+    inputGuard: () => !!diagnoseError.trim(),
+    defaultError: "Diagnosis failed.",
+  });
 
   const [hpcHost, setHpcHost] = useState("");
   const [hpcUsername, setHpcUsername] = useState("");
@@ -970,59 +1008,8 @@ export default function App() {
     }
   };
 
-  const handleCoderRun = async () => {
-    if (!coderTask.trim()) return;
-    setCoderRunning(true);
-    setCoderError("");
-    setCoderResult("");
-    try {
-      const body: any = { task: coderTask, auto_approve: coderAutoApprove };
-      if (coderMaxIters !== "") body.max_iterations = Number(coderMaxIters);
-      const data = await api.post<{ success?: boolean; final_answer?: string; error?: string }>(
-        "/coder",
-        body
-      );
-      if (data.success) {
-        setCoderResult(data.final_answer || "Done.");
-      } else {
-        setCoderError(data.error || "Coder run failed.");
-      }
-    } catch (e: any) {
-      setCoderError(e.message || "Network error");
-    } finally {
-      setCoderRunning(false);
-    }
-  };
-
-  const handleExecuteRun = async () => {
-    if (!executeStages.trim()) return;
-    setExecuteRunning(true);
-    setExecuteError("");
-    setExecuteResult(null);
-    try {
-      let stages: any;
-      try {
-        stages = JSON.parse(executeStages);
-      } catch {
-        setExecuteError("Stages must be valid JSON.");
-        setExecuteRunning(false);
-        return;
-      }
-      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
-        "/execute",
-        { stages, working_dir: executeWorkingDir, name: executeName }
-      );
-      if (data.success) {
-        setExecuteResult(data);
-      } else {
-        setExecuteError(data.error || "Execution failed.");
-      }
-    } catch (e: any) {
-      setExecuteError(e.message || "Network error");
-    } finally {
-      setExecuteRunning(false);
-    }
-  };
+  const handleCoderRun = coder.run;
+  const handleExecuteRun = execute.run;
 
   const loadWorkflowTemplates = async () => {
     try {
@@ -1033,64 +1020,8 @@ export default function App() {
     }
   };
 
-  const handleWorkflowRun = async () => {
-    if (!workflowTemplate) return;
-    setWorkflowRunning(true);
-    setWorkflowError("");
-    setWorkflowResult(null);
-    try {
-      const args: any = {};
-      workflowArgs.split(" ").forEach((a) => {
-        if (!a.includes("=")) return;
-        const [k, v] = a.split("=");
-        try {
-          args[k] = JSON.parse(v);
-        } catch {
-          args[k] = v;
-        }
-      });
-      const data = await api.post<{ error?: string } & Record<string, any>>(
-        "/workflows/execute",
-        { template: workflowTemplate, args }
-      );
-      if (data.error) {
-        setWorkflowError(data.error);
-      } else {
-        setWorkflowResult(data);
-      }
-    } catch (e: any) {
-      setWorkflowError(e.message || "Network error");
-    } finally {
-      setWorkflowRunning(false);
-    }
-  };
-
-  const handleDiagnoseRun = async () => {
-    if (!diagnoseError.trim()) return;
-    setDiagnoseRunning(true);
-    setDiagnoseErrorMsg("");
-    setDiagnoseResult(null);
-    try {
-      const data = await api.post<{ success?: boolean; data?: any; error?: string }>(
-        "/diagnose",
-        {
-          error_message: diagnoseError,
-          software: diagnoseSoftware || undefined,
-          calculation_type: diagnoseCalcType || undefined,
-          context: diagnoseContext || undefined,
-        }
-      );
-      if (data.success) {
-        setDiagnoseResult(data.data);
-      } else {
-        setDiagnoseErrorMsg(data.error || "Diagnosis failed.");
-      }
-    } catch (e: any) {
-      setDiagnoseErrorMsg(e.message || "Network error");
-    } finally {
-      setDiagnoseRunning(false);
-    }
-  };
+  const handleDiagnoseRun = diagnose.run;
+  const handleWorkflowRun = workflow.run;
 
   const handleHpcTest = async () => {
     setHpcRunning(true);
@@ -3036,7 +2967,7 @@ export default function App() {
                       onChange={(e) => setCoderTask(e.target.value)}
                       placeholder="e.g. Refactor the VASP parser to use the Rust extension, then add a test."
                       rows={5}
-                      disabled={coderRunning}
+                      disabled={coder.running}
                       className="input resize-none"
                     />
                     <div className="flex flex-wrap items-center gap-4">
@@ -3045,7 +2976,7 @@ export default function App() {
                           type="checkbox"
                           checked={coderAutoApprove}
                           onChange={(e) => setCoderAutoApprove(e.target.checked)}
-                          disabled={coderRunning}
+                          disabled={coder.running}
                           className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
                         />
                         Auto-approve destructive actions
@@ -3058,7 +2989,7 @@ export default function App() {
                           max={200}
                           value={coderMaxIters}
                           onChange={(e) => setCoderMaxIters(e.target.value === "" ? "" : parseInt(e.target.value, 10))}
-                          disabled={coderRunning}
+                          disabled={coder.running}
                           placeholder="default"
                           className="input w-24 px-2 py-1 text-xs"
                         />
@@ -3066,29 +2997,29 @@ export default function App() {
                     </div>
                     <button
                       onClick={handleCoderRun}
-                      disabled={!isConnected || coderRunning || !coderTask.trim()}
+                      disabled={!isConnected || coder.running || !coderTask.trim()}
                       className="btn-primary px-4 py-1.5 text-xs"
                     >
-                      {coderRunning ? "Coding…" : "▶ Run coder"}
+                      {coder.running ? "Coding…" : "▶ Run coder"}
                     </button>
-                    {coderRunning && (
+                    {coder.running && (
                       <div className="flex items-center gap-2 text-xs text-text-secondary">
                         <span className="inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
                         Muninn is coding…
                       </div>
                     )}
-                    {coderError && (
+                    {coder.error && (
                       <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">
-                        {coderError}
+                        {coder.error}
                       </div>
                     )}
                   </div>
 
-                  {coderResult && (
+                  {coder.result && (
                     <div className="card space-y-3">
                       <h3 className="text-sm font-semibold">Result</h3>
                       <div className="rounded-lg border border-border bg-bg-tertiary p-3 text-sm whitespace-pre-wrap">
-                        {coderResult}
+                        {coder.result}
                       </div>
                     </div>
                   )}
@@ -5081,15 +5012,15 @@ export default function App() {
                     <input type="text" value={executeWorkingDir} onChange={(e) => setExecuteWorkingDir(e.target.value)} placeholder="Working dir" className="input text-xs" />
                     <input type="text" value={executeName} onChange={(e) => setExecuteName(e.target.value)} placeholder="Workflow name" className="input text-xs" />
                   </div>
-                  <button onClick={handleExecuteRun} disabled={executeRunning || !isConnected} className="btn-primary text-xs">
-                    {executeRunning ? "Executing…" : "▶ Execute stages"}
+                  <button onClick={handleExecuteRun} disabled={execute.running || !isConnected} className="btn-primary text-xs">
+                    {execute.running ? "Executing…" : "▶ Execute stages"}
                   </button>
-                  {executeError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{executeError}</div>}
+                  {execute.error && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{execute.error}</div>}
                 </div>
-                {executeResult && (
+                {execute.result && (
                   <div className="card">
                     <h3 className="text-sm font-semibold mb-2">Result</h3>
-                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(executeResult, null, 2)}</pre>
+                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(execute.result, null, 2)}</pre>
                   </div>
                 )}
               </div>
@@ -5117,15 +5048,15 @@ export default function App() {
                     placeholder="key1=value1 key2=value2 ..."
                     className="input text-sm"
                   />
-                  <button onClick={handleWorkflowRun} disabled={workflowRunning || !isConnected || !workflowTemplate} className="btn-primary text-xs">
-                    {workflowRunning ? "Running…" : "▶ Run workflow"}
+                  <button onClick={handleWorkflowRun} disabled={workflow.running || !isConnected || !workflowTemplate} className="btn-primary text-xs">
+                    {workflow.running ? "Running…" : "▶ Run workflow"}
                   </button>
-                  {workflowError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{workflowError}</div>}
+                  {workflow.error && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{workflow.error}</div>}
                 </div>
-                {workflowResult && (
+                {workflow.result && (
                   <div className="card">
                     <h3 className="text-sm font-semibold mb-2">Result</h3>
-                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(workflowResult, null, 2)}</pre>
+                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(workflow.result, null, 2)}</pre>
                   </div>
                 )}
               </div>
@@ -5175,15 +5106,15 @@ export default function App() {
                     <input type="text" value={diagnoseCalcType} onChange={(e) => setDiagnoseCalcType(e.target.value)} placeholder="Calc type" className="input text-xs" />
                     <input type="text" value={diagnoseContext} onChange={(e) => setDiagnoseContext(e.target.value)} placeholder="Context" className="input text-xs" />
                   </div>
-                  <button onClick={handleDiagnoseRun} disabled={diagnoseRunning || !isConnected || !diagnoseError.trim()} className="btn-primary text-xs">
-                    {diagnoseRunning ? "Diagnosing…" : "▶ Diagnose"}
+                  <button onClick={handleDiagnoseRun} disabled={diagnose.running || !isConnected || !diagnoseError.trim()} className="btn-primary text-xs">
+                    {diagnose.running ? "Diagnosing…" : "▶ Diagnose"}
                   </button>
-                  {diagnoseErrorMsg && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{diagnoseErrorMsg}</div>}
+                  {diagnose.error && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{diagnose.error}</div>}
                 </div>
-                {diagnoseResult && (
+                {diagnose.result && (
                   <div className="card">
                     <h3 className="text-sm font-semibold mb-2">Findings</h3>
-                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(diagnoseResult, null, 2)}</pre>
+                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(diagnose.result, null, 2)}</pre>
                   </div>
                 )}
               </div>
@@ -5351,4 +5282,8 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
 
