@@ -244,4 +244,100 @@ async def summarize_compact_messages(
     except Exception:
         logger.debug("summarize compact messages failed", exc_info=True)
 
+    # 结构化状态附件 — 从被压缩的消息中提取关键状态, 跨压缩无损传递
+    attachments = _extract_compact_attachments(to_summarize)
+    if attachments:
+        attachment_msg = SystemMessage(
+            content=f"## Active state (preserved across compaction):\n{attachments}"
+        )
+        # 插在 summary 之后, keep_zone 之前
+        compacted = protected + [summary_msg, attachment_msg] + keep_zone
+        # 重新检查 budget (附件很小, 通常不影响)
+        if estimate_message_tokens(compacted) > budget_tokens and len(compacted) > keep_last_n:
+            compacted = compact_messages(compacted, budget_tokens, keep_last_n)
+
     return compacted, summary_text
+
+
+def _extract_compact_attachments(messages: list[Any]) -> str:
+    """从被压缩的消息中提取结构化状态, 返回可读的文本块.
+
+    提取的状态:
+    - 活跃文件: 工具调用中出现的文件路径
+    - 已验证结论: validation 阶段通过的 tests_passed
+    - 离线产物: 磁盘卸载的 artifact 路径
+    - 关键数值: 能量/带隙/晶格常数等 (从 tool result 中提取)
+
+    这比纯 LLM 摘要更可靠: 确定性提取, 零信息损失, 跨压缩保留.
+    """
+    lines: list[str] = []
+
+    # 收集所有 tool message 的内容
+    tool_texts: list[str] = []
+    for msg in messages:
+        role = _msg_role(msg)
+        content = _msg_content(msg)
+        if role == "tool" or (role == "function" if role else False):
+            tool_texts.append(content)
+        elif role == "assistant" and isinstance(content, str):
+            # 从 assistant 消息中提取 tool call 参数
+            tool_texts.append(content)
+
+    full_text = "\n".join(tool_texts)
+
+    # 1. 活跃文件 — 从 tool 调用参数和输出中提取路径
+    import re
+
+    file_patterns = [
+        r'"file_path"\s*:\s*"([^"]+\.(?:poscar|vasp|incar|outcar|cfg|data|lammps|cif|xyz|json|csv))"',
+        r'"working_dir"\s*:\s*"([^"]+)"',
+        r'"output_prefix"\s*:\s*"([^"]+)"',
+        r'_artifact_path["\s:]+([^"]+\.txt)',
+    ]
+    files: set[str] = set()
+    for pattern in file_patterns:
+        for m in re.finditer(pattern, full_text, re.IGNORECASE):
+            files.add(m.group(1))
+    if files:
+        lines.append("### Active files:")
+        for f in sorted(files)[:15]:  # 上限 15 个, 避免膨胀
+            lines.append(f"  - {f}")
+
+    # 2. 关键数值 — 从 tool result 中提取
+    numeric_patterns = {
+        "energy": r'"(?:total_energy|energy|E0|free_energy)"\s*:\s*(-?[\d.]+)',
+        "band_gap": r'"band_gap"\s*:\s*(-?[\d.]+)',
+        "lattice_constant": r'"lattice_constant"\s*:\s*(-?[\d.]+)',
+        "converged": r'"converged"\s*:\s*(true|false)',
+        "forces_max": r'"forces_max"\s*:\s*(-?[\d.]+)',
+        "stress_max": r'"stress_max"\s*:\s*(-?[\d.]+)',
+    }
+    key_values: dict[str, list[str]] = {}
+    for name, pattern in numeric_patterns.items():
+        matches = re.findall(pattern, full_text, re.IGNORECASE)
+        if matches:
+            # 去重, 保留最后 3 个值 (最新的)
+            unique = list(dict.fromkeys(matches))[-3:]
+            key_values[name] = unique
+    if key_values:
+        lines.append("### Key values (last seen):")
+        for name, values in key_values.items():
+            lines.append(f"  {name}: {', '.join(values)}")
+
+    # 3. 已验证结论 — 从 validation 消息中提取
+    if "tests_passed" in full_text:
+        # 提取 tests_passed 周围的上下文
+        idx = full_text.rfind("tests_passed")
+        if idx >= 0:
+            snippet = full_text[max(0, idx - 200) : idx + 200]
+            lines.append("### Validation result (last seen):")
+            lines.append(f"  {snippet.strip()[:400]}")
+
+    # 4. 离线产物 — 磁盘卸载的文件路径
+    artifact_matches = re.findall(r'_artifact_path.*?["\s:]+([^"\s]+\.txt)', full_text)
+    if artifact_matches:
+        lines.append("### Offloaded artifacts:")
+        for a in artifact_matches[-5:]:  # 保留最近 5 个
+            lines.append(f"  - {a}")
+
+    return "\n".join(lines) if len(lines) > 1 else ""
