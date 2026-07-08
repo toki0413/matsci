@@ -246,6 +246,17 @@ async def summarize_compact_messages(
 
     # 结构化状态附件 — 从被压缩的消息中提取关键状态, 跨压缩无损传递
     attachments = _extract_compact_attachments(to_summarize)
+    # 压缩感知: 如果 ProvenanceRegistry 有内容, 追加溯源 + 智能预取信息,
+    # 让压缩后的 agent 仍知道文件状态、下一步要读什么、管线跑到哪了
+    try:
+        from huginn.provenance import ProvenanceRegistry
+        from huginn.utils.smart_prefetch import enhance_compact_attachments
+
+        _prov_reg = ProvenanceRegistry.shared()
+        if _prov_reg.summary().get("total_files", 0) > 0:
+            attachments = enhance_compact_attachments(to_summarize, _prov_reg)
+    except Exception:
+        logger.debug("append provenance/prefetch to attachments failed", exc_info=True)
     if attachments:
         attachment_msg = SystemMessage(
             content=f"## Active state (preserved across compaction):\n{attachments}"
