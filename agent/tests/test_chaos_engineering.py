@@ -478,6 +478,7 @@ class TestResourceExhaustion:
 
     def test_too_many_open_fds_handled(self, monkeypatch):
         """模拟打开过多文件描述符, 验证错误处理。"""
+        import os
         # mock open() 抛 OSError (EMFILE)
         _real_open = open
 
@@ -492,8 +493,14 @@ class TestResourceExhaustion:
 
         monkeypatch.setattr("builtins.open", _limited_open)
 
+        # 前 3 次调用成功, 第 4 次抛 OSError
+        # os.devnull 是跨平台的 /dev/null
+        devnull = os.devnull
+        _limited_open(devnull)
+        _limited_open(devnull)
+        _limited_open(devnull)
         with pytest.raises(OSError):
-            _limited_open("/dev/null")  # 第4次调用会失败
+            _limited_open(devnull)  # 第4次调用会失败
 
         # 恢复后正常
         monkeypatch.undo()
