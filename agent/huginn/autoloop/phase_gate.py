@@ -52,6 +52,7 @@ class PhaseGate:
 
 # 默认硬性证据清单: (from, to) -> evidence dict 里必须出现的 key
 # 这些 key 缺失或为空就阻断, 防止空 plan / 空结果往后传
+# Phase names must match huginn.autoloop.engine.AUTOLOOP_PHASES
 _DEFAULT_EVIDENCE_REQUIREMENTS: dict[tuple[str, str], list[str]] = {
     ("hypothesize", "plan"): ["hypothesis"],
     ("plan", "execute"): ["mode", "description"],

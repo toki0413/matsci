@@ -11,6 +11,7 @@ import Pet from "./Pet";
 import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import ErrorBoundary from "./components/ErrorBoundary";
 import MessageContent from "./components/MessageContent";
+import { SettingsTabNav, ConfigField } from "./components/SettingsPanel";
 // Tab panels only mount when their tab is active — lazy-load so the
 // recharts / diff / three chunks stay out of the initial bundle.
 const EmotionTrackerPanel = lazy(() => import("./components/EmotionTracker"));
@@ -26,6 +27,7 @@ import { PROVIDERS, formatTime } from "./lib/constants";
 import { ReconnectingWebSocket } from "./lib/ws-client";
 import { getAuthToken, setApiBase as _setApiBase } from "./lib/api-client";
 import { api } from "./lib/api";
+import { useToolRunner } from "./hooks/useToolRunner";
 import { isWSMessage, type WSMessage } from "./types/ws";
 import {
   MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
@@ -670,13 +672,23 @@ export default function App() {
 
   const [benchEvolve, setBenchEvolve] = useState(false);
   const [benchCategories, setBenchCategories] = useState("");
-  const [benchRunning, setBenchRunning] = useState(false);
-  const [benchResult, setBenchResult] = useState<any>(null);
-  const [benchError, setBenchError] = useState("");
+  const bench = useToolRunner<any>({
+    endpoint: "/bench/run",
+    buildPayload: () => {
+      const body: any = { evolve: benchEvolve };
+      if (benchCategories.trim()) body.categories = benchCategories.split(",").map((s) => s.trim()).filter(Boolean);
+      return body;
+    },
+    extractResult: (data) => data.report,
+    defaultError: "Benchmark failed.",
+  });
 
-  const [evolveRunning, setEvolveRunning] = useState(false);
-  const [evolveResult, setEvolveResult] = useState<any>(null);
-  const [evolveError, setEvolveError] = useState("");
+  const evolve = useToolRunner<any>({
+    endpoint: "/evolve/run",
+    buildPayload: () => ({}),
+    extractResult: (data) => data.report,
+    defaultError: "Evolution failed.",
+  });
 
   const [executeStages, setExecuteStages] = useState("");
   const [executeWorkingDir, setExecuteWorkingDir] = useState(".");
@@ -695,9 +707,17 @@ export default function App() {
   const [exploreObjective, setExploreObjective] = useState("");
   const [exploreMaxIters, setExploreMaxIters] = useState(20);
   const [exploreMaxBranches, setExploreMaxBranches] = useState(10);
-  const [exploreRunning, setExploreRunning] = useState(false);
-  const [exploreResult, setExploreResult] = useState<any>(null);
-  const [exploreError, setExploreError] = useState("");
+  const explore = useToolRunner<any>({
+    endpoint: "/explore",
+    buildPayload: () => ({
+      objective: exploreObjective,
+      max_iterations: exploreMaxIters,
+      max_branches: exploreMaxBranches,
+    }),
+    extractResult: (data) => data,
+    defaultError: "Exploration failed.",
+    inputGuard: () => !!exploreObjective.trim(),
+  });
 
   const [diagnoseError, setDiagnoseError] = useState("");
   const [diagnoseSoftware, setDiagnoseSoftware] = useState("");
@@ -974,50 +994,6 @@ export default function App() {
     }
   };
 
-  const handleBenchRun = async () => {
-    setBenchRunning(true);
-    setBenchError("");
-    setBenchResult(null);
-    try {
-      const body: any = { evolve: benchEvolve };
-      if (benchCategories.trim()) body.categories = benchCategories.split(",").map((s) => s.trim()).filter(Boolean);
-      const data = await api.post<{ success?: boolean; report?: any; error?: string }>(
-        "/bench/run",
-        body
-      );
-      if (data.success) {
-        setBenchResult(data.report);
-      } else {
-        setBenchError(data.error || "Benchmark failed.");
-      }
-    } catch (e: any) {
-      setBenchError(e.message || "Network error");
-    } finally {
-      setBenchRunning(false);
-    }
-  };
-
-  const handleEvolveRun = async () => {
-    setEvolveRunning(true);
-    setEvolveError("");
-    setEvolveResult(null);
-    try {
-      const data = await api.post<{ success?: boolean; report?: any; error?: string }>(
-        "/evolve/run",
-        {}
-      );
-      if (data.success) {
-        setEvolveResult(data.report);
-      } else {
-        setEvolveError(data.error || "Evolution failed.");
-      }
-    } catch (e: any) {
-      setEvolveError(e.message || "Network error");
-    } finally {
-      setEvolveRunning(false);
-    }
-  };
-
   const handleExecuteRun = async () => {
     if (!executeStages.trim()) return;
     setExecuteRunning(true);
@@ -1086,32 +1062,6 @@ export default function App() {
       setWorkflowError(e.message || "Network error");
     } finally {
       setWorkflowRunning(false);
-    }
-  };
-
-  const handleExploreRun = async () => {
-    if (!exploreObjective.trim()) return;
-    setExploreRunning(true);
-    setExploreError("");
-    setExploreResult(null);
-    try {
-      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
-        "/explore",
-        {
-          objective: exploreObjective,
-          max_iterations: exploreMaxIters,
-          max_branches: exploreMaxBranches,
-        }
-      );
-      if (data.success) {
-        setExploreResult(data);
-      } else {
-        setExploreError(data.error || "Exploration failed.");
-      }
-    } catch (e: any) {
-      setExploreError(e.message || "Network error");
-    } finally {
-      setExploreRunning(false);
     }
   };
 
@@ -2152,8 +2102,8 @@ export default function App() {
         break;
       case "exploration_result":
         if (data.data) {
-          setExploreResult(data.data);
-          setExploreRunning(false);
+          explore.setResult(data.data);
+          explore.setRunning(false);
           const best = data.data.best_branch;
           const summary = best
             ? `Exploration complete — best: **${best.name}** (${data.data.convergence_reason})`
@@ -4207,24 +4157,7 @@ export default function App() {
 
           {activeTab === "settings" && (
             <div className="flex h-full flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-                <span className="text-sm font-semibold">Settings</span>
-                <div className="flex items-center gap-2">
-                  {(["general", "models", "agents", "privacy", "pet", "security", "credentials", "jobs", "export", "bot"] as const).map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setSettingsTab(t)}
-                      className={`rounded px-3 py-1 text-xs capitalize ${
-                        settingsTab === t
-                          ? "bg-accent text-white"
-                          : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-                      }`}
-                    >
-                      {t === "jobs" ? "SSH Jobs" : t === "export" ? "Export" : t === "bot" ? "Bot" : t}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <SettingsTabNav activeTab={settingsTab} onTabChange={setSettingsTab} />
               <div className="flex-1 overflow-y-auto p-6">
                 {settingsTab === "general" && (
                   <div className="max-w-2xl space-y-5">
@@ -4232,8 +4165,7 @@ export default function App() {
                       Default single-model settings. For multi-LLM mode, switch to the Models tab.
                     </p>
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                      <div>
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Provider</label>
+                      <ConfigField label="Provider">
                         <select
                           value={config.provider}
                           onChange={(e) => { const next = { ...config, provider: e.target.value }; setConfig(next); setConfigDirty(true); }}
@@ -4243,9 +4175,8 @@ export default function App() {
                             <option key={p.id} value={p.id}>{p.label}</option>
                           ))}
                         </select>
-                      </div>
-                      <div>
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Model</label>
+                      </ConfigField>
+                      <ConfigField label="Model">
                         <input
                           type="text"
                           value={config.model}
@@ -4253,9 +4184,8 @@ export default function App() {
                           placeholder="e.g. gpt-4o"
                           className="input"
                         />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Persona</label>
+                      </ConfigField>
+                      <ConfigField label="Persona" full>
                         <select
                           value={config.persona}
                           onChange={(e) => {
@@ -4280,7 +4210,7 @@ export default function App() {
                             </span>
                           </div>
                         )}
-                      </div>
+                      </ConfigField>
                       <div className="md:col-span-2">
                         <label className="flex cursor-pointer items-center gap-2">
                           <input
@@ -4292,8 +4222,7 @@ export default function App() {
                           <span className="text-sm text-text-primary">Use knowledge base (RAG) in chat</span>
                         </label>
                       </div>
-                      <div className="md:col-span-2">
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">API Key</label>
+                      <ConfigField label="API Key" full>
                         <input
                           type="password"
                           value={config.api_key}
@@ -4301,9 +4230,8 @@ export default function App() {
                           placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || "API key"}
                           className="input"
                         />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Base URL (optional)</label>
+                      </ConfigField>
+                      <ConfigField label="Base URL (optional)" full>
                         <input
                           type="text"
                           value={config.base_url}
@@ -4311,9 +4239,8 @@ export default function App() {
                           placeholder="https://api.openai.com/v1"
                           className="input"
                         />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Ollama Host</label>
+                      </ConfigField>
+                      <ConfigField label="Ollama Host" full>
                         <input
                           type="text"
                           value={config.ollama_host}
@@ -4321,9 +4248,8 @@ export default function App() {
                           placeholder="http://localhost:11434"
                           className="input"
                         />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Max concurrent sub-agents</label>
+                      </ConfigField>
+                      <ConfigField label="Max concurrent sub-agents" full>
                         <input
                           type="number"
                           min={1}
@@ -4332,7 +4258,7 @@ export default function App() {
                           onChange={(e) => { const next = { ...config, max_concurrent_subagents: parseInt(e.target.value || "1", 10) }; setConfig(next); setConfigDirty(true); }}
                           className="input"
                         />
-                      </div>
+                      </ConfigField>
                     </div>
                   </div>
                 )}
@@ -4536,8 +4462,7 @@ export default function App() {
                         />
                         <span className="text-sm text-text-primary">Block messages that contain detected secrets</span>
                       </label>
-                      <div>
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Max tool output tokens</label>
+                      <ConfigField label="Max tool output tokens">
                         <input
                           type="number"
                           min={0}
@@ -4547,9 +4472,8 @@ export default function App() {
                           className="input"
                         />
                         <p className="mt-1 text-xs text-text-muted">Tool results longer than this are truncated before being sent to the LLM.</p>
-                      </div>
-                      <div>
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Context budget tokens</label>
+                      </ConfigField>
+                      <ConfigField label="Context budget tokens">
                         <input
                           type="number"
                           min={0}
@@ -4559,7 +4483,7 @@ export default function App() {
                           className="input"
                         />
                         <p className="mt-1 text-xs text-text-muted">Warn when the estimated prompt tokens exceed this budget.</p>
-                      </div>
+                      </ConfigField>
                     </div>
                   </div>
                 )}
@@ -4570,8 +4494,7 @@ export default function App() {
                       Customize your desktop companion.
                     </p>
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                      <div>
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Pet name</label>
+                      <ConfigField label="Pet name">
                         <input
                           type="text"
                           value={config.pet_name}
@@ -4579,9 +4502,8 @@ export default function App() {
                           placeholder="Muninn"
                           className="input"
                         />
-                      </div>
-                      <div>
-                        <label className="mb-1.5 block text-xs font-medium text-text-secondary">Personality</label>
+                      </ConfigField>
+                      <ConfigField label="Personality">
                         <select
                           value={config.pet_personality}
                           onChange={(e) => { const next = { ...config, pet_personality: e.target.value as "cheerful" | "nerdy" | "calm" | "sassy" }; setConfig(next); setConfigDirty(true); }}
@@ -4592,12 +4514,11 @@ export default function App() {
                           <option value="calm">Calm</option>
                           <option value="sassy">Sassy</option>
                         </select>
-                      </div>
+                      </ConfigField>
                     </div>
 
                     {/* Accessories */}
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">Accessories</label>
+                    <ConfigField label="Accessories">
                       <div className="flex flex-wrap gap-2">
                         {([
                           { id: "crown", label: "Crown", minLevel: 5 },
@@ -4633,7 +4554,7 @@ export default function App() {
                       <p className="mt-1 text-[10px] text-text-muted">
                         Accessories unlock as your pet levels up through completed tasks.
                       </p>
-                    </div>
+                    </ConfigField>
 
                     {/* Status overview (read-only from backend) */}
                     <div className="rounded-xl border border-border bg-bg-tertiary p-4">
@@ -4683,8 +4604,7 @@ export default function App() {
                       />
                       <span className="text-sm text-text-primary">Encrypt config files</span>
                     </label>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">Encryption password</label>
+                    <ConfigField label="Encryption password">
                       <input
                         type="password"
                         value={config.encryption_password}
@@ -4692,9 +4612,8 @@ export default function App() {
                         placeholder="Leave empty to keep unchanged"
                         className="input"
                       />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">Key file path (optional)</label>
+                    </ConfigField>
+                    <ConfigField label="Key file path (optional)">
                       <input
                         type="text"
                         value={config.encryption_key_file}
@@ -4702,7 +4621,7 @@ export default function App() {
                         placeholder="Path to encrypted key file"
                         className="input"
                       />
-                    </div>
+                    </ConfigField>
                     <button
                       onClick={async () => {
                         try {
@@ -5092,19 +5011,19 @@ export default function App() {
                     placeholder="Categories, comma separated (empty = all)"
                     className="input text-sm"
                   />
-                  <button onClick={handleBenchRun} disabled={benchRunning || !isConnected} className="btn-primary text-xs">
-                    {benchRunning ? "Running…" : "▶ Run benchmark"}
+                  <button onClick={bench.run} disabled={bench.running || !isConnected} className="btn-primary text-xs">
+                    {bench.running ? "Running…" : "▶ Run benchmark"}
                   </button>
-                  {benchError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{benchError}</div>}
+                  {bench.error && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{bench.error}</div>}
                 </div>
-                {benchResult && (
+                {bench.result && (
                   <div className="card space-y-3">
                     <h3 className="text-sm font-semibold">Report</h3>
                     <div className="text-xs text-text-secondary">
-                      Pass rate: {(benchResult.metrics?.pass_rate * 100).toFixed(0)}% · Total: {benchResult.total} · Passed: {benchResult.passed} · Failed: {benchResult.failed} · Skipped: {benchResult.skipped}
+                      Pass rate: {(bench.result.metrics?.pass_rate * 100).toFixed(0)}% · Total: {bench.result.total} · Passed: {bench.result.passed} · Failed: {bench.result.failed} · Skipped: {bench.result.skipped}
                     </div>
                     <div className="space-y-2">
-                      {(benchResult.results || []).map((r: any) => (
+                      {(bench.result.results || []).map((r: any) => (
                         <div key={r.task_id} className="rounded-lg border border-border bg-bg-tertiary p-3 text-xs">
                           <span className={`font-semibold ${r.passed ? "text-success" : "text-error"}`}>{r.passed ? "✓" : "✗"}</span>{" "}
                           <span className="font-mono">{r.task_id}</span> — {r.reason}
@@ -5125,18 +5044,18 @@ export default function App() {
                   <p className="text-sm text-text-secondary">Run a self-evolution cycle over recent execution logs to learn rules and skills.</p>
                 </div>
                 <div className="card space-y-3">
-                  <button onClick={handleEvolveRun} disabled={evolveRunning || !isConnected} className="btn-primary text-xs">
-                    {evolveRunning ? "Evolving…" : "▶ Run evolution cycle"}
+                  <button onClick={evolve.run} disabled={evolve.running || !isConnected} className="btn-primary text-xs">
+                    {evolve.running ? "Evolving…" : "▶ Run evolution cycle"}
                   </button>
-                  {evolveError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{evolveError}</div>}
+                  {evolve.error && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{evolve.error}</div>}
                 </div>
-                {evolveResult && (
+                {evolve.result && (
                   <div className="card space-y-3">
                     <h3 className="text-sm font-semibold">Report</h3>
                     <div className="text-xs text-text-secondary">
-                      Failure rules: {evolveResult.failure_rules?.length} · Success skills: {evolveResult.success_skills?.length} · Prompt patches: {evolveResult.prompt_patches?.length}
+                      Failure rules: {evolve.result.failure_rules?.length} · Success skills: {evolve.result.success_skills?.length} · Prompt patches: {evolve.result.prompt_patches?.length}
                     </div>
-                    <div className="text-xs text-text-secondary">Total rules: {evolveResult.total_rules_after} · Total skills: {evolveResult.total_skills_after}</div>
+                    <div className="text-xs text-text-secondary">Total rules: {evolve.result.total_rules_after} · Total skills: {evolve.result.total_skills_after}</div>
                   </div>
                 )}
               </div>
@@ -5226,16 +5145,16 @@ export default function App() {
                     <input type="number" min={1} value={exploreMaxIters} onChange={(e) => setExploreMaxIters(parseInt(e.target.value || "1", 10))} placeholder="Max iterations" className="input text-xs" />
                     <input type="number" min={1} value={exploreMaxBranches} onChange={(e) => setExploreMaxBranches(parseInt(e.target.value || "1", 10))} placeholder="Max branches" className="input text-xs" />
                   </div>
-                  <button onClick={handleExploreRun} disabled={exploreRunning || !isConnected || !exploreObjective.trim()} className="btn-primary text-xs">
-                    {exploreRunning ? "Exploring…" : "▶ Explore"}
+                  <button onClick={explore.run} disabled={explore.running || !isConnected || !exploreObjective.trim()} className="btn-primary text-xs">
+                    {explore.running ? "Exploring…" : "▶ Explore"}
                   </button>
-                  {exploreError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{exploreError}</div>}
+                  {explore.error && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{explore.error}</div>}
                 </div>
-                {exploreResult && (
+                {explore.result && (
                   <div className="card space-y-3">
                     <h3 className="text-sm font-semibold">Result</h3>
-                    <div className="text-xs text-text-secondary">Explored: {exploreResult.n_branches_explored} · Pruned: {exploreResult.n_branches_pruned} · Convergence: {exploreResult.convergence_reason}</div>
-                    {exploreResult.best_branch && <div className="text-xs text-text-secondary">Best branch: {exploreResult.best_branch.name}</div>}
+                    <div className="text-xs text-text-secondary">Explored: {explore.result.n_branches_explored} · Pruned: {explore.result.n_branches_pruned} · Convergence: {explore.result.convergence_reason}</div>
+                    {explore.result.best_branch && <div className="text-xs text-text-secondary">Best branch: {explore.result.best_branch.name}</div>}
                   </div>
                 )}
               </div>
