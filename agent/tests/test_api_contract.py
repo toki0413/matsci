@@ -25,6 +25,9 @@ import pytest
 # server.py 的 lifespan 依赖 mcp，没装就跳过整个文件
 pytest.importorskip("mcp")
 
+# Heavy: 1200+ endpoint tests, run locally or in integration CI job
+pytestmark = pytest.mark.integration
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 from huginn.config import HuginnConfig  # noqa: E402
