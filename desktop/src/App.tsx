@@ -1,239 +1,54 @@
-﻿import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
 import Pet from "./Pet";
-import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
-import { ChatModeSelector } from "./components/ChatModeSelector";
-import { ToolResultRenderer } from "./components/ToolResultRenderer";
-import { SaveToMemoryButton } from "./components/SaveToMemoryButton";
-import { useTranslation } from "react-i18next";
-import MessageContent from "./components/MessageContent";
-import { SettingsTabNav, ConfigField, PanelHeader } from "./components/SettingsPanel";
-// Tab panels only mount when their tab is active — lazy-load so the
-// recharts / diff / three chunks stay out of the initial bundle.
 const EmotionTrackerPanel = lazy(() => import("./components/EmotionTracker"));
 const SandboxPanel = lazy(() => import("./components/SandboxPanel"));
-const DiffViewer = lazy(() => import("./components/DiffViewer"));
-const CredentialsPanel = lazy(() => import("./components/CredentialsPanel"));
-const RemoteJobsPanel = lazy(() => import("./components/RemoteJobsPanel"));
 const PeriodicTable = lazy(() => import("./components/PeriodicTable"));
 const Notebook = lazy(() => import("./components/Notebook"));
 const SweepDashboard = lazy(() => import("./components/SweepDashboard"));
 const StructureViewer = lazy(() => import("./components/StructureViewer"));
-import { PROVIDERS, formatTime } from "./lib/constants";
-import { ReconnectingWebSocket } from "./lib/ws-client";
-import { getAuthToken, setApiBase as _setApiBase } from "./lib/api-client";
+import { PROVIDERS } from "./lib/constants";
 import { api } from "./lib/api";
+import { API_BASE } from "./lib/config-store";
 import { useToolRunner } from "./hooks/useToolRunner";
-import { isWSMessage, type WSMessage } from "./types/ws";
+import { useMemory } from "./hooks/useMemory";
+import { useKnowledge } from "./hooks/useKnowledge";
+import { useWorkspace } from "./hooks/useWorkspace";
+import { useHPC } from "./hooks/useHPC";
+import { useTeam } from "./hooks/useTeam";
+import { usePlugins } from "./hooks/usePlugins";
+import { useProject } from "./hooks/useProject";
+import { useLogs } from "./hooks/useLogs";
+import { useConfig } from "./hooks/useConfig";
+import { useChatAndConnection } from "./hooks/useChatAndConnection";
+import { ChatPanel } from "./components/panels/ChatPanel";
+import { MemoryPanel } from "./components/panels/MemoryPanel";
+import { SettingsPanel } from "./components/panels/SettingsPanel";
+import { KnowledgePanel } from "./components/panels/KnowledgePanel";
+import { PluginsPanel } from "./components/panels/PluginsPanel";
+import { ToolsPanel } from "./components/panels/ToolsPanel";
+import { SkillsPanel } from "./components/panels/SkillsPanel";
+import { TeamPanel } from "./components/panels/TeamPanel";
+import { ProjectPanel } from "./components/panels/ProjectPanel";
+import { FilesPanel } from "./components/panels/FilesPanel";
+import { ThreadsPanel } from "./components/panels/ThreadsPanel";
+import { ReviewPanel } from "./components/panels/ReviewPanel";
+import { CoderPanel } from "./components/panels/CoderPanel";
+import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
+import { HPCPanel } from "./components/panels/HPCPanel";
+import { LogsPanel } from "./components/panels/LogsPanel";
+import { TerminalPanel } from "./components/panels/TerminalPanel";
+import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo } from "./types/domain";
 import {
   MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
   Users, Code2, FlaskConical, Brain, BookOpen, GitBranch,
   MessageCircle, Puzzle, FileText, Bird, Briefcase, HelpCircle,
   Dna, Play, Compass, Stethoscope, Monitor, ChevronDown, Sparkles,
-  Search, X,
+  Search,
   Atom, Notebook as NotebookIcon, TerminalSquare, BarChart3, Box, Activity,
 } from 'lucide-react';
-
-interface Message {
-  role: "user" | "assistant" | "tool";
-  content: string;
-  timestamp: string;
-  tool_name?: string;
-  tool_args?: any;
-  tool_status?: "running" | "done" | "error";
-  tool_result?: string;
-  tool_call_id?: string;
-  // Plan mode: structured plan card from agent
-  isPlan?: boolean;
-  planId?: string;
-  planData?: any;
-  planConfirmed?: boolean;
-  // Clarification: interactive question cards from agent
-  isClarification?: boolean;
-  clarifications?: any[];
-  // Citations: RAG source references
-  isCitation?: boolean;
-  citationSources?: any[];
-  // Task progress: HPC job / sweep updates
-  isTaskProgress?: boolean;
-  taskType?: string;
-  jobId?: string;
-}
-
-interface ToolInfo {
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, any>;
-  };
-  destructive?: boolean;
-  read_only?: boolean;
-}
-
-interface SkillInfo {
-  name: string;
-  description: string;
-  category: string;
-  parameters: Array<{
-    name: string;
-    type: string;
-    description: string;
-    required?: boolean;
-    default?: any;
-  }>;
-  tags: string[];
-}
-
-// Shapes for a few REST responses that are consumed in multiple places.
-// Kept loose (optional fields) since the backend evolves independently.
-
-interface PersonaSeed {
-  name?: string;
-  id?: string;
-  description?: string;
-  avatar?: string;
-}
-
-interface PersonaEmotionResponse {
-  context_prompt?: string;
-  state?: { valence?: number; arousal?: number; trust?: number };
-}
-
-interface DocumentParseResult {
-  info_packages?: number;
-  graph?: { nodes?: unknown[]; edges?: unknown[] };
-}
-
-interface DocumentGraph {
-  nodes?: unknown[];
-  edges?: unknown[];
-}
-
-interface ModelConfig {
-  alias: string;
-  provider: string;
-  model: string;
-  api_key: string;
-  base_url: string;
-  temperature: number;
-  enabled: boolean;
-  // When set, the backend resolves the key from the stored credential
-  // instead of using api_key directly. Null = use the inline api_key.
-  credential_id?: string | null;
-}
-
-interface AgentProfile {
-  id: string;
-  name: string;
-  model_alias: string;
-  persona: string;
-  tools: string[];
-  enabled: boolean;
-  max_steps: number;
-}
-
-interface AppConfig {
-  provider: string;
-  model: string;
-  api_key: string;
-  base_url: string;
-  ollama_host: string;
-  persona: string;
-  rag_enabled: boolean;
-  models: ModelConfig[];
-  agents: AgentProfile[];
-  team_mode_enabled: boolean;
-  max_concurrent_subagents: number;
-  privacy_redact_secrets: boolean;
-  privacy_block_on_secrets: boolean;
-  local_only_mode: boolean;
-  max_tool_output_tokens: number;
-  context_budget_tokens: number;
-  pet_name: string;
-  pet_personality: "cheerful" | "nerdy" | "calm" | "sassy";
-  pet_accessories: string[];
-  encrypt_config: boolean;
-  encryption_password: string;
-  encryption_key_file: string;
-}
-
-interface FileEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
-}
-
-interface BackendLogEvent {
-  source: "stdout" | "stderr";
-  text: string;
-  time: string;
-}
-
-let API_BASE = "http://localhost:8000";
-let WS_URL =
-  import.meta.env.VITE_WS_URL || `${API_BASE.replace("http", "ws")}/ws/agent`;
-
-/** Update API_BASE and WS_URL from the actual backend port reported by Tauri. */
-async function syncBackendUrl() {
-  try {
-    const port: number = await invoke("get_backend_port");
-    if (port && port > 0) {
-      API_BASE = `http://localhost:${port}`;
-      WS_URL = `${API_BASE.replace("http", "ws")}/ws/agent`;
-      // Sync to the shared api-client module so all api.* calls use the right base
-      _setApiBase(API_BASE);
-      console.log(`[API] synced to port ${port}`);
-    }
-  } catch {
-    // Tauri IPC not available (dev/browser) — keep defaults
-  }
-}
-
-const CONFIG_KEY = "huginn:config:v1";
-
-const DEFAULT_CONFIG: AppConfig = {
-  provider: "openai",
-  model: "gpt-4o",
-  api_key: "",
-  base_url: "",
-  ollama_host: "http://localhost:11434",
-  persona: "default",
-  rag_enabled: false,
-  models: [],
-  agents: [],
-  team_mode_enabled: false,
-  max_concurrent_subagents: 3,
-  privacy_redact_secrets: true,
-  privacy_block_on_secrets: false,
-  local_only_mode: false,
-  max_tool_output_tokens: 25000,
-  context_budget_tokens: 0,
-  pet_name: "Muninn",
-  pet_personality: "cheerful",
-  pet_accessories: [],
-  encrypt_config: false,
-  encryption_password: "",
-  encryption_key_file: "",
-};
-
-// Persona list — loaded dynamically from backend /personas endpoint.
-// Falls back to this minimal list if the API is unavailable.
-const PERSONAS_FALLBACK = [
-  { id: "default", label: "Default Materials Scientist" },
-  { id: "dft_expert", label: "DFT Expert" },
-  { id: "md_expert", label: "MD Expert" },
-  { id: "reviewer", label: "Critical Reviewer" },
-  { id: "tutor", label: "Patient Tutor" },
-];
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
 
@@ -265,277 +80,6 @@ async function openPetWindow() {
   }
 }
 
-function loadStoredConfig(): AppConfig {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...DEFAULT_CONFIG, ...parsed };
-    }
-  } catch {
-    // ignore
-  }
-  return { ...DEFAULT_CONFIG };
-}
-
-function saveStoredConfig(config: AppConfig) {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-}
-
-function defaultForSchema(prop: any): any {
-  if (prop && "default" in prop) return prop.default;
-  const type = prop?.type;
-  if (type === "boolean") return false;
-  if (type === "integer" || type === "number") return 0;
-  if (type === "array") return [];
-  if (type === "object") return buildDefaultArgs(prop);
-  return "";
-}
-
-function buildDefaultArgs(schema: any): Record<string, any> {
-  if (!schema || schema.type !== "object") return {};
-  const out: Record<string, any> = {};
-  for (const [key, prop] of Object.entries(schema.properties || {})) {
-    out[key] = defaultForSchema(prop);
-  }
-  return out;
-}
-
-interface JsonSchemaProperty {
-  type?: string;
-  description?: string;
-  enum?: string[];
-}
-
-interface JsonSchema {
-  type?: string;
-  required?: string[];
-  properties?: Record<string, JsonSchemaProperty>;
-}
-
-function JsonSchemaForm({
-  schema,
-  value,
-  onChange,
-}: {
-  schema: JsonSchema;
-  value: Record<string, any>;
-  onChange: (v: Record<string, any>) => void;
-}) {
-  if (!schema || schema.type !== "object") return null;
-  const required = new Set(schema.required || []);
-  const update = (key: string, val: any) => {
-    onChange({ ...value, [key]: val });
-  };
-  return (
-    <div className="space-y-4">
-      {Object.entries(schema.properties ?? {}).map(([key, prop]) => {
-        const label = (
-          <span className="text-xs font-medium text-text-secondary">
-            {key}
-            {required.has(key) && <span className="ml-1 text-error">*</span>}
-          </span>
-        );
-        const desc = prop.description ? (
-          <p className="mt-1 text-xs text-text-muted">{prop.description}</p>
-        ) : null;
-        let input: React.ReactNode;
-        if (prop.type === "boolean") {
-          input = (
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={!!value[key]}
-                onChange={(e) => update(key, e.target.checked)}
-                className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-              />
-              <span className="text-sm text-text-primary">{value[key] ? "true" : "false"}</span>
-            </label>
-          );
-        } else if (prop.type === "integer" || prop.type === "number") {
-          input = (
-            <input
-              type="number"
-              value={value[key] ?? ""}
-              onChange={(e) => update(key, e.target.value === "" ? "" : Number(e.target.value))}
-              className="input font-mono text-sm"
-            />
-          );
-        } else if (Array.isArray(prop.enum) && prop.enum.length > 0) {
-          input = (
-            <select
-              value={value[key] ?? ""}
-              onChange={(e) => update(key, e.target.value)}
-              className="input text-sm"
-            >
-              {prop.enum.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-          );
-        } else {
-          input = (
-            <input
-              type="text"
-              value={value[key] ?? ""}
-              onChange={(e) => update(key, e.target.value)}
-              className="input font-mono text-sm"
-            />
-          );
-        }
-        return (
-          <div key={key}>
-            {label}
-            <div className="mt-1.5">{input}</div>
-            {desc}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function SkillForm({
-  params,
-  value,
-  onChange,
-}: {
-  params: SkillInfo["parameters"];
-  value: Record<string, any>;
-  onChange: (v: Record<string, any>) => void;
-}) {
-  const update = (key: string, val: any) => onChange({ ...value, [key]: val });
-  return (
-    <div className="space-y-4">
-      {params.map((p) => {
-        const label = (
-          <span className="text-xs font-medium text-text-secondary">
-            {p.name}
-            {p.required && <span className="ml-1 text-error">*</span>}
-            <span className="ml-2 font-mono text-[10px] text-text-muted">{p.type}</span>
-          </span>
-        );
-        const desc = p.description ? (
-          <p className="mt-1 text-xs text-text-muted">{p.description}</p>
-        ) : null;
-        let input: React.ReactNode;
-        if (p.type === "boolean") {
-          input = (
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={!!value[p.name]}
-                onChange={(e) => update(p.name, e.target.checked)}
-                className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-              />
-              <span className="text-sm text-text-primary">{value[p.name] ? "true" : "false"}</span>
-            </label>
-          );
-        } else if (p.type === "integer" || p.type === "number") {
-          input = (
-            <input
-              type="number"
-              value={value[p.name] ?? ""}
-              onChange={(e) =>
-                update(p.name, e.target.value === "" ? "" : Number(e.target.value))
-              }
-              className="input font-mono text-sm"
-            />
-          );
-        } else {
-          input = (
-            <input
-              type="text"
-              value={value[p.name] ?? ""}
-              onChange={(e) => update(p.name, e.target.value)}
-              className="input font-mono text-sm"
-            />
-          );
-        }
-        return (
-          <div key={p.name}>
-            {label}
-            <div className="mt-1.5">{input}</div>
-            {desc}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// Inline helper for the Models tab: probes a local server (ollama / vllm /
-// local / openai-compatible) and lists model names that can be picked with
-// one click. Kept as its own component so the discovered-list state stays local.
-function LocalModelDiscoverer({
-  model,
-  onUpdate,
-}: {
-  model: ModelConfig;
-  onUpdate: (patch: Partial<ModelConfig>) => void;
-}) {
-  const [discovered, setDiscovered] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-
-  const LOCAL_PROVIDERS = ["ollama", "vllm", "local", "openai-compatible"];
-  if (!LOCAL_PROVIDERS.includes(model.provider)) return null;
-
-  const discover = async () => {
-    setLoading(true);
-    setErr("");
-    try {
-      const params = new URLSearchParams({
-        provider: model.provider,
-        base_url: model.base_url || "",
-      });
-      const data = await api.get<{ success?: boolean; models?: string[]; error?: string }>(
-        `/config/local-models?${params.toString()}`
-      );
-      if (data.success && Array.isArray(data.models) && data.models.length > 0) {
-        setDiscovered(data.models);
-      } else {
-        setErr(data.error || "未发现可用模型, 请检查 base URL");
-        setDiscovered([]);
-      }
-    } catch (e: any) {
-      setErr(e.message || "请求失败");
-      setDiscovered([]);
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div className="md:col-span-2 space-y-1.5">
-      <button
-        onClick={discover}
-        disabled={loading}
-        className="btn-secondary px-2.5 py-1 text-xs disabled:opacity-50"
-      >
-        {loading ? "探测中…" : "Discover Local Models"}
-      </button>
-      {err && <p className="text-xs text-error">{err}</p>}
-      {discovered.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {discovered.map((m) => (
-            <button
-              key={m}
-              onClick={() => onUpdate({ model: m })}
-              className="rounded bg-accent/10 px-2 py-0.5 text-xs text-accent transition-colors hover:bg-accent/20"
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Minimal suspense fallback — just a spinner so tabs feel responsive
-// while the chunk for a heavy panel loads.
 function LoadingFallback() {
   return (
     <div className="flex h-full w-full items-center justify-center">
@@ -549,54 +93,15 @@ export default function App() {
     return <Pet />;
   }
 
-  const { t } = useTranslation();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content:
-        "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat. I can help with DFT, molecular dynamics, packing, symbolic math, UQ/GP, and formal Lean verification.",
-      timestamp: formatTime(),
-    },
-  ]);
-  const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"chat" | "plan" | "build">("chat");
-  const [pendingPlan, setPendingPlan] = useState<string>("");
-  const [planLoading, setPlanLoading] = useState(false);
-  const [status, setStatus] = useState<string>("connecting…");
+  // ── Sidebar state ────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<
-    | "chat"
-    | "tools"
-    | "memory"
-    | "skills"
-    | "settings"
-    | "files"
-    | "terminal"
-    | "review"
-    | "knowledge"
-    | "logs"
-    | "plugins"
-    | "threads"
-    | "project"
-    | "team"
-    | "coder"
-    | "benchmark"
-    | "evolution"
-    | "execute"
-    | "workflows"
-    | "explore"
-    | "diagnose"
-    | "hpc"
-    | "periodic"
-    | "notebook"
-    | "sandbox"
-    | "sweep"
-    | "structure"
-    | "emotion"
+    | "chat" | "tools" | "memory" | "skills" | "settings" | "files"
+    | "terminal" | "review" | "knowledge" | "logs" | "plugins"
+    | "threads" | "project" | "team" | "coder" | "benchmark"
+    | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
+    | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
+    | "structure" | "emotion"
   >("chat");
-  const [isConnected, setIsConnected] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-
-  // Sidebar group collapse state (progressive disclosure)
   const [sidebarGroups, setSidebarGroups] = useState<Record<string, boolean>>({
     core: true,
     research: true,
@@ -605,47 +110,137 @@ export default function App() {
   });
   const toggleSidebarGroup = (group: string) =>
     setSidebarGroups((prev) => ({ ...prev, [group]: !prev[group] }));
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  // reconnectTimeoutRef was used by the old native WS; ReconnectingWebSocket
-  // handles its own reconnection internally now.
 
+  // ── Tools / Skills state arrays ──────────────────────────────
   const [tools, setTools] = useState<ToolInfo[]>([]);
-  const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
-  const [toolArgs, setToolArgs] = useState<Record<string, any>>({});
-  const [toolResult, setToolResult] = useState<string>("");
-  const [toolLoading, setToolLoading] = useState(false);
-
-  // Persona state — dynamically loaded from backend
-  const [personaList, setPersonaList] = useState<{ id: string; label: string; description?: string; avatar?: string }[]>(PERSONAS_FALLBACK);
-  const [personaEmotion, setPersonaEmotion] = useState<{ mood: string; valence: number; arousal: number; trust: number } | null>(null);
-  // Pending clarification questions from agent
-  const [pendingClarifications, setPendingClarifications] = useState<{ question_id?: string; question: string; options?: string[]; thread_id?: string }[]>([]);
-  // Deep PDF parse loading state
-  const [parseLoading, setParseLoading] = useState(false);
-
   const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
-  const [skillArgs, setSkillArgs] = useState<Record<string, any>>({});
-  const [skillResult, setSkillResult] = useState<string>("");
-  const [skillLoading, setSkillLoading] = useState(false);
 
-  // Lazy init: loadStoredConfig() hits localStorage, only run once on mount.
-  const [config, setConfig] = useState<AppConfig>(() => loadStoredConfig());
-  const [configDirty, setConfigDirty] = useState(false);
-  const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
-  const [settingsTab, setSettingsTab] = useState<"general" | "models" | "agents" | "privacy" | "pet" | "security" | "credentials" | "jobs" | "export" | "bot">("general");
+  // ── Hook calls ───────────────────────────────────────────────
+  const {
+    config, configDirty, configSavedMsg, settingsTab, llmCredOptions,
+    expandedModels, expandedAgents,
+    setConfig, setConfigDirty, setConfigSavedMsg, setSettingsTab,
+    pushConfig, saveConfig,
+    updateModel, addModel, removeModel,
+    updateAgent, addAgent, removeAgent,
+    toggleModelExpanded, toggleAgentExpanded,
+    switchPersona,
+  } = useConfig();
 
-  // Stored LLM credentials made available as a link option in the Models tab.
-  const [llmCredOptions, setLlmCredOptions] = useState<Array<{ id: string; name: string; provider?: string }>>([]);
+  const {
+    teamObjective, teamPlan, teamRunning, teamResult, teamError,
+    setTeamObjective,
+    handleTeamPlan, handleTeamRun,
+  } = useTeam();
 
-  // Multi-agent team state
-  const [teamObjective, setTeamObjective] = useState("");
-  const [teamPlan, setTeamPlan] = useState<any[] | null>(null);
-  const [teamRunning, setTeamRunning] = useState(false);
-  const [teamResult, setTeamResult] = useState<any>(null);
-  const [teamError, setTeamError] = useState("");
+  const {
+    hpcHost, hpcUsername, hpcScheduler, hpcKeyPath, hpcCommand,
+    hpcJobName, hpcWalltime, hpcNodes, hpcNtasks, hpcQueue,
+    hpcJobId, hpcRunning, hpcResult, hpcError,
+    setHpcHost, setHpcUsername, setHpcScheduler, setHpcKeyPath,
+    setHpcCommand, setHpcJobName, setHpcWalltime, setHpcNodes,
+    setHpcNtasks, setHpcQueue, setHpcJobId,
+    handleHpcTest, handleHpcSubmit, handleHpcStatus,
+  } = useHPC();
 
-  // Coder mode state
+  const {
+    projectContext, projectContextSource, projectContextMsg,
+    codebaseStatus, codebaseQuery, codebaseResults, codebaseMsg,
+    setProjectContext, setCodebaseQuery,
+    loadProjectContext, saveProjectContext,
+    loadCodebaseStatus, indexCodebase, searchCodebase,
+  } = useProject();
+
+  const memory = useMemory();
+  const {
+    memories, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
+    setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView,
+    loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
+    promoteMemory, pruneMemory, syncMemoryMd,
+  } = memory;
+
+  const {
+    cwd, selectedFile,
+    editorContent, editorDirty, editorMsg,
+    terminalOutput, terminalInput, terminalEndRef,
+    setEditorContent, setEditorDirty,
+    setTerminalOutput, setTerminalInput,
+    loadDir, saveFile, renderTree,
+  } = useWorkspace();
+
+  const {
+    backendLogs, logFilter, backendLogEndRef,
+    setBackendLogs, setLogFilter,
+  } = useLogs();
+
+  const {
+    kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading,
+    fileInputRef, parseFileInputRef,
+    setKbQuery,
+    loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
+    deleteKnowledge, queryKnowledge,
+  } = useKnowledge();
+
+  const {
+    mcpServers, discoveredServers, mcpMsg, newMcp,
+    setNewMcp,
+    loadMcp, discoverMcp, connectMcp, disconnectMcp,
+  } = usePlugins();
+
+  // ── Checkpoint / review state ────────────────────────────────
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  const [activeCp, setActiveCp] = useState<string | null>(null);
+  const [diffs, setDiffs] = useState<DiffEntry[]>([]);
+
+  const createCheckpoint = async () => {
+    if (!cwd) return;
+    try {
+      const cp = await api.post<Checkpoint>("/checkpoints", { path: cwd });
+      setCheckpoints((prev) => [cp, ...prev]);
+      setActiveCp(cp.id);
+      loadDiffs(cp.id);
+    } catch (e: any) {
+      console.error("[review] create checkpoint failed:", e);
+    }
+  };
+
+  const loadDiffs = async (cpId: string) => {
+    try {
+      const data = await api.get<{ diffs?: DiffEntry[] }>(`/checkpoints/${cpId}/diff`);
+      setDiffs((data.diffs as DiffEntry[]) || []);
+      setActiveCp(cpId);
+    } catch (e: any) {
+      console.error("[review] load diffs failed:", e);
+    }
+  };
+
+  const acceptCheckpoint = async (cpId: string) => {
+    try {
+      await api.post(`/checkpoints/${cpId}/accept`);
+      setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
+      if (activeCp === cpId) {
+        setActiveCp(null);
+        setDiffs([]);
+      }
+    } catch (e: any) {
+      console.error("[review] accept failed:", e);
+    }
+  };
+
+  const rejectCheckpoint = async (cpId: string) => {
+    try {
+      await api.post(`/checkpoints/${cpId}/reject`);
+      setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
+      if (activeCp === cpId) {
+        setActiveCp(null);
+        setDiffs([]);
+      }
+    } catch (e: any) {
+      console.error("[review] reject failed:", e);
+    }
+  };
+
+  // ── Tool runner instances ────────────────────────────────────
   const [coderTask, setCoderTask] = useState("");
   const [coderAutoApprove, setCoderAutoApprove] = useState(false);
   const [coderMaxIters, setCoderMaxIters] = useState<number | "">("");
@@ -660,29 +255,6 @@ export default function App() {
     inputGuard: () => !!coderTask.trim(),
     defaultError: "Coder run failed.",
   });
-
-  // Workbench features are now independent sidebar tabs (no more workbenchTab state)
-
-  // Collapsible cards in Settings (models/agents)
-  const [expandedModels, setExpandedModels] = useState<Set<number>>(new Set());
-  const [expandedAgents, setExpandedAgents] = useState<Set<number>>(new Set());
-  const toggleModelExpanded = (i: number) => setExpandedModels((prev) => {
-    const next = new Set(prev);
-    next.has(i) ? next.delete(i) : next.add(i);
-    return next;
-  });
-  const toggleAgentExpanded = (i: number) => setExpandedAgents((prev) => {
-    const next = new Set(prev);
-    next.has(i) ? next.delete(i) : next.add(i);
-    return next;
-  });
-
-  // Memory panel view toggle
-  const [memoryView, setMemoryView] = useState<"browse" | "add">("browse");
-
-  // Chat message search
-  const [chatSearchOpen, setChatSearchOpen] = useState(false);
-  const [chatSearchQuery, setChatSearchQuery] = useState("");
 
   const [benchEvolve, setBenchEvolve] = useState(false);
   const [benchCategories, setBenchCategories] = useState("");
@@ -771,252 +343,41 @@ export default function App() {
     defaultError: "Diagnosis failed.",
   });
 
-  const [hpcHost, setHpcHost] = useState("");
-  const [hpcUsername, setHpcUsername] = useState("");
-  const [hpcScheduler, setHpcScheduler] = useState<"slurm" | "pbs">("slurm");
-  const [hpcKeyPath, setHpcKeyPath] = useState("");
-  const [hpcCommand, setHpcCommand] = useState("");
-  const [hpcJobName, setHpcJobName] = useState("huginn_job");
-  const [hpcWalltime, setHpcWalltime] = useState("01:00:00");
-  const [hpcNodes, setHpcNodes] = useState(1);
-  const [hpcNtasks, setHpcNtasks] = useState(4);
-  const [hpcQueue, setHpcQueue] = useState("");
-  const [hpcJobId, setHpcJobId] = useState("");
-  const [hpcRunning, setHpcRunning] = useState(false);
-  const [hpcResult, setHpcResult] = useState<any>(null);
-  const [hpcError, setHpcError] = useState("");
-
-  // Project context + codebase search state
-  const [projectContext, setProjectContext] = useState<string>("");
-  const [projectContextSource, setProjectContextSource] = useState<string>("none");
-  const [projectContextMsg, setProjectContextMsg] = useState<string>("");
-  const [codebaseStatus, setCodebaseStatus] = useState<any>(null);
-  const [codebaseQuery, setCodebaseQuery] = useState<string>("");
-  const [codebaseResults, setCodebaseResults] = useState<any[]>([]);
-  const [codebaseMsg, setCodebaseMsg] = useState<string>("");
-
-  // Memory panel state
-  interface MemoryEntry {
-    id: string;
-    category: string;
-    content: string;
-    tags: string;
-    source: string;
-    importance: number;
-    tier: string;
-    created_at: string;
-    last_accessed: string;
-    expires_at: string | null;
-    access_count: number;
-  }
-  interface MemoryStats {
-    longterm_entries: number;
-    tier_counts: { short: number; mid: number; long: number };
-  }
-  const [memories, setMemories] = useState<MemoryEntry[]>([]);
-  const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
-  const [memorySearch, setMemorySearch] = useState<string>("");
-  const [memoryFilter, setMemoryFilter] = useState<{ category: string; tier: string }>({ category: "", tier: "" });
-  const [memoryForm, setMemoryForm] = useState<{ content: string; category: string; tags: string; importance: number; tier: string }>({
-    content: "",
-    category: "fact",
-    tags: "",
-    importance: 0.5,
-    tier: "mid",
-  });
-  const [memoryMsg, setMemoryMsg] = useState<string>("");
-
-  // Workspace / file explorer state
-  const [cwd, setCwd] = useState<string>("");
-  const [dirCache, setDirCache] = useState<Record<string, FileEntry[]>>({});
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [editorContent, setEditorContent] = useState<string>("");
-  const [editorDirty, setEditorDirty] = useState(false);
-  const [editorMsg, setEditorMsg] = useState<string>("");
-
-  const [terminalOutput, setTerminalOutput] = useState<string>("");
-  const [terminalInput, setTerminalInput] = useState<string>("");
-  const terminalEndRef = useRef<HTMLDivElement>(null);
-
-  const [backendLogs, setBackendLogs] = useState<BackendLogEvent[]>([]);
-  const [logFilter, setLogFilter] = useState<"all" | "stdout" | "stderr">("all");
-  const backendLogEndRef = useRef<HTMLDivElement>(null);
-
-  interface DiffEntry {
-    path: string;
-    status: "modified" | "added" | "deleted";
-    diff: string;
-    old: string;
-    new: string;
-  }
-  interface Checkpoint {
-    id: string;
-    base: string;
-    files: number;
-  }
-  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
-  const [activeCp, setActiveCp] = useState<string | null>(null);
-  const [diffs, setDiffs] = useState<DiffEntry[]>([]);
-
-  const pendingResponseRef = useRef<string>("");
-
-  const GUIDE_KEY = "huginn:guide:v1";
-  const [showGuide, setShowGuide] = useState(false);
-  useEffect(() => {
-    if (!localStorage.getItem(GUIDE_KEY)) {
-      setShowGuide(true);
-    }
-  }, []);
-  const closeGuide = () => {
-    localStorage.setItem(GUIDE_KEY, "1");
-    setShowGuide(false);
-  };
-
-  // Request OS notification permission once
-  useEffect(() => {
-    (async () => {
-      try {
-        let permitted = await isPermissionGranted();
-        if (!permitted) {
-          const permission = await requestPermission();
-          permitted = permission === "granted";
-        }
-      } catch {
-        // notification plugin may not be available in web builds
-      }
-    })();
-  }, []);
-
-  const notify = useCallback((title: string, body: string) => {
-    try {
-      if (document.hidden) {
-        sendNotification({ title, body });
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const startBackend = useCallback(async () => {
-    setStatus("starting backend…");
-    try {
-      const result = await invoke("start_backend");
-      await syncBackendUrl();
-      setStatus(`${result} • waiting for health…`);
-    } catch (e: any) {
-      setStatus(`backend start failed: ${e}`);
-    }
-  }, []);
-
-  // Native Tauri status check + auto-start backend if needed
-  useEffect(() => {
-    let alive = true;
-
-    const check = async () => {
-      try {
-        const s: any = await invoke("get_agent_status");
-        if (alive) {
-          await syncBackendUrl();
-          setStatus(`${s.status} • v${s.version || "0.1.0"}`);
-          if (s.status === "ok") return true;
-        }
-      } catch {
-        if (alive) setStatus("desktop ready");
-      }
-      return false;
-    };
-
-    const run = async () => {
-      const online = await check();
-      if (online) return;
-      // Try to start the bundled backend once.
-      await startBackend();
-      // Poll health for up to ~30s.
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 500));
-        if (await check()) return;
-      }
-      if (alive) setStatus("backend did not come online");
-    };
-
-    run();
-    return () => {
-      alive = false;
-    };
-  }, [startBackend]);
-
-  // Push config to backend whenever it changes or we come online
-  const pushConfig = useCallback(async (cfg: AppConfig) => {
-    try {
-      await api.post("/config", cfg);
-      return true;
-    } catch (e) {
-      console.warn("[config] failed to push:", e);
-      return false;
-    }
-  }, []);
-
-  const saveConfig = useCallback(
-    async (next: AppConfig) => {
-      saveStoredConfig(next);
-      setConfig(next);
-      setConfigDirty(false);
-      const ok = await pushConfig(next);
-      setConfigSavedMsg(ok ? "Saved and applied to backend." : "Saved locally; will apply once backend is online.");
-      setTimeout(() => setConfigSavedMsg(""), 4000);
+  // ── Chat and connection hook ─────────────────────────────────
+  const {
+    messages, input, mode, pendingPlan, planLoading,
+    chatSearchOpen, chatSearchQuery,
+    isStreaming,
+    messagesEndRef,
+    isConnected, status,
+    wsClientRef,
+    personaList, personaEmotion, pendingClarifications,
+    threads, activeThread,
+    showGuide, closeGuide,
+    setInput, setMode, setMessages, setPendingPlan, setChatSearchOpen, setChatSearchQuery,
+    setActiveThread, setThreads, setShowGuide,
+    sendMessage, answerClarification,
+    loadThreads, createThread, renameThread, deleteThread,
+    startBackend,
+  } = useChatAndConnection({
+    config,
+    activeTab,
+    pushConfig,
+    onAutoCheckpoint: (cp) => {
+      setCheckpoints((prev) => [{ id: cp.id, base: cp.base, files: cp.files }, ...prev]);
+      setActiveCp(cp.id);
     },
-    [pushConfig]
-  );
+    onExplorationResult: (data) => {
+      explore.setResult(data);
+      explore.setRunning(false);
+    },
+    toolsLength: tools.length,
+    skillsLength: skills.length,
+    setTools,
+    setSkills,
+  });
 
-  const handleTeamPlan = async () => {
-    if (!teamObjective.trim()) return;
-    setTeamRunning(true);
-    setTeamError("");
-    setTeamResult(null);
-    try {
-      const data = await api.post<{ success?: boolean; tasks?: any[]; error?: string }>(
-        "/team/plan",
-        { objective: teamObjective }
-      );
-      if (data.success) {
-        setTeamPlan(data.tasks || []);
-      } else {
-        setTeamError(data.error || "Planning failed.");
-        setTeamPlan(null);
-      }
-    } catch (e: any) {
-      setTeamError(e.message || "Network error");
-    } finally {
-      setTeamRunning(false);
-    }
-  };
-
-  const handleTeamRun = async () => {
-    if (!teamObjective.trim()) return;
-    setTeamRunning(true);
-    setTeamError("");
-    setTeamResult(null);
-    try {
-      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
-        "/team/run",
-        { objective: teamObjective }
-      );
-      if (data.success) {
-        setTeamResult(data);
-      } else {
-        setTeamError(data.error || "Team run failed.");
-      }
-    } catch (e: any) {
-      setTeamError(e.message || "Network error");
-    } finally {
-      setTeamRunning(false);
-    }
-  };
-
-  const handleCoderRun = coder.run;
-  const handleExecuteRun = execute.run;
-
+  // ── loadWorkflowTemplates ────────────────────────────────────
   const loadWorkflowTemplates = async () => {
     try {
       const data = await api.get<any[]>("/workflows");
@@ -1026,749 +387,74 @@ export default function App() {
     }
   };
 
-  const handleDiagnoseRun = diagnose.run;
-  const handleWorkflowRun = workflow.run;
-
-  const handleHpcTest = async () => {
-    setHpcRunning(true);
-    setHpcError("");
-    setHpcResult(null);
-    try {
-      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
-        "/hpc/test",
-        { host: hpcHost, username: hpcUsername, scheduler: hpcScheduler, key_path: hpcKeyPath || undefined }
-      );
-      if (data.success) {
-        setHpcResult(data);
-      } else {
-        setHpcError(data.error || "HPC test failed.");
-      }
-    } catch (e: any) {
-      setHpcError(e.message || "Network error");
-    } finally {
-      setHpcRunning(false);
-    }
-  };
-
-  const handleHpcSubmit = async () => {
-    if (!hpcCommand.trim()) return;
-    setHpcRunning(true);
-    setHpcError("");
-    setHpcResult(null);
-    try {
-      const data = await api.post<{ success?: boolean; job_id?: string; error?: string } & Record<string, any>>(
-        "/hpc/submit",
-        {
-          host: hpcHost,
-          username: hpcUsername,
-          scheduler: hpcScheduler,
-          key_path: hpcKeyPath || undefined,
-          command: hpcCommand,
-          job_name: hpcJobName,
-          walltime: hpcWalltime,
-          nodes: hpcNodes,
-          ntasks_per_node: hpcNtasks,
-          queue: hpcQueue || undefined,
-        }
-      );
-      if (data.success) {
-        setHpcJobId(data.job_id ?? "");
-        setHpcResult(data);
-      } else {
-        setHpcError(data.error || "HPC submit failed.");
-      }
-    } catch (e: any) {
-      setHpcError(e.message || "Network error");
-    } finally {
-      setHpcRunning(false);
-    }
-  };
-
-  const handleHpcStatus = async () => {
-    if (!hpcJobId.trim()) return;
-    setHpcRunning(true);
-    setHpcError("");
-    try {
-      const data = await api.post<{ success?: boolean; error?: string } & Record<string, any>>(
-        "/hpc/status",
-        {
-          host: hpcHost,
-          username: hpcUsername,
-          scheduler: hpcScheduler,
-          key_path: hpcKeyPath || undefined,
-          job_id: hpcJobId,
-        }
-      );
-      if (data.success) {
-        setHpcResult(data);
-      } else {
-        setHpcError(data.error || "HPC status failed.");
-      }
-    } catch (e: any) {
-      setHpcError(e.message || "Network error");
-    } finally {
-      setHpcRunning(false);
-    }
-  };
-
-  const ensureDefaultModel = () => {
-    if (config.models.length === 0) {
-      return {
-        ...config,
-        models: [
-          {
-            alias: "default",
-            provider: config.provider || "openai",
-            model: config.model || "",
-            api_key: config.api_key || "",
-            base_url: config.base_url || "",
-            temperature: 0.7,
-            enabled: true,
-          },
-        ],
-      };
-    }
-    return config;
-  };
-
-  const updateModel = (idx: number, patch: Partial<ModelConfig>) => {
-    const base = ensureDefaultModel();
-    const nextModels = base.models.map((m, i) => (i === idx ? { ...m, ...patch } : m));
-    const next = { ...base, models: nextModels };
-    setConfig(next);
-    setConfigDirty(true);
-  };
-
-  const addModel = () => {
-    const base = ensureDefaultModel();
-    const next: AppConfig = {
-      ...base,
-      models: [
-        ...base.models,
-        { alias: `model${base.models.length + 1}`, provider: "openai", model: "", api_key: "", base_url: "", temperature: 0.7, enabled: true },
-      ],
-    };
-    setConfig(next);
-    setConfigDirty(true);
-  };
-
-  const removeModel = (idx: number) => {
-    const next = { ...config, models: config.models.filter((_, i) => i !== idx) };
-    setConfig(next);
-    setConfigDirty(true);
-  };
-
-  const ensureDefaultAgents = () => {
-    if (config.agents.length === 0) {
-      const modelAlias = config.models[0]?.alias || "default";
-      return {
-        ...config,
-        agents: [
-          { id: "lead", name: "Lead", model_alias: modelAlias, persona: "default", tools: [], enabled: true, max_steps: 10 },
-          { id: "researcher", name: "Researcher", model_alias: modelAlias, persona: "tutor", tools: [], enabled: true, max_steps: 10 },
-          { id: "reviewer", name: "Reviewer", model_alias: modelAlias, persona: "reviewer", tools: [], enabled: true, max_steps: 10 },
-        ],
-      };
-    }
-    return config;
-  };
-
-  const updateAgent = (idx: number, patch: Partial<AgentProfile>) => {
-    const base = ensureDefaultAgents();
-    const nextAgents = base.agents.map((a, i) => (i === idx ? { ...a, ...patch } : a));
-    const next = { ...base, agents: nextAgents };
-    setConfig(next);
-    setConfigDirty(true);
-  };
-
-  const addAgent = () => {
-    const base = ensureDefaultAgents();
-    const modelAlias = config.models[0]?.alias || "default";
-    const next: AppConfig = {
-      ...base,
-      agents: [
-        ...base.agents,
-        { id: `agent${base.agents.length + 1}`, name: "", model_alias: modelAlias, persona: "default", tools: [], enabled: true, max_steps: 10 },
-      ],
-    };
-    setConfig(next);
-    setConfigDirty(true);
-  };
-
-  const removeAgent = (idx: number) => {
-    const next = { ...config, agents: config.agents.filter((_, i) => i !== idx) };
-    setConfig(next);
-    setConfigDirty(true);
-  };
-
-  // Workspace file explorer helpers
-  const loadDir = useCallback(async (path: string) => {
-    try {
-      const entries = (await invoke("read_dir", { path })) as FileEntry[];
-      setDirCache((prev) => ({ ...prev, [path]: entries }));
-    } catch (e: any) {
-      console.error("[files] read_dir failed:", e);
-    }
-  }, []);
-
-  const toggleDir = (path: string) => {
-    setExpandedDirs((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-        loadDir(path);
-      }
-      return next;
-    });
-  };
-
-  const openFile = async (path: string) => {
-    try {
-      const content = (await invoke("read_file", { path })) as string;
-      setSelectedFile(path);
-      setEditorContent(content);
-      setEditorDirty(false);
-      setEditorMsg("");
-    } catch (e: any) {
-      setEditorMsg(`Failed to open file: ${e}`);
-    }
-  };
-
-  const saveFile = async () => {
-    if (!selectedFile) return;
-    try {
-      await invoke("write_file", { path: selectedFile, content: editorContent });
-      setEditorDirty(false);
-      setEditorMsg("Saved.");
-      setTimeout(() => setEditorMsg(""), 2000);
-    } catch (e: any) {
-      setEditorMsg(`Save failed: ${e}`);
-    }
-  };
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const path = (await invoke("get_cwd")) as string;
-        setCwd(path);
-        await loadDir(path);
-        setExpandedDirs((prev) => new Set(prev).add(path));
-      } catch (e) {
-        console.error("[files] get_cwd failed:", e);
-      }
-    })();
-  }, [loadDir]);
-
-  // Listen to integrated terminal output
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    (async () => {
-      unlisten = await listen("terminal-output", (event) => {
-        const payload = event.payload as { source: string; text: string };
-        setTerminalOutput((prev) => prev + payload.text);
-      });
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [terminalOutput]);
-
-  // Listen to backend stdout/stderr
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    (async () => {
-      unlisten = await listen("backend-log", (event) => {
-        const payload = event.payload as { source: string; text: string };
-        const source = payload.source === "stderr" ? "stderr" : "stdout";
-        setBackendLogs((prev) => [
-          ...prev,
-          { source, text: payload.text, time: formatTime() },
-        ]);
-      });
-    })();
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  useEffect(() => {
-    backendLogEndRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [backendLogs, logFilter]);
-
-  const createCheckpoint = async () => {
-    if (!cwd) return;
-    try {
-      const cp = await api.post<Checkpoint>("/checkpoints", { path: cwd });
-      setCheckpoints((prev) => [cp, ...prev]);
-      setActiveCp(cp.id);
-      loadDiffs(cp.id);
-    } catch (e: any) {
-      console.error("[review] create checkpoint failed:", e);
-    }
-  };
-
-  const loadDiffs = async (cpId: string) => {
-    try {
-      const data = await api.get<{ diffs?: DiffEntry[] }>(`/checkpoints/${cpId}/diff`);
-      setDiffs((data.diffs as DiffEntry[]) || []);
-      setActiveCp(cpId);
-    } catch (e: any) {
-      console.error("[review] load diffs failed:", e);
-    }
-  };
-
-  const acceptCheckpoint = async (cpId: string) => {
-    try {
-      await api.post(`/checkpoints/${cpId}/accept`);
-      setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
-      if (activeCp === cpId) {
-        setActiveCp(null);
-        setDiffs([]);
-      }
-    } catch (e: any) {
-      console.error("[review] accept failed:", e);
-    }
-  };
-
-  const rejectCheckpoint = async (cpId: string) => {
-    try {
-      await api.post(`/checkpoints/${cpId}/reject`);
-      setCheckpoints((prev) => prev.filter((c) => c.id !== cpId));
-      if (activeCp === cpId) {
-        setActiveCp(null);
-        setDiffs([]);
-      }
-    } catch (e: any) {
-      console.error("[review] reject failed:", e);
-    }
-  };
-
-  // Knowledge base state
-  interface KbDoc {
-    doc_id: string;
-    filename: string;
-  }
-  const [kbDocs, setKbDocs] = useState<KbDoc[]>([]);
-  const [kbAvailable, setKbAvailable] = useState(false);
-  const [kbMsg, setKbMsg] = useState<string>("");
-  const [kbQuery, setKbQuery] = useState<string>("");
-  const [kbChunks, setKbChunks] = useState<any[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const parseFileInputRef = useRef<HTMLInputElement>(null);
-
-  const loadKnowledge = async () => {
-    try {
-      const data = await api.get<{ documents?: any[]; available?: any }>("/knowledge");
-      setKbDocs(data.documents || []);
-      setKbAvailable(data.available);
-    } catch (e: any) {
-      setKbMsg(`Failed to load knowledge base: ${e.message}`);
-    }
-  };
-
-  const uploadKnowledge = async (file: File) => {
-    setKbMsg("Uploading…");
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const data = await api.upload<{ success?: boolean; error?: string; document?: { chunks: number } }>(
-        "/knowledge/upload",
-        form
-      );
-      if (data.success) {
-        setKbMsg(`Uploaded ${data.document?.chunks ?? 0} chunks from ${file.name}`);
-        loadKnowledge();
-      } else {
-        setKbMsg(`Upload failed: ${data.error}`);
-      }
-    } catch (e: any) {
-      setKbMsg(`Upload error: ${e.message}`);
-    }
-  };
-
-  // ── Deep PDF document parsing (6-stage pipeline) ───────────────
-  // Uses /document/parse which runs M1-M6: PDF element extraction,
-  // figure data extraction, document graph, relation prediction,
-  // cross-modal validation, and info pack assembly.
-  const parseDocument = async (file: File) => {
-    setParseLoading(true);
-    setKbMsg("Parsing document (6-stage pipeline)…");
-    try {
-      const d = await api.upload<DocumentParseResult>('/document/parse', file);
-      setKbMsg(
-        `✅ Parsed: ${d.info_packages || 0} info packages, ` +
-        `${d.graph?.nodes?.length || 0} graph nodes, ` +
-        `${d.graph?.edges?.length || 0} edges`
-      );
-      loadKnowledge();
-    } catch (e) {
-      setKbMsg(`Parse error: ${(e as Error).message}`);
-    } finally {
-      setParseLoading(false);
-    }
-  };
-  const loadDocumentGraph = useCallback(async (docId: string) => {
-    try {
-      const data = await api.get<DocumentGraph>(`/document/${docId}/graph`);
-      setKbMsg(
-        `📊 Document graph: ${data.nodes?.length || 0} nodes, ` +
-        `${data.edges?.length || 0} edges`
-      );
-      return data;
-    } catch { /* ignore */ }
-    return null;
-  }, []);
-
-  const deleteKnowledge = async (docId: string) => {
-    try {
-      await api.del(`/knowledge/${docId}`);
-      loadKnowledge();
-    } catch (e: any) {
-      setKbMsg(`Delete failed: ${e.message}`);
-    }
-  };
-
-  const queryKnowledge = async () => {
-    if (!kbQuery.trim()) return;
-    setKbMsg("Querying…");
-    try {
-      const data = await api.post<{ chunks?: any[] } & Record<string, any>>(
-        "/knowledge/query",
-        { query: kbQuery, top_k: 5 }
-      );
-      setKbChunks(data.chunks || []);
-      setKbMsg(data.chunks?.length ? `Found ${data.chunks.length} chunks` : "No results");
-    } catch (e: any) {
-      setKbMsg(`Query failed: ${e.message}`);
-    }
-  };
-
-  // MCP / Plugin state
-  interface McpServer {
-    name: string;
-    connected: boolean;
-    tools: { name: string; description: string; input_schema?: any }[];
-  }
-  interface DiscoveredServer {
-    name: string;
-    path: string;
-    command: string;
-    args: string[];
-  }
-  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
-  const [discoveredServers, setDiscoveredServers] = useState<DiscoveredServer[]>([]);
-  const [mcpMsg, setMcpMsg] = useState<string>("");
-  const [newMcp, setNewMcp] = useState<{ name: string; command: string; args: string }>({
-    name: "",
-    command: "python",
-    args: "",
-  });
-
-  const loadMcp = async () => {
-    try {
-      const data = await api.get<{ servers?: any[] }>("/mcp/servers");
-      setMcpServers(data.servers || []);
-    } catch (e: any) {
-      setMcpMsg(`Failed to load MCP servers: ${e.message}`);
-    }
-  };
-
-  const discoverMcp = async () => {
-    try {
-      const data = await api.get<{ servers?: any[] }>("/mcp/servers/discover");
-      setDiscoveredServers(data.servers || []);
-    } catch (e: any) {
-      setMcpMsg(`Discovery failed: ${e.message}`);
-    }
-  };
-
-  const connectMcp = async (server: { name: string; command: string; args: string[] }) => {
-    setMcpMsg(`Connecting ${server.name}…`);
-    try {
-      const data = await api.post<{ success?: boolean; tools?: any[]; error?: string }>(
-        "/mcp/servers/connect",
-        server
-      );
-      if (data.success) {
-        setMcpMsg(`Connected ${server.name} (${data.tools?.length || 0} tools)`);
-        loadMcp();
-      } else {
-        setMcpMsg(`Connect failed: ${data.error}`);
-      }
-    } catch (e: any) {
-      setMcpMsg(`Connect error: ${e.message}`);
-    }
-  };
-
-  const disconnectMcp = async (name: string) => {
-    setMcpMsg(`Disconnecting ${name}…`);
-    try {
-      const data = await api.post<{ success?: boolean; error?: string }>(
-        `/mcp/servers/${name}/disconnect`
-      );
-      if (data.success) {
-        setMcpMsg(`Disconnected ${name}`);
-        loadMcp();
-      } else {
-        setMcpMsg(`Disconnect failed: ${data.error}`);
-      }
-    } catch (e: any) {
-      setMcpMsg(`Disconnect error: ${e.message}`);
-    }
-  };
-
-  // Thread state
-  interface Thread {
-    id: string;
+  // ── useEffect: sidebar auto-expand ───────────────────────────
+  type SidebarTabId = typeof activeTab;
+  interface SidebarTabItem {
+    id: SidebarTabId;
     label: string;
-    created_at: string;
-    last_active: string;
+    icon: React.ReactNode;
+    indented?: boolean;
   }
-  const [threads, setThreads] = useState<Thread[]>([
-    { id: "desktop", label: "Default", created_at: "", last_active: "" },
-  ]);
-  const [activeThread, setActiveThread] = useState<string>("desktop");
+  interface SidebarGroupData {
+    key: string;
+    label: string;
+    tabs: SidebarTabItem[];
+  }
+  const sidebarGroupsData: SidebarGroupData[] = [
+    {
+      key: "core",
+      label: "CORE",
+      tabs: [
+        { id: "chat" as const, label: "Chat", icon: <MessageSquare size={16} /> },
+        { id: "team" as const, label: "Team", icon: <Users size={16} /> },
+        { id: "coder" as const, label: "Coder", icon: <Code2 size={16} /> },
+      ],
+    },
+    {
+      key: "research",
+      label: "RESEARCH",
+      tabs: [
+        { id: "knowledge" as const, label: "Knowledge", icon: <BookOpen size={16} /> },
+        { id: "periodic" as const, label: "Periodic Table", icon: <Atom size={16} /> },
+        { id: "project" as const, label: "Project", icon: <Briefcase size={16} /> },
+        { id: "notebook" as const, label: "Notebook", icon: <NotebookIcon size={16} />, indented: true },
+        { id: "benchmark" as const, label: "Benchmark", icon: <FlaskConical size={16} />, indented: true },
+        { id: "evolution" as const, label: "Evolution", icon: <Dna size={16} />, indented: true },
+        { id: "execute" as const, label: "Execute", icon: <Play size={16} />, indented: true },
+        { id: "workflows" as const, label: "Workflows", icon: <Zap size={16} />, indented: true },
+        { id: "sweep" as const, label: "Sweep", icon: <BarChart3 size={16} />, indented: true },
+        { id: "explore" as const, label: "Explore", icon: <Compass size={16} />, indented: true },
+        { id: "diagnose" as const, label: "Diagnose", icon: <Stethoscope size={16} />, indented: true },
+        { id: "structure" as const, label: "Structure", icon: <Box size={16} />, indented: true },
+        { id: "hpc" as const, label: "HPC", icon: <Monitor size={16} />, indented: true },
+      ],
+    },
+    {
+      key: "workspace",
+      label: "WORKSPACE",
+      tabs: [
+        { id: "files" as const, label: "Files", icon: <FolderTree size={16} /> },
+        { id: "terminal" as const, label: "Terminal", icon: <Terminal size={16} /> },
+        { id: "sandbox" as const, label: "Sandbox", icon: <TerminalSquare size={16} /> },
+        { id: "review" as const, label: "Review", icon: <GitBranch size={16} /> },
+        { id: "tools" as const, label: "Tools", icon: <Wrench size={16} /> },
+        { id: "skills" as const, label: "Skills", icon: <Sparkles size={16} /> },
+      ],
+    },
+    {
+      key: "system",
+      label: "SYSTEM",
+      tabs: [
+        { id: "memory" as const, label: "Memory", icon: <Brain size={16} /> },
+        { id: "emotion" as const, label: "Emotion", icon: <Activity size={16} /> },
+        { id: "plugins" as const, label: "Plugins", icon: <Puzzle size={16} /> },
+        { id: "threads" as const, label: "Threads", icon: <MessageCircle size={16} /> },
+        { id: "logs" as const, label: "Logs", icon: <FileText size={16} /> },
+        { id: "settings" as const, label: "Settings", icon: <Settings size={16} /> },
+      ],
+    },
+  ];
 
-  const loadThreads = async () => {
-    try {
-      const data = await api.get<{ threads?: Thread[] }>("/threads");
-      setThreads(data.threads || []);
-    } catch (e: any) {
-      console.error("[threads] load failed:", e);
-    }
-  };
-
-  const createThread = async () => {
-    try {
-      const data = await api.post<{ id: string; label: string }>("/threads", { label: "New thread" });
-      setActiveThread(data.id);
-      setMessages([
-        {
-          role: "assistant",
-          content: `Started new thread **${data.label}**.`,
-          timestamp: formatTime(),
-        },
-      ]);
-      loadThreads();
-    } catch (e: any) {
-      console.error("[threads] create failed:", e);
-    }
-  };
-
-  const renameThread = async (id: string, label: string) => {
-    try {
-      await api.patch(`/threads/${id}`, { label });
-      loadThreads();
-    } catch (e: any) {
-      console.error("[threads] rename failed:", e);
-    }
-  };
-
-  const deleteThread = async (id: string) => {
-    try {
-      await api.del(`/threads/${id}`);
-      if (activeThread === id) {
-        setActiveThread("desktop");
-      }
-      loadThreads();
-    } catch (e: any) {
-      console.error("[threads] delete failed:", e);
-    }
-  };
-
-  const loadProjectContext = async () => {
-    try {
-      const data = await api.get<{ content?: string; source?: string }>("/project-context");
-      setProjectContext(data.content || "");
-      setProjectContextSource(data.source || "none");
-      setProjectContextMsg("");
-    } catch (e: any) {
-      setProjectContextMsg(`Load failed: ${e.message}`);
-    }
-  };
-
-  const saveProjectContext = async () => {
-    setProjectContextMsg("Saving…");
-    try {
-      const data = await api.post<{ success?: boolean; error?: string }>(
-        "/project-context",
-        { content: projectContext }
-      );
-      if (data.success) {
-        setProjectContextMsg("Saved. Agent will reload on next message.");
-      } else {
-        setProjectContextMsg(`Save failed: ${data.error}`);
-      }
-    } catch (e: any) {
-      setProjectContextMsg(`Save error: ${e.message}`);
-    }
-  };
-
-  const loadCodebaseStatus = async () => {
-    try {
-      const data = await api.get<any>("/codebase");
-      setCodebaseStatus(data);
-    } catch (e: any) {
-      setCodebaseMsg(`Status failed: ${e.message}`);
-    }
-  };
-
-  const indexCodebase = async () => {
-    setCodebaseMsg("Indexing workspace…");
-    try {
-      const data = await api.post<{ success?: boolean; indexed_files?: number; chunks?: number; error?: string }>(
-        "/codebase/index"
-      );
-      if (data.success) {
-        setCodebaseMsg(`Indexed ${data.indexed_files} files, ${data.chunks} chunks`);
-        loadCodebaseStatus();
-      } else {
-        setCodebaseMsg(`Index failed: ${data.error}`);
-      }
-    } catch (e: any) {
-      setCodebaseMsg(`Index error: ${e.message}`);
-    }
-  };
-
-  const searchCodebase = async () => {
-    if (!codebaseQuery.trim()) return;
-    setCodebaseMsg("Searching…");
-    try {
-      const data = await api.post<{ results?: any[] } & Record<string, any>>(
-        "/codebase/search",
-        { query: codebaseQuery, top_k: 8 }
-      );
-      setCodebaseResults(data.results || []);
-      setCodebaseMsg(data.results?.length ? `Found ${data.results.length} results` : "No results");
-    } catch (e: any) {
-      setCodebaseMsg(`Search error: ${e.message}`);
-    }
-  };
-
-  const loadMemory = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (memoryFilter.category) params.set("category", memoryFilter.category);
-      if (memoryFilter.tier) params.set("tier", memoryFilter.tier);
-      params.set("limit", "200");
-      const data = await api.get<{ entries?: MemoryEntry[] }>(`/memory?${params.toString()}`);
-      setMemories(data.entries || []);
-    } catch (e: any) {
-      setMemoryMsg(`Load failed: ${e.message}`);
-    }
-  };
-
-  const loadMemoryStats = async () => {
-    try {
-      const data = await api.get<MemoryStats>("/memory/stats");
-      setMemoryStats(data);
-    } catch {
-      setMemoryStats(null);
-    }
-  };
-
-  const searchMemory = async () => {
-    if (!memorySearch.trim()) {
-      loadMemory();
-      return;
-    }
-    setMemoryMsg("Searching…");
-    try {
-      const data = await api.post<{ results?: MemoryEntry[] } & Record<string, any>>(
-        "/memory/search",
-        { query: memorySearch, top_k: 10 }
-      );
-      setMemories(data.results || []);
-      setMemoryMsg(data.results?.length ? `Found ${data.results.length} results` : "No results");
-    } catch (e: any) {
-      setMemoryMsg(`Search error: ${e.message}`);
-    }
-  };
-
-  const createMemory = async () => {
-    setMemoryMsg("Saving…");
-    try {
-      const data = await api.post<{ success?: boolean; error?: string }>(
-        "/memory",
-        {
-          content: memoryForm.content,
-          category: memoryForm.category,
-          tags: memoryForm.tags.split(",").map((t) => t.trim()).filter(Boolean),
-          importance: memoryForm.importance,
-          tier: memoryForm.tier,
-        }
-      );
-      if (data.success) {
-        setMemoryForm({ content: "", category: "fact", tags: "", importance: 0.5, tier: "mid" });
-        setMemoryMsg("Memory saved.");
-        loadMemory();
-        loadMemoryStats();
-      } else {
-        setMemoryMsg(`Save failed: ${data.error}`);
-      }
-    } catch (e: any) {
-      setMemoryMsg(`Save error: ${e.message}`);
-    }
-  };
-
-  const deleteMemory = async (id: string) => {
-    if (!confirm("Delete this memory?")) return;
-    try {
-      await api.del(`/memory/${id}`);
-      loadMemory();
-      loadMemoryStats();
-    } catch (e: any) {
-      setMemoryMsg(`Delete error: ${e.message}`);
-    }
-  };
-
-  const promoteMemory = async (id: string) => {
-    try {
-      const data = await api.post<{ success?: boolean; error?: string }>(`/memory/promote/${id}`);
-      if (data.success) {
-        loadMemory();
-        loadMemoryStats();
-      } else {
-        setMemoryMsg(`Promote failed: ${data.error}`);
-      }
-    } catch (e: any) {
-      setMemoryMsg(`Promote error: ${e.message}`);
-    }
-  };
-
-  const pruneMemory = async () => {
-    if (!confirm("Prune expired and low-importance memories?")) return;
-    try {
-      const data = await api.post<{ expired?: number; low_importance?: number }>("/memory/prune");
-      setMemoryMsg(`Pruned ${data.expired ?? 0} expired, ${data.low_importance ?? 0} low-importance.`);
-      loadMemory();
-      loadMemoryStats();
-    } catch (e: any) {
-      setMemoryMsg(`Prune error: ${e.message}`);
-    }
-  };
-
-  const syncMemoryMd = async () => {
-    setMemoryMsg("Syncing MEMORY.md…");
-    try {
-      const data = await api.post<{ path?: string }>("/memory/sync-md");
-      if (data.path) {
-        setMemoryMsg(`Synced to ${data.path}`);
-      } else {
-        setMemoryMsg("Sync returned no path.");
-      }
-    } catch (e: any) {
-      setMemoryMsg(`Sync error: ${e.message}`);
-    }
-  };
-
-  // Auto-expand sidebar group when activeTab changes (e.g. from deep links)
   useEffect(() => {
     const group = sidebarGroupsData.find((g) => g.tabs.some((t) => t.id === activeTab));
     if (group) {
@@ -1779,6 +465,7 @@ export default function App() {
     }
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── useEffect: tab data loading ──────────────────────────────
   useEffect(() => {
     if (activeTab === "knowledge") {
       loadKnowledge();
@@ -1803,593 +490,9 @@ export default function App() {
     }
   }, [activeTab, memoryFilter.category, memoryFilter.tier]);
 
-  // Lazy-load stored LLM credentials when the Models settings tab is opened,
-  // so users can link a model to a credential instead of pasting a key.
-  useEffect(() => {
-    if (settingsTab !== "models") return;
-    let alive = true;
-    api
-      .get<{ credentials?: any[] }>("/credentials?kind=llm")
-      .then((data) => {
-        if (!alive) return;
-        const list = (data.credentials || []).map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          provider: c.metadata?.provider,
-        }));
-        setLlmCredOptions(list);
-      })
-      .catch(() => {
-        // backend may be offline; just leave the list empty
-      });
-    return () => { alive = false; };
-  }, [settingsTab]);
-
-  // ── WebSocket via ReconnectingWebSocket ────────────────────────
-  // Replaces the previous native WebSocket (fixed 3s reconnect, no heartbeat,
-  // no message buffering) with the production ws-client that provides
-  // exponential backoff (1s→30s), 30s heartbeat ping, message buffering
-  // during disconnection, and auth token support.
-  const wsClientRef = useRef<ReconnectingWebSocket | null>(null);
-
-  useEffect(() => {
-    // Build WS URL from current API_BASE (already synced via Tauri)
-    const wsUrl = WS_URL || `${API_BASE.replace("http", "ws")}/ws/agent`;
-
-    const ws = new ReconnectingWebSocket({
-      url: wsUrl,
-      authToken: () => getAuthToken(),
-      pingInterval: 30_000, // matches backend heartbeat
-      maxDelay: 30_000,
-      onStatus: (status) => {
-        setIsConnected(status === "connected");
-        if (status === "reconnecting") {
-          setIsConnected(false);
-        }
-      },
-      onMessage: (data) => {
-        // Safe parse: ws-client already handles JSON parsing and
-        // pong/ping filtering, but we guard against unexpected types
-        if (typeof data === "string") return; // non-JSON text, ignore
-        if (isWSMessage(data)) handleWsMessage(data);
-      },
-      onConnected: () => {
-        // Sync local config to backend on connect/reconnect
-        pushConfig(loadStoredConfig());
-        // Reset transient state that may be stale after reconnect
-        setPendingClarifications([]);
-        setIsStreaming(false);
-        // Reconnect drops in-flight replies: finalize the placeholder so
-        // it stops showing "typing..." instead of hanging forever.
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.timestamp === "streaming"
-              ? { ...m, timestamp: formatTime(), content: m.content + "\n\n[连接中断，回复未完成]" }
-              : m
-          )
-        );
-      },
-    });
-
-    ws.connect();
-    wsClientRef.current = ws;
-
-    return () => {
-      ws.close();
-      wsClientRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  useEffect(() => {
-    if (activeTab === "tools" && tools.length === 0) {
-      api.get<ToolInfo[]>('/tools')
-        .then(setTools)
-        .catch((e) => console.error("Failed to load tools:", e));
-    }
-    if (activeTab === "skills" && skills.length === 0) {
-      api.get<SkillInfo[]>('/skills')
-        .then(setSkills)
-        .catch((e) => console.error("Failed to load skills:", e));
-    }
-  }, [activeTab, tools.length, skills.length]);
-
-  // ── Dynamic persona loading from backend ──────────────────────
-  useEffect(() => {
-    api.get<{ personas?: PersonaSeed[] } | PersonaSeed[]>('/personas')
-      .then((data) => {
-        const list = Array.isArray(data) ? data : (data.personas || []);
-        const personas = list.map((p) => ({
-          id: p.name || p.id || '',
-          label: p.name || p.id || '',
-          description: p.description || '',
-          avatar: p.avatar || '',
-        }));
-        if (personas.length > 0) {
-          setPersonaList(personas);
-        }
-      })
-      .catch(() => { /* keep fallback list */ });
-  }, []);
-
-  // ── Load persona emotion when persona changes ──────────────────
-  useEffect(() => {
-    if (!config.persona || config.persona === 'default') {
-      setPersonaEmotion(null);
-      return;
-    }
-    api.get<PersonaEmotionResponse>(`/personas/${config.persona}/emotion`)
-      .then((d) => {
-        setPersonaEmotion({
-          mood: d.context_prompt?.slice(0, 80) || '',
-          valence: d.state?.valence ?? 0,
-          arousal: d.state?.arousal ?? 0,
-          trust: d.state?.trust ?? 0.5,
-        });
-      })
-      .catch(() => { /* emotion not available */ });
-  }, [config.persona]);
-
-  const handleWsMessage = (data: WSMessage) => {
-    switch (data.type) {
-      case "text_delta":
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === "assistant" && last.timestamp === "streaming") {
-            const updated = [...prev];
-            updated[updated.length - 1] = { ...last, content: last.content + data.text };
-            return updated;
-          }
-          return [...prev, { role: "assistant", content: data.text, timestamp: "streaming" }];
-        });
-        pendingResponseRef.current += data.text;
-        setIsStreaming(true);
-        break;
-      case "done":
-        setMessages((prev) => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last && last.timestamp === "streaming") {
-            updated[updated.length - 1] = { ...last, timestamp: formatTime() };
-          }
-          return updated;
-        });
-        setIsStreaming(false);
-        playTaskComplete();
-        notify(
-          "Huginn",
-          pendingResponseRef.current.slice(0, 120) || "Agent finished"
-        );
-        break;
-      case "error":
-        playErrorSound();
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `❌ ${data.error}`, timestamp: formatTime() },
-        ]);
-        setIsStreaming(false);
-        notify("Huginn", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
-        break;
-      case "tool_call":
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "tool",
-            content: `Using tool **${data.name}**…`,
-            timestamp: formatTime(),
-            tool_call_id: data.id,
-            tool_name: data.name,
-            tool_args: data.args,
-            tool_status: "running",
-          },
-        ]);
-        setIsStreaming(true);
-        break;
-      case "tool_result":
-        setMessages((prev) => {
-          const updated = [...prev];
-          const idx = updated.findIndex(
-            (m) => m.role === "tool" && m.tool_call_id === data.id && m.tool_status === "running"
-          );
-          if (idx !== -1) {
-            updated[idx] = {
-              ...updated[idx],
-              content: `Tool **${updated[idx].tool_name}** finished`,
-              tool_status: "done",
-              tool_result: data.content,
-            };
-          }
-          return updated;
-        });
-        break;
-      case "auto_checkpoint":
-        setCheckpoints((prev) => [
-          { id: data.id, base: data.base, files: data.files },
-          ...prev,
-        ]);
-        setActiveCp(data.id);
-        break;
-      case "agent_status":
-        setMessages((prev) => {
-          const updated = [...prev];
-          const key = `agent:${data.task_id}`;
-          const idx = updated.findIndex((m) => m.role === "tool" && m.tool_call_id === key);
-          const text = data.output
-            ? `**${data.agent_id}** ${data.status}: ${data.output.slice(0, 200)}`
-            : `**${data.agent_id}** ${data.status}…`;
-          const entry: Message = {
-            role: "tool",
-            content: text,
-            timestamp: formatTime(),
-            tool_call_id: key,
-            tool_name: data.agent_id,
-            tool_status: data.status === "done" ? "done" : "running",
-          };
-          if (idx !== -1) {
-            updated[idx] = entry;
-          } else {
-            updated.push(entry);
-          }
-          return updated;
-        });
-        break;
-      case "exploration_result":
-        if (data.data) {
-          explore.setResult(data.data);
-          explore.setRunning(false);
-          const best = data.data.best_branch;
-          const summary = best
-            ? `Exploration complete — best: **${best.name}** (${data.data.convergence_reason})`
-            : `Exploration complete (${data.data.convergence_reason})`;
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: summary, timestamp: formatTime() },
-          ]);
-        }
-        break;
-      case "pong":
-        break;
-      case "plan": {
-        // Structured plan from agent — render as a plan card
-        const planData = data.plan;
-        const planId = data.plan_id;
-        const steps = (planData?.steps || []).map((s: any, i: number) =>
-          `${i + 1}. **${s.name || "Step"}**: ${s.description || ""}`
-        ).join("\n");
-        const criteria = (planData?.acceptance_criteria || []).map((c: any) =>
-          `✅ ${c.criterion || c}`
-        ).join("\n");
-        const tools = (planData?.tools_needed || []).join(", ");
-        const planContent = `📋 **Plan**: ${planData?.summary || ""}\n\n${steps}\n${criteria ? `\n${criteria}\n` : ""}${tools ? `\n🔧 Tools: ${tools}` : ""}`;
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: planContent,
-            timestamp: formatTime(),
-            isPlan: true,
-            planId,
-            planData,
-          } as Message,
-        ]);
-        // Do NOT auto-confirm — user must click Confirm/Cancel buttons
-        break;
-      }
-      case "plan_result": {
-        // Validation results for acceptance criteria
-        const criteria = (data.criteria || []).map((c: any) =>
-          `${c.passed ? "✅" : "❌"} ${c.criterion}`
-        ).join("\n");
-        const allPassed = data.all_passed;
-        const resultContent = `${allPassed ? "🎉 All criteria passed!" : "⚠️ Some criteria failed"}\n${criteria}`;
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: resultContent, timestamp: formatTime() },
-        ]);
-        break;
-      }
-      case "clarification_request": {
-        // Agent is asking clarifying questions before proceeding.
-        // Render as interactive question cards in the chat.
-        const questions = data.questions || [];
-        const questionText = questions.map((q: any, i: number) => {
-          const opts = q.options ? q.options.map((o: string) => `[${o}]`).join(" ") : "";
-          return `${i + 1}. ${q.question || q}${opts ? " " + opts : ""}`;
-        }).join("\n");
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `❓ Please clarify:\n${questionText}`,
-            timestamp: formatTime(),
-            isClarification: true,
-            clarifications: questions,
-          } as Message,
-        ]);
-        // Store for interactive UI rendering
-        setPendingClarifications(questions.map((q: any) => ({
-          question_id: q.question_id,
-          question: q.question || q,
-          options: q.options || [],
-          thread_id: data.thread_id,
-        })));
-        break;
-      }
-      case "citations": {
-        // RAG citation sources — render as expandable source list
-        const sources = data.sources || [];
-        const sourceText = sources.map((s: any) =>
-          `[${s.ref}] ${s.filename}${s.distance ? ` (score: ${(1 - s.distance).toFixed(2)})` : ""}`
-        ).join("\n");
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `📎 Sources:\n${sourceText}`,
-            timestamp: formatTime(),
-            isCitation: true,
-            citationSources: sources,
-          } as Message,
-        ]);
-        break;
-      }
-      case "task_progress": {
-        // Long task progress (HPC job, sweep, etc.)
-        const tp = data;
-        const taskKey = tp.task_type + (tp.job_id ? `_${tp.job_id}` : "");
-        let progressText = "";
-        if (tp.task_type === "hpc_job") {
-          const icon = tp.status === "completed" ? "✅" : tp.status === "failed" ? "❌" : tp.status === "running" ? "🔄" : "⏳";
-          progressText = `${icon} HPC Job ${tp.job_id}: ${tp.status}`;
-        } else if (tp.task_type === "sweep") {
-          progressText = `📊 Sweep: ${tp.completed}/${tp.total} (${tp.progress_pct}%)`;
-        } else {
-          progressText = `📈 Progress: ${tp.progress_pct}%`;
-        }
-        setMessages((prev) => {
-          // Search all messages for a matching task to update (not just last)
-          for (let i = prev.length - 1; i >= Math.max(0, prev.length - 10); i--) {
-            const m = prev[i];
-            if (m.isTaskProgress && (m.taskType + (m.jobId ? `_${m.jobId}` : "")) === taskKey) {
-              const updated = [...prev];
-              updated[i] = { ...m, content: progressText, timestamp: formatTime() };
-              return updated;
-            }
-          }
-          // No match found — append new
-          return [...prev, {
-            role: "assistant",
-            content: progressText,
-            timestamp: formatTime(),
-            isTaskProgress: true,
-            taskType: tp.task_type,
-            jobId: tp.job_id,
-          } as Message];
-        });
-        break;
-      }
-      case "sediment": {
-        // Knowledge base auto-sediment confirmation
-        if (data.stored) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: `💾 Result saved to knowledge base`,
-              timestamp: formatTime(),
-            },
-          ]);
-        }
-        break;
-      }
-      case "approval_request": {
-        // Tool approval request from agent (auto-approved by backend,
-        // shown for visibility)
-        // Don't add to messages — just log to console for now
-        console.log("[WS] Approval request:", data.tool_name, data.reason);
-        break;
-      }
-      case "auto_approve_set": {
-        // Auto-approve toggle response
-        console.log("[WS] Auto-approve set:", data.enabled, data.scope);
-        break;
-      }
-      case "ping": {
-        // Backend heartbeat ping — respond with pong
-        if (wsClientRef.current) {
-          wsClientRef.current.send(JSON.stringify({ type: "pong" }));
-        }
-        break;
-      }
-    }
-  };
-
-  const sendMessage = async () => {
-    if (!input.trim() || isStreaming) return;
-
-    const content = input.trim();
-
-    if (mode === "plan") {
-      setPlanLoading(true);
-      setPendingPlan("");
-      try {
-        const data = await api.post<{ error?: string; plan?: string } & Record<string, any>>(
-          "/plan",
-          { content, thread_id: activeThread }
-        );
-        if (data.error) {
-          setPendingPlan(`❌ ${data.error}`);
-        } else {
-          setPendingPlan(data.plan || "No plan returned.");
-        }
-      } catch (e: any) {
-        setPendingPlan(`❌ Plan request failed: ${e.message}`);
-      } finally {
-        setPlanLoading(false);
-      }
-      return;
-    }
-
-    if (!wsClientRef.current) return;
-
-    const userMsg: Message = { role: "user", content, timestamp: formatTime() };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    pendingResponseRef.current = "";
-
-    // Use ReconnectingWebSocket.send() which buffers during disconnect
-    const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread });
-    if (wsClientRef.current) {
-      wsClientRef.current.send(payload);
-    }
-  };
-
-  // ── Answer clarification questions ────────────────────────────
-  // Called when user clicks an option button or types an answer to
-  // a clarification_request. Sends the answer via WS and clears
-  // the pending clarifications.
-  const answerClarification = (questionId: string | undefined, answer: string) => {
-    const payload = JSON.stringify({
-      type: "clarification_response",
-      question_id: questionId,
-      answer,
-      thread_id: activeThread,
-    });
-    if (wsClientRef.current) {
-      wsClientRef.current.send(payload);
-    }
-    // Add user's answer to chat
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: answer, timestamp: formatTime() },
-    ]);
-    setPendingClarifications([]);
-  };
-
-  // ── Switch persona mid-conversation ────────────────────────────
-  const switchPersona = async (personaName: string) => {
-    try {
-      await api.post(`/personas/${personaName}/switch`, {});
-      setConfig((prev) => ({ ...prev, persona: personaName }));
-    } catch (e) {
-      console.error("Failed to switch persona:", e);
-    }
-  };
-
-  const runTool = async () => {
-    if (!selectedTool) return;
-    if (selectedTool.destructive) {
-      const ok = window.confirm(
-        `⚠️ ${selectedTool.function.name} may overwrite files or run shell commands. Run it anyway?`
-      );
-      if (!ok) return;
-    }
-    setToolLoading(true);
-    setToolResult("");
-    try {
-      const name = selectedTool.function.name;
-      const data = await api.post(`/tools/${name}`, toolArgs);
-      setToolResult(JSON.stringify(data, null, 2));
-    } catch (e: any) {
-      setToolResult(`Error: ${e.message}`);
-    } finally {
-      setToolLoading(false);
-    }
-  };
-
-  const runSkill = async () => {
-    if (!selectedSkill) return;
-    setSkillLoading(true);
-    setSkillResult("");
-    try {
-      const data = await api.post("/skills/execute", { skill: selectedSkill.name, args: skillArgs });
-      setSkillResult(JSON.stringify(data, null, 2));
-    } catch (e: any) {
-      setSkillResult(`Error: ${e.message}`);
-    } finally {
-      setSkillLoading(false);
-    }
-  };
-
+  // ── Derived constants ────────────────────────────────────────
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
-
-  const iconSize = 16;
-
-  interface SidebarTab {
-    id: typeof activeTab;
-    label: string;
-    icon: React.ReactNode;
-    indented?: boolean;
-  }
-
-  interface SidebarGroup {
-    key: string;
-    label: string;
-    tabs: SidebarTab[];
-  }
-
-  const sidebarGroupsData: SidebarGroup[] = [
-    {
-      key: "core",
-      label: "CORE",
-      tabs: [
-        { id: "chat", label: "Chat", icon: <MessageSquare size={iconSize} /> },
-        { id: "team", label: "Team", icon: <Users size={iconSize} /> },
-        { id: "coder", label: "Coder", icon: <Code2 size={iconSize} /> },
-      ],
-    },
-    {
-      key: "research",
-      label: "RESEARCH",
-      tabs: [
-        { id: "knowledge", label: "Knowledge", icon: <BookOpen size={iconSize} /> },
-        { id: "periodic", label: "Periodic Table", icon: <Atom size={iconSize} /> },
-        { id: "project", label: "Project", icon: <Briefcase size={iconSize} /> },
-        { id: "notebook", label: "Notebook", icon: <NotebookIcon size={iconSize} />, indented: true },
-        { id: "benchmark", label: "Benchmark", icon: <FlaskConical size={iconSize} />, indented: true },
-        { id: "evolution", label: "Evolution", icon: <Dna size={iconSize} />, indented: true },
-        { id: "execute", label: "Execute", icon: <Play size={iconSize} />, indented: true },
-        { id: "workflows", label: "Workflows", icon: <Zap size={iconSize} />, indented: true },
-        { id: "sweep", label: "Sweep", icon: <BarChart3 size={iconSize} />, indented: true },
-        { id: "explore", label: "Explore", icon: <Compass size={iconSize} />, indented: true },
-        { id: "diagnose", label: "Diagnose", icon: <Stethoscope size={iconSize} />, indented: true },
-        { id: "structure", label: "Structure", icon: <Box size={iconSize} />, indented: true },
-        { id: "hpc", label: "HPC", icon: <Monitor size={iconSize} />, indented: true },
-      ],
-    },
-    {
-      key: "workspace",
-      label: "WORKSPACE",
-      tabs: [
-        { id: "files", label: "Files", icon: <FolderTree size={iconSize} /> },
-        { id: "terminal", label: "Terminal", icon: <Terminal size={iconSize} /> },
-        { id: "sandbox", label: "Sandbox", icon: <TerminalSquare size={iconSize} /> },
-        { id: "review", label: "Review", icon: <GitBranch size={iconSize} /> },
-        { id: "tools", label: "Tools", icon: <Wrench size={iconSize} /> },
-        { id: "skills", label: "Skills", icon: <Sparkles size={iconSize} /> },
-      ],
-    },
-    {
-      key: "system",
-      label: "SYSTEM",
-      tabs: [
-        { id: "memory", label: "Memory", icon: <Brain size={iconSize} /> },
-        { id: "emotion", label: "Emotion", icon: <Activity size={iconSize} /> },
-        { id: "plugins", label: "Plugins", icon: <Puzzle size={iconSize} /> },
-        { id: "threads", label: "Threads", icon: <MessageCircle size={iconSize} /> },
-        { id: "logs", label: "Logs", icon: <FileText size={iconSize} /> },
-        { id: "settings", label: "Settings", icon: <Settings size={iconSize} /> },
-      ],
-    },
-  ];
-
   const allTabs = sidebarGroupsData.flatMap((g) => g.tabs);
-  // Resolve the active tab once — the header reads icon + label, and without
-  // this it scans allTabs twice per render.
   const activeTabInfo = allTabs.find((t) => t.id === activeTab);
 
   const sectionAccent: Record<string, string> = {
@@ -2401,33 +504,10 @@ export default function App() {
   const activeGroupKey = sidebarGroupsData.find((g) => g.tabs.some((t) => t.id === activeTab))?.key ?? "core";
   const activeAccent = sectionAccent[activeGroupKey] ?? sectionAccent.core;
 
-  const renderTree = (path: string, depth = 0) => {
-    const entries = dirCache[path];
-    if (!entries) return null;
-    return (
-      <div>
-        {entries.map((entry) => (
-          <div key={entry.path}>
-            <button
-              onClick={() => (entry.is_dir ? toggleDir(entry.path) : openFile(entry.path))}
-              className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm ${
-                selectedFile === entry.path
-                  ? "bg-accent text-white"
-                  : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-              }`}
-              style={{ paddingLeft: depth * 12 + 8 }}
-            >
-              <span>{entry.is_dir ? (expandedDirs.has(entry.path) ? "📂" : "📁") : "📄"}</span>
-              <span className="truncate">{entry.name}</span>
-            </button>
-            {entry.is_dir &&
-              expandedDirs.has(entry.path) &&
-              renderTree(entry.path, depth + 1)}
-          </div>
-        ))}
-      </div>
-    );
-  };
+  const handleCoderRun = coder.run;
+  const handleExecuteRun = execute.run;
+  const handleDiagnoseRun = diagnose.run;
+  const handleWorkflowRun = workflow.run;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
@@ -2444,7 +524,6 @@ export default function App() {
         <nav className="flex-1 overflow-y-auto px-3 py-2" aria-label="Main navigation">
           {sidebarGroupsData.map((group, gi) => (
             <div key={group.key} className={gi > 0 ? "mt-1" : ""}>
-              {/* Group header - clickable, collapsible */}
               <button
                 onClick={() => toggleSidebarGroup(group.key)}
                 aria-expanded={sidebarGroups[group.key]}
@@ -2459,7 +538,6 @@ export default function App() {
                 {group.label}
               </button>
 
-              {/* Collapsible items container */}
               <div
                 role="tablist"
                 aria-label={group.label}
@@ -2551,7 +629,7 @@ export default function App() {
             <LanguageSwitcher />
             {activeTab === "chat" && (
               <button
-                onClick={() => { setChatSearchOpen((p) => !p); if (chatSearchOpen) setChatSearchQuery(""); }}
+                onClick={() => { setChatSearchOpen((p: boolean) => !p); if (chatSearchOpen) setChatSearchQuery(""); }}
                 className={`rounded-lg p-1.5 transition-colors ${chatSearchOpen ? "bg-bg-tertiary text-accent" : "text-text-muted hover:text-text-secondary"}`}
                 title="Search messages"
                 aria-label="Search messages"
@@ -2579,1049 +657,140 @@ export default function App() {
         {/* Content */}
         <div className="flex-1 overflow-hidden border-l-[3px]" style={{ borderLeftColor: activeAccent, transition: "border-left-color 0.3s ease" }}>
           {activeTab === "chat" && (
-            <div className="flex h-full flex-col">
-              {chatSearchOpen && (
-                <div className="flex items-center gap-2 border-b border-border bg-bg-secondary/50 px-6 py-2">
-                  <Search size={14} className="shrink-0 text-text-muted" />
-                  <input
-                    type="text"
-                    autoFocus
-                    value={chatSearchQuery}
-                    onChange={(e) => setChatSearchQuery(e.target.value)}
-                    placeholder="Search messages…"
-                    className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
-                  />
-                  {chatSearchQuery && (
-                    <span className="shrink-0 text-[11px] text-text-muted">
-                      {messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase())).length} matches
-                    </span>
-                  )}
-                  <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary" aria-label="Close search">
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
-              <div className="cv-list flex-1 overflow-y-auto p-6 space-y-5">
-                {(chatSearchQuery.trim()
-                  ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
-                  : messages
-                ).map((msg, i) => {
-                  if (msg.role === "tool") {
-                    return (
-                      <div key={i} className="flex justify-center">
-                        <div className="w-full max-w-2xl rounded-xl border border-border bg-bg-secondary p-4 shadow-sm">
-                          <div className="flex items-center gap-2 text-sm font-semibold text-accent">
-                            <span>🔧</span>
-                            <span>{msg.tool_name}</span>
-                            {msg.tool_status === "running" && (
-                              <span className="ml-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                            )}
-                            {msg.tool_status === "done" && (
-                              <span className="ml-2 text-xs text-success">done</span>
-                            )}
-                          </div>
-                          <div className="mt-2 text-xs text-text-secondary">
-                            Arguments
-                          </div>
-                          <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
-                            {JSON.stringify(msg.tool_args, null, 2)}
-                          </pre>
-                          {msg.tool_status === "done" && msg.tool_result !== undefined && (
-                            <>
-                              <div className="mt-3 text-xs text-text-secondary">
-                                Result
-                              </div>
-                              <ToolResultRenderer content={msg.tool_result} toolName={msg.tool_name} />
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div
-                      key={i}
-                      className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
-                    >
-                      <div
-                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
-                          msg.role === "user" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-                        }`}
-                      >
-                        {msg.role === "user" ? "You" : "AI"}
-                      </div>
-                      <div
-                        className={`max-w-[75%] rounded-2xl px-5 py-3 ${
-                          msg.role === "user"
-                            ? "bg-accent text-white rounded-br-none"
-                            : "bg-bg-secondary border border-border rounded-bl-none"
-                        }`}
-                      >
-                        <div className="mb-1 flex items-center gap-2 text-xs opacity-70">
-                          <span>{msg.role === "user" ? "You" : "Assistant"}</span>
-                          <span>
-                            {msg.timestamp === "streaming" ? "typing…" : msg.timestamp}
-                          </span>
-                        </div>
-                        <div className="text-[15px] leading-relaxed">
-                          <MessageContent content={msg.content} />
-                        </div>
-                        {msg.role === "assistant" && msg.content && msg.timestamp !== "streaming" && (
-                          <div className="mt-1.5 flex justify-end">
-                            <SaveToMemoryButton content={msg.content} />
-                          </div>
-                        )}
-                        {/* Plan confirm/cancel buttons */}
-                        {msg.isPlan && msg.planId && (
-                          <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
-                            <button
-                              onClick={() => {
-                                if (wsClientRef.current) {
-                                  wsClientRef.current.send(JSON.stringify({
-                                    type: "plan_confirm",
-                                    plan_id: msg.planId,
-                                    confirmed: true,
-                                  }));
-                                }
-                                // Mark as confirmed to disable buttons
-                                setMessages((prev) => prev.map((m) =>
-                                  m === msg ? { ...m, planConfirmed: true } : m
-                                ));
-                              }}
-                              disabled={msg.planConfirmed}
-                              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              {msg.planConfirmed ? "✓ Confirmed" : "Confirm & Execute"}
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (wsClientRef.current) {
-                                  wsClientRef.current.send(JSON.stringify({
-                                    type: "plan_confirm",
-                                    plan_id: msg.planId,
-                                    confirmed: false,
-                                  }));
-                                }
-                                setMessages((prev) => prev.map((m) =>
-                                  m === msg ? { ...m, planConfirmed: true } : m
-                                ));
-                              }}
-                              disabled={msg.planConfirmed}
-                              className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary hover:bg-bg-tertiary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        )}
-                        {/* Interactive clarification question cards */}
-                        {msg.isClarification && msg.clarifications && (
-                          <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
-                            {msg.clarifications.map((q: any, qi: number) => (
-                              <div key={qi} className="rounded-lg bg-bg-tertiary p-3">
-                                <div className="text-sm font-medium text-text-primary">
-                                  {q.question || q}
-                                </div>
-                                {q.options && q.options.length > 0 ? (
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {q.options.map((opt: string) => (
-                                      <button
-                                        key={opt}
-                                        onClick={() => answerClarification(q.question_id, opt)}
-                                        disabled={pendingClarifications.length === 0}
-                                        className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                      >
-                                        {opt}
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            ))}
-                            <div className="text-xs text-text-tertiary">
-                              Type your answer or click an option above
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                <div ref={messagesEndRef} />
-              </div>
-
-              <div className="border-t border-border bg-bg-secondary p-4">
-                {!isConnected && (
-                  <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
-                    Backend is not connected. Start the server to send messages, or configure it in Settings.
-                  </div>
-                )}
-
-                {pendingClarifications.length > 0 && (
-                  <div className="mb-3 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs text-accent">
-                    💡 Agent is waiting for your clarification — answer above or type below
-                  </div>
-                )}
-
-                {pendingPlan && (
-                  <div className="mb-3 rounded-xl border border-border bg-bg-tertiary p-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-accent">📋 Plan</span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setPendingPlan("")}
-                          className="text-xs text-text-secondary hover:text-text-primary"
-                        >
-                          Dismiss
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMode("build");
-                            sendMessage();
-                          }}
-                          disabled={!input.trim() || planLoading}
-                          className="btn-primary px-3 py-1 text-xs"
-                        >
-                          Run plan
-                        </button>
-                      </div>
-                    </div>
-                    <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs text-text-primary">
-                      <MessageContent content={pendingPlan} />
-                    </div>
-                  </div>
-                )}
-
-                <div className="mb-3 flex items-center gap-2">
-                  <ChatModeSelector mode={mode} onChange={setMode} />
-                  <span className="text-[10px] text-text-muted">
-                    {t(`chat.mode.${mode}.desc`)}
-                  </span>
-                </div>
-
-                <div className="flex items-end gap-3">
-                  <textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage();
-                      }
-                    }}
-                    placeholder={
-                      mode === "plan"
-                        ? "Describe what you want to do. I'll generate a plan first."
-                        : mode === "build"
-                        ? "Run the plan with tool execution enabled…"
-                        : isConnected
-                        ? "Ask about materials science, DFT, MD, packing, UQ/GP…"
-                        : "Backend offline — start server.py"
-                    }
-                    rows={2}
-                    disabled={!isConnected || isStreaming || planLoading}
-                    className="input min-h-[56px] resize-none flex-1"
-                  />
-                  <button
-                    onClick={sendMessage}
-                    disabled={!isConnected || isStreaming || !input.trim() || planLoading}
-                    className="btn-primary h-11 px-5"
-                  >
-                    {planLoading ? "Planning…" : isStreaming ? "…" : mode === "plan" ? "Plan" : "Send"}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ChatPanel
+              messages={messages}
+              chatSearchOpen={chatSearchOpen}
+              chatSearchQuery={chatSearchQuery}
+              setChatSearchOpen={setChatSearchOpen}
+              setChatSearchQuery={setChatSearchQuery}
+              wsClientRef={wsClientRef}
+              setMessages={setMessages}
+              answerClarification={answerClarification}
+              pendingClarifications={pendingClarifications}
+              isConnected={isConnected}
+              sendMessage={sendMessage}
+              pendingPlan={pendingPlan}
+              setPendingPlan={setPendingPlan}
+              planLoading={planLoading}
+              setMode={setMode}
+              input={input}
+              setInput={setInput}
+              mode={mode}
+              isStreaming={isStreaming}
+              messagesEndRef={messagesEndRef}
+            />
           )}
 
           {activeTab === "team" && (
-            <div className="flex h-full flex-col">
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="mx-auto max-w-3xl space-y-5">
-                  <div className="card">
-                    <h2 className="mb-2 text-base font-semibold">👥 Multi-Agent Team</h2>
-                    <p className="text-sm text-text-secondary">
-                      The lead agent breaks your objective into subtasks and delegates them to the configured agent profiles.
-                    </p>
-                    <div className="mt-4 flex items-center gap-2">
-                      <label className="flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
-                        <input
-                          type="checkbox"
-                          checked={config.team_mode_enabled}
-                          onChange={(e) => {
-                            const next = { ...config, team_mode_enabled: e.target.checked };
-                            setConfig(next);
-                            setConfigDirty(true);
-                            saveConfig(next);
-                          }}
-                        />
-                        Enable team mode
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="card space-y-3">
-                    <label className="block text-xs font-medium text-text-secondary">Objective</label>
-                    <textarea
-                      value={teamObjective}
-                      onChange={(e) => setTeamObjective(e.target.value)}
-                      placeholder="e.g. Compare VASP and Quantum ESPRESSO for silicon band structure, then suggest which is cheaper for a 50-atom cell."
-                      rows={4}
-                      disabled={teamRunning}
-                      className="input resize-none"
-                    />
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleTeamPlan}
-                        disabled={!isConnected || teamRunning || !teamObjective.trim()}
-                        className="btn-secondary px-3 py-1.5 text-xs"
-                      >
-                        📋 Plan
-                      </button>
-                      <button
-                        onClick={handleTeamRun}
-                        disabled={!isConnected || teamRunning || !teamObjective.trim()}
-                        className="btn-primary px-3 py-1.5 text-xs"
-                      >
-                        {teamRunning ? "Running…" : "▶ Run team"}
-                      </button>
-                    </div>
-                    {teamRunning && (
-                      <div className="flex items-center gap-2 text-xs text-text-secondary">
-                        <span className="inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                        Working with the team…
-                      </div>
-                    )}
-                    {teamError && (
-                      <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">
-                        {teamError}
-                      </div>
-                    )}
-                  </div>
-
-                  {teamPlan && teamPlan.length > 0 && (
-                    <div className="card space-y-3">
-                      <h3 className="text-sm font-semibold">Planned tasks</h3>
-                      <div className="space-y-2">
-                        {teamPlan.map((t) => (
-                          <div key={t.task_id} className="rounded-lg border border-border bg-bg-tertiary p-3">
-                            <div className="flex items-center gap-2 text-xs font-semibold">
-                              <span className="text-accent">{t.task_id}</span>
-                              <span className="text-text-muted">→</span>
-                              <span>{t.agent_id}</span>
-                            </div>
-                            <p className="mt-1 text-xs text-text-secondary">{t.prompt}</p>
-                            {t.depends_on?.length > 0 && (
-                              <p className="mt-1 text-[10px] text-text-muted">Depends on: {t.depends_on.join(", ")}</p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {teamResult && (
-                    <div className="card space-y-3">
-                      <h3 className="text-sm font-semibold">Result</h3>
-                      <div className="rounded-lg border border-border bg-bg-tertiary p-3 text-sm whitespace-pre-wrap">
-                        {teamResult.summary}
-                      </div>
-                      {Object.keys(teamResult.outputs || {}).length > 0 && (
-                        <div className="space-y-2">
-                          <h4 className="text-xs font-semibold text-text-secondary">Sub-agent outputs</h4>
-                          {Object.entries(teamResult.outputs).map(([taskId, output]: [string, any]) => (
-                            <details key={taskId} className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-xs">
-                              <summary className="cursor-pointer font-medium">{taskId}</summary>
-                              <div className="mt-2 whitespace-pre-wrap text-text-secondary">{String(output)}</div>
-                            </details>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <TeamPanel
+              config={config}
+              setConfig={setConfig}
+              setConfigDirty={setConfigDirty}
+              saveConfig={saveConfig}
+              isConnected={isConnected}
+              teamObjective={teamObjective}
+              setTeamObjective={setTeamObjective}
+              teamRunning={teamRunning}
+              teamError={teamError}
+              teamPlan={teamPlan || []}
+              teamResult={teamResult}
+              handleTeamPlan={handleTeamPlan}
+              handleTeamRun={handleTeamRun}
+            />
           )}
 
           {activeTab === "coder" && (
-            <div className="flex h-full flex-col">
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="mx-auto max-w-3xl space-y-5">
-                  <div className="card">
-                    <h2 className="mb-2 text-base font-semibold">💻 Coder Mode</h2>
-                    <p className="text-sm text-text-secondary">
-                      Give Muninn a coding task and let it read, write, edit, run shell commands, and commit changes autonomously.
-                    </p>
-                  </div>
-
-                  <div className="card space-y-3">
-                    <label className="block text-xs font-medium text-text-secondary">Task</label>
-                    <textarea
-                      value={coderTask}
-                      onChange={(e) => setCoderTask(e.target.value)}
-                      placeholder="e.g. Refactor the VASP parser to use the Rust extension, then add a test."
-                      rows={5}
-                      disabled={coder.running}
-                      className="input resize-none"
-                    />
-                    <div className="flex flex-wrap items-center gap-4">
-                      <label className="flex cursor-pointer items-center gap-2 text-sm text-text-primary">
-                        <input
-                          type="checkbox"
-                          checked={coderAutoApprove}
-                          onChange={(e) => setCoderAutoApprove(e.target.checked)}
-                          disabled={coder.running}
-                          className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-                        />
-                        Auto-approve destructive actions
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs text-text-secondary">Max iterations</label>
-                        <input
-                          type="number"
-                          min={1}
-                          max={200}
-                          value={coderMaxIters}
-                          onChange={(e) => setCoderMaxIters(e.target.value === "" ? "" : parseInt(e.target.value, 10))}
-                          disabled={coder.running}
-                          placeholder="default"
-                          className="input w-24 px-2 py-1 text-xs"
-                        />
-                      </div>
-                    </div>
-                    <button
-                      onClick={handleCoderRun}
-                      disabled={!isConnected || coder.running || !coderTask.trim()}
-                      className="btn-primary px-4 py-1.5 text-xs"
-                    >
-                      {coder.running ? "Coding…" : "▶ Run coder"}
-                    </button>
-                    {coder.running && (
-                      <div className="flex items-center gap-2 text-xs text-text-secondary">
-                        <span className="inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                        Muninn is coding…
-                      </div>
-                    )}
-                    {coder.error && (
-                      <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">
-                        {coder.error}
-                      </div>
-                    )}
-                  </div>
-
-                  {coder.result && (
-                    <div className="card space-y-3">
-                      <h3 className="text-sm font-semibold">Result</h3>
-                      <div className="rounded-lg border border-border bg-bg-tertiary p-3 text-sm whitespace-pre-wrap">
-                        {coder.result}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <CoderPanel
+              isConnected={isConnected}
+              coderTask={coderTask}
+              setCoderTask={setCoderTask}
+              coderAutoApprove={coderAutoApprove}
+              setCoderAutoApprove={setCoderAutoApprove}
+              coderMaxIters={coderMaxIters}
+              setCoderMaxIters={setCoderMaxIters}
+              coderRunning={coder.running}
+              coderError={coder.error}
+              coderResult={coder.result}
+              handleCoderRun={handleCoderRun}
+            />
           )}
 
           {activeTab === "files" && (
-            <div className="flex h-full">
-              {/* File tree sidebar */}
-              <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
-                <div className="flex h-12 items-center justify-between border-b border-border px-4">
-                  <span className="text-sm font-semibold">Workspace</span>
-                  <button
-                    onClick={() => cwd && loadDir(cwd)}
-                    className="text-xs text-text-secondary hover:text-text-primary"
-                  >
-                    Refresh
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2">
-                  {cwd ? (
-                    renderTree(cwd)
-                  ) : (
-                    <div className="p-4 text-xs text-text-muted">Loading workspace…</div>
-                  )}
-                </div>
-                <div className="border-t border-border p-3 text-xs text-text-muted truncate">
-                  {cwd}
-                </div>
-              </aside>
-
-              {/* Editor */}
-              <div className="flex flex-1 flex-col bg-bg-primary">
-                <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
-                  <span className="text-sm font-medium truncate">
-                    {selectedFile || "No file selected"}
-                  </span>
-                  <div className="flex items-center gap-3">
-                    {editorDirty && (
-                      <span className="text-xs text-warning">Unsaved changes</span>
-                    )}
-                    {editorMsg && (
-                      <span className="text-xs text-success">{editorMsg}</span>
-                    )}
-                    <button
-                      onClick={saveFile}
-                      disabled={!selectedFile || !editorDirty}
-                      className="btn-primary px-3 py-1.5 text-xs"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
-                {selectedFile ? (
-                  <textarea
-                    value={editorContent}
-                    onChange={(e) => {
-                      setEditorContent(e.target.value);
-                      setEditorDirty(true);
-                    }}
-                    className="flex-1 resize-none bg-bg-primary p-4 font-mono text-sm text-text-primary focus:outline-none"
-                    spellCheck={false}
-                  />
-                ) : (
-                  <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
-                    Select a file from the workspace to edit
-                  </div>
-                )}
-              </div>
-            </div>
+            <FilesPanel
+              cwd={cwd}
+              selectedFile={selectedFile ?? ""}
+              editorContent={editorContent}
+              editorDirty={editorDirty}
+              editorMsg={editorMsg}
+              setEditorContent={setEditorContent}
+              setEditorDirty={setEditorDirty}
+              loadDir={loadDir}
+              saveFile={saveFile}
+              renderTree={renderTree}
+            />
           )}
 
           {activeTab === "terminal" && (
-            <div className="flex h-full flex-col bg-bg-tertiary text-text-primary">
-              <PanelHeader title="Integrated Terminal">
-                <button
-                  onClick={() => setTerminalOutput("")}
-                  className="btn-secondary px-3 py-1.5 text-xs"
-                >
-                  Clear
-                </button>
-                <button
-                  onClick={() => invoke("stop_terminal")}
-                  className="btn-secondary px-3 py-1.5 text-xs"
-                >
-                  Stop
-                </button>
-              </PanelHeader>
-              <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
-                <pre className="whitespace-pre-wrap break-all text-text-primary">
-                  {terminalOutput}
-                </pre>
-                <div ref={terminalEndRef} />
-              </div>
-              <div className="flex items-center gap-2 border-t border-border bg-bg-secondary p-3">
-                <span className="font-mono text-sm text-accent">&gt;</span>
-                <input
-                  type="text"
-                  value={terminalInput}
-                  onChange={(e) => setTerminalInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && terminalInput.trim()) {
-                      const cmd = terminalInput + "\r\n";
-                      setTerminalOutput((prev) => prev + "> " + terminalInput + "\n");
-                      invoke("write_terminal", { text: cmd }).catch((err) =>
-                        setTerminalOutput((prev) => prev + "[error] " + err + "\n")
-                      );
-                      setTerminalInput("");
-                    }
-                  }}
-                  placeholder="Type a command and press Enter"
-                  className="input flex-1 bg-bg-tertiary font-mono text-sm border-border text-text-primary"
-                  spellCheck={false}
-                />
-              </div>
-            </div>
+            <TerminalPanel
+              terminalOutput={terminalOutput}
+              terminalInput={terminalInput}
+              terminalEndRef={terminalEndRef}
+              setTerminalOutput={setTerminalOutput}
+              setTerminalInput={setTerminalInput}
+            />
           )}
 
           {activeTab === "review" && (
-            <div className="flex h-full">
-              {/* Checkpoint list */}
-              <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
-                <div className="flex h-12 items-center justify-between border-b border-border px-4">
-                  <span className="text-sm font-semibold">Checkpoints</span>
-                  <button
-                    onClick={createCheckpoint}
-                    disabled={!cwd}
-                    className="btn-primary px-3 py-1.5 text-xs"
-                  >
-                    + New
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                  {checkpoints.length === 0 && (
-                    <div className="text-xs text-text-muted">
-                      Create a checkpoint before asking the agent to edit files. After the agent
-                      runs, come back here to review changes.
-                    </div>
-                  )}
-                  {checkpoints.map((cp) => (
-                    <div
-                      key={cp.id}
-                      onClick={() => loadDiffs(cp.id)}
-                      className={`cursor-pointer rounded-lg border border-border p-3 transition-colors ${
-                        activeCp === cp.id
-                          ? "bg-accent/10 border-accent"
-                          : "bg-bg-tertiary hover:bg-bg-primary"
-                      }`}
-                    >
-                      <div className="text-xs font-semibold text-accent">{cp.id}</div>
-                      <div className="mt-1 truncate text-xs text-text-muted">{cp.base}</div>
-                      <div className="mt-1 text-xs text-text-secondary">{cp.files} files</div>
-                    </div>
-                  ))}
-                </div>
-              </aside>
-
-              {/* Diff viewer */}
-              <div className="flex flex-1 flex-col bg-bg-primary">
-                <PanelHeader title={activeCp ? `Checkpoint ${activeCp}` : "Review"} />
-
-                <div className="flex flex-1 overflow-hidden">
-                  {activeCp && diffs.length > 0 ? (
-                    <Suspense fallback={<LoadingFallback />}>
-                      <DiffViewer
-                        diffs={diffs}
-                        onAcceptAll={() => acceptCheckpoint(activeCp)}
-                        onRejectAll={() => rejectCheckpoint(activeCp)}
-                      />
-                    </Suspense>
-                  ) : activeCp ? (
-                    <div className="flex h-full items-center justify-center text-sm text-text-muted">
-                      No changes in this checkpoint
-                    </div>
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-sm text-text-muted">
-                      Select a checkpoint to review changes
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <ReviewPanel
+              cwd={cwd}
+              checkpoints={checkpoints}
+              activeCp={activeCp}
+              diffs={diffs}
+              createCheckpoint={createCheckpoint}
+              loadDiffs={loadDiffs}
+              acceptCheckpoint={acceptCheckpoint}
+              rejectCheckpoint={rejectCheckpoint}
+            />
           )}
 
           {activeTab === "knowledge" && (
-            <div data-component="knowledge-panel" className="kb-panel flex h-full flex-col">
-              <div className="kb-header flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-                <span className="text-sm font-semibold">Knowledge Base</span>
-                <label className="kb-rag-toggle flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={config.rag_enabled}
-                    onChange={(e) => {
-                      const next = { ...config, rag_enabled: e.target.checked };
-                      setConfig(next);
-                      saveConfig(next);
-                    }}
-                    className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-                  />
-                  <span className="text-xs text-text-secondary">Use RAG in chat</span>
-                </label>
-              </div>
-              <div className="flex flex-1 overflow-hidden">
-                {/* Upload / docs */}
-                <aside className="flex w-80 flex-col border-r border-border bg-bg-secondary p-4">
-                  <div className="kb-upload mb-4 rounded-lg border border-dashed border-border bg-bg-tertiary p-4 text-center">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      className="hidden"
-                      accept=".txt,.md,.pdf,.py,.json,.yaml,.yml"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) uploadKnowledge(file);
-                        if (fileInputRef.current) fileInputRef.current.value = "";
-                      }}
-                    />
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="btn-primary w-full text-xs"
-                    >
-                      📤 Upload document
-                    </button>
-                    <p className="mt-2 text-xs text-text-muted">
-                      Supports TXT, MD, PDF, code files
-                    </p>
-                  </div>
-
-                  {/* Deep PDF parsing — 6-stage document analysis pipeline */}
-                  <div className="kb-deep-parse mb-4 rounded-lg border border-accent/20 bg-accent/5 p-3">
-                    <input
-                      ref={parseFileInputRef}
-                      type="file"
-                      className="hidden"
-                      accept=".pdf"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) parseDocument(file);
-                        if (parseFileInputRef.current) parseFileInputRef.current.value = "";
-                      }}
-                    />
-                    <button
-                      onClick={() => parseFileInputRef.current?.click()}
-                      disabled={parseLoading}
-                      className="w-full rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {parseLoading ? "⏳ Parsing…" : "📊 Deep PDF Parse"}
-                    </button>
-                    <p className="mt-1.5 text-xs text-text-muted">
-                      6-stage: extract → figures → graph → relations → validate → assemble
-                    </p>
-                  </div>
-
-                  {kbMsg && (
-                    <div className="kb-status mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
-                      {kbMsg}
-                    </div>
-                  )}
-
-                  <div className="flex-1 overflow-y-auto">
-                    <div className="mb-2 text-xs font-medium text-text-secondary">
-                      Documents ({kbDocs.length})
-                    </div>
-                    {!kbAvailable && (
-                      <div className="text-xs text-text-muted">
-                        Knowledge base backend is not available. Install chromadb and sentence-transformers.
-                      </div>
-                    )}
-                    {kbDocs.map((doc) => (
-                      <div
-                        key={doc.doc_id}
-                        className="kb-doc-item mb-2 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2"
-                      >
-                        <span className="truncate text-xs text-text-primary">{doc.filename}</span>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => loadDocumentGraph(doc.doc_id)}
-                            className="text-xs text-accent hover:underline"
-                            title="View document structure graph"
-                            aria-label="View document structure graph"
-                          >
-                            📊
-                          </button>
-                          <button
-                            onClick={() => deleteKnowledge(doc.doc_id)}
-                            className="text-xs text-error hover:underline"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </aside>
-
-                {/* Query tester */}
-                <div className="kb-query-area flex flex-1 flex-col bg-bg-primary p-4">
-                  <h3 className="mb-3 text-sm font-semibold">Test retrieval</h3>
-                  <div className="mb-4 flex gap-2">
-                    <input
-                      type="text"
-                      value={kbQuery}
-                      onChange={(e) => setKbQuery(e.target.value)}
-                      placeholder="Ask a question against the knowledge base…"
-                      className="input flex-1"
-                      onKeyDown={(e) => e.key === "Enter" && queryKnowledge()}
-                    />
-                    <button onClick={queryKnowledge} className="btn-primary">
-                      Search
-                    </button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto space-y-3">
-                    {kbChunks.map((chunk, i) => (
-                      <div key={i} className="kb-chunk rounded-lg border border-border bg-bg-secondary p-3">
-                        <div className="mb-1 flex items-center justify-between text-xs text-text-muted">
-                          <span>{chunk.metadata?.filename}</span>
-                          <span>distance: {chunk.distance?.toFixed(3)}</span>
-                        </div>
-                        <p className="text-xs text-text-primary whitespace-pre-wrap">
-                          {chunk.text}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <KnowledgePanel
+              config={config}
+              setConfig={setConfig}
+              saveConfig={saveConfig}
+              fileInputRef={fileInputRef}
+              parseFileInputRef={parseFileInputRef}
+              parseLoading={parseLoading}
+              kbMsg={kbMsg}
+              kbDocs={kbDocs}
+              kbAvailable={kbAvailable}
+              kbQuery={kbQuery}
+              kbChunks={kbChunks}
+              setKbQuery={setKbQuery}
+              uploadKnowledge={uploadKnowledge}
+              parseDocument={parseDocument}
+              loadDocumentGraph={loadDocumentGraph}
+              deleteKnowledge={deleteKnowledge}
+              queryKnowledge={queryKnowledge}
+            />
           )}
 
           {activeTab === "logs" && (
-            <div className="flex h-full flex-col bg-bg-tertiary text-text-primary">
-              <PanelHeader title="Backend Logs">
-                <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
-                  {(["all", "stdout", "stderr"] as const).map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setLogFilter(f)}
-                      className={`rounded px-2.5 py-1 capitalize ${
-                        logFilter === f
-                          ? "bg-accent text-white"
-                          : "text-text-secondary hover:text-text-primary"
-                      }`}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  onClick={() =>
-                    navigator.clipboard.writeText(
-                      backendLogs.map((l) => `[${l.time}][${l.source}] ${l.text}`).join("")
-                    )
-                  }
-                  className="btn-secondary px-3 py-1.5 text-xs"
-                >
-                  Copy
-                </button>
-                <button
-                  onClick={() => setBackendLogs([])}
-                  className="btn-secondary px-3 py-1.5 text-xs"
-                >
-                  Clear
-                </button>
-              </PanelHeader>
-              <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
-                {backendLogs
-                  .filter((l) => logFilter === "all" || l.source === logFilter)
-                  .map((l, i) => (
-                    <div
-                      key={i}
-                      className={`whitespace-pre-wrap break-all ${
-                        l.source === "stderr" ? "text-error" : "text-text-primary"
-                      }`}
-                    >
-                      <span className="text-text-muted">[{l.time}]</span>{" "}
-                      {l.text}
-                    </div>
-                  ))}
-                <div ref={backendLogEndRef} />
-              </div>
-            </div>
+            <LogsPanel
+              backendLogs={backendLogs}
+              logFilter={logFilter}
+              backendLogEndRef={backendLogEndRef}
+              setLogFilter={setLogFilter}
+              setBackendLogs={setBackendLogs}
+            />
           )}
 
           {activeTab === "tools" && (
-            <div className="h-full overflow-y-auto p-6">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Available Tools</h2>
-                {selectedTool && (
-                  <button onClick={() => setSelectedTool(null)} className="btn-secondary text-xs">
-                    ← Back
-                  </button>
-                )}
-              </div>
-
-              {!selectedTool ? (
-                tools.length === 0 ? (
-                  !isConnected ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <Wrench size={40} className="text-text-muted opacity-40" />
-                      <p className="mt-4 text-sm font-medium text-text-secondary">Backend not connected</p>
-                      <p className="mt-1 max-w-xs text-xs text-text-muted">
-                        Tools are loaded from the AI backend. Make sure the server is running and reconnect to see available tools.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                      <p className="mt-4 text-sm text-text-muted">Loading tools…</p>
-                    </div>
-                  )
-                ) : (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {tools.map((tool) => (
-                    <button
-                      key={tool.function.name}
-                      onClick={() => {
-                        setSelectedTool(tool);
-                        setToolArgs(buildDefaultArgs(tool.function.parameters));
-                        setToolResult("");
-                      }}
-                      className="card text-left transition-colors hover:border-accent"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold uppercase text-accent">Tool</div>
-                        {tool.destructive && (
-                          <span className="rounded bg-error/10 px-1.5 py-0.5 text-[10px] text-error">
-                            destructive
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 text-sm font-semibold">{tool.function.name}</div>
-                      <div className="mt-1 text-xs text-text-secondary line-clamp-2">
-                        {tool.function.description}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-                )
-              ) : (
-                <div className="max-w-3xl space-y-4">
-                  <div className="card">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs uppercase text-accent font-semibold">Tool</div>
-                      {selectedTool.destructive && (
-                        <span className="rounded bg-error/10 px-1.5 py-0.5 text-[10px] text-error">
-                          destructive
-                        </span>
-                      )}
-                    </div>
-                    <h3 className="mt-1 text-base font-semibold">{selectedTool.function.name}</h3>
-                    <p className="mt-1 text-sm text-text-secondary">
-                      {selectedTool.function.description}
-                    </p>
-                  </div>
-                  <div className="card">
-                    <div className="mb-3 flex items-center justify-between">
-                      <label className="text-xs font-medium text-text-secondary">Arguments</label>
-                      <button
-                        onClick={() =>
-                          setToolArgs(buildDefaultArgs(selectedTool.function.parameters))
-                        }
-                        className="text-xs text-accent hover:underline"
-                      >
-                        Reset defaults
-                      </button>
-                    </div>
-                    <JsonSchemaForm
-                      schema={selectedTool.function.parameters}
-                      value={toolArgs}
-                      onChange={setToolArgs}
-                    />
-                  </div>
-                  <button onClick={runTool} disabled={toolLoading} className="btn-primary">
-                    {toolLoading
-                      ? "Running…"
-                      : selectedTool.destructive
-                      ? "⚠️ Run Tool"
-                      : "Run Tool"}
-                  </button>
-                  {toolResult && (
-                    <div className="card border-accent/20 bg-bg-secondary">
-                      <div className="mb-2 text-xs font-semibold text-accent">Result</div>
-                      <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">
-                        {toolResult}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <ToolsPanel tools={tools} isConnected={isConnected} />
           )}
 
           {activeTab === "skills" && (
-            <div className="h-full overflow-y-auto p-6">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Declarative Skills</h2>
-                {selectedSkill && (
-                  <button onClick={() => setSelectedSkill(null)} className="btn-secondary text-xs">
-                    ← Back
-                  </button>
-                )}
-              </div>
-
-              {!selectedSkill ? (
-                skills.length === 0 ? (
-                  !isConnected ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <Sparkles size={40} className="text-text-muted opacity-40" />
-                      <p className="mt-4 text-sm font-medium text-text-secondary">Backend not connected</p>
-                      <p className="mt-1 max-w-xs text-xs text-text-muted">
-                        Skills are loaded from the AI backend. Make sure the server is running and reconnect to see available skills.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                      <p className="mt-4 text-sm text-text-muted">Loading skills…</p>
-                    </div>
-                  )
-                ) : (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {skills.map((skill) => (
-                    <div key={skill.name} className="card flex flex-col">
-                      <div className="text-xs font-semibold uppercase text-accent">{skill.category}</div>
-                      <div className="mt-1 text-sm font-semibold">{skill.name}</div>
-                      <div className="mt-1 flex-1 text-xs text-text-secondary line-clamp-3">
-                        {skill.description}
-                      </div>
-                      <div className="mt-3 text-xs text-text-muted">
-                        Tags: {skill.tags.join(", ")}
-                      </div>
-                      <button
-                        onClick={() => {
-                          setSelectedSkill(skill);
-                          const defaults: Record<string, any> = {};
-                          skill.parameters.forEach((p) => {
-                            if (p.default !== undefined && p.default !== null)
-                              defaults[p.name] = p.default;
-                            else defaults[p.name] = p.type === "boolean" ? false : p.type === "number" || p.type === "integer" ? 0 : "";
-                          });
-                          setSkillArgs(defaults);
-                          setSkillResult("");
-                        }}
-                        className="btn-secondary mt-3 w-full text-xs"
-                      >
-                        Execute
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                )
-              ) : (
-                <div className="max-w-3xl space-y-4">
-                  <div className="card">
-                    <div className="text-xs uppercase text-accent font-semibold">Skill</div>
-                    <h3 className="mt-1 text-base font-semibold">{selectedSkill.name}</h3>
-                    <p className="mt-1 text-sm text-text-secondary">
-                      {selectedSkill.description}
-                    </p>
-                    <div className="mt-2 text-xs text-text-muted">
-                      Tags: {selectedSkill.tags.join(", ")}
-                    </div>
-                  </div>
-                  <div className="card">
-                    <div className="mb-3 flex items-center justify-between">
-                      <label className="text-xs font-medium text-text-secondary">Arguments</label>
-                      <button
-                        onClick={() => {
-                          const defaults: Record<string, any> = {};
-                          selectedSkill.parameters.forEach((p) => {
-                            defaults[p.name] =
-                              p.default !== undefined && p.default !== null
-                                ? p.default
-                                : p.type === "boolean"
-                                ? false
-                                : p.type === "number" || p.type === "integer"
-                                ? 0
-                                : "";
-                          });
-                          setSkillArgs(defaults);
-                        }}
-                        className="text-xs text-accent hover:underline"
-                      >
-                        Reset defaults
-                      </button>
-                    </div>
-                    <SkillForm
-                      params={selectedSkill.parameters}
-                      value={skillArgs}
-                      onChange={setSkillArgs}
-                    />
-                  </div>
-                  <button onClick={runSkill} disabled={skillLoading} className="btn-primary">
-                    {skillLoading ? "Running…" : "Run Skill"}
-                  </button>
-                  {skillResult && (
-                    <div className="card border-accent/20 bg-bg-secondary">
-                      <div className="mb-2 text-xs font-semibold text-accent">Result</div>
-                      <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">
-                        {skillResult}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <SkillsPanel skills={skills} isConnected={isConnected} />
           )}
 
           {activeTab === "emotion" && (
@@ -3633,1322 +802,116 @@ export default function App() {
           )}
 
           {activeTab === "memory" && (
-            <div data-component="memory-panel" className="mem-panel flex h-full flex-col">
-              <div className="mem-header flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-                <span className="text-sm font-semibold">Memory</span>
-                <div className="mem-header-actions flex items-center gap-2">
-                  <button onClick={syncMemoryMd} className="btn-secondary px-3 py-1.5 text-xs">Sync MEMORY.md</button>
-                  <button onClick={pruneMemory} className="btn-secondary px-3 py-1.5 text-xs">Prune</button>
-                  <button onClick={loadMemory} className="btn-secondary px-3 py-1.5 text-xs">Refresh</button>
-                </div>
-              </div>
-              <div className="flex flex-1 overflow-hidden">
-                <div className="w-80 overflow-y-auto border-r border-border bg-bg-secondary p-4">
-                  <div className="card mem-stats mb-4">
-                    <h3 className="text-sm font-semibold">Stats</h3>
-                    <div className="mt-2">
-                      <div className="mem-stats-row"><span className="text-text-muted">Total</span><span>{memoryStats?.longterm_entries ?? "—"}</span></div>
-                      <div className="mem-stats-row"><span className="text-text-muted">Short</span><span>{memoryStats?.tier_counts?.short ?? 0}</span></div>
-                      <div className="mem-stats-row"><span className="text-text-muted">Mid</span><span>{memoryStats?.tier_counts?.mid ?? 0}</span></div>
-                      <div className="mem-stats-row"><span className="text-text-muted">Long</span><span>{memoryStats?.tier_counts?.long ?? 0}</span></div>
-                    </div>
-                  </div>
-                  <div className="card mb-4">
-                    <button
-                      onClick={() => setMemoryView(memoryView === "add" ? "browse" : "add")}
-                      className="flex w-full items-center justify-between text-left"
-                    >
-                      <h3 className="text-sm font-semibold">
-                        {memoryView === "add" ? "Add Memory" : "+ Add memory"}
-                      </h3>
-                      <ChevronDown size={14} className={`text-text-muted transition-transform duration-150 ${memoryView === "add" ? "rotate-0" : "-rotate-90"}`} />
-                    </button>
-                    {memoryView === "add" && (
-                      <div className="mt-3">
-                        <textarea
-                          className="input-field mb-2 min-h-[80px] text-xs"
-                          placeholder="Content..."
-                          value={memoryForm.content}
-                          onChange={(e) => setMemoryForm({ ...memoryForm, content: e.target.value })}
-                        />
-                        <div className="mb-2 grid grid-cols-2 gap-2">
-                          <select className="input-field text-xs" value={memoryForm.category} onChange={(e) => setMemoryForm({ ...memoryForm, category: e.target.value })}>
-                            <option value="fact">fact</option>
-                            <option value="insight">insight</option>
-                            <option value="conversation">conversation</option>
-                            <option value="calculation">calculation</option>
-                            <option value="error">error</option>
-                            <option value="episode">episode</option>
-                          </select>
-                          <select className="input-field text-xs" value={memoryForm.tier} onChange={(e) => setMemoryForm({ ...memoryForm, tier: e.target.value })}>
-                            <option value="short">short (6h)</option>
-                            <option value="mid">mid (7d)</option>
-                            <option value="long">long (perm)</option>
-                          </select>
-                        </div>
-                        <input
-                          className="input-field mb-2 text-xs"
-                          placeholder="tags, comma separated"
-                          value={memoryForm.tags}
-                          onChange={(e) => setMemoryForm({ ...memoryForm, tags: e.target.value })}
-                        />
-                        <div className="mb-2 flex items-center gap-2 text-xs">
-                          <span className="text-text-muted">Importance</span>
-                          <input type="range" min={0} max={1} step={0.05} value={memoryForm.importance} onChange={(e) => setMemoryForm({ ...memoryForm, importance: parseFloat(e.target.value) })} />
-                          <span>{memoryForm.importance.toFixed(2)}</span>
-                        </div>
-                        <button onClick={createMemory} className="btn-primary w-full py-1.5 text-xs" disabled={!memoryForm.content.trim()}>
-                          Remember
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {memoryMsg && <p className="text-xs text-text-secondary">{memoryMsg}</p>}
-                </div>
-                <div className="flex flex-1 flex-col overflow-hidden bg-bg-primary p-4">
-                  <div className="mem-search-bar items-center gap-2">
-                    <input
-                      className="input-field flex-1 text-xs"
-                      placeholder="Search memory..."
-                      value={memorySearch}
-                      onChange={(e) => setMemorySearch(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && searchMemory()}
-                    />
-                    <button onClick={searchMemory} className="btn-primary px-3 py-1.5 text-xs">Search</button>
-                    <select className="input-field text-xs" value={memoryFilter.category} onChange={(e) => setMemoryFilter({ ...memoryFilter, category: e.target.value })}>
-                      <option value="">all categories</option>
-                      <option value="fact">fact</option>
-                      <option value="insight">insight</option>
-                      <option value="conversation">conversation</option>
-                      <option value="calculation">calculation</option>
-                      <option value="error">error</option>
-                      <option value="episode">episode</option>
-                    </select>
-                    <select className="input-field text-xs" value={memoryFilter.tier} onChange={(e) => setMemoryFilter({ ...memoryFilter, tier: e.target.value })}>
-                      <option value="">all tiers</option>
-                      <option value="short">short</option>
-                      <option value="mid">mid</option>
-                      <option value="long">long</option>
-                    </select>
-                  </div>
-                  <div className="flex-1 overflow-y-auto space-y-2">
-                    {memories.length === 0 && (
-                      <div className="flex flex-col items-center justify-center py-16 text-center">
-                        <Brain size={36} className="text-text-muted opacity-40" />
-                        {memorySearch.trim() ? (
-                          <>
-                            <p className="mt-3 text-sm font-medium text-text-secondary">No matching memories</p>
-                            <p className="mt-1 max-w-xs text-xs text-text-muted">
-                              No memories match your search. Try different keywords or clear the filter.
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="mt-3 text-sm font-medium text-text-secondary">No memories yet</p>
-                            <p className="mt-1 max-w-xs text-xs text-text-muted">
-                              Memories help Huginn remember context across conversations. Add your first memory using the panel on the left.
-                            </p>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    {memories.map((m) => (
-                      <div key={m.id} className="card mem-entry">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 text-xs">
-                              <span className={`mem-badge mem-badge--tier-${m.tier}`}>{m.tier}</span>
-                              <span className="mem-badge mem-badge--category">{m.category}</span>
-                              <span className="text-text-muted">importance {m.importance}</span>
-                            </div>
-                            <p className="mt-1 whitespace-pre-wrap text-sm">{m.content}</p>
-                            <p className="mt-1 text-xs text-text-muted">tags: {m.tags || "—"} · source: {m.source || "—"}</p>
-                            <p className="text-xs text-text-muted">expires: {m.expires_at ? new Date(m.expires_at).toLocaleString() : "never"} · accessed {m.access_count ?? 0}</p>
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            {m.tier !== "long" && (
-                              <button onClick={() => promoteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Promote to long" aria-label="Promote memory to long-term">
-                                ⬆
-                              </button>
-                            )}
-                            <button onClick={() => deleteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Delete" aria-label="Delete memory">
-                              🗑
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <MemoryPanel
+              memories={memories}
+              memoryStats={memoryStats}
+              memorySearch={memorySearch}
+              memoryFilter={memoryFilter}
+              memoryForm={memoryForm}
+              memoryMsg={memoryMsg}
+              memoryView={memoryView}
+              setMemorySearch={setMemorySearch}
+              setMemoryFilter={setMemoryFilter}
+              setMemoryForm={setMemoryForm}
+              setMemoryView={setMemoryView}
+              loadMemory={loadMemory}
+              loadMemoryStats={loadMemoryStats}
+              searchMemory={searchMemory}
+              createMemory={createMemory}
+              deleteMemory={deleteMemory}
+              promoteMemory={promoteMemory}
+              pruneMemory={pruneMemory}
+              syncMemoryMd={syncMemoryMd}
+            />
           )}
 
           {activeTab === "plugins" && (
-            <div className="flex h-full flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-                <span className="text-sm font-semibold">Plugins / MCP Servers</span>
-                <button onClick={() => { loadMcp(); discoverMcp(); }} className="btn-secondary px-3 py-1.5 text-xs">
-                  Refresh
-                </button>
-              </div>
-              <div className="flex flex-1 overflow-hidden">
-                <aside className="flex w-80 flex-col border-r border-border bg-bg-secondary p-4">
-                  <h3 className="mb-3 text-sm font-semibold">Connect manually</h3>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="mb-1 block text-xs text-text-secondary">Name</label>
-                      <input
-                        type="text"
-                        value={newMcp.name}
-                        onChange={(e) => setNewMcp({ ...newMcp, name: e.target.value })}
-                        placeholder="my-server"
-                        className="input text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs text-text-secondary">Command</label>
-                      <input
-                        type="text"
-                        value={newMcp.command}
-                        onChange={(e) => setNewMcp({ ...newMcp, command: e.target.value })}
-                        placeholder="python"
-                        className="input text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs text-text-secondary">Args (space separated)</label>
-                      <input
-                        type="text"
-                        value={newMcp.args}
-                        onChange={(e) => setNewMcp({ ...newMcp, args: e.target.value })}
-                        placeholder="server.py"
-                        className="input text-sm"
-                      />
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (!newMcp.name.trim()) return;
-                        const args = newMcp.args
-                          .split(" ")
-                          .map((s) => s.trim())
-                          .filter(Boolean);
-                        connectMcp({ name: newMcp.name.trim(), command: newMcp.command.trim() || "python", args });
-                        setNewMcp({ name: "", command: "python", args: "" });
-                      }}
-                      className="btn-primary w-full text-xs"
-                    >
-                      Connect
-                    </button>
-                  </div>
-
-                  {mcpMsg && (
-                    <div className="mt-4 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
-                      {mcpMsg}
-                    </div>
-                  )}
-
-                  <h3 className="mb-2 mt-6 text-sm font-semibold">Discovered local</h3>
-                  <div className="flex-1 overflow-y-auto space-y-2">
-                    {discoveredServers.length === 0 && (
-                      <div className="flex flex-col items-start rounded-lg border border-dashed border-border p-3">
-                        <p className="text-xs font-medium text-text-secondary">No local servers found</p>
-                        <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-                          Start an MCP server on your network, or use the form above to connect manually by name and command.
-                        </p>
-                      </div>
-                    )}
-                    {discoveredServers.map((srv) => (
-                      <div
-                        key={srv.name}
-                        className="rounded-lg border border-border bg-bg-tertiary p-2"
-                      >
-                        <div className="text-xs font-medium text-text-primary">{srv.name}</div>
-                        <div className="mt-1 truncate text-[10px] text-text-muted">{srv.path}</div>
-                        <button
-                          onClick={() => connectMcp(srv)}
-                          className="mt-2 w-full rounded bg-accent px-2 py-1 text-xs text-white hover:bg-accent/90"
-                        >
-                          Connect
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </aside>
-
-                <div className="flex flex-1 flex-col bg-bg-primary p-4">
-                  <h3 className="mb-3 text-sm font-semibold">Connected servers</h3>
-                  <div className="flex-1 overflow-y-auto space-y-3">
-                    {mcpServers.length === 0 && (
-                      <div className="flex flex-col items-center justify-center py-16 text-center">
-                        <Puzzle size={36} className="text-text-muted opacity-40" />
-                        <p className="mt-3 text-sm font-medium text-text-secondary">No plugins connected</p>
-                        <p className="mt-1 max-w-xs text-xs text-text-muted">
-                          Connect an MCP server from the sidebar to extend Huginn with additional tools and capabilities.
-                        </p>
-                      </div>
-                    )}
-                    {mcpServers.map((srv) => (
-                      <div key={srv.name} className="rounded-xl border border-border bg-bg-secondary p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm font-semibold text-text-primary">{srv.name}</div>
-                          <button
-                            onClick={() => disconnectMcp(srv.name)}
-                            className="btn-secondary px-2 py-1 text-xs text-error hover:bg-error/10"
-                          >
-                            Disconnect
-                          </button>
-                        </div>
-                        <div className="mt-2 text-xs text-text-secondary">
-                          {srv.tools.length} tool{srv.tools.length === 1 ? "" : "s"}
-                        </div>
-                        <div className="mt-2 space-y-1">
-                          {srv.tools.map((t) => (
-                            <div
-                              key={t.name}
-                              className="rounded bg-bg-tertiary px-2 py-1 text-xs text-text-primary"
-                            >
-                              <span className="font-mono text-accent">{t.name}</span>
-                              <span className="ml-2 text-text-muted">{t.description}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <PluginsPanel
+              mcpServers={mcpServers}
+              discoveredServers={discoveredServers as any}
+              mcpMsg={mcpMsg}
+              newMcp={newMcp}
+              setNewMcp={setNewMcp}
+              loadMcp={loadMcp}
+              discoverMcp={discoverMcp}
+              connectMcp={connectMcp}
+              disconnectMcp={disconnectMcp}
+            />
           )}
 
           {activeTab === "project" && (
-            <div className="flex h-full flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-                <span className="text-sm font-semibold">Project Context & Codebase</span>
-                <button onClick={loadProjectContext} className="btn-secondary px-3 py-1.5 text-xs">
-                  Refresh
-                </button>
-              </div>
-              <div className="flex flex-1 overflow-hidden">
-                {/* Project context editor */}
-                <aside className="flex w-1/2 flex-col border-r border-border bg-bg-secondary p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold">Project Instructions</h3>
-                      <p className="text-[10px] text-text-muted">
-                        Loaded from: <span className="text-text-secondary">{projectContextSource}</span>
-                      </p>
-                    </div>
-                    <button onClick={saveProjectContext} className="btn-primary px-3 py-1.5 text-xs">
-                      Save
-                    </button>
-                  </div>
-                  {projectContextMsg && (
-                    <div className="mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
-                      {projectContextMsg}
-                    </div>
-                  )}
-                  <textarea
-                    value={projectContext}
-                    onChange={(e) => setProjectContext(e.target.value)}
-                    placeholder="Write project-level instructions here (coding style, conventions, important formulas, DFT preferences...). Saved to .huginn.md in the workspace."
-                    className="input flex-1 resize-none font-mono text-sm"
-                    spellCheck={false}
-                  />
-                </aside>
-
-                {/* Codebase semantic search */}
-                <div className="flex w-1/2 flex-col bg-bg-primary p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold">Codebase Search</h3>
-                      <p className="text-[10px] text-text-muted">
-                        {codebaseStatus?.available
-                          ? `${codebaseStatus.indexed_files || 0} files indexed`
-                          : "Not indexed"}
-                      </p>
-                    </div>
-                    <button onClick={indexCodebase} className="btn-primary px-3 py-1.5 text-xs">
-                      Re-index
-                    </button>
-                  </div>
-                  <div className="mb-3 flex gap-2">
-                    <input
-                      type="text"
-                      value={codebaseQuery}
-                      onChange={(e) => setCodebaseQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && searchCodebase()}
-                      placeholder="Search the codebase semantically…"
-                      className="input flex-1 text-sm"
-                    />
-                    <button onClick={searchCodebase} className="btn-primary text-xs">
-                      Search
-                    </button>
-                  </div>
-                  {codebaseMsg && (
-                    <div className="mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
-                      {codebaseMsg}
-                    </div>
-                  )}
-                  <div className="flex-1 overflow-y-auto space-y-3">
-                    {codebaseResults.map((r, i) => (
-                      <div key={i} className="rounded-lg border border-border bg-bg-secondary p-3">
-                        <div className="mb-1 flex items-center justify-between text-xs text-text-muted">
-                          <span className="font-mono">{r.path}</span>
-                          <span>chunk {r.chunk}</span>
-                        </div>
-                        <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-bg-tertiary p-2 text-xs text-text-primary">
-                          {r.text}
-                        </pre>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <ProjectPanel
+              projectContext={projectContext}
+              projectContextSource={projectContextSource}
+              projectContextMsg={projectContextMsg}
+              setProjectContext={setProjectContext}
+              loadProjectContext={loadProjectContext}
+              saveProjectContext={saveProjectContext}
+              codebaseStatus={codebaseStatus}
+              codebaseQuery={codebaseQuery}
+              codebaseResults={codebaseResults}
+              codebaseMsg={codebaseMsg}
+              setCodebaseQuery={setCodebaseQuery}
+              indexCodebase={indexCodebase}
+              searchCodebase={searchCodebase}
+            />
           )}
 
           {activeTab === "threads" && (
-            <div className="flex h-full flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-                <span className="text-sm font-semibold">Threads</span>
-                <button onClick={createThread} className="btn-primary px-3 py-1.5 text-xs">
-                  + New thread
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {threads.map((t) => (
-                    <div
-                      key={t.id}
-                      className={`rounded-xl border p-4 transition-colors ${
-                        activeThread === t.id
-                          ? "border-accent bg-accent/10"
-                          : "border-border bg-bg-secondary hover:bg-bg-tertiary"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <input
-                          value={t.label}
-                          onChange={(e) => {
-                            const next = threads.map((th) =>
-                              th.id === t.id ? { ...th, label: e.target.value } : th
-                            );
-                            setThreads(next);
-                          }}
-                          onBlur={(e) => renameThread(t.id, e.target.value)}
-                          className="w-full bg-transparent text-sm font-semibold text-text-primary focus:outline-none"
-                        />
-                        <button
-                          onClick={() => deleteThread(t.id)}
-                          className="text-xs text-error hover:underline"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                      <div className="mt-2 text-[10px] text-text-muted">ID: {t.id}</div>
-                      <button
-                        onClick={() => {
-                          setActiveThread(t.id);
-                          setMessages([
-                            {
-                              role: "assistant",
-                              content: `Switched to thread **${t.label}**.`,
-                              timestamp: formatTime(),
-                            },
-                          ]);
-                        }}
-                        disabled={activeThread === t.id}
-                        className="mt-3 w-full rounded-lg border border-border bg-bg-tertiary py-1.5 text-xs text-text-secondary hover:text-text-primary disabled:opacity-50"
-                      >
-                        {activeThread === t.id ? "Active" : "Switch"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <ThreadsPanel
+              threads={threads}
+              activeThread={activeThread}
+              setThreads={setThreads as any}
+              setActiveThread={setActiveThread}
+              setMessages={setMessages}
+              createThread={createThread}
+              renameThread={renameThread}
+              deleteThread={deleteThread}
+            />
           )}
 
           {activeTab === "settings" && (
-            <div className="flex h-full flex-col">
-              <SettingsTabNav activeTab={settingsTab} onTabChange={setSettingsTab} />
-              <div className="flex-1 overflow-y-auto p-6">
-                {settingsTab === "general" && (
-                  <div className="max-w-2xl space-y-5">
-                    <p className="text-sm text-text-secondary">
-                      Default single-model settings. For multi-LLM mode, switch to the Models tab.
-                    </p>
-                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                      <ConfigField label="Provider">
-                        <select
-                          value={config.provider}
-                          onChange={(e) => { const next = { ...config, provider: e.target.value }; setConfig(next); setConfigDirty(true); }}
-                          className="input"
-                        >
-                          {PROVIDERS.map((p) => (
-                            <option key={p.id} value={p.id}>{p.label}</option>
-                          ))}
-                        </select>
-                      </ConfigField>
-                      <ConfigField label="Model">
-                        <input
-                          type="text"
-                          value={config.model}
-                          onChange={(e) => { setConfig({ ...config, model: e.target.value }); setConfigDirty(true); }}
-                          placeholder="e.g. gpt-4o"
-                          className="input"
-                        />
-                      </ConfigField>
-                      <ConfigField label="Persona" full>
-                        <select
-                          value={config.persona}
-                          onChange={(e) => {
-                            const next = { ...config, persona: e.target.value };
-                            setConfig(next);
-                            setConfigDirty(true);
-                            switchPersona(e.target.value);
-                          }}
-                          className="input"
-                        >
-                          {personaList.map((p) => (
-                            <option key={p.id} value={p.id}>{p.label}{p.description ? ` — ${p.description.slice(0, 40)}` : ""}</option>
-                          ))}
-                        </select>
-                        {personaEmotion && (
-                          <div className="mt-1.5 text-xs text-text-tertiary">
-                            <span className="inline-flex items-center gap-1">
-                              <span className="inline-block h-2 w-2 rounded-full" style={{
-                                backgroundColor: personaEmotion.valence > 0 ? "#7ee787" : personaEmotion.valence < -0.3 ? "#f85149" : "#8b949e"
-                              }} />
-                              {personaEmotion.mood || "neutral mood"}
-                            </span>
-                          </div>
-                        )}
-                      </ConfigField>
-                      <div className="md:col-span-2">
-                        <label className="flex cursor-pointer items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={config.rag_enabled}
-                            onChange={(e) => { const next = { ...config, rag_enabled: e.target.checked }; setConfig(next); setConfigDirty(true); }}
-                            className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-                          />
-                          <span className="text-sm text-text-primary">Use knowledge base (RAG) in chat</span>
-                        </label>
-                      </div>
-                      <ConfigField label="API Key" full>
-                        <input
-                          type="password"
-                          value={config.api_key}
-                          onChange={(e) => { setConfig((prev) => ({ ...prev, api_key: e.target.value })); setConfigDirty(true); }}
-                          placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || "API key"}
-                          className="input"
-                        />
-                      </ConfigField>
-                      <ConfigField label="Base URL (optional)" full>
-                        <input
-                          type="text"
-                          value={config.base_url}
-                          onChange={(e) => { setConfig({ ...config, base_url: e.target.value }); setConfigDirty(true); }}
-                          placeholder="https://api.openai.com/v1"
-                          className="input"
-                        />
-                      </ConfigField>
-                      <ConfigField label="Ollama Host" full>
-                        <input
-                          type="text"
-                          value={config.ollama_host}
-                          onChange={(e) => { setConfig((prev) => ({ ...prev, ollama_host: e.target.value })); setConfigDirty(true); }}
-                          placeholder="http://localhost:11434"
-                          className="input"
-                        />
-                      </ConfigField>
-                      <ConfigField label="Max concurrent sub-agents" full>
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          value={config.max_concurrent_subagents}
-                          onChange={(e) => { const next = { ...config, max_concurrent_subagents: parseInt(e.target.value || "1", 10) }; setConfig(next); setConfigDirty(true); }}
-                          className="input"
-                        />
-                      </ConfigField>
-                    </div>
-                  </div>
-                )}
-
-                {settingsTab === "models" && (
-                  <div className="max-w-3xl space-y-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm text-text-secondary">Configure multiple provider/model entries.</p>
-                      <button onClick={addModel} className="btn-secondary px-3 py-1.5 text-xs">+ Add Model</button>
-                    </div>
-                    {config.models.length === 0 && (
-                      <p className="text-sm text-text-muted">No model pool yet. Add a model or use the General tab for a single provider.</p>
-                    )}
-                    {config.models.map((m, i) => (
-                      <div key={i} className="card">
-                        <div className="flex items-center justify-between">
-                          <button
-                            onClick={() => toggleModelExpanded(i)}
-                            className="flex flex-1 items-center gap-2 text-left min-w-0"
-                          >
-                            <ChevronDown size={14} className={`flex-shrink-0 text-text-muted transition-transform duration-150 ${expandedModels.has(i) ? "rotate-0" : "-rotate-90"}`} />
-                            <input
-                              className="input-field w-32 text-sm font-semibold"
-                              value={m.alias}
-                              onChange={(e) => updateModel(i, { alias: e.target.value })}
-                              placeholder="alias"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                            {!expandedModels.has(i) && (
-                              <span className="text-xs text-text-muted truncate">{m.provider} / {m.model || "—"}</span>
-                            )}
-                          </button>
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1 text-xs">
-                              <input type="checkbox" checked={m.enabled} onChange={(e) => updateModel(i, { enabled: e.target.checked })} />
-                              Enabled
-                            </label>
-                            <button onClick={() => removeModel(i)} className="btn-secondary px-2 py-1 text-xs">🗑</button>
-                          </div>
-                        </div>
-                        {expandedModels.has(i) && (
-                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <select
-                              className="input-field text-xs"
-                              value={m.provider}
-                              onChange={(e) => updateModel(i, { provider: e.target.value })}
-                            >
-                              {PROVIDERS.map((p) => (
-                                <option key={p.id} value={p.id}>{p.label}</option>
-                              ))}
-                            </select>
-                            <input className="input-field text-xs" value={m.model} onChange={(e) => updateModel(i, { model: e.target.value })} placeholder="model name" />
-                            <input className="input-field text-xs" type="password" value={m.api_key} onChange={(e) => updateModel(i, { api_key: e.target.value })} placeholder="API key (optional)" />
-                            <input className="input-field text-xs" value={m.base_url} onChange={(e) => updateModel(i, { base_url: e.target.value })} placeholder="base URL (optional)" />
-                            <div className="flex items-center gap-2 text-xs">
-                              <span className="text-text-muted">Temp</span>
-                              <input type="range" min={0} max={2} step={0.05} value={m.temperature} onChange={(e) => updateModel(i, { temperature: parseFloat(e.target.value) })} />
-                              <span>{m.temperature.toFixed(2)}</span>
-                            </div>
-
-                            {/* Link to a stored credential, or probe a local server for model names */}
-                            <div className="md:col-span-2 space-y-1.5 border-t border-border pt-3">
-                              <label className="block text-xs font-medium text-text-secondary">Stored credential (optional)</label>
-                              <select
-                                className="input-field text-xs"
-                                value={m.credential_id || ""}
-                                onChange={(e) => updateModel(i, { credential_id: e.target.value || null })}
-                              >
-                                <option value="">— Direct API Key —</option>
-                                {llmCredOptions.map((c) => (
-                                  <option key={c.id} value={c.id}>
-                                    {c.name}{c.provider ? ` (${c.provider})` : ""}
-                                  </option>
-                                ))}
-                              </select>
-                              {m.credential_id ? (
-                                <p className="text-xs text-text-secondary">
-                                  Using stored credential. API key field above can be left empty.
-                                </p>
-                              ) : llmCredOptions.length === 0 ? (
-                                <p className="text-xs text-text-muted">
-                                  No stored LLM credentials yet — add some in the Credentials tab.
-                                </p>
-                              ) : null}
-                              <LocalModelDiscoverer model={m} onUpdate={(patch) => updateModel(i, patch)} />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {settingsTab === "agents" && (
-                  <div className="max-w-3xl space-y-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm text-text-secondary">Agent profiles used by Team mode and @ routing.</p>
-                      <button onClick={addAgent} className="btn-secondary px-3 py-1.5 text-xs">+ Add Agent</button>
-                    </div>
-                    {config.agents.length === 0 && (
-                      <p className="text-sm text-text-muted">No agent profiles yet. Add one or use the General tab for a single agent.</p>
-                    )}
-                    {config.agents.map((a, i) => (
-                      <div key={i} className="card">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            onClick={() => toggleAgentExpanded(i)}
-                            className="flex flex-1 items-center gap-2 text-left min-w-0"
-                          >
-                            <ChevronDown size={14} className={`flex-shrink-0 text-text-muted transition-transform duration-150 ${expandedAgents.has(i) ? "rotate-0" : "-rotate-90"}`} />
-                            <input
-                              className="input-field w-28 text-sm font-semibold"
-                              value={a.id}
-                              onChange={(e) => updateAgent(i, { id: e.target.value })}
-                              placeholder="id"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                            <input
-                              className="input-field flex-1 text-sm"
-                              value={a.name}
-                              onChange={(e) => updateAgent(i, { name: e.target.value })}
-                              placeholder="display name"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                            {!expandedAgents.has(i) && (
-                              <span className="text-xs text-text-muted truncate">{a.model_alias || "default"} · {a.persona || "—"}</span>
-                            )}
-                          </button>
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1 text-xs">
-                              <input type="checkbox" checked={a.enabled} onChange={(e) => updateAgent(i, { enabled: e.target.checked })} />
-                              Enabled
-                            </label>
-                            <button onClick={() => removeAgent(i)} className="btn-secondary px-2 py-1 text-xs">🗑</button>
-                          </div>
-                        </div>
-                        {expandedAgents.has(i) && (
-                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <select
-                              className="input-field text-xs"
-                              value={a.model_alias}
-                              onChange={(e) => updateAgent(i, { model_alias: e.target.value })}
-                            >
-                              <option value="">default model</option>
-                              {config.models.filter((m) => m.enabled).map((m) => (
-                                <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
-                              ))}
-                            </select>
-                            <select
-                              className="input-field text-xs"
-                              value={a.persona}
-                              onChange={(e) => updateAgent(i, { persona: e.target.value })}
-                            >
-                              {personaList.map((p) => (
-                                <option key={p.id} value={p.id}>{p.label}</option>
-                              ))}
-                            </select>
-                            <input
-                              className="input-field text-xs md:col-span-2"
-                              value={(a.tools || []).join(", ")}
-                              onChange={(e) => updateAgent(i, { tools: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
-                              placeholder="tool allowlist, comma separated (empty = all)"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {settingsTab === "privacy" && (
-                  <div className="max-w-2xl space-y-5">
-                    <p className="text-sm text-text-secondary">
-                      Controls what local data can leave your machine when using a cloud LLM provider.
-                    </p>
-                    <div className="space-y-4">
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.local_only_mode}
-                          onChange={(e) => { const next = { ...config, local_only_mode: e.target.checked }; setConfig(next); setConfigDirty(true); }}
-                          className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-                        />
-                        <span className="text-sm text-text-primary">Local-only / no-cloud mode (allow only Ollama, vLLM, local loopback endpoints)</span>
-                      </label>
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.privacy_redact_secrets}
-                          onChange={(e) => { const next = { ...config, privacy_redact_secrets: e.target.checked }; setConfig(next); setConfigDirty(true); }}
-                          className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-                        />
-                        <span className="text-sm text-text-primary">Redact secrets (API keys, private keys, tokens) before sending to LLM</span>
-                      </label>
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.privacy_block_on_secrets}
-                          onChange={(e) => { const next = { ...config, privacy_block_on_secrets: e.target.checked }; setConfig(next); setConfigDirty(true); }}
-                          className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-                        />
-                        <span className="text-sm text-text-primary">Block messages that contain detected secrets</span>
-                      </label>
-                      <ConfigField label="Max tool output tokens">
-                        <input
-                          type="number"
-                          min={0}
-                          value={config.max_tool_output_tokens}
-                          onChange={(e) => { const next = { ...config, max_tool_output_tokens: parseInt(e.target.value || "0", 10) }; setConfig(next); setConfigDirty(true); }}
-                          placeholder="0 = unlimited"
-                          className="input"
-                        />
-                        <p className="mt-1 text-xs text-text-muted">Tool results longer than this are truncated before being sent to the LLM.</p>
-                      </ConfigField>
-                      <ConfigField label="Context budget tokens">
-                        <input
-                          type="number"
-                          min={0}
-                          value={config.context_budget_tokens}
-                          onChange={(e) => { const next = { ...config, context_budget_tokens: parseInt(e.target.value || "0", 10) }; setConfig(next); setConfigDirty(true); }}
-                          placeholder="0 = unlimited"
-                          className="input"
-                        />
-                        <p className="mt-1 text-xs text-text-muted">Warn when the estimated prompt tokens exceed this budget.</p>
-                      </ConfigField>
-                    </div>
-                  </div>
-                )}
-
-                {settingsTab === "pet" && (
-                  <div className="max-w-2xl space-y-5">
-                    <p className="text-sm text-text-secondary">
-                      Customize your desktop companion.
-                    </p>
-                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                      <ConfigField label="Pet name">
-                        <input
-                          type="text"
-                          value={config.pet_name}
-                          onChange={(e) => { const next = { ...config, pet_name: e.target.value }; setConfig(next); setConfigDirty(true); }}
-                          placeholder="Muninn"
-                          className="input"
-                        />
-                      </ConfigField>
-                      <ConfigField label="Personality">
-                        <select
-                          value={config.pet_personality}
-                          onChange={(e) => { const next = { ...config, pet_personality: e.target.value as "cheerful" | "nerdy" | "calm" | "sassy" }; setConfig(next); setConfigDirty(true); }}
-                          className="input"
-                        >
-                          <option value="cheerful">Cheerful</option>
-                          <option value="nerdy">Nerdy</option>
-                          <option value="calm">Calm</option>
-                          <option value="sassy">Sassy</option>
-                        </select>
-                      </ConfigField>
-                    </div>
-
-                    {/* Accessories */}
-                    <ConfigField label="Accessories">
-                      <div className="flex flex-wrap gap-2">
-                        {([
-                          { id: "crown", label: "Crown", minLevel: 5 },
-                          { id: "glasses", label: "Glasses", minLevel: 3 },
-                          { id: "scarf", label: "Scarf", minLevel: 7 },
-                        ] as const).map((acc) => {
-                          const active = config.pet_accessories.includes(acc.id);
-                          return (
-                            <button
-                              key={acc.id}
-                              onClick={() => {
-                                const next = {
-                                  ...config,
-                                  pet_accessories: active
-                                    ? config.pet_accessories.filter(a => a !== acc.id)
-                                    : [...config.pet_accessories, acc.id],
-                                };
-                                setConfig(next);
-                                setConfigDirty(true);
-                              }}
-                              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-                                active
-                                  ? "border-accent/40 bg-accent/10 text-text-primary"
-                                  : "border-border bg-bg-tertiary text-text-secondary hover:text-text-primary"
-                              }`}
-                            >
-                              {acc.label}
-                              <span className="text-text-muted text-[10px]">(Lv.{acc.minLevel}+)</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <p className="mt-1 text-[10px] text-text-muted">
-                        Accessories unlock as your pet levels up through completed tasks.
-                      </p>
-                    </ConfigField>
-
-                    {/* Status overview (read-only from backend) */}
-                    <div className="rounded-xl border border-border bg-bg-tertiary p-4">
-                      <p className="mb-2 text-xs font-medium text-text-secondary">Pet vitals are managed by the backend.</p>
-                      <p className="text-[11px] text-text-muted leading-relaxed">
-                        Your raven gains XP when agent tasks succeed. Hunger and mood decay slowly over time.
-                        Feed and pet your companion via the right-click menu on the pet window.
-                      </p>
-                    </div>
-
-                    {/* Reset */}
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={async () => {
-                          try {
-                            await api.post("/pet/reset");
-                          } catch {
-                            // backend may not have this endpoint yet
-                          }
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-error/30 bg-error/5 px-3 py-1.5 text-xs font-medium text-error/80 transition-colors hover:bg-error/10 hover:text-error"
-                      >
-                        Reset pet progress
-                      </button>
-                      <span className="text-[10px] text-text-muted">
-                        Resets level, XP, hunger, mood, and accessories.
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-text-muted">
-                      The pet's greeting, idle tips, and click responses will match the chosen personality.
-                    </p>
-                  </div>
-                )}
-
-                {settingsTab === "security" && (
-                  <div className="max-w-2xl space-y-5">
-                    <p className="text-sm text-text-secondary">
-                      Encrypt sensitive configuration files and key material at rest.
-                    </p>
-                    <label className="flex cursor-pointer items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={config.encrypt_config}
-                        onChange={(e) => { const next = { ...config, encrypt_config: e.target.checked }; setConfig(next); setConfigDirty(true); }}
-                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
-                      />
-                      <span className="text-sm text-text-primary">Encrypt config files</span>
-                    </label>
-                    <ConfigField label="Encryption password">
-                      <input
-                        type="password"
-                        value={config.encryption_password}
-                        onChange={(e) => { const next = { ...config, encryption_password: e.target.value }; setConfig(next); setConfigDirty(true); }}
-                        placeholder="Leave empty to keep unchanged"
-                        className="input"
-                      />
-                    </ConfigField>
-                    <ConfigField label="Key file path (optional)">
-                      <input
-                        type="text"
-                        value={config.encryption_key_file}
-                        onChange={(e) => { const next = { ...config, encryption_key_file: e.target.value }; setConfig(next); setConfigDirty(true); }}
-                        placeholder="Path to encrypted key file"
-                        className="input"
-                      />
-                    </ConfigField>
-                    <button
-                      onClick={async () => {
-                        try {
-                          const data = await api.post<{ success?: boolean; path?: string; error?: string }>(
-                            "/config/encrypt",
-                            { path: "huginn.toml", password: config.encryption_password }
-                          );
-                          if (data.success) {
-                            setConfigSavedMsg(`Encrypted config saved to ${data.path}`);
-                            setTimeout(() => setConfigSavedMsg(""), 4000);
-                          } else {
-                            setConfigSavedMsg(`Encrypt failed: ${data.error}`);
-                          }
-                        } catch (e: any) {
-                          setConfigSavedMsg(`Encrypt error: ${e.message}`);
-                        }
-                      }}
-                      disabled={!config.encryption_password}
-                      className="btn-secondary text-xs"
-                    >
-                      Encrypt huginn.toml now
-                    </button>
-                  </div>
-                )}
-
-                {settingsTab === "credentials" && (
-                  <CredentialsPanel />
-                )}
-
-                {settingsTab === "jobs" && (
-                  <RemoteJobsPanel />
-                )}
-
-                {/* Export / Import Panel */}
-                {settingsTab === "export" && (
-                  <div className="space-y-4">
-                    <div>
-                      <h3 className="text-sm font-semibold text-text-primary">数据导出与共享</h3>
-                      <p className="mt-1 text-xs text-text-muted">
-                        将记忆、知识库、知识图谱等数据打包为压缩文件, 可用于备份或分享给其他用户。
-                      </p>
-                    </div>
-
-                    {/* Export status */}
-                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-                      <div className="mb-2 text-xs font-medium text-text-secondary">可导出数据</div>
-                      <div id="export-status" className="space-y-1 text-xs text-text-muted">
-                        <span className="text-text-muted">点击下方按钮查看...</span>
-                      </div>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const data = await api.get<{ available?: Record<string, boolean> }>("/export/status");
-                            const el = document.getElementById("export-status");
-                            if (el && data.available) {
-                              // 用 textContent 代替 innerHTML, 避免 XSS
-                              el.innerHTML = "";
-                              Object.entries(data.available)
-                                .filter(([, v]) => v)
-                                .forEach(([k]) => {
-                                  const div = document.createElement("div");
-                                  div.textContent = `✓ ${k}`;
-                                  el.appendChild(div);
-                                });
-                            }
-                          } catch (e: any) {
-                            console.error("export status error:", e);
-                          }
-                        }}
-                        className="btn-secondary text-xs mt-2"
-                      >
-                        刷新状态
-                      </button>
-                    </div>
-
-                    {/* Export all */}
-                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-                      <div className="mb-2 text-xs font-medium text-text-secondary">全量导出</div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={async () => {
-                            try {
-                              const blob = await api.getBlob("/export/all", {
-                                method: "POST",
-                                body: JSON.stringify({ format: "zip" }),
-                                headers: { "Content-Type": "application/json" },
-                              });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement("a");
-                              a.href = url;
-                              a.download = "huginn_export.zip";
-                              a.click();
-                              URL.revokeObjectURL(url);
-                            } catch (e: any) {
-                              console.error("export error:", e);
-                            }
-                          }}
-                          className="btn-primary text-xs"
-                        >
-                          📦 导出全部 (ZIP)
-                        </button>
-                        <button
-                          onClick={async () => {
-                            try {
-                              const blob = await api.getBlob("/export/memory", {
-                                method: "POST",
-                                body: JSON.stringify({ format: "json" }),
-                                headers: { "Content-Type": "application/json" },
-                              });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement("a");
-                              a.href = url;
-                              a.download = "huginn_memory.json";
-                              a.click();
-                              URL.revokeObjectURL(url);
-                            } catch (e: any) {
-                              console.error("export memory error:", e);
-                            }
-                          }}
-                          className="btn-secondary text-xs"
-                        >
-                          🧠 仅记忆
-                        </button>
-                        <button
-                          onClick={async () => {
-                            try {
-                              const blob = await api.getBlob("/export/knowledge", {
-                                method: "POST",
-                                body: JSON.stringify({ format: "json" }),
-                                headers: { "Content-Type": "application/json" },
-                              });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement("a");
-                              a.href = url;
-                              a.download = "huginn_knowledge.json";
-                              a.click();
-                              URL.revokeObjectURL(url);
-                            } catch (e: any) {
-                              console.error("export knowledge error:", e);
-                            }
-                          }}
-                          className="btn-secondary text-xs"
-                        >
-                          📚 仅知识库
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Import */}
-                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-                      <div className="mb-2 text-xs font-medium text-text-secondary">导入归档</div>
-                      <input
-                        type="file"
-                        accept=".zip,.tar.gz,.json"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          const formData = new FormData();
-                          formData.append("file", file);
-                          try {
-                            const data = await api.upload<{ imported?: Record<string, any> }>(
-                              "/import/all",
-                              formData
-                            );
-                            if (data.imported) {
-                              alert(`导入成功: ${JSON.stringify(data.imported)}`);
-                            }
-                          } catch (e: any) {
-                            alert(`导入失败: ${e.message}`);
-                          }
-                        }}
-                        className="hidden"
-                        id="import-file-input"
-                      />
-                      <button
-                        onClick={() => document.getElementById("import-file-input")?.click()}
-                        className="btn-secondary text-xs"
-                      >
-                        📥 选择文件导入
-                      </button>
-                      <p className="mt-1 text-xs text-text-muted">
-                        支持 ZIP / TAR.GZ / JSON 格式, 导入时自动合并到现有数据。
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Bot Management Panel */}
-                {settingsTab === "bot" && (
-                  <div className="space-y-4">
-                    <div>
-                      <h3 className="text-sm font-semibold text-text-primary">机器人接入</h3>
-                      <p className="mt-1 text-xs text-text-muted">
-                        通过 OneBot v11 协议接入 QQ/微信机器人。需要先部署 go-cqhttp / Lagrange / NapCat。
-                      </p>
-                    </div>
-
-                    {/* Bot status */}
-                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-xs font-medium text-text-secondary">状态: </span>
-                          <span id="bot-status-text" className="text-xs text-text-muted">未运行</span>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={async () => {
-                              try {
-                                const data = await api.post<{ running?: boolean }>("/bot/start");
-                                const el = document.getElementById("bot-status-text");
-                                if (el) el.textContent = data.running ? "运行中" : "启动失败";
-                              } catch (e: any) {
-                                console.error("bot start error:", e);
-                              }
-                            }}
-                            className="btn-primary text-xs"
-                          >
-                            ▶ 启动
-                          </button>
-                          <button
-                            onClick={async () => {
-                              try {
-                                await api.post("/bot/stop");
-                                const el = document.getElementById("bot-status-text");
-                                if (el) el.textContent = "已停止";
-                              } catch (e: any) {
-                                console.error("bot stop error:", e);
-                              }
-                            }}
-                            className="btn-secondary text-xs"
-                          >
-                            ⏹ 停止
-                          </button>
-                        </div>
-                      </div>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const data = await api.get<{ running?: boolean; platform?: string }>("/bot/status");
-                            const el = document.getElementById("bot-status-text");
-                            if (el) el.textContent = data.running ? `运行中 (${data.platform})` : "未运行";
-                          } catch (e: any) {
-                            console.error("bot status error:", e);
-                          }
-                        }}
-                        className="btn-secondary text-xs mt-2"
-                      >
-                        刷新状态
-                      </button>
-                    </div>
-
-                    {/* Bot config */}
-                    <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-                      <div className="mb-2 text-xs font-medium text-text-secondary">配置</div>
-                      <div className="space-y-2">
-                        <div>
-                          <label className="text-xs text-text-muted">平台</label>
-                          <select
-                            id="bot-platform"
-                            className="input mt-1 w-full text-xs"
-                            defaultValue="qq"
-                          >
-                            <option value="qq">QQ</option>
-                            <option value="wechat">微信</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-text-muted">Bot ID (QQ号/微信号)</label>
-                          <input
-                            type="text"
-                            id="bot-id"
-                            className="input mt-1 w-full text-xs"
-                            placeholder="如: 123456789"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-text-muted">HTTP API 地址</label>
-                          <input
-                            type="text"
-                            id="bot-api-url"
-                            className="input mt-1 w-full text-xs"
-                            placeholder="如: http://127.0.0.1:5700"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-text-muted">事件监听端口</label>
-                          <input
-                            type="number"
-                            id="bot-http-port"
-                            className="input mt-1 w-full text-xs"
-                            defaultValue={8080}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-text-muted">允许的群号 (逗号分隔, 留空=全部)</label>
-                          <input
-                            type="text"
-                            id="bot-allowed-groups"
-                            className="input mt-1 w-full text-xs"
-                            placeholder="如: 123456,789012"
-                          />
-                        </div>
-                      </div>
-                      <button
-                        onClick={async () => {
-                          const config: any = {
-                            platform: (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq",
-                            bot_id: (document.getElementById("bot-id") as HTMLInputElement)?.value || "",
-                            api_url: (document.getElementById("bot-api-url") as HTMLInputElement)?.value || "",
-                            http_port: parseInt((document.getElementById("bot-http-port") as HTMLInputElement)?.value || "8080"),
-                            enabled: true,
-                          };
-                          const groups = (document.getElementById("bot-allowed-groups") as HTMLInputElement)?.value;
-                          if (groups) {
-                            config.allowed_groups = groups.split(",").map((s: string) => s.trim()).filter(Boolean);
-                          }
-                          try {
-                            await api.put("/bot/config", config);
-                            alert("配置已保存");
-                          } catch (e: any) {
-                            alert(`保存失败: ${e.message}`);
-                          }
-                        }}
-                        className="btn-primary text-xs mt-2"
-                      >
-                        保存配置
-                      </button>
-                    </div>
-
-                    <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
-                      <p className="text-xs text-accent">
-                        💡 使用说明: 先启动 go-cqhttp 或 Lagrange, 配置 HTTP POST 上报到
-                        <code className="mx-1 rounded bg-bg-tertiary px-1">http://your-host:8080/onebot/v11/event</code>
-                        然后在上方填写配置并启动。
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-6 flex items-center gap-3 pt-2">
-                  <button onClick={() => saveConfig(config)} disabled={!configDirty} className="btn-primary">
-                    Save Settings
-                  </button>
-                  {configSavedMsg && <span className="text-sm text-success">{configSavedMsg}</span>}
-                </div>
-
-                <div className="card mt-6 border-accent/20 bg-accent/5">
-                  <h3 className="text-sm font-semibold text-accent">Backend</h3>
-                  <p className="mt-1 text-xs text-text-secondary">
-                    The desktop app normally starts the Python backend automatically. If it didn't, you can start it here.
-                  </p>
-                  <div className="mt-3 flex items-center gap-2">
-                    <button onClick={startBackend} className="btn-primary text-xs">
-                      ▶ Start backend
-                    </button>
-                    <button
-                      onClick={() => invoke("stop_backend")}
-                      className="btn-secondary text-xs"
-                    >
-                      ⏹ Stop backend
-                    </button>
-                  </div>
-                  <p className="mt-2 text-xs text-text-muted">
-                    Status: {status}
-                  </p>
-                </div>
-              </div>
-            </div>
+            <SettingsPanel
+              config={config}
+              configDirty={configDirty}
+              configSavedMsg={configSavedMsg}
+              settingsTab={settingsTab}
+              llmCredOptions={llmCredOptions}
+              expandedModels={expandedModels}
+              expandedAgents={expandedAgents}
+              setConfig={setConfig}
+              setConfigDirty={setConfigDirty}
+              setConfigSavedMsg={setConfigSavedMsg}
+              setSettingsTab={setSettingsTab}
+              saveConfig={saveConfig}
+              updateModel={updateModel}
+              addModel={addModel}
+              removeModel={removeModel}
+              updateAgent={updateAgent}
+              addAgent={addAgent}
+              removeAgent={removeAgent}
+              toggleModelExpanded={toggleModelExpanded}
+              toggleAgentExpanded={toggleAgentExpanded}
+              switchPersona={switchPersona}
+              startBackend={startBackend}
+              status={status}
+              personaList={personaList}
+              personaEmotion={personaEmotion}
+            />
           )}
 
           {activeTab === "benchmark" && (
-            <div className="h-full overflow-y-auto p-6">
-              <div className="mx-auto max-w-3xl space-y-5">
-                <div className="card">
-                  <h2 className="mb-2 text-base font-semibold">Benchmark</h2>
-                  <p className="text-sm text-text-secondary">Run standardized tasks and measure pass rate.</p>
-                </div>
-                <div className="card space-y-3">
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
-                    <input type="checkbox" checked={benchEvolve} onChange={(e) => setBenchEvolve(e.target.checked)} className="h-4 w-4 rounded border-border" />
-                    Run evolution cycle afterward
-                  </label>
-                  <input
-                    type="text"
-                    value={benchCategories}
-                    onChange={(e) => setBenchCategories(e.target.value)}
-                    placeholder="Categories, comma separated (empty = all)"
-                    className="input text-sm"
-                  />
-                  <button onClick={bench.run} disabled={bench.running || !isConnected} className="btn-primary text-xs">
-                    {bench.running ? "Running…" : "▶ Run benchmark"}
-                  </button>
-                  {bench.error && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{bench.error}</div>}
-                </div>
-                {bench.result && (
-                  <div className="card space-y-3">
-                    <h3 className="text-sm font-semibold">Report</h3>
-                    <div className="text-xs text-text-secondary">
-                      Pass rate: {(bench.result.metrics?.pass_rate * 100).toFixed(0)}% · Total: {bench.result.total} · Passed: {bench.result.passed} · Failed: {bench.result.failed} · Skipped: {bench.result.skipped}
-                    </div>
-                    <div className="space-y-2">
-                      {(bench.result.results || []).map((r: any) => (
-                        <div key={r.task_id} className="rounded-lg border border-border bg-bg-tertiary p-3 text-xs">
-                          <span className={`font-semibold ${r.passed ? "text-success" : "text-error"}`}>{r.passed ? "✓" : "✗"}</span>{" "}
-                          <span className="font-mono">{r.task_id}</span> — {r.reason}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <BenchmarkPanel
+              isConnected={isConnected}
+              benchEvolve={benchEvolve}
+              setBenchEvolve={setBenchEvolve}
+              benchCategories={benchCategories}
+              setBenchCategories={setBenchCategories}
+              benchRunning={bench.running}
+              benchError={bench.error}
+              benchResult={bench.result}
+              benchRun={bench.run}
+            />
           )}
 
           {activeTab === "evolution" && (
@@ -5106,53 +1069,37 @@ export default function App() {
           )}
 
           {activeTab === "hpc" && (
-            <div className="h-full overflow-y-auto p-6">
-              <div className="mx-auto max-w-3xl space-y-5">
-                <div className="card">
-                  <h2 className="mb-2 text-base font-semibold">HPC</h2>
-                  <p className="text-sm text-text-secondary">Submit and monitor jobs on a remote cluster.</p>
-                </div>
-                <div className="card space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <input type="text" value={hpcHost} onChange={(e) => setHpcHost(e.target.value)} placeholder="Host" className="input text-xs" />
-                    <input type="text" value={hpcUsername} onChange={(e) => setHpcUsername(e.target.value)} placeholder="Username" className="input text-xs" />
-                    <select value={hpcScheduler} onChange={(e) => setHpcScheduler(e.target.value as "slurm" | "pbs")} className="input text-xs">
-                      <option value="slurm">SLURM</option>
-                      <option value="pbs">PBS</option>
-                    </select>
-                    <input type="text" value={hpcKeyPath} onChange={(e) => setHpcKeyPath(e.target.value)} placeholder="SSH key path (optional)" className="input text-xs" />
-                  </div>
-                  <button onClick={handleHpcTest} disabled={hpcRunning || !isConnected || !hpcHost || !hpcUsername} className="btn-secondary text-xs">
-                    Test connection
-                  </button>
-                  <hr className="border-border" />
-                  <input type="text" value={hpcCommand} onChange={(e) => setHpcCommand(e.target.value)} placeholder="Command to run" className="input text-sm" />
-                  <div className="grid grid-cols-3 gap-3">
-                    <input type="text" value={hpcJobName} onChange={(e) => setHpcJobName(e.target.value)} placeholder="Job name" className="input text-xs" />
-                    <input type="text" value={hpcWalltime} onChange={(e) => setHpcWalltime(e.target.value)} placeholder="Walltime" className="input text-xs" />
-                    <input type="text" value={hpcQueue} onChange={(e) => setHpcQueue(e.target.value)} placeholder="Queue" className="input text-xs" />
-                    <input type="number" min={1} value={hpcNodes} onChange={(e) => setHpcNodes(parseInt(e.target.value || "1", 10))} placeholder="Nodes" className="input text-xs" />
-                    <input type="number" min={1} value={hpcNtasks} onChange={(e) => setHpcNtasks(parseInt(e.target.value || "1", 10))} placeholder="Tasks/node" className="input text-xs" />
-                    <input type="text" value={hpcJobId} onChange={(e) => setHpcJobId(e.target.value)} placeholder="Job ID" className="input text-xs" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={handleHpcSubmit} disabled={hpcRunning || !isConnected || !hpcCommand.trim()} className="btn-primary text-xs">
-                      Submit
-                    </button>
-                    <button onClick={handleHpcStatus} disabled={hpcRunning || !isConnected || !hpcJobId.trim()} className="btn-secondary text-xs">
-                      Status
-                    </button>
-                  </div>
-                  {hpcError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{hpcError}</div>}
-                </div>
-                {hpcResult && (
-                  <div className="card">
-                    <h3 className="text-sm font-semibold mb-2">Result</h3>
-                    <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{JSON.stringify(hpcResult, null, 2)}</pre>
-                  </div>
-                )}
-              </div>
-            </div>
+            <HPCPanel
+              isConnected={isConnected}
+              hpcHost={hpcHost}
+              hpcUsername={hpcUsername}
+              hpcScheduler={hpcScheduler}
+              hpcKeyPath={hpcKeyPath}
+              hpcCommand={hpcCommand}
+              hpcJobName={hpcJobName}
+              hpcWalltime={hpcWalltime}
+              hpcNodes={hpcNodes}
+              hpcNtasks={hpcNtasks}
+              hpcQueue={hpcQueue}
+              hpcJobId={hpcJobId}
+              hpcRunning={hpcRunning}
+              hpcResult={hpcResult}
+              hpcError={hpcError}
+              setHpcHost={setHpcHost}
+              setHpcUsername={setHpcUsername}
+              setHpcScheduler={setHpcScheduler}
+              setHpcKeyPath={setHpcKeyPath}
+              setHpcCommand={setHpcCommand}
+              setHpcJobName={setHpcJobName}
+              setHpcWalltime={setHpcWalltime}
+              setHpcNodes={setHpcNodes}
+              setHpcNtasks={setHpcNtasks}
+              setHpcQueue={setHpcQueue}
+              setHpcJobId={setHpcJobId}
+              handleHpcTest={handleHpcTest}
+              handleHpcSubmit={handleHpcSubmit}
+              handleHpcStatus={handleHpcStatus}
+            />
           )}
 
           {activeTab === "periodic" && (
@@ -5266,8 +1213,3 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
