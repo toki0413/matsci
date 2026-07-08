@@ -1424,6 +1424,47 @@
 }
 
 /* ═══════════════════════════════════════════════
+   Chat Mode Selector (chat / plan / build)
+   ═══════════════════════════════════════════════ */
+[data-component="chat-mode-selector"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+
+.chat-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  border: none;
+  background: none;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  line-height: 1.3;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+}
+
+.chat-mode-option--active {
+  background: var(--fg-primary);
+  color: var(--fg-inverse);
+  box-shadow: var(--shadow-sm);
+}
+
+.chat-mode-option:not(.chat-mode-option--active):hover {
+  color: var(--fg-primary);
+}
+
+/* ═══════════════════════════════════════════════
    Structured Output panel
    ═══════════════════════════════════════════════ */
 [data-component="structured-output"] {
@@ -1631,4 +1672,176 @@
   color: var(--accent);
   font-weight: 500;
   border-top: 1px solid var(--border);
+}
+
+/* ═══════════════════════════════════════════════
+   Knowledge Panel — production panel scoped styles
+   Applies design tokens to the existing sidebar + query-tester layout.
+   ═══════════════════════════════════════════════ */
+
+[data-component="knowledge-panel"] {
+  font-family: var(--font-sans);
+}
+
+/* ── Header bar ── */
+.kb-header {
+  border-bottom-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-sm);
+}
+.kb-header .kb-rag-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.kb-header .kb-rag-toggle:hover {
+  border-color: var(--accent);
+}
+
+/* ── Sidebar upload zone ── */
+.kb-upload {
+  border-color: var(--border-strong) !important;
+  background: var(--bg-surface) !important;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+.kb-upload:hover {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+/* ── Deep PDF parse box ── */
+.kb-deep-parse {
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface)) !important;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.kb-deep-parse:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent) !important;
+}
+
+/* ── Status message ── */
+.kb-status {
+  background: var(--accent-subtle) !important;
+  border-color: color-mix(in srgb, var(--accent) 18%, transparent) !important;
+}
+
+/* ── Document list items ── */
+.kb-doc-item {
+  border-color: var(--border) !important;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+.kb-doc-item:hover {
+  border-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── Query area ── */
+.kb-query-area {
+  background: var(--bg-base) !important;
+}
+
+/* ── Retrieval result chunks ── */
+.kb-chunk {
+  border-color: var(--border) !important;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--duration-fast) var(--ease-out);
+}
+.kb-chunk:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* ═══════════════════════════════════════════════
+   Memory Panel — production panel scoped styles
+   Applies design tokens to the existing stats + entries layout.
+   ═══════════════════════════════════════════════ */
+
+[data-component="memory-panel"] {
+  font-family: var(--font-sans);
+}
+
+/* ── Header bar ── */
+.mem-header {
+  border-bottom-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-sm);
+}
+.mem-header-actions {
+  display: inline-flex;
+  gap: var(--sp-1);
+}
+
+/* ── Stats card ── */
+.mem-stats {
+  border-color: var(--border) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.mem-stats:hover {
+  border-color: var(--border-strong) !important;
+}
+.mem-stats-row {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+.mem-stats-row:last-child {
+  border-bottom: none;
+}
+
+/* ── Memory entry cards ── */
+.mem-entry {
+  border-color: var(--border) !important;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+.mem-entry:hover {
+  border-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Tier / category badges ── */
+.mem-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.03em;
+  line-height: 1.4;
+}
+.mem-badge--tier-short {
+  background: color-mix(in srgb, var(--warning) 15%, var(--bg-surface));
+  color: var(--warning);
+}
+.mem-badge--tier-mid {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-surface));
+  color: var(--accent);
+}
+.mem-badge--tier-long {
+  background: color-mix(in srgb, var(--success) 15%, var(--bg-surface));
+  color: var(--success);
+}
+.mem-badge--category {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+/* ── Search toolbar ── */
+.mem-search-bar {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--sp-3);
 }

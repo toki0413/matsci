@@ -11,6 +11,10 @@ import Pet from "./Pet";
 import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
+import { ChatModeSelector } from "./components/ChatModeSelector";
+import { ToolResultRenderer } from "./components/ToolResultRenderer";
+import { SaveToMemoryButton } from "./components/SaveToMemoryButton";
+import { useTranslation } from "react-i18next";
 import MessageContent from "./components/MessageContent";
 import { SettingsTabNav, ConfigField, PanelHeader } from "./components/SettingsPanel";
 // Tab panels only mount when their tab is active — lazy-load so the
@@ -545,6 +549,7 @@ export default function App() {
     return <Pet />;
   }
 
+  const { t } = useTranslation();
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
@@ -2626,9 +2631,7 @@ export default function App() {
                               <div className="mt-3 text-xs text-text-secondary">
                                 Result
                               </div>
-                              <pre className="mt-1 max-h-60 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
-                                {msg.tool_result}
-                              </pre>
+                              <ToolResultRenderer content={msg.tool_result} toolName={msg.tool_name} />
                             </>
                           )}
                         </div>
@@ -2663,6 +2666,11 @@ export default function App() {
                         <div className="text-[15px] leading-relaxed">
                           <MessageContent content={msg.content} />
                         </div>
+                        {msg.role === "assistant" && msg.content && msg.timestamp !== "streaming" && (
+                          <div className="mt-1.5 flex justify-end">
+                            <SaveToMemoryButton content={msg.content} />
+                          </div>
+                        )}
                         {/* Plan confirm/cancel buttons */}
                         {msg.isPlan && msg.planId && (
                           <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
@@ -2784,25 +2792,9 @@ export default function App() {
                 )}
 
                 <div className="mb-3 flex items-center gap-2">
-                  <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
-                    {(["chat", "plan", "build"] as const).map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => setMode(m)}
-                        className={`rounded px-3 py-1 capitalize ${
-                          mode === m
-                            ? "bg-accent text-white"
-                            : "text-text-secondary hover:text-text-primary"
-                        }`}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
+                  <ChatModeSelector mode={mode} onChange={setMode} />
                   <span className="text-[10px] text-text-muted">
-                    {mode === "plan" && "Generate a step-by-step plan without executing tools"}
-                    {mode === "build" && "Execute tools and edit files"}
-                    {mode === "chat" && "Normal assistant chat"}
+                    {t(`chat.mode.${mode}.desc`)}
                   </span>
                 </div>
 
@@ -3209,10 +3201,10 @@ export default function App() {
           )}
 
           {activeTab === "knowledge" && (
-            <div className="flex h-full flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+            <div data-component="knowledge-panel" className="kb-panel flex h-full flex-col">
+              <div className="kb-header flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
                 <span className="text-sm font-semibold">Knowledge Base</span>
-                <label className="flex cursor-pointer items-center gap-2">
+                <label className="kb-rag-toggle flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
                     checked={config.rag_enabled}
@@ -3229,7 +3221,7 @@ export default function App() {
               <div className="flex flex-1 overflow-hidden">
                 {/* Upload / docs */}
                 <aside className="flex w-80 flex-col border-r border-border bg-bg-secondary p-4">
-                  <div className="mb-4 rounded-lg border border-dashed border-border bg-bg-tertiary p-4 text-center">
+                  <div className="kb-upload mb-4 rounded-lg border border-dashed border-border bg-bg-tertiary p-4 text-center">
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -3253,7 +3245,7 @@ export default function App() {
                   </div>
 
                   {/* Deep PDF parsing — 6-stage document analysis pipeline */}
-                  <div className="mb-4 rounded-lg border border-accent/20 bg-accent/5 p-3">
+                  <div className="kb-deep-parse mb-4 rounded-lg border border-accent/20 bg-accent/5 p-3">
                     <input
                       ref={parseFileInputRef}
                       type="file"
@@ -3278,7 +3270,7 @@ export default function App() {
                   </div>
 
                   {kbMsg && (
-                    <div className="mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
+                    <div className="kb-status mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
                       {kbMsg}
                     </div>
                   )}
@@ -3295,7 +3287,7 @@ export default function App() {
                     {kbDocs.map((doc) => (
                       <div
                         key={doc.doc_id}
-                        className="mb-2 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2"
+                        className="kb-doc-item mb-2 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2"
                       >
                         <span className="truncate text-xs text-text-primary">{doc.filename}</span>
                         <div className="flex gap-2">
@@ -3320,7 +3312,7 @@ export default function App() {
                 </aside>
 
                 {/* Query tester */}
-                <div className="flex flex-1 flex-col bg-bg-primary p-4">
+                <div className="kb-query-area flex flex-1 flex-col bg-bg-primary p-4">
                   <h3 className="mb-3 text-sm font-semibold">Test retrieval</h3>
                   <div className="mb-4 flex gap-2">
                     <input
@@ -3337,7 +3329,7 @@ export default function App() {
                   </div>
                   <div className="flex-1 overflow-y-auto space-y-3">
                     {kbChunks.map((chunk, i) => (
-                      <div key={i} className="rounded-lg border border-border bg-bg-secondary p-3">
+                      <div key={i} className="kb-chunk rounded-lg border border-border bg-bg-secondary p-3">
                         <div className="mb-1 flex items-center justify-between text-xs text-text-muted">
                           <span>{chunk.metadata?.filename}</span>
                           <span>distance: {chunk.distance?.toFixed(3)}</span>
@@ -3641,10 +3633,10 @@ export default function App() {
           )}
 
           {activeTab === "memory" && (
-            <div className="flex h-full flex-col">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
+            <div data-component="memory-panel" className="mem-panel flex h-full flex-col">
+              <div className="mem-header flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
                 <span className="text-sm font-semibold">Memory</span>
-                <div className="flex items-center gap-2">
+                <div className="mem-header-actions flex items-center gap-2">
                   <button onClick={syncMemoryMd} className="btn-secondary px-3 py-1.5 text-xs">Sync MEMORY.md</button>
                   <button onClick={pruneMemory} className="btn-secondary px-3 py-1.5 text-xs">Prune</button>
                   <button onClick={loadMemory} className="btn-secondary px-3 py-1.5 text-xs">Refresh</button>
@@ -3652,13 +3644,13 @@ export default function App() {
               </div>
               <div className="flex flex-1 overflow-hidden">
                 <div className="w-80 overflow-y-auto border-r border-border bg-bg-secondary p-4">
-                  <div className="card mb-4">
+                  <div className="card mem-stats mb-4">
                     <h3 className="text-sm font-semibold">Stats</h3>
-                    <div className="mt-2 space-y-1 text-xs">
-                      <div className="flex justify-between"><span className="text-text-muted">Total</span><span>{memoryStats?.longterm_entries ?? "—"}</span></div>
-                      <div className="flex justify-between"><span className="text-text-muted">Short</span><span>{memoryStats?.tier_counts?.short ?? 0}</span></div>
-                      <div className="flex justify-between"><span className="text-text-muted">Mid</span><span>{memoryStats?.tier_counts?.mid ?? 0}</span></div>
-                      <div className="flex justify-between"><span className="text-text-muted">Long</span><span>{memoryStats?.tier_counts?.long ?? 0}</span></div>
+                    <div className="mt-2">
+                      <div className="mem-stats-row"><span className="text-text-muted">Total</span><span>{memoryStats?.longterm_entries ?? "—"}</span></div>
+                      <div className="mem-stats-row"><span className="text-text-muted">Short</span><span>{memoryStats?.tier_counts?.short ?? 0}</span></div>
+                      <div className="mem-stats-row"><span className="text-text-muted">Mid</span><span>{memoryStats?.tier_counts?.mid ?? 0}</span></div>
+                      <div className="mem-stats-row"><span className="text-text-muted">Long</span><span>{memoryStats?.tier_counts?.long ?? 0}</span></div>
                     </div>
                   </div>
                   <div className="card mb-4">
@@ -3714,7 +3706,7 @@ export default function App() {
                   {memoryMsg && <p className="text-xs text-text-secondary">{memoryMsg}</p>}
                 </div>
                 <div className="flex flex-1 flex-col overflow-hidden bg-bg-primary p-4">
-                  <div className="mb-3 flex items-center gap-2">
+                  <div className="mem-search-bar items-center gap-2">
                     <input
                       className="input-field flex-1 text-xs"
                       placeholder="Search memory..."
@@ -3761,12 +3753,12 @@ export default function App() {
                       </div>
                     )}
                     {memories.map((m) => (
-                      <div key={m.id} className="card">
+                      <div key={m.id} className="card mem-entry">
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 text-xs">
-                              <span className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono">{m.tier}</span>
-                              <span className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono">{m.category}</span>
+                              <span className={`mem-badge mem-badge--tier-${m.tier}`}>{m.tier}</span>
+                              <span className="mem-badge mem-badge--category">{m.category}</span>
                               <span className="text-text-muted">importance {m.importance}</span>
                             </div>
                             <p className="mt-1 whitespace-pre-wrap text-sm">{m.content}</p>
