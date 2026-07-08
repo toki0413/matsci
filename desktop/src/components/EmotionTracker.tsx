@@ -88,7 +88,10 @@ function formatTimeAgo(iso: string): string {
   return `${Math.floor(diffSec / 86400)}d ago`;
 }
 
-function formatTime(iso: string): string {
+// Format an ISO timestamp as HH:MM:SS for chart axes / event log.
+// Renamed from formatTime to avoid clashing with lib/constants.formatTime()
+// (which takes no args and returns the current HH:MM stamp).
+function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
@@ -185,7 +188,7 @@ export default function EmotionTrackerPanel({
       currentVals[dim.key] = Math.max(min, Math.min(max, currentVals[dim.key] + delta));
     }
     cumulativePoints.push({
-      time: formatTime(evt.timestamp),
+      time: formatTimestamp(evt.timestamp),
       ...currentVals,
     });
   }
@@ -415,7 +418,7 @@ export default function EmotionTrackerPanel({
                   >
                     <div className="flex w-20 flex-shrink-0 flex-col">
                       <span className="text-xs font-mono text-text-muted">
-                        {formatTime(evt.timestamp)}
+                        {formatTimestamp(evt.timestamp)}
                       </span>
                       <span className="text-xs text-text-muted">
                         {formatTimeAgo(evt.timestamp)}

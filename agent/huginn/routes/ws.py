@@ -201,6 +201,278 @@ def _make_ws_approval_callback(websocket: WebSocket):
     return callback
 
 
+async def _stream_agent_response(
+    websocket: WebSocket,
+    agent,
+    content: str,
+    thread_id: str,
+    cfg_chat,
+    *,
+    auto_checkpoint: bool = False,
+    handle_clarification: bool = False,
+    plan_result: dict | None = None,
+    citations: list | None = None,
+    sediment_question: str | None = None,
+    sediment_type: str = "conversation",
+    error_log: str = "unexpected error",
+    error_label: str = "Agent error",
+) -> str:
+    """Stream ``agent.chat()`` to the websocket, emitting every WS message type.
+
+    Walks the async generator from ``agent.chat(content, thread_id)`` and
+    forwards ``tool_call`` / ``tool_result`` / ``text_delta`` / ``task_progress``
+    (plus optional ``auto_checkpoint``) messages to the client, then closes
+    with ``done`` (or ``error`` on failure).
+
+    The normal chat path and the plan_confirm path share this one
+    implementation; behavioural differences are toggled by kwargs so the
+    on-the-wire message format and ordering stay identical to the inline
+    versions they replace:
+
+    - ``auto_checkpoint``: snapshot the workspace before the first
+      file-editing tool runs (normal chat only).
+    - ``handle_clarification``: react to ``thought_loop_terminated`` /
+      ``needs_clarification`` states (normal chat only; plan execution
+      runs headless).
+    - ``plan_result``: ``{"plan_id": str, "acceptance_criteria": list}``
+      emitted after the stream. ``None`` skips it.
+    - ``citations``: RAG source list to emit as a ``citations`` message.
+    - ``sediment_question``: when set (and RAG enabled), store the Q&A
+      pair into the knowledge base; ``sediment_type`` tags the metadata.
+
+    Returns the concatenated assistant response text.
+    """
+    full_response = ""
+    seen_tool_calls: set[str] = set()
+    seen_tool_results: set[str] = set()
+    auto_cp_id: str | None = None
+    workspace_path = Path(cfg_chat.workspace).resolve() if auto_checkpoint else None
+    # Check for clarification questions in state metadata
+    _clarify_sent = False
+
+    try:
+        async for state in agent.chat(content, thread_id):
+            # ── Thought loop termination ────────────────
+            # If the agent detected a persistent thought loop
+            # (LLM repeating similar output), it terminates
+            # and sends a special state. We notify the user.
+            if handle_clarification and state.get("thought_loop_terminated"):
+                await websocket.send_json({
+                    "type": "text_delta",
+                    "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
+                })
+                await websocket.send_json({"type": "done"})
+                break
+
+            # ── Clarification support ────────────────────
+            # When the agent decides the user's request is
+            # ambiguous, it sets needs_clarification=True and
+            # attach a list of clarify_questions. We send these
+            # as a structured WS message so the frontend can
+            # render interactive question cards.
+            if (
+                handle_clarification
+                and not _clarify_sent
+                and state.get("needs_clarification")
+                and state.get("clarify_questions")
+            ):
+                questions = state["clarify_questions"]
+                await websocket.send_json(
+                    {
+                        "type": "clarification_request",
+                        "thread_id": thread_id,
+                        "questions": questions,
+                    }
+                )
+                _clarify_sent = True
+                # Also send the agent's text (the questions
+                # phrased as natural language)
+                messages = state.get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                    text = (
+                        last_msg.content
+                        if hasattr(last_msg, "content")
+                        else str(last_msg)
+                    )
+                    if text:
+                        await websocket.send_json(
+                            {"type": "text_delta", "text": text}
+                        )
+                await websocket.send_json({"type": "done"})
+                break
+
+            messages = state.get("messages", [])
+            if not messages:
+                continue
+            last_msg = messages[-1]
+
+            # Emit tool-call cards
+            if isinstance(last_msg, AIMessage):
+                for tc in getattr(last_msg, "tool_calls", []) or []:
+                    tid = tc.get("id")
+                    name = tc.get("name", "unknown")
+                    if tid and tid not in seen_tool_calls:
+                        seen_tool_calls.add(tid)
+                        # Auto-checkpoint before any file-editing tool runs
+                        if (
+                            auto_checkpoint
+                            and name in _EDIT_TOOLS
+                            and auto_cp_id is None
+                        ):
+                            try:
+                                snapshot = _snapshot_directory(
+                                    workspace_path
+                                )
+                                auto_cp_id = uuid.uuid4().hex[:8]
+                                with _state_lock:
+                                    _checkpoints[auto_cp_id] = (
+                                        workspace_path,
+                                        snapshot,
+                                    )
+                                await websocket.send_json(
+                                    {
+                                        "type": "auto_checkpoint",
+                                        "id": auto_cp_id,
+                                        "base": str(workspace_path),
+                                        "files": len(snapshot),
+                                    }
+                                )
+                            except Exception as e:
+                                logger.debug("[auto-cp] failed: %s", e)
+                        await websocket.send_json(
+                            {
+                                "type": "tool_call",
+                                "id": tid,
+                                "name": name,
+                                "args": tc.get("args", {}),
+                            }
+                        )
+
+            # Emit tool results
+            if isinstance(last_msg, ToolMessage):
+                tid = getattr(last_msg, "tool_call_id", None)
+                if tid and tid not in seen_tool_results:
+                    seen_tool_results.add(tid)
+                    tool_content = str(
+                        getattr(last_msg, "content", "")
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": "tool_result",
+                            "id": tid,
+                            "content": tool_content,
+                        }
+                    )
+
+                    # ── Long task progress detection ──────
+                    # When a tool result contains HPC job info,
+                    # sweep progress, or long-running task markers,
+                    # send a structured task_progress message so the
+                    # frontend can render a progress card.
+                    _progress = _extract_task_progress(
+                        tool_content
+                    )
+                    if _progress:
+                        await websocket.send_json({
+                            "type": "task_progress",
+                            **_progress,
+                        })
+
+            # Only send text delta for assistant content
+            if hasattr(last_msg, "content") and not isinstance(
+                last_msg, ToolMessage
+            ):
+                # Only send delta (new content)
+                delta = last_msg.content[len(full_response) :]
+                if delta:
+                    full_response = last_msg.content
+                    await websocket.send_json(
+                        {
+                            "type": "text_delta",
+                            "text": delta,
+                        }
+                    )
+
+        # Plan mode: send plan_result with criteria validation
+        if plan_result and plan_result.get("acceptance_criteria"):
+            criteria_results = []
+            for ac in plan_result["acceptance_criteria"]:
+                criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
+                criteria_results.append({
+                    "criterion": criterion,
+                    "passed": True,  # Agent executed successfully
+                    "note": "Verified after execution",
+                })
+            await websocket.send_json({
+                "type": "plan_result",
+                "plan_id": plan_result.get("plan_id", ""),
+                "criteria": criteria_results,
+                "all_passed": all(c["passed"] for c in criteria_results),
+            })
+
+        # Send citations if RAG was used this turn
+        if citations:
+            await websocket.send_json({
+                "type": "citations",
+                "sources": citations,
+            })
+
+        # ── Auto-sediment to knowledge base ───────────────
+        # When RAG is enabled and the agent produced a
+        # substantial response, automatically store the
+        # Q&A pair into the knowledge base for future
+        # retrieval. This creates a self-growing KB where
+        # each conversation enriches the corpus.
+        if (
+            sediment_question
+            and cfg_chat.rag_enabled
+            and full_response
+            and len(full_response) > 50
+            and get_context().kb is not None
+        ):
+            try:
+                import time as _time
+
+                sediment_text = (
+                    f"Q: {sediment_question[:500]}\n\n"
+                    f"A: {full_response[:2000]}"
+                )
+                get_context().kb.add_text(
+                    text=sediment_text,
+                    metadata={
+                        "type": sediment_type,
+                        "thread_id": thread_id,
+                        "timestamp": _time.time(),
+                        "source": "auto_sediment",
+                    },
+                )
+                await websocket.send_json({
+                    "type": "sediment",
+                    "stored": True,
+                    "preview": sediment_text[:100],
+                })
+            except Exception:
+                # Sediment failure should never block the response
+                logger.debug(
+                    "plan auto-sediment failed"
+                    if sediment_type == "plan_execution"
+                    else "auto-sediment failed",
+                    exc_info=True,
+                )
+
+        # Signal completion
+        await websocket.send_json({"type": "done"})
+
+    except Exception as e:
+        logger.error(error_log, exc_info=True)
+        await websocket.send_json(
+            {"type": "error", "error": f"{error_label}: {str(e)}"}
+        )
+
+    return full_response
+
+
 @router.websocket("/ws/agent")
 async def agent_websocket(websocket: WebSocket):
     """WebSocket endpoint for real-time Agent chat.
@@ -689,223 +961,26 @@ async def agent_websocket(websocket: WebSocket):
                         logger.warning("[RAG] query failed: %s", e)
 
                 # Stream agent responses
-                try:
-                    full_response = ""
-                    seen_tool_calls: set[str] = set()
-                    seen_tool_results: set[str] = set()
-                    auto_cp_id: str | None = None
-                    workspace_path = Path(cfg_chat.workspace).resolve()
-
-                    # Check for clarification questions in state metadata
-                    _clarify_sent = False
-
-                    async for state in agent.chat(content, thread_id):
-                        # ── Thought loop termination ────────────────
-                        # If the agent detected a persistent thought loop
-                        # (LLM repeating similar output), it terminates
-                        # and sends a special state. We notify the user.
-                        if state.get("thought_loop_terminated"):
-                            await websocket.send_json({
-                                "type": "text_delta",
-                                "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
-                            })
-                            await websocket.send_json({"type": "done"})
-                            break
-
-                        # ── Clarification support ────────────────────
-                        # When the agent decides the user's request is
-                        # ambiguous, it sets needs_clarification=True and
-                        # attach a list of clarify_questions. We send these
-                        # as a structured WS message so the frontend can
-                        # render interactive question cards.
-                        if (
-                            not _clarify_sent
-                            and state.get("needs_clarification")
-                            and state.get("clarify_questions")
-                        ):
-                            questions = state["clarify_questions"]
-                            await websocket.send_json(
-                                {
-                                    "type": "clarification_request",
-                                    "thread_id": thread_id,
-                                    "questions": questions,
-                                }
-                            )
-                            _clarify_sent = True
-                            # Also send the agent's text (the questions
-                            # phrased as natural language)
-                            messages = state.get("messages", [])
-                            if messages:
-                                last_msg = messages[-1]
-                                text = (
-                                    last_msg.content
-                                    if hasattr(last_msg, "content")
-                                    else str(last_msg)
-                                )
-                                if text:
-                                    await websocket.send_json(
-                                        {"type": "text_delta", "text": text}
-                                    )
-                            await websocket.send_json({"type": "done"})
-                            break
-
-                        messages = state.get("messages", [])
-                        if not messages:
-                            continue
-                        last_msg = messages[-1]
-
-                        # Emit tool-call cards
-                        if isinstance(last_msg, AIMessage):
-                            for tc in getattr(last_msg, "tool_calls", []) or []:
-                                tid = tc.get("id")
-                                name = tc.get("name", "unknown")
-                                if tid and tid not in seen_tool_calls:
-                                    seen_tool_calls.add(tid)
-                                    # Auto-checkpoint before any file-editing tool runs
-                                    if name in _EDIT_TOOLS and auto_cp_id is None:
-                                        try:
-                                            snapshot = _snapshot_directory(
-                                                workspace_path
-                                            )
-                                            auto_cp_id = uuid.uuid4().hex[:8]
-                                            with _state_lock:
-                                                _checkpoints[auto_cp_id] = (
-                                                    workspace_path,
-                                                    snapshot,
-                                                )
-                                            await websocket.send_json(
-                                                {
-                                                    "type": "auto_checkpoint",
-                                                    "id": auto_cp_id,
-                                                    "base": str(workspace_path),
-                                                    "files": len(snapshot),
-                                                }
-                                            )
-                                        except Exception as e:
-                                            logger.debug("[auto-cp] failed: %s", e)
-                                    await websocket.send_json(
-                                        {
-                                            "type": "tool_call",
-                                            "id": tid,
-                                            "name": name,
-                                            "args": tc.get("args", {}),
-                                        }
-                                    )
-
-                        # Emit tool results
-                        if isinstance(last_msg, ToolMessage):
-                            tid = getattr(last_msg, "tool_call_id", None)
-                            if tid and tid not in seen_tool_results:
-                                seen_tool_results.add(tid)
-                                tool_content = str(
-                                    getattr(last_msg, "content", "")
-                                )
-                                await websocket.send_json(
-                                    {
-                                        "type": "tool_result",
-                                        "id": tid,
-                                        "content": tool_content,
-                                    }
-                                )
-
-                                # ── Long task progress detection ──────
-                                # When a tool result contains HPC job info,
-                                # sweep progress, or long-running task markers,
-                                # send a structured task_progress message so
-                                # the frontend can render a progress card.
-                                _progress = _extract_task_progress(
-                                    tool_content
-                                )
-                                if _progress:
-                                    await websocket.send_json({
-                                        "type": "task_progress",
-                                        **_progress,
-                                    })
-
-                        # Only send text delta for assistant content
-                        if hasattr(last_msg, "content") and not isinstance(
-                            last_msg, ToolMessage
-                        ):
-                            # Only send delta (new content)
-                            delta = last_msg.content[len(full_response) :]
-                            if delta:
-                                full_response = last_msg.content
-                                await websocket.send_json(
-                                    {
-                                        "type": "text_delta",
-                                        "text": delta,
-                                    }
-                                )
-
-                    # Plan mode: send plan_result with criteria validation
-                    if plan_mode and not use_team and plan_data.get("acceptance_criteria"):
-                        criteria_results = []
-                        for ac in plan_data["acceptance_criteria"]:
-                            criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
-                            criteria_results.append({
-                                "criterion": criterion,
-                                "passed": True,  # Agent executed successfully
-                                "note": "Verified after execution",
-                            })
-                        await websocket.send_json({
-                            "type": "plan_result",
-                            "plan_id": plan_data.get("summary", "")[:50],
-                            "criteria": criteria_results,
-                            "all_passed": all(c["passed"] for c in criteria_results),
-                        })
-
-                    # Send citations if RAG was used this turn
-                    if _rag_sources:
-                        await websocket.send_json({
-                            "type": "citations",
-                            "sources": _rag_sources,
-                        })
-
-                    # ── Auto-sediment to knowledge base ───────────────
-                    # When RAG is enabled and the agent produced a
-                    # substantial response, automatically store the
-                    # Q&A pair into the knowledge base for future
-                    # retrieval. This creates a self-growing KB where
-                    # each conversation enriches the corpus.
-                    if (
-                        cfg_chat.rag_enabled
-                        and full_response
-                        and len(full_response) > 50
-                        and get_context().kb is not None
-                    ):
-                        try:
-                            import time as _time
-
-                            sediment_text = (
-                                f"Q: {content[:500]}\n\n"
-                                f"A: {full_response[:2000]}"
-                            )
-                            get_context().kb.add_text(
-                                text=sediment_text,
-                                metadata={
-                                    "type": "conversation",
-                                    "thread_id": thread_id,
-                                    "timestamp": _time.time(),
-                                    "source": "auto_sediment",
-                                },
-                            )
-                            await websocket.send_json({
-                                "type": "sediment",
-                                "stored": True,
-                                "preview": sediment_text[:100],
-                            })
-                        except Exception:
-                            # Sediment failure should never block the response
-                            logger.debug("auto-sediment failed", exc_info=True)
-
-                    # Signal completion
-                    await websocket.send_json({"type": "done"})
-
-                except Exception as e:
-                    logger.error("unexpected error", exc_info=True)
-                    await websocket.send_json(
-                        {"type": "error", "error": f"Agent error: {str(e)}"}
-                    )
+                _plan_result = None
+                if plan_mode and not use_team and plan_data.get("acceptance_criteria"):
+                    _plan_result = {
+                        "plan_id": plan_data.get("summary", "")[:50],
+                        "acceptance_criteria": plan_data["acceptance_criteria"],
+                    }
+                await _stream_agent_response(
+                    websocket,
+                    agent,
+                    content,
+                    thread_id,
+                    cfg_chat,
+                    auto_checkpoint=True,
+                    handle_clarification=True,
+                    plan_result=_plan_result,
+                    citations=_rag_sources,
+                    sediment_question=content,
+                    error_log="unexpected error",
+                    error_label="Agent error",
+                )
 
             elif msg_type == "explore_start":
                 # Exploration mode — run real exploration engine
@@ -1038,101 +1113,24 @@ async def agent_websocket(websocket: WebSocket):
                 )
 
                 # Execute the agent with plan context (same as normal chat)
-                try:
-                    full_response = ""
-                    seen_tool_calls: set[str] = set()
-                    seen_tool_results: set[str] = set()
-
-                    async for state in agent.chat(plan_context, thread_id):
-                        messages = state.get("messages", [])
-                        if not messages:
-                            continue
-                        last_msg = messages[-1]
-
-                        if isinstance(last_msg, AIMessage):
-                            for tc in getattr(last_msg, "tool_calls", []) or []:
-                                tid = tc.get("id")
-                                name = tc.get("name", "unknown")
-                                if tid and tid not in seen_tool_calls:
-                                    seen_tool_calls.add(tid)
-                                    await websocket.send_json({
-                                        "type": "tool_call",
-                                        "id": tid,
-                                        "name": name,
-                                        "args": tc.get("args", {}),
-                                    })
-
-                        if isinstance(last_msg, ToolMessage):
-                            tid = getattr(last_msg, "tool_call_id", None)
-                            if tid and tid not in seen_tool_results:
-                                seen_tool_results.add(tid)
-                                tool_content = str(getattr(last_msg, "content", ""))
-                                await websocket.send_json({
-                                    "type": "tool_result",
-                                    "id": tid,
-                                    "content": tool_content,
-                                })
-                                _progress = _extract_task_progress(tool_content)
-                                if _progress:
-                                    await websocket.send_json({"type": "task_progress", **_progress})
-
-                        if hasattr(last_msg, "content") and not isinstance(last_msg, ToolMessage):
-                            delta = last_msg.content[len(full_response):]
-                            if delta:
-                                full_response = last_msg.content
-                                await websocket.send_json({"type": "text_delta", "text": delta})
-
-                    # Send plan_result with criteria validation
-                    if plan_data.get("acceptance_criteria"):
-                        criteria_results = []
-                        for ac in plan_data["acceptance_criteria"]:
-                            criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
-                            criteria_results.append({
-                                "criterion": criterion,
-                                "passed": True,
-                                "note": "Verified after execution",
-                            })
-                        await websocket.send_json({
-                            "type": "plan_result",
-                            "plan_id": plan_id,
-                            "criteria": criteria_results,
-                            "all_passed": all(c["passed"] for c in criteria_results),
-                        })
-
-                    # Auto-sediment
-                    if (
-                        cfg_chat.rag_enabled
-                        and full_response
-                        and len(full_response) > 50
-                        and get_context().kb is not None
-                    ):
-                        try:
-                            import time as _time
-                            sediment_text = f"Q: {plan_objective[:500]}\n\nA: {full_response[:2000]}"
-                            get_context().kb.add_text(
-                                text=sediment_text,
-                                metadata={
-                                    "type": "plan_execution",
-                                    "thread_id": thread_id,
-                                    "timestamp": _time.time(),
-                                    "source": "auto_sediment",
-                                },
-                            )
-                            await websocket.send_json({
-                                "type": "sediment",
-                                "stored": True,
-                                "preview": sediment_text[:100],
-                            })
-                        except Exception:
-                            logger.debug("plan auto-sediment failed", exc_info=True)
-
-                    await websocket.send_json({"type": "done"})
-
-                except Exception as e:
-                    logger.error("plan execution error", exc_info=True)
-                    await websocket.send_json(
-                        {"type": "error", "error": f"Plan execution failed: {e}"}
-                    )
+                _plan_result = None
+                if plan_data.get("acceptance_criteria"):
+                    _plan_result = {
+                        "plan_id": plan_id,
+                        "acceptance_criteria": plan_data["acceptance_criteria"],
+                    }
+                await _stream_agent_response(
+                    websocket,
+                    agent,
+                    plan_context,
+                    thread_id,
+                    cfg_chat,
+                    plan_result=_plan_result,
+                    sediment_question=plan_objective,
+                    sediment_type="plan_execution",
+                    error_log="plan execution error",
+                    error_label="Plan execution failed",
+                )
 
             elif msg_type == "clarification_response":
                 # User answered a clarification_request. Resolve the

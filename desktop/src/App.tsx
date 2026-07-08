@@ -11,7 +11,7 @@ import Pet from "./Pet";
 import { playTaskComplete, playError as playErrorSound } from "./sounds";
 import ErrorBoundary from "./components/ErrorBoundary";
 import MessageContent from "./components/MessageContent";
-import { SettingsTabNav, ConfigField } from "./components/SettingsPanel";
+import { SettingsTabNav, ConfigField, PanelHeader } from "./components/SettingsPanel";
 // Tab panels only mount when their tab is active — lazy-load so the
 // recharts / diff / three chunks stay out of the initial bundle.
 const EmotionTrackerPanel = lazy(() => import("./components/EmotionTracker"));
@@ -3096,23 +3096,20 @@ export default function App() {
 
           {activeTab === "terminal" && (
             <div className="flex h-full flex-col bg-bg-tertiary text-text-primary">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
-                <span className="text-sm font-semibold">Integrated Terminal</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setTerminalOutput("")}
-                    className="btn-secondary px-3 py-1.5 text-xs"
-                  >
-                    Clear
-                  </button>
-                  <button
-                    onClick={() => invoke("stop_terminal")}
-                    className="btn-secondary px-3 py-1.5 text-xs"
-                  >
-                    Stop
-                  </button>
-                </div>
-              </div>
+              <PanelHeader title="Integrated Terminal">
+                <button
+                  onClick={() => setTerminalOutput("")}
+                  className="btn-secondary px-3 py-1.5 text-xs"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() => invoke("stop_terminal")}
+                  className="btn-secondary px-3 py-1.5 text-xs"
+                >
+                  Stop
+                </button>
+              </PanelHeader>
               <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
                 <pre className="whitespace-pre-wrap break-all text-text-primary">
                   {terminalOutput}
@@ -3184,11 +3181,7 @@ export default function App() {
 
               {/* Diff viewer */}
               <div className="flex flex-1 flex-col bg-bg-primary">
-                <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
-                  <span className="text-sm font-semibold">
-                    {activeCp ? `Checkpoint ${activeCp}` : "Review"}
-                  </span>
-                </div>
+                <PanelHeader title={activeCp ? `Checkpoint ${activeCp}` : "Review"} />
 
                 <div className="flex flex-1 overflow-hidden">
                   {activeCp && diffs.length > 0 ? (
@@ -3360,42 +3353,39 @@ export default function App() {
 
           {activeTab === "logs" && (
             <div className="flex h-full flex-col bg-bg-tertiary text-text-primary">
-              <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
-                <span className="text-sm font-semibold">Backend Logs</span>
-                <div className="flex items-center gap-2">
-                  <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
-                    {(["all", "stdout", "stderr"] as const).map((f) => (
-                      <button
-                        key={f}
-                        onClick={() => setLogFilter(f)}
-                        className={`rounded px-2.5 py-1 capitalize ${
-                          logFilter === f
-                            ? "bg-accent text-white"
-                            : "text-text-secondary hover:text-text-primary"
-                        }`}
-                      >
-                        {f}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() =>
-                      navigator.clipboard.writeText(
-                        backendLogs.map((l) => `[${l.time}][${l.source}] ${l.text}`).join("")
-                      )
-                    }
-                    className="btn-secondary px-3 py-1.5 text-xs"
-                  >
-                    Copy
-                  </button>
-                  <button
-                    onClick={() => setBackendLogs([])}
-                    className="btn-secondary px-3 py-1.5 text-xs"
-                  >
-                    Clear
-                  </button>
+              <PanelHeader title="Backend Logs">
+                <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
+                  {(["all", "stdout", "stderr"] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setLogFilter(f)}
+                      className={`rounded px-2.5 py-1 capitalize ${
+                        logFilter === f
+                          ? "bg-accent text-white"
+                          : "text-text-secondary hover:text-text-primary"
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
                 </div>
-              </div>
+                <button
+                  onClick={() =>
+                    navigator.clipboard.writeText(
+                      backendLogs.map((l) => `[${l.time}][${l.source}] ${l.text}`).join("")
+                    )
+                  }
+                  className="btn-secondary px-3 py-1.5 text-xs"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => setBackendLogs([])}
+                  className="btn-secondary px-3 py-1.5 text-xs"
+                >
+                  Clear
+                </button>
+              </PanelHeader>
               <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
                 {backendLogs
                   .filter((l) => logFilter === "all" || l.source === logFilter)
