@@ -29,6 +29,10 @@ import pytest
 # server.py 间接依赖 mcp, 没装的话整个模块都跳过
 pytest.importorskip("mcp")
 
+# Chaos tests use mock injection — fast enough for CI but logically grouped
+# with the integration suite. Run in integration CI job.
+pytestmark = pytest.mark.integration
+
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 

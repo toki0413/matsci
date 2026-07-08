@@ -47,3 +47,8 @@ def _clear_config_cache_between_tests(monkeypatch):
     clear_config_cache()
     yield
     clear_config_cache()
+
+
+def pytest_configure(config):
+    """Register custom markers for industry-grade test categorization."""
+    config.addinivalue_line("markers", "integration: heavy tests that need full stack (skip on fast CI)")

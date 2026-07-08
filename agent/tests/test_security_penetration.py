@@ -24,6 +24,9 @@ import pytest
 # server.py 间接依赖 mcp, 没装的话整个模块都跳过
 pytest.importorskip("mcp")
 
+# Penetration tests run in integration CI job — they need full middleware stack
+pytestmark = pytest.mark.integration
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
