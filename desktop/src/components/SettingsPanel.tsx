@@ -81,3 +81,13 @@ export function ConfigField({
     </div>
   );
 }
+
+/** Reusable panel header bar — title on left, optional actions on right. */
+export function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+      <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
+      {children && <div className="flex items-center gap-2">{children}</div>}
+    </div>
+  );
+}
