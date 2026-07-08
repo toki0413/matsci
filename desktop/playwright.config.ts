@@ -48,6 +48,14 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+    },
   ],
   webServer: [
     {
@@ -55,14 +63,16 @@ export default defineConfig({
       url: VITE_URL,
       cwd: __dirname,
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      timeout: 90_000,
     },
     {
       command: BACKEND_CMD,
       url: `${BACKEND_URL}/health/live`,
       cwd: BACKEND_CWD,
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      // MCP server initialization takes ~50s on a cold start, so give the
+      // backend ample time to come up before Playwright starts probing.
+      timeout: 120_000,
       // Dev mode so the spawned backend accepts the unauthenticated WS the
       // desktop app opens (no JWT login in e2e). Ignored when reusing an
       // already-running backend. Don't fail the whole run if the agent env
