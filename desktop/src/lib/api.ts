@@ -5,9 +5,22 @@
  * port via api-client), JSON (de)serialisation and auth headers so call
  * sites can stay one-liners. Non-2xx responses reject the promise, which
  * lets callers lean on try/catch / .catch().
+ *
+ * ponytail: one retry on 5xx with 1s backoff — covers transient remote
+ * backend hiccups without adding circuit-breaker complexity.
+ * upgrade path: add jitter / circuit-breaker if thundering-herd shows up.
  */
 
 import { getApiBase, getAuthToken } from "./api-client";
+
+async function fetchWithRetry(input: string, init: RequestInit): Promise<Response> {
+  const resp = await fetch(input, init);
+  if (resp.status >= 500) {
+    await new Promise((r) => setTimeout(r, 1000));
+    return fetch(input, init);
+  }
+  return resp;
+}
 
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -36,7 +49,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers["Content-Type"] = "application/json";
   }
 
-  const resp = await fetch(`${getApiBase()}${path}`, { ...options, headers });
+  const resp = await fetchWithRetry(`${getApiBase()}${path}`, { ...options, headers });
 
   if (!resp.ok) {
     let detail = `API error: ${resp.status}`;
@@ -88,7 +101,7 @@ export const api = {
 
   /** Blob downloads (exports, generated files). */
   getBlob: async (path: string, options?: RequestInit): Promise<Blob> => {
-    const resp = await fetch(`${getApiBase()}${path}`, {
+    const resp = await fetchWithRetry(`${getApiBase()}${path}`, {
       ...options,
       headers: {
         ...authHeaders(),
