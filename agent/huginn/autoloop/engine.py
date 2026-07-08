@@ -48,6 +48,20 @@ from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.templates import standard_dft_workflow
 
 
+# Autoloop 7-phase pipeline — single source of truth for phase names.
+# ponytail: constants, not an enum — engine phases are imperative control
+# flow labels, not a declarative state machine like ResearchPhase.
+# If phases diverge enough to need transitions/validation, promote to Enum.
+AUTOLOOP_PHASES = (
+    "perceive",
+    "hypothesize",
+    "plan",
+    "execute",
+    "validate",
+    "learn",
+    "report",
+)
+
 # 7 阶段 → persona 分派表. None 表示该阶段不走 LLM persona 注入
 # (比如 Execute 直接调 workflow, 不需要 persona 影响输出).
 # Hypothesize 用 default, 真正的 persona 在 _hypothesize 里按研究类型动态选.
@@ -60,6 +74,9 @@ _PHASE_PERSONAS: dict[str, str | None] = {
     "learn": "default",
     "report": "tutor",  # 教学风格输出
 }
+assert set(_PHASE_PERSONAS.keys()) == set(AUTOLOOP_PHASES), (
+    "Phase persona keys must match AUTOLOOP_PHASES"
+)
 
 # result_data 里的 key -> 文献检索时用的性质名. _literature_comparison 遍历这个表.
 _LIT_PROPERTY_MAP: dict[str, str] = {
@@ -209,10 +226,7 @@ class AutoloopEngine:
         # 懒加载, 避免 import 时拉起 StarHandlerRegistry.
         self._event_bus = None
         # 阶段索引: 给 WorkflowStageEvent 用, 从 phase name 推算.
-        self._phase_order = [
-            "perceive", "hypothesize", "plan", "execute",
-            "validate", "learn", "report",
-        ]
+        self._phase_order = list(AUTOLOOP_PHASES)
 
     def _get_evolution(self):
         """懒加载 EvolutionEngine, 避免实例化时就拉起日志和规则文件。"""
@@ -655,7 +669,7 @@ class AutoloopEngine:
             task_id=progress_task_id,
             description=f"autoloop: {objective[:80]}",
             total_steps=total_steps,
-            stage_labels=["perceive", "hypothesize", "plan", "execute", "validate", "learn", "report"],
+            stage_labels=list(AUTOLOOP_PHASES),
             engine_kind="autoloop",
             metadata={"run_id": run_id, "objective": objective[:200]},
         )
