@@ -465,6 +465,25 @@ class ToolAdapter:
                 data["metadata"] = result.metadata
 
             data = _sanitize_and_compress(data)
+
+            # 磁盘卸载: 压缩后仍然超长的输出存文件, 只留预览
+            try:
+                from huginn.tools.compress import offload_tool_output
+
+                serialized = json.dumps(data, default=str, ensure_ascii=False)
+                if count_tokens(serialized) > 20000:
+                    preview, artifact_path = offload_tool_output(
+                        serialized, tool.name,
+                    )
+                    data = {
+                        "_offloaded": True,
+                        "_preview": preview,
+                        "_artifact_path": artifact_path,
+                        "_full_size_chars": len(serialized),
+                    }
+            except Exception:
+                logger.debug("offload_tool_output failed (non-fatal)", exc_info=True)
+
             return data
 
         def _sanitize_and_compress(obj: Any) -> Any:
@@ -668,6 +687,22 @@ class ToolAdapter:
             """Post-execution: constraints, audit, cache, publish."""
             if router is not None:
                 router.record_light_attempt(tool.name)
+
+            # 溯源注册: 自动提取文件路径和关键属性
+            if result.success:
+                try:
+                    from huginn.provenance import register_tool_output
+
+                    register_tool_output(
+                        tool_name=tool.name,
+                        tool_input=input_data.model_dump() if hasattr(input_data, "model_dump") else {},
+                        tool_output=output,
+                    )
+                except ImportError:
+                    pass
+                except Exception:
+                    logger.debug("provenance register failed (non-fatal)", exc_info=True)
+
             result = _check_constraints(result, context)
             output = _serialize(result)
             _audit(input_data, output, approved=True, reason=None)

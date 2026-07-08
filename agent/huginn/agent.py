@@ -621,6 +621,13 @@ class HuginnAgent:
         # 钩子在外部通过 register_hook() 注入.
         self.hook_manager = HookManager()
 
+        # 注册材料科学内置 hook (VASP 收敛检查, LAMMPS 稳定性检查, 结构合理性检查)
+        try:
+            from huginn.hooks.science_hooks import register_science_hooks
+            register_science_hooks(self.hook_manager)
+        except ImportError:
+            logger.debug("science_hooks not available (non-fatal)")
+
         # 单步执行: 工具结果出来后暂停 chat 流, 让调用方检查 / 决定要不要继续.
         # _break_after_tool 是开关, _break_flag 是 _process_stream_state 置位、
         # chat() 消费的一次性信号.
@@ -1092,16 +1099,13 @@ class HuginnAgent:
             result: Any = None
             try:
                 result = await original.ainvoke(input_data)
-                return result
             except Exception as exc:
                 error = exc
-                raise
-            finally:
+                # Run post hooks for error case, then re-raise
                 if admission is not None and sched is not None:
                     try:
                         sched.release(admission)
                     except Exception:
-                        # Release failure must not mask the real result/error.
                         logger.warning("scheduler release failed for %s", tool_name)
                 duration_ms = (time.time() - start) * 1000
                 await hm.run_post(
@@ -1109,6 +1113,25 @@ class HuginnAgent:
                     thread_id=get_thread_id() or getattr(self, "thread_id", None),
                     user_message=get_user_message() or getattr(self, "_current_user_message", None),
                 )
+                raise
+
+            # Success path: release scheduler, run post hooks, check block
+            if admission is not None and sched is not None:
+                try:
+                    sched.release(admission)
+                except Exception:
+                    logger.warning("scheduler release failed for %s", tool_name)
+            duration_ms = (time.time() - start) * 1000
+            post_ctx = await hm.run_post(
+                tool_name, input_data, result, None, duration_ms,
+                thread_id=get_thread_id() or getattr(self, "thread_id", None),
+                user_message=get_user_message() or getattr(self, "_current_user_message", None),
+            )
+            # Science hooks can block bad results (e.g. VASP not converged)
+            if post_ctx and post_ctx.metadata.get("blocked_by_hook"):
+                block_reason = post_ctx.metadata.get("block_reason", "blocked by post_tool_use hook")
+                return {"error": block_reason, "_hook_blocked": True}
+            return result
 
         async def hooked_coroutine(**kwargs: Any) -> Any:
             return await _invoke_with_hooks(kwargs)

@@ -217,3 +217,60 @@ async def smart_compress_text(
     # Fallback: head/tail with omission marker
     omitted = n - head_end - (n - tail_start)
     return head + f"\n[... {omitted} lines omitted ...]\n" + tail
+
+
+# ── 工具输出磁盘卸载 ──────────────────────────────────────────────
+
+# 触发磁盘卸载的 token 阈值. 超过此值的输出存到文件, 只返回预览.
+_OFFLOAD_THRESHOLD_TOKENS = 20000
+# 预览的字符数 (头+尾各一半)
+_OFFLOAD_PREVIEW_CHARS = 4000
+# 卸载文件存放目录
+def _offload_dir() -> Path:
+    import os
+    from pathlib import Path
+
+    base = os.environ.get("HUGINN_CACHE_DIR")
+    d = Path(base) / "tool_artifacts" if base else Path.home() / ".huginn" / "tool_artifacts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def offload_tool_output(
+    output: str,
+    tool_name: str,
+    tool_call_id: str | None = None,
+    threshold_tokens: int = _OFFLOAD_THRESHOLD_TOKENS,
+    preview_chars: int = _OFFLOAD_PREVIEW_CHARS,
+) -> tuple[str, str | None]:
+    """超长输出存盘, 返回 (inline_preview, artifact_path).
+
+    如果输出不超过 threshold, 原样返回 (output, None).
+    否则存到文件, 返回预览+文件路径.
+
+    与 ToolOutputCompressor 互补:
+    - Compressor 是有损压缩 (保留关键值, 截断数组)
+    - Offload 是无损存盘 (完整输出在文件里, 上下文只放预览)
+    """
+    if not isinstance(output, str) or not output:
+        return output, None
+
+    if count_tokens(output) <= threshold_tokens:
+        return output, None
+
+    import time
+    import uuid
+
+    ts = int(time.time())
+    short_id = (tool_call_id or uuid.uuid4().hex[:8])
+    safe_name = tool_name.replace("/", "_")
+    artifact = _offload_dir() / f"{ts}-{safe_name}-{short_id}.txt"
+    artifact.write_text(output, encoding="utf-8")
+
+    half = preview_chars // 2
+    preview = (
+        output[:half]
+        + f"\n\n[... Full output ({len(output)} chars) saved to: {artifact} ...]\n\n"
+        + output[-half:]
+    )
+    return preview, str(artifact)

@@ -177,8 +177,12 @@ class HookManager:
         duration_ms: float,
         thread_id: str | None = None,
         user_message: str | None = None,
-    ) -> None:
-        """依次跑 post_tool_use 钩子. 纯观察性质, 返回值忽略.
+    ) -> HookContext:
+        """依次跑 post_tool_use 钩子. 返回最终 ctx.
+
+        钩子可通过 ctx.metadata['blocked_by_hook'] = True 和
+        ctx.metadata['block_reason'] = '...' 来 block 结果.
+        调用方检查返回的 ctx 来决定是否替换输出.
 
         user_message 是当前回合的用户提问, 可选. PRT Level 1 的 LLM
         判定钩子靠它识别"用户给的值"和"工具返回的值"是否冲突, 没有就
@@ -186,7 +190,10 @@ class HookManager:
         """
         callbacks = self._callbacks[POST_TOOL_USE]
         if not callbacks:
-            return
+            return HookContext(
+                tool_name=tool_name, args=args, result=result,
+                error=error, duration_ms=duration_ms,
+            )
 
         ctx = HookContext(
             tool_name=tool_name,
@@ -222,6 +229,8 @@ class HookManager:
             if user_message:
                 fail_ctx.metadata["user_message"] = user_message
             await self.trigger(POST_TOOL_USE_FAILURE, fail_ctx)
+
+        return ctx
 
 
 # ---------------------------------------------------------------------------
