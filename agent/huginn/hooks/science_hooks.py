@@ -566,6 +566,225 @@ async def openmm_stability_hook(ctx: HookContext) -> HookContext | None:
     return None
 
 
+# ── 跨学科工具检查族 (loop engineering 补全) ─────────────────────
+
+
+async def fep_validation_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查自由能计算结果的合理性."""
+    if ctx.tool_name != "fep_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    text = _extract_text(ctx)
+    if "nan" in text or "inf" in text:
+        return _block(ctx, "FEP 输出包含 NaN/Inf, 自由能计算可能发散.")
+
+    # 自由能差值过大时 warn (超过 100 kcal/mol 物理上可疑)
+    dG = data.get("delta_g_kcal_mol")
+    if dG is not None and abs(dG) > 100:
+        _warn(ctx, f"自由能变化 {dG:.2f} kcal/mol 过大, 检查 lambda 窗口和耦合参数.")
+
+    # TI/FEP 需要 lambda 窗口, 太少不靠谱
+    lambdas = data.get("lambdas", [])
+    if isinstance(lambdas, list) and len(lambdas) < 3:
+        _warn(ctx, f"仅 {len(lambdas)} 个 lambda 窗口, 建议至少 5-10 个提高精度.")
+
+    return None
+
+
+async def enhanced_sampling_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查增强采样结果的合理性."""
+    if ctx.tool_name != "enhanced_sampling_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    text = _extract_text(ctx)
+    if "nan" in text or "inf" in text:
+        return _block(ctx, "增强采样输出包含 NaN/Inf, FES 重构可能失败.")
+
+    # WHAM 未收敛时 warn
+    converged = data.get("converged")
+    if converged is False:
+        _warn(ctx, "WHAM 迭代未收敛, FES 可能不准确. 考虑增加 bin 数或迭代次数.")
+
+    # FES 自由能范围过大时 warn
+    fes_min = data.get("fes_min")
+    fes_max = data.get("fes_max")
+    if fes_min is not None and fes_max is not None:
+        rng = abs(fes_max - fes_min)
+        if rng > 200:
+            _warn(ctx, f"FES 自由能范围 {rng:.1f} kcal/mol 过大, 检查 CV 选择和采样充分性.")
+
+    return None
+
+
+async def msm_validation_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查 MSM 构建的有效性."""
+    if ctx.tool_name != "msm_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    text = _extract_text(ctx)
+    if "nan" in text or "inf" in text:
+        return _block(ctx, "MSM 输出包含 NaN/Inf, 转移矩阵可能无效.")
+
+    # 转移矩阵行和应接近 1 (随机矩阵性质)
+    t_matrix = data.get("transition_matrix")
+    if isinstance(t_matrix, list) and t_matrix:
+        for i, row in enumerate(t_matrix):
+            if isinstance(row, list) and row:
+                row_sum = sum(row)
+                if row_sum < 0.9 or row_sum > 1.1:
+                    _warn(ctx, f"转移矩阵第 {i} 行和为 {row_sum:.4f}, 偏离 1.0, 检查微扰态划分.")
+                    break
+
+    # 隐含弛豫时间过短说明微扰态划分太粗
+    timescales = data.get("implied_timescales", [])
+    if isinstance(timescales, list) and timescales:
+        max_ts = max(timescales) if timescales else 0
+        if max_ts < 2:
+            _warn(ctx, f"最大隐含弛豫时间 {max_ts:.1f} 步, 微扰态划分可能过粗.")
+
+    return None
+
+
+async def inverse_design_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查逆向设计优化结果."""
+    if ctx.tool_name != "inverse_design_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    # Pareto 前沿为空时 block
+    pareto = data.get("pareto_frontier", data.get("pareto_indices"))
+    if pareto is not None and isinstance(pareto, list) and len(pareto) == 0:
+        return _block(ctx, "Pareto 前沿为空, 可能所有解都被支配. 检查目标函数方向.")
+
+    # 优化没改善时 warn
+    best = data.get("best_score")
+    initial = data.get("initial_score")
+    if best is not None and initial is not None and best >= initial:
+        _warn(ctx, f"优化后最佳得分 {best:.4f} 未优于初始 {initial:.4f}, 可能陷入局部最优.")
+
+    return None
+
+
+async def motif_mining_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查结构 motif 挖掘结果."""
+    if ctx.tool_name != "motif_mining_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    motifs = data.get("motifs", data.get("found_motifs", []))
+    if isinstance(motifs, list) and len(motifs) == 0:
+        _warn(ctx, "未检测到任何结构 motif, 检查截断半径或输入结构.")
+
+    return None
+
+
+async def consensus_scoring_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查共识打分结果的一致性."""
+    if ctx.tool_name != "consensus_scoring_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    # 排名列表为空时 block
+    ranked = data.get("ranked_items", data.get("ranking", []))
+    if isinstance(ranked, list) and len(ranked) == 0:
+        return _block(ctx, "共识打分结果为空, 检查输入分数列表.")
+
+    # 排名一致性 (Kendall W 太低说明各模型分歧大)
+    w = data.get("kendall_w")
+    if w is not None and isinstance(w, (int, float)) and w < 0.3:
+        _warn(ctx, f"Kendall W = {w:.3f} 偏低, 各打分模型分歧较大, 共识排名可靠性有限.")
+
+    return None
+
+
+async def rdkit_validation_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查 RDKit 分子操作的有效性."""
+    if ctx.tool_name != "rdkit_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    # SMILES 解析失败
+    if data.get("valid") is False or data.get("error"):
+        return _block(ctx, f"RDKit 分子解析失败: {data.get('error', '未知错误')}")
+
+    # 分子描述符异常
+    mw = data.get("molecular_weight")
+    if mw is not None and isinstance(mw, (int, float)):
+        if mw > 900:
+            _warn(ctx, f"分子量 {mw:.1f} Da 超过 900, 可能不适合类药物性 (Lipinski 规则).")
+        if mw < 30:
+            _warn(ctx, f"分子量 {mw:.1f} Da 过小, 可能不是有效的药物分子.")
+
+    return None
+
+
+async def neb_convergence_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查 NEB 路径收敛性."""
+    if ctx.tool_name != "neb_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    converged = data.get("converged")
+    if converged is False:
+        _warn(ctx, "NEB 路径未收敛, 考虑增加最大迭代次数或调整弹簧常数.")
+
+    # 能垒为负说明起点比终点高, 可能路径方向反了
+    barrier = data.get("barrier_ev")
+    if barrier is not None and isinstance(barrier, (int, float)) and barrier < 0:
+        _warn(ctx, f"NEB 能垒 {barrier:.4f} eV 为负值, 检查初末态方向是否正确.")
+
+    return None
+
+
+async def gp_model_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查 GP 模型拟合质量."""
+    if ctx.tool_name != "gp_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    # R² 过低说明模型拟合差
+    r2 = data.get("r2_score")
+    if r2 is not None and isinstance(r2, (int, float)) and r2 < 0.5:
+        _warn(ctx, f"GP 模型 R² = {r2:.4f} 偏低, 考虑增加核函数复杂度或训练数据.")
+
+    # 超参数异常 (length_scale 过大说明模型没学到任何结构)
+    ls = data.get("length_scale")
+    if ls is not None and isinstance(ls, (int, float)) and ls > 100:
+        _warn(ctx, f"GP length_scale = {ls:.2f} 过大, 模型可能退化为常数预测.")
+
+    return None
+
+
 # ── 注册函数 ─────────────────────────────────────────────────────
 
 
@@ -601,6 +820,16 @@ def register_science_hooks(hm: HookManager) -> None:
     # 生物医药检查族
     hm.register(POST_TOOL_USE, vina_docking_hook)
     hm.register(POST_TOOL_USE, openmm_stability_hook)
+    # 跨学科工具检查族 (loop engineering 补全)
+    hm.register(POST_TOOL_USE, fep_validation_hook)
+    hm.register(POST_TOOL_USE, enhanced_sampling_hook)
+    hm.register(POST_TOOL_USE, msm_validation_hook)
+    hm.register(POST_TOOL_USE, inverse_design_hook)
+    hm.register(POST_TOOL_USE, motif_mining_hook)
+    hm.register(POST_TOOL_USE, consensus_scoring_hook)
+    hm.register(POST_TOOL_USE, rdkit_validation_hook)
+    hm.register(POST_TOOL_USE, neb_convergence_hook)
+    hm.register(POST_TOOL_USE, gp_model_hook)
 
     # 事件驱动管线 hook — 成功完成后建议下一步
     try:
@@ -650,7 +879,15 @@ def register_science_hooks(hm: HookManager) -> None:
         "gaussian_termination, orca_termination, gromacs_stability, "
         "fem_solver, openfoam_residual, mechanical_property, "
         "packing_success, energy_bound, output_file_existence, "
-        "vina_docking, openmm_stability, pipeline, "
+        "vina_docking, openmm_stability, "
+        "fep_validation, enhanced_sampling, msm_validation, "
+        "inverse_design, motif_mining, consensus_scoring, "
+        "rdkit_validation, neb_convergence, gp_model, "
+        "pipeline, "
         "rag_provenance, workflow_guidance, calculation_ingest, "
-        "hook_failure, rag_track, rag_feedback"
+        "hook_failure, rag_track, rag_feedback. "
+        "Pipeline stages: structure→relax→static→properties→"
+        "mechanical→md→cheminfo→docking/biomd→"
+        "free_energy/enhanced_sampling→kinetics/motif/inverse→"
+        "consensus→analysis"
     )

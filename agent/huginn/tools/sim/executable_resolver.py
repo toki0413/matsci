@@ -131,6 +131,13 @@ _REGISTRY: dict[str, ToolExecutableSpec] = {
         install_hint="conda install -c conda-forge elmerfem  或从 https://www.elmerfem.org/ 编译",
         conda_package="conda-forge/elmerfem",
     ),
+    "autodock_vina": ToolExecutableSpec(
+        name="autodock_vina",
+        env_vars=("VINA_EXECUTABLE",),
+        basenames=("vina", "vina_split", "vinardo"),
+        install_hint="conda install -c conda-forge autodock-vina  或从 https://github.com/ccsb-scripps/AutoDock-Vina 编译",
+        conda_package="conda-forge/autodock-vina",
+    ),
 }
 
 
