@@ -263,6 +263,7 @@ export default function StructureViewer({ API_BASE }: { API_BASE: string }) {
             value={inputFormat}
             onChange={(e) => setInputFormat(e.target.value as any)}
             className="input-field text-xs w-24"
+            aria-label="Input format"
           >
             <option value="xyz">XYZ</option>
             <option value="poscar">POSCAR/CIF</option>
