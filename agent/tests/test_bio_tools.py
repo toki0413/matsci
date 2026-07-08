@@ -170,14 +170,12 @@ class TestRDKitTool:
 class TestRDKitToolNoDeps:
     """Test error paths when rdkit is not installed."""
 
-    def test_missing_smiles(self):
+    @pytest.mark.asyncio
+    async def test_missing_smiles(self):
         from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
 
         tool = RDKitTool()
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            tool.call(RDKitInput(action="smiles_to_mol"), CTX)
-        )
+        result = await tool.call(RDKitInput(action="smiles_to_mol"), CTX)
         assert not result.success
         # Without rdkit we get an ImportError message; with rdkit but no smiles we get validation error
         assert "smiles is required" in result.error or "rdkit" in result.error.lower()
