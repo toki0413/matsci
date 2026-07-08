@@ -29,7 +29,8 @@ class PipelineStage(Enum):
     STRUCTURE = "structure"    # 结构准备 (structure_tool, packing_tool)
     RELAX = "relax"            # 结构优化 (vasp_tool relax, qe_tool, cp2k_tool, lammps_tool)
     STATIC = "static"          # 静态计算 (vasp_tool static)
-    PROPERTIES = "properties"  # 性质计算 (vasp_tool band/dos, mechanical_tool, characterization_tool)
+    PROPERTIES = "properties"  # 性质计算 (vasp_tool band/dos, characterization_tool)
+    MECHANICAL = "mechanical"  # 力学性质 (mechanical_tool, 弹性常数/模量/硬度)
     MD = "md"                  # 分子动力学 (lammps_tool, gromacs_tool)
     ANALYSIS = "analysis"      # 数据分析 (任何产出最终结果的工具)
 
@@ -42,6 +43,7 @@ _STAGE_ORDER: dict[PipelineStage, int] = {
     PipelineStage.RELAX: 1,
     PipelineStage.STATIC: 2,
     PipelineStage.PROPERTIES: 3,
+    PipelineStage.MECHANICAL: 3,  # 和 PROPERTIES 同级, 走力学线
     PipelineStage.MD: 4,
     PipelineStage.ANALYSIS: 5,
 }
@@ -52,8 +54,9 @@ _STAGE_PREREQUISITES: dict[PipelineStage, list[PipelineStage]] = {
     PipelineStage.RELAX: [PipelineStage.STRUCTURE],
     PipelineStage.STATIC: [PipelineStage.RELAX],
     PipelineStage.PROPERTIES: [PipelineStage.STATIC, PipelineStage.RELAX],
+    PipelineStage.MECHANICAL: [PipelineStage.RELAX],
     PipelineStage.MD: [PipelineStage.STRUCTURE],
-    PipelineStage.ANALYSIS: [PipelineStage.MD, PipelineStage.PROPERTIES],
+    PipelineStage.ANALYSIS: [PipelineStage.MD, PipelineStage.PROPERTIES, PipelineStage.MECHANICAL],
 }
 
 # 管线认识的所有工具, 遍历注册表时用
