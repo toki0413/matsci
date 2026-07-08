@@ -40,7 +40,25 @@ async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
                 "success": False,
                 "error": f"File too large ({len(content)} bytes, max {_MAX_UPLOAD_BYTES})",
             }
-        result = get_context().kb.add_document(file.filename or "unnamed", content)
+
+        # 优先走 SmartIngester: 按文件类型自动选解析方式 (图片 OCR + CV
+        # 分析, PDF 文本/OCR + 内嵌图片, CSV/JSON 摘要). 缺依赖时退回原逻辑.
+        filename = file.filename or "unnamed"
+        smart_result = None
+        try:
+            from huginn.knowledge.smart_ingest import build_smart_ingester
+
+            ingester = build_smart_ingester(get_context().kb)
+            if ingester is not None:
+                smart_result = await ingester.ingest(filename, content)
+        except Exception:
+            logger.debug("SmartIngester 不可用, 退回原生 add_document", exc_info=True)
+
+        if smart_result is not None:
+            return {"success": True, "document": smart_result}
+
+        # 退路: KB 原生摄入
+        result = get_context().kb.add_document(filename, content)
         return {"success": True, "document": result}
     except Exception as e:
         logger.error("unexpected error", exc_info=True)

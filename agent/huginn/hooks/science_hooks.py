@@ -488,6 +488,84 @@ async def output_file_existence_hook(ctx: HookContext) -> HookContext | None:
     return None
 
 
+# ── 生物医药检查族 ───────────────────────────────────────────────
+
+
+async def vina_docking_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查 AutoDock Vina 对接结果的合理性.
+
+    - 对接无结果时 block
+    - 最佳亲和力 > 0 kcal/mol 时 block (物理上不合理)
+    - 亲和力过弱 (> -3) 时 warn (几乎无结合)
+    """
+    if ctx.tool_name != "vina_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data or data.get("action") != "dock":
+        return None
+
+    poses = data.get("poses", [])
+    if not poses:
+        return _block(ctx, "Vina 对接未产生任何结合构象. 检查格点盒子是否覆盖活性位点.")
+
+    best = data.get("best_affinity")
+    if best is not None:
+        if best > 0:
+            return _block(
+                ctx,
+                f"对接亲和力 {best:.2f} kcal/mol 为正值, 物理上不合理. 检查受体/配体准备.",
+            )
+        if best > -3.0:
+            _warn(ctx, f"最佳亲和力 {best:.2f} kcal/mol 偏弱, 可能无显著结合.")
+
+    return None
+
+
+async def openmm_stability_hook(ctx: HookContext) -> HookContext | None:
+    """POST_TOOL_USE: 检查 OpenMM MD 运行稳定性.
+
+    - 温度严重偏离设定值时 warn
+    - 能量为 NaN/Inf 时 block
+    - 能量不降反升 (minimization) 时 warn
+    """
+    if ctx.tool_name != "openmm_tool":
+        return None
+
+    data = _result_data(ctx)
+    if not data:
+        return None
+
+    text = _extract_text(ctx)
+    if "nan" in text or "inf" in text:
+        return _block(ctx, "OpenMM 输出包含 NaN/Inf, 模拟可能发散. 检查时间步长和约束设置.")
+
+    action = data.get("action")
+
+    # Minimization: energy should decrease
+    if action == "energy_minimize":
+        e0 = data.get("initial_energy_kj_mol")
+        ef = data.get("final_energy_kj_mol")
+        if e0 is not None and ef is not None and ef > e0:
+            _warn(ctx, f"能量最小化后能量升高 ({e0:.1f} → {ef:.1f} kJ/mol), 可能未收敛.")
+
+    # MD run: check temperature drift
+    if action == "md_run":
+        series = data.get("time_series", {})
+        temps = series.get("temperatures", [])
+        target = data.get("temperature_k", 300.0)
+        if temps:
+            mean_t = sum(temps) / len(temps)
+            if abs(mean_t - target) > 50:
+                _warn(
+                    ctx,
+                    f"平均温度 {mean_t:.1f}K 偏离设定值 {target:.1f}K 超过 50K. "
+                    "检查热浴耦合强度或时间步长.",
+                )
+
+    return None
+
+
 # ── 注册函数 ─────────────────────────────────────────────────────
 
 
@@ -520,6 +598,9 @@ def register_science_hooks(hm: HookManager) -> None:
     hm.register(POST_TOOL_USE, energy_bound_hook)
     # 文件存在性验证
     hm.register(POST_TOOL_USE, output_file_existence_hook)
+    # 生物医药检查族
+    hm.register(POST_TOOL_USE, vina_docking_hook)
+    hm.register(POST_TOOL_USE, openmm_stability_hook)
 
     # 事件驱动管线 hook — 成功完成后建议下一步
     try:
@@ -528,11 +609,48 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("pipeline_hook not available (non-fatal)")
 
+    # RAG 检索结果增强: 搜索知识库时附带 provenance 上下文
+    try:
+        from huginn.rag.provenance_enhancer import rag_provenance_hook
+        hm.register(POST_TOOL_USE, rag_provenance_hook)
+    except ImportError:
+        logger.debug("rag_provenance_hook not available (non-fatal)")
+
+    # 领域管线建议: 搜索知识库时根据领域推荐计算流程
+    try:
+        from huginn.knowledge.domain_pipeline import workflow_guidance_hook
+        hm.register(POST_TOOL_USE, workflow_guidance_hook)
+    except ImportError:
+        logger.debug("workflow_guidance_hook not available (non-fatal)")
+
+    # 计算结果自动摄入知识库 + hook 失败蒸馏联动
+    try:
+        from huginn.knowledge.auto_ingest import (
+            calculation_ingest_hook,
+            hook_failure_hook,
+        )
+        hm.register(POST_TOOL_USE, calculation_ingest_hook)
+        hm.register(POST_TOOL_USE, hook_failure_hook)
+    except ImportError:
+        logger.debug("auto_ingest hooks not available (non-fatal)")
+
+    # 检索质量反馈循环: rag_tool 搜索结果 -> 后续工具成败 -> 文档置信度调权
+    try:
+        from huginn.rag.feedback import rag_feedback_hook, rag_track_hook
+
+        hm.register(POST_TOOL_USE, rag_track_hook)
+        hm.register(POST_TOOL_USE, rag_feedback_hook)
+    except ImportError:
+        logger.debug("rag feedback hooks not available (non-fatal)")
+
     hm._science_hooks_registered = True
     logger.info(
         "Science hooks registered: vasp_convergence, lammps_stability, "
         "structure_sanity, qe_convergence, cp2k_convergence, "
         "gaussian_termination, orca_termination, gromacs_stability, "
         "fem_solver, openfoam_residual, mechanical_property, "
-        "packing_success, energy_bound, output_file_existence, pipeline"
+        "packing_success, energy_bound, output_file_existence, "
+        "vina_docking, openmm_stability, pipeline, "
+        "rag_provenance, workflow_guidance, calculation_ingest, "
+        "hook_failure, rag_track, rag_feedback"
     )
