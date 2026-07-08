@@ -72,6 +72,9 @@ const resources = {
       'chat.mode.chat': 'Chat',
       'chat.mode.plan': 'Plan',
       'chat.mode.build': 'Build',
+      'chat.mode.chat.desc': 'Normal assistant chat',
+      'chat.mode.plan.desc': 'Generate a step-by-step plan without executing tools',
+      'chat.mode.build.desc': 'Execute tools and edit files',
 
       /* ── Language switcher ── */
       'lang.label': 'EN',
@@ -147,6 +150,8 @@ const resources = {
       'save.selectTopic': 'Select a topic',
       'save.saved': 'Saved',
       'save.newTopic': '+ New topic',
+      'save.toMemory': 'Save to memory',
+      'save.confirm': 'Save',
 
       /* ── Pet widget ── */
       'pet.xp': 'Experience',
@@ -272,6 +277,9 @@ const resources = {
       'chat.mode.chat': '对话',
       'chat.mode.plan': '规划',
       'chat.mode.build': '构建',
+      'chat.mode.chat.desc': '常规助手对话',
+      'chat.mode.plan.desc': '生成分步计划，不执行工具',
+      'chat.mode.build.desc': '执行工具并编辑文件',
 
       /* ── Language switcher ── */
       'lang.label': '中',
@@ -347,6 +355,8 @@ const resources = {
       'save.selectTopic': '选择专题',
       'save.saved': '已保存',
       'save.newTopic': '+ 新建专题',
+      'save.toMemory': '保存到记忆',
+      'save.confirm': '保存',
 
       /* ── Pet widget ── */
       'pet.xp': '经验',
