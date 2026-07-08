@@ -1,0 +1,170 @@
+name: Stable Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ./desktop/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust CLI + sidecar
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release -p huginn -p huginn-sidecar 2>&1 | tee rust-build.log
+
+      - name: Detect Rust target triple
+        id: target
+        shell: bash
+        run: echo "triple=$(rustc --print host-tuple)" >> "$GITHUB_OUTPUT"
+
+      - name: Stage huginn sidecars
+        shell: bash
+        run: |
+          TARGET=${{ steps.target.outputs.triple }}
+          SIDECAR_DIR="desktop/src-tauri/sidecars"
+          mkdir -p "$SIDECAR_DIR"
+          cp "target/release/huginn.exe" "$SIDECAR_DIR/huginn-$TARGET.exe"
+          cp "target/release/huginn-sidecar.exe" "$SIDECAR_DIR/huginn-sidecar-$TARGET.exe"
+
+      - name: Install frontend dependencies
+        working-directory: ./desktop
+        run: npm ci
+
+      - name: Type-check frontend
+        working-directory: ./desktop
+        run: npm run build
+
+      - name: Build Tauri desktop app
+        working-directory: ./desktop
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run tauri build 2>&1 | tee tauri-build.log
+        timeout-minutes: 40
+
+      - name: Annotate build failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "::error::Build failed. Relevant error context:"
+          for log in rust-build.log desktop/tauri-build.log; do
+            if [ -f "$log" ]; then
+              echo "::error::--- $log ---"
+              grep -n -E -B3 -A5 "error\[|failed to run custom build|failed to build app|failed to compile" "$log" | tail -100 | while IFS= read -r line; do
+                echo "::error::$line"
+              done
+            fi
+          done
+
+      - name: Upload desktop artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: huginn-desktop-windows
+          path: |
+            target/release/bundle/
+            target/release/*.exe
+
+  build-wheels:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        shell: bash
+        run: pip install maturin
+
+      - name: Build huginn-ext wheel
+        shell: bash
+        run: |
+          cd pyext
+          maturin build --release --interpreter python
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: huginn-wheels
+          path: target/wheels/*.whl
+          if-no-files-found: error
+
+  release:
+    runs-on: windows-latest
+    needs: [build-desktop, build-wheels]
+    steps:
+      - name: Extract version from tag
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: huginn-desktop-windows
+          path: ./assets
+
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: huginn-wheels
+          path: ./assets/wheels
+
+      - name: Create stable release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Huginn ${{ steps.ver.outputs.version }}
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            assets/**/*.exe
+            assets/**/*.msi
+            assets/**/*.whl
+
+      - name: Print release URL
+        run: |
+          echo "::notice::Release URL: ${{ steps.release.outputs.url }}"
+          echo "::notice::Release assets: ${{ steps.release.outputs.assets }}"
