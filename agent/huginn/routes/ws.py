@@ -283,6 +283,7 @@ async def _stream_agent_response(
     """
     full_response = ""
     seen_tool_calls: set[str] = set()
+    _tool_names_used: set[str] = set()
     seen_tool_results: set[str] = set()
     auto_cp_id: str | None = None
     workspace_path = Path(cfg_chat.workspace).resolve() if auto_checkpoint else None
@@ -371,6 +372,7 @@ async def _stream_agent_response(
                     name = tc.get("name", "unknown")
                     if tid and tid not in seen_tool_calls:
                         seen_tool_calls.add(tid)
+                        _tool_names_used.add(name)
                         # Auto-checkpoint before any file-editing tool runs
                         if (
                             auto_checkpoint
@@ -532,6 +534,21 @@ async def _stream_agent_response(
                     else "auto-sediment failed",
                     exc_info=True,
                 )
+
+        # Fallback: agent produced no text at all (tool calls failed,
+        # internal errors, or LLM returned empty content). Send a
+        # generic message so the user doesn't stare at a blank response.
+        if not full_response:
+            if _tool_names_used:
+                names_str = ", ".join(sorted(_tool_names_used))
+                fallback = f"（Agent 调用了工具 [{names_str}] 但未生成文字回复。请查看上方的工具调用结果，或换一种问法重试。）"
+            else:
+                fallback = "（Agent 未能生成回复，可能是内部处理超时或出错。请尝试换一种问法，或稍后重试。）"
+            full_response = fallback
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": fallback,
+            })
 
         # Signal completion
         await websocket.send_json({"type": "done"})
