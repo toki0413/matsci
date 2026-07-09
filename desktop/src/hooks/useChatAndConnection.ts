@@ -73,15 +73,18 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const { config, activeTab, pushConfig, onAutoCheckpoint, onExplorationResult,
     toolsLength, skillsLength, setTools, setSkills } = params;
 
+  // ── Per-thread message cache ─────────────────────────────────
+  // each thread keeps its own message list so switching doesn't lose history
+  const threadMessagesRef = useRef<Record<string, Message[]>>({});
+  const WELCOME_MSG = (): Message => ({
+    role: "assistant",
+    content:
+      "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat. I can help with DFT, molecular dynamics, packing, symbolic math, UQ/GP, and formal Lean verification.",
+    timestamp: formatTime(),
+  });
+
   // ── Chat message state ───────────────────────────────────────
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content:
-        "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat. I can help with DFT, molecular dynamics, packing, symbolic math, UQ/GP, and formal Lean verification.",
-      timestamp: formatTime(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([WELCOME_MSG()]);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"chat" | "plan" | "build">("chat");
   const [pendingPlan, setPendingPlan] = useState<string>("");
@@ -144,6 +147,21 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   ]);
   const [activeThread, setActiveThread] = useState<string>("desktop");
 
+  // switch thread: cache current messages, restore target thread's messages
+  const switchThread = (threadId: string) => {
+    if (threadId === activeThread) return;
+    // save current thread's messages
+    threadMessagesRef.current[activeThread] = messages;
+    // restore or init target thread's messages
+    const cached = threadMessagesRef.current[threadId];
+    if (cached) {
+      setMessages(cached);
+    } else {
+      setMessages([WELCOME_MSG()]);
+    }
+    setActiveThread(threadId);
+  };
+
   const loadThreads = async () => {
     try {
       const data = await api.get<{ threads?: Thread[] }>("/threads");
@@ -156,6 +174,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const createThread = async () => {
     try {
       const data = await api.post<{ id: string; label: string }>("/threads", { label: "New thread" });
+      // cache current thread before switching
+      threadMessagesRef.current[activeThread] = messages;
       setActiveThread(data.id);
       setMessages([
         {
@@ -812,7 +832,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     showGuide, closeGuide,
     // Setters
     setInput, setMode, setMessages, setPendingPlan, setChatSearchOpen, setChatSearchQuery,
-    setActiveThread, setThreads, setShowGuide,
+    setActiveThread, setThreads, setShowGuide, switchThread,
     // Functions
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,

@@ -375,13 +375,19 @@ class ResearchLog:
             ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
-    def list_by_status(self, status: str) -> list[ResearchRecord]:
-        """按状态列出, 时间升序."""
+    def list_by_status(self, status: str, limit: int | None = None) -> list[ResearchRecord]:
+        """按状态列出, 时间升序. limit 截取前 N 条."""
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM research_records WHERE status = ? ORDER BY timestamp ASC",
-                (status,),
-            ).fetchall()
+            if limit is not None:
+                rows = self._conn.execute(
+                    "SELECT * FROM research_records WHERE status = ? ORDER BY timestamp ASC LIMIT ?",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM research_records WHERE status = ? ORDER BY timestamp ASC",
+                    (status,),
+                ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
     def list_by_tag(self, tag: str) -> list[ResearchRecord]:

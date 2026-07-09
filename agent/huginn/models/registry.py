@@ -41,6 +41,8 @@ def _patch_langchain_reasoning_content():
                 if not reasoning and hasattr(delta, "model_extra"):
                     reasoning = delta.model_extra.get("reasoning_content", "")
             if reasoning:
+                if chunk.additional_kwargs is None:
+                    chunk.additional_kwargs = {}
                 chunk.additional_kwargs["reasoning_content"] = reasoning
             return chunk
 

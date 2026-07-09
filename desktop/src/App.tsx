@@ -474,7 +474,7 @@ export default function App() {
     threads, activeThread,
     showGuide, closeGuide,
     setInput, setMode, setMessages, setPendingPlan, setChatSearchOpen, setChatSearchQuery,
-    setActiveThread, setThreads, setShowGuide,
+    setThreads, setShowGuide, switchThread,
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
     startBackend,
@@ -1061,8 +1061,7 @@ export default function App() {
               threads={threads}
               activeThread={activeThread}
               setThreads={setThreads as any}
-              setActiveThread={setActiveThread}
-              setMessages={setMessages}
+              switchThread={switchThread}
               createThread={createThread}
               renameThread={renameThread}
               deleteThread={deleteThread}
