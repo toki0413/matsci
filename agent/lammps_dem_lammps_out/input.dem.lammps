@@ -1,0 +1,78 @@
+# LAMMPS DEM (Discrete Element Method) — Granular Packing Simulation
+# 碰撞模型: Hertz-Mindlin with Coulomb friction
+# 生成方式: lammps_tool action=dem_packing
+# 粒子数: 10, 粒径: 5.0 ± 0.0
+
+# ── Units & Atom Style ──────────────────────────────────────────
+# si: meters/seconds/kg; real: Angstroms/fs/g (需按比例换算)
+units           si
+atom_style      sphere
+boundary        f f f
+
+# ── Simulation Box ──────────────────────────────────────────────
+region          box block 0 100.0 0 100.0 0 100.0
+create_box      1 box
+
+# ── Particle Properties ─────────────────────────────────────────
+# 每个粒子: position + diameter + density (LAMMPS 算 mass)
+set             type 1 diameter 10.0 density 1.0
+
+# ── Create Particles ────────────────────────────────────────────
+# random distribution in box, 上下留点空给重力沉降
+create_atoms    1 random 10 12345 box \
+                overlap 10.0 maxtry 10000
+
+# 多分散: 按 r ± r_std 调整粒径
+
+
+
+# ── Neighbor & Communication ───────────────────────────────────
+neighbor        10.0 bin
+neigh_modify    delay 0
+
+# ── Pair Style: Hertz-Mindlin Granular Contact ──────────────────
+# LAMMPS GRANULAR package: 非线性 Hertz 接触 + Mindlin 切向 + 阻尼
+pair_style      granular
+pair_coeff      * * hertz/material 1000000.0 0.3 0.5 0.8 0 normal \
+                mindlin/force 384615.3846153846 0.5 0 tangential \
+                damping_coeff 0.8 0.5 0.5 0 rolling \
+                tsudi 1.0 0.5 0 twisting
+
+# ── Physics: Gravity (optional) ─────────────────────────────────
+# no gravity
+
+# ── Integration: NVE + Granular Temperature ────────────────────
+# velocity limit 防止穿透时爆飞
+fix             integrate all nve/sphere
+fix             freeze_property all setforce 0 0 0
+
+# ── Output: Thermo + Dump ──────────────────────────────────────
+thermo          1000
+thermo_style    custom step atoms ke pe etotal press
+thermo_modify   lost warn
+
+# 每 10000 步 dump 一次粒子位置和速度
+dump            particles all custom 10000 dump.particles id type x y z vx vy vz \
+                radius mass
+dump_modify     particles sort id
+
+# ── Run ─────────────────────────────────────────────────────────
+# 初始能量最小化 (消除重叠)
+minimize        1e-6 1e-8 1000 10000
+
+# 释放 freeze, 跑 DEM
+unfix           freeze_property
+
+timestep        1e-07
+run             100000
+
+# ── Post: Compute Coordination Number & Packing Fraction ───────
+compute         cn all contact/atom
+compute         cn_avg all reduce ave c_cn
+variable        phi equal count(all) * 523.5987755982983 / (vol * 1.0)
+variable        mean_cn equal c_cn_avg
+
+print           "Packing fraction (phi): ${phi}"
+print           "Mean coordination number: ${mean_cn}"
+
+write_restart   restart.dem

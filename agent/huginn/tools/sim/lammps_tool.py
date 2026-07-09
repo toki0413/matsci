@@ -47,6 +47,7 @@ class LammpsToolInput(BaseModel):
         "poll_job",
         "wait_job",
         "equilibrium_check",
+        "dem_packing",
     ] = Field(...)
     input_script: str = Field(
         default="", description="LAMMPS input script content or file path"
@@ -108,6 +109,51 @@ class LammpsToolInput(BaseModel):
         ge=1.0,
         le=100.0,
         description="For equilibrium_check: percentage of trailing steps to use (default 30%)",
+    )
+    # dem_packing 专用: 离散元颗粒碰撞模拟
+    dem_box: list[float] = Field(
+        default=[100.0, 100.0, 100.0],
+        description="DEM simulation box dimensions in LAMMPS units (Å for real, µm for si)",
+    )
+    dem_n_particles: int = Field(
+        default=1000, ge=1, le=100000,
+        description="Number of particles for DEM packing",
+    )
+    dem_radius: float = Field(
+        default=5.0, gt=0,
+        description="Particle radius (in LAMMPS length unit)",
+    )
+    dem_radius_std: float = Field(
+        default=0.0, ge=0.0,
+        description="Particle radius standard deviation (for polydisperse packing)",
+    )
+    dem_density: float = Field(
+        default=1.0, gt=0,
+        description="Particle density (mass/volume in LAMMPS units)",
+    )
+    dem_youngs: float = Field(
+        default=1e6, gt=0,
+        description="Young's modulus for Hertzian contact (Pa for si, energy/length³ for real)",
+    )
+    dem_poisson: float = Field(
+        default=0.3, ge=0.0, lt=0.5,
+        description="Poisson's ratio for contact model",
+    )
+    dem_friction: float = Field(
+        default=0.5, ge=0.0, le=2.0,
+        description="Sliding friction coefficient",
+    )
+    dem_restitution: float = Field(
+        default=0.8, gt=0.0, le=1.0,
+        description="Restitution coefficient (bounciness, 1=perfectly elastic)",
+    )
+    dem_n_steps: int = Field(
+        default=100000, ge=100,
+        description="Number of DEM simulation steps",
+    )
+    dem_gravity: float = Field(
+        default=0.0,
+        description="Gravity acceleration (m/s² for si, or 0 for no gravity)",
     )
 
     @model_validator(mode="after")
@@ -274,6 +320,10 @@ class LammpsTool(HuginnTool):
         # Equilibrium check: analyze thermo data from a log file, no LAMMPS run
         if args.action == "equilibrium_check":
             return self._run_equilibrium_check(args)
+
+        # DEM packing: generate granular input script, then optionally run
+        if args.action == "dem_packing":
+            return await self._handle_dem_packing(args, context)
 
         # Handle trajectory analysis without running LAMMPS
         if args.action == "analyze_trajectory":
@@ -1264,3 +1314,202 @@ class LammpsTool(HuginnTool):
             return {"r": r_values, "g": g.tolist(), "bins": bins, "r_max": r_max}
         except Exception:
             return None
+
+    # ------------------------------------------------------------------ DEM
+
+    async def _handle_dem_packing(
+        self, args: LammpsToolInput, context: ToolContext
+    ) -> ToolResult:
+        """DEM 颗粒碰撞模拟: 生成 LAMMPS granular 输入脚本 + 可选执行."""
+        script = self._generate_dem_input_script(args)
+
+        # 写脚本到工作目录
+        if args.working_dir:
+            work_dir = Path(args.working_dir)
+        else:
+            work_dir = Path(context.workspace) / f"lammps_dem_{args.output_prefix}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        script_path = work_dir / "input.dem.lammps"
+        script_path.write_text(script, encoding="utf-8")
+
+        data = {
+            "action": "dem_packing",
+            "script_path": str(script_path),
+            "script_content": script,
+            "n_particles": args.dem_n_particles,
+            "particle_radius": args.dem_radius,
+            "box_size": args.dem_box,
+            "contact_model": "hertz/material",
+            "n_steps": args.dem_n_steps,
+            "friction_coeff": args.dem_friction,
+            "restitution": args.dem_restitution,
+        }
+
+        # 没有 LAMMPS 可执行文件就只返回脚本
+        if not self.lammps_executable:
+            from huginn.tools.sim.executable_resolver import resolve_executable
+
+            resolution = resolve_executable("lammps")
+            if isinstance(resolution, str):
+                self.lammps_executable = resolution
+            else:
+                data["needs_resolution"] = True
+                data["resolution_request"] = resolution.to_dict()
+                return ToolResult(data=data, success=True,
+                                  error="LAMMPS executable not found. Script generated only.")
+
+        # 执行 LAMMPS
+        try:
+            import subprocess
+
+            cmd = [str(self.lammps_executable), "-in", str(script_path)]
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=3600, cwd=str(work_dir)
+            )
+            ok = proc.returncode == 0
+            data["returncode"] = proc.returncode
+            data["stdout_tail"] = proc.stdout[-2000:] if proc.stdout else ""
+            data["stderr_tail"] = proc.stderr[-2000:] if proc.stderr else ""
+
+            if ok:
+                data["output_dir"] = str(work_dir)
+                data["status"] = "completed"
+
+                # provenance
+                try:
+                    from huginn.provenance import capture
+                    data["provenance"] = capture(
+                        "lammps_tool", args.model_dump(), output=dict(data)
+                    ).to_dict()
+                except Exception:
+                    logger.debug("DEM provenance failed", exc_info=True)
+            else:
+                data["status"] = "failed"
+
+            return ToolResult(
+                data=data,
+                success=ok,
+                error=None if ok else f"LAMMPS exited with code {proc.returncode}",
+            )
+        except subprocess.TimeoutExpired:
+            return ToolResult(
+                data=data, success=False, error="LAMMPS DEM execution timed out (3600s)"
+            )
+        except Exception as e:
+            return ToolResult(
+                data=data, success=False, error=f"DEM execution failed: {e}"
+            )
+
+    @staticmethod
+    def _generate_dem_input_script(args: LammpsToolInput) -> str:
+        """生成 LAMMPS DEM (Discrete Element Method) 颗粒碰撞脚本.
+
+        用 Hertz-Mindlin 接触模型 (LAMMPS pair_style granular):
+        - 法向: Hertzian (k_n ∝ E* / R*)
+        - 切向: Mindlin (k_t = (2-v)/(2(1-v)) * k_n)
+        - 摩擦: 库仑摩擦 (μ)
+        - 恢复: 非线性阻尼 (由 restitution coefficient 反算)
+
+        LAMMPS GRANULAR pair style 需要编译 GRANULAR package.
+        """
+        bx, by, bz = args.dem_box
+        r = args.dem_radius
+        r_std = args.dem_radius_std
+        rho = args.dem_density
+        E = args.dem_youngs
+        nu = args.dem_poisson
+        mu = args.dem_friction
+        e = args.dem_restitution
+        n_steps = args.dem_n_steps
+        g = args.dem_gravity
+
+        # 颗粒质量: m = ρ * (4/3)πr³
+        mass = rho * (4.0 / 3.0) * 3.14159265358979 * r ** 3
+
+        # Hertzian 法向刚度: k_n = (4/3) * E* * sqrt(R*)
+        # ponytail: LAMMPS 的 granular pair style 内部自己算, 这里只给 E 和 v
+        # G = E / (2(1+v)) — shear modulus for Mindlin
+        G = E / (2 * (1 + nu))
+
+        # 用 SI 单位, 因为 DEM 颗粒通常在 mm~cm 尺度
+        # 如果用户用 real 单位, 数值需要自己换算
+
+        return f"""# LAMMPS DEM (Discrete Element Method) — Granular Packing Simulation
+# 碰撞模型: Hertz-Mindlin with Coulomb friction
+# 生成方式: lammps_tool action=dem_packing
+# 粒子数: {args.dem_n_particles}, 粒径: {r} ± {r_std}
+
+# ── Units & Atom Style ──────────────────────────────────────────
+# si: meters/seconds/kg; real: Angstroms/fs/g (需按比例换算)
+units           si
+atom_style      sphere
+boundary        f f f
+
+# ── Simulation Box ──────────────────────────────────────────────
+region          box block 0 {bx} 0 {by} 0 {bz}
+create_box      1 box
+
+# ── Particle Properties ─────────────────────────────────────────
+# 每个粒子: position + diameter + density (LAMMPS 算 mass)
+set             type 1 diameter {2*r} density {rho}
+
+# ── Create Particles ────────────────────────────────────────────
+# random distribution in box, 上下留点空给重力沉降
+create_atoms    1 random {args.dem_n_particles} 12345 box \\
+                overlap {2*r} maxtry 10000
+
+# 多分散: 按 r ± r_std 调整粒径
+{"variable       r_var normal " + str(r) + " " + str(r_std) if r_std > 0 else ""}
+{"set             type 1 diameter v_r_var" if r_std > 0 else ""}
+
+# ── Neighbor & Communication ───────────────────────────────────
+neighbor        {r * 2} bin
+neigh_modify    delay 0
+
+# ── Pair Style: Hertz-Mindlin Granular Contact ──────────────────
+# LAMMPS GRANULAR package: 非线性 Hertz 接触 + Mindlin 切向 + 阻尼
+pair_style      granular
+pair_coeff      * * hertz/material {E} {nu} {mu} {e} 0 normal \\
+                mindlin/force {G} {mu} 0 tangential \\
+                damping_coeff {e} 0.5 0.5 0 rolling \\
+                tsudi 1.0 0.5 0 twisting
+
+# ── Physics: Gravity (optional) ─────────────────────────────────
+{"fix            gravity all gravity {g} vector 0 0 -1" if g > 0 else "# no gravity"}
+
+# ── Integration: NVE + Granular Temperature ────────────────────
+# velocity limit 防止穿透时爆飞
+fix             integrate all nve/sphere
+fix             freeze_property all setforce 0 0 0
+
+# ── Output: Thermo + Dump ──────────────────────────────────────
+thermo          1000
+thermo_style    custom step atoms ke pe etotal press
+thermo_modify   lost warn
+
+# 每 10000 步 dump 一次粒子位置和速度
+dump            particles all custom 10000 dump.particles id type x y z vx vy vz \\
+                radius mass
+dump_modify     particles sort id
+
+# ── Run ─────────────────────────────────────────────────────────
+# 初始能量最小化 (消除重叠)
+minimize        1e-6 1e-8 1000 10000
+
+# 释放 freeze, 跑 DEM
+unfix           freeze_property
+
+timestep        {1e-6 if g > 0 else 1e-7}
+run             {n_steps}
+
+# ── Post: Compute Coordination Number & Packing Fraction ───────
+compute         cn all contact/atom
+compute         cn_avg all reduce ave c_cn
+variable        phi equal count(all) * {mass} / (vol * {rho})
+variable        mean_cn equal c_cn_avg
+
+print           "Packing fraction (phi): ${{phi}}"
+print           "Mean coordination number: ${{mean_cn}}"
+
+write_restart   restart.dem
+"""

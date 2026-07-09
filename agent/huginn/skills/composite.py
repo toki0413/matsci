@@ -430,6 +430,71 @@ def _make_phonon_analysis() -> SkillDefinition:
     )
 
 
+def _make_fracture_assessment() -> SkillDefinition:
+    """SEM crack detection → LEFM fracture assessment.
+
+    Chains image_analysis_tool (defect_detect) to find cracks in microscopy
+    images, then feeds the crack length into specialty_analysis_tool
+    (fracture_lefm) to compute K_I / J / G and compare against K_IC.
+    """
+    return SkillDefinition(
+        name="fracture_assessment",
+        description=(
+            "Fracture assessment from SEM imagery: detect cracks → "
+            "compute stress intensity factor K_I and compare with K_IC"
+        ),
+        category="analysis",
+        parameters=[
+            SkillParameter("image_path", "str", "Path to SEM/OM image (PNG/JPG/TIFF)"),
+            SkillParameter("pixel_size_nm", "float", "Pixel size in nm", default=1.0, required=False),
+            SkillParameter("sensitivity", "float", "Detection sensitivity 0-1", default=0.5, required=False),
+            SkillParameter("applied_stress", "float", "Applied stress σ (Pa)"),
+            SkillParameter("youngs_modulus", "float", "Young's modulus E (Pa)", default=210e9, required=False),
+            SkillParameter("poissons_ratio", "float", "Poisson's ratio ν", default=0.3, required=False),
+            SkillParameter("k_ic", "float", "Fracture toughness K_IC (Pa·√m)", required=False),
+            SkillParameter("crack_type", "str", "Crack type: edge/interior/surface", default="edge", required=False),
+        ],
+        steps=[
+            SkillStep(
+                name="crack_detection",
+                tool="image_analysis_tool",
+                input_mapping={
+                    "image_path": "$image_path",
+                    "action": "defect_detect",
+                    "parameters": {
+                        "defect_type": "crack",
+                        "sensitivity": "$sensitivity",
+                        "pixel_size_nm": "$pixel_size_nm",
+                    },
+                },
+                output_key="defect_result",
+                validation=_cond("defect_result", "measurements"),
+                on_failure="abort",
+            ),
+            SkillStep(
+                name="fracture_lefm",
+                tool="specialty_analysis_tool",
+                input_mapping={
+                    "action": "fracture_lefm",
+                    "crack_type": "$crack_type",
+                    "crack_length": "$defect_result.measurements.defects[0].area_nm2",
+                    "applied_stress": "$applied_stress",
+                    "youngs_modulus": "$youngs_modulus",
+                    "poissons_ratio": "$poissons_ratio",
+                    "k_ic": "$k_ic",
+                },
+                output_key="fracture_result",
+                condition=_cond("defect_result", "measurements"),
+                validation=_cond("fracture_result", "stress_intensity_factor_ki"),
+            ),
+        ],
+        required_tools=["image_analysis_tool", "specialty_analysis_tool"],
+        estimated_cost={"cpu_hours": 0.1, "memory_gb": 2, "disk_gb": 1},
+        tags=["fracture", "lefm", "crack", "sem", "kic", "safety_factor"],
+        metadata={"applicable_systems": ["metallurgy", "ceramics", "composites"]},
+    )
+
+
 # Register at import time so SkillRegistry sees them as soon as the
 # skills package is loaded (same pattern as presets.py).
 BAND_STRUCTURE_ANALYSIS = register_skill(_make_band_structure_analysis())
@@ -437,6 +502,7 @@ MECHANICAL_PROPERTIES = register_skill(_make_mechanical_properties())
 MD_PIPELINE = register_skill(_make_md_pipeline())
 MOLECULE_SCREENING = register_skill(_make_molecule_screening())
 PHONON_ANALYSIS = register_skill(_make_phonon_analysis())
+FRACTURE_ASSESSMENT = register_skill(_make_fracture_assessment())
 
 __all__ = [
     "BAND_STRUCTURE_ANALYSIS",
@@ -444,4 +510,5 @@ __all__ = [
     "MD_PIPELINE",
     "MOLECULE_SCREENING",
     "PHONON_ANALYSIS",
+    "FRACTURE_ASSESSMENT",
 ]

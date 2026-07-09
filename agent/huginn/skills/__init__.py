@@ -24,6 +24,7 @@ from huginn.skills.presets import (
 )
 from huginn.skills.composite import (
     BAND_STRUCTURE_ANALYSIS,
+    FRACTURE_ASSESSMENT,
     MD_PIPELINE,
     MECHANICAL_PROPERTIES,
     MOLECULE_SCREENING,
@@ -63,4 +64,5 @@ __all__ = [
     "MD_PIPELINE",
     "MOLECULE_SCREENING",
     "PHONON_ANALYSIS",
+    "FRACTURE_ASSESSMENT",
 ]

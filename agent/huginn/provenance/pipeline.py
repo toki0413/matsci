@@ -106,6 +106,8 @@ _KNOWN_TOOLS = [
     "dynamics_discovery_tool", "high_throughput_tool",
     "active_learning_tool", "uq_tool",
     "symbolic_regression_tool", "evidence_fusion_tool",
+    # 视觉 × 力学交叉
+    "image_analysis_tool", "specialty_analysis_tool",
 ]
 
 
@@ -538,6 +540,23 @@ PIPELINE_RULES: list[PipelineRule] = [
         next_stages=[PipelineStage.ANALYSIS],
         next_tool_hints=["characterization_tool"],
         description="证据融合完成, 可进入最终分析",
+    ),
+    # ── 视觉 × 力学交叉: SEM 缺陷检测 → 断裂力学 ──
+    PipelineRule(
+        stage=PipelineStage.PROPERTIES,
+        tool_name="image_analysis_tool",
+        action_matcher="defect_detect",
+        next_stages=[PipelineStage.ANALYSIS],
+        next_tool_hints=["specialty_analysis_tool"],
+        description="缺陷检测完成 (裂纹/气孔/夹杂), 可做断裂力学评估 (K_I/K_IC)",
+    ),
+    PipelineRule(
+        stage=PipelineStage.MECHANICAL,
+        tool_name="image_analysis_tool",
+        action_matcher="defect_detect",
+        next_stages=[PipelineStage.ANALYSIS],
+        next_tool_hints=["specialty_analysis_tool"],
+        description="力学性质图像分析完成, 可做 LEFM 断裂判据评估",
     ),
 ]
 
