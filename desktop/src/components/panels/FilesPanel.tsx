@@ -1,4 +1,6 @@
+import { useState, useRef } from 'react';
 import { PanelHeader } from '../settings-shared';
+import { api } from '../../lib/api';
 
 interface FilesPanelProps {
   cwd: string;
@@ -17,6 +19,45 @@ export function FilesPanel({
   cwd, selectedFile, editorContent, editorDirty, editorMsg,
   setEditorContent, setEditorDirty, loadDir, saveFile, renderTree,
 }: FilesPanelProps) {
+  const [remoteFiles, setRemoteFiles] = useState<any[] | null>(null);
+  const [transferMsg, setTransferMsg] = useState('');
+  const uploadRef = useRef<HTMLInputElement>(null);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setTransferMsg(`Uploading ${file.name}…`);
+    try {
+      await api.upload('/transfer/upload', file);
+      setTransferMsg(`Uploaded ${file.name}`);
+    } catch (err: any) {
+      setTransferMsg(`Upload failed: ${err.message}`);
+    }
+    e.target.value = '';
+  };
+
+  const browseRemote = async () => {
+    if (remoteFiles) { setRemoteFiles(null); return; }
+    try {
+      const data = await api.get<any>('/transfer/browse?path=.');
+      const list = Array.isArray(data) ? data : (data.entries || data.files || []);
+      setRemoteFiles(list);
+      setTransferMsg('');
+    } catch (err: any) {
+      setTransferMsg(`Browse failed: ${err.message}`);
+    }
+  };
+
+  const syncRemote = async () => {
+    setTransferMsg('Syncing…');
+    try {
+      await api.post('/transfer/sync', { path: '.' });
+      setTransferMsg('Sync complete');
+    } catch (err: any) {
+      setTransferMsg(`Sync failed: ${err.message}`);
+    }
+  };
+
   return (
     <div className="flex h-full">
       {/* File tree sidebar */}
@@ -28,16 +69,45 @@ export function FilesPanel({
           >
             Refresh
           </button>
+          <button
+            onClick={() => uploadRef.current?.click()}
+            className="text-xs text-text-secondary hover:text-text-primary"
+          >
+            Upload
+          </button>
+          <input ref={uploadRef} type="file" className="hidden" onChange={handleUpload} />
+          <button
+            onClick={browseRemote}
+            className={`text-xs ${remoteFiles ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
+          >
+            Remote
+          </button>
+          <button
+            onClick={syncRemote}
+            className="text-xs text-text-secondary hover:text-text-primary"
+          >
+            Sync
+          </button>
         </PanelHeader>
         <div className="flex-1 overflow-y-auto p-2">
-          {cwd ? (
+          {remoteFiles ? (
+            <div className="space-y-1">
+              {remoteFiles.length === 0 ? (
+                <p className="p-2 text-xs text-text-muted">No files on remote</p>
+              ) : remoteFiles.map((f, i) => (
+                <div key={i} className="rounded px-2 py-1 text-xs hover:bg-bg-tertiary">
+                  {f.is_dir ? '\u{1F4C1} ' : '\u{1F4C4} '}{f.name || f.path || String(f)}
+                </div>
+              ))}
+            </div>
+          ) : cwd ? (
             renderTree(cwd)
           ) : (
             <div className="p-4 text-xs text-text-muted">Loading workspace…</div>
           )}
         </div>
         <div className="border-t border-border p-3 text-xs text-text-muted truncate">
-          {cwd}
+          {transferMsg || cwd}
         </div>
       </aside>
 

@@ -243,6 +243,23 @@ export default function StructureViewer({ API_BASE }: { API_BASE: string }) {
     }
   }, [API_BASE, rawInput, inputFormat]);
 
+  const handleBackendLoad = useCallback(async () => {
+    if (!rawInput.trim()) return;
+    setInfo("Syncing structure to backend…");
+    try {
+      const res = await fetch(`${API_BASE}/load`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: rawInput, format: inputFormat }),
+      });
+      const data = await res.json();
+      if (data.success !== false) setInfo("Structure loaded to backend.");
+      else setInfo(`Load failed: ${data.error || "unknown"}`);
+    } catch (e: any) {
+      setInfo(`Backend error: ${e.message}`);
+    }
+  }, [API_BASE, rawInput, inputFormat]);
+
   const bonds = useMemo(() => structure && showBonds ? detectBonds(structure.atoms) : [], [structure, showBonds]);
 
   const center = useMemo(() => {
@@ -274,6 +291,7 @@ export default function StructureViewer({ API_BASE }: { API_BASE: string }) {
           <input ref={fileRef} type="file" accept=".xyz,.poscar,.cif,.vasp" className="hidden" onChange={handleFileUpload} />
           <button onClick={handleLoad} className="btn-secondary text-xs">Load</button>
           <button onClick={handleBackendAnalyze} className="btn-secondary text-xs">Analyze</button>
+          <button onClick={handleBackendLoad} className="btn-secondary text-xs">Sync</button>
           <div className="mx-2 h-4 w-px bg-border" />
           <button
             onClick={() => setShowBonds((p) => !p)}

@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/api";
+import { ReconnectingWebSocket } from "../lib/ws-client";
+import { getApiBase, getAuthToken } from "../lib/api-client";
 
 // 远程作业面板: 展示通过 SSH 提交到 HPC 调度器的作业, 支持轮询状态 / 取消。
 // 自包含组件, 挂载即拉 /hpc/jobs, 默认每 30s 自动刷新一次。
@@ -9,6 +11,36 @@ export function RemoteJobsPanel() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   // 记录正在 refresh / cancel 的作业 id, 用来禁用按钮避免重复点击
   const [busy, setBusy] = useState<string | null>(null);
+  const [liveJobId, setLiveJobId] = useState<string | null>(null);
+  const [liveOutput, setLiveOutput] = useState('');
+  const outputWsRef = useRef<ReconnectingWebSocket | null>(null);
+
+  const toggleLiveOutput = (localId: string) => {
+    if (liveJobId === localId) {
+      outputWsRef.current?.close();
+      outputWsRef.current = null;
+      setLiveJobId(null);
+      return;
+    }
+    outputWsRef.current?.close();
+    setLiveOutput('');
+    const wsUrl = getApiBase().replace(/^http/, 'ws') + `/ws/hpc/jobs/${localId}/output`;
+    const ws = new ReconnectingWebSocket({
+      url: wsUrl,
+      authToken: getAuthToken,
+      onMessage: (data) => {
+        const text = typeof data === 'string' ? data
+          : (data as any)?.data ?? (data as any)?.output ?? JSON.stringify(data);
+        setLiveOutput((prev) => prev + text);
+      },
+    });
+    ws.connect();
+    outputWsRef.current = ws;
+    setLiveJobId(localId);
+    setLiveOutput(`[connecting to ${wsUrl}]\n`);
+  };
+
+  useEffect(() => () => { outputWsRef.current?.close(); }, []);
 
   const load = async () => {
     try {
@@ -171,8 +203,19 @@ export function RemoteJobsPanel() {
                         </button>
                       </>
                     )}
+                    <button
+                      onClick={() => toggleLiveOutput(job.local_id)}
+                      className={`${btnGhost} ${liveJobId === job.local_id ? 'text-accent' : ''}`}
+                    >
+                      {liveJobId === job.local_id ? 'Stop' : 'Output'}
+                    </button>
                   </div>
                 </div>
+                {liveJobId === job.local_id && (
+                  <div className="mt-2 rounded-lg bg-bg-tertiary p-3">
+                    <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all text-xs font-mono text-text-secondary">{liveOutput}</pre>
+                  </div>
+                )}
               </div>
             );
           })}

@@ -105,6 +105,19 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     setShowGuide(false);
   };
 
+  // ── Approval state ───────────────────────────────────────────
+  const [pendingApproval, setPendingApproval] = useState<{
+    request_id: string;
+    tool_name: string;
+    reason: string;
+    dangerous: boolean;
+  } | null>(null);
+  const [autoApprove, setAutoApprove] = useState<boolean>(true);
+
+  // ── Autoloop progress (SSE) ──────────────────────────────────
+  const [autoloopPhase, setAutoloopPhase] = useState<string>("");
+  const [autoloopProgress, setAutoloopProgress] = useState<number>(0);
+
   // ── Persona state ────────────────────────────────────────────
   const [personaList, setPersonaList] = useState<{ id: string; label: string; description?: string; avatar?: string }[]>(PERSONAS_FALLBACK);
   const [personaEmotion, setPersonaEmotion] = useState<{ mood: string; valence: number; arousal: number; trust: number } | null>(null);
@@ -466,12 +479,39 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         }
         break;
       }
-      case "approval_request":
-        console.log("[WS] Approval request:", data.tool_name, data.reason);
+      case "approval_request": {
+        setPendingApproval({
+          request_id: data.request_id,
+          tool_name: data.tool_name,
+          reason: data.reason,
+          dangerous: data.dangerous,
+        });
+        if (data.auto_approved) {
+          const icon = data.dangerous ? "🔴" : "⚠️";
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: `${icon} Auto-approved: **${data.tool_name}** — ${data.reason}`,
+              timestamp: formatTime(),
+            },
+          ]);
+        }
         break;
+      }
       case "auto_approve_set":
-        console.log("[WS] Auto-approve set:", data.enabled, data.scope);
+        setAutoApprove(data.enabled ?? true);
         break;
+      case "hook_warning": {
+        const warningText = data.warnings
+          .map((w) => `⚠️ **${data.tool_name}**: ${w.message}`)
+          .join("\n");
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: warningText, timestamp: formatTime() },
+        ]);
+        break;
+      }
       case "ping":
         if (wsClientRef.current) {
           wsClientRef.current.send(JSON.stringify({ type: "pong" }));
@@ -636,6 +676,45 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     setPendingClarifications([]);
   };
 
+  // ── Approval response ───────────────────────────────────────
+  const respondToApproval = (requestId: string, approved: boolean) => {
+    if (wsClientRef.current) {
+      wsClientRef.current.send(JSON.stringify({
+        type: "approval_response",
+        request_id: requestId,
+        approved,
+      }));
+    }
+    setPendingApproval(null);
+  };
+
+  const toggleAutoApprove = (enabled: boolean) => {
+    setAutoApprove(enabled);
+    if (wsClientRef.current) {
+      wsClientRef.current.send(JSON.stringify({
+        type: "set_auto_approve",
+        enabled,
+      }));
+    }
+  };
+
+  // ── Autoloop SSE subscription ────────────────────────────────
+  useEffect(() => {
+    const es = new EventSource(`${API_BASE}/tasks/stream`);
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "task" && data.task_type === "autoloop") {
+          setAutoloopPhase(data.status || "");
+          setAutoloopProgress(data.progress_pct || 0);
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
+    return () => es.close();
+  }, []);
+
   return {
     // Chat state
     messages, input, mode, pendingPlan, planLoading,
@@ -658,5 +737,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
     startBackend, notify,
+    // Approval
+    pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
+    // Autoloop
+    autoloopPhase, autoloopProgress,
   };
 }

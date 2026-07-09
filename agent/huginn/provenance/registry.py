@@ -437,6 +437,19 @@ class ProvenanceRegistry:
         results.sort(key=lambda x: -x[0])
         return [r[1] for r in results[:20]]
 
+    def count(self) -> int:
+        if self._store is not None:
+            return self._store.count()
+        return len(self._entries)
+
+    def recent(self, n: int = 10) -> list[ProvenanceEntry]:
+        # SQLite 有 produced_at 索引, 走 DESC 查询最快; 不可用时退回内存
+        # 按时间倒序 (内存 _entries 不保证有序, 见 register 的 append 逻辑)
+        if self._store is not None:
+            return self._store.recent(n)
+        entries = sorted(self._entries, key=lambda e: e.produced_at, reverse=True)
+        return entries[:n] if n > 0 else []
+
     def summary(self) -> dict[str, Any]:
         total = self._store.count() if self._store else len(self._entries)
         return {

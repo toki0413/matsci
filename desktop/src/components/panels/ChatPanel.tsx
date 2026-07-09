@@ -28,6 +28,15 @@ interface ChatPanelProps {
   mode: "chat" | "plan" | "build";
   isStreaming: boolean;
   messagesEndRef: React.RefObject<HTMLDivElement>;
+  pendingApproval: {
+    request_id: string;
+    tool_name: string;
+    reason: string;
+    dangerous: boolean;
+  } | null;
+  respondToApproval: (requestId: string, approved: boolean) => void;
+  autoApprove: boolean;
+  toggleAutoApprove: (enabled: boolean) => void;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -37,6 +46,7 @@ export function ChatPanel(props: ChatPanelProps) {
     wsClientRef, setMessages, answerClarification, pendingClarifications,
     isConnected, sendMessage, pendingPlan, setPendingPlan, planLoading,
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
+    pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
   } = props;
 
   return (
@@ -251,8 +261,50 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
+        {pendingApproval && (
+          <div
+            className={`mb-3 rounded-xl border-2 p-3 ${
+              pendingApproval.dangerous
+                ? "border-error bg-error/5"
+                : "border-warning bg-warning/5"
+            }`}
+          >
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className={`text-sm font-bold ${pendingApproval.dangerous ? "text-error" : "text-warning"}`}>
+                {pendingApproval.dangerous ? "🔴 Approval Required" : "⚠️ Approval Required"}
+              </span>
+              <span className="rounded bg-bg-tertiary px-2 py-0.5 text-xs font-mono text-text-secondary">
+                {pendingApproval.tool_name}
+              </span>
+            </div>
+            <p className="mb-3 text-xs text-text-secondary">{pendingApproval.reason}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => respondToApproval(pendingApproval.request_id, true)}
+                className="rounded-lg bg-success px-4 py-2 text-sm font-medium text-white hover:bg-success/80 transition-colors"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => respondToApproval(pendingApproval.request_id, false)}
+                className="rounded-lg bg-error px-4 py-2 text-sm font-medium text-white hover:bg-error/80 transition-colors"
+              >
+                Deny
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="mb-3 flex items-center gap-2">
           <ChatModeSelector mode={mode} onChange={setMode} />
+          <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-text-muted">
+            <input
+              type="checkbox"
+              checked={autoApprove}
+              onChange={(e) => toggleAutoApprove(e.target.checked)}
+            />
+            Auto-approve
+          </label>
           <span className="text-[10px] text-text-muted">
             {t(`chat.mode.${mode}.desc`)}
           </span>
