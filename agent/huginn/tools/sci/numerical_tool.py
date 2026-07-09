@@ -736,6 +736,7 @@ class NumericalTool(HuginnTool):
         b_eq = np.asarray(args.b_eq, dtype=float) if args.b_eq else None
 
         eval_globals = {
+            "__builtins__": {},  # sandbox: no __import__, no open, no exec
             "cp": cp, "np": np, "x": x,
             "A": A, "b": b_ub, "A_ub": A, "b_ub": b_ub,
             "A_eq": A_eq, "b_eq": b_eq,
