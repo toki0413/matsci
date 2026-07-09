@@ -487,8 +487,9 @@ class TestEventBus:
                 data={"v": 42},
             ))
 
+        # Python 3.11+ forbids passing bare coroutines to asyncio.wait
         done, pending = await asyncio.wait(
-            [_consume(), _publish()],
+            [asyncio.ensure_future(_consume()), asyncio.ensure_future(_publish())],
             return_when=asyncio.FIRST_COMPLETED,
             timeout=5.0,
         )
@@ -498,6 +499,8 @@ class TestEventBus:
             if result and isinstance(result, str):
                 assert "sse.stream.test" in result
                 break
+        for task in pending:
+            task.cancel()
 
     async def test_audit_log(self, monkeypatch):
         import tempfile

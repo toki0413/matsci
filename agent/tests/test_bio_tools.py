@@ -363,6 +363,13 @@ class TestOpenMMTool:
 # ── Hooks ──
 
 
+def _warning_text(w):
+    """warnings 可能是 dict 或 str, 统一取文本."""
+    if isinstance(w, dict):
+        return w.get("message", "")
+    return str(w)
+
+
 class TestBioPharmaHooks:
     @pytest.mark.asyncio
     async def test_vina_docking_hook_no_poses(self):
@@ -406,7 +413,7 @@ class TestBioPharmaHooks:
         # Should warn but not block
         assert out is None
         assert ctx.metadata.get("warnings")
-        assert "偏弱" in ctx.metadata["warnings"][0]
+        assert "偏弱" in _warning_text(ctx.metadata["warnings"][0])
 
     @pytest.mark.asyncio
     async def test_vina_docking_hook_good(self):
@@ -453,7 +460,7 @@ class TestBioPharmaHooks:
         out = await openmm_stability_hook(ctx)
         assert out is None  # warns, doesn't block
         assert ctx.metadata.get("warnings")
-        assert "升高" in ctx.metadata["warnings"][0]
+        assert "升高" in _warning_text(ctx.metadata["warnings"][0])
 
     @pytest.mark.asyncio
     async def test_openmm_stability_hook_temp_drift(self):
@@ -472,7 +479,7 @@ class TestBioPharmaHooks:
         out = await openmm_stability_hook(ctx)
         assert out is None
         assert ctx.metadata.get("warnings")
-        assert "偏离" in ctx.metadata["warnings"][0]
+        assert "偏离" in _warning_text(ctx.metadata["warnings"][0])
 
     @pytest.mark.asyncio
     async def test_hooks_ignore_other_tools(self):

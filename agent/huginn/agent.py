@@ -2058,7 +2058,7 @@ class HuginnAgent:
                 pipeline = SimulationPipeline()
                 pipeline_block = pipeline.to_context_block()
             except Exception:
-                pass
+                logger.debug("pipeline context block skipped", exc_info=True)
 
             # 获取 provenance 摘要
             prov_block = ""
@@ -2066,7 +2066,7 @@ class HuginnAgent:
                 from huginn.provenance.registry import ProvenanceRegistry
                 prov_block = ProvenanceRegistry.shared().to_context_block()
             except Exception:
-                pass
+                logger.debug("provenance context block skipped", exc_info=True)
 
             if not pipeline_block and not ended_at_tool:
                 return
