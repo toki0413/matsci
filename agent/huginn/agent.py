@@ -2096,6 +2096,57 @@ class HuginnAgent:
         except Exception:
             logger.debug("synthetic continue injection skipped", exc_info=True)
 
+    async def _maybe_inject_proactive_suggestion(self) -> None:
+        """每轮 chat 结束后主动检查 pipeline 状态, 有明确下一步时注入建议.
+
+        和 synthetic Continue 不同: 后者是被动触发 (压缩/工具边界),
+        这里是主动检查 pipeline 状态. 比如:
+        - 结构弛豫完成 → 建议 band structure 计算
+        - SCF 收敛 → 建议 DOS 计算
+        - 分子优化完成 → 建议 vibrational analysis
+        """
+        try:
+            from huginn.provenance.pipeline import get_pipeline
+
+            pipeline = get_pipeline()
+            suggestions = pipeline._latest
+            if not suggestions:
+                # 没有缓存建议, 从最近 provenance 条目推断
+                entry = pipeline._latest_entry()
+                if entry is not None:
+                    suggestions = pipeline.suggest_next(
+                        entry.produced_by, entry.parameters, {}
+                    )
+            if not suggestions:
+                return
+            # 只在 prerequisite_met=True 的建议里选
+            ready = [s for s in suggestions if s.prerequisite_met]
+            if not ready:
+                return
+            # 构造建议消息
+            from langchain_core.messages import HumanMessage
+
+            parts = ["[Pipeline Suggestion] Based on current progress:"]
+            for s in ready[:3]:  # 最多 3 条, 避免消息过长
+                parts.append(
+                    f"  - [{s.stage.value}] {s.tool_hint}: {s.description}"
+                )
+            parts.append(
+                "Consider proceeding with one of these steps, "
+                "or explain why a different approach is needed."
+            )
+            msg = HumanMessage(content="\n".join(parts))
+            if hasattr(self, "_pending_synthetic_messages"):
+                self._pending_synthetic_messages.append(msg)
+            else:
+                self._pending_synthetic_messages = [msg]
+            logger.info(
+                "Proactive suggestion injected: %d ready steps",
+                len(ready),
+            )
+        except Exception:
+            logger.debug("proactive suggestion skipped", exc_info=True)
+
     def _build_compact_summary(self) -> str:
         """Build the existing_summary for the summarizer, prepending L1 coords.
 
@@ -2766,6 +2817,9 @@ class HuginnAgent:
                                 self._csm.request_confirmation(reflection.confirm_type or "continue")
 
                         self._session_state.clear_turn_results()
+
+                    # 主动检查 pipeline 状态, 有明确下一步就注入建议
+                    await self._maybe_inject_proactive_suggestion()
 
                     # 上下文超 70% 就自动 compact, 触发 PRE_COMPACT 钩子
                     await self._maybe_auto_compact(
