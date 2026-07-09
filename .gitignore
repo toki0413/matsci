@@ -226,3 +226,8 @@ Huginn_Agent_Overview_enhanced.pptx
 _commit_msg.txt
 _inject_speaker_notes.py
 agent/_gen_arch_slides.py
+python-runtime-test/
+python-standalone-tmp/
+python-extract-tmp/
+python-standalone.tar.gz
+python-embed.zip
