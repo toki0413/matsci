@@ -113,7 +113,7 @@ export default function App() {
   >("chat");
   const [sidebarGroups, setSidebarGroups] = useState<Record<string, boolean>>({
     core: true,
-    research: false,
+    research: true,
     workspace: false,
     system: false,
   });
