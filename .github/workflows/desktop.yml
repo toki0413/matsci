@@ -71,12 +71,13 @@ jobs:
           Write-Host "=== Extracting ==="
           $runtimeDir = "desktop/src-tauri/python-runtime"
           New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-          # Extract to temp, then move python/* into runtimeDir directly
+          # Extract to temp, then copy python/* into runtimeDir
           $tmpDir = "python-standalone-tmp"
           New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
           tar -xzf python-standalone.tar.gz -C $tmpDir
-          # Move contents of python/ into runtimeDir
-          Move-Item "$tmpDir/python/*" $runtimeDir -Force
+          if ($LASTEXITCODE -ne 0) { throw "tar extract failed" }
+          # PowerShell Move-Item doesn't expand wildcards — use Get-ChildItem
+          Get-ChildItem "$tmpDir/python" -Force | Copy-Item -Destination $runtimeDir -Recurse -Force
           Remove-Item $tmpDir -Recurse -Force
 
           Write-Host "=== Installing huginn-agent + core deps ==="
@@ -92,8 +93,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "routes import failed" }
 
           Write-Host "=== Cleaning up to reduce size ==="
-          # Remove pip and its cache (not needed at runtime)
-          & "$runtimeDir/python.exe" -m pip uninstall pip -y 2>&1 | Out-Null
           # Remove __pycache__ directories
           Get-ChildItem $runtimeDir -Filter "__pycache__" -Directory -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           # Remove test directories inside site-packages
