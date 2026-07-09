@@ -61,42 +61,43 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          # Download Python 3.12 embeddable
           $pyVer = "3.12.3"
           $url = "https://www.python.org/ftp/python/$pyVer/python-$pyVer-embed-amd64.zip"
           Write-Host "Downloading $url"
           Invoke-WebRequest -Uri $url -OutFile python-embed.zip
 
-          # Extract
+          # Extract embeddable Python
           $runtimeDir = "desktop/src-tauri/python-runtime"
           New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
           Expand-Archive -Path python-embed.zip -DestinationPath $runtimeDir -Force
 
-          # Enable site-packages in ._pth
+          # Enable site-packages
           $pthFile = Get-ChildItem "$runtimeDir/python*._pth" | Select-Object -First 1
-          $content = Get-Content $pthFile.FullName -Raw
-          $content = $content -replace '#import site', 'import site'
+          $content = (Get-Content $pthFile.FullName -Raw) -replace '#import site', 'import site'
           Set-Content $pthFile.FullName $content
 
-          # Bootstrap pip
-          Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile get-pip.py
-          & "$runtimeDir/python.exe" get-pip.py --no-warn-script-location
-          if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed" }
+          # Use the CI-installed Python (3.11) to install packages into the
+          # embeddable runtime's site-packages via --target.
+          # This avoids get-pip.py issues with embeddable Python.
+          $embedSitePackages = "$runtimeDir/Lib/site-packages"
+          New-Item -ItemType Directory -Force -Path $embedSitePackages | Out-Null
 
-          # Install huginn-agent (core deps only, not [all])
+          # Install huginn-agent + core deps into the target dir
           Push-Location agent
-          & "$runtimeDir/python.exe" -m pip install . --no-warn-script-location --no-cache-dir
+          python -m pip install . --no-warn-script-location --no-cache-dir --target $embedSitePackages
           if ($LASTEXITCODE -ne 0) { throw "huginn install failed" }
           Pop-Location
 
           # Clean caches/tests to reduce size
-          Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "tests" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem $embedSitePackages -Directory -Filter "tests" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           Get-ChildItem $runtimeDir -Filter "__pycache__" -Directory -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           Get-ChildItem $runtimeDir -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
 
-          # Verify
+          # Verify with the embeddable python.exe
           & "$runtimeDir/python.exe" -c "import huginn; print('huginn OK:', huginn.__file__)"
+          if ($LASTEXITCODE -ne 0) { throw "huginn import failed" }
           & "$runtimeDir/python.exe" -c "import pydantic, langchain, langgraph; print('deps OK')"
+          if ($LASTEXITCODE -ne 0) { throw "deps import failed" }
 
           $size = (Get-ChildItem $runtimeDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
           Write-Host "Python runtime size: $([math]::Round($size, 1)) MB"
