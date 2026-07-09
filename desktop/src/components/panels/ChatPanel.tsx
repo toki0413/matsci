@@ -36,6 +36,13 @@ interface ChatPanelProps {
   respondToApproval: (requestId: string, approved: boolean) => void;
   autoApprove: boolean;
   toggleAutoApprove: (enabled: boolean) => void;
+  thinkingIntensity: "low" | "medium" | "high";
+  setThinkingIntensity: (v: "low" | "medium" | "high") => void;
+  pendingMessages: string[];
+  researchMode: boolean;
+  setResearchMode: (v: boolean) => void;
+  autoloopPhase: string;
+  autoloopProgress: number;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -46,7 +53,12 @@ export function ChatPanel(props: ChatPanelProps) {
     isConnected, sendMessage, pendingPlan, setPendingPlan, planLoading,
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
+    thinkingIntensity, setThinkingIntensity,
+    pendingMessages, researchMode, setResearchMode,
+    autoloopPhase, autoloopProgress,
   } = props;
+
+  const AUTOLOOP_PHASES = ["perceive", "hypothesize", "plan", "execute", "validate", "learn", "report"];
 
   return (
     <div className="flex h-full flex-col">
@@ -58,12 +70,12 @@ export function ChatPanel(props: ChatPanelProps) {
             autoFocus
             value={chatSearchQuery}
             onChange={(e) => setChatSearchQuery(e.target.value)}
-            placeholder="Search messages…"
+            placeholder={t('chat.searchPlaceholder')}
             className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
           {chatSearchQuery && (
             <span className="shrink-0 text-[11px] text-text-muted">
-              {messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase())).length} matches
+              {messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase())).length} {t('chat.matches')}
             </span>
           )}
           <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary" aria-label="Close search">
@@ -87,11 +99,11 @@ export function ChatPanel(props: ChatPanelProps) {
                       <span className="ml-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
                     )}
                     {msg.tool_status === "done" && (
-                      <span className="ml-2 text-xs text-success">done</span>
+                      <span className="ml-2 text-xs text-success">{t('chat.done')}</span>
                     )}
                   </div>
                   <div className="mt-2 text-xs text-text-secondary">
-                    Arguments
+                    {t('chat.arguments')}
                   </div>
                   <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
                     {JSON.stringify(msg.tool_args, null, 2)}
@@ -99,7 +111,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   {msg.tool_status === "done" && msg.tool_result !== undefined && (
                     <>
                       <div className="mt-3 text-xs text-text-secondary">
-                        Result
+                        {t('chat.result')}
                       </div>
                       <ToolResultRenderer content={msg.tool_result} toolName={msg.tool_name} />
                     </>
@@ -118,7 +130,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   msg.role === "user" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
                 }`}
               >
-                {msg.role === "user" ? "You" : "AI"}
+                {msg.role === "user" ? t('chat.you') : t('chat.ai')}
               </div>
               <div
                 className={`max-w-[75%] rounded-2xl px-5 py-3 ${
@@ -128,9 +140,9 @@ export function ChatPanel(props: ChatPanelProps) {
                 }`}
               >
                 <div className="mb-1 flex items-center gap-2 text-xs opacity-70">
-                  <span>{msg.role === "user" ? "You" : "Assistant"}</span>
+                  <span>{msg.role === "user" ? t('chat.you') : t('chat.assistant')}</span>
                   <span>
-                    {msg.timestamp === "streaming" ? "typing…" : msg.timestamp}
+                    {msg.timestamp === "streaming" ? t('chat.typing') : msg.timestamp}
                   </span>
                 </div>
                 {msg.reasoning && (
@@ -140,8 +152,8 @@ export function ChatPanel(props: ChatPanelProps) {
                   >
                     <summary className="cursor-pointer select-none text-xs font-medium text-text-muted hover:text-text-secondary">
                       {msg.timestamp === "streaming" && !msg.content
-                        ? "💭 thinking…"
-                        : "💭 thought process"}
+                        ? t('chat.thinking')
+                        : t('chat.thoughtProcess')}
                     </summary>
                     <div className="mt-1.5 max-h-60 overflow-y-auto whitespace-pre-wrap border-l-2 border-border pl-3 text-xs italic leading-relaxed text-text-muted opacity-80">
                       {msg.reasoning}
@@ -175,7 +187,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       disabled={msg.planConfirmed}
                       className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      {msg.planConfirmed ? "✓ Confirmed" : "Confirm & Execute"}
+                      {msg.planConfirmed ? t('chat.confirmed') : t('chat.confirmExecute')}
                     </button>
                     <button
                       onClick={() => {
@@ -222,7 +234,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       </div>
                     ))}
                     <div className="text-xs text-text-tertiary">
-                      Type your answer or click an option above
+                      {t('chat.clarificationHint')}
                     </div>
                   </div>
                 )}
@@ -233,10 +245,35 @@ export function ChatPanel(props: ChatPanelProps) {
         <div ref={messagesEndRef} />
       </div>
 
+      {autoloopPhase && (
+        <div className="flex items-center gap-2 border-b border-border bg-accent/5 px-6 py-1.5">
+          <span className="text-xs">🔬</span>
+          <div className="flex items-center gap-1 text-[11px]">
+            {AUTOLOOP_PHASES.map((phase, i, arr) => (
+              <span key={phase} className="flex items-center gap-1">
+                <span
+                  className={
+                    phase === autoloopPhase
+                      ? "font-bold text-accent"
+                      : AUTOLOOP_PHASES.indexOf(phase) < AUTOLOOP_PHASES.indexOf(autoloopPhase)
+                      ? "text-accent/50"
+                      : "text-text-muted"
+                  }
+                >
+                  {phase}
+                </span>
+                {i < arr.length - 1 && <span className="text-text-muted">→</span>}
+              </span>
+            ))}
+          </div>
+          <span className="ml-auto text-[11px] text-text-muted">{autoloopProgress}%</span>
+        </div>
+      )}
+
       <div className="border-t border-border bg-bg-secondary p-4">
         {!isConnected && (
           <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
-            Backend is not connected. Start the server to send messages, or configure it in Settings.
+            {t('chat.backendNotConnected')}
           </div>
         )}
 
@@ -265,7 +302,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   disabled={!input.trim() || planLoading}
                   className="btn-primary px-3 py-1 text-xs"
                 >
-                  Run plan
+                  {t('chat.runPlan')}
                 </button>
               </div>
             </div>
@@ -285,7 +322,7 @@ export function ChatPanel(props: ChatPanelProps) {
           >
             <div className="mb-1.5 flex items-center gap-2">
               <span className={`text-sm font-bold ${pendingApproval.dangerous ? "text-error" : "text-warning"}`}>
-                {pendingApproval.dangerous ? "🔴 Approval Required" : "⚠️ Approval Required"}
+                {pendingApproval.dangerous ? `🔴 ${t('chat.approvalRequired')}` : `⚠️ ${t('chat.approvalRequired')}`}
               </span>
               <span className="rounded bg-bg-tertiary px-2 py-0.5 text-xs font-mono text-text-secondary">
                 {pendingApproval.tool_name}
@@ -297,37 +334,76 @@ export function ChatPanel(props: ChatPanelProps) {
                 onClick={() => respondToApproval(pendingApproval.request_id, true)}
                 className="rounded-lg bg-success px-4 py-2 text-sm font-medium text-white hover:bg-success/80 transition-colors"
               >
-                Approve
+                {t('chat.approve')}
               </button>
               <button
                 onClick={() => respondToApproval(pendingApproval.request_id, false)}
                 className="rounded-lg bg-error px-4 py-2 text-sm font-medium text-white hover:bg-error/80 transition-colors"
               >
-                Deny
+                {t('chat.deny')}
               </button>
             </div>
           </div>
         )}
 
-        <div className="mb-2 flex items-center justify-between">
-          <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-text-muted">
-            <input
-              type="checkbox"
-              checked={autoApprove}
-              onChange={(e) => toggleAutoApprove(e.target.checked)}
-              className="h-3 w-3"
-            />
-            Auto-approve
-          </label>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-text-muted">
+              <input
+                type="checkbox"
+                checked={autoApprove}
+                onChange={(e) => toggleAutoApprove(e.target.checked)}
+                className="h-3 w-3"
+              />
+              Auto-approve
+            </label>
+
+            {/* Thinking intensity segmented control */}
+            <div className="flex items-center gap-1 text-[10px] text-text-muted">
+              <span>🧠</span>
+              {(["low", "medium", "high"] as const).map((level) => (
+                <button
+                  key={level}
+                  onClick={() => setThinkingIntensity(level)}
+                  className={`rounded px-1.5 py-0.5 transition-colors ${
+                    thinkingIntensity === level
+                      ? "bg-accent/20 text-accent font-medium"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+
+            {/* Research mode toggle */}
+            <button
+              onClick={() => setResearchMode(!researchMode)}
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+                researchMode
+                  ? "bg-accent/20 text-accent font-medium"
+                  : "text-text-muted hover:text-text-secondary"
+              }`}
+            >
+              🔬 Research Mode
+            </button>
+          </div>
+
           {mode !== "chat" && (
             <button
               onClick={() => setMode("chat")}
               className="text-[10px] text-accent hover:underline"
             >
-              ← Back to chat
+              {t('chat.backToChat')}
             </button>
           )}
         </div>
+
+        {pendingMessages.length > 0 && (
+          <div className="mb-2 rounded-lg border border-accent/20 bg-accent/5 px-3 py-1.5 text-[11px] text-accent">
+            📋 {pendingMessages.length} message{pendingMessages.length > 1 ? "s" : ""} queued — will send after current response
+          </div>
+        )}
 
         <div className="flex items-end gap-3">
           <textarea
@@ -341,23 +417,23 @@ export function ChatPanel(props: ChatPanelProps) {
             }}
             placeholder={
               mode === "plan"
-                ? "Describe what you want to do. I'll generate a plan first."
+                ? t('chat.placeholderPlan')
                 : mode === "build"
-                ? "Run the plan with tool execution enabled…"
+                ? t('chat.placeholderBuild')
                 : isConnected
-                ? "Ask about materials science, DFT, MD, packing, UQ/GP…"
-                : "Backend offline — start server.py"
+                ? t('chat.placeholderConnected')
+                : t('chat.placeholderOffline')
             }
             rows={2}
-            disabled={!isConnected || isStreaming || planLoading}
+            disabled={!isConnected || planLoading}
             className="input min-h-[56px] resize-none flex-1"
           />
           <button
             onClick={sendMessage}
-            disabled={!isConnected || isStreaming || !input.trim() || planLoading}
+            disabled={!isConnected || !input.trim() || planLoading}
             className="btn-primary h-11 px-5"
           >
-            {planLoading ? "Planning…" : isStreaming ? "…" : mode === "plan" ? "Plan" : "Send"}
+            {planLoading ? t('chat.planning') : isStreaming ? t('chat.streaming') : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
           </button>
         </div>
       </div>

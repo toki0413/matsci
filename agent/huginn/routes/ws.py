@@ -166,20 +166,25 @@ async def send_plan_and_wait(
         _pending_plans.pop(plan_id, None)
 
 
-def _make_ws_approval_callback(websocket: WebSocket):
+def _make_ws_approval_callback(
+    websocket: WebSocket,
+    session_auto_approve: dict | None = None,
+    pending_approvals: dict | None = None,
+):
     """Build a sync approval callback that notifies the WebSocket client.
 
-    The adapter calls this synchronously from inside ``_arun``. We can't
-    block the event loop waiting for a client reply, so the callback
-    fires off an ``approval_request`` event for visibility and
-    auto-approves. Clients that want true interactive approval can send
-    ``set_auto_approve=false`` to switch the cached agent into ASK mode
-    and handle the request/reply flow themselves before the tool runs.
+    The adapter calls this synchronously from inside ``_arun``. When
+    ``session_auto_approve["enabled"]`` is True (default) the callback
+    auto-approves but still emits ``approval_request`` events for
+    visibility. When False, dangerous / ASK-mode tools are denied so
+    the client can toggle approval back on after reviewing the request.
 
-    ponytail: auto-approve is a headless convenience; per-connection
-    interactive approval requires making this callback async (asyncio.Future
-    + client response handler). Upgrade path: wrap in create_task + Future
-    with 60s timeout, fall back to auto-approve on timeout.
+    ponytail: this is a sync callback running inside the event loop, so
+    we can't block on a client reply. The per-connection flag gates
+    whether dangerous tools proceed, but true interactive approval
+    (wait for client response) requires making the callback async.
+    Upgrade path: make ApprovalCallback async, create a Future, and
+    await it with a timeout in the adapter's _check_permission.
     """
 
     # Tools that warrant a client-visible warning when auto-approved.
@@ -189,13 +194,22 @@ def _make_ws_approval_callback(websocket: WebSocket):
         "file_delete_tool", "git_tool", "terminal_tool",
     })
 
+    _auto = session_auto_approve if session_auto_approve is not None else {"enabled": True}
+
     def callback(tool_name: str, reason: str) -> bool:
         request_id = uuid.uuid4().hex
         is_dangerous = tool_name in _DANGEROUS_TOOLS
+        approved = _auto["enabled"]
+
+        # Register a future so a client that sends approval_response
+        # after the turn completes can still resolve it (best-effort).
+        if pending_approvals is not None and not approved:
+            loop = asyncio.get_event_loop()
+            fut = loop.create_future()
+            pending_approvals[request_id] = fut
+
         try:
             loop = asyncio.get_running_loop()
-            # Save the task reference to prevent GC from cancelling it
-            # before the send completes.
             task = loop.create_task(
                 websocket.send_json(
                     {
@@ -203,7 +217,7 @@ def _make_ws_approval_callback(websocket: WebSocket):
                         "request_id": request_id,
                         "tool_name": tool_name,
                         "reason": reason,
-                        "auto_approved": True,
+                        "auto_approved": approved,
                         "dangerous": is_dangerous,
                     }
                 )
@@ -216,12 +230,13 @@ def _make_ws_approval_callback(websocket: WebSocket):
 
         if is_dangerous:
             logger.warning(
-                "Auto-approved dangerous tool '%s' (reason: %s). "
-                "Client should send set_auto_approve=false for interactive approval.",
-                tool_name, reason,
+                "Tool '%s' %s (reason: %s).",
+                tool_name,
+                "denied (auto-approve off)" if not approved else "auto-approved",
+                reason,
             )
 
-        return True
+        return approved
 
     return callback
 
@@ -551,7 +566,15 @@ async def agent_websocket(websocket: WebSocket):
     # Per-connection approval state. The callback auto-approves but still
     # emits approval_request events so the client has full visibility.
     _pending_approvals: dict[str, asyncio.Future[bool]] = {}
-    _ws_approval = _make_ws_approval_callback(websocket)
+    # Per-connection auto-approve flag. Toggled via set_auto_approve so the
+    # client can deny dangerous tools for this session without touching the
+    # shared global agent.
+    session_auto_approve: dict[str, bool] = {"enabled": True}
+    _ws_approval = _make_ws_approval_callback(
+        websocket,
+        session_auto_approve=session_auto_approve,
+        pending_approvals=_pending_approvals,
+    )
 
     # Per-connection plan contexts: plan_id -> execution context.
     # Local to this connection to prevent cross-user plan_id collisions.
@@ -582,6 +605,37 @@ async def agent_websocket(websocket: WebSocket):
     heartbeat_task = asyncio.create_task(_heartbeat())
     _pending_tasks.add(heartbeat_task)
     heartbeat_task.add_done_callback(_pending_tasks.discard)
+
+    # ── Pet event forwarding ──────────────────────────────────────
+    # Subscribe to the global PetEventBus and push state changes to the
+    # client as pet_update messages so the frontend can render the raven.
+    async def _forward_pet_events():
+        from huginn.pet import get_pet_bus
+
+        bus = get_pet_bus()
+        q, unsub = await bus.queue()
+        try:
+            while True:
+                event = await q.get()
+                st = bus.state
+                await websocket.send_json({
+                    "type": "pet_update",
+                    "mood": st.mood.value,
+                    "message": event.message,
+                    "xp": st.experience,
+                    "level": st.level,
+                    "hunger": st.hunger,
+                    "happiness": st.happiness,
+                    "active_tasks": st.active_tasks,
+                })
+        except Exception:
+            pass
+        finally:
+            unsub()
+
+    pet_task = asyncio.create_task(_forward_pet_events())
+    _pending_tasks.add(pet_task)
+    pet_task.add_done_callback(_pending_tasks.discard)
 
     try:
         while True:
@@ -801,10 +855,38 @@ async def agent_websocket(websocket: WebSocket):
                     )
                     try:
                         from huginn.autoloop.engine import AutoloopEngine
+                        from huginn.interaction.progress import (
+                            get_progress_tracker,
+                        )
 
                         workspace = get_context().config.workspace or "."
                         engine = AutoloopEngine(workspace=workspace)
-                        result = await engine.run(research_objective)
+                        tracker = get_progress_tracker()
+
+                        # Run the engine as a background task so we can push
+                        # progress without blocking the WS receive loop.
+                        engine_task = asyncio.create_task(
+                            engine.run(research_objective)
+                        )
+
+                        # Poll the shared tracker while the engine runs.
+                        # ponytail: 2s polling interval — fine for a research
+                        # loop that runs minutes; sub-second phases just get the
+                        # final result. Upgrade: subscribe to tracker._events
+                        # via asyncio.Event for push-based updates.
+                        last_step: int | None = None
+                        while not engine_task.done():
+                            await asyncio.sleep(2)
+                            for t in tracker.list_active():
+                                if t.get("engine_kind") != "autoloop":
+                                    continue
+                                if t.get("current_step") != last_step:
+                                    last_step = t.get("current_step")
+                                    await websocket.send_json(
+                                        {"type": "task_progress", **t}
+                                    )
+
+                        result = await engine_task
 
                         await websocket.send_json(
                             {
@@ -1036,6 +1118,21 @@ async def agent_websocket(websocket: WebSocket):
                     error_label="Agent error",
                 )
 
+                # Drain pending side-channel questions so the frontend can
+                # surface them without the user polling /side/pending.
+                try:
+                    from huginn.side_conversation import get_shared_side_channel
+
+                    for sq in get_shared_side_channel().drain():
+                        await websocket.send_json({
+                            "type": "side_question_pending",
+                            "question_id": sq.id,
+                            "question": sq.question,
+                            "created_at": sq.created_at,
+                        })
+                except Exception:
+                    logger.debug("side-channel drain failed", exc_info=True)
+
             elif msg_type == "explore_start":
                 # Exploration mode — run real exploration engine
                 await websocket.send_json(
@@ -1209,13 +1306,11 @@ async def agent_websocket(websocket: WebSocket):
                     mgr.resolve_thread(thread_id, answer)
 
             elif msg_type == "set_auto_approve":
-                # Let the client toggle auto-approve for this session.
-                # Previously this mutated the shared global agent, which
-                # is a multi-tenancy violation — one client's setting
-                # would affect all other concurrent connections. Now we
-                # just acknowledge the toggle; per-connection approval
-                # control requires creating a fresh agent via factory.
+                # Toggle per-connection auto-approve. When disabled the
+                # approval callback returns False for dangerous / ASK-mode
+                # tools instead of auto-approving them.
                 enabled = bool(data.get("enabled", True))
+                session_auto_approve["enabled"] = enabled
                 await websocket.send_json(
                     {
                         "type": "auto_approve_set",
@@ -1232,10 +1327,11 @@ async def agent_websocket(websocket: WebSocket):
     except Exception as e:
         logger.error("WebSocket error: %s", e, exc_info=True)
     finally:
-        # Cancel heartbeat task to free resources
-        if heartbeat_task and not heartbeat_task.done():
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
+        # Cancel background tasks to free resources
+        for _t in (heartbeat_task, pet_task):
+            if _t and not _t.done():
+                _t.cancel()
+                try:
+                    await _t
+                except asyncio.CancelledError:
+                    pass

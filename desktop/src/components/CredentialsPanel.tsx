@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { api } from "../lib/api";
 import { PROVIDERS } from "../lib/constants";
 
@@ -58,6 +59,7 @@ export function CredentialsPanel() {
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, any>>({});
   const [importing, setImporting] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
 
   // Provider catalogue pulled from /config/providers (id + defaults). null while
   // loading / on fetch failure — the dropdown falls back to the flat PROVIDERS list.
@@ -326,7 +328,23 @@ export function CredentialsPanel() {
         </div>
         <div className="md:col-span-2">
           <label className="mb-1 block text-xs text-text-secondary">密码 (可选; {editing?.id ? "留空=不修改" : "密钥认证可留空"})</label>
-          <input type="password" className="input" value={sshForm.password} onChange={(e) => setSshForm({ ...sshForm, password: e.target.value })} placeholder="••••••••" />
+          <div className="relative">
+            <input
+              type={showSecret ? "text" : "password"}
+              className="input pr-9"
+              value={sshForm.password}
+              onChange={(e) => setSshForm({ ...sshForm, password: e.target.value })}
+              placeholder="••••••••"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSecret((s) => !s)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
+              tabIndex={-1}
+            >
+              {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
         </div>
         <div>
           <label className="mb-1 block text-xs text-text-secondary">远程工作目录</label>
@@ -404,7 +422,23 @@ export function CredentialsPanel() {
         {needsKey && (
           <div className="md:col-span-2">
             <label className="mb-1 block text-xs text-text-secondary">API Key ({editing?.id ? "留空=不修改" : "必填"})</label>
-            <input type="password" className="input" value={llmForm.api_key} onChange={(e) => setLlmForm({ ...llmForm, api_key: e.target.value })} placeholder={providerInfo(llmForm.provider)?.env_var || "sk-..."} />
+            <div className="relative">
+              <input
+                type={showSecret ? "text" : "password"}
+                className="input pr-9"
+                value={llmForm.api_key}
+                onChange={(e) => setLlmForm({ ...llmForm, api_key: e.target.value })}
+                placeholder={providerInfo(llmForm.provider)?.env_var || "sk-..."}
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((s) => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
+                tabIndex={-1}
+              >
+                {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
           </div>
         )}
         {formTest && !formTest.loading && (
@@ -508,13 +542,23 @@ export function CredentialsPanel() {
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
-          <input
-            type="password"
-            value={apiKeyForm.api_key}
-            onChange={(e) => setApiKeyForm({ ...apiKeyForm, api_key: e.target.value })}
-            placeholder="API Key…"
-            className="input flex-1 text-xs"
-          />
+          <div className="relative flex-1">
+            <input
+              type={showSecret ? "text" : "password"}
+              value={apiKeyForm.api_key}
+              onChange={(e) => setApiKeyForm({ ...apiKeyForm, api_key: e.target.value })}
+              placeholder="API Key…"
+              className="input w-full text-xs pr-9"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSecret((s) => !s)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
+              tabIndex={-1}
+            >
+              {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
           <button
             onClick={async () => {
               if (!apiKeyForm.service || !apiKeyForm.api_key) return;
