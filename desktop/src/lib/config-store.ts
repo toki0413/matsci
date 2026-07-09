@@ -9,11 +9,21 @@
 import { getApiBase, setApiBase } from "./api-client";
 import type { AppConfig } from "../types/domain";
 
-/** Reactive API base — reads from api-client's module state. */
+/** Reactive API base — reads from api-client's module state.
+ *  Proxy intercepts property access so callers always get the latest value.
+ *  Must handle toString / Symbol.toPrimitive for template-literal coercion. */
 export const API_BASE = new Proxy(
   { _v: "" },
   {
-    get(t) {
+    get(t, prop) {
+      // String coercion: `${API_BASE}` calls [Symbol.toPrimitive]("string")
+      // then falls back to toString(). Both must return a function.
+      if (prop === "toString" || prop === Symbol.toPrimitive || prop === "valueOf") {
+        return () => {
+          if (!t._v) t._v = getApiBase();
+          return t._v;
+        };
+      }
       if (!t._v) t._v = getApiBase();
       return t._v;
     },
