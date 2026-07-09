@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense, Fragment } from "react";
+import { useTranslation } from "react-i18next";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Pet from "./Pet";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -24,6 +25,7 @@ import { useLogs } from "./hooks/useLogs";
 import { useConfig } from "./hooks/useConfig";
 import { useChatAndConnection } from "./hooks/useChatAndConnection";
 import { ChatPanel } from "./components/panels/ChatPanel";
+import { MetricsBar } from "./components/MetricsBar";
 import { MemoryPanel } from "./components/panels/MemoryPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
@@ -94,6 +96,8 @@ export default function App() {
   if (IS_PET_MODE) {
     return <Pet />;
   }
+
+  const { t } = useTranslation();
 
   // ── Sidebar state ────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<
@@ -473,6 +477,9 @@ export default function App() {
     startBackend,
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
     autoloopPhase, autoloopProgress,
+    thinkingIntensity, setThinkingIntensity,
+    pendingMessages,
+    researchMode, setResearchMode,
   } = useChatAndConnection({
     config,
     activeTab,
@@ -517,57 +524,57 @@ export default function App() {
   const sidebarGroupsData: SidebarGroupData[] = [
     {
       key: "core",
-      label: "CORE",
+      label: t('nav.core'),
       tabs: [
-        { id: "chat" as const, label: "Chat", icon: <MessageSquare size={16} /> },
-        { id: "team" as const, label: "Team", icon: <Users size={16} /> },
-        { id: "coder" as const, label: "Coder", icon: <Code2 size={16} /> },
+        { id: "chat" as const, label: t('tab.chat'), icon: <MessageSquare size={16} /> },
+        { id: "team" as const, label: t('tab.team'), icon: <Users size={16} /> },
+        { id: "coder" as const, label: t('tab.coder'), icon: <Code2 size={16} /> },
       ],
     },
     {
       key: "research",
-      label: "RESEARCH",
+      label: t('nav.research'),
       tabs: [
-        { id: "knowledge" as const, label: "Knowledge", icon: <BookOpen size={16} /> },
-        { id: "periodic" as const, label: "Periodic Table", icon: <Atom size={16} /> },
-        { id: "project" as const, label: "Project", icon: <Briefcase size={16} /> },
-        { id: "notebook" as const, label: "Notebook", icon: <NotebookIcon size={16} />, indented: true },
-        { id: "benchmark" as const, label: "Benchmark", icon: <FlaskConical size={16} />, indented: true },
-        { id: "evolution" as const, label: "Evolution", icon: <Dna size={16} />, indented: true },
-        { id: "execute" as const, label: "Execute", icon: <Play size={16} />, indented: true },
-        { id: "workflows" as const, label: "Workflows", icon: <Zap size={16} />, indented: true },
-        { id: "sweep" as const, label: "Sweep", icon: <BarChart3 size={16} />, indented: true },
-        { id: "explore" as const, label: "Explore", icon: <Compass size={16} />, indented: true },
-        { id: "diagnose" as const, label: "Diagnose", icon: <Stethoscope size={16} />, indented: true },
-        { id: "structure" as const, label: "Structure", icon: <Box size={16} />, indented: true },
-        { id: "hpc" as const, label: "HPC", icon: <Monitor size={16} />, indented: true },
-        { id: "solver" as const, label: "Solver", icon: <Calculator size={16} />, indented: true },
+        { id: "knowledge" as const, label: t('tab.knowledge'), icon: <BookOpen size={16} /> },
+        { id: "periodic" as const, label: t('tab.periodic'), icon: <Atom size={16} /> },
+        { id: "project" as const, label: t('tab.project'), icon: <Briefcase size={16} /> },
+        { id: "notebook" as const, label: t('tab.notebook'), icon: <NotebookIcon size={16} />, indented: true },
+        { id: "benchmark" as const, label: t('tab.benchmark'), icon: <FlaskConical size={16} />, indented: true },
+        { id: "evolution" as const, label: t('tab.evolution'), icon: <Dna size={16} />, indented: true },
+        { id: "execute" as const, label: t('tab.execute'), icon: <Play size={16} />, indented: true },
+        { id: "workflows" as const, label: t('tab.workflows'), icon: <Zap size={16} />, indented: true },
+        { id: "sweep" as const, label: t('tab.sweep'), icon: <BarChart3 size={16} />, indented: true },
+        { id: "explore" as const, label: t('tab.explore'), icon: <Compass size={16} />, indented: true },
+        { id: "diagnose" as const, label: t('tab.diagnose'), icon: <Stethoscope size={16} />, indented: true },
+        { id: "structure" as const, label: t('tab.structure'), icon: <Box size={16} />, indented: true },
+        { id: "hpc" as const, label: t('tab.hpc'), icon: <Monitor size={16} />, indented: true },
+        { id: "solver" as const, label: t('tab.solver'), icon: <Calculator size={16} />, indented: true },
       ],
     },
     {
       key: "workspace",
-      label: "WORKSPACE",
+      label: t('nav.workspace'),
       tabs: [
-        { id: "files" as const, label: "Files", icon: <FolderTree size={16} /> },
-        { id: "terminal" as const, label: "Terminal", icon: <Terminal size={16} /> },
-        { id: "sandbox" as const, label: "Sandbox", icon: <TerminalSquare size={16} /> },
-        { id: "review" as const, label: "Review", icon: <GitBranch size={16} /> },
-        { id: "tools" as const, label: "Tools", icon: <Wrench size={16} /> },
-        { id: "skills" as const, label: "Skills", icon: <Sparkles size={16} /> },
+        { id: "files" as const, label: t('tab.files'), icon: <FolderTree size={16} /> },
+        { id: "terminal" as const, label: t('tab.terminal'), icon: <Terminal size={16} /> },
+        { id: "sandbox" as const, label: t('tab.sandbox'), icon: <TerminalSquare size={16} /> },
+        { id: "review" as const, label: t('tab.review'), icon: <GitBranch size={16} /> },
+        { id: "tools" as const, label: t('tab.tools'), icon: <Wrench size={16} /> },
+        { id: "skills" as const, label: t('tab.skills'), icon: <Sparkles size={16} /> },
       ],
     },
     {
       key: "system",
-      label: "SYSTEM",
+      label: t('nav.system'),
       tabs: [
-        { id: "memory" as const, label: "Memory", icon: <Brain size={16} /> },
-        { id: "emotion" as const, label: "Emotion", icon: <Activity size={16} /> },
-        { id: "provenance" as const, label: "Provenance", icon: <History size={16} /> },
-        { id: "plugins" as const, label: "Plugins", icon: <Puzzle size={16} /> },
-        { id: "threads" as const, label: "Threads", icon: <MessageCircle size={16} /> },
-        { id: "logs" as const, label: "Logs", icon: <FileText size={16} /> },
-        { id: "side" as const, label: "Side Q&A", icon: <HelpCircle size={16} /> },
-        { id: "settings" as const, label: "Settings", icon: <Settings size={16} /> },
+        { id: "memory" as const, label: t('tab.memory'), icon: <Brain size={16} /> },
+        { id: "emotion" as const, label: t('tab.emotion'), icon: <Activity size={16} /> },
+        { id: "provenance" as const, label: t('tab.provenance'), icon: <History size={16} /> },
+        { id: "plugins" as const, label: t('tab.plugins'), icon: <Puzzle size={16} /> },
+        { id: "threads" as const, label: t('tab.threads'), icon: <MessageCircle size={16} /> },
+        { id: "logs" as const, label: t('tab.logs'), icon: <FileText size={16} /> },
+        { id: "side" as const, label: t('tab.side'), icon: <HelpCircle size={16} /> },
+        { id: "settings" as const, label: t('tab.settings'), icon: <Settings size={16} /> },
       ],
     },
   ];
@@ -646,7 +653,7 @@ export default function App() {
           <img src="/raven-logo.png" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
           <div className="flex flex-1 flex-col">
             <div className="text-[15px] font-bold tracking-tight">Huginn</div>
-            <div className="text-[12px] text-text-muted leading-none font-medium">Materials Science Agent</div>
+            <div className="text-[12px] text-text-muted leading-none font-medium">{t('app.subtitle')}</div>
           </div>
           <button
             onClick={() => setSidebarHidden(true)}
@@ -709,7 +716,7 @@ export default function App() {
         <div className="border-t border-border px-3 py-3">
           <div className="flex items-center gap-2 text-[13px] text-text-muted">
             <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-success" : "bg-error"}`} />
-            <span className="truncate">{status || (isConnected ? "Connected" : "Offline")}</span>
+            <span className="truncate">{status || (isConnected ? t('status.connected') : t('status.offline'))}</span>
           </div>
           <div className="mt-2 flex gap-1.5">
             <button
@@ -722,9 +729,9 @@ export default function App() {
             <button
               onClick={openPetWindow}
               className="sidebar-footer-btn flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary"
-              title="Summon pet"
+              title={t('app.summonPet')}
             >
-              <Bird size={13} /> Pet
+              <Bird size={13} /> {t('app.pet')}
             </button>
           </div>
         </div>
@@ -746,8 +753,8 @@ export default function App() {
               <>
                 <span className="badge border border-border bg-bg-tertiary text-text-secondary">
                   {config.models.length > 0
-                    ? `${config.models.filter((m) => m.enabled).length} models`
-                    : `${providerLabel} / ${config.model || "default"}`}
+                    ? `${config.models.filter((m) => m.enabled).length} ${t('app.models')}`
+                    : `${providerLabel} / ${config.model || t('app.default')}`}
                 </span>
                 <label className="flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
                   <input
@@ -771,8 +778,8 @@ export default function App() {
               <button
                 onClick={() => { setChatSearchOpen((p: boolean) => !p); if (chatSearchOpen) setChatSearchQuery(""); }}
                 className={`rounded-lg p-1.5 transition-colors ${chatSearchOpen ? "bg-bg-tertiary text-accent" : "text-text-muted hover:text-text-secondary"}`}
-                title="Search messages"
-                aria-label="Search messages"
+                title={t('chat.search')}
+                aria-label={t('chat.search')}
                 aria-expanded={chatSearchOpen}
               >
                 <Search size={16} />
@@ -783,21 +790,24 @@ export default function App() {
                 onClick={startBackend}
                 className="badge bg-error/10 text-error border border-error/20 hover:bg-error/20"
               >
-                ▶ Start backend
+                ▶ {t('app.startBackend')}
               </button>
             )}
             {status.includes("starting") && (
               <span className="badge bg-warning/10 text-warning border border-warning/20">
-                Starting backend…
+                {t('app.startingBackend')}
               </span>
             )}
           </div>
         </header>
 
+        {/* Real-time metrics bar */}
+        <MetricsBar />
+
         {/* Autoloop progress bar */}
         {autoloopPhase && (
           <div className="flex items-center gap-3 border-b border-border bg-bg-secondary px-6 py-2">
-            <span className="text-xs font-semibold text-text-secondary">Autoloop</span>
+            <span className="text-xs font-semibold text-text-secondary">{t('app.autoloop')}</span>
             <div className="flex items-center gap-1.5">
               {AUTOLOOP_PHASES.map((phase) => (
                 <div
@@ -846,6 +856,13 @@ export default function App() {
               respondToApproval={respondToApproval}
               autoApprove={autoApprove}
               toggleAutoApprove={toggleAutoApprove}
+              thinkingIntensity={thinkingIntensity}
+              setThinkingIntensity={setThinkingIntensity}
+              pendingMessages={pendingMessages}
+              researchMode={researchMode}
+              setResearchMode={setResearchMode}
+              autoloopPhase={autoloopPhase}
+              autoloopProgress={autoloopProgress}
             />
           )}
 
@@ -1322,21 +1339,21 @@ export default function App() {
 
           {activeTab === "provenance" && (
             <div className="flex h-full flex-col">
-              <PanelHeader title="Provenance">
-                <button onClick={loadProvenance} className="btn-primary px-3 py-1 text-xs">Refresh</button>
+              <PanelHeader title={t('provenance.title')}>
+                <button onClick={loadProvenance} className="btn-primary px-3 py-1 text-xs">{t('common.refresh')}</button>
               </PanelHeader>
               <div className="flex-1 overflow-y-auto p-6">
                 {provenanceRecords.length === 0 ? (
-                  <p className="text-sm text-text-muted">No provenance records yet.</p>
+                  <p className="text-sm text-text-muted">{t('provenance.empty')}</p>
                 ) : (
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-border text-text-muted">
-                        <th className="py-2 pr-4 font-semibold">Tool</th>
-                        <th className="py-2 pr-4 font-semibold">File</th>
-                        <th className="py-2 pr-4 font-semibold">Format</th>
-                        <th className="py-2 pr-4 font-semibold">Key Properties</th>
-                        <th className="py-2 pr-4 font-semibold">Time</th>
+                        <th className="py-2 pr-4 font-semibold">{t('provenance.tool')}</th>
+                        <th className="py-2 pr-4 font-semibold">{t('provenance.file')}</th>
+                        <th className="py-2 pr-4 font-semibold">{t('provenance.format')}</th>
+                        <th className="py-2 pr-4 font-semibold">{t('provenance.keyProps')}</th>
+                        <th className="py-2 pr-4 font-semibold">{t('provenance.time')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1376,9 +1393,9 @@ export default function App() {
 
           {activeTab === "side" && (
             <div className="flex h-full flex-col">
-              <PanelHeader title="Side Q&A">
-                <button onClick={loadSidePending} className="btn-secondary px-3 py-1 text-xs">Refresh</button>
-                <button onClick={clearSide} className="btn-secondary px-3 py-1 text-xs">Clear</button>
+              <PanelHeader title={t('side.title')}>
+                <button onClick={loadSidePending} className="btn-secondary px-3 py-1 text-xs">{t('common.refresh')}</button>
+                <button onClick={clearSide} className="btn-secondary px-3 py-1 text-xs">{t('common.clear')}</button>
               </PanelHeader>
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="mx-auto max-w-2xl space-y-4">
@@ -1386,7 +1403,7 @@ export default function App() {
                     <textarea
                       value={sideInput}
                       onChange={(e) => setSideInput(e.target.value)}
-                      placeholder="Ask a side question…"
+                      placeholder={t('side.placeholder')}
                       rows={3}
                       className="input resize-none text-sm"
                     />
@@ -1397,7 +1414,7 @@ export default function App() {
                   {sideMsg && <div className="text-xs text-error">{sideMsg}</div>}
                   <div className="space-y-2">
                     {sideQuestions.length === 0 ? (
-                      <p className="text-sm text-text-muted">No pending questions.</p>
+                      <p className="text-sm text-text-muted">{t('side.empty')}</p>
                     ) : sideQuestions.map((q) => (
                       <div key={q.id || q.question} className="card space-y-2">
                         <p className="text-sm font-medium">{q.question}</p>
@@ -1412,11 +1429,11 @@ export default function App() {
                               className="input flex-1 text-xs"
                               onKeyDown={(e) => { if (e.key === "Enter") answerSideQuestion(q.id || q.local_id); }}
                             />
-                            <button onClick={() => answerSideQuestion(q.id || q.local_id)} disabled={!sideAnswer.trim()} className="btn-primary text-xs">Send</button>
-                            <button onClick={() => setSideAnswerId(null)} className="btn-secondary text-xs">Cancel</button>
+                            <button onClick={() => answerSideQuestion(q.id || q.local_id)} disabled={!sideAnswer.trim()} className="btn-primary text-xs">{t('common.send')}</button>
+                            <button onClick={() => setSideAnswerId(null)} className="btn-secondary text-xs">{t('common.cancel')}</button>
                           </div>
                         ) : (
-                          <button onClick={() => setSideAnswerId(q.id || q.local_id)} className="btn-secondary text-xs">Answer</button>
+                          <button onClick={() => setSideAnswerId(q.id || q.local_id)} className="btn-secondary text-xs">{t('common.answer')}</button>
                         )}
                       </div>
                     ))}
@@ -1492,54 +1509,42 @@ export default function App() {
       {showGuide && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl">
-            <h2 className="mb-1 text-xl font-bold">Welcome to Huginn</h2>
+            <h2 className="mb-1 text-xl font-bold">{t('guide.title')}</h2>
             <p className="mb-5 text-sm italic text-text-secondary">
-              Magic springs from the wellspring of imagination.
+              {t('guide.subtitle')}
             </p>
             <p className="mb-5 text-sm text-text-secondary">
-              A few quick tips to get you started:
+              {t('guide.intro')}
             </p>
             <ol className="mb-6 space-y-3 text-sm text-text-primary">
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
                   1
                 </span>
-                <span>
-                  Open <strong>Settings</strong> and enter your LLM provider / API key. The app
-                  saves it locally and pushes it to the backend automatically.
-                </span>
+                <span dangerouslySetInnerHTML={{ __html: t('guide.step1') }} />
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
                   2
                 </span>
-                <span>
-                  The Python backend starts automatically. If it doesn't, use the{" "}
-                  <strong>▶ Start backend</strong> button in the header or Settings.
-                </span>
+                <span dangerouslySetInnerHTML={{ __html: t('guide.step2') }} />
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
                   3
                 </span>
-                <span>
-                  Switch to <strong>Files</strong> to browse and edit scripts, or use{" "}
-                  <strong>Tools</strong> / <strong>Skills</strong> to run capabilities directly.
-                </span>
+                <span dangerouslySetInnerHTML={{ __html: t('guide.step3') }} />
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
                   4
                 </span>
-                <span>
-                  In chat, tool calls appear as expandable cards so you can see exactly what
-                  the agent is doing.
-                </span>
+                <span dangerouslySetInnerHTML={{ __html: t('guide.step4') }} />
               </li>
             </ol>
             <div className="flex justify-end">
               <button onClick={closeGuide} className="btn-primary px-5 py-2">
-                Got it
+                {t('guide.gotIt')}
               </button>
             </div>
           </div>

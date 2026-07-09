@@ -263,6 +263,19 @@ RATE_LIMIT_BLOCKED_TOTAL = Counter(
     labelnames=("session",),
 )
 
+# Prompt cache prefix stability. A "hit" means the static prefix
+# (system prompt + begin-dialogs) was the same as the previous turn,
+# so the LLM provider can reuse its KV cache. A "miss" means the prefix
+# changed (persona switch, rebuild, first call).
+PROMPT_CACHE_HITS_TOTAL = Counter(
+    "huginn_prompt_cache_hits_total",
+    "Prompt cache prefix hits (stable prefix reused).",
+)
+PROMPT_CACHE_MISSES_TOTAL = Counter(
+    "huginn_prompt_cache_misses_total",
+    "Prompt cache prefix misses (new or changed prefix).",
+)
+
 
 # ---------------------------------------------------------------------------
 # Small convenience helpers for future instrumentation points

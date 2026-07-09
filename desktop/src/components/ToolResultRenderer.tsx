@@ -109,7 +109,7 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
             onClick={() => setView('raw')}
           >
             <List size={10} style={{ display: 'inline', marginRight: 4 }} />
-            Raw
+            {t('output.raw')}
           </button>
         </div>
         {toolName && (

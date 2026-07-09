@@ -119,6 +119,16 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [autoloopPhase, setAutoloopPhase] = useState<string>("");
   const [autoloopProgress, setAutoloopProgress] = useState<number>(0);
 
+  // ── Thinking intensity (per-request override sent to backend) ──
+  const [thinkingIntensity, setThinkingIntensity] = useState<"low" | "medium" | "high">("medium");
+
+  // ── Message queue (Kimi-style: send while streaming, drain on done) ──
+  const [pendingMessages, setPendingMessages] = useState<string[]>([]);
+  const pendingMessagesRef = useRef<string[]>([]);
+
+  // ── Research mode toggle (prepends /research to outgoing messages) ──
+  const [researchMode, setResearchMode] = useState(false);
+
   // ── Persona state ────────────────────────────────────────────
   const [personaList, setPersonaList] = useState<{ id: string; label: string; description?: string; avatar?: string }[]>(PERSONAS_FALLBACK);
   const [personaEmotion, setPersonaEmotion] = useState<{ mood: string; valence: number; arousal: number; trust: number } | null>(null);
@@ -641,9 +651,14 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   // ── Send message ─────────────────────────────────────────────
   const sendMessage = async () => {
-    if (!input.trim() || isStreaming) return;
+    if (!input.trim()) return;
 
-    const content = input.trim();
+    let content = input.trim();
+
+    // Research mode: auto-prefix /research so the backend triggers autoloop
+    if (researchMode && !content.startsWith("/research ")) {
+      content = "/research " + content;
+    }
 
     if (mode === "plan") {
       setPlanLoading(true);
@@ -666,6 +681,14 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       return;
     }
 
+    // Queue the message if the agent is still streaming (Kimi-style)
+    if (isStreaming) {
+      pendingMessagesRef.current.push(content);
+      setPendingMessages([...pendingMessagesRef.current]);
+      setInput("");
+      return;
+    }
+
     if (!wsClientRef.current) return;
 
     const userMsg: Message = { role: "user", content, timestamp: formatTime() };
@@ -673,11 +696,34 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     setInput("");
     pendingResponseRef.current = "";
 
-    const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread });
+    const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread, thinking: thinkingIntensity });
     if (wsClientRef.current) {
       wsClientRef.current.send(payload);
     }
   };
+
+  // ── Drain queued messages when streaming finishes ─────────────
+  // Fires on every isStreaming transition; only acts when streaming
+  // just stopped and there are pending messages to flush.
+  useEffect(() => {
+    if (!isStreaming && pendingMessagesRef.current.length > 0 && wsClientRef.current) {
+      const nextContent = pendingMessagesRef.current.shift()!;
+      setPendingMessages([...pendingMessagesRef.current]);
+
+      let content = nextContent;
+      if (researchMode && !content.startsWith("/research ")) {
+        content = "/research " + content;
+      }
+
+      const userMsg: Message = { role: "user", content, timestamp: formatTime() };
+      setMessages((prev) => [...prev, userMsg]);
+      pendingResponseRef.current = "";
+
+      const payload = JSON.stringify({ type: "user_input", content, thread_id: activeThread, thinking: thinkingIntensity });
+      wsClientRef.current.send(payload);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStreaming]);
 
   // ── Answer clarification ─────────────────────────────────────
   const answerClarification = (questionId: string | undefined, answer: string) => {
@@ -762,5 +808,11 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
     // Autoloop
     autoloopPhase, autoloopProgress,
+    // Thinking intensity
+    thinkingIntensity, setThinkingIntensity,
+    // Message queue
+    pendingMessages,
+    // Research mode
+    researchMode, setResearchMode,
   };
 }

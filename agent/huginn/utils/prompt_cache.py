@@ -12,6 +12,7 @@ To maximize cache hits we must keep the beginning of every request stable:
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -48,6 +49,11 @@ class PromptCacheBuilder:
         self.begin_dialogs = begin_dialogs or []
         self.cache_control = cache_control
         self.provider = (provider or "").lower().strip()
+        # Track whether the static prefix changed since the last build.
+        # Hit = same prefix (provider can reuse KV cache), miss = changed.
+        self._last_prefix_key: str | None = None
+        self.cache_hits = 0
+        self.cache_misses = 0
 
     def set_provider(self, provider: str | None) -> None:
         """Update provider after the builder is constructed."""
@@ -61,6 +67,40 @@ class PromptCacheBuilder:
             # compatibility when no provider is specified.
             return True
         return any(p in self.provider for p in self._SUPPORTED_PROVIDERS)
+
+    def _track_prefix_stability(self) -> None:
+        """Bump hit/miss counters based on whether the prefix changed.
+
+        Called once per build_input_messages() call (i.e. once per turn).
+        If the system prompt + begin-dialogs are identical to the previous
+        turn it's a cache hit — the provider can reuse its KV cache for the
+        entire prefix. A persona switch or prompt rebuild counts as a miss.
+        """
+        raw = f"{self.system_prompt}\x00{self.begin_dialogs}"
+        key = hashlib.md5(raw.encode("utf-8")).hexdigest()
+        if key == self._last_prefix_key:
+            self.cache_hits += 1
+            self._inc_metric("hit")
+        else:
+            self.cache_misses += 1
+            self._inc_metric("miss")
+        self._last_prefix_key = key
+
+    @staticmethod
+    def _inc_metric(kind: str) -> None:
+        try:
+            from huginn.routes.metrics import (
+                PROMPT_CACHE_HITS_TOTAL,
+                PROMPT_CACHE_MISSES_TOTAL,
+            )
+
+            if kind == "hit":
+                PROMPT_CACHE_HITS_TOTAL.inc()
+            else:
+                PROMPT_CACHE_MISSES_TOTAL.inc()
+        except Exception:
+            # metrics lib missing — instance counters still work
+            pass
 
     def _cache_control_kwargs(self) -> dict[str, Any]:
         if "kimi" in self.provider or "moonshot" in self.provider:
@@ -125,6 +165,7 @@ class PromptCacheBuilder:
         LangGraph's ``add_messages`` replaces them each turn instead of
         accumulating unbounded duplicates in the graph state.
         """
+        self._track_prefix_stability()
         prefix = self._static_prefix()
         messages: list[BaseMessage] = list(prefix[1:])
 

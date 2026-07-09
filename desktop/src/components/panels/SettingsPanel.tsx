@@ -6,6 +6,7 @@
  * plus the save button and backend start/stop card.
  */
 import { useState, lazy, Suspense } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown } from "lucide-react";
 import { SettingsTabNav, ConfigField } from "../settings-shared";
@@ -31,6 +32,7 @@ function LocalModelDiscoverer({
   const [discovered, setDiscovered] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const { t } = useTranslation();
 
   const LOCAL_PROVIDERS = ["ollama", "vllm", "local", "openai-compatible"];
   if (!LOCAL_PROVIDERS.includes(model.provider)) return null;
@@ -53,7 +55,7 @@ function LocalModelDiscoverer({
         setDiscovered([]);
       }
     } catch (e: any) {
-      setErr(e.message || "请求失败");
+      setErr(e.message || t('settings.requestFailed'));
       setDiscovered([]);
     }
     setLoading(false);
@@ -66,7 +68,7 @@ function LocalModelDiscoverer({
         disabled={loading}
         className="btn-secondary px-2.5 py-1 text-xs disabled:opacity-50"
       >
-        {loading ? "探测中…" : "Discover Local Models"}
+        {loading ? t('settings.discovering') : t('settings.discoverModels')}
       </button>
       {err && <p className="text-xs text-error">{err}</p>}
       {discovered.length > 0 && (
@@ -122,6 +124,7 @@ export interface SettingsPanelProps {
 // ── Component ────────────────────────────────────────────────────────────
 
 export function SettingsPanel(props: SettingsPanelProps) {
+  const { t } = useTranslation();
   const {
     config, configDirty, configSavedMsg, settingsTab, llmCredOptions,
     expandedModels, expandedAgents,
@@ -139,7 +142,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
         {settingsTab === "general" && (
           <div className="max-w-2xl space-y-5">
             <p className="text-sm text-text-secondary">
-              Default single-model settings. For multi-LLM mode, switch to the Models tab.
+              {t('settings.general.desc')}
             </p>
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <ConfigField label="Provider">
@@ -153,7 +156,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   ))}
                 </select>
               </ConfigField>
-              <ConfigField label="Model">
+              <ConfigField label={t('settings.model')}>
                 <input
                   type="text"
                   value={config.model}
@@ -162,7 +165,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   className="input"
                 />
               </ConfigField>
-              <ConfigField label="Persona" full>
+              <ConfigField label={t('settings.persona')} full>
                 <select
                   value={config.persona}
                   onChange={(e) => {
@@ -183,7 +186,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       <span className="inline-block h-2 w-2 rounded-full" style={{
                         backgroundColor: personaEmotion.valence > 0 ? "#7ee787" : personaEmotion.valence < -0.3 ? "#f85149" : "#8b949e"
                       }} />
-                      {personaEmotion.mood || "neutral mood"}
+                      {personaEmotion.mood || t('settings.neutralMood')}
                     </span>
                   </div>
                 )}
@@ -196,19 +199,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     onChange={(e) => { const next = { ...config, rag_enabled: e.target.checked }; setConfig(next); setConfigDirty(true); }}
                     className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
                   />
-                  <span className="text-sm text-text-primary">Use knowledge base (RAG) in chat</span>
+                  <span className="text-sm text-text-primary">{t('settings.useRag')}</span>
                 </label>
               </div>
-              <ConfigField label="API Key" full>
+              <ConfigField label={t('settings.apiKey')} full>
                 <input
                   type="password"
                   value={config.api_key}
                   onChange={(e) => { setConfig((prev) => ({ ...prev, api_key: e.target.value })); setConfigDirty(true); }}
-                  placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || "API key"}
+                  placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || t('settings.apiKeyPlaceholder')}
                   className="input"
                 />
               </ConfigField>
-              <ConfigField label="Base URL (optional)" full>
+              <ConfigField label={t('settings.baseUrl')} full>
                 <input
                   type="text"
                   value={config.base_url}
@@ -226,7 +229,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   className="input"
                 />
               </ConfigField>
-              <ConfigField label="Max concurrent sub-agents" full>
+              <ConfigField label={t('settings.maxSubagents')} full>
                 <input
                   type="number"
                   min={1}
@@ -247,7 +250,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <button onClick={addModel} className="btn-secondary px-3 py-1.5 text-xs">+ Add Model</button>
             </div>
             {config.models.length === 0 && (
-              <p className="text-sm text-text-muted">No model pool yet. Add a model or use the General tab for a single provider.</p>
+              <p className="text-sm text-text-muted">{t('settings.modelsEmpty')}</p>
             )}
             {config.models.map((m, i) => (
               <div key={i} className="card">
@@ -271,7 +274,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   <div className="flex items-center gap-2">
                     <label className="flex items-center gap-1 text-xs">
                       <input type="checkbox" checked={m.enabled} onChange={(e) => updateModel(i, { enabled: e.target.checked })} />
-                      Enabled
+                      {t('settings.enabled')}
                     </label>
                     <button onClick={() => removeModel(i)} className="btn-secondary px-2 py-1 text-xs">🗑</button>
                   </div>
@@ -291,7 +294,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     <input className="input-field text-xs" type="password" value={m.api_key} onChange={(e) => updateModel(i, { api_key: e.target.value })} placeholder="API key (optional)" />
                     <input className="input-field text-xs" value={m.base_url} onChange={(e) => updateModel(i, { base_url: e.target.value })} placeholder="base URL (optional)" />
                     <div className="flex items-center gap-2 text-xs">
-                      <span className="text-text-muted">Temp</span>
+                      <span className="text-text-muted">{t('settings.temp')}</span>
                       <input type="range" min={0} max={2} step={0.05} value={m.temperature} onChange={(e) => updateModel(i, { temperature: parseFloat(e.target.value) })} />
                       <span>{m.temperature.toFixed(2)}</span>
                     </div>
@@ -304,7 +307,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         value={m.credential_id || ""}
                         onChange={(e) => updateModel(i, { credential_id: e.target.value || null })}
                       >
-                        <option value="">— Direct API Key —</option>
+                        <option value="">{t('settings.directApiKey')}</option>
                         {llmCredOptions.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.name}{c.provider ? ` (${c.provider})` : ""}
@@ -316,9 +319,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                           Using stored credential. API key field above can be left empty.
                         </p>
                       ) : llmCredOptions.length === 0 ? (
-                        <p className="text-xs text-text-muted">
-                          No stored LLM credentials yet — add some in the Credentials tab.
-                        </p>
+                        <p className="text-xs text-text-muted">{t('settings.noCreds')}</p>
                       ) : null}
                       <LocalModelDiscoverer model={m} onUpdate={(patch) => updateModel(i, patch)} />
                     </div>
@@ -336,7 +337,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <button onClick={addAgent} className="btn-secondary px-3 py-1.5 text-xs">+ Add Agent</button>
             </div>
             {config.agents.length === 0 && (
-              <p className="text-sm text-text-muted">No agent profiles yet. Add one or use the General tab for a single agent.</p>
+              <p className="text-sm text-text-muted">{t('settings.agentsEmpty')}</p>
             )}
             {config.agents.map((a, i) => (
               <div key={i} className="card">
@@ -357,7 +358,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       className="input-field flex-1 text-sm"
                       value={a.name}
                       onChange={(e) => updateAgent(i, { name: e.target.value })}
-                      placeholder="display name"
+                      placeholder={t('settings.displayName')}
                       onClick={(e) => e.stopPropagation()}
                     />
                     {!expandedAgents.has(i) && (
@@ -379,7 +380,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       value={a.model_alias}
                       onChange={(e) => updateAgent(i, { model_alias: e.target.value })}
                     >
-                      <option value="">default model</option>
+                      <option value="">{t('settings.defaultModel')}</option>
                       {config.models.filter((m) => m.enabled).map((m) => (
                         <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
                       ))}
@@ -397,7 +398,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       className="input-field text-xs md:col-span-2"
                       value={(a.tools || []).join(", ")}
                       onChange={(e) => updateAgent(i, { tools: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
-                      placeholder="tool allowlist, comma separated (empty = all)"
+                      placeholder={t('settings.toolAllowlist')}
                     />
                   </div>
                 )}
@@ -419,7 +420,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   onChange={(e) => { const next = { ...config, local_only_mode: e.target.checked }; setConfig(next); setConfigDirty(true); }}
                   className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
                 />
-                <span className="text-sm text-text-primary">Local-only / no-cloud mode (allow only Ollama, vLLM, local loopback endpoints)</span>
+                <span className="text-sm text-text-primary">{t('settings.localOnly')}</span>
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input
@@ -428,7 +429,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   onChange={(e) => { const next = { ...config, privacy_redact_secrets: e.target.checked }; setConfig(next); setConfigDirty(true); }}
                   className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
                 />
-                <span className="text-sm text-text-primary">Redact secrets (API keys, private keys, tokens) before sending to LLM</span>
+                <span className="text-sm text-text-primary">{t('settings.redactSecrets')}</span>
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input
@@ -437,9 +438,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   onChange={(e) => { const next = { ...config, privacy_block_on_secrets: e.target.checked }; setConfig(next); setConfigDirty(true); }}
                   className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
                 />
-                <span className="text-sm text-text-primary">Block messages that contain detected secrets</span>
+                <span className="text-sm text-text-primary">{t('settings.blockSecrets')}</span>
               </label>
-              <ConfigField label="Max tool output tokens">
+              <ConfigField label={t('settings.maxToolTokens')}>
                 <input
                   type="number"
                   min={0}
@@ -448,7 +449,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   placeholder="0 = unlimited"
                   className="input"
                 />
-                <p className="mt-1 text-xs text-text-muted">Tool results longer than this are truncated before being sent to the LLM.</p>
+                <p className="mt-1 text-xs text-text-muted">{t('settings.maxToolTokensHint')}</p>
               </ConfigField>
               <ConfigField label="Context budget tokens">
                 <input
@@ -468,7 +469,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
         {settingsTab === "pet" && (
           <div className="max-w-2xl space-y-5">
             <p className="text-sm text-text-secondary">
-              Customize your desktop companion.
+              {t('settings.pet.desc')}
             </p>
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <ConfigField label="Pet name">
@@ -554,10 +555,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 }}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-error/30 bg-error/5 px-3 py-1.5 text-xs font-medium text-error/80 transition-colors hover:bg-error/10 hover:text-error"
               >
-                Reset pet progress
+                {t('settings.resetPet')}
               </button>
               <span className="text-[10px] text-text-muted">
-                Resets level, XP, hunger, mood, and accessories.
+                {t('settings.resetPetHint')}
               </span>
             </div>
 
@@ -579,14 +580,14 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 onChange={(e) => { const next = { ...config, encrypt_config: e.target.checked }; setConfig(next); setConfigDirty(true); }}
                 className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
               />
-              <span className="text-sm text-text-primary">Encrypt config files</span>
+              <span className="text-sm text-text-primary">{t('settings.encryptConfig')}</span>
             </label>
             <ConfigField label="Encryption password">
               <input
                 type="password"
                 value={config.encryption_password}
                 onChange={(e) => { const next = { ...config, encryption_password: e.target.value }; setConfig(next); setConfigDirty(true); }}
-                placeholder="Leave empty to keep unchanged"
+                placeholder={t('settings.encryptionPasswordPlaceholder')}
                 className="input"
               />
             </ConfigField>
@@ -619,19 +620,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
               disabled={!config.encryption_password}
               className="btn-secondary text-xs"
             >
-              Encrypt huginn.toml now
+              {t('settings.encryptNow')}
             </button>
           </div>
         )}
 
         {settingsTab === "credentials" && (
-          <Suspense fallback={<div className="flex h-32 items-center justify-center text-sm text-text-muted">Loading…</div>}>
+          <Suspense fallback={<div className="flex h-32 items-center justify-center text-sm text-text-muted">{t('common.loading')}</div>}>
             <CredentialsPanel />
           </Suspense>
         )}
 
         {settingsTab === "jobs" && (
-          <Suspense fallback={<div className="flex h-32 items-center justify-center text-sm text-text-muted">Loading…</div>}>
+          <Suspense fallback={<div className="flex h-32 items-center justify-center text-sm text-text-muted">{t('common.loading')}</div>}>
             <RemoteJobsPanel />
           </Suspense>
         )}
@@ -640,15 +641,15 @@ export function SettingsPanel(props: SettingsPanelProps) {
         {settingsTab === "export" && (
           <div className="space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-text-primary">数据导出与共享</h3>
+              <h3 className="text-sm font-semibold text-text-primary">{t('settings.export.title')}</h3>
               <p className="mt-1 text-xs text-text-muted">
-                将记忆、知识库、知识图谱等数据打包为压缩文件, 可用于备份或分享给其他用户。
+                {t('settings.export.desc')}
               </p>
             </div>
 
             {/* Export status */}
             <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-              <div className="mb-2 text-xs font-medium text-text-secondary">可导出数据</div>
+              <div className="mb-2 text-xs font-medium text-text-secondary">{t('settings.export.available')}</div>
               <div id="export-status" className="space-y-1 text-xs text-text-muted">
                 <span className="text-text-muted">点击下方按钮查看...</span>
               </div>
@@ -674,7 +675,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 }}
                 className="btn-secondary text-xs mt-2"
               >
-                刷新状态
+                {t('common.refresh')}
               </button>
             </div>
 
@@ -724,7 +725,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   }}
                   className="btn-secondary text-xs"
                 >
-                  🧠 仅记忆
+                  {t('settings.export.memoryOnly')}
                 </button>
                 <button
                   onClick={async () => {
@@ -753,7 +754,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
 
             {/* Import */}
             <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-              <div className="mb-2 text-xs font-medium text-text-secondary">导入归档</div>
+              <div className="mb-2 text-xs font-medium text-text-secondary">{t('settings.export.import')}</div>
               <input
                 type="file"
                 accept=".zip,.tar.gz,.json"
@@ -771,7 +772,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       alert(`导入成功: ${JSON.stringify(data.imported)}`);
                     }
                   } catch (e: any) {
-                    alert(`导入失败: ${e.message}`);
+                    alert(t('settings.export.importFailed', { error: e.message }));
                   }
                 }}
                 className="hidden"
@@ -781,10 +782,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 onClick={() => document.getElementById("import-file-input")?.click()}
                 className="btn-secondary text-xs"
               >
-                📥 选择文件导入
+                {t('settings.export.selectFile')}
               </button>
               <p className="mt-1 text-xs text-text-muted">
-                支持 ZIP / TAR.GZ / JSON 格式, 导入时自动合并到现有数据。
+                {t('settings.export.importHint')}
               </p>
             </div>
           </div>
@@ -794,9 +795,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
         {settingsTab === "bot" && (
           <div className="space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-text-primary">机器人接入</h3>
+              <h3 className="text-sm font-semibold text-text-primary">{t('settings.bot.title')}</h3>
               <p className="mt-1 text-xs text-text-muted">
-                通过 OneBot v11 协议接入 QQ/微信机器人。需要先部署 go-cqhttp / Lagrange / NapCat。
+                {t('settings.bot.desc')}
               </p>
             </div>
 
@@ -804,8 +805,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
             <div className="rounded-lg border border-border bg-bg-tertiary p-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-medium text-text-secondary">状态: </span>
-                  <span id="bot-status-text" className="text-xs text-text-muted">未运行</span>
+                  <span className="text-xs font-medium text-text-secondary">{t('settings.bot.status')} </span>
+                  <span id="bot-status-text" className="text-xs text-text-muted">{t('settings.bot.notRunning')}</span>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -813,28 +814,28 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       try {
                         const data = await api.post<{ running?: boolean }>("/bot/start");
                         const el = document.getElementById("bot-status-text");
-                        if (el) el.textContent = data.running ? "运行中" : "启动失败";
+                        if (el) el.textContent = data.running ? t('settings.bot.running') : t('settings.bot.startFailed');
                       } catch (e: any) {
                         console.error("bot start error:", e);
                       }
                     }}
                     className="btn-primary text-xs"
                   >
-                    ▶ 启动
+                    {t('settings.bot.start')}
                   </button>
                   <button
                     onClick={async () => {
                       try {
                         await api.post("/bot/stop");
                         const el = document.getElementById("bot-status-text");
-                        if (el) el.textContent = "已停止";
+                        if (el) el.textContent = t('settings.bot.stopped');
                       } catch (e: any) {
                         console.error("bot stop error:", e);
                       }
                     }}
                     className="btn-secondary text-xs"
                   >
-                    ⏹ 停止
+                    {t('settings.bot.stop')}
                   </button>
                 </div>
               </div>
@@ -843,23 +844,23 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   try {
                     const data = await api.get<{ running?: boolean; platform?: string }>("/bot/status");
                     const el = document.getElementById("bot-status-text");
-                    if (el) el.textContent = data.running ? `运行中 (${data.platform})` : "未运行";
+                    if (el) el.textContent = data.running ? `${t('settings.bot.running')} (${data.platform})` : t('settings.bot.notRunning');
                   } catch (e: any) {
                     console.error("bot status error:", e);
                   }
                 }}
                 className="btn-secondary text-xs mt-2"
               >
-                刷新状态
+                {t('common.refresh')}
               </button>
             </div>
 
             {/* Bot config */}
             <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-              <div className="mb-2 text-xs font-medium text-text-secondary">配置</div>
+              <div className="mb-2 text-xs font-medium text-text-secondary">{t('settings.bot.config')}</div>
               <div className="space-y-2">
                 <div>
-                  <label className="text-xs text-text-muted">平台</label>
+                  <label className="text-xs text-text-muted">{t('settings.bot.platform')}</label>
                   <select
                     id="bot-platform"
                     className="input mt-1 w-full text-xs"
@@ -870,25 +871,25 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-text-muted">Bot ID (QQ号/微信号)</label>
+                  <label className="text-xs text-text-muted">{t('settings.bot.botId')}</label>
                   <input
                     type="text"
                     id="bot-id"
                     className="input mt-1 w-full text-xs"
-                    placeholder="如: 123456789"
+                    placeholder={t('settings.bot.botIdPlaceholder')}
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-text-muted">HTTP API 地址</label>
+                  <label className="text-xs text-text-muted">{t('settings.bot.apiUrl')}</label>
                   <input
                     type="text"
                     id="bot-api-url"
                     className="input mt-1 w-full text-xs"
-                    placeholder="如: http://127.0.0.1:5700"
+                    placeholder={t('settings.bot.apiUrlPlaceholder')}
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-text-muted">事件监听端口</label>
+                  <label className="text-xs text-text-muted">{t('settings.bot.httpPort')}</label>
                   <input
                     type="number"
                     id="bot-http-port"
@@ -897,12 +898,12 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-text-muted">允许的群号 (逗号分隔, 留空=全部)</label>
+                  <label className="text-xs text-text-muted">{t('settings.bot.allowedGroups')}</label>
                   <input
                     type="text"
                     id="bot-allowed-groups"
                     className="input mt-1 w-full text-xs"
-                    placeholder="如: 123456,789012"
+                    placeholder={t('settings.bot.allowedGroupsPlaceholder')}
                   />
                 </div>
               </div>
@@ -928,15 +929,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 }}
                 className="btn-primary text-xs mt-2"
               >
-                保存配置
+                {t('settings.bot.saveConfig')}
               </button>
             </div>
 
             <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
               <p className="text-xs text-accent">
-                💡 使用说明: 先启动 go-cqhttp 或 Lagrange, 配置 HTTP POST 上报到
-                <code className="mx-1 rounded bg-bg-tertiary px-1">http://your-host:8080/onebot/v11/event</code>
-                然后在上方填写配置并启动。
+                {t('settings.bot.hint')} <code className="mx-1 rounded bg-bg-tertiary px-1">{t('settings.bot.hintUrl')}</code> {t('settings.bot.hintTail')}
               </p>
             </div>
           </div>
@@ -944,29 +943,27 @@ export function SettingsPanel(props: SettingsPanelProps) {
 
         <div className="mt-6 flex items-center gap-3 pt-2">
           <button onClick={() => saveConfig(config)} disabled={!configDirty} className="btn-primary">
-            Save Settings
+            {t('settings.save')}
           </button>
           {configSavedMsg && <span className="text-sm text-success">{configSavedMsg}</span>}
         </div>
 
         <div className="card mt-6 border-accent/20 bg-accent/5">
-          <h3 className="text-sm font-semibold text-accent">Backend</h3>
-          <p className="mt-1 text-xs text-text-secondary">
-            The desktop app normally starts the Python backend automatically. If it didn't, you can start it here.
-          </p>
+          <h3 className="text-sm font-semibold text-accent">{t('settings.backend')}</h3>
+          <p className="mt-1 text-xs text-text-secondary">{t('settings.backendDesc')}</p>
           <div className="mt-3 flex items-center gap-2">
             <button onClick={startBackend} className="btn-primary text-xs">
-              ▶ Start backend
+              ▶ {t('settings.startBackend')}
             </button>
             <button
               onClick={() => invoke("stop_backend")}
               className="btn-secondary text-xs"
             >
-              ⏹ Stop backend
+              ⏹ {t('settings.stopBackend')}
             </button>
           </div>
           <p className="mt-2 text-xs text-text-muted">
-            Status: {status}
+            {t('settings.statusLabel')} {status === "running" ? t('status.connected') : t('status.offline')}
           </p>
         </div>
       </div>
