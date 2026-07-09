@@ -836,7 +836,8 @@ export default function App() {
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {activeTab === "chat" && (
+          {/* ChatPanel — 永久挂载，用 hidden 控制可见性，切换 tab 不丢失状态 */}
+          <div hidden={activeTab !== "chat"} className="h-full">
             <ChatPanel
               messages={messages}
               chatSearchOpen={chatSearchOpen}
@@ -870,7 +871,7 @@ export default function App() {
               autoloopPhase={autoloopPhase}
               autoloopProgress={autoloopProgress}
             />
-          )}
+          </div>
 
           {activeTab === "team" && (
             <TeamPanel
