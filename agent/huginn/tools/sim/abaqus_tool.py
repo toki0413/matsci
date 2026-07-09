@@ -90,6 +90,60 @@ class FractureSpec(BaseModel):
     k_ic: float | None = Field(default=None, gt=0, description="断裂韧性, Pa·√m")
 
 
+class ExplicitDynamicSpec(BaseModel):
+    """显式动力学分析步参数 — 碰撞/冲击/爆炸.
+
+    Abaqus/Explicit 使用中心差分法, 适合高速短时事件:
+    - 冲击/跌落测试
+    - 爆炸分析
+    - 接触碰撞
+    - 高速成形
+    """
+
+    youngs_modulus: float = Field(..., gt=0, description="E, Pa")
+    poissons_ratio: float = Field(default=0.3, ge=-1, lt=0.5)
+    density: float = Field(default=7850.0, gt=0)
+    # 时间步
+    total_time: float = Field(..., gt=0, description="总分析时间, s")
+    # 接触定义
+    contact_pairs: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="[{master: surface_name, slave: surface_name, "
+        "type: general|self_contact, friction: float}]",
+    )
+    # 初速度 (冲击/跌落)
+    initial_velocity: list[float] | None = Field(
+        default=None,
+        description="[vx, vy, vz] m/s, 如跌落测试的初速度",
+    )
+    # 载荷
+    loads: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="[{type: pressure|concentrated|gravity, value, region?}]",
+    )
+    # 边界条件
+    boundary_conditions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="[{region, dofs: [1,2,3], value: 0.0}]",
+    )
+    # 材料模型: 弹塑性/Johnson-Cook
+    material_model: Literal["elastic", "plastic", "johnson_cook"] = Field(
+        default="plastic",
+        description="本构模型: elastic(纯弹性)/plastic(双线性)/johnson_cook(高温高速)",
+    )
+    plastic_params: dict[str, float] | None = Field(
+        default=None,
+        description="plastic: {yield_stress, hardening_modulus}; "
+        "johnson_cook: {A, B, n, C, m, T_ref, T_melt}",
+    )
+    # 质量缩放 (显式分析的常用加速手段)
+    mass_scaling: float = Field(
+        default=1.0,
+        ge=1.0,
+        description="质量缩放因子 (1=不缩放, >1 加速计算但影响精度)",
+    )
+
+
 class AbaqusToolInput(BaseModel):
     action: Literal[
         "import_packing",
@@ -99,6 +153,7 @@ class AbaqusToolInput(BaseModel):
         "buckling",
         "fatigue",
         "fracture",
+        "explicit_dynamic",
     ] = Field(default="import_packing")
     packing_data: dict[str, Any] | str | None = Field(
         default=None,
@@ -122,6 +177,7 @@ class AbaqusToolInput(BaseModel):
     buckling_spec: BucklingSpec | None = None
     fatigue_spec: FatigueSpec | None = None
     fracture_spec: FractureSpec | None = None
+    explicit_spec: ExplicitDynamicSpec | None = None
 
     @model_validator(mode="after")
     def _check_action_fields(self) -> "AbaqusToolInput":
@@ -132,6 +188,7 @@ class AbaqusToolInput(BaseModel):
             "buckling": "buckling_spec",
             "fatigue": "fatigue_spec",
             "fracture": "fracture_spec",
+            "explicit_dynamic": "explicit_spec",
         }
         for action_name, spec_field in spec_map.items():
             if self.action == action_name and getattr(self, spec_field) is None:
@@ -198,13 +255,14 @@ class AbaqusTool(HuginnTool):
                     )
                 return self._execute_script(script_path, work_dir, action="run")
 
-            # 5 个新 action: 生成脚本 + 可选执行
+            # 6 个新 action: 生成脚本 + 可选执行
             script_generators = {
                 "static_general": self._generate_static_general_script,
                 "modal": self._generate_modal_script,
                 "buckling": self._generate_buckling_script,
                 "fatigue": self._generate_fatigue_script,
                 "fracture": self._generate_fracture_script,
+                "explicit_dynamic": self._generate_explicit_dynamic_script,
             }
             gen = script_generators.get(input_data.action)
             if gen is None:
@@ -622,6 +680,167 @@ model.StaticStep(name='Step-1', previous='Initial', nlgeom=ON)
 # 提交作业
 job = mdb.Job(name='{args.output_prefix}', model='{args.base_model}',
               description='Fracture analysis (J-integral)')
+job.submit()
+job.waitForCompletion()
+"""
+
+    def _generate_explicit_dynamic_script(self, args: AbaqusToolInput) -> str:
+        """生成显式动力学脚本 — 碰撞/冲击/跌落测试.
+
+        Abaqus/Explicit 用中心差分法, 适合高速短时事件:
+        t_step ≈ L / c, c = sqrt(E/rho) (波速)
+        """
+        s = args.explicit_spec
+        E = s.youngs_modulus
+        nu = s.poissons_ratio
+        rho = s.density
+        t_total = s.total_time
+        mat_model = s.material_model
+        mass_scale = s.mass_scaling
+
+        # 估算稳定时间步: dt ≈ L_min / c, c = sqrt(E/rho)
+        # ponytail: 用特征长度 1mm 估, 真实值取决于网格, Abaqus 会自己算
+        c_wave = (E / rho) ** 0.5
+        dt_est = 1e-3 / c_wave  # 1mm 特征长度
+        dt_scaled = dt_est / (mass_scale ** 0.5)
+
+        # 材料模型代码
+        mat_lines = [
+            "model.materials['Material-1'].Elastic(table=((%r, %r), ))" % (E, nu),
+        ]
+        if mat_model == "plastic" and s.plastic_params:
+            ys = s.plastic_params.get("yield_stress", 250e6)
+            hm = s.plastic_params.get("hardening_modulus", 5e9)
+            mat_lines.append(
+                "model.materials['Material-1'].Plastic(table=((%r, 0.0), (%r, 0.01), ))"
+                % (ys, ys + hm * 0.01)
+            )
+        elif mat_model == "johnson_cook" and s.plastic_params:
+            p = s.plastic_params
+            A = p.get("A", 250e6)
+            B = p.get("B", 5e8)
+            n = p.get("n", 0.3)
+            C = p.get("C", 0.0)
+            m = p.get("m", 1.0)
+            T_ref = p.get("T_ref", 293.0)
+            T_melt = p.get("T_melt", 1800.0)
+            mat_lines.append(
+                f"model.materials['Material-1'].JohnsonCook("
+                f"table=(({A}, {B}, {n}, {C}, {m}, {T_ref}, {T_melt}), ))"
+            )
+        mat_code = "\n".join(mat_lines)
+
+        # 接触定义
+        contact_lines = []
+        for i, cp in enumerate(s.contact_pairs):
+            master = cp.get("master", "")
+            slave = cp.get("slave", "")
+            ctype = cp.get("type", "general")
+            friction = cp.get("friction", 0.0)
+            if ctype == "self_contact":
+                contact_lines.append(
+                    f"model.ContactTie(name='Contact-{i}', "
+                    f"mainRegion=model.rootAssembly.sets['{master}'], "
+                    f"secondaryRegion=model.rootAssembly.sets['{master}'])"
+                )
+            else:
+                contact_lines.append(
+                    f"# Contact pair {i}: {master} (master) ↔ {slave} (slave)\n"
+                    f"# *SURFACE INTERACTION, NAME=Interaction-{i}\n"
+                    f"# friction coefficient = {friction}"
+                )
+        contact_code = "\n".join(contact_lines) if contact_lines else "# 无接触定义"
+
+        # 初速度
+        vel_code = ""
+        if s.initial_velocity:
+            vx, vy, vz = s.initial_velocity
+            vel_code = (
+                f"# 初始速度: vx={vx} m/s, vy={vy} m/s, vz={vz} m/s\n"
+                f"model.Field(name='InitialVelocity', "
+                f"region=model.rootAssembly.sets['SET-IMPACT'], "
+                f"velocity=({vx}, {vy}, {vz}))"
+            )
+
+        # 载荷
+        loads_lines = []
+        for i, load in enumerate(s.loads):
+            ltype = load.get("type", "pressure")
+            val = float(load.get("value", 0.0))
+            if ltype == "pressure":
+                loads_lines.append(
+                    f"model.Pressure(name='Load-{i}', createStepName='Step-1', "
+                    f"region=region, magnitude={val})"
+                )
+            elif ltype == "gravity":
+                loads_lines.append(
+                    f"model.Gravity(name='Load-{i}', createStepName='Step-1', "
+                    f"comp3={val})"
+                )
+        loads_code = "\n".join(loads_lines) if loads_lines else "    pass"
+
+        # 边界条件
+        bc_lines = []
+        for i, bc in enumerate(s.boundary_conditions):
+            val = float(bc.get("value", 0.0))
+            bc_lines.append(
+                f"model.DisplacementBC(name='BC-{i}', createStepName='Initial', "
+                f"region=region, u1={val}, u2={val}, u3={val})"
+            )
+        bc_code = "\n".join(bc_lines) if bc_lines else "    pass"
+
+        return f"""# Abaqus Python script: explicit_dynamic (collision/impact)
+# Run with: abaqus cae noGUI={args.output_prefix}.py
+# 物理场景: 碰撞/冲击/跌落测试
+# 稳定时间步估算: dt ≈ L/c, c = sqrt(E/rho) = {c_wave:.1f} m/s
+# 质量缩放因子: {mass_scale}
+from abaqus import *
+from abaqusConstants import *
+from caeModules import *
+
+model = mdb.Model(name='{args.base_model}')
+
+# 材料属性 ({mat_model})
+model.Material(name='Material-1')
+{mat_code}
+model.materials['Material-1'].Density(table=(({rho}, ), ))
+
+# 截面
+model.HomogeneousSolidSection(name='Section-1', material='Material-1')
+
+# 显式动力学步 (*DYNAMIC, EXPLICIT)
+model.ExplicitDynamicsStep(name='Step-1', previous='Initial',
+                           timePeriod={t_total},
+                           nlgeom=ON,
+                           massScaling=MASS_SCALING_FACTOR({mass_scale}))
+
+# 接触定义
+{contact_code}
+
+# 初始速度
+{vel_code}
+
+# 载荷 (region 需按实际模型指定)
+region = model.rootAssembly.sets.get('SET-LOAD')
+{loads_code}
+
+# 边界条件
+region = model.rootAssembly.sets.get('SET-FIX')
+{bc_code}
+
+# 场输出 (需要大量帧来捕捉冲击波传播)
+field = model.FieldOutputRequest(name='F-1', createStepName='Step-1',
+                                 numIntervals=100)
+
+# 历史输出 (能量平衡 — 检查沙漏/接触耗散)
+history = model.HistoryOutputRequest(name='H-1', createStepName='Step-1',
+                                     variables=('ALLKE', 'ALLIE', 'ALLCD',
+                                               'ALLVD', 'ALLAE', 'ETOTAL'))
+
+# 提交作业 (Explicit 用 explicit double precision)
+job = mdb.Job(name='{args.output_prefix}', model='{args.base_model}',
+              description='Explicit dynamic analysis (collision/impact)',
+              type=EXPLICIT)
 job.submit()
 job.waitForCompletion()
 """
