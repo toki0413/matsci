@@ -16,8 +16,6 @@ export const API_BASE = new Proxy(
   { _v: "" },
   {
     get(t, prop) {
-      // String coercion: `${API_BASE}` calls [Symbol.toPrimitive]("string")
-      // then falls back to toString(). Both must return a function.
       if (prop === "toString" || prop === Symbol.toPrimitive || prop === "valueOf") {
         return () => {
           if (!t._v) t._v = getApiBase();
@@ -25,7 +23,12 @@ export const API_BASE = new Proxy(
         };
       }
       if (!t._v) t._v = getApiBase();
-      return t._v;
+      const val = t._v;
+      // delegate string method calls (.replace, .startsWith, etc.)
+      if (typeof (val as any)[prop] === "function") {
+        return (val as any)[prop].bind(val);
+      }
+      return (val as any)[prop] ?? val;
     },
   }
 ) as unknown as string;

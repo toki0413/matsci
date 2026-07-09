@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense, Fragment } from "react";
+﻿import { useState, useEffect, lazy, Suspense, Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Pet from "./Pet";
@@ -13,7 +13,7 @@ const StructureViewer = lazy(() => import("./components/StructureViewer"));
 const PersonaManager = lazy(() => import("./components/PersonaManager"));
 import { PROVIDERS } from "./lib/constants";
 import { api } from "./lib/api";
-import { API_BASE } from "./lib/config-store";
+import { getApiBase } from "./lib/api-client";
 import { useToolRunner } from "./hooks/useToolRunner";
 import { useMemory } from "./hooks/useMemory";
 import { useKnowledge } from "./hooks/useKnowledge";
@@ -987,7 +987,7 @@ export default function App() {
           {activeTab === "emotion" && (
             <ErrorBoundary>
               <Suspense fallback={<LoadingFallback />}>
-                <EmotionTrackerPanel apiBase={API_BASE} />
+                <EmotionTrackerPanel apiBase={getApiBase()} />
               </Suspense>
             </ErrorBoundary>
           )}
@@ -1305,7 +1305,7 @@ export default function App() {
             <div className="h-full overflow-y-auto p-4">
               <ErrorBoundary>
                 <Suspense fallback={<LoadingFallback />}>
-                  <PeriodicTable API_BASE={API_BASE} />
+                  <PeriodicTable API_BASE={getApiBase()} />
                 </Suspense>
               </ErrorBoundary>
             </div>
@@ -1315,7 +1315,7 @@ export default function App() {
             <div className="h-full overflow-hidden p-4">
               <ErrorBoundary>
                 <Suspense fallback={<LoadingFallback />}>
-                  <Notebook API_BASE={API_BASE} />
+                  <Notebook API_BASE={getApiBase()} />
                 </Suspense>
               </ErrorBoundary>
             </div>
@@ -1325,7 +1325,7 @@ export default function App() {
             <div className="h-full overflow-hidden p-4">
               <ErrorBoundary>
                 <Suspense fallback={<LoadingFallback />}>
-                  <SandboxPanel API_BASE={API_BASE} />
+                  <SandboxPanel API_BASE={getApiBase()} />
                 </Suspense>
               </ErrorBoundary>
             </div>
@@ -1335,7 +1335,7 @@ export default function App() {
             <div className="h-full overflow-y-auto p-4">
               <ErrorBoundary>
                 <Suspense fallback={<LoadingFallback />}>
-                  <SweepDashboard API_BASE={API_BASE} />
+                  <SweepDashboard API_BASE={getApiBase()} />
                 </Suspense>
               </ErrorBoundary>
             </div>
@@ -1345,7 +1345,7 @@ export default function App() {
             <div className="h-full overflow-hidden p-4">
               <ErrorBoundary>
                 <Suspense fallback={<LoadingFallback />}>
-                  <StructureViewer API_BASE={API_BASE} />
+                  <StructureViewer API_BASE={getApiBase()} />
                 </Suspense>
               </ErrorBoundary>
             </div>
