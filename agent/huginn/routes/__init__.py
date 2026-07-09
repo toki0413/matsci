@@ -26,6 +26,7 @@ from huginn.routes.compat import router as compat_router
 from huginn.routes.config import router as config_router
 from huginn.routes.diagnostics import router as diagnostics_router
 from huginn.routes.events import router as events_router
+from huginn.routes.event_stream import router as event_stream_router
 from huginn.routes.execution import router as execution_router
 from huginn.routes.health import router as health_router
 from huginn.routes.hpc import router as hpc_router
@@ -33,6 +34,7 @@ from huginn.routes.credentials import router as credentials_router
 from huginn.routes.interaction import router as interaction_router
 from huginn.routes.knowledge import router as knowledge_router
 from huginn.routes.metrics import router as metrics_router
+from huginn.routes.provenance import router as provenance_router
 from huginn.routes.mcp import router as mcp_router
 from huginn.routes.memory import router as memory_router
 from huginn.routes.pet import router as pet_router
@@ -76,6 +78,8 @@ ALL_ROUTERS = [
     knowledge_router,
     tools_router,
     events_router,
+    # 实时事件 SSE: 订阅全局 EventBus 推送所有 agent 生命周期事件
+    event_stream_router,
     pet_router,
     memory_router,
     agents_router,
@@ -110,6 +114,8 @@ ALL_ROUTERS = [
     document_router,
     # Prometheus /metrics 抓取端点
     metrics_router,
+    # 计算溯源: 文件产出关系 / 谱系追溯 / 全文搜索
+    provenance_router,
     diagnostics_router,
     # Admin endpoints (maintenance mode, etc.)
     admin_router,

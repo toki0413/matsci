@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense, Fragment } from "react";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Pet from "./Pet";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -40,6 +40,7 @@ import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
 import { HPCPanel } from "./components/panels/HPCPanel";
 import { LogsPanel } from "./components/panels/LogsPanel";
 import { TerminalPanel } from "./components/panels/TerminalPanel";
+import { PanelHeader } from "./components/settings-shared";
 import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo } from "./types/domain";
 import {
   MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
@@ -48,6 +49,7 @@ import {
   Dna, Play, Compass, Stethoscope, Monitor, ChevronDown, Sparkles,
   Search,
   Atom, Notebook as NotebookIcon, TerminalSquare, BarChart3, Box, Activity,
+  History, Calculator,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -100,7 +102,7 @@ export default function App() {
     | "threads" | "project" | "team" | "coder" | "benchmark"
     | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
     | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
-    | "structure" | "emotion"
+    | "structure" | "emotion" | "provenance" | "side" | "solver"
   >("chat");
   const [sidebarGroups, setSidebarGroups] = useState<Record<string, boolean>>({
     core: true,
@@ -191,6 +193,19 @@ export default function App() {
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [activeCp, setActiveCp] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<DiffEntry[]>([]);
+
+  // ── Provenance state ─────────────────────────────────────────
+  const [provenanceRecords, setProvenanceRecords] = useState<any[]>([]);
+  const [provenanceExpanded, setProvenanceExpanded] = useState<number | null>(null);
+
+  const loadProvenance = async () => {
+    try {
+      const data = await api.get<any[]>("/provenance/recent?n=50");
+      setProvenanceRecords(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      console.error("[provenance] load failed:", e);
+    }
+  };
 
   const createCheckpoint = async () => {
     if (!cwd) return;
@@ -343,6 +358,102 @@ export default function App() {
     defaultError: "Diagnosis failed.",
   });
 
+  // ── Side dialogue state ──────────────────────────────────────
+  const [sideInput, setSideInput] = useState("");
+  const [sideQuestions, setSideQuestions] = useState<any[]>([]);
+  const [sideAnswerId, setSideAnswerId] = useState<string | null>(null);
+  const [sideAnswer, setSideAnswer] = useState("");
+  const [sideMsg, setSideMsg] = useState("");
+
+  const loadSidePending = async () => {
+    try {
+      const data = await api.get<any[]>("/side/pending");
+      setSideQuestions(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setSideMsg(`Load failed: ${e.message}`);
+    }
+  };
+
+  const sendSideQuestion = async () => {
+    if (!sideInput.trim()) return;
+    try {
+      await api.post("/side", { question: sideInput });
+      setSideInput("");
+      loadSidePending();
+    } catch (e: any) {
+      setSideMsg(`Send failed: ${e.message}`);
+    }
+  };
+
+  const answerSideQuestion = async (id: string) => {
+    if (!sideAnswer.trim()) return;
+    try {
+      await api.post("/side", { id, answer: sideAnswer });
+      setSideAnswer("");
+      setSideAnswerId(null);
+      loadSidePending();
+    } catch (e: any) {
+      setSideMsg(`Answer failed: ${e.message}`);
+    }
+  };
+
+  const clearSide = async () => {
+    try {
+      await api.del("/side");
+      setSideQuestions([]);
+    } catch (e: any) {
+      setSideMsg(`Clear failed: ${e.message}`);
+    }
+  };
+
+  // ── Unified solver state ─────────────────────────────────────
+  const [solverModels, setSolverModels] = useState<string[]>([]);
+  const [solverModel, setSolverModel] = useState("");
+  const [solverInput, setSolverInput] = useState("");
+  const [solverDerived, setSolverDerived] = useState("");
+  const [solverSolution, setSolverSolution] = useState("");
+  const [solverPlotUrl, setSolverPlotUrl] = useState("");
+  const [solverRunning, setSolverRunning] = useState(false);
+  const [solverError, setSolverError] = useState("");
+
+  const loadSolverModels = async () => {
+    try {
+      const data = await api.get<string[]>("/unified/models");
+      const models = Array.isArray(data) ? data : [];
+      setSolverModels(models);
+      if (models.length > 0 && !solverModel) setSolverModel(models[0]);
+    } catch (e: any) {
+      setSolverError(`Load models failed: ${e.message}`);
+    }
+  };
+
+  const solverDerive = async () => {
+    setSolverRunning(true); setSolverError(""); setSolverDerived(""); setSolverSolution(""); setSolverPlotUrl("");
+    try {
+      const data = await api.post<{ derived?: string }>("/unified/derive", { model: solverModel, input: solverInput });
+      setSolverDerived(data.derived || JSON.stringify(data, null, 2));
+    } catch (e: any) { setSolverError(e.message); }
+    setSolverRunning(false);
+  };
+
+  const solverSolve = async () => {
+    setSolverRunning(true); setSolverError(""); setSolverSolution(""); setSolverPlotUrl("");
+    try {
+      const data = await api.post<{ solution?: string }>("/unified/solve", { model: solverModel, derived: solverDerived, input: solverInput });
+      setSolverSolution(data.solution || JSON.stringify(data, null, 2));
+    } catch (e: any) { setSolverError(e.message); }
+    setSolverRunning(false);
+  };
+
+  const solverPlot = async () => {
+    setSolverRunning(true); setSolverError(""); setSolverPlotUrl("");
+    try {
+      const data = await api.post<{ plot_url?: string; image?: string }>("/unified/plot", { model: solverModel, solution: solverSolution });
+      setSolverPlotUrl(data.plot_url || (data.image ? `data:image/png;base64,${data.image}` : "") || JSON.stringify(data));
+    } catch (e: any) { setSolverError(e.message); }
+    setSolverRunning(false);
+  };
+
   // ── Chat and connection hook ─────────────────────────────────
   const {
     messages, input, mode, pendingPlan, planLoading,
@@ -359,6 +470,8 @@ export default function App() {
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
     startBackend,
+    pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
+    autoloopPhase, autoloopProgress,
   } = useChatAndConnection({
     config,
     activeTab,
@@ -427,6 +540,7 @@ export default function App() {
         { id: "diagnose" as const, label: "Diagnose", icon: <Stethoscope size={16} />, indented: true },
         { id: "structure" as const, label: "Structure", icon: <Box size={16} />, indented: true },
         { id: "hpc" as const, label: "HPC", icon: <Monitor size={16} />, indented: true },
+        { id: "solver" as const, label: "Solver", icon: <Calculator size={16} />, indented: true },
       ],
     },
     {
@@ -447,9 +561,11 @@ export default function App() {
       tabs: [
         { id: "memory" as const, label: "Memory", icon: <Brain size={16} /> },
         { id: "emotion" as const, label: "Emotion", icon: <Activity size={16} /> },
+        { id: "provenance" as const, label: "Provenance", icon: <History size={16} /> },
         { id: "plugins" as const, label: "Plugins", icon: <Puzzle size={16} /> },
         { id: "threads" as const, label: "Threads", icon: <MessageCircle size={16} /> },
         { id: "logs" as const, label: "Logs", icon: <FileText size={16} /> },
+        { id: "side" as const, label: "Side Q&A", icon: <HelpCircle size={16} /> },
         { id: "settings" as const, label: "Settings", icon: <Settings size={16} /> },
       ],
     },
@@ -488,6 +604,15 @@ export default function App() {
     if (activeTab === "workflows" && workflowTemplates.length === 0) {
       loadWorkflowTemplates();
     }
+    if (activeTab === "provenance") {
+      loadProvenance();
+    }
+    if (activeTab === "side") {
+      loadSidePending();
+    }
+    if (activeTab === "solver" && solverModels.length === 0) {
+      loadSolverModels();
+    }
   }, [activeTab, memoryFilter.category, memoryFilter.tier]);
 
   // ── Derived constants ────────────────────────────────────────
@@ -499,6 +624,8 @@ export default function App() {
   const handleExecuteRun = execute.run;
   const handleDiagnoseRun = diagnose.run;
   const handleWorkflowRun = workflow.run;
+
+  const AUTOLOOP_PHASES = ["perceive", "hypothesize", "plan", "execute", "validate", "learn", "report"];
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
@@ -648,6 +775,30 @@ export default function App() {
           </div>
         </header>
 
+        {/* Autoloop progress bar */}
+        {autoloopPhase && (
+          <div className="flex items-center gap-3 border-b border-border bg-bg-secondary px-6 py-2">
+            <span className="text-xs font-semibold text-text-secondary">Autoloop</span>
+            <div className="flex items-center gap-1.5">
+              {AUTOLOOP_PHASES.map((phase) => (
+                <div
+                  key={phase}
+                  className={`h-2.5 w-2.5 rounded-full transition-colors ${
+                    phase === autoloopPhase
+                      ? "bg-accent ring-2 ring-accent/30"
+                      : AUTOLOOP_PHASES.indexOf(phase) < AUTOLOOP_PHASES.indexOf(autoloopPhase)
+                      ? "bg-accent/40"
+                      : "bg-bg-tertiary"
+                  }`}
+                  title={phase}
+                />
+              ))}
+            </div>
+            <span className="text-xs font-medium text-accent">{autoloopPhase}</span>
+            <span className="text-xs text-text-muted">{autoloopProgress}%</span>
+          </div>
+        )}
+
         {/* Content */}
         <div className="flex-1 overflow-hidden">
           {activeTab === "chat" && (
@@ -672,6 +823,10 @@ export default function App() {
               mode={mode}
               isStreaming={isStreaming}
               messagesEndRef={messagesEndRef}
+              pendingApproval={pendingApproval}
+              respondToApproval={respondToApproval}
+              autoApprove={autoApprove}
+              toggleAutoApprove={toggleAutoApprove}
             />
           )}
 
@@ -1143,6 +1298,173 @@ export default function App() {
                   <StructureViewer API_BASE={API_BASE} />
                 </Suspense>
               </ErrorBoundary>
+            </div>
+          )}
+
+          {activeTab === "provenance" && (
+            <div className="flex h-full flex-col">
+              <PanelHeader title="Provenance">
+                <button onClick={loadProvenance} className="btn-primary px-3 py-1 text-xs">Refresh</button>
+              </PanelHeader>
+              <div className="flex-1 overflow-y-auto p-6">
+                {provenanceRecords.length === 0 ? (
+                  <p className="text-sm text-text-muted">No provenance records yet.</p>
+                ) : (
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-text-muted">
+                        <th className="py-2 pr-4 font-semibold">Tool</th>
+                        <th className="py-2 pr-4 font-semibold">File</th>
+                        <th className="py-2 pr-4 font-semibold">Format</th>
+                        <th className="py-2 pr-4 font-semibold">Key Properties</th>
+                        <th className="py-2 pr-4 font-semibold">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {provenanceRecords.map((rec, i) => (
+                        <Fragment key={i}>
+                          <tr
+                            onClick={() => setProvenanceExpanded(provenanceExpanded === i ? null : i)}
+                            className="cursor-pointer border-b border-border/50 hover:bg-bg-tertiary"
+                          >
+                            <td className="py-2 pr-4 font-mono text-accent">{rec.tool || "—"}</td>
+                            <td className="py-2 pr-4 text-text-secondary">{rec.file || rec.path || "—"}</td>
+                            <td className="py-2 pr-4 text-text-secondary">{rec.format || "—"}</td>
+                            <td className="py-2 pr-4 text-text-secondary">
+                              {rec.key_properties
+                                ? Object.entries(rec.key_properties).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(", ")
+                                : "—"}
+                            </td>
+                            <td className="py-2 pr-4 text-text-muted">{rec.timestamp || rec.time || "—"}</td>
+                          </tr>
+                          {provenanceExpanded === i && (
+                            <tr key={`${i}-detail`} className="bg-bg-tertiary">
+                              <td colSpan={5} className="py-3 px-4">
+                                <pre className="max-h-60 overflow-auto rounded-lg bg-bg-secondary p-3 text-xs">
+                                  {JSON.stringify(rec, null, 2)}
+                                </pre>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === "side" && (
+            <div className="flex h-full flex-col">
+              <PanelHeader title="Side Q&A">
+                <button onClick={loadSidePending} className="btn-secondary px-3 py-1 text-xs">Refresh</button>
+                <button onClick={clearSide} className="btn-secondary px-3 py-1 text-xs">Clear</button>
+              </PanelHeader>
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="mx-auto max-w-2xl space-y-4">
+                  <div className="card space-y-2">
+                    <textarea
+                      value={sideInput}
+                      onChange={(e) => setSideInput(e.target.value)}
+                      placeholder="Ask a side question…"
+                      rows={3}
+                      className="input resize-none text-sm"
+                    />
+                    <button onClick={sendSideQuestion} disabled={!sideInput.trim()} className="btn-primary text-xs">
+                      Ask
+                    </button>
+                  </div>
+                  {sideMsg && <div className="text-xs text-error">{sideMsg}</div>}
+                  <div className="space-y-2">
+                    {sideQuestions.length === 0 ? (
+                      <p className="text-sm text-text-muted">No pending questions.</p>
+                    ) : sideQuestions.map((q) => (
+                      <div key={q.id || q.question} className="card space-y-2">
+                        <p className="text-sm font-medium">{q.question}</p>
+                        {q.answer && <p className="text-xs text-text-secondary">{q.answer}</p>}
+                        {sideAnswerId === (q.id || q.local_id) ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={sideAnswer}
+                              onChange={(e) => setSideAnswer(e.target.value)}
+                              placeholder="Type answer…"
+                              className="input flex-1 text-xs"
+                              onKeyDown={(e) => { if (e.key === "Enter") answerSideQuestion(q.id || q.local_id); }}
+                            />
+                            <button onClick={() => answerSideQuestion(q.id || q.local_id)} disabled={!sideAnswer.trim()} className="btn-primary text-xs">Send</button>
+                            <button onClick={() => setSideAnswerId(null)} className="btn-secondary text-xs">Cancel</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setSideAnswerId(q.id || q.local_id)} className="btn-secondary text-xs">Answer</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "solver" && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                <div className="card">
+                  <h2 className="mb-2 text-base font-semibold">Unified Solver</h2>
+                  <p className="text-sm text-text-secondary">Derive, solve, and plot physical models.</p>
+                </div>
+                <div className="card space-y-3">
+                  <div className="flex gap-3">
+                    <select value={solverModel} onChange={(e) => setSolverModel(e.target.value)} className="input flex-1 text-sm">
+                      <option value="">Select model</option>
+                      {solverModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <button onClick={loadSolverModels} className="btn-secondary text-xs">Refresh</button>
+                  </div>
+                  <textarea
+                    value={solverInput}
+                    onChange={(e) => setSolverInput(e.target.value)}
+                    placeholder="Model input / parameters (JSON or free text)…"
+                    rows={4}
+                    className="input resize-none font-mono text-xs"
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={solverDerive} disabled={solverRunning || !solverModel || !solverInput.trim()} className="btn-primary text-xs">
+                      {solverRunning ? "…" : "Derive"}
+                    </button>
+                    <button onClick={solverSolve} disabled={solverRunning || !solverDerived} className="btn-primary text-xs">
+                      {solverRunning ? "…" : "Solve"}
+                    </button>
+                    <button onClick={solverPlot} disabled={solverRunning || !solverSolution} className="btn-primary text-xs">
+                      {solverRunning ? "…" : "Plot"}
+                    </button>
+                  </div>
+                  {solverError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{solverError}</div>}
+                </div>
+                {solverDerived && (
+                  <div className="card">
+                    <h3 className="text-sm font-semibold mb-2">Derived</h3>
+                    <pre className="max-h-60 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{solverDerived}</pre>
+                  </div>
+                )}
+                {solverSolution && (
+                  <div className="card">
+                    <h3 className="text-sm font-semibold mb-2">Solution</h3>
+                    <pre className="max-h-60 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">{solverSolution}</pre>
+                  </div>
+                )}
+                {solverPlotUrl && (
+                  <div className="card">
+                    <h3 className="text-sm font-semibold mb-2">Plot</h3>
+                    {solverPlotUrl.startsWith("data:") || solverPlotUrl.startsWith("http") ? (
+                      <img src={solverPlotUrl} alt="Solver plot" className="w-full rounded-lg" />
+                    ) : (
+                      <pre className="text-xs">{solverPlotUrl}</pre>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

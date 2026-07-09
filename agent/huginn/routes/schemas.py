@@ -46,6 +46,18 @@ class WSMessage(BaseModel):
     max_tokens: Optional[Any] = None
     persona: Optional[str] = Field(None, max_length=64)
 
+    # Plan / approval / clarification flows. ws.py still reads these off the
+    # raw dict via data.get(...), so declaring them here is additive — it
+    # documents and validates the fields without changing existing behavior.
+    plan_id: Optional[str] = None
+    confirmed: Optional[bool] = None
+    edited_plan: Optional[Any] = None
+    question_id: Optional[str] = None
+    answer: Optional[str] = None
+    request_id: Optional[str] = None
+    approved: Optional[bool] = None
+    enabled: Optional[bool] = None
+
 
 class CreateThreadRequest(BaseModel):
     """Body schema for POST /threads."""

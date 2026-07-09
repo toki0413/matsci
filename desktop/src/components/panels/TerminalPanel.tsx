@@ -1,5 +1,8 @@
+import { useState, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { PanelHeader } from '../settings-shared';
+import { ReconnectingWebSocket, type WsStatus } from '../../lib/ws-client';
+import { getApiBase, getAuthToken } from '../../lib/api-client';
 
 interface TerminalPanelProps {
   terminalOutput: string;
@@ -13,21 +16,74 @@ export function TerminalPanel({
   terminalOutput, terminalInput, terminalEndRef,
   setTerminalOutput, setTerminalInput,
 }: TerminalPanelProps) {
+  const [isRemote, setIsRemote] = useState(false);
+  const [remoteStatus, setRemoteStatus] = useState<WsStatus>('idle');
+  const wsRef = useRef<ReconnectingWebSocket | null>(null);
+
+  const toggleRemote = () => {
+    if (isRemote) {
+      wsRef.current?.close();
+      wsRef.current = null;
+      setRemoteStatus('idle');
+      setIsRemote(false);
+      return;
+    }
+    const wsUrl = getApiBase().replace(/^http/, 'ws') + '/ws/terminal';
+    const ws = new ReconnectingWebSocket({
+      url: wsUrl,
+      authToken: getAuthToken,
+      onStatus: (s) => setRemoteStatus(s),
+      onMessage: (data) => {
+        const text = typeof data === 'string' ? data
+          : (data as any)?.data ?? (data as any)?.output ?? JSON.stringify(data);
+        setTerminalOutput((prev) => prev + text);
+      },
+    });
+    ws.connect();
+    wsRef.current = ws;
+    setIsRemote(true);
+    setTerminalOutput((prev) => prev + `[remote] connecting to ${wsUrl}...\n`);
+  };
+
+  useEffect(() => () => { wsRef.current?.close(); }, []);
+
+  const handleSend = () => {
+    if (!terminalInput.trim()) return;
+    const cmd = terminalInput + "\r\n";
+    setTerminalOutput((prev) => prev + "> " + terminalInput + "\n");
+    if (isRemote && wsRef.current) {
+      wsRef.current.send({ type: 'input', data: cmd });
+    } else {
+      invoke("write_terminal", { text: cmd }).catch((err) =>
+        setTerminalOutput((prev) => prev + "[error] " + err + "\n")
+      );
+    }
+    setTerminalInput("");
+  };
+
   return (
     <div className="flex h-full flex-col bg-bg-tertiary text-text-primary">
       <PanelHeader title="Integrated Terminal">
+        <button
+          onClick={toggleRemote}
+          className={`px-3 py-1.5 text-xs ${isRemote ? 'btn-primary' : 'btn-secondary'}`}
+        >
+          {isRemote ? `Remote: ${remoteStatus}` : 'Remote'}
+        </button>
         <button
           onClick={() => setTerminalOutput("")}
           className="btn-secondary px-3 py-1.5 text-xs"
         >
           Clear
         </button>
-        <button
-          onClick={() => invoke("stop_terminal")}
-          className="btn-secondary px-3 py-1.5 text-xs"
-        >
-          Stop
-        </button>
+        {!isRemote && (
+          <button
+            onClick={() => invoke("stop_terminal")}
+            className="btn-secondary px-3 py-1.5 text-xs"
+          >
+            Stop
+          </button>
+        )}
       </PanelHeader>
       <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
         <pre className="whitespace-pre-wrap break-all text-text-primary">
@@ -41,17 +97,8 @@ export function TerminalPanel({
           type="text"
           value={terminalInput}
           onChange={(e) => setTerminalInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && terminalInput.trim()) {
-              const cmd = terminalInput + "\r\n";
-              setTerminalOutput((prev) => prev + "> " + terminalInput + "\n");
-              invoke("write_terminal", { text: cmd }).catch((err) =>
-                setTerminalOutput((prev) => prev + "[error] " + err + "\n")
-              );
-              setTerminalInput("");
-            }
-          }}
-          placeholder="Type a command and press Enter"
+          onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+          placeholder={isRemote ? "Remote terminal — type and press Enter" : "Type a command and press Enter"}
           className="input flex-1 bg-bg-tertiary font-mono text-sm border-border text-text-primary"
           spellCheck={false}
         />

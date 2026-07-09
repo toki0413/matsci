@@ -102,6 +102,31 @@ def _extract_task_progress(content: str) -> dict | None:
     return None
 
 
+def _extract_tool_warnings(content: str) -> list:
+    """Pull warning entries out of a serialized tool result.
+
+    Warnings land in a few spots depending on who raised them: a top-level
+    ``warnings`` key (hook warnings) or nested under ``result`` as
+    ``_constraint_warnings`` / ``warnings`` (domain constraint checks).
+    Returns the first non-empty list found, else [].
+    """
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    w = parsed.get("warnings")
+    if isinstance(w, list) and w:
+        return w
+    inner = parsed.get("result")
+    if isinstance(inner, dict):
+        w = inner.get("_constraint_warnings") or inner.get("warnings")
+        if isinstance(w, list) and w:
+            return w
+    return []
+
+
 async def send_plan_and_wait(
     websocket: WebSocket,
     plan: dict,
@@ -357,13 +382,19 @@ async def _stream_agent_response(
                     tool_content = str(
                         getattr(last_msg, "content", "")
                     )
-                    await websocket.send_json(
-                        {
-                            "type": "tool_result",
-                            "id": tid,
-                            "content": tool_content,
-                        }
-                    )
+                    tool_result_msg = {
+                        "type": "tool_result",
+                        "id": tid,
+                        "content": tool_content,
+                    }
+                    # Surface hook/constraint warnings so the UI can flag
+                    # shaky results (e.g. VASP not converged). The hooks run
+                    # inside the ToolAdapter, so ws.py reads them back out of
+                    # the serialized tool output. See _extract_tool_warnings.
+                    _warnings = _extract_tool_warnings(tool_content)
+                    if _warnings:
+                        tool_result_msg["warnings"] = _warnings
+                    await websocket.send_json(tool_result_msg)
 
                     # ── Long task progress detection ──────
                     # When a tool result contains HPC job info,

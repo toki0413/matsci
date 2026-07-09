@@ -70,8 +70,20 @@ export type WSMessage =
       progress_pct?: number;
     }
   | { type: "sediment"; stored: boolean; preview?: string }
-  | { type: "approval_request"; tool_name?: string; reason?: string }
+  | {
+      type: "approval_request";
+      request_id: string;
+      tool_name: string;
+      reason: string;
+      auto_approved: boolean;
+      dangerous: boolean;
+    }
   | { type: "auto_approve_set"; enabled?: boolean; scope?: string }
+  | {
+      type: "hook_warning";
+      tool_name: string;
+      warnings: Array<{ severity: string; message: string }>;
+    }
   | { type: "exploration_result"; data?: ExplorationResult }
   | { type: "auto_checkpoint"; id: string; base: string; files: number }
   | {
@@ -81,7 +93,6 @@ export type WSMessage =
       status?: string;
       output?: string;
     }
-  | { type: "thought_loop"; text?: string }
   | { type: "ping" }
   | { type: "pong" }
   | { type: "done" }
