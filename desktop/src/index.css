@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -8,62 +8,72 @@
   :root {
     color-scheme: light;
 
-    /* ── Seed tokens (Google Material palette) ── */
-    --seed-bg: #ffffff;
-    --seed-fg: #0e1115;
+    /* ── Seed tokens (warm palette, Claude/Geist inspired) ── */
+    --seed-bg: #faf9f5;
+    --seed-fg: #1a1815;
     --seed-primary: #4285f4;
     --seed-accent: #34a853;
-    --seed-surface: #eff1f4;
-    --seed-radius: 8px;
+    --seed-surface: #f5f3ee;
+    --seed-radius: 12px;
+
+    /* ── Semantic gray scale (warm stone, 10-step Geist-style) ── */
+    --gray-100: #fafaf9;
+    --gray-200: #f5f5f4;
+    --gray-300: #e7e5e4;
+    --gray-400: #d6d3d1;
+    --gray-500: #a8a29e;
+    --gray-600: #78716c;
+    --gray-700: #57534e;
+    --gray-800: #292524;
+    --gray-900: #1c1917;
+    --gray-1000: #0c0a09;
 
     /* ── Background scale ── */
-    --bg-primary: color-mix(in srgb, var(--seed-bg) 96%, black);
-    --bg-secondary: color-mix(in srgb, var(--seed-bg) 82%, var(--seed-surface));
-    --bg-tertiary: color-mix(in srgb, var(--seed-surface) 92%, var(--seed-bg));
-    --bg-hover: color-mix(in srgb, var(--seed-surface) 78%, var(--seed-primary));
+    --bg-primary: var(--seed-bg);
+    --bg-secondary: var(--gray-100);
+    --bg-tertiary: var(--gray-200);
+    --bg-hover: color-mix(in srgb, var(--gray-300) 60%, var(--seed-bg));
+    --bg-elevated: var(--gray-100);
+    --bg-sidebar: var(--seed-surface);
 
     /* ── Text scale ── */
     --text-primary: var(--seed-fg);
-    --text-secondary: color-mix(in srgb, var(--seed-fg) 62%, var(--seed-bg));
-    --text-muted: color-mix(in srgb, var(--seed-fg) 40%, var(--seed-bg));
+    --text-secondary: var(--gray-600);
+    --text-muted: var(--gray-500);
 
     /* ── Accent ── */
     --accent: var(--seed-primary);
     --accent-hover: color-mix(in srgb, var(--seed-primary) 82%, black);
     --accent-glow: color-mix(in srgb, var(--seed-primary) 18%, transparent);
+    --accent-subtle: color-mix(in srgb, var(--seed-primary) 8%, transparent);
 
-    /* ── Semantic colors ── */
+    /* ── Semantic colors (warm-tinted) ── */
     --success: var(--seed-accent);
-    --warning: #fbbc05;
-    --error: #ea4335;
-    --border: #ebebeb;
+    --warning: #d97706;
+    --error: #dc2626;
+    --border: color-mix(in srgb, var(--seed-fg) 8%, transparent);
+    --border-strong: color-mix(in srgb, var(--seed-fg) 14%, transparent);
 
     /* ── RGB channels (for Tailwind opacity modifiers) ── */
     --accent-rgb: 66 133 244;
     --success-rgb: 52 168 83;
-    --warning-rgb: 251 188 5;
-    --error-rgb: 234 67 53;
-    --border-rgb: 235 235 235;
+    --warning-rgb: 217 119 6;
+    --error-rgb: 220 38 38;
+    --border-rgb: 214 211 209;
 
-    /* ── Radius ── */
-    --radius: var(--seed-radius);
-
-    /* ── Section accents (Google chart colors) ── */
-    --workspace-accent: #0043ad;
-    --system-accent: #7f8d9f;
-
-    /* ── Additional derived tokens ── */
-    --bg-elevated: color-mix(in srgb, var(--seed-bg) 85%, var(--seed-surface));
-    --bg-sidebar: #f0f6ff;
-    --fg-inverse: #ffffff;
-    --accent-subtle: #dbeafe;
-    --success-subtle: color-mix(in srgb, var(--seed-accent) 14%, transparent);
-    --border-strong: #e7eaef;
-
-    /* ── Radius scale ── */
+    /* ── Radius (three-tier: controls 6, cards 12, fullscreen 16) ── */
+    --radius: 12px;
     --radius-sm: 6px;
-    --radius-lg: 8px;
+    --radius-lg: 16px;
     --radius-pill: 9999px;
+
+    /* ── Section accents ── */
+    --workspace-accent: #0043ad;
+    --system-accent: #78716c;
+
+    /* ── Derived tokens ── */
+    --fg-inverse: #ffffff;
+    --success-subtle: color-mix(in srgb, var(--seed-accent) 14%, transparent);
 
     /* ── Spacing scale (4dp base) ── */
     --sp-1: 4px;
@@ -76,23 +86,59 @@
     --sp-10: 40px;
     --sp-12: 48px;
 
-    /* ── Shadow scale (Google: zero elevation) ── */
-    --shadow-sm: 0 1px 2px rgba(14,17,21,0);
-    --shadow-md: 0 4px 12px rgba(14,17,21,0);
-    --shadow-lg: 0 8px 24px rgba(14,17,21,0);
+    /* ── Shadow scale (warm-tinted, subtle) ── */
+    --shadow-sm: 0 1px 2px rgba(28,25,23,0.04);
+    --shadow-md: 0 4px 12px rgba(28,25,23,0.06);
+    --shadow-lg: 0 8px 24px rgba(28,25,23,0.08);
 
     /* ── Transitions ── */
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     --duration-fast: 150ms;
     --duration-normal: 220ms;
 
-    /* ── Prototype variable aliases (for ported components) ── */
+    /* ── Prototype variable aliases ── */
     --fg-primary: var(--text-primary);
     --fg-secondary: var(--text-secondary);
     --fg-muted: var(--text-muted);
     --bg-base: var(--bg-primary);
     --bg-surface: var(--bg-secondary);
-    --font-sans: 'DM Sans', ui-sans-serif, sans-serif, system-ui;
+    --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, monospace;
+  }
+
+  /* Dark mode (Claude warm dark: #141413) */
+  .dark {
+    color-scheme: dark;
+    --seed-bg: #141413;
+    --seed-fg: #f5f4f1;
+    --seed-surface: #1c1b19;
+    --gray-100: #1c1b19;
+    --gray-200: #252321;
+    --gray-300: #2e2c29;
+    --gray-400: #3a3733;
+    --gray-500: #8a8580;
+    --gray-600: #a8a29e;
+    --gray-700: #c4bfb8;
+    --gray-800: #e7e5e4;
+    --gray-900: #f5f4f1;
+    --gray-1000: #ffffff;
+    --bg-primary: var(--seed-bg);
+    --bg-secondary: var(--gray-100);
+    --bg-tertiary: var(--gray-200);
+    --bg-hover: color-mix(in srgb, var(--gray-300) 60%, var(--seed-bg));
+    --bg-elevated: var(--gray-100);
+    --bg-sidebar: var(--seed-surface);
+    --text-primary: var(--seed-fg);
+    --text-secondary: var(--gray-600);
+    --text-muted: var(--gray-500);
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.14);
+    --border-rgb: 82 82 82;
+    --accent-subtle: color-mix(in srgb, var(--seed-primary) 12%, transparent);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
+    --fg-inverse: #141413;
   }
 
   * {
@@ -106,7 +152,8 @@
   body {
     @apply bg-bg-primary text-text-primary font-sans antialiased;
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 500;
+    letter-spacing: -0.01em;
   }
 
   /* ponytail: !important overrides Tailwind's font-size/font-weight utilities globally.
@@ -899,7 +946,7 @@
   border-radius: 4px;
   padding: 0.15em 0.4em;
   font-size: 0.88em;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Geist Mono', monospace;
   color: var(--warning);
 }
 .chat-prose pre {
@@ -913,7 +960,7 @@
   line-height: 1.5;
 }
 .chat-prose pre code {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Geist Mono', monospace;
   color: var(--text-primary);
   background: none;
   border: none;
@@ -965,7 +1012,7 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Geist Mono', monospace;
 }
 .chat-prose .code-block-copy {
   position: absolute;
@@ -1892,7 +1939,7 @@
   border-radius: var(--radius-sm);
   font-size: 10px;
   font-weight: 600;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Geist Mono', monospace;
   letter-spacing: 0.03em;
   line-height: 1.4;
 }
@@ -1922,4 +1969,23 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: var(--sp-3);
+}
+
+/* ── Restrained animations (Cline-inspired) ── */
+@keyframes cursorBlink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-cursor-blink {
+  animation: cursorBlink 1s step-end infinite;
+}
+
+.animate-fade-slide-in {
+  animation: fadeSlideIn 0.2s var(--ease-out) both;
 }
