@@ -110,6 +110,8 @@ _SUMMARY_SYSTEM = (
     "3. Failed approaches and why they failed\n"
     "4. Pending tasks and next steps\n"
     "5. Any file paths, structure IDs, or job IDs referenced\n"
+    "6. Key scientific values (energy, bandgap, lattice parameters) that were"
+    " preserved from earlier messages\n"
     "Be terse — use bullet points. Do not include greetings or filler."
 )
 
@@ -117,6 +119,65 @@ _SUMMARY_SYSTEM = (
 # without a cap it grows without bound. Past this many tokens we compress
 # it back down before reusing it.
 _SUMMARY_TOKEN_CAP = 2000
+
+# Keywords that mark a message as high-value for scientific context retention.
+# Messages containing these get a higher survival score during compaction.
+_VALUE_KEYWORDS = (
+    "energy", "bandgap", "band gap", "converged", "convergence",
+    "encut", "k-points", "kpoints", "ediff", "ediffg",
+    "spacegroup", "space group", "lattice", "a =", "b =", "c =",
+    "alpha =", "beta =", "gamma =",
+    "elastic", "bulk modulus", "shear modulus",
+    "dos", "pdos", " fermi",
+    "force", "stress", "pressure",
+    "negative", "positive", "stable", "unstable",
+    "isotropic", "anisotropic",
+    "epsilon", "dielectric",
+    "homo", "lumo",
+    "refractive", "extinction",
+    "sold solubility",
+    "formation energy", "cohesive energy",
+    "defect", "vacancy", "interstitial",
+    "doping", "substitution",
+)
+
+# Messages matching these patterns are low-value (safe to summarize first)
+_LOW_VALUE_PATTERNS = (
+    "debug", "traceback", "warning:", "[debug]",
+    "elapsed time", "wall time", "cpu time",
+    "loading", "importing", "initializing",
+    "progress:", "step ", "iteration ",
+)
+
+
+def _message_value_score(msg: Any) -> int:
+    """Score a message's retention value. Higher = more important to keep.
+
+    0 = default, can be summarized
+    1+ = contains scientific keywords, prefer keeping
+    -1 = low-value content, prioritize for summarization
+    """
+    # Accept plain strings for convenience (testing, ad-hoc calls)
+    if isinstance(msg, str):
+        content = msg.lower()
+    else:
+        content = _msg_content(msg).lower()
+    if not content:
+        return 0
+    score = 0
+    for kw in _VALUE_KEYWORDS:
+        if kw in content:
+            score += 1
+            break  # one match is enough
+    for pat in _LOW_VALUE_PATTERNS:
+        if pat in content:
+            score -= 1
+            break
+    # Tool messages with actual data (not just "success") are valuable
+    role = _msg_role(msg)
+    if role == "tool" and len(content) > 100:
+        score += 1
+    return score
 
 
 async def summarize_compact_messages(
@@ -159,6 +220,17 @@ async def summarize_compact_messages(
     # Target: summarize enough to get under budget, keeping at least keep_last_n.
     keep_zone = messages[-keep_last_n:] if len(messages) > keep_last_n else messages[:]
     summarize_zone = messages[:-keep_last_n] if len(messages) > keep_last_n else []
+
+    # Value-aware selection: within summarize_zone, find high-value messages
+    # that should survive even if they're old. Keep what matters, drop the rest.
+    value_scores = [_message_value_score(m) for m in summarize_zone]
+    high_value_indices = [i for i, s in enumerate(value_scores) if s > 0]
+    if high_value_indices:
+        high_value_msgs = [summarize_zone[i] for i in high_value_indices]
+        # Remove from summarize_zone in reverse to keep indices stable
+        for i in sorted(high_value_indices, reverse=True):
+            summarize_zone.pop(i)
+        keep_zone = high_value_msgs + keep_zone
 
     # Filter out protected (system) messages from the summarize zone —
     # they're managed separately by the prompt cache builder.

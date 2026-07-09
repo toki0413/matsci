@@ -662,6 +662,7 @@ class AutoloopEngine:
         progressive_budget: bool = True,
         goal: Goal | None = None,
         max_refines: int = 8,
+        use_director_pilot: bool = False,
     ) -> AutoloopResult:
         """Run the full autonomous loop for the given objective.
 
@@ -695,6 +696,12 @@ class AutoloopEngine:
         )
         completed_steps = 0
         phases: list[LoopPhase] = []
+
+        # Director/Pilot 双层: use_director_pilot=True 时策略和执行分离
+        _director = _pilot = None
+        if use_director_pilot:
+            from huginn.agents.director import create_director_pilot
+            _director, _pilot = create_director_pilot(self)
 
         while self._iteration < max_iterations and not self._should_stop:
             self._iteration += 1
@@ -736,17 +743,48 @@ class AutoloopEngine:
             except Exception:
                 logger.warning("error in run: hypothesis_graph.add_hypothesis failed", exc_info=True)
 
-            # 3. Plan
-            phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
-            phases.append(phase)
-            completed_steps += 1
-            tracker.update(progress_task_id, current_step=completed_steps,
-                           current_label=f"iter {self._iteration}: plan ({phase.status})")
-            plan = phase.result
-            if not plan:
-                print("  → No plan generated, skipping iteration")
-                continue
-            print(f"  → Plan: {plan['mode']} | {plan['description']}")
+            # 3. Plan — Director/Pilot 模式时由 DirectorAgent 产出 Directive
+            if _director is not None:
+                directive = _director.propose(context=context, hypothesis=hypothesis)
+                if directive is not None:
+                    # 把 hypothesis_id 绑上, 让 validate 阶段能追溯
+                    directive.hypothesis_id = _current_hyp_id or ""
+                    plan = directive.to_plan_dict()
+                    plan["plan_id"] = None  # 跳过 PlanStore 二次确认
+                    phase = LoopPhase(
+                        name="plan",
+                        result=plan,
+                        status="completed",
+                        duration=0.0,
+                    )
+                    phases.append(phase)
+                    completed_steps += 1
+                    tracker.update(progress_task_id, current_step=completed_steps,
+                                   current_label=f"iter {self._iteration}: plan (director)")
+                    print(f"  → Director plan: {plan['mode']} | {plan['description']}")
+                else:
+                    # Director 没产出, 退回正常 _plan
+                    phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
+                    phases.append(phase)
+                    completed_steps += 1
+                    tracker.update(progress_task_id, current_step=completed_steps,
+                                   current_label=f"iter {self._iteration}: plan ({phase.status})")
+                    plan = phase.result
+                    if not plan:
+                        print("  → No plan generated, skipping iteration")
+                        continue
+                    print(f"  → Plan: {plan['mode']} | {plan['description']}")
+            else:
+                phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
+                phases.append(phase)
+                completed_steps += 1
+                tracker.update(progress_task_id, current_step=completed_steps,
+                               current_label=f"iter {self._iteration}: plan ({phase.status})")
+                plan = phase.result
+                if not plan:
+                    print("  → No plan generated, skipping iteration")
+                    continue
+                print(f"  → Plan: {plan['mode']} | {plan['description']}")
 
             # 高成本 plan 时问用户确认. 有 plan_id 说明 _plan 里已经走过
             # PlanStore 确认门了, 别重复问; 没 plan_id (PlanStore 不可用)
