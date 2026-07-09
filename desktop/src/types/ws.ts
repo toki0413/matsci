@@ -97,7 +97,15 @@ export type WSMessage =
   | { type: "ping" }
   | { type: "pong" }
   | { type: "done" }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | {
+      type: "pet_update";
+      mood: string;
+      xp: number;
+      level: number;
+      hunger: number;
+      happiness: number;
+    };
 
 /**
  * Minimal runtime guard so we can hand `unknown` WS frames to the typed
