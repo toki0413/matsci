@@ -33,11 +33,21 @@ dependencies = [
     "rich>=13.0",
     "networkx>=3.0",
     "numpy>=1.24",
+    "scipy>=1.10",
     "aiohttp>=3.9",
     "python-dotenv>=1.0",
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "mcp>=1.28",
+    # server
+    "fastapi>=0.100",
+    "uvicorn>=0.27",
+    "sse-starlette>=1.6",
+    "python-multipart>=0.0.6",
+    "httpx>=0.25",
+    "websockets>=12.0",
+    "requests>=2.31",
+    "tenacity>=8.0",
 ]
 
 [project.optional-dependencies]
