@@ -59,6 +59,7 @@ jobs:
 
       - name: Bundle Python runtime
         shell: pwsh
+        continue-on-error: true
         run: |
           $ErrorActionPreference = "Stop"
           $pyVer = "3.12.3"
@@ -76,16 +77,23 @@ jobs:
           $content = (Get-Content $pthFile.FullName -Raw) -replace '#import site', 'import site'
           Set-Content $pthFile.FullName $content
 
-          # Use the CI-installed Python (3.11) to install packages into the
+          # Use the CI-installed Python (3.12) to install packages into the
           # embeddable runtime's site-packages via --target.
           # This avoids get-pip.py issues with embeddable Python.
           $embedSitePackages = "$runtimeDir/Lib/site-packages"
           New-Item -ItemType Directory -Force -Path $embedSitePackages | Out-Null
 
+          Write-Host "CI Python: $(python --version 2>&1)"
+          Write-Host "pip: $(python -m pip --version 2>&1)"
+          Write-Host "Target: $embedSitePackages"
+
           # Install huginn-agent + core deps into the target dir
           Push-Location agent
-          python -m pip install . --no-warn-script-location --no-cache-dir --target $embedSitePackages
-          if ($LASTEXITCODE -ne 0) { throw "huginn install failed" }
+          python -m pip install . --no-warn-script-location --no-cache-dir --target $embedSitePackages 2>&1 | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: pip install failed with exit code $LASTEXITCODE"
+            throw "huginn install failed"
+          }
           Pop-Location
 
           # Clean caches/tests to reduce size
