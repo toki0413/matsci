@@ -73,17 +73,19 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const { config, activeTab, pushConfig, onAutoCheckpoint, onExplorationResult,
     toolsLength, skillsLength, setTools, setSkills } = params;
 
-  // ── Per-thread message cache ─────────────────────────────────
-  // each thread keeps its own message list so switching doesn't lose history
-  const threadMessagesRef = useRef<Record<string, Message[]>>({});
+  // ── Per-thread message cache (reactive) ─────────────────────
+  // AstrBot pattern: messagesBySession Map, each thread has its own list
   const WELCOME_MSG = (): Message => ({
     role: "assistant",
     content:
       "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat. I can help with DFT, molecular dynamics, packing, symbolic math, UQ/GP, and formal Lean verification.",
     timestamp: formatTime(),
   });
+  const [messagesByThread, setMessagesByThread] = useState<Record<string, Message[]>>({
+    desktop: [WELCOME_MSG()],
+  });
 
-  // ── Chat message state ───────────────────────────────────────
+  // ── Chat message state (derived from activeThread) ───────────
   const [messages, setMessages] = useState<Message[]>([WELCOME_MSG()]);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"chat" | "plan" | "build">("chat");
@@ -150,15 +152,11 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // switch thread: cache current messages, restore target thread's messages
   const switchThread = (threadId: string) => {
     if (threadId === activeThread) return;
-    // save current thread's messages
-    threadMessagesRef.current[activeThread] = messages;
-    // restore or init target thread's messages
-    const cached = threadMessagesRef.current[threadId];
-    if (cached) {
-      setMessages(cached);
-    } else {
-      setMessages([WELCOME_MSG()]);
-    }
+    // save current thread's messages to reactive store
+    setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
+    // restore target thread's messages
+    const cached = messagesByThread[threadId];
+    setMessages(cached || [WELCOME_MSG()]);
     setActiveThread(threadId);
   };
 
@@ -175,7 +173,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     try {
       const data = await api.post<{ id: string; label: string }>("/threads", { label: "New thread" });
       // cache current thread before switching
-      threadMessagesRef.current[activeThread] = messages;
+      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
       setActiveThread(data.id);
       setMessages([
         {
@@ -284,43 +282,60 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     return () => { alive = false; };
   }, [startBackend]);
 
+  // ── Stream batching (assistant-UI pattern: batch tokens to reduce renders) ─
+  const streamBufferRef = useRef<{ text: string; reasoning: string }>({ text: "", reasoning: "" });
+  const rafScheduledRef = useRef(false);
+
+  const flushStreamBuffer = useCallback(() => {
+    rafScheduledRef.current = false;
+    const buf = streamBufferRef.current;
+    if (!buf.text && !buf.reasoning) return;
+    setMessages((prev) => {
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+      if (last && last.role === "assistant" && last.timestamp === "streaming") {
+        updated[updated.length - 1] = {
+          ...last,
+          content: last.content + buf.text,
+          reasoning: (last.reasoning || "") + buf.reasoning,
+        };
+      } else {
+        updated.push({
+          role: "assistant",
+          content: buf.text,
+          reasoning: buf.reasoning,
+          timestamp: "streaming",
+        });
+      }
+      return updated;
+    });
+    streamBufferRef.current = { text: "", reasoning: "" };
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (!rafScheduledRef.current) {
+      rafScheduledRef.current = true;
+      requestAnimationFrame(flushStreamBuffer);
+    }
+  }, [flushStreamBuffer]);
+
   // ── WebSocket message handler ────────────────────────────────
   const handleWsMessage = (data: WSMessage) => {
     switch (data.type) {
       case "reasoning_delta":
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === "assistant" && last.timestamp === "streaming") {
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              ...last,
-              reasoning: (last.reasoning || "") + data.text,
-            };
-            return updated;
-          }
-          return [...prev, {
-            role: "assistant" as const,
-            content: "",
-            reasoning: data.text,
-            timestamp: "streaming",
-          }];
-        });
+        streamBufferRef.current.reasoning += data.text;
+        scheduleFlush();
         setIsStreaming(true);
         break;
       case "text_delta":
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === "assistant" && last.timestamp === "streaming") {
-            const updated = [...prev];
-            updated[updated.length - 1] = { ...last, content: last.content + data.text };
-            return updated;
-          }
-          return [...prev, { role: "assistant", content: data.text, timestamp: "streaming" }];
-        });
+        streamBufferRef.current.text += data.text;
+        scheduleFlush();
         pendingResponseRef.current += data.text;
         setIsStreaming(true);
         break;
       case "done":
+        // flush any remaining buffered tokens before finalizing
+        flushStreamBuffer();
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
@@ -724,10 +739,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
     if (!wsClientRef.current) return;
 
+    // AstrBot pattern: optimistic update — immediately add user msg + empty bot placeholder
     const userMsg: Message = { role: "user", content, timestamp: formatTime() };
-    setMessages((prev) => [...prev, userMsg]);
+    const botPlaceholder: Message = { role: "assistant", content: "", timestamp: "streaming", reasoning: "" };
+    setMessages((prev) => [...prev, userMsg, botPlaceholder]);
     setInput("");
     pendingResponseRef.current = "";
+    streamBufferRef.current = { text: "", reasoning: "" };
 
     const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread, thinking: thinkingIntensity });
     if (wsClientRef.current) {

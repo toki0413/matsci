@@ -1,4 +1,5 @@
 import { Search, X } from 'lucide-react';
+import { Virtuoso } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 import { SaveToMemoryButton } from '../SaveToMemoryButton';
@@ -58,6 +59,50 @@ export function ChatPanel(props: ChatPanelProps) {
     autoloopPhase, autoloopProgress,
   } = props;
 
+  // Cline pattern: combine consecutive tool calls into groups
+  function groupMessages(msgs: Message[]): Message[] {
+    const result: Message[] = [];
+    let toolGroup: Message[] = [];
+
+    for (const msg of msgs) {
+      if (msg.role === "tool") {
+        toolGroup.push(msg);
+      } else {
+        if (toolGroup.length > 0) {
+          if (toolGroup.length === 1) {
+            result.push(toolGroup[0]);
+          } else {
+            result.push({
+              role: "tool_group" as any,
+              tool_calls: toolGroup,
+              timestamp: toolGroup[0].timestamp,
+            } as any);
+          }
+          toolGroup = [];
+        }
+        result.push(msg);
+      }
+    }
+    // flush remaining
+    if (toolGroup.length > 0) {
+      if (toolGroup.length === 1) {
+        result.push(toolGroup[0]);
+      } else {
+        result.push({
+          role: "tool_group" as any,
+          tool_calls: toolGroup,
+          timestamp: toolGroup[0].timestamp,
+        } as any);
+      }
+    }
+    return result;
+  }
+
+  const filteredMessages = chatSearchQuery.trim()
+    ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
+    : messages;
+  const groupedMessages = groupMessages(filteredMessages);
+
   const AUTOLOOP_PHASES = ["perceive", "hypothesize", "plan", "execute", "validate", "learn", "report"];
 
   return (
@@ -83,14 +128,42 @@ export function ChatPanel(props: ChatPanelProps) {
           </button>
         </div>
       )}
-      <div className="cv-list flex-1 overflow-y-auto p-6 space-y-5">
-        {(chatSearchQuery.trim()
-          ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
-          : messages
-        ).map((msg, i) => {
+      <Virtuoso
+        data={groupedMessages}
+        className="cv-list flex-1"
+        style={{ height: '100%' }}
+        itemContent={(index, msg) => {
+          if ((msg as any).role === "tool_group" && (msg as any).tool_calls) {
+            return (
+              <div key={index} className="flex justify-center">
+                <div className="w-full max-w-2xl rounded-xl border border-border bg-bg-secondary p-4 shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-accent">
+                    <span>🔧</span>
+                    <span>{(msg as any).tool_calls.length} tool calls</span>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {(msg as any).tool_calls.map((tc: Message, ti: number) => (
+                      <details key={ti} className="rounded-lg bg-bg-tertiary p-2">
+                        <summary className="cursor-pointer text-xs font-medium text-text-secondary">
+                          {tc.tool_name} {tc.tool_status === "running" && "⟳"}
+                          {tc.tool_status === "done" && "✓"}
+                        </summary>
+                        <pre className="mt-1 max-h-40 overflow-auto text-xs">
+                          {JSON.stringify(tc.tool_args, null, 2)}
+                        </pre>
+                        {tc.tool_status === "done" && tc.tool_result !== undefined && (
+                          <ToolResultRenderer content={tc.tool_result} toolName={tc.tool_name} />
+                        )}
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          }
           if (msg.role === "tool") {
             return (
-              <div key={i} className="flex justify-center">
+              <div key={index} className="flex justify-center">
                 <div className="w-full max-w-2xl rounded-xl border border-border bg-bg-secondary p-4 shadow-sm">
                   <div className="flex items-center gap-2 text-sm font-semibold text-accent">
                     <span>🔧</span>
@@ -122,7 +195,7 @@ export function ChatPanel(props: ChatPanelProps) {
           }
           return (
             <div
-              key={i}
+              key={index}
               className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
             >
               <div
@@ -241,9 +314,12 @@ export function ChatPanel(props: ChatPanelProps) {
               </div>
             </div>
           );
-        })}
-        <div ref={messagesEndRef} />
-      </div>
+        }}
+        components={{
+          Footer: () => <div ref={messagesEndRef} style={{ height: 1 }} />,
+        }}
+        followOutput={'auto'}
+      />
 
       {autoloopPhase && (
         <div className="flex items-center gap-2 border-b border-border bg-accent/5 px-6 py-1.5">
