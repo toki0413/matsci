@@ -49,7 +49,7 @@ class TestAgentTelemetry:
     def test_agent_turn_span(self):
         class _FakeGraph:
             async def astream(self, inputs, config, stream_mode):
-                yield {"messages": []}
+                yield ("values", {"messages": []})
 
         set_telemetry_collector(TelemetryCollector())
         agent = HuginnAgent(model=None, tools=[])
