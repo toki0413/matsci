@@ -20,7 +20,6 @@ from huginn.server_core import (
     _current_user_id,
     _snapshot_directory,
     _state_lock,
-    get_agent,
     get_agent_factory,
     get_context,
     get_memory_manager,
@@ -450,7 +449,9 @@ async def _stream_agent_response(
             if isinstance(last_msg, AIMessage):
                 if _token_streamed:
                     full_response = last_msg.content
-                else:
+                elif isinstance(last_msg.content, str):
+                    # content may be a list (multimodal) — only compute a
+                    # text delta for plain string payloads.
                     delta = last_msg.content[len(full_response) :]
                     if delta:
                         full_response = last_msg.content
@@ -460,6 +461,10 @@ async def _stream_agent_response(
                                 "text": delta,
                             }
                         )
+                else:
+                    # Multimodal message: no string delta to forward, just
+                    # sync full_response so downstream sees the final content.
+                    full_response = last_msg.content
 
         # Plan mode: send plan_result with criteria validation
         if plan_result and plan_result.get("acceptance_criteria"):
@@ -628,8 +633,10 @@ async def agent_websocket(websocket: WebSocket):
                     "happiness": st.happiness,
                     "active_tasks": st.active_tasks,
                 })
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            pass
+            logger.debug("pet event forward error", exc_info=True)
         finally:
             unsub()
 
@@ -709,22 +716,21 @@ async def agent_websocket(websocket: WebSocket):
                         )
                         continue
                 else:
+                    # Always build a fresh per-connection agent. The global
+                    # singleton shares mutable state (_session_state, _csm,
+                    # _turn_count) across concurrent WS sessions — that's a
+                    # cross-talk bug waiting to happen.
                     try:
-                        agent = await get_agent()
+                        agent = factory.create_lead(
+                            thread_id=thread_id,
+                            approval_callback=_ws_approval,
+                        )
                     except Exception as exc:
                         logger.error("unexpected error", exc_info=True)
                         await websocket.send_json(
                             {"type": "error", "error": f"Failed to init agent: {exc}"}
                         )
                         continue
-                    # NOTE: Previously this code mutated the shared global
-                    # agent's ``auto_approve_all`` flag, which is a race
-                    # condition — multiple concurrent WebSocket connections
-                    # would overwrite each other's setting. Instead, we
-                    # now always use the factory path when per-connection
-                    # approval control is needed. The global agent defaults
-                    # to auto_approve_all=True from config, so this is
-                    # safe for backward-compatible behavior.
 
                 # Early return when no LLM is configured — skip expensive
                 # persona matching (which loads the ONNX embedding model and
@@ -968,6 +974,17 @@ async def agent_websocket(websocket: WebSocket):
                 # to the client as a "plan" message, waits for the user to
                 # confirm (or edit), then executes and validates results.
                 if plan_mode and not use_team:
+                    # @agent routing may have swapped in a fresh agent that
+                    # bypassed the model-None guard above — re-check before
+                    # we touch agent.model.ainvoke, else AttributeError.
+                    if agent.model is None:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "error": "No LLM configured for plan mode.",
+                            }
+                        )
+                        continue
                     try:
                         # Step 1: Ask the agent to generate a structured plan
                         plan_prompt = (

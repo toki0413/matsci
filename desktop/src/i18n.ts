@@ -157,6 +157,12 @@ const resources = {
       'common.save': 'Save',
       'common.ask': 'Ask',
       'common.answer': 'Answer',
+      'common.delete': 'Delete',
+
+      /* ── Threads ── */
+      'threads.new': 'New thread',
+      'threads.active': 'Active',
+      'threads.switch': 'Switch',
 
       /* ── Provenance panel ── */
       'provenance.title': 'Provenance',
@@ -623,6 +629,12 @@ const resources = {
       'common.save': '保存',
       'common.ask': '提问',
       'common.answer': '回答',
+      'common.delete': '删除',
+
+      /* ── Threads ── */
+      'threads.new': '新对话',
+      'threads.active': '当前',
+      'threads.switch': '切换',
 
       /* ── Provenance panel ── */
       'provenance.title': '溯源',
