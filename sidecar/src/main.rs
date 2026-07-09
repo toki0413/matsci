@@ -179,18 +179,24 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
         return Ok(());
     }
 
-    // Prefer the bundled Python runtime that ships next to the sidecar binary;
-    // fall back to whatever "python" resolves to on PATH.
+    // Prefer the bundled Python runtime. In a Tauri production build, resources
+    // are placed in a `resources/` subdirectory next to the app binary. In dev
+    // mode they're in the same directory. Check both, then fall back to PATH.
     let python_exe = {
         let sidecar_path = std::env::current_exe()
             .map_err(|e| format!("cannot determine sidecar path: {}", e))?;
-        let bundled = sidecar_path
-            .parent()
-            .map(|p| p.join("python-runtime").join("python.exe"));
-        match bundled {
-            Some(p) if p.exists() => p,
-            _ => std::path::PathBuf::from("python"),
-        }
+        let parent = sidecar_path.parent();
+        let candidates: Vec<std::path::PathBuf> = match parent {
+            Some(p) => vec![
+                p.join("python-runtime").join("python.exe"),
+                p.join("resources").join("python-runtime").join("python.exe"),
+            ],
+            None => vec![],
+        };
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| std::path::PathBuf::from("python"))
     };
 
     let mut cmd = tokio::process::Command::new(&python_exe);

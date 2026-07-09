@@ -273,6 +273,16 @@ sys.modules[__name__] = _wrapper
 
 
 if __name__ == "__main__":
+    import sys
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Accept --port from sidecar; default to 8000
+    port = 8000
+    for i, arg in enumerate(sys.argv):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            try:
+                port = int(sys.argv[i + 1])
+            except ValueError:
+                pass
+
+    uvicorn.run(app, host="127.0.0.1", port=port)
