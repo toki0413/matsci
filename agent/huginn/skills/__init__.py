@@ -22,6 +22,14 @@ from huginn.skills.presets import (
     SURFACE_CALCULATION,
     SYMBOLIC_REGRESSION,
 )
+from huginn.skills.composite import (
+    BAND_STRUCTURE_ANALYSIS,
+    MD_PIPELINE,
+    MECHANICAL_PROPERTIES,
+    MOLECULE_SCREENING,
+    PHONON_ANALYSIS,
+)
+from huginn.skills.evolution import SkillEvolutionLayer, ToolBelief
 from huginn.skills.registry import SkillRegistry, register_skill
 
 __all__ = [
@@ -32,6 +40,9 @@ __all__ = [
     "DeclarativeSkillExecutor",
     "SkillRegistry",
     "register_skill",
+    # Bayesian evolution
+    "SkillEvolutionLayer",
+    "ToolBelief",
     # Preset skills
     "STANDARD_DFT",
     "AIMD_WORKFLOW",
@@ -46,4 +57,10 @@ __all__ = [
     "SYMBOLIC_REGRESSION",
     "HPC_REMOTE_RUN",
     "AUTORESEARCH_WORKFLOW",
+    # Composite skills
+    "BAND_STRUCTURE_ANALYSIS",
+    "MECHANICAL_PROPERTIES",
+    "MD_PIPELINE",
+    "MOLECULE_SCREENING",
+    "PHONON_ANALYSIS",
 ]

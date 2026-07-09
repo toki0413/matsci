@@ -37,6 +37,9 @@ from huginn.provenance.pipeline import (
     pipeline_hook,
 )
 
+# ── 新增: Sim-to-Real 校正因子表 ────────────────────────────────
+from huginn.provenance.correction import CorrectionEntry, CorrectionTable
+
 __all__ = [
     # Legacy FAIR provenance
     "ProvenanceLogger",
@@ -59,4 +62,7 @@ __all__ = [
     "SimulationPipeline",
     "get_pipeline",
     "pipeline_hook",
+    # New: sim-to-real correction
+    "CorrectionEntry",
+    "CorrectionTable",
 ]
