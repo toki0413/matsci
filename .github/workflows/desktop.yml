@@ -60,58 +60,61 @@ jobs:
       - name: Bundle Python runtime
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          Write-Host "=== Downloading python-build-standalone ==="
-          # Use indygreg/python-build-standalone — a full portable Python
-          # (not embeddable) with pip pre-installed, works on any Windows 10+
-          $url = "https://github.com/indygreg/python-build-standalone/releases/download/20240415/cpython-3.12.3+20240415-x86_64-pc-windows-msvc-install_only.tar.gz"
-          Invoke-WebRequest -Uri $url -OutFile python-standalone.tar.gz
-          Write-Host "Downloaded $([math]::Round((Get-Item python-standalone.tar.gz).Length / 1MB, 1)) MB"
+          try {
+            $ErrorActionPreference = "Stop"
 
-          Write-Host "=== Extracting ==="
-          $runtimeDir = "desktop/src-tauri/python-runtime"
-          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-          # Extract to temp, then copy python/* into runtimeDir
-          $tmpDir = "python-standalone-tmp"
-          New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
-          tar -xzf python-standalone.tar.gz -C $tmpDir
-          if ($LASTEXITCODE -ne 0) { throw "tar extract failed" }
-          # PowerShell Move-Item doesn't expand wildcards — use Get-ChildItem
-          Get-ChildItem "$tmpDir/python" -Force | Copy-Item -Destination $runtimeDir -Recurse -Force
-          Remove-Item $tmpDir -Recurse -Force
+            Write-Host "=== 1. Downloading python-build-standalone ==="
+            $url = "https://github.com/indygreg/python-build-standalone/releases/download/20240415/cpython-3.12.3+20240415-x86_64-pc-windows-msvc-install_only.tar.gz"
+            Invoke-WebRequest -Uri $url -OutFile python-standalone.tar.gz
+            Write-Host "Downloaded $([math]::Round((Get-Item python-standalone.tar.gz).Length / 1MB, 1)) MB"
 
-          Write-Host "=== Installing huginn-agent + core deps ==="
-          Push-Location agent
-          & "$runtimeDir/python.exe" -m pip install . --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object { Write-Host $_ }
-          if ($LASTEXITCODE -ne 0) { throw "huginn install failed (exit $LASTEXITCODE)" }
-          Pop-Location
+            Write-Host "=== 2. Extracting ==="
+            $runtimeDir = "desktop/src-tauri/python-runtime"
+            # Extract using Python's tarfile (reliable on Windows, avoids tar.exe issues)
+            $extractDir = "python-extract-tmp"
+            python -c "import tarfile; tarfile.open('python-standalone.tar.gz', 'r:gz').extractall('$extractDir')"
+            if ($LASTEXITCODE -ne 0) { throw "Python tarfile extract failed (exit $LASTEXITCODE)" }
+            # Archive contains 'python/' subdir — rename it to python-runtime
+            if (Test-Path "$extractDir/python") {
+              # Copy contents (robocopy handles long paths & locked files)
+              robocopy "$extractDir/python" $runtimeDir /E /NFL /NDL /NJH /NJS /NP
+              Remove-Item $extractDir -Recurse -Force
+            } else {
+              throw "Expected python/ dir in archive, found: $(Get-ChildItem $extractDir -Name)"
+            }
 
-          Write-Host "=== Verifying imports ==="
-          & "$runtimeDir/python.exe" -c "import huginn.server; print('server OK')"
-          if ($LASTEXITCODE -ne 0) { throw "server import failed" }
-          & "$runtimeDir/python.exe" -c "from huginn.routes import ALL_ROUTERS; print('routes OK:', len(ALL_ROUTERS))"
-          if ($LASTEXITCODE -ne 0) { throw "routes import failed" }
+            Write-Host "=== 3. Verifying python.exe ==="
+            if (-not (Test-Path "$runtimeDir/python.exe")) { throw "python.exe not found at $runtimeDir/python.exe" }
+            & "$runtimeDir/python.exe" --version
+            if ($LASTEXITCODE -ne 0) { throw "python.exe --version failed" }
 
-          Write-Host "=== Cleaning up to reduce size ==="
-          # Remove __pycache__ directories
-          Get-ChildItem $runtimeDir -Filter "__pycache__" -Directory -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          # Remove test directories inside site-packages
-          Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "tests" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "test" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          # Remove .dist-info (metadata, not needed at runtime)
-          Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "*.dist-info" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          # Remove .pyc files (Python will regenerate from .py)
-          Get-ChildItem $runtimeDir -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
-          # Remove vcruntime source if present
-          Remove-Item "$runtimeDir/vcruntime" -Recurse -Force -ErrorAction SilentlyContinue
-          # Remove include headers
-          Remove-Item "$runtimeDir/include" -Recurse -Force -ErrorAction SilentlyContinue
-          # Remove Tcl/Tk (no GUI needed from Python side)
-          Remove-Item "$runtimeDir/tcl" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item "$runtimeDir/DLLs/_tkinter*" -Force -ErrorAction SilentlyContinue
+            Write-Host "=== 4. Installing huginn-agent ==="
+            Push-Location agent
+            & "..\$runtimeDir\python.exe" -m pip install . --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE -ne 0) { throw "pip install huginn failed (exit $LASTEXITCODE)" }
+            Pop-Location
 
-          $size = (Get-ChildItem $runtimeDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
-          Write-Host "=== Final Python runtime size: $([math]::Round($size, 1)) MB ==="
+            Write-Host "=== 5. Verifying imports ==="
+            & "$runtimeDir/python.exe" -c "import huginn.server; print('server OK')"
+            if ($LASTEXITCODE -ne 0) { throw "server import failed" }
+            & "$runtimeDir/python.exe" -c "from huginn.routes import ALL_ROUTERS; print('routes:', len(ALL_ROUTERS))"
+
+            Write-Host "=== 6. Cleaning up ==="
+            Get-ChildItem $runtimeDir -Filter "__pycache__" -Directory -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "tests" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "*.dist-info" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem $runtimeDir -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+            Remove-Item "$runtimeDir/include" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item "$runtimeDir/tcl" -Recurse -Force -ErrorAction SilentlyContinue
+
+            $size = (Get-ChildItem $runtimeDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+            Write-Host "=== Final size: $([math]::Round($size, 1)) MB ==="
+          } catch {
+            Write-Host "FATAL ERROR in Bundle Python runtime:"
+            Write-Host $_
+            Write-Host $_.ScriptStackTrace
+            throw
+          }
         timeout-minutes: 20
 
       - name: Install frontend dependencies
