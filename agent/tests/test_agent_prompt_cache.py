@@ -28,7 +28,7 @@ class _CaptureGraph:
         stream_mode: str,
     ):
         self.captured_inputs = inputs
-        yield {"messages": [AIMessage(content="ok")]}
+        yield ("values", {"messages": [AIMessage(content="ok")]})
 
 
 def _make_agent(
