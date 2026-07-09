@@ -1559,6 +1559,27 @@ class HuginnAgent:
                 base = f"{base}\n\n# User Taste Profile\n{taste}"
         except Exception:
             logger.warning("taste profile injection failed", exc_info=True)
+
+        # Quick hint about missing simulation backends so the LLM
+        # doesn't waste turns calling tools that will just error.
+        try:
+            import shutil as _shutil
+            _missing = []
+            for _name, _exes in [
+                ("VASP", ["vasp", "vasp_std", "vasp_gam"]),
+                ("LAMMPS", ["lmp", "lmp_serial", "lammps"]),
+                ("CP2K", ["cp2k"]),
+            ]:
+                if not any(_shutil.which(e) for e in _exes):
+                    _missing.append(_name)
+            if _missing:
+                base += (
+                    f"\n\nNote: {', '.join(_missing)} not installed locally. "
+                    "Answer parameter questions from knowledge."
+                )
+        except Exception:
+            pass
+
         return base
 
     # Heavy simulation tools that are too expensive / slow for casual chat.
