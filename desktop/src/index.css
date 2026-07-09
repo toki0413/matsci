@@ -109,7 +109,11 @@
     font-weight: 600;
   }
 
-  /* ponytail: global font weight bump — user wants everything bolder */
+  /* ponytail: !important overrides Tailwind's font-size/font-weight utilities globally.
+     ceiling: any component needing a different weight/size must use a custom class
+     that also carries !important, or inline style — Tailwind utilities won't win.
+     upgrade: switch to body { font-weight: 600 } + a custom .text-xs-sm utility,
+     then remove these overrides once all panels are audited for legibility. */
   .text-xs { font-size: 13px !important; font-weight: 500 !important; }
   .text-sm { font-size: 15px !important; font-weight: 600 !important; }
   .text-base { font-size: 16px !important; font-weight: 600 !important; }
@@ -232,11 +236,8 @@
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--seed-primary) 15%, transparent);
   }
 
-  .input-field {
-    @apply w-full rounded-lg border border-border px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none transition-all duration-150;
-    background: var(--bg-secondary);
-  }
-
+  /* alias — same as .input, kept for panel components that use input-field */
+  .input-field { @apply input; }
   .input-field:focus {
     border-color: var(--seed-primary);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--seed-primary) 15%, transparent);
@@ -993,7 +994,7 @@
   border-radius: 8px;
   pointer-events: none;
   z-index: 0;
-  transition: background 2min ease-in-out;
+  transition: background 120s ease-in-out;
 }
 
 .pet-scene-dawn {

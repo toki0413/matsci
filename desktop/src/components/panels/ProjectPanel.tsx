@@ -1,3 +1,5 @@
+import { PanelHeader } from '../settings-shared';
+
 interface CodebaseStatus {
   available?: boolean;
   indexed_files?: number;
@@ -33,12 +35,11 @@ export function ProjectPanel({
 }: ProjectPanelProps) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-        <span className="text-sm font-semibold">Project Context & Codebase</span>
+      <PanelHeader title={"Project Context & Codebase"} className="px-6">
         <button onClick={loadProjectContext} className="btn-secondary px-3 py-1.5 text-xs">
           Refresh
         </button>
-      </div>
+      </PanelHeader>
       <div className="flex flex-1 overflow-hidden">
         {/* Project context editor */}
         <aside className="flex w-1/2 flex-col border-r border-border bg-bg-secondary p-4">

@@ -83,9 +83,21 @@ export function ConfigField({
 }
 
 /** Reusable panel header bar — title on left, optional actions on right. */
-export function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
+export function PanelHeader({
+  title,
+  children,
+  className,
+}: {
+  title: string;
+  children?: ReactNode;
+  className?: string;
+}) {
+  // ponytail: className replaces the default px-4 so callers keep their own padding
+  // (px-6 for full-width panels) and hook classes (kb-header / mem-header). If a title
+  // ever needs per-element styling (e.g. truncate on a dynamic path), keep a raw div
+  // or add a titleClassName prop — don't shove it on the container.
   return (
-    <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
+    <div className={`flex h-12 items-center justify-between border-b border-border bg-bg-secondary ${className ?? "px-4"}`}>
       <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
       {children && <div className="flex items-center gap-2">{children}</div>}
     </div>

@@ -1,3 +1,4 @@
+import { PanelHeader } from '../settings-shared';
 import type { AppConfig } from '../../types/domain';
 
 interface KbDoc {
@@ -39,8 +40,7 @@ export function KnowledgePanel({
 }: KnowledgePanelProps) {
   return (
     <div data-component="knowledge-panel" className="kb-panel flex h-full flex-col">
-      <div className="kb-header flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-        <span className="text-sm font-semibold">Knowledge Base</span>
+      <PanelHeader title="Knowledge Base" className="kb-header px-6">
         <label className="kb-rag-toggle flex cursor-pointer items-center gap-2">
           <input
             type="checkbox"
@@ -54,7 +54,7 @@ export function KnowledgePanel({
           />
           <span className="text-xs text-text-secondary">Use RAG in chat</span>
         </label>
-      </div>
+      </PanelHeader>
       <div className="flex flex-1 overflow-hidden">
         {/* Upload / docs */}
         <aside className="flex w-80 flex-col border-r border-border bg-bg-secondary p-4">

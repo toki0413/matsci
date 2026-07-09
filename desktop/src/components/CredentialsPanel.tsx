@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { api } from "../lib/api";
-import { getApiBase } from "../lib/api-client";
 import { PROVIDERS } from "../lib/constants";
 
 // /config/providers only hands back ids + defaults — the readable label and the
@@ -173,9 +172,9 @@ export function CredentialsPanel() {
       body.secret = sshForm.password; // 编辑: 只有填了才覆盖, 留空=不改
     }
     try {
-      const url = editing?.id ? `${getApiBase()}/credentials/${editing.id}` : `${getApiBase()}/credentials`;
-      const method = editing?.id ? "PUT" : "POST";
-      const data = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+      const data = editing?.id
+        ? await api.put<any>(`/credentials/${editing.id}`, body)
+        : await api.post<any>("/credentials", body);
       if (data.success) { flash(editing?.id ? "SSH 凭据已更新" : "SSH 凭据已创建"); setEditing(null); load(); }
       else flash(data.error || "保存失败", false);
     } catch (e: any) { flash("保存出错: " + e.message, false); }
@@ -197,9 +196,9 @@ export function CredentialsPanel() {
       body.secret = llmForm.api_key;
     }
     try {
-      const url = editing?.id ? `${getApiBase()}/credentials/${editing.id}` : `${getApiBase()}/credentials`;
-      const method = editing?.id ? "PUT" : "POST";
-      const data = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+      const data = editing?.id
+        ? await api.put<any>(`/credentials/${editing.id}`, body)
+        : await api.post<any>("/credentials", body);
       if (data.success) { flash(editing?.id ? "LLM 凭据已更新" : "LLM 凭据已创建"); setEditing(null); load(); }
       else flash(data.error || "保存失败", false);
     } catch (e: any) { flash("保存出错: " + e.message, false); }

@@ -1,5 +1,6 @@
 import type { Message } from '../../hooks/useChatAndConnection';
 import { formatTime } from '../../lib/constants';
+import { PanelHeader } from '../settings-shared';
 
 interface Thread {
   id: string;
@@ -23,12 +24,11 @@ export function ThreadsPanel({
 }: ThreadsPanelProps) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-        <span className="text-sm font-semibold">Threads</span>
+      <PanelHeader title="Threads" className="px-6">
         <button onClick={createThread} className="btn-primary px-3 py-1.5 text-xs">
           + New thread
         </button>
-      </div>
+      </PanelHeader>
       <div className="flex-1 overflow-y-auto p-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {threads.map((t) => (

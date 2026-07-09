@@ -31,8 +31,7 @@ export function ReviewPanel({
     <div className="flex h-full">
       {/* Checkpoint list */}
       <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
-        <div className="flex h-12 items-center justify-between border-b border-border px-4">
-          <span className="text-sm font-semibold">Checkpoints</span>
+        <PanelHeader title="Checkpoints">
           <button
             onClick={createCheckpoint}
             disabled={!cwd}
@@ -40,7 +39,7 @@ export function ReviewPanel({
           >
             + New
           </button>
-        </div>
+        </PanelHeader>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {checkpoints.length === 0 && (
             <div className="text-xs text-text-muted">
