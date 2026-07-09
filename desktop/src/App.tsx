@@ -51,7 +51,7 @@ import {
   Users, Code2, FlaskConical, Brain, BookOpen, GitBranch,
   MessageCircle, Puzzle, FileText, Bird, Briefcase, HelpCircle,
   Dna, Play, Compass, Stethoscope, Monitor, ChevronDown, Sparkles,
-  Search,
+  Search, Grid,
   Atom, Notebook as NotebookIcon, TerminalSquare, BarChart3, Box, Activity,
   History, Calculator, UserCircle,
 } from 'lucide-react';
@@ -111,15 +111,9 @@ export default function App() {
     | "structure" | "emotion" | "provenance" | "side" | "solver"
     | "persona"
   >("chat");
-  const [sidebarGroups, setSidebarGroups] = useState<Record<string, boolean>>({
-    core: true,
-    research: true,
-    workspace: false,
-    system: false,
-  });
   const [sidebarHidden, setSidebarHidden] = useState(false);
-  const toggleSidebarGroup = (group: string) =>
-    setSidebarGroups((prev) => ({ ...prev, [group]: !prev[group] }));
+  const [toolPaletteOpen, setToolPaletteOpen] = useState(false);
+  const [toolSearch, setToolSearch] = useState("");
 
   // ── Tools / Skills state arrays ──────────────────────────────
   const [tools, setTools] = useState<ToolInfo[]>([]);
@@ -584,16 +578,6 @@ export default function App() {
     },
   ];
 
-  useEffect(() => {
-    const group = sidebarGroupsData.find((g) => g.tabs.some((t) => t.id === activeTab));
-    if (group) {
-      setSidebarGroups((prev) => {
-        if (prev[group.key]) return prev;
-        return { ...prev, [group.key]: true };
-      });
-    }
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── useEffect: tab data loading ──────────────────────────────
   useEffect(() => {
     if (activeTab === "knowledge") {
@@ -628,6 +612,22 @@ export default function App() {
     }
   }, [activeTab, memoryFilter.category, memoryFilter.tier]);
 
+  // ── Keyboard shortcuts: Ctrl+K palette, ESC close ────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setToolPaletteOpen((prev) => !prev);
+      }
+      if (e.key === "Escape" && toolPaletteOpen) {
+        setToolPaletteOpen(false);
+        setToolSearch("");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toolPaletteOpen]);
+
   // ── Derived constants ────────────────────────────────────────
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
   const allTabs = sidebarGroupsData.flatMap((g) => g.tabs);
@@ -642,8 +642,8 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
-      {/* Sidebar — chat-first: collapsible to maximize chat area */}
-      {sidebarHidden && (
+      {/* Sidebar — chat-first: 4 primary destinations + tool palette */}
+      {sidebarHidden ? (
         <button
           onClick={() => setSidebarHidden(false)}
           className="z-50 flex h-full w-10 items-center justify-center border-r border-border bg-bg-secondary text-text-muted hover:text-text-primary transition-colors"
@@ -651,9 +651,8 @@ export default function App() {
         >
           <ChevronDown size={16} className="-rotate-90" />
         </button>
-      )}
-      {!sidebarHidden && (
-      <aside className="sidebar-shell flex w-60 flex-col border-r border-border bg-bg-secondary">
+      ) : (
+      <aside className="sidebar-shell flex w-56 flex-col border-r border-border bg-bg-secondary">
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
           <img src="/raven-logo.png" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
           <div className="flex flex-1 flex-col">
@@ -670,52 +669,48 @@ export default function App() {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Main navigation">
-          {sidebarGroupsData.map((group, gi) => (
-            <div key={group.key} className={gi > 0 ? "mt-2" : ""}>
-              <button
-                onClick={() => toggleSidebarGroup(group.key)}
-                aria-expanded={sidebarGroups[group.key]}
-                className="sidebar-group-header flex w-full items-center gap-1.5 px-2 py-1 text-[13px] font-bold uppercase tracking-widest text-text-muted hover:text-text-secondary transition-colors"
-              >
-                <ChevronDown
-                  size={12}
-                  className={`transition-transform duration-200 ${
-                    sidebarGroups[group.key] ? "rotate-0" : "-rotate-90"
-                  }`}
-                />
-                {group.label}
-              </button>
-
-              <div
-                role="tablist"
-                aria-label={group.label}
-                className="sidebar-group-content overflow-hidden transition-all duration-200 ease-in-out"
-                style={{
-                  maxHeight: sidebarGroups[group.key] ? `${group.tabs.length * 36 + 4}px` : "0px",
-                  opacity: sidebarGroups[group.key] ? 1 : 0,
-                }}
-              >
-                {group.tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    role="tab"
-                    aria-selected={activeTab === tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold transition-all duration-150 ${
-                      tab.indented ? "pl-5" : ""
-                    } ${
-                      activeTab === tab.id
-                        ? "sidebar-nav-active"
-                        : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-                    }`}
-                  >
-                    <span className="flex-shrink-0">{tab.icon}</span>
-                    <span>{tab.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+          {([
+            { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={16} /> },
+            { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={16} /> },
+            { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={16} /> },
+            { id: "settings", label: t('tab.settings'), icon: <Settings size={16} /> },
+          ] as const).map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold transition-all duration-150 ${
+                activeTab === item.id
+                  ? "sidebar-nav-active"
+                  : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+              }`}
+            >
+              <span className="flex-shrink-0">{item.icon}</span>
+              <span>{item.label}</span>
+            </button>
           ))}
+
+          {/* More tools — opens command palette */}
+          <button
+            onClick={() => setToolPaletteOpen(true)}
+            className="sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-all duration-150 mt-3 border-t border-border/50 pt-3"
+          >
+            <Grid size={16} /> More Tools
+          </button>
+
+          {/* Quick access to active tool (if non-primary) */}
+          {activeTab !== "chat" && activeTab !== "knowledge" && activeTab !== "threads" && activeTab !== "settings" && activeTabInfo && (
+            <div className="mt-2 flex items-center gap-2 rounded-md bg-bg-tertiary px-2.5 py-1.5">
+              <span className="flex-shrink-0 text-accent">{activeTabInfo.icon}</span>
+              <span className="truncate text-[13px] font-semibold text-text-primary">{activeTabInfo.label}</span>
+              <button
+                onClick={() => setActiveTab("chat")}
+                className="ml-auto text-text-muted hover:text-text-primary"
+                title="Back to chat"
+              >
+                <ChevronDown size={14} className="rotate-90" />
+              </button>
+            </div>
+          )}
         </nav>
 
         {petState && <PetStatusWidget petState={petState} />}
@@ -755,6 +750,15 @@ export default function App() {
             <span className="text-sm font-semibold">
               {activeTabInfo?.label}
             </span>
+            {activeTab !== "chat" && activeTab !== "knowledge" && activeTab !== "threads" && activeTab !== "settings" && (
+              <button
+                onClick={() => setActiveTab("chat")}
+                className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-text-muted hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+                title="Back to chat"
+              >
+                <ChevronDown size={12} className="rotate-90" /> Chat
+              </button>
+            )}
             {activeTab === "chat" && (
               <>
                 <span className="badge border border-border bg-bg-tertiary text-text-secondary">
@@ -779,6 +783,14 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setToolPaletteOpen(true)}
+              className="flex items-center gap-2 rounded-lg border border-border bg-bg-tertiary px-2.5 py-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+              title="Open tool palette (Ctrl+K)"
+            >
+              <Grid size={14} />
+              <kbd className="text-[10px] font-bold">⌘K</kbd>
+            </button>
             <LanguageSwitcher />
             {activeTab === "chat" && (
               <button
@@ -1519,6 +1531,76 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* Tool palette — command palette style, all tools searchable */}
+      {toolPaletteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-text-primary/40 p-4 pt-[15vh] backdrop-blur-sm"
+          onClick={() => { setToolPaletteOpen(false); setToolSearch(""); }}
+        >
+          <div
+            className="w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-bg-secondary shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+              <Search size={18} className="text-text-muted" />
+              <input
+                type="text"
+                value={toolSearch}
+                onChange={(e) => setToolSearch(e.target.value)}
+                placeholder="Search tools..."
+                className="flex-1 bg-transparent text-sm font-medium text-text-primary placeholder:text-text-muted focus:outline-none"
+                autoFocus
+              />
+              <kbd className="rounded border border-border bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-muted">ESC</kbd>
+              <button
+                onClick={() => { setToolPaletteOpen(false); setToolSearch(""); }}
+                className="text-text-muted hover:text-text-primary"
+              >
+                <ChevronDown size={16} />
+              </button>
+            </div>
+            <div className="max-h-[55vh] overflow-y-auto p-3">
+              {sidebarGroupsData.map((group) => {
+                const filtered = group.tabs.filter((tab) =>
+                  tab.label.toLowerCase().includes(toolSearch.toLowerCase())
+                );
+                if (filtered.length === 0) return null;
+                return (
+                  <div key={group.key} className="mb-3">
+                    <div className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-widest text-text-muted">
+                      {group.label}
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {filtered.map((tab) => (
+                        <button
+                          key={tab.id}
+                          onClick={() => {
+                            setActiveTab(tab.id);
+                            setToolPaletteOpen(false);
+                            setToolSearch("");
+                          }}
+                          className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-center transition-all ${
+                            activeTab === tab.id
+                              ? "border-accent bg-accent/10"
+                              : "border-border bg-bg-tertiary hover:border-accent/50 hover:bg-accent/5"
+                          }`}
+                        >
+                          <span className="text-text-secondary">{tab.icon}</span>
+                          <span className="text-[11px] font-medium leading-tight text-text-primary">{tab.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {toolSearch && !sidebarGroupsData.some((g) => g.tabs.some((t) => t.label.toLowerCase().includes(toolSearch.toLowerCase()))) && (
+                <div className="py-8 text-center text-sm text-text-muted">No tools match "{toolSearch}"</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showGuide && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 p-4 backdrop-blur-sm">
