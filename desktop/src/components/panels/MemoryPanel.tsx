@@ -1,4 +1,5 @@
 import { ChevronDown, Brain } from 'lucide-react';
+import { PanelHeader } from '../settings-shared';
 import type { MemoryEntry, MemoryStats } from '../../types/domain';
 
 export interface MemoryPanelProps {
@@ -45,14 +46,13 @@ export function MemoryPanel({
 }: MemoryPanelProps) {
   return (
     <div data-component="memory-panel" className="mem-panel flex h-full flex-col">
-      <div className="mem-header flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
-        <span className="text-sm font-semibold">Memory</span>
+      <PanelHeader title="Memory" className="mem-header px-6">
         <div className="mem-header-actions flex items-center gap-2">
           <button onClick={syncMemoryMd} className="btn-secondary px-3 py-1.5 text-xs">Sync MEMORY.md</button>
           <button onClick={pruneMemory} className="btn-secondary px-3 py-1.5 text-xs">Prune</button>
           <button onClick={loadMemory} className="btn-secondary px-3 py-1.5 text-xs">Refresh</button>
         </div>
-      </div>
+      </PanelHeader>
       <div className="flex flex-1 overflow-hidden">
         <div className="w-80 overflow-y-auto border-r border-border bg-bg-secondary p-4">
           <div className="card mem-stats mb-4">

@@ -9,7 +9,6 @@
 
 let apiBase: string = 'http://localhost:8000';
 let authToken: string | null = null;
-let apiKey: string | null = null;
 
 export function setApiBase(base: string): void {
   apiBase = base.replace(/\/$/, '');
@@ -22,9 +21,6 @@ export function getApiBase(): string {
 export function getAuthToken(): string | null {
   if (!authToken) {
     authToken = localStorage.getItem('huginn:auth_token');
-  }
-  if (!apiKey) {
-    apiKey = localStorage.getItem('huginn:api_key');
   }
   return authToken;
 }

@@ -1,3 +1,5 @@
+import { PanelHeader } from '../settings-shared';
+
 interface FilesPanelProps {
   cwd: string;
   selectedFile: string;
@@ -19,15 +21,14 @@ export function FilesPanel({
     <div className="flex h-full">
       {/* File tree sidebar */}
       <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
-        <div className="flex h-12 items-center justify-between border-b border-border px-4">
-          <span className="text-sm font-semibold">Workspace</span>
+        <PanelHeader title="Workspace">
           <button
             onClick={() => cwd && loadDir(cwd)}
             className="text-xs text-text-secondary hover:text-text-primary"
           >
             Refresh
           </button>
-        </div>
+        </PanelHeader>
         <div className="flex-1 overflow-y-auto p-2">
           {cwd ? (
             renderTree(cwd)
@@ -42,6 +43,9 @@ export function FilesPanel({
 
       {/* Editor */}
       <div className="flex flex-1 flex-col bg-bg-primary">
+        {/* ponytail: raw div, not PanelHeader — title is a dynamic file path needing
+            truncate + font-medium, which PanelHeader's <h2> can't express. Add a
+            titleClassName prop to PanelHeader if a second case shows up. */}
         <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
           <span className="text-sm font-medium truncate">
             {selectedFile || "No file selected"}
