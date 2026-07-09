@@ -54,6 +54,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_agent_status,
+            get_backend_port,
             start_backend,
             stop_backend,
             get_cwd,
@@ -99,6 +100,11 @@ fn get_agent_status() -> serde_json::Value {
 }
 
 #[tauri::command]
+fn get_backend_port() -> u16 {
+    8000
+}
+
+#[tauri::command]
 async fn start_backend(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -112,101 +118,130 @@ async fn start_backend(
     }
 
     // If a backend is already running externally, don't start another one.
-    if let Ok(resp) = reqwest::blocking::get("http://localhost:8000/health") {
-        if resp.status().is_success() {
-            return Ok("already running externally".to_string());
+    // Use TCP connect instead of reqwest::blocking to avoid tokio runtime panic.
+    if std::net::TcpStream::connect("127.0.0.1:8000").is_ok() {
+        return Ok("already running externally".to_string());
+    }
+
+    // In dev mode, skip the sidecar (it can't find python-runtime in dev)
+    // and use Python directly — either from the installed Huginn app or PATH.
+    let is_dev = std::env::var("HUGINN_DEV_MODE").is_ok();
+
+    // ── Production: try sidecars first ──────────────────────────────
+    if !is_dev {
+        if let Ok(sidecar) = app.shell().sidecar("huginn-sidecar") {
+            eprintln!("[start_backend] Found huginn-sidecar, spawning...");
+            let (mut rx, child) = sidecar
+                .spawn()
+                .map_err(|e| format!("failed to spawn huginn-sidecar: {}", e))?;
+
+            let app_stdout = app.clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let (source, bytes) = match event {
+                        CommandEvent::Stdout(b) => ("stdout", b),
+                        CommandEvent::Stderr(b) => ("stderr", b),
+                        _ => continue,
+                    };
+                    let text = String::from_utf8_lossy(&bytes).to_string();
+                    let _ = app_stdout.emit(
+                        "backend-log",
+                        serde_json::json!({"source": source, "text": text}),
+                    );
+                }
+            });
+
+            *state.backend.lock().unwrap() = Some(child);
+            return Ok("started".to_string());
+        }
+
+        if let Ok(sidecar) = app.shell().sidecar("huginn") {
+            let (mut rx, child) = sidecar
+                .args(["serve", "--port", "8000"])
+                .spawn()
+                .map_err(|e| format!("failed to spawn huginn sidecar: {}", e))?;
+
+            let app_stdout = app.clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let (source, bytes) = match event {
+                        CommandEvent::Stdout(b) => ("stdout", b),
+                        CommandEvent::Stderr(b) => ("stderr", b),
+                        _ => continue,
+                    };
+                    let text = String::from_utf8_lossy(&bytes).to_string();
+                    let _ = app_stdout.emit(
+                        "backend-log",
+                        serde_json::json!({"source": source, "text": text}),
+                    );
+                }
+            });
+
+            *state.backend.lock().unwrap() = Some(child);
+            return Ok("started (legacy sidecar)".to_string());
         }
     }
 
-    // Prefer the new Rust process-manager sidecar, then the legacy huginn CLI,
-    // then a direct Python invocation during development.
-    if let Ok(sidecar) = app.shell().sidecar("huginn-sidecar") {
-        let (mut rx, child) = sidecar
-            .spawn()
-            .map_err(|e| format!("failed to spawn huginn-sidecar: {}", e))?;
+    // ── Dev / standalone fallback: direct Python ────────────────────
+    eprintln!("[start_backend] Using Python fallback (dev={})", is_dev);
 
-        let app_stdout = app.clone();
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let (source, bytes) = match event {
-                    CommandEvent::Stdout(b) => ("stdout", b),
-                    CommandEvent::Stderr(b) => ("stderr", b),
-                    _ => continue,
-                };
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                let _ = app_stdout.emit(
-                    "backend-log",
-                    serde_json::json!({"source": source, "text": text}),
-                );
-            }
-        });
-
-        *state.backend.lock().unwrap() = Some(child);
-        Ok("started".to_string())
-    } else if let Ok(sidecar) = app.shell().sidecar("huginn") {
-        let (mut rx, child) = sidecar
-            .args(["serve", "--port", "8000"])
-            .spawn()
-            .map_err(|e| format!("failed to spawn huginn sidecar: {}", e))?;
-
-        let app_stdout = app.clone();
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let (source, bytes) = match event {
-                    CommandEvent::Stdout(b) => ("stdout", b),
-                    CommandEvent::Stderr(b) => ("stderr", b),
-                    _ => continue,
-                };
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                let _ = app_stdout.emit(
-                    "backend-log",
-                    serde_json::json!({"source": source, "text": text}),
-                );
-            }
-        });
-
-        *state.backend.lock().unwrap() = Some(child);
-        Ok("started (legacy sidecar)".to_string())
+    // In dev mode, try the installed Huginn Python runtime first.
+    let installed_python = if is_dev {
+        let local_app = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let p = std::path::PathBuf::from(local_app)
+            .join("Huginn")
+            .join("python-runtime")
+            .join("python.exe");
+        if p.exists() { Some(p) } else { None }
     } else {
-        // Dev/standalone fallback: prefer the bundled Python runtime shipped in
-        // the app resources, otherwise use whatever "python" is on PATH.
-        let bundled_python = app
-            .path()
-            .resource_dir()
-            .ok()
-            .map(|d| d.join("python-runtime").join("python.exe"))
-            .filter(|p| p.exists());
+        None
+    };
 
-        let python_cmd = match &bundled_python {
-            Some(p) => app.shell().command(p.to_str().unwrap_or("python")),
-            None => app.shell().command("python"),
-        };
+    // In production, prefer the bundled Python runtime from resources.
+    let bundled_python = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("python-runtime").join("python.exe"))
+        .filter(|p| p.exists());
 
-        let (mut rx, child) = python_cmd
-            .args(["-m", "huginn.server"])
-            .env("PYTHONUNBUFFERED", "1")
-            .spawn()
-            .map_err(|e| format!("failed to start backend via python: {}", e))?;
+    let python_exe = installed_python
+        .as_ref()
+        .or(bundled_python.as_ref())
+        .map(|p| p.to_str().unwrap_or("python").to_string())
+        .unwrap_or_else(|| "python".to_string());
 
-        let app_stdout = app.clone();
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let (source, bytes) = match event {
-                    CommandEvent::Stdout(b) => ("stdout", b),
-                    CommandEvent::Stderr(b) => ("stderr", b),
-                    _ => continue,
-                };
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                let _ = app_stdout.emit(
-                    "backend-log",
-                    serde_json::json!({"source": source, "text": text}),
-                );
-            }
-        });
+    eprintln!("[start_backend] Python: {}", python_exe);
 
-        *state.backend.lock().unwrap() = Some(child);
-        Ok("started (python fallback)".to_string())
-    }
+    let python_cmd = app.shell().command(&python_exe);
+    let (mut rx, child) = python_cmd
+        .args(["-m", "huginn.server", "--port", "8000"])
+        .env("PYTHONUNBUFFERED", "1")
+        .env("DEEPSEEK_API_KEY", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())
+        .env("HUGINN_PROVIDER", std::env::var("HUGINN_PROVIDER").unwrap_or_default())
+        .env("HUGINN_MODEL", std::env::var("HUGINN_MODEL").unwrap_or_default())
+        .env("HUGINN_DEV_MODE", std::env::var("HUGINN_DEV_MODE").unwrap_or_default())
+        .spawn()
+        .map_err(|e| format!("failed to start backend via python: {}", e))?;
+
+    let app_stdout = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let (source, bytes) = match event {
+                CommandEvent::Stdout(b) => ("stdout", b),
+                CommandEvent::Stderr(b) => ("stderr", b),
+                _ => continue,
+            };
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            let _ = app_stdout.emit(
+                "backend-log",
+                serde_json::json!({"source": source, "text": text}),
+            );
+        }
+    });
+
+    *state.backend.lock().unwrap() = Some(child);
+    Ok("started (python)".to_string())
 }
 
 #[tauri::command]

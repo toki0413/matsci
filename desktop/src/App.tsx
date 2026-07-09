@@ -106,10 +106,11 @@ export default function App() {
   >("chat");
   const [sidebarGroups, setSidebarGroups] = useState<Record<string, boolean>>({
     core: true,
-    research: true,
+    research: false,
     workspace: false,
     system: false,
   });
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const toggleSidebarGroup = (group: string) =>
     setSidebarGroups((prev) => ({ ...prev, [group]: !prev[group] }));
 
@@ -629,14 +630,31 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
-      {/* Sidebar */}
+      {/* Sidebar — chat-first: collapsible to maximize chat area */}
+      {sidebarHidden && (
+        <button
+          onClick={() => setSidebarHidden(false)}
+          className="z-50 flex h-full w-10 items-center justify-center border-r border-border bg-bg-secondary text-text-muted hover:text-text-primary transition-colors"
+          title="Show sidebar"
+        >
+          <ChevronDown size={16} className="-rotate-90" />
+        </button>
+      )}
+      {!sidebarHidden && (
       <aside className="sidebar-shell flex w-60 flex-col border-r border-border bg-bg-secondary">
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
           <img src="/raven-logo.png" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
-          <div className="flex flex-col">
+          <div className="flex flex-1 flex-col">
             <div className="text-[15px] font-bold tracking-tight">Huginn</div>
             <div className="text-[12px] text-text-muted leading-none font-medium">Materials Science Agent</div>
           </div>
+          <button
+            onClick={() => setSidebarHidden(true)}
+            className="text-text-muted hover:text-text-primary transition-colors"
+            title="Hide sidebar"
+          >
+            <ChevronDown size={16} className="rotate-90" />
+          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Main navigation">
@@ -711,6 +729,7 @@ export default function App() {
           </div>
         </div>
       </aside>
+      )}
 
       {/* Main */}
       <main className="flex flex-1 flex-col min-w-0 bg-bg-primary">

@@ -1,6 +1,5 @@
 import { Search, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { ChatModeSelector } from '../ChatModeSelector';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 import { SaveToMemoryButton } from '../SaveToMemoryButton';
 import MessageContent from '../MessageContent';
@@ -134,8 +133,23 @@ export function ChatPanel(props: ChatPanelProps) {
                     {msg.timestamp === "streaming" ? "typing…" : msg.timestamp}
                   </span>
                 </div>
+                {msg.reasoning && (
+                  <details
+                    className={`mb-2 rounded-lg ${msg.reasoning && !msg.content ? "" : ""}`}
+                    open={msg.timestamp === "streaming" && !msg.content}
+                  >
+                    <summary className="cursor-pointer select-none text-xs font-medium text-text-muted hover:text-text-secondary">
+                      {msg.timestamp === "streaming" && !msg.content
+                        ? "💭 thinking…"
+                        : "💭 thought process"}
+                    </summary>
+                    <div className="mt-1.5 max-h-60 overflow-y-auto whitespace-pre-wrap border-l-2 border-border pl-3 text-xs italic leading-relaxed text-text-muted opacity-80">
+                      {msg.reasoning}
+                    </div>
+                  </details>
+                )}
                 <div className="text-[15px] leading-relaxed">
-                  <MessageContent content={msg.content} />
+                  {msg.content && <MessageContent content={msg.content} />}
                 </div>
                 {msg.role === "assistant" && msg.content && msg.timestamp !== "streaming" && (
                   <div className="mt-1.5 flex justify-end">
@@ -295,19 +309,24 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
-        <div className="mb-3 flex items-center gap-2">
-          <ChatModeSelector mode={mode} onChange={setMode} />
+        <div className="mb-2 flex items-center justify-between">
           <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-text-muted">
             <input
               type="checkbox"
               checked={autoApprove}
               onChange={(e) => toggleAutoApprove(e.target.checked)}
+              className="h-3 w-3"
             />
             Auto-approve
           </label>
-          <span className="text-[10px] text-text-muted">
-            {t(`chat.mode.${mode}.desc`)}
-          </span>
+          {mode !== "chat" && (
+            <button
+              onClick={() => setMode("chat")}
+              className="text-[10px] text-accent hover:underline"
+            >
+              ← Back to chat
+            </button>
+          )}
         </div>
 
         <div className="flex items-end gap-3">
