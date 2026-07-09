@@ -1,0 +1,19 @@
+{
+  "root": {
+    "nodeId": "gen-project-shell",
+    "kind": "project-shell",
+    "pageIds": ["page-index"],
+    "output": "partials/project-shell.html",
+    "status": "generated",
+    "children": [
+      {
+        "nodeId": "gen-page-index",
+        "kind": "page-leaf",
+        "pageIds": ["page-index"],
+        "output": "pages/index.html",
+        "status": "generated",
+        "children": []
+      }
+    ]
+  }
+}

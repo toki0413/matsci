@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { PanelHeader } from '../SettingsPanel';
+import { PanelHeader } from '../settings-shared';
 import type { DiffEntry, Checkpoint } from '../../types/domain';
 
 const DiffViewer = lazy(() => import('../DiffViewer'));

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { PanelHeader } from '../SettingsPanel';
+import { PanelHeader } from '../settings-shared';
 
 interface TerminalPanelProps {
   terminalOutput: string;
