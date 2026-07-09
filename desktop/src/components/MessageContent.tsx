@@ -1,10 +1,11 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { memo } from 'react';
 
 // Renders assistant / user chat content as GitHub-flavoured markdown with
 // syntax-highlighted code blocks and a per-block copy button.
-export function MessageContent({ content }: { content: string }) {
+export const MessageContent = memo(function MessageContent({ content }: { content: string }) {
   return (
     <div className="chat-prose">
       <ReactMarkdown
@@ -38,6 +39,6 @@ export function MessageContent({ content }: { content: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 export default MessageContent;

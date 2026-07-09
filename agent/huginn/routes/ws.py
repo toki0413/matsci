@@ -272,11 +272,29 @@ async def _stream_agent_response(
     seen_tool_results: set[str] = set()
     auto_cp_id: str | None = None
     workspace_path = Path(cfg_chat.workspace).resolve() if auto_checkpoint else None
-    # Check for clarification questions in state metadata
     _clarify_sent = False
+    _token_streamed = False
 
     try:
         async for state in agent.chat(content, thread_id):
+            # ── Token-level streaming (from dual stream mode) ───
+            if "_token" in state:
+                _token_streamed = True
+                text = state["_token"]
+                if text:
+                    full_response += text
+                    await websocket.send_json(
+                        {"type": "text_delta", "text": text}
+                    )
+                continue
+            if "_reasoning" in state:
+                reasoning = state["_reasoning"]
+                if reasoning:
+                    await websocket.send_json(
+                        {"type": "reasoning_delta", "text": reasoning}
+                    )
+                continue
+
             # ── Thought loop termination ────────────────
             # If the agent detected a persistent thought loop
             # (LLM repeating similar output), it terminates
@@ -410,20 +428,23 @@ async def _stream_agent_response(
                             **_progress,
                         })
 
-            # Only send text delta for assistant content
-            if hasattr(last_msg, "content") and not isinstance(
-                last_msg, ToolMessage
-            ):
-                # Only send delta (new content)
-                delta = last_msg.content[len(full_response) :]
-                if delta:
+            # Text delta for AI messages. When token-level streaming is
+            # active, tokens were already forwarded above — just sync
+            # full_response to the complete content. For non-streaming
+            # models (sync path), fall back to node-level delta.
+            if isinstance(last_msg, AIMessage):
+                if _token_streamed:
                     full_response = last_msg.content
-                    await websocket.send_json(
-                        {
-                            "type": "text_delta",
-                            "text": delta,
-                        }
-                    )
+                else:
+                    delta = last_msg.content[len(full_response) :]
+                    if delta:
+                        full_response = last_msg.content
+                        await websocket.send_json(
+                            {
+                                "type": "text_delta",
+                                "text": delta,
+                            }
+                        )
 
         # Plan mode: send plan_result with criteria validation
         if plan_result and plan_result.get("acceptance_criteria"):
@@ -969,7 +990,9 @@ async def agent_websocket(websocket: WebSocket):
                     and get_context().kb.count() > 0
                 ):
                     try:
-                        chunks = get_context().kb.query(content, top_k=5)
+                        chunks = await asyncio.to_thread(
+                            get_context().kb.query, content, 5
+                        )
                         if chunks:
                             context = "\n\n".join(
                                 f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)

@@ -2625,9 +2625,30 @@ class HuginnAgent:
                                 if interrupt and interrupt.get("cancelled"):
                                     raise InterruptCancelled(interrupt.get("reason", ""))
                         else:
-                            async for state in graph.astream(
-                                inputs, config, stream_mode="values"
+                            # Dual stream: "values" for state snapshots (tool
+                            # calls, memory, etc.), "messages" for token-level
+                            # LLM streaming so the UI updates per-token instead
+                            # of waiting for the entire node to finish.
+                            async for mode, data in graph.astream(
+                                inputs, config,
+                                stream_mode=["values", "messages"],
                             ):
+                                if mode == "messages":
+                                    chunk, _meta = data
+                                    text = ""
+                                    if hasattr(chunk, "content") and isinstance(chunk.content, str):
+                                        text = chunk.content
+                                    reasoning = ""
+                                    if hasattr(chunk, "additional_kwargs"):
+                                        reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+                                    if text:
+                                        yield {"_token": text}
+                                    if reasoning:
+                                        yield {"_reasoning": reasoning}
+                                    continue
+
+                                # mode == "values" — full state snapshot
+                                state = data
                                 self._process_stream_state(
                                     state, turn_span, thread_id, pet
                                 )

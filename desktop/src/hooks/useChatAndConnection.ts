@@ -45,6 +45,7 @@ export interface Message {
   isTaskProgress?: boolean;
   taskType?: string;
   jobId?: string;
+  reasoning?: string;
 }
 
 export interface Thread {
@@ -252,6 +253,26 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // ── WebSocket message handler ────────────────────────────────
   const handleWsMessage = (data: WSMessage) => {
     switch (data.type) {
+      case "reasoning_delta":
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "assistant" && last.timestamp === "streaming") {
+            const updated = [...prev];
+            updated[updated.length - 1] = {
+              ...last,
+              reasoning: (last.reasoning || "") + data.text,
+            };
+            return updated;
+          }
+          return [...prev, {
+            role: "assistant" as const,
+            content: "",
+            reasoning: data.text,
+            timestamp: "streaming",
+          }];
+        });
+        setIsStreaming(true);
+        break;
       case "text_delta":
         setMessages((prev) => {
           const last = prev[prev.length - 1];

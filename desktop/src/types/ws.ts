@@ -48,6 +48,7 @@ export interface ExplorationResult {
 
 export type WSMessage =
   | { type: "text_delta"; text: string }
+  | { type: "reasoning_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; id: string; content: string }
   | { type: "plan"; plan_id: string; plan: PlanData }

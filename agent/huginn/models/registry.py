@@ -15,6 +15,45 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _patch_langchain_reasoning_content():
+    """Forward DeepSeek's reasoning_content from OpenAI SDK delta to
+    AIMessageChunk.additional_kwargs.
+
+    LangChain's _convert_delta_to_message_chunk only extracts standard
+    OpenAI fields and silently drops DeepSeek-specific reasoning_content.
+    This patch intercepts the conversion and preserves the field.
+    """
+    try:
+        from langchain_openai.chat_models import base as _base
+        if getattr(_base, "_reasoning_patched", False):
+            return
+        _original = _base._convert_delta_to_message_chunk
+
+        def _patched(delta, *args, **kwargs):
+            chunk = _original(delta, *args, **kwargs)
+            # DeepSeek puts reasoning_content in the delta dict (streaming)
+            # or in model_extra (non-streaming). Check both.
+            reasoning = ""
+            if isinstance(delta, dict):
+                reasoning = delta.get("reasoning_content", "")
+            else:
+                reasoning = getattr(delta, "reasoning_content", "") or ""
+                if not reasoning and hasattr(delta, "model_extra"):
+                    reasoning = delta.model_extra.get("reasoning_content", "")
+            if reasoning:
+                chunk.additional_kwargs["reasoning_content"] = reasoning
+            return chunk
+
+        _base._convert_delta_to_message_chunk = _patched
+        _base._reasoning_patched = True
+        logger.info("patched _convert_delta_to_message_chunk for reasoning_content")
+    except Exception as e:
+        logger.warning("could not patch reasoning_content: %s", e)
+
+
+_patch_langchain_reasoning_content()
+
+
 ProviderT = Literal[
     "anthropic",
     "openai",
