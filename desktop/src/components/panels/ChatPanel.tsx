@@ -206,10 +206,10 @@ export function ChatPanel(props: ChatPanelProps) {
                 {msg.role === "user" ? t('chat.you') : t('chat.ai')}
               </div>
               <div
-                className={`max-w-[75%] rounded-2xl px-5 py-3 ${
+                className={`max-w-[75%] px-5 py-3 ${
                   msg.role === "user"
-                    ? "bg-accent text-white rounded-br-none"
-                    : "bg-bg-secondary border border-border rounded-bl-none"
+                    ? "bg-accent text-white rounded-2xl rounded-br-none"
+                    : "rounded-2xl rounded-bl-none"
                 }`}
               >
                 <div className="mb-1 flex items-center gap-2 text-xs opacity-70">
