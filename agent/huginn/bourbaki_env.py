@@ -118,11 +118,15 @@ class LeanEnvironment:
             return False
 
     def _install_linux(self) -> bool:
-        """Install elan on Linux via curl | sh."""
+        """Install elan on Linux via downloaded script (no shell=True)."""
         try:
+            import urllib.request
+            url = "https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh"
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                script = resp.read().decode()
             result = subprocess.run(
-                "curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y",
-                shell=True, capture_output=True, text=True, timeout=300,
+                ["sh", "-s", "-y"],
+                input=script, capture_output=True, text=True, timeout=300,
             )
             if result.returncode != 0:
                 print(f"[Bourbaki] elan install failed: {result.stderr}")
