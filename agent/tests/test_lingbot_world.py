@@ -92,38 +92,39 @@ class TestPilotAgent:
 
         pilot = PilotAgent(tool_adapter=None)
         directive = Directive(objective="test", tool_hint="explore")
-        result = asyncio.get_event_loop().run_until_complete(pilot.execute(directive))
+        result = asyncio.run(pilot.execute(directive))
         assert not result.success
         assert "no tool adapter" in result.error
 
     def test_execute_success(self):
         from huginn.agents.director import PilotAgent, Directive
 
+        async def _mock_call(**kw):
+            return {"result": {"energy": -10.5, "converged": True}}
+
         mock_adapter = MagicMock()
-        mock_adapter.call = MagicMock(return_value=asyncio.coroutine(
-            lambda **kw: {"result": {"energy": -10.5, "converged": True}}
-        )())
+        mock_adapter.call = MagicMock(side_effect=_mock_call)
         pilot = PilotAgent(tool_adapter=mock_adapter)
         directive = Directive(
             objective="Run SCF",
             tool_hint="vasp_tool",
             parameters={"action": "run"},
         )
-        result = asyncio.get_event_loop().run_until_complete(pilot.execute(directive))
+        result = asyncio.run(pilot.execute(directive))
         assert result.success
         assert result.key_properties.get("energy") == -10.5
 
     def test_execution_count_increments(self):
         from huginn.agents.director import PilotAgent, Directive
 
+        async def _mock_call(**kw):
+            return {"result": {}}
         mock_adapter = MagicMock()
-        mock_adapter.call = MagicMock(return_value=asyncio.coroutine(
-            lambda **kw: {"result": {}}
-        )())
+        mock_adapter.call = MagicMock(side_effect=_mock_call)
         pilot = PilotAgent(tool_adapter=mock_adapter)
         directive = Directive(objective="test")
-        asyncio.get_event_loop().run_until_complete(pilot.execute(directive))
-        asyncio.get_event_loop().run_until_complete(pilot.execute(directive))
+        asyncio.run(pilot.execute(directive))
+        asyncio.run(pilot.execute(directive))
         assert pilot._execution_count == 2
 
 

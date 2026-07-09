@@ -18,7 +18,13 @@ def _ctx() -> ToolContext:
 
 def _run(coro):
     """Run an async coroutine synchronously."""
-    return asyncio.get_event_loop().run_until_complete(coro) if not asyncio.iscoroutine(coro) else coro
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        return asyncio.run(coro)
+    return coro
 
 
 @pytest.fixture
