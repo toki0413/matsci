@@ -168,10 +168,23 @@ async fn start_backend(
         *state.backend.lock().unwrap() = Some(child);
         Ok("started (legacy sidecar)".to_string())
     } else {
-        // Development fallback: use the system Python interpreter directly.
-        let python = app.shell().command("python");
-        let (mut rx, child) = python
+        // Dev/standalone fallback: prefer the bundled Python runtime shipped in
+        // the app resources, otherwise use whatever "python" is on PATH.
+        let bundled_python = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|d| d.join("python-runtime").join("python.exe"))
+            .filter(|p| p.exists());
+
+        let python_cmd = match &bundled_python {
+            Some(p) => app.shell().command(p.to_str().unwrap_or("python")),
+            None => app.shell().command("python"),
+        };
+
+        let (mut rx, child) = python_cmd
             .args(["-m", "huginn.server"])
+            .env("PYTHONUNBUFFERED", "1")
             .spawn()
             .map_err(|e| format!("failed to start backend via python: {}", e))?;
 

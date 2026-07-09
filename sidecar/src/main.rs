@@ -179,7 +179,21 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut cmd = tokio::process::Command::new("python");
+    // Prefer the bundled Python runtime that ships next to the sidecar binary;
+    // fall back to whatever "python" resolves to on PATH.
+    let python_exe = {
+        let sidecar_path = std::env::current_exe()
+            .map_err(|e| format!("cannot determine sidecar path: {}", e))?;
+        let bundled = sidecar_path
+            .parent()
+            .map(|p| p.join("python-runtime").join("python.exe"));
+        match bundled {
+            Some(p) if p.exists() => p,
+            _ => std::path::PathBuf::from("python"),
+        }
+    };
+
+    let mut cmd = tokio::process::Command::new(&python_exe);
     cmd.args([
         "-m",
         "huginn.server",
@@ -187,7 +201,14 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
         &state.backend_port.to_string(),
     ])
     .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+    .stderr(Stdio::piped())
+    .env("PYTHONUNBUFFERED", "1");
+
+    // Run from the user's home dir so the backend doesn't drop files into the
+    // install directory (which may be read-only after packaging).
+    if let Some(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok() {
+        cmd.current_dir(home);
+    }
 
     let mut wrap = CommandWrap::from(cmd);
     #[cfg(windows)]

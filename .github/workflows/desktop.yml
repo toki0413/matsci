@@ -57,6 +57,47 @@ jobs:
           cp "target/release/huginn.exe" "$SIDECAR_DIR/huginn-$TARGET.exe"
           cp "target/release/huginn-sidecar.exe" "$SIDECAR_DIR/huginn-sidecar-$TARGET.exe"
 
+      - name: Bundle Python runtime
+        shell: bash
+        run: |
+          set -ex
+          # Download Python 3.12 embeddable
+          PYTHON_VERSION="3.12.3"
+          EMBED_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
+          curl -sL "$EMBED_URL" -o python-embed.zip
+          
+          # Extract to tauri resources dir
+          RUNTIME_DIR="desktop/src-tauri/python-runtime"
+          mkdir -p "$RUNTIME_DIR"
+          unzip -q python-embed.zip -d "$RUNTIME_DIR"
+          
+          # Enable site-packages (uncomment import site in ._pth file)
+          PTH_FILE=$(ls "$RUNTIME_DIR"/python*._pth | head -1)
+          sed -i 's/#import site/import site/' "$PTH_FILE"
+          
+          # Bootstrap pip
+          curl -sL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+          "$RUNTIME_DIR/python.exe" get-pip.py --no-warn-script-location
+          
+          # Install huginn-agent with core deps (NOT [all] — too heavy)
+          cd agent
+          "$RUNTIME_DIR/python.exe" -m pip install . --no-warn-script-location --no-cache-dir
+          cd ..
+          
+          # Clean up cache and tests to reduce size
+          rm -rf "$RUNTIME_DIR"/Lib/site-packages/*/tests
+          rm -rf "$RUNTIME_DIR"/Lib/site-packages/*/__pycache__
+          rm -rf "$RUNTIME_DIR"/Lib/site-packages/*.dist-info/tests
+          find "$RUNTIME_DIR" -name "*.pyc" -delete
+          find "$RUNTIME_DIR" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+          
+          # Verify it works
+          "$RUNTIME_DIR/python.exe" -c "import huginn; print('huginn OK:', huginn.__file__)"
+          "$RUNTIME_DIR/python.exe" -c "import pydantic, langchain, langgraph; print('deps OK')"
+          
+          echo "Python runtime size: $(du -sh "$RUNTIME_DIR" | cut -f1)"
+        timeout-minutes: 15
+
       - name: Install frontend dependencies
         working-directory: ./desktop
         run: npm ci
