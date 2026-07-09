@@ -2635,6 +2635,10 @@ class HuginnAgent:
                             ):
                                 if mode == "messages":
                                     chunk, _meta = data
+                                    # Only stream AI chunks — skip HumanMessage echoes
+                                    chunk_type = type(chunk).__name__
+                                    if not chunk_type.startswith("AIMessage"):
+                                        continue
                                     text = ""
                                     if hasattr(chunk, "content") and isinstance(chunk.content, str):
                                         text = chunk.content
