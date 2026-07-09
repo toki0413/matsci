@@ -8,8 +8,8 @@
 import { useState, lazy, Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown } from "lucide-react";
-import { SettingsTabNav, ConfigField } from "../SettingsPanel";
-import type { SettingsTab } from "../SettingsPanel";
+import { SettingsTabNav, ConfigField } from "../settings-shared";
+import type { SettingsTab } from "../settings-shared";
 import { PROVIDERS } from "../../lib/constants";
 import { api } from "../../lib/api";
 import type { ModelConfig, AgentProfile, AppConfig } from "../../types/domain";

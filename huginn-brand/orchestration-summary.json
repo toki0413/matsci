@@ -1,0 +1,69 @@
+{
+  "project": {
+    "operation": "create",
+    "designRead": "brand-landing / developer-scientist / professional-restrained / medium-density / generic-card-wall",
+    "designDials": {
+      "layoutVariance": 3,
+      "motionIntensity": 2,
+      "visualDensity": 3
+    },
+    "styleDefinitionBrief": "Materials science AI agent brand site, deep dark background with blue accent, Inter typeface, restrained surfaces with border-first depth, OpenAI-level minimalism meets AstrBot developer warmth.",
+    "generationTree": {
+      "root": {
+        "nodeId": "gen-project-shell",
+        "kind": "project-shell",
+        "pageIds": ["page-index"],
+        "output": "partials/project-shell.html",
+        "status": "planned",
+        "children": [
+          {
+            "nodeId": "gen-page-index",
+            "kind": "page-leaf",
+            "pageIds": ["page-index"],
+            "output": "pages/index.html",
+            "status": "planned",
+            "children": []
+          }
+        ]
+      }
+    }
+  },
+  "designSource": {
+    "operatingMode": "free-explore",
+    "brandCSS": "colors_and_type.css",
+    "brandPrefix": "hg",
+    "styleConstraints": {
+      "radiusMax": 16,
+      "staticShadowAlphaMax": 0.05
+    }
+  },
+  "pages": [
+    {
+      "nodeId": "page-index",
+      "title": "Home",
+      "htmlSrc": "pages/index.html",
+      "pageIndex": 1,
+      "visualNorthStar": "OpenAI.com hero restraint — large centered headline, single-line subtitle, minimal UI chrome, deep dark background, blue accent only on interactive elements",
+      "compositionPattern": "hero-statement → feature-grid → capabilities-detail → cta-close",
+      "continuityAnchors": [
+        "Deep dark background (#0B0B0F) with border-first surfaces",
+        "Inter font, semibold headlines, regular body text",
+        "Blue accent (#4A9FD9) only on interactive/CTA elements",
+        "Border-first card surfaces, no colored shadows on static elements"
+      ],
+      "imagePlan": [
+        { "role": "critical-hero", "filename": "hero-bg.png", "section": "hero", "status": "generating" }
+      ],
+      "componentPlan": {
+        "core": [],
+        "support": []
+      }
+    }
+  ],
+  "assets": [
+    { "filename": "raven-logo.png", "role": "shared-brand", "status": "copied" },
+    { "filename": "hero-bg.png", "role": "critical-hero", "status": "generating" }
+  ],
+  "wiringPlan": [],
+  "hiddenInteractionPlan": []
+}

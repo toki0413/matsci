@@ -1,4 +1,4 @@
-import { PanelHeader } from '../SettingsPanel';
+import { PanelHeader } from '../settings-shared';
 import type { BackendLogEvent } from '../../types/domain';
 
 interface LogsPanelProps {

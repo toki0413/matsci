@@ -1,0 +1,53 @@
+{
+  "data": [
+    {
+      "id": "page-index",
+      "title": "Home",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1752000000000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/index.html",
+        "interactions": []
+      }
+    },
+    {
+      "id": "image-001",
+      "title": "Raven Logo",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1752000100000,
+      "canvasData": {
+        "x": 0,
+        "y": 1201
+      },
+      "devMetadata": {
+        "imageSrc": "assets/raven-logo.png"
+      }
+    },
+    {
+      "id": "image-002",
+      "title": "Hero Background",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1752000200000,
+      "canvasData": {
+        "x": 620,
+        "y": 1201
+      },
+      "devMetadata": {
+        "imageSrc": "assets/hero-bg.jpg"
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "desktop",
+    "projectName": "Huginn Agent"
+  }
+}

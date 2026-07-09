@@ -495,15 +495,6 @@ export default function App() {
   const allTabs = sidebarGroupsData.flatMap((g) => g.tabs);
   const activeTabInfo = allTabs.find((t) => t.id === activeTab);
 
-  const sectionAccent: Record<string, string> = {
-    core: "var(--seed-primary)",
-    research: "var(--seed-accent)",
-    workspace: "var(--workspace-accent, #b8956a)",
-    system: "var(--system-accent, #8a8680)",
-  };
-  const activeGroupKey = sidebarGroupsData.find((g) => g.tabs.some((t) => t.id === activeTab))?.key ?? "core";
-  const activeAccent = sectionAccent[activeGroupKey] ?? sectionAccent.core;
-
   const handleCoderRun = coder.run;
   const handleExecuteRun = execute.run;
   const handleDiagnoseRun = diagnose.run;
@@ -512,22 +503,22 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
       {/* Sidebar */}
-      <aside className="flex w-64 flex-col border-r border-border bg-bg-secondary">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          <span className="text-2xl">🔬</span>
-          <div>
-            <div className="text-base font-bold tracking-tight">Huginn</div>
-            <div className="text-xs text-text-muted">Research assistant</div>
+      <aside className="sidebar-shell flex w-60 flex-col border-r border-border bg-bg-secondary">
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
+          <img src="/raven-logo.png" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
+          <div className="flex flex-col">
+            <div className="text-[15px] font-bold tracking-tight">Huginn</div>
+            <div className="text-[12px] text-text-muted leading-none font-medium">Materials Science Agent</div>
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-2" aria-label="Main navigation">
+        <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Main navigation">
           {sidebarGroupsData.map((group, gi) => (
-            <div key={group.key} className={gi > 0 ? "mt-1" : ""}>
+            <div key={group.key} className={gi > 0 ? "mt-2" : ""}>
               <button
                 onClick={() => toggleSidebarGroup(group.key)}
                 aria-expanded={sidebarGroups[group.key]}
-                className="sidebar-group-header flex w-full items-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted hover:text-text-secondary transition-colors"
+                className="sidebar-group-header flex w-full items-center gap-1.5 px-2 py-1 text-[13px] font-bold uppercase tracking-widest text-text-muted hover:text-text-secondary transition-colors"
               >
                 <ChevronDown
                   size={12}
@@ -553,11 +544,11 @@ export default function App() {
                     role="tab"
                     aria-selected={activeTab === tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                      tab.indented ? "pl-6" : ""
+                    className={`sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold transition-all duration-150 ${
+                      tab.indented ? "pl-5" : ""
                     } ${
                       activeTab === tab.id
-                        ? "bg-accent text-white shadow-glow"
+                        ? "sidebar-nav-active"
                         : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
                     }`}
                   >
@@ -570,24 +561,27 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="border-t border-border p-4">
-          <div className="mb-2 flex items-center gap-2 text-xs text-text-muted">
+        <div className="border-t border-border px-3 py-3">
+          <div className="flex items-center gap-2 text-[13px] text-text-muted">
             <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-success" : "bg-error"}`} />
-            <span>{isConnected ? "Backend online" : "Backend offline"}</span>
+            <span className="truncate">{status || (isConnected ? "Connected" : "Offline")}</span>
           </div>
-          <div className="text-xs text-text-muted truncate">{status}</div>
-          <button
-            onClick={() => setShowGuide(true)}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
-          >
-            <HelpCircle size={14} /> Help / Guide
-          </button>
-          <button
-            onClick={openPetWindow}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
-          >
-            <Bird size={14} /> Summon Pet
-          </button>
+          <div className="mt-2 flex gap-1.5">
+            <button
+              onClick={() => setShowGuide(true)}
+              className="sidebar-footer-btn flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary"
+              title="Help"
+            >
+              <HelpCircle size={13} /> Guide
+            </button>
+            <button
+              onClick={openPetWindow}
+              className="sidebar-footer-btn flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary"
+              title="Summon pet"
+            >
+              <Bird size={13} /> Pet
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -596,7 +590,7 @@ export default function App() {
         {/* Header */}
         <header className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
           <div className="flex items-center gap-2.5">
-            <span style={{ color: activeAccent }}>
+            <span className="text-text-muted">
               {activeTabInfo?.icon}
             </span>
             <span className="text-sm font-semibold">
@@ -655,7 +649,7 @@ export default function App() {
         </header>
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden border-l-[3px]" style={{ borderLeftColor: activeAccent, transition: "border-left-color 0.3s ease" }}>
+        <div className="flex-1 overflow-hidden">
           {activeTab === "chat" && (
             <ChatPanel
               messages={messages}
