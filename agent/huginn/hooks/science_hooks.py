@@ -808,6 +808,13 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("snapshot hooks not available (non-fatal)")
 
+    # 物理预检 hook — PRE_TOOL_USE, 警告+force_proceed (不自动拦截)
+    try:
+        from huginn.hooks.physical_precheck import register_physical_prechecks
+        register_physical_prechecks(hm)
+    except ImportError:
+        logger.debug("physical_precheck hooks not available (non-fatal)")
+
     hm._science_hooks_registered = True
     logger.info(
         "Science hooks registered: vasp_convergence, lammps_stability, "
@@ -821,7 +828,8 @@ def register_science_hooks(hm: HookManager) -> None:
         "rdkit_validation, neb_convergence, gp_model, "
         "pipeline, "
         "rag_provenance, workflow_guidance, calculation_ingest, "
-        "hook_failure, rag_track, rag_feedback. "
+        "hook_failure, rag_track, rag_feedback, "
+        "physical_precheck (warn+force_proceed). "
         "Pipeline stages: structure→relax→static→properties→"
         "mechanical→md→cheminfo→docking/biomd→"
         "free_energy/enhanced_sampling→kinetics/motif/inverse→"

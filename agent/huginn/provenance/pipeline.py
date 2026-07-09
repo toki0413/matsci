@@ -683,8 +683,8 @@ def _is_converged(tool_output: Any) -> bool:
 class SimulationPipeline:
     """事件驱动的仿真管线, 持有 ProvenanceRegistry 引用, 根据工具完成情况建议下一步."""
 
-    def __init__(self, registry: ProvenanceRegistry) -> None:
-        self._registry = registry
+    def __init__(self, registry: ProvenanceRegistry | None = None) -> None:
+        self._registry = registry or ProvenanceRegistry.shared()
         # 缓存最近一次 suggest_next 的结果, get_progress / to_context_block 用
         self._latest: list[PipelineSuggestion] = []
 
@@ -738,6 +738,67 @@ class SimulationPipeline:
 
         self._latest = suggestions
         return suggestions
+
+    def affordance(self) -> list[PipelineSuggestion]:
+        """返回当前管线状态下所有可行的下一步, 不只是最后一个工具对应的路径.
+
+        和 suggest_next() 不同: suggest_next 按最后一个工具过滤,
+        affordance 看所有已完成阶段, 返回每个已完成阶段后面能做什么.
+        给 agent 完整的可选空间, 而不是单条建议路径.
+        """
+        completed = self._get_completed_stages()
+        if not completed:
+            # 啥都没做 — 返回所有入口规则的后继
+            starting: list[PipelineSuggestion] = []
+            seen_stages: set[PipelineStage] = set()
+            for rule in PIPELINE_RULES:
+                if rule.stage in (PipelineStage.STRUCTURE, PipelineStage.CHEMINFO):
+                    for next_stage in rule.next_stages:
+                        if next_stage not in seen_stages:
+                            seen_stages.add(next_stage)
+                            hint = (rule.next_tool_hints[0]
+                                    if rule.next_tool_hints else "")
+                            starting.append(PipelineSuggestion(
+                                stage=next_stage,
+                                tool_hint=hint,
+                                description=rule.description,
+                                prerequisite_met=self._check_prerequisite(next_stage),
+                                reason="available from start",
+                            ))
+            return starting
+
+        # 找所有「源阶段已完成」的规则, 收集它们的后继
+        all_suggestions: list[PipelineSuggestion] = []
+        seen: set[tuple[PipelineStage, str]] = set()
+        for rule in PIPELINE_RULES:
+            if rule.stage not in completed:
+                continue
+            for next_stage in rule.next_stages:
+                # 跳过已经做完的阶段
+                if next_stage in completed:
+                    continue
+                key = (next_stage, rule.tool_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                # hints 和 stages 数量对齐时取对应的, 否则拼一起
+                if len(rule.next_tool_hints) == len(rule.next_stages):
+                    hint = rule.next_tool_hints[rule.next_stages.index(next_stage)]
+                else:
+                    hint = ", ".join(rule.next_tool_hints) if rule.next_tool_hints else ""
+                # Skip if same (stage, hint) already added from another rule
+                hint_key = (next_stage, hint)
+                if hint_key in seen:
+                    continue
+                seen.add(hint_key)
+                all_suggestions.append(PipelineSuggestion(
+                    stage=next_stage,
+                    tool_hint=hint,
+                    description=rule.description,
+                    prerequisite_met=self._check_prerequisite(next_stage),
+                    reason=f"available after {rule.stage.value}",
+                ))
+        return all_suggestions
 
     def get_current_stage(self) -> PipelineStage | None:
         """从 provenance 注册表推断当前处于哪个阶段 (取已完成的最高阶段)."""
