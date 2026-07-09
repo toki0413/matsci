@@ -10,6 +10,7 @@ const PeriodicTable = lazy(() => import("./components/PeriodicTable"));
 const Notebook = lazy(() => import("./components/Notebook"));
 const SweepDashboard = lazy(() => import("./components/SweepDashboard"));
 const StructureViewer = lazy(() => import("./components/StructureViewer"));
+const PersonaManager = lazy(() => import("./components/PersonaManager"));
 import { PROVIDERS } from "./lib/constants";
 import { api } from "./lib/api";
 import { API_BASE } from "./lib/config-store";
@@ -24,6 +25,7 @@ import { useProject } from "./hooks/useProject";
 import { useLogs } from "./hooks/useLogs";
 import { useConfig } from "./hooks/useConfig";
 import { useChatAndConnection } from "./hooks/useChatAndConnection";
+import { PetStatusWidget } from "./components/PetStatusWidget";
 import { ChatPanel } from "./components/panels/ChatPanel";
 import { MetricsBar } from "./components/MetricsBar";
 import { MemoryPanel } from "./components/panels/MemoryPanel";
@@ -51,7 +53,7 @@ import {
   Dna, Play, Compass, Stethoscope, Monitor, ChevronDown, Sparkles,
   Search,
   Atom, Notebook as NotebookIcon, TerminalSquare, BarChart3, Box, Activity,
-  History, Calculator,
+  History, Calculator, UserCircle,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -107,6 +109,7 @@ export default function App() {
     | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
     | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
     | "structure" | "emotion" | "provenance" | "side" | "solver"
+    | "persona"
   >("chat");
   const [sidebarGroups, setSidebarGroups] = useState<Record<string, boolean>>({
     core: true,
@@ -480,6 +483,7 @@ export default function App() {
     thinkingIntensity, setThinkingIntensity,
     pendingMessages,
     researchMode, setResearchMode,
+    petState,
   } = useChatAndConnection({
     config,
     activeTab,
@@ -568,6 +572,7 @@ export default function App() {
       label: t('nav.system'),
       tabs: [
         { id: "memory" as const, label: t('tab.memory'), icon: <Brain size={16} /> },
+        { id: "persona" as const, label: t('tab.persona'), icon: <UserCircle size={16} /> },
         { id: "emotion" as const, label: t('tab.emotion'), icon: <Activity size={16} /> },
         { id: "provenance" as const, label: t('tab.provenance'), icon: <History size={16} /> },
         { id: "plugins" as const, label: t('tab.plugins'), icon: <Puzzle size={16} /> },
@@ -713,6 +718,7 @@ export default function App() {
           ))}
         </nav>
 
+        {petState && <PetStatusWidget petState={petState} />}
         <div className="border-t border-border px-3 py-3">
           <div className="flex items-center gap-2 text-[13px] text-text-muted">
             <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-success" : "bg-error"}`} />
@@ -982,6 +988,14 @@ export default function App() {
             <ErrorBoundary>
               <Suspense fallback={<LoadingFallback />}>
                 <EmotionTrackerPanel apiBase={API_BASE} />
+              </Suspense>
+            </ErrorBoundary>
+          )}
+
+          {activeTab === "persona" && (
+            <ErrorBoundary>
+              <Suspense fallback={<LoadingFallback />}>
+                <PersonaManager />
               </Suspense>
             </ErrorBoundary>
           )}

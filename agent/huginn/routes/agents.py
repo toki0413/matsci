@@ -240,11 +240,15 @@ async def list_personas() -> dict[str, Any]:
             "personas": [
                 {
                     "name": name,
-                    "system_prompt": mgr.get(name).system_prompt[:200],
-                    "begin_dialogs": mgr.get(name).begin_dialogs,
-                    "avatar": mgr.get(name).avatar,
+                    "system_prompt": p.system_prompt[:200],
+                    "begin_dialogs": p.begin_dialogs,
+                    "avatar": p.avatar,
+                    # 前端列表需要这两项展示标签, 之前漏掉了
+                    "description": p.description,
+                    "when_to_use": p.when_to_use,
                 }
                 for name in mgr.list()
+                for p in [mgr.get(name)]
             ],
         }
     except Exception as e:
@@ -336,6 +340,8 @@ async def get_persona(name: str) -> dict[str, Any]:
             "mood_dialogs": p.mood_dialogs,
             "variables": p.variables,
             "avatar": p.avatar,
+            "description": p.description,
+            "when_to_use": p.when_to_use,
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -381,6 +387,8 @@ async def create_persona(params: dict[str, Any]) -> dict[str, Any]:
             mood_dialogs=params.get("mood_dialogs", []),
             variables=params.get("variables", {}),
             avatar=params.get("avatar"),
+            description=params.get("description", ""),
+            when_to_use=params.get("when_to_use", []),
         )
         return {"success": True, "persona": p.to_dict()}
     except Exception as e:

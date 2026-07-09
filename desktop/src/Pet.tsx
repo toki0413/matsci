@@ -5,7 +5,8 @@ import {
   playPetChirp, playHappyCoo, playFeedTick, playLevelUp,
   startAmbient, stopAmbient, setMuted as setSoundMuted,
 } from "./sounds";
-import { getApiBase, setApiBase } from "./lib/api-client";
+import { getApiBase, setApiBase, getAuthToken } from "./lib/api-client";
+import { ReconnectingWebSocket } from "./lib/ws-client";
 
 // API_BASE is now managed by the shared api-client module, but we
 // keep a local reference for SSE URL construction. The syncBackendUrl()
@@ -276,6 +277,7 @@ export default function Pet() {
   const idleTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const decayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const appWindow = useRef<ReturnType<typeof getCurrentWindow> | null>(null);
+  const petWsRef = useRef<ReconnectingWebSocket | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const ravenSvgRef = useRef<HTMLDivElement>(null);
   const particleContainerRef = useRef<HTMLDivElement>(null);
@@ -513,6 +515,26 @@ export default function Pet() {
         // Tauri IPC not available — keep default
       }
       connectSSE();
+
+      // WS for real-time pet_update pushes (mood, xp, level, hunger, happiness)
+      const wsUrl = getApiBase().replace("http", "ws") + "/ws/agent";
+      petWsRef.current?.close();
+      petWsRef.current = new ReconnectingWebSocket({
+        url: wsUrl,
+        authToken: () => getAuthToken(),
+        pingInterval: 30_000,
+        onMessage: (data) => {
+          if (typeof data !== "object" || data === null) return;
+          const msg = data as { type?: string; mood?: string; xp?: number; level?: number; hunger?: number; happiness?: number };
+          if (msg.type !== "pet_update") return;
+          if (msg.mood) setMood(msg.mood as PetMood);
+          if (msg.xp !== undefined) setExperience(msg.xp);
+          if (msg.level !== undefined) setLevel(msg.level);
+          if (msg.hunger !== undefined) setHunger(msg.hunger);
+          if (msg.happiness !== undefined) setHappiness(msg.happiness);
+        },
+      });
+      petWsRef.current.connect();
     };
     init();
 
@@ -549,6 +571,8 @@ export default function Pet() {
 
     return () => {
       es?.close();
+      petWsRef.current?.close();
+      petWsRef.current = null;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (hopTimer.current) clearTimeout(hopTimer.current);

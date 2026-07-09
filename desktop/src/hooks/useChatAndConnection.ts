@@ -23,6 +23,7 @@ import {
 } from "../lib/config-store";
 import { isWSMessage, type WSMessage } from "../types/ws";
 import type { AppConfig, PersonaSeed, PersonaEmotionResponse } from "../types/domain";
+import type { PetStatusState } from "../components/PetStatusWidget";
 
 // ── Types ──────────────────────────────────────────────────────
 export interface Message {
@@ -133,6 +134,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [personaList, setPersonaList] = useState<{ id: string; label: string; description?: string; avatar?: string }[]>(PERSONAS_FALLBACK);
   const [personaEmotion, setPersonaEmotion] = useState<{ mood: string; valence: number; arousal: number; trust: number } | null>(null);
   const [pendingClarifications, setPendingClarifications] = useState<{ question_id?: string; question: string; options?: string[]; thread_id?: string }[]>([]);
+
+  // ── Pet state (pushed via pet_update WS messages) ────────────
+  const [petState, setPetState] = useState<PetStatusState | null>(null);
 
   // ── Thread state ─────────────────────────────────────────────
   const [threads, setThreads] = useState<Thread[]>([
@@ -548,6 +552,15 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           wsClientRef.current.send(JSON.stringify({ type: "pong" }));
         }
         break;
+      case "pet_update":
+        setPetState({
+          mood: data.mood,
+          xp: data.xp,
+          level: data.level,
+          hunger: data.hunger,
+          happiness: data.happiness,
+        });
+        break;
     }
   };
 
@@ -814,5 +827,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     pendingMessages,
     // Research mode
     researchMode, setResearchMode,
+    // Pet state
+    petState,
   };
 }

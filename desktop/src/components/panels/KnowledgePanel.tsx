@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PanelHeader } from '../settings-shared';
 import type { AppConfig } from '../../types/domain';
 
@@ -32,12 +34,72 @@ interface KnowledgePanelProps {
   queryKnowledge: () => void;
 }
 
+type ViewMode = 'concise' | 'detailed' | 'research';
+
+// rough token estimate — words vary, but chars/4 tracks BPE closely enough for a counter
+const estimateTokens = (text: string) => Math.ceil((text?.length ?? 0) / 4);
+
+// wrap query terms in <mark> so users see why a chunk was retrieved.
+// naive regex split: fine for short natural-language queries, not a tokenizer.
+function highlightTerms(text: string, query: string) {
+  const terms = query.trim().split(/\s+/).filter((t) => t.length > 2);
+  if (!terms.length) return text;
+  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const splitRe = new RegExp(`(${escaped.join('|')})`, 'gi');
+  const testRe = new RegExp(`^(?:${escaped.join('|')})$`, 'i');
+  return text.split(splitRe).map((part, i) =>
+    part && testRe.test(part) ? (
+      <mark key={i} className="rounded bg-accent/30 px-0.5 text-text-primary">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
 export function KnowledgePanel({
   config, setConfig, saveConfig,
   fileInputRef, parseFileInputRef, parseLoading,
   kbMsg, kbDocs, kbAvailable, kbQuery, kbChunks, setKbQuery,
   uploadKnowledge, parseDocument, loadDocumentGraph, deleteKnowledge, queryKnowledge,
 }: KnowledgePanelProps) {
+  const { t } = useTranslation();
+  const [viewMode, setViewMode] = useState<ViewMode>('detailed');
+  const [searching, setSearching] = useState(false);
+  // per-chunk toggles — tracks which cards have their citation / thinking / body expanded
+  const [openCitations, setOpenCitations] = useState<Set<number>>(new Set());
+  const [openThinking, setOpenThinking] = useState<Set<number>>(new Set());
+  const [openText, setOpenText] = useState<Set<number>>(new Set());
+
+  // wrap the parent handler so we can drive the "searching" animation locally
+  const runQuery = async () => {
+    setSearching(true);
+    try {
+      await queryKnowledge();
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const toggle = (set: Set<number>, i: number, setter: (s: Set<number>) => void) => {
+    const next = new Set(set);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    setter(next);
+  };
+
+  const switchView = (mode: ViewMode) => {
+    setViewMode(mode);
+    // research mode unfolds the retrieval trace for every chunk by default
+    setOpenThinking(mode === 'research' ? new Set(kbChunks.map((_, i) => i)) : new Set());
+  };
+
+  const estTokens = kbChunks.reduce((n, c) => n + estimateTokens(c.text), 0);
+  // concise view trims to the top 3 hits
+  const visibleChunks = viewMode === 'concise' ? kbChunks.slice(0, 3) : kbChunks;
+  const TEXT_LIMIT = 240;
+
   return (
     <div data-component="knowledge-panel" className="kb-panel flex h-full flex-col">
       <PanelHeader title="Knowledge Base" className="kb-header px-6">
@@ -148,34 +210,137 @@ export function KnowledgePanel({
           </div>
         </aside>
 
-        {/* Query tester */}
+        {/* Query tester — Metaso-style "transparent brain" retrieval view */}
         <div className="kb-query-area flex flex-1 flex-col bg-bg-primary p-4">
-          <h3 className="mb-3 text-sm font-semibold">Test retrieval</h3>
-          <div className="mb-4 flex gap-2">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold">{t('kb.testRetrieval')}</h3>
+            {/* three search-depth modes, mirrors Metaso's concise / detailed / research */}
+            <div className="flex rounded-lg border border-border bg-bg-secondary p-0.5">
+              {(['concise', 'detailed', 'research'] as ViewMode[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => switchView(m)}
+                  className={
+                    'rounded-md px-2.5 py-1 text-xs font-medium transition-colors ' +
+                    (viewMode === m
+                      ? 'bg-accent text-white'
+                      : 'text-text-secondary hover:text-text-primary')
+                  }
+                >
+                  {t(`kb.view.${m}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-3 flex gap-2">
             <input
               type="text"
               value={kbQuery}
               onChange={(e) => setKbQuery(e.target.value)}
-              placeholder="Ask a question against the knowledge base…"
+              placeholder={t('kb.queryPlaceholder')}
               className="input flex-1"
-              onKeyDown={(e) => e.key === "Enter" && queryKnowledge()}
+              onKeyDown={(e) => e.key === "Enter" && runQuery()}
             />
-            <button onClick={queryKnowledge} className="btn-primary">
-              Search
+            <button onClick={runQuery} disabled={searching} className="btn-primary disabled:opacity-50">
+              {t('kb.search')}
             </button>
           </div>
+
+          {/* live status counter — Metaso left-corner style */}
+          {kbChunks.length > 0 && (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-bg-secondary px-3 py-1.5 text-xs text-text-secondary">
+              <span>📊 {t('kb.sources', { n: kbChunks.length })}</span>
+              <span className="text-border">|</span>
+              <span>🔤 ~{t('kb.tokens', { n: estTokens })}</span>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto space-y-3">
-            {kbChunks.map((chunk, i) => (
-              <div key={i} className="kb-chunk rounded-lg border border-border bg-bg-secondary p-3">
-                <div className="mb-1 flex items-center justify-between text-xs text-text-muted">
-                  <span>{chunk.metadata?.filename}</span>
-                  <span>distance: {chunk.distance?.toFixed(3)}</span>
-                </div>
-                <p className="text-xs text-text-primary whitespace-pre-wrap">
-                  {chunk.text}
-                </p>
+            {searching ? (
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <span className="animate-pulse">🔍</span>
+                <span className="animate-pulse">{t('kb.searching')}</span>
               </div>
-            ))}
+            ) : kbChunks.length === 0 ? (
+              <div className="text-xs text-text-muted">{t('kb.query.empty')}</div>
+            ) : (
+              visibleChunks.map((chunk, i) => {
+                const filename = chunk.metadata?.filename ?? 'unknown';
+                const distance = chunk.distance;
+                const tokens = estimateTokens(chunk.text);
+                const citationOpen = openCitations.has(i);
+                const thinkingOpen = openThinking.has(i);
+                // concise mode collapses long bodies until the user expands them
+                const showFull = openText.has(i) || viewMode !== 'concise';
+                const tooLong = chunk.text.length > TEXT_LIMIT;
+                const shownText = showFull
+                  ? chunk.text
+                  : chunk.text.slice(0, TEXT_LIMIT) + '…';
+
+                return (
+                  <div key={i} className="kb-chunk rounded-lg border border-border bg-bg-secondary p-3">
+                    {/* header: clickable citation marker + source + distance badge */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => toggle(openCitations, i, setOpenCitations)}
+                          className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded bg-accent/20 px-1 text-xs font-bold text-accent hover:bg-accent/30"
+                          title={t('kb.source')}
+                        >
+                          [{i + 1}]
+                        </button>
+                        <span className="truncate text-xs text-text-primary">{filename}</span>
+                      </div>
+                      {distance != null && (
+                        <span className="shrink-0 rounded-full bg-bg-tertiary px-2 py-0.5 text-[10px] font-medium text-text-secondary">
+                          {t('kb.distance')}: {distance.toFixed(3)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* expanded citation chain — source / rank / distance / token cost */}
+                    {citationOpen && (
+                      <div className="mt-2 space-y-0.5 rounded-md bg-bg-tertiary p-2 text-[11px] text-text-secondary">
+                        <div>📚 {t('kb.source')}: {filename}</div>
+                        <div>📊 {t('kb.rank')}: #{i + 1}</div>
+                        {distance != null && <div>📐 {t('kb.distance')}: {distance.toFixed(4)}</div>}
+                        <div>🔤 ~{tokens} tokens</div>
+                      </div>
+                    )}
+
+                    {/* collapsible retrieval trace — the "how did we get here" brain */}
+                    <button
+                      onClick={() => toggle(openThinking, i, setOpenThinking)}
+                      className="mt-2 flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary"
+                    >
+                      <span className={'inline-block transition-transform ' + (thinkingOpen ? 'rotate-90' : '')}>▸</span>
+                      💭 {t('kb.thinkingProcess')}
+                    </button>
+                    {thinkingOpen && (
+                      <div className="mt-1 rounded-md border border-border bg-bg-tertiary p-2 font-mono text-[10px] text-text-muted">
+                        vector search → query embedded → top_k=5 → rank #{i + 1}
+                        {distance != null ? ` (distance ${distance.toFixed(4)})` : ''}
+                      </div>
+                    )}
+
+                    {/* chunk body — query terms highlighted inline */}
+                    <p className="mt-2 whitespace-pre-wrap text-xs text-text-primary">
+                      {highlightTerms(shownText, kbQuery)}
+                    </p>
+
+                    {viewMode === 'concise' && tooLong && (
+                      <button
+                        onClick={() => toggle(openText, i, setOpenText)}
+                        className="mt-1 text-[11px] text-accent hover:underline"
+                      >
+                        {showFull ? t('kb.showLess') : t('kb.showMore')}
+                      </button>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>
