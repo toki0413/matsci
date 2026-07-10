@@ -32,7 +32,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
+from huginn.types import ToolContext, ToolResult, progress_cb
 
 logger = logging.getLogger(__name__)
 
@@ -792,6 +792,48 @@ class DeliAutoResearch:
     def list_sessions(self) -> list[dict[str, Any]]:
         return [s.to_summary() for s in self._sessions.values()]
 
+    async def _emit_progress(
+        self,
+        state: ResearchState,
+        stage: ResearchStage | str,
+        status: str,
+        detail: str = "",
+        *,
+        pipeline: str = "deli_research",
+        stage_label: str | None = None,
+        stage_index: int | None = None,
+        total_stages: int | None = None,
+    ) -> None:
+        """Push a progress event to the WS client (no-op when offline)."""
+        cb = progress_cb.get(None)
+        if not cb:
+            return
+        if isinstance(stage, ResearchStage):
+            stages = list(ResearchStage)
+            idx = stages.index(stage)
+            total = len(stages)
+            name = stage.value
+            label = stage_label or stage.value.replace("_", " ").title()
+        else:
+            idx = stage_index or 0
+            total = total_stages or 1
+            name = str(stage)
+            label = stage_label or name
+        pct = int((idx / max(total - 1, 1)) * 100)
+        await cb({
+            "type": "task_progress",
+            "task_type": "pipeline",
+            "pipeline": pipeline,
+            "stage": name,
+            "stage_label": label,
+            "stage_index": idx,
+            "total_stages": total,
+            "progress_pct": pct,
+            "status": status,
+            "detail": detail,
+            "topic": state.topic,
+        })
+
     async def _run_computational_loop(
         self,
         state: ResearchState,
@@ -849,8 +891,16 @@ class DeliAutoResearch:
         ws_path = workspace or "."
         engine = AutoloopEngine(workspace=ws_path)
 
-        for gap in comp_gaps:
+        for i, gap in enumerate(comp_gaps):
             objective = gap["objective"]
+            await self._emit_progress(
+                state, "compute_gap", "running",
+                f"[{i+1}/{len(comp_gaps)}] {objective[:60]}",
+                pipeline="computational_loop",
+                stage_label=objective[:60],
+                stage_index=i,
+                total_stages=len(comp_gaps),
+            )
             try:
                 result = await engine.run(
                     objective=objective,
@@ -882,6 +932,15 @@ class DeliAutoResearch:
                     f"[compute] gap '{gap.get('gap', '?')[:50]}' → "
                     f"{'success' if result.success else 'partial'}"
                 )
+                await self._emit_progress(
+                    state, "compute_gap", "done",
+                    f"[{i+1}/{len(comp_gaps)}] "
+                    f"{'success' if result.success else 'partial'}",
+                    pipeline="computational_loop",
+                    stage_label=objective[:60],
+                    stage_index=i,
+                    total_stages=len(comp_gaps),
+                )
             except Exception as e:
                 state.integrity_log.append(
                     f"[compute] gap '{gap.get('gap', '?')[:50]}' failed: {e}"
@@ -898,23 +957,52 @@ class DeliAutoResearch:
         state = ResearchState(topic=topic, target_journal=target_journal)
         self._sessions[state.session_id] = state
 
-        # 1. Deep Research
+        # 1. Deep Research (topic_analysis + literature_search + gap_analysis)
+        await self._emit_progress(
+            state, ResearchStage.TOPIC_ANALYSIS, "running",
+            f"Analyzing topic: {topic[:80]}",
+        )
         state = await self.deep_research.run(state, rag_search_fn, config)
         self._check_gate(state, ResearchStage.LITERATURE_SEARCH)
         self._check_gate(state, ResearchStage.GAP_ANALYSIS)
+        await self._emit_progress(
+            state, ResearchStage.GAP_ANALYSIS, "done",
+            f"Found {len(state.literature)} papers, {len(state.gaps)} gaps",
+        )
 
         # 1.5 内层循环: 对需要计算数据的 gap 跑 AutoloopEngine
         if state.gaps:
+            await self._emit_progress(
+                state, ResearchStage.GAP_ANALYSIS, "running",
+                "Filling computational gaps via AutoloopEngine...",
+            )
             await self._run_computational_loop(state)
+            await self._emit_progress(
+                state, ResearchStage.GAP_ANALYSIS, "done",
+                f"Computational loop: {len(state.gaps_filled)} gaps filled",
+            )
 
-        # 2. Paper Writing
+        # 2. Paper Writing (outline + drafting)
+        await self._emit_progress(
+            state, ResearchStage.OUTLINE, "running",
+            "Generating paper outline and drafting sections...",
+        )
         state = await self.paper_writing.run(state, config)
         self._check_gate(state, ResearchStage.OUTLINE)
         self._check_gate(state, ResearchStage.DRAFTING)
+        await self._emit_progress(
+            state, ResearchStage.DRAFTING, "done",
+            f"Drafted {len(state.draft_sections)} sections, "
+            f"{len(state.integrated_draft)} chars total",
+        )
 
         # 3. Citation Verification
         state.stage = ResearchStage.CITATION_VERIFY
         state.touch()
+        await self._emit_progress(
+            state, ResearchStage.CITATION_VERIFY, "running",
+            f"Verifying {len(state.citations)} citations...",
+        )
         if state.citations:
             verify_results = await self.citation_verifier.verify(
                 state.citations, rag_search_fn, config
@@ -929,14 +1017,30 @@ class DeliAutoResearch:
                 f"{len(state.citation_issues)} issues"
             )
         self._check_gate(state, ResearchStage.CITATION_VERIFY)
+        await self._emit_progress(
+            state, ResearchStage.CITATION_VERIFY, "done",
+            f"{len(state.citation_issues)} citation issues found",
+        )
 
         # 4. Peer Review
+        await self._emit_progress(
+            state, ResearchStage.PEER_REVIEW, "running",
+            "Running peer review simulation (EIC + reviewers + devil's advocate)...",
+        )
         state = await self.peer_review.run(state, config)
         self._check_gate(state, ResearchStage.PEER_REVIEW)
+        await self._emit_progress(
+            state, ResearchStage.PEER_REVIEW, "done",
+            f"{len(state.reviews)} reviews, {len(state.revision_notes)} must-fix items",
+        )
 
         # 5. Revision (简单版: 把 must-fix 注入草稿重写)
         state.stage = ResearchStage.REVISION
         state.touch()
+        await self._emit_progress(
+            state, ResearchStage.REVISION, "running",
+            "Revising draft based on reviewer feedback...",
+        )
         if state.revision_notes:
             revision_agent = ResearchAgent(
                 role="reviser",
@@ -955,6 +1059,10 @@ class DeliAutoResearch:
             )
             state.integrated_draft = revised
             state.integrity_log.append("[revision] draft revised per reviewer feedback")
+        await self._emit_progress(
+            state, ResearchStage.REVISION, "done",
+            "Draft revised per reviewer feedback",
+        )
 
         # 6. Final
         state.stage = ResearchStage.FINAL
@@ -980,6 +1088,11 @@ class DeliAutoResearch:
             except Exception:
                 logger.debug("compliance check failed", exc_info=True)
 
+        await self._emit_progress(
+            state, ResearchStage.FINAL, "done",
+            f"Pipeline complete: {len(state.integrated_draft)} chars, "
+            f"{len(state.citations)} citations",
+        )
         return state
 
     async def run_stage(

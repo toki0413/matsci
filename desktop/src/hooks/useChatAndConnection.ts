@@ -27,6 +27,13 @@ import type { PetStatusState } from "../components/PetStatusWidget";
 import i18n from "../i18n";
 
 // ── Types ──────────────────────────────────────────────────────
+export interface PipelineStage {
+  name: string;
+  label: string;
+  status: "pending" | "running" | "done" | "error";
+  detail?: string;
+}
+
 export interface Message {
   role: "user" | "assistant" | "tool";
   content: string;
@@ -51,6 +58,11 @@ export interface Message {
   isCompacted?: boolean;
   compactBefore?: number;
   compactAfter?: number;
+  // pipeline progress
+  pipelineName?: string;
+  pipelineTopic?: string;
+  pipelineStages?: PipelineStage[];
+  pipelineProgressPct?: number;
 }
 
 export interface Thread {
@@ -589,6 +601,74 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       }
       case "task_progress": {
         const tp = data;
+
+        // Pipeline progress (deli_research, computational_loop, etc.)
+        if (tp.task_type === "pipeline") {
+          const pipelineKey = tp.pipeline || "pipeline";
+          const sIdx = tp.stage_index ?? 0;
+          const sTotal = tp.total_stages ?? 1;
+          setMessages((prev) => {
+            for (let i = prev.length - 1; i >= Math.max(0, prev.length - 20); i--) {
+              const m = prev[i];
+              if (m.isTaskProgress && m.pipelineName === pipelineKey) {
+                const stages = [...(m.pipelineStages || [])];
+                while (stages.length < sTotal) {
+                  stages.push({ name: "", label: "", status: "pending" });
+                }
+                stages[sIdx] = {
+                  name: tp.stage || "",
+                  label: tp.stage_label || tp.stage || "",
+                  status: (tp.status as PipelineStage["status"]) || "pending",
+                  detail: tp.detail,
+                };
+                for (let j = 0; j < sIdx; j++) {
+                  if (stages[j].status !== "error" && stages[j].status !== "done") {
+                    stages[j] = { ...stages[j], status: "done" };
+                  }
+                }
+                for (let j = sIdx + 1; j < sTotal; j++) {
+                  if (stages[j].status === "running") {
+                    stages[j] = { ...stages[j], status: "pending" };
+                  }
+                }
+                const updated = [...prev];
+                updated[i] = {
+                  ...m,
+                  pipelineStages: stages,
+                  pipelineProgressPct: tp.progress_pct,
+                  pipelineTopic: tp.topic || m.pipelineTopic,
+                  content: tp.detail || m.content,
+                  timestamp: formatTime(),
+                };
+                return updated;
+              }
+            }
+            // first message for this pipeline — create the card
+            const stages: PipelineStage[] = Array.from(
+              { length: sTotal },
+              (_, idx) => ({
+                name: idx === sIdx ? (tp.stage || "") : "",
+                label: idx === sIdx ? (tp.stage_label || tp.stage || "") : "",
+                status: idx === sIdx ? ((tp.status as PipelineStage["status"]) || "pending") : "pending",
+                detail: idx === sIdx ? tp.detail : undefined,
+              })
+            );
+            return [...prev, {
+              role: "assistant",
+              content: tp.detail || "",
+              timestamp: formatTime(),
+              isTaskProgress: true,
+              taskType: "pipeline",
+              pipelineName: pipelineKey,
+              pipelineTopic: tp.topic,
+              pipelineStages: stages,
+              pipelineProgressPct: tp.progress_pct,
+            } as Message];
+          });
+          break;
+        }
+
+        // HPC job / sweep / generic progress
         const taskKey = tp.task_type + (tp.job_id ? `_${tp.job_id}` : "");
         let progressText = "";
         if (tp.task_type === "hpc_job") {

@@ -5,10 +5,18 @@ Inspired by Claude Code's Tool.ts — every type is explicit and serializable.
 
 from __future__ import annotations
 
+import contextvars
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
+
+# Tools can push live progress events to the WS client by calling this.
+# Set by the WS layer before running the agent loop; defaults to None so
+# tools running outside WS (CLI, tests) just skip it.
+progress_cb: contextvars.ContextVar = contextvars.ContextVar(
+    "progress_cb", default=None
+)
 
 
 class PermissionMode(Enum):

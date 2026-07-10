@@ -69,6 +69,14 @@ export type WSMessage =
       completed?: number;
       total?: number;
       progress_pct?: number;
+      // pipeline-specific fields
+      pipeline?: string;
+      stage?: string;
+      stage_label?: string;
+      stage_index?: number;
+      total_stages?: number;
+      detail?: string;
+      topic?: string;
     }
   | { type: "sediment"; stored: boolean; preview?: string }
   | {
