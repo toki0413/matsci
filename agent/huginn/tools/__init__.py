@@ -116,6 +116,9 @@ def register_all_tools(config: Any | None = None) -> list[str]:
         ("huginn.evaluation.evaluation_tool", "EvaluationTool"),
         ("huginn.rag.rag_tool", "RAGTool"),
         ("huginn.plugins.autoresearch", "AutoresearchTool"),
+        # ── academic/ ──
+        ("huginn.academic.paper_tool", "PaperTool"),
+        ("huginn.academic.deli_research", "DeliAutoResearchTool"),
     ]
 
     # Optional simulation / science tools (skip if deps missing)

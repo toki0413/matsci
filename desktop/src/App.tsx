@@ -1027,7 +1027,29 @@ export default function App() {
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="relative flex-1 overflow-hidden">
+          {/* Restart waiting overlay */}
+          {(wsReconnecting || wsFailed) && (
+            <div className="absolute inset-0 z-40 flex items-center justify-center bg-bg-primary/80 backdrop-blur-sm">
+              <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-bg-secondary p-8 shadow-2xl">
+                {wsFailed ? (
+                  <>
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-error/10">
+                      <span className="text-2xl">!</span>
+                    </div>
+                    <div className="text-sm font-semibold text-text-primary">Backend stopped</div>
+                    <div className="text-xs text-text-muted">Reconnection attempts exhausted. Please restart the backend.</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-10 w-10 animate-spin rounded-full border-2 border-border border-t-accent" />
+                    <div className="text-sm font-semibold text-text-primary">Reconnecting…</div>
+                    <div className="text-xs text-text-muted">Waiting for backend to come back online</div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           {/* ChatPanel — 永久挂载，用 hidden 控制可见性，切换 tab 不丢失状态 */}
           <div hidden={activeTab !== "chat"} className="h-full">
             <ChatPanel
@@ -1064,6 +1086,7 @@ export default function App() {
               pendingMessages={pendingMessages}
               researchMode={researchMode}
               setResearchMode={setResearchMode}
+              contextBudgetTokens={config.context_budget_tokens}
             />
           </div>
 

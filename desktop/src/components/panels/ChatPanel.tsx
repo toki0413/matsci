@@ -109,6 +109,7 @@ interface ChatPanelProps {
   pendingMessages: string[];
   researchMode: boolean;
   setResearchMode: (v: boolean) => void;
+  contextBudgetTokens?: number;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -121,6 +122,7 @@ export function ChatPanel(props: ChatPanelProps) {
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages, researchMode, setResearchMode,
+    contextBudgetTokens,
   } = props;
 
   const [showCommands, setShowCommands] = useState(false);
@@ -435,8 +437,27 @@ export function ChatPanel(props: ChatPanelProps) {
         >
           <Volume2 size={12} /> {notifSound ? 'On' : 'Off'}
         </button>
-        <div className="ml-auto text-[10px] text-text-muted">
-          {messages.length} {messages.length === 1 ? 'message' : 'messages'}
+        <div className="ml-auto flex items-center gap-2 text-[10px] text-text-muted">
+          {(() => {
+            const budget = contextBudgetTokens || 32000;
+            const totalChars = messages.reduce((sum, m) => sum + (m.content?.length || 0) + (m.reasoning?.length || 0), 0) + input.length;
+            const estTokens = Math.round(totalChars / 4);
+            const pct = Math.min(estTokens / budget, 1);
+            const r = 8, c = 2 * Math.PI * r;
+            const color = pct > 0.8 ? 'var(--error, #ef4444)' : pct > 0.5 ? 'var(--warning, #f59e0b)' : 'var(--success, #22c55e)';
+            return (
+              <div className="flex items-center gap-1.5" title={`~${estTokens.toLocaleString()} / ${budget.toLocaleString()} tokens (${Math.round(pct * 100)}%)`}>
+                <svg width="20" height="20" viewBox="0 0 20 20" className="shrink-0">
+                  <circle cx="10" cy="10" r={r} fill="none" stroke="var(--border)" strokeWidth="2" />
+                  <circle cx="10" cy="10" r={r} fill="none" stroke={color} strokeWidth="2"
+                    strokeDasharray={c} strokeDashoffset={c * (1 - pct)}
+                    strokeLinecap="round" transform="rotate(-90 10 10)" style={{ transition: 'stroke-dashoffset 0.3s ease' }} />
+                </svg>
+                <span style={{ color }}>{Math.round(pct * 100)}%</span>
+              </div>
+            );
+          })()}
+          <span>{messages.length} {messages.length === 1 ? 'message' : 'messages'}</span>
         </div>
       </div>
 
@@ -534,11 +555,13 @@ export function ChatPanel(props: ChatPanelProps) {
           }
           if (msg.isCompacted) {
             return (
-              <div key={index} className="flex justify-center py-1">
-                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-bg-secondary px-3 py-1 text-xs text-text-muted">
-                  <Archive size={12} />
-                  <span>{t('chat.contextCompacted', { before: msg.compactBefore ?? '?', after: msg.compactAfter ?? '?' })}</span>
+              <div key={index} className="flex items-center gap-3 py-2">
+                <div className="h-px flex-1 bg-border" />
+                <div className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-accent/5 px-3 py-1 text-[11px] text-accent" title={`Context compacted: ${msg.compactBefore}% → ${msg.compactAfter}%`}>
+                  <Archive size={11} />
+                  <span>Context compressed ({msg.compactBefore ?? '?'}% → {msg.compactAfter ?? '?'}%)</span>
                 </div>
+                <div className="h-px flex-1 bg-border" />
               </div>
             );
           }

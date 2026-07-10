@@ -8,7 +8,7 @@
 import { useState, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Zap, Check, X, Loader2 } from "lucide-react";
 import { SettingsTabNav, ConfigField } from "../settings-shared";
 import type { SettingsTab } from "../settings-shared";
 import { PROVIDERS } from "../../lib/constants";
@@ -83,6 +83,70 @@ function LocalModelDiscoverer({
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── ProviderTestButton: tests LLM connectivity with a minimal request ──
+function ProviderTestButton({ model, apiBase }: { model: import("../../types/domain").ModelConfig; apiBase: string }) {
+  const [status, setStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [latency, setLatency] = useState<number | null>(null);
+  const [error, setError] = useState('');
+
+  const test = async () => {
+    setStatus('testing');
+    setError('');
+    setLatency(null);
+    const start = performance.now();
+    try {
+      const resp = await fetch(`${apiBase}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(model.api_key ? { 'Authorization': `Bearer ${model.api_key}` } : {}),
+        },
+        body: JSON.stringify({
+          model: model.model || 'gpt-3.5-turbo',
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 1,
+          stream: false,
+        }),
+      });
+      const elapsed = Math.round(performance.now() - start);
+      if (resp.ok) {
+        setStatus('ok');
+        setLatency(elapsed);
+      } else {
+        const body = await resp.text();
+        setStatus('fail');
+        setError(`${resp.status}: ${body.slice(0, 100)}`);
+      }
+    } catch (e: any) {
+      setStatus('fail');
+      setError(e.message || 'Connection failed');
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={test}
+        disabled={status === 'testing' || !model.model}
+        className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-tertiary disabled:opacity-40 transition-colors"
+        title="Test connectivity to this model provider"
+      >
+        {status === 'testing' ? <Loader2 size={12} className="animate-spin" /> :
+         status === 'ok' ? <Check size={12} className="text-success" /> :
+         status === 'fail' ? <X size={12} className="text-error" /> :
+         <Zap size={12} />}
+        Test
+      </button>
+      {status === 'ok' && latency !== null && (
+        <span className="text-[10px] text-success">{latency}ms</span>
+      )}
+      {status === 'fail' && (
+        <span className="text-[10px] text-error truncate max-w-[200px]" title={error}>{error}</span>
       )}
     </div>
   );
@@ -485,6 +549,33 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         <p className="text-xs text-text-muted">{t('settings.noCreds')}</p>
                       ) : null}
                       <LocalModelDiscoverer model={m} onUpdate={(patch) => updateModel(i, patch)} />
+                    </div>
+
+                    {/* Model capability badges + Provider test */}
+                    <div className="md:col-span-2 flex items-center justify-between border-t border-border pt-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(() => {
+                          const mn = (m.model || '').toLowerCase();
+                          const badges: { label: string; color: string }[] = [];
+                          // Context window estimation by model family
+                          if (/gpt-4o/.test(mn)) badges.push({ label: '128K ctx', color: 'bg-blue-500/10 text-blue-600' });
+                          else if (/claude-3.*sonnet|claude-3\.5/.test(mn)) badges.push({ label: '200K ctx', color: 'bg-purple-500/10 text-purple-600' });
+                          else if (/claude-3.*opus/.test(mn)) badges.push({ label: '200K ctx', color: 'bg-purple-500/10 text-purple-600' });
+                          else if (/gpt-4/.test(mn)) badges.push({ label: '8K ctx', color: 'bg-blue-500/10 text-blue-600' });
+                          else if (/gpt-3.5/.test(mn)) badges.push({ label: '16K ctx', color: 'bg-blue-500/10 text-blue-600' });
+                          else if (/deepseek/.test(mn)) badges.push({ label: '64K ctx', color: 'bg-green-500/10 text-green-600' });
+                          else if (/gemini.*1\.5|gemini-2/.test(mn)) badges.push({ label: '1M ctx', color: 'bg-orange-500/10 text-orange-600' });
+                          else if (/llama.*70b|llama-3/.test(mn)) badges.push({ label: '8K ctx', color: 'bg-teal-500/10 text-teal-600' });
+                          // Vision capability
+                          if (/gpt-4o|gpt-4-vision|claude-3|gemini|llava|qwen-vl/.test(mn)) badges.push({ label: 'Vision', color: 'bg-pink-500/10 text-pink-600' });
+                          // Function calling
+                          if (/gpt-4|gpt-3.5-turbo|claude-3|gemini|deepseek/.test(mn)) badges.push({ label: 'Tools', color: 'bg-amber-500/10 text-amber-600' });
+                          return badges.length > 0 ? badges.map((b, bi) => (
+                            <span key={bi} className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${b.color}`}>{b.label}</span>
+                          )) : <span className="text-[10px] text-text-muted">No metadata — type a model name</span>;
+                        })()}
+                      </div>
+                      <ProviderTestButton model={m} apiBase={m.base_url || 'https://api.openai.com/v1'} />
                     </div>
                   </div>
                 )}
