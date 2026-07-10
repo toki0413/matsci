@@ -295,6 +295,7 @@ async def _stream_agent_response(
                         else str(last_msg)
                     )
                     if text:
+                        full_response = text
                         await websocket.send_json(
                             {"type": "text_delta", "text": text}
                         )

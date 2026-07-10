@@ -558,6 +558,15 @@ PIPELINE_RULES: list[PipelineRule] = [
         next_tool_hints=["specialty_analysis_tool"],
         description="力学性质图像分析完成, 可做 LEFM 断裂判据评估",
     ),
+    # specialty_analysis_tool: 终端分析 (断裂判据 K_I/K_IC), 无后续工具建议
+    PipelineRule(
+        stage=PipelineStage.ANALYSIS,
+        tool_name="specialty_analysis_tool",
+        action_matcher=None,
+        next_stages=[],
+        next_tool_hints=[],
+        description="断裂力学评估完成 (K_I/K_IC), 管线终端",
+    ),
 ]
 
 
@@ -682,6 +691,15 @@ def _infer_stage(tool_name: str, tool_input: dict[str, Any]) -> PipelineStage | 
 
     if tool_name == "evidence_fusion_tool":
         return PipelineStage.CONSENSUS
+
+    # 视觉 × 力学交叉
+    if tool_name == "image_analysis_tool":
+        if action == "defect_detect":
+            return PipelineStage.PROPERTIES
+        return PipelineStage.ANALYSIS
+
+    if tool_name == "specialty_analysis_tool":
+        return PipelineStage.ANALYSIS
 
     return None
 
