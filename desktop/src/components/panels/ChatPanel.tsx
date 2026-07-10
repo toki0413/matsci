@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, Wrench, Loader2, AlertCircle } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -499,15 +499,25 @@ export function ChatPanel(props: ChatPanelProps) {
               <div key={index} className="flex justify-center">
                 <div className="w-full max-w-2xl rounded-xl border border-border bg-bg-secondary p-4 shadow-sm">
                   <div className="flex items-center gap-2 text-sm font-semibold text-accent">
-                    <span>🔧</span>
+                    <Wrench size={14} />
                     <span>{(msg as any).tool_calls.length} tool calls</span>
                   </div>
                   <div className="mt-2 space-y-2">
                     {(msg as any).tool_calls.map((tc: Message, ti: number) => (
-                      <details key={ti} className="rounded-lg bg-bg-tertiary p-2">
-                        <summary className="cursor-pointer text-xs font-medium text-text-secondary">
-                          {tc.tool_name} {tc.tool_status === "running" && "⟳"}
-                          {tc.tool_status === "done" && "✓"}
+                      <details key={ti} className={`rounded-lg border p-2 ${
+                        tc.tool_status === "running" ? "border-accent/30 bg-accent/5"
+                        : tc.tool_status === "error" ? "border-red-500/30 bg-red-500/5"
+                        : "border-border bg-bg-tertiary"
+                      }`}>
+                        <summary className="cursor-pointer text-xs font-medium text-text-secondary flex items-center gap-1.5">
+                          {tc.tool_status === "running" ? (
+                            <Loader2 size={12} className="text-accent animate-spin" />
+                          ) : tc.tool_status === "error" ? (
+                            <AlertCircle size={12} className="text-red-500" />
+                          ) : (
+                            <Check size={12} className="text-emerald-500" />
+                          )}
+                          {tc.tool_name}
                         </summary>
                         <pre className="mt-1 max-h-40 overflow-auto text-xs">
                           {JSON.stringify(tc.tool_args, null, 2)}
@@ -525,23 +535,30 @@ export function ChatPanel(props: ChatPanelProps) {
           if (msg.role === "tool") {
             return (
               <div key={index} className="flex justify-center">
-                <div className="w-full max-w-2xl rounded-xl border border-border bg-bg-secondary p-4 shadow-sm">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-accent">
-                    <span>🔧</span>
-                    <span>{msg.tool_name}</span>
+                <div className={`w-full max-w-2xl rounded-xl border p-4 shadow-sm ${
+                  msg.tool_status === "running" ? "border-accent/30 bg-accent/5"
+                  : msg.tool_status === "error" ? "border-red-500/30 bg-red-500/5"
+                  : "border-border bg-bg-secondary"
+                }`}>
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <Wrench size={14} className={msg.tool_status === "running" ? "text-accent" : "text-text-muted"} />
+                    <span className={msg.tool_status === "running" ? "text-accent" : "text-text-primary"}>{msg.tool_name}</span>
                     {msg.tool_status === "running" && (
-                      <span className="ml-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                      <Loader2 size={14} className="text-accent animate-spin ml-1" />
                     )}
                     {msg.tool_status === "done" && (
-                      <span className="ml-2 text-xs text-success">{t('chat.done')}</span>
+                      <span className="ml-1 inline-flex items-center gap-1 text-xs text-emerald-500">
+                        <Check size={12} />
+                        {t('chat.done')}
+                      </span>
                     )}
                   </div>
-                  <div className="mt-2 text-xs text-text-secondary">
-                    {t('chat.arguments')}
-                  </div>
-                  <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
-                    {JSON.stringify(msg.tool_args, null, 2)}
-                  </pre>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-text-secondary">{t('chat.arguments')}</summary>
+                    <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
+                      {JSON.stringify(msg.tool_args, null, 2)}
+                    </pre>
+                  </details>
                   {msg.tool_status === "done" && msg.tool_result !== undefined && (
                     <>
                       <div className="mt-3 text-xs text-text-secondary">
