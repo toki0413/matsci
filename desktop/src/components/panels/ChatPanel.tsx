@@ -1,8 +1,9 @@
-import { useState, useRef, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check } from 'lucide-react';
+import { useState, useRef, useEffect, type ReactNode, useCallback } from 'react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
+import { api } from '../../lib/api';
 import { toast } from '../Toast';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 import { SaveToMemoryButton } from '../SaveToMemoryButton';
@@ -125,6 +126,15 @@ export function ChatPanel(props: ChatPanelProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [copyingId, setCopyingId] = useState<number | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msg: Message; index: number } | null>(null);
+
+  // Close context menu on any click outside
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [ctxMenu]);
 
   // Input history — up arrow cycles through previous user messages
   const inputHistoryRef = useRef<string[]>([]);
@@ -158,7 +168,7 @@ export function ChatPanel(props: ChatPanelProps) {
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
     const files = Array.from(e.dataTransfer.files);
@@ -172,7 +182,22 @@ export function ChatPanel(props: ChatPanelProps) {
         };
         reader.readAsText(file);
       } else {
-        setInput((prev) => prev + '\n\n[Attached: ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)]');
+        // Binary file — actually upload to backend and notify
+        try {
+          setInput((prev) => prev + `\n\n[Uploading ${file.name} (${(file.size / 1024).toFixed(1)} KB)…]`);
+          const result = await api.uploadWithProgress<{ success?: boolean; path?: string; error?: string }>(
+            '/transfer/upload', file,
+          );
+          if (result.success) {
+            toast.success(`Uploaded ${file.name}`);
+            setInput((prev) => prev.replace(`[Uploading ${file.name}…`, `[Attached: ${file.name}]`));
+          } else {
+            toast.error(`Upload failed: ${result.error}`);
+            setInput((prev) => prev.replace(`[Uploading ${file.name} (${(file.size / 1024).toFixed(1)} KB)…`, `[Upload failed: ${file.name}]`));
+          }
+        } catch (err: any) {
+          toast.error(`Upload failed: ${err.message}`);
+        }
       }
     }
   };
@@ -340,6 +365,10 @@ export function ChatPanel(props: ChatPanelProps) {
             <div
               key={index}
               className={`group flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setCtxMenu({ x: e.clientX, y: e.clientY, msg, index });
+              }}
             >
               <div
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
@@ -440,7 +469,20 @@ export function ChatPanel(props: ChatPanelProps) {
                   </div>
                 )}
                 {msg.role === "user" && msg.timestamp !== "streaming" && (
-                  <div className="mt-1.5 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="mt-1.5 flex justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => {
+                        // Edit: fill input with message content, remove this message
+                        setInput(msg.content);
+                        setMessages(prev => prev.filter((_, i) => i !== index));
+                        setTimeout(() => textareaRef.current?.focus(), 0);
+                      }}
+                      className="rounded p-1 text-text-muted hover:text-text-primary transition-colors"
+                      aria-label="Edit message"
+                      title="Edit"
+                    >
+                      <Pencil size={13} />
+                    </button>
                     <button
                       onClick={() => {
                         setMessages(prev => prev.filter((_, i) => i !== index));
@@ -551,6 +593,70 @@ export function ChatPanel(props: ChatPanelProps) {
         {isStreaming ? t('chat.typing') : ''}
       </div>
 
+      {/* Context menu */}
+      {ctxMenu && (
+        <div
+          className="fixed z-50 min-w-[160px] overflow-hidden rounded-lg border border-border bg-bg-secondary py-1 shadow-xl"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {ctxMenu.msg.content && (
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(ctxMenu.msg.content);
+                toast.success('Copied');
+                setCtxMenu(null);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
+            >
+              <Copy size={12} /> Copy message
+            </button>
+          )}
+          {ctxMenu.msg.role === "user" && (
+            <button
+              onClick={() => {
+                setInput(ctxMenu.msg.content);
+                setMessages(prev => prev.filter((_, i) => i !== ctxMenu.index));
+                setCtxMenu(null);
+                setTimeout(() => textareaRef.current?.focus(), 0);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
+            >
+              <Pencil size={12} /> Edit
+            </button>
+          )}
+          {ctxMenu.index === groupedMessages.length - 1 && ctxMenu.msg.role === "assistant" && (
+            <button
+              onClick={() => {
+                const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+                if (lastUserMsg) {
+                  setMessages(prev => {
+                    const idx = [...prev].reverse().findIndex(m => m.role === "assistant");
+                    if (idx === -1) return prev;
+                    return prev.slice(0, prev.length - 1 - idx);
+                  });
+                  setTimeout(() => { setInput(lastUserMsg.content); sendMessage(); }, 50);
+                }
+                setCtxMenu(null);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
+            >
+              <RotateCw size={12} /> Regenerate
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setMessages(prev => prev.filter((_, i) => i !== ctxMenu.index));
+              toast.success('Message deleted');
+              setCtxMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-error hover:bg-bg-tertiary"
+          >
+            <Trash2 size={12} /> Delete
+          </button>
+        </div>
+      )}
+
       <div className="border-t border-border bg-bg-secondary p-4">
         {!isConnected && (
             <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
@@ -633,13 +739,13 @@ export function ChatPanel(props: ChatPanelProps) {
             <div className="flex gap-2">
               <button
                 onClick={() => respondToApproval(pendingApproval.request_id, true)}
-                className="rounded-lg bg-success px-4 py-2 text-sm font-medium text-white hover:bg-success/80 transition-colors"
+                className="btn-success px-4 py-2 text-sm"
               >
                 {t('chat.approve')}
               </button>
               <button
                 onClick={() => respondToApproval(pendingApproval.request_id, false)}
-                className="rounded-lg bg-error px-4 py-2 text-sm font-medium text-white hover:bg-error/80 transition-colors"
+                className="btn-danger px-4 py-2 text-sm"
               >
                 {t('chat.deny')}
               </button>
@@ -649,9 +755,11 @@ export function ChatPanel(props: ChatPanelProps) {
 
         <div className="mb-2 flex items-center justify-between gap-2">
           {/* Mode selector — segmented control */}
-          <div className="flex items-center gap-1 rounded-lg bg-bg-tertiary p-0.5">
+          <div className="flex items-center gap-1 rounded-lg bg-bg-tertiary p-0.5" role="radiogroup" aria-label="Chat mode">
             <button
               onClick={() => { setMode("chat"); setResearchMode(false); }}
+              aria-checked={mode === "chat" && !researchMode}
+              role="radio"
               className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                 mode === "chat" && !researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
               }`}
@@ -660,6 +768,8 @@ export function ChatPanel(props: ChatPanelProps) {
             </button>
             <button
               onClick={() => { setMode("plan"); setResearchMode(false); }}
+              aria-checked={mode === "plan"}
+              role="radio"
               className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                 mode === "plan" ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
               }`}
@@ -668,6 +778,8 @@ export function ChatPanel(props: ChatPanelProps) {
             </button>
             <button
               onClick={() => { setResearchMode(!researchMode); if (!researchMode) setMode("chat"); }}
+              aria-checked={researchMode}
+              role="radio"
               className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                 researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
               }`}
@@ -678,7 +790,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
           {/* Options popover */}
           <details className="relative">
-            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors" title="Options">
+            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors" title="Options" aria-label="Chat options" role="button" aria-expanded="false">
               <Settings size={14} />
             </summary>
             <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-secondary p-3 shadow-lg">

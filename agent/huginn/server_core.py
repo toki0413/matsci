@@ -171,7 +171,7 @@ def get_memory_manager() -> MemoryManager:
     """Get or create the global MemoryManager."""
     if get_context().memory_manager is not None:
         return get_context().memory_manager
-    cfg = HuginnConfig.from_env()
+    cfg = get_config()
     memory_md = Path(cfg.workspace) / "MEMORY.md" if cfg.workspace else None
 
     # Try to wire up semantic search via VectorStore + chromadb.

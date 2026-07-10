@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, lazy, Suspense, Fragment } from "react";
+﻿import { useState, useEffect, useRef, lazy, Suspense, Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Pet from "./Pet";
@@ -45,6 +45,7 @@ import { CoderPanel } from "./components/panels/CoderPanel";
 import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
 import { HPCPanel } from "./components/panels/HPCPanel";
 import { useTheme } from "./hooks/useTheme";
+import { useFocusTrap } from "./hooks/useFocusTrap";
 import { toast } from "./components/Toast";
 import { LogsPanel } from "./components/panels/LogsPanel";
 import { TerminalPanel } from "./components/panels/TerminalPanel";
@@ -104,6 +105,10 @@ export default function App() {
   const { t } = useTranslation();
   const { theme, toggleTheme } = useTheme();
 
+  // Focus trap for modals
+  const toolPaletteRef = useRef<HTMLDivElement>(null);
+  const guideModalRef = useRef<HTMLDivElement>(null);
+
   // ── Sidebar state ────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<
     | "chat" | "tools" | "memory" | "skills" | "settings" | "files"
@@ -115,6 +120,40 @@ export default function App() {
     | "persona"
   >("chat");
   const [sidebarHidden, setSidebarHidden] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem('sidebar-width');
+    return saved ? parseInt(saved) : 224;
+  });
+
+  // Sidebar drag-to-resize
+  const sidebarDraggingRef = useRef(false);
+  const handleSidebarResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    sidebarDraggingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!sidebarDraggingRef.current) return;
+      const w = Math.max(180, Math.min(400, e.clientX));
+      setSidebarWidth(w);
+    };
+    const onUp = () => {
+      if (sidebarDraggingRef.current) {
+        sidebarDraggingRef.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem('sidebar-width', String(sidebarWidth));
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [sidebarWidth]);
   const [toolPaletteOpen, setToolPaletteOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
 
@@ -181,7 +220,7 @@ export default function App() {
   } = useLogs();
 
   const {
-    kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
+    kbDocs, kbAvailable, kbLoading, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
     fileInputRef, parseFileInputRef,
     setKbQuery,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
@@ -499,6 +538,10 @@ export default function App() {
     setSkills,
   });
 
+  // Focus trap for modals — must be after toolPaletteOpen/showGuide are available
+  useFocusTrap(toolPaletteRef, toolPaletteOpen);
+  useFocusTrap(guideModalRef, showGuide);
+
   // ── loadWorkflowTemplates ────────────────────────────────────
   const loadWorkflowTemplates = async () => {
     try {
@@ -651,7 +694,11 @@ export default function App() {
           <ChevronDown size={16} className="-rotate-90" />
         </button>
       ) : (
-      <aside className="sidebar-shell flex w-56 flex-col border-r border-border bg-bg-secondary">
+        <>
+      <aside
+        className="sidebar-shell flex flex-col border-r border-border bg-bg-secondary"
+        style={{ width: `${sidebarWidth}px` }}
+      >
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
           <img src="/raven-logo.png" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
           <div className="flex flex-1 flex-col">
@@ -746,6 +793,18 @@ export default function App() {
           </div>
         </div>
       </aside>
+      {/* Sidebar resize handle */}
+      <div
+        onMouseDown={handleSidebarResizeStart}
+        className="group relative w-1 shrink-0 cursor-col-resize transition-colors hover:bg-accent/30 active:bg-accent/50"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        title="Drag to resize"
+      >
+        <div className="absolute inset-y-0 left-0 w-full" />
+      </div>
+      </>
       )}
 
       {/* Main */}
@@ -956,6 +1015,7 @@ export default function App() {
               parseFileInputRef={parseFileInputRef}
               parseLoading={parseLoading}
               uploadPct={uploadPct}
+              kbLoading={kbLoading}
               kbMsg={kbMsg}
               kbDocs={kbDocs}
               kbAvailable={kbAvailable}
@@ -1542,6 +1602,7 @@ export default function App() {
           aria-label="Command palette"
         >
           <div
+            ref={toolPaletteRef}
             className="w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-bg-secondary shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -1607,7 +1668,7 @@ export default function App() {
 
       {showGuide && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Guide" onClick={() => setShowGuide(false)}>
-          <div className="w-full max-w-lg rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl">
+          <div ref={guideModalRef} className="w-full max-w-lg rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl">
             <h2 className="mb-1 text-xl font-bold">{t('guide.title')}</h2>
             <p className="mb-5 text-sm italic text-text-secondary">
               {t('guide.subtitle')}
