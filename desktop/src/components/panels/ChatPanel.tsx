@@ -80,6 +80,7 @@ interface ChatPanelProps {
   pendingClarifications: any[];
   isConnected: boolean;
   wsReconnecting?: boolean;
+  wsFailed?: boolean;
   sendMessage: () => void;
   pendingPlan: string;
   setPendingPlan: (v: string) => void;
@@ -112,7 +113,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const {
     messages, chatSearchOpen, chatSearchQuery, setChatSearchOpen, setChatSearchQuery,
     wsClientRef, setMessages, answerClarification, pendingClarifications,
-    isConnected, wsReconnecting, sendMessage, pendingPlan, setPendingPlan, planLoading,
+    isConnected, wsReconnecting, wsFailed, sendMessage, pendingPlan, setPendingPlan, planLoading,
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
@@ -552,16 +553,30 @@ export function ChatPanel(props: ChatPanelProps) {
 
       <div className="border-t border-border bg-bg-secondary p-4">
         {!isConnected && (
-          <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
-            <span>{wsReconnecting ? t('chat.reconnecting') : t('chat.backendNotConnected')}</span>
-            {wsReconnecting && (
-              <span className="ml-2 inline-flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
-                retrying…
-              </span>
-            )}
-          </div>
-        )}
+            <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
+              {wsFailed ? (
+                <div className="flex items-center gap-2">
+                  <span>Backend appears to have stopped. Reconnection attempts exhausted.</span>
+                  <button
+                    onClick={() => { try { (window as any).__TAURI__.invoke("start_backend"); } catch {} }}
+                    className="rounded bg-warning/20 px-2 py-0.5 text-xs font-medium text-warning hover:bg-warning/30"
+                  >
+                    Restart Backend
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <span>{wsReconnecting ? t('chat.reconnecting') : t('chat.backendNotConnected')}</span>
+                  {wsReconnecting && (
+                    <span className="ml-2 inline-flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
+                      retrying…
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
         {pendingClarifications.length > 0 && (
           <div className="mb-3 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs text-accent">

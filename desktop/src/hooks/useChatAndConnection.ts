@@ -97,6 +97,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [status, setStatus] = useState<string>("connecting…");
   const [isConnected, setIsConnected] = useState(false);
   const [wsReconnecting, setWsReconnecting] = useState(false);
+  const [wsFailed, setWsFailed] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pendingResponseRef = useRef<string>("");
@@ -675,8 +676,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         if (wsStatus === "reconnecting") {
           setIsConnected(false);
           setWsReconnecting(true);
+          setWsFailed(false);
         } else if (wsStatus === "connected") {
           setWsReconnecting(false);
+          setWsFailed(false);
+        } else if (wsStatus === "failed") {
+          setWsReconnecting(false);
+          setWsFailed(true);
         }
       },
       onMessage: (data) => {
@@ -936,7 +942,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     isStreaming,
     messagesEndRef,
     // Connection
-    isConnected, status, wsReconnecting,
+    isConnected, status, wsReconnecting, wsFailed,
     wsClientRef,
     // Persona
     personaList, personaEmotion, pendingClarifications,

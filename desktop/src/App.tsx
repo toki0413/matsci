@@ -11,7 +11,7 @@ const Notebook = lazy(() => import("./components/Notebook"));
 const SweepDashboard = lazy(() => import("./components/SweepDashboard"));
 const StructureViewer = lazy(() => import("./components/StructureViewer"));
 const PersonaManager = lazy(() => import("./components/PersonaManager"));
-import { PROVIDERS } from "./lib/constants";
+import { PROVIDERS, formatTimeAgo } from "./lib/constants";
 import { api } from "./lib/api";
 import { getApiBase } from "./lib/api-client";
 import { useToolRunner } from "./hooks/useToolRunner";
@@ -181,7 +181,7 @@ export default function App() {
   } = useLogs();
 
   const {
-    kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading,
+    kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
     fileInputRef, parseFileInputRef,
     setKbQuery,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
@@ -465,7 +465,7 @@ export default function App() {
     chatSearchOpen, chatSearchQuery,
     isStreaming,
     messagesEndRef,
-    isConnected, status, wsReconnecting,
+    isConnected, status, wsReconnecting, wsFailed,
     wsClientRef,
     personaList, personaEmotion, pendingClarifications,
     threads, activeThread,
@@ -852,6 +852,7 @@ export default function App() {
               pendingClarifications={pendingClarifications}
               isConnected={isConnected}
               wsReconnecting={wsReconnecting}
+              wsFailed={wsFailed}
               sendMessage={sendMessage}
               pendingPlan={pendingPlan}
               setPendingPlan={setPendingPlan}
@@ -908,7 +909,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "files" && (
+          <div hidden={activeTab !== "files"}>
             <FilesPanel
               cwd={cwd}
               selectedFile={selectedFile ?? ""}
@@ -921,7 +922,7 @@ export default function App() {
               saveFile={saveFile}
               renderTree={renderTree}
             />
-          )}
+          </div>
 
           {activeTab === "terminal" && (
             <TerminalPanel
@@ -946,7 +947,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "knowledge" && (
+          <div hidden={activeTab !== "knowledge"}>
             <KnowledgePanel
               config={config}
               setConfig={setConfig}
@@ -954,6 +955,7 @@ export default function App() {
               fileInputRef={fileInputRef}
               parseFileInputRef={parseFileInputRef}
               parseLoading={parseLoading}
+              uploadPct={uploadPct}
               kbMsg={kbMsg}
               kbDocs={kbDocs}
               kbAvailable={kbAvailable}
@@ -968,7 +970,7 @@ export default function App() {
               ingestUrl={ingestUrl}
               loadProvenanceDag={loadProvenanceDag}
             />
-          )}
+          </div>
 
           {activeTab === "projects" && (
             <ResearchProjectPanel onOpenInChat={() => setActiveTab("chat")} />
@@ -1008,7 +1010,7 @@ export default function App() {
             </ErrorBoundary>
           )}
 
-          {activeTab === "memory" && (
+          <div hidden={activeTab !== "memory"}>
             <MemoryPanel
               memories={memories}
               memoriesLoading={memoriesLoading}
@@ -1032,7 +1034,7 @@ export default function App() {
               pruneMemory={pruneMemory}
               syncMemoryMd={syncMemoryMd}
             />
-          )}
+          </div>
 
           {activeTab === "plugins" && (
             <PluginsPanel
@@ -1078,7 +1080,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "settings" && (
+          <div hidden={activeTab !== "settings"}>
             <SettingsPanel
               config={config}
               configDirty={configDirty}
@@ -1107,7 +1109,7 @@ export default function App() {
               personaList={personaList}
               personaEmotion={personaEmotion}
             />
-          )}
+          </div>
 
           {activeTab === "benchmark" && (
             <BenchmarkPanel
@@ -1140,9 +1142,9 @@ export default function App() {
                   <div className="card space-y-3">
                     <h3 className="text-sm font-semibold">Report</h3>
                     <div className="text-xs text-text-secondary">
-                      Failure rules: {evolve.result.failure_rules?.length} · Success skills: {evolve.result.success_skills?.length} · Prompt patches: {evolve.result.prompt_patches?.length}
+                      Failure rules: {evolve.result.failure_rules?.length ?? 0} · Success skills: {evolve.result.success_skills?.length ?? 0} · Prompt patches: {evolve.result.prompt_patches?.length ?? 0}
                     </div>
-                    <div className="text-xs text-text-secondary">Total rules: {evolve.result.total_rules_after} · Total skills: {evolve.result.total_skills_after}</div>
+                    <div className="text-xs text-text-secondary">Total rules: {(evolve.result.total_rules_after ?? 0).toLocaleString()} · Total skills: {(evolve.result.total_skills_after ?? 0).toLocaleString()}</div>
                   </div>
                 )}
               </div>
@@ -1395,7 +1397,7 @@ export default function App() {
                                 ? Object.entries(rec.key_properties).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(", ")
                                 : "—"}
                             </td>
-                            <td className="py-2 pr-4 text-text-muted">{rec.timestamp || rec.time || "—"}</td>
+                            <td className="py-2 pr-4 text-text-muted">{rec.timestamp || rec.time ? formatTimeAgo(rec.timestamp || rec.time) : "—"}</td>
                           </tr>
                           {provenanceExpanded === i && (
                             <tr key={`${i}-detail`} className="bg-bg-tertiary">

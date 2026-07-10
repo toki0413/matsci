@@ -130,4 +130,36 @@ export const api = {
     if (data instanceof File) form.append("file", data);
     return request<T>(path, { ...options, method: "POST", body: form });
   },
+
+  /** Multipart upload with progress callback — uses XHR for upload.onprogress. */
+  uploadWithProgress: <T = unknown>(
+    path: string,
+    file: File,
+    onProgress?: (loaded: number, total: number) => void,
+  ): Promise<T> => {
+    const form = new FormData();
+    form.append("file", file);
+    return new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${getApiBase()}${path}`);
+      // Copy auth headers
+      const auth = authHeaders();
+      for (const [k, v] of Object.entries(auth)) {
+        if (typeof v === "string") xhr.setRequestHeader(k, v);
+      }
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch { resolve(xhr.responseText as unknown as T); }
+        } else {
+          reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.send(form);
+    });
+  },
 };
