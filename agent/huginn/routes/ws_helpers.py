@@ -24,6 +24,7 @@ from huginn.server_core import (
     _snapshot_directory,
     _state_lock,
 )
+from huginn.types import progress_cb
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,9 @@ async def _stream_agent_response(
             except Exception:
                 _ws_closed[0] = True
                 logger.debug("WS closed mid-stream, stopping sends")
+
+        # let tools push progress events back through the same WS
+        progress_cb.set(_ws_send)
 
         async for state in agent.chat(content, thread_id):
             if "_token" in state:

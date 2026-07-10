@@ -7,6 +7,7 @@ import { api } from '../../lib/api';
 import { toast } from '../Toast';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 import { SaveToMemoryButton } from '../SaveToMemoryButton';
+import { PipelineProgressCard } from '../PipelineProgressCard';
 import MessageContent from '../MessageContent';
 import type { Message } from '../../hooks/useChatAndConnection';
 import type { ReconnectingWebSocket } from '../../lib/ws-client';
@@ -562,6 +563,16 @@ export function ChatPanel(props: ChatPanelProps) {
                   <span>Context compressed ({msg.compactBefore ?? '?'}% → {msg.compactAfter ?? '?'}%)</span>
                 </div>
                 <div className="h-px flex-1 bg-border" />
+              </div>
+            );
+          }
+          // pipeline progress card (deli_research, computational_loop)
+          if (msg.isTaskProgress && msg.taskType === "pipeline") {
+            return (
+              <div key={index} className="flex justify-center px-4">
+                <div className="w-full max-w-2xl">
+                  <PipelineProgressCard msg={msg} />
+                </div>
               </div>
             );
           }
