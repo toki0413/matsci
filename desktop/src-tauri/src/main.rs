@@ -124,9 +124,22 @@ async fn start_backend(
         return Ok("already running externally".to_string());
     }
 
-    // In dev mode, skip the sidecar (it can't find python-runtime in dev)
-    // and use Python directly — either from the installed Huginn app or PATH.
-    let is_dev = std::env::var("HUGINN_DEV_MODE").is_ok();
+    // Always use dev mode — the sidecar binary has frozen old code that
+    // lacks our recent fixes (config loading, thread_id, reasoning, etc.).
+    // System Python from PATH runs the latest source directly.
+    let is_dev = true;
+
+    // Deterministic config file path under AppData.
+    // Without this, the backend writes huginn.toml to the CWD, which is
+    // unpredictable and leads to config corruption.
+    let local_app = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string())
+    });
+    let config_dir = std::path::PathBuf::from(&local_app).join("Huginn");
+    let _ = std::fs::create_dir_all(&config_dir);
+    let config_file = std::env::var("HUGINN_CONFIG_FILE")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|_| config_dir.join("huginn.toml").to_string_lossy().to_string());
 
     // ── Production: try sidecars first ──────────────────────────────
     if !is_dev {
@@ -206,43 +219,34 @@ async fn start_backend(
     // ── Dev / standalone fallback: direct Python ────────────────────
     eprintln!("[start_backend] Using Python fallback (dev={})", is_dev);
 
-    // In dev mode, try the installed Huginn Python runtime first.
-    let installed_python = if is_dev {
-        let local_app = std::env::var("LOCALAPPDATA").unwrap_or_default();
-        let p = std::path::PathBuf::from(local_app)
-            .join("Huginn")
-            .join("python-runtime")
-            .join("python.exe");
-        if p.exists() { Some(p) } else { None }
-    } else {
-        None
-    };
-
-    // In production, prefer the bundled Python runtime from resources.
-    let bundled_python = app
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|d| d.join("python-runtime").join("python.exe"))
-        .filter(|p| p.exists());
-
-    let python_exe = installed_python
-        .as_ref()
-        .or(bundled_python.as_ref())
-        .map(|p| p.to_str().unwrap_or("python").to_string())
-        .unwrap_or_else(|| "python".to_string());
-
+    // Use system Python from PATH. The installed python-runtime directory
+    // only has site-packages, not the interpreter itself.
+    let python_exe = "python".to_string();
     eprintln!("[start_backend] Python: {}", python_exe);
+
+    // Point PYTHONPATH at the agent source so huginn.server is importable.
+    // The workspace structure is: matsci-agent/agent/huginn/...
+    let agent_src = std::path::PathBuf::from(&local_app)
+        .join("..")
+        .join("Desktop")
+        .join("matsci-agent")
+        .join("agent");
+    let pythonpath = if agent_src.exists() {
+        agent_src.to_string_lossy().to_string()
+    } else {
+        std::env::var("PYTHONPATH").unwrap_or_default()
+    };
 
     let python_cmd = app.shell().command(&python_exe);
     let (mut rx, child) = python_cmd
         .args(["-m", "huginn.server", "--port", "8000"])
         .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONPATH", &pythonpath)
         .env("DEEPSEEK_API_KEY", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())
         .env("HUGINN_PROVIDER", std::env::var("HUGINN_PROVIDER").unwrap_or_default())
         .env("HUGINN_MODEL", std::env::var("HUGINN_MODEL").unwrap_or_default())
-        .env("HUGINN_DEV_MODE", std::env::var("HUGINN_DEV_MODE").unwrap_or_default())
-        .env("HUGINN_CONFIG_FILE", std::env::var("HUGINN_CONFIG_FILE").unwrap_or_default())
+        .env("HUGINN_DEV_MODE", "1")
+        .env("HUGINN_CONFIG_FILE", &config_file)
         .spawn()
         .map_err(|e| format!("failed to start backend via python: {}", e))?;
 

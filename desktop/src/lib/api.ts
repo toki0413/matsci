@@ -14,12 +14,24 @@
 import { getApiBase, getAuthToken } from "./api-client";
 
 async function fetchWithRetry(input: string, init: RequestInit): Promise<Response> {
-  const resp = await fetch(input, init);
-  if (resp.status >= 500) {
-    await new Promise((r) => setTimeout(r, 1000));
-    return fetch(input, init);
+  // 60s timeout — covers slow LLM calls but not infinite hangs
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000);
+  try {
+    const resp = await fetch(input, { ...init, signal: controller.signal });
+    if (resp.status >= 500) {
+      await new Promise((r) => setTimeout(r, 1000 + Math.random() * 500)); // jitter
+      return fetch(input, init); // retry without the abort signal (fresh controller)
+    }
+    return resp;
+  } catch (e: any) {
+    if (e.name === 'AbortError') {
+      throw new Error('Request timed out (60s)');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return resp;
 }
 
 function authHeaders(): Record<string, string> {

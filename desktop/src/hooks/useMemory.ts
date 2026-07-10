@@ -11,6 +11,7 @@ import type { MemoryEntry, MemoryStats } from '../types/domain';
 
 export function useMemory() {
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
+  const [memoriesLoading, setMemoriesLoading] = useState(true);
   const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
   const [memorySearch, setMemorySearch] = useState('');
   const [memoryFilter, setMemoryFilter] = useState<{ category: string; tier: string }>({ category: '', tier: '' });
@@ -32,6 +33,7 @@ export function useMemory() {
       params.set('limit', '200');
       const data = await api.get<{ entries?: MemoryEntry[] }>(`/memory?${params.toString()}`);
       setMemories(data.entries || []);
+      setMemoriesLoading(false);
     } catch (e: any) {
       setMemoryMsg(`Load failed: ${e.message}`);
     }
@@ -165,7 +167,7 @@ export function useMemory() {
   };
 
   return {
-    memories, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
+    memories, memoriesLoading, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView, setMemoryMsg,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
     updateMemory, promoteMemory, pruneMemory, syncMemoryMd,

@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react';
-import { Search, X, Settings, Archive } from 'lucide-react';
-import { Virtuoso } from 'react-virtuoso';
+import { useState, useRef, type ReactNode, useCallback } from 'react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check } from 'lucide-react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
+import { toast } from '../Toast';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 import { SaveToMemoryButton } from '../SaveToMemoryButton';
 import MessageContent from '../MessageContent';
@@ -37,7 +38,19 @@ function CollapsibleMessageContent({ content, isStreaming }: { content: string; 
   const [expanded, setExpanded] = useState(false);
   const isLong = content.length > 1500;
   if (!isLong || isStreaming || expanded) {
-    return <MessageContent content={content} />;
+    return (
+      <>
+        <MessageContent content={content} />
+        {isLong && expanded && !isStreaming && (
+          <button
+            onClick={() => setExpanded(false)}
+            className="mt-1 text-xs text-accent hover:underline"
+          >
+            Show less
+          </button>
+        )}
+      </>
+    );
   }
   return (
     <div>
@@ -66,6 +79,7 @@ interface ChatPanelProps {
   answerClarification: (questionId: string | undefined, answer: string) => void;
   pendingClarifications: any[];
   isConnected: boolean;
+  wsReconnecting?: boolean;
   sendMessage: () => void;
   pendingPlan: string;
   setPendingPlan: (v: string) => void;
@@ -98,7 +112,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const {
     messages, chatSearchOpen, chatSearchQuery, setChatSearchOpen, setChatSearchQuery,
     wsClientRef, setMessages, answerClarification, pendingClarifications,
-    isConnected, sendMessage, pendingPlan, setPendingPlan, planLoading,
+    isConnected, wsReconnecting, sendMessage, pendingPlan, setPendingPlan, planLoading,
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
@@ -108,6 +122,24 @@ export function ChatPanel(props: ChatPanelProps) {
   const [showCommands, setShowCommands] = useState(false);
   const [cmdSelectIdx, setCmdSelectIdx] = useState(0);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [copyingId, setCopyingId] = useState<number | null>(null);
+
+  // Input history — up arrow cycles through previous user messages
+  const inputHistoryRef = useRef<string[]>([]);
+  const historyIdxRef = useRef(-1);
+  const savedInputRef = useRef("");
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, []);
+
   const filteredCommands = showCommands
     ? INLINE_COMMANDS.filter(c => c.cmd.startsWith(input))
     : [];
@@ -225,10 +257,13 @@ export function ChatPanel(props: ChatPanelProps) {
           </button>
         </div>
       )}
+      <div className="relative flex-1">
       <Virtuoso
+        ref={virtuosoRef}
         data={groupedMessages}
-        className="cv-list flex-1"
+        className="cv-list"
         style={{ height: '100%' }}
+        atBottomStateChange={(atBottom) => setShowScrollBtn(!atBottom)}
         itemContent={(index, msg) => {
           if ((msg as any).role === "tool_group" && (msg as any).tool_calls) {
             return (
@@ -303,7 +338,7 @@ export function ChatPanel(props: ChatPanelProps) {
           return (
             <div
               key={index}
-              className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+              className={`group flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
             >
               <div
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
@@ -348,10 +383,74 @@ export function ChatPanel(props: ChatPanelProps) {
                       <CollapsibleMessageContent content={msg.content} isStreaming={msg.timestamp === "streaming"} />
                     )
                   )}
+                  {/* Typing dots — shown when streaming hasn't produced content yet */}
+                  {msg.timestamp === "streaming" && !msg.content && !msg.reasoning && (
+                    <div className="flex items-center gap-1 py-2" aria-label="Assistant is typing">
+                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  )}
                 </div>
                 {msg.role === "assistant" && msg.content && msg.timestamp !== "streaming" && (
-                  <div className="mt-1.5 flex justify-end">
+                  <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(msg.content).then(() => {
+                            setCopyingId(index);
+                            setTimeout(() => setCopyingId(null), 1500);
+                            toast.success('Copied');
+                          });
+                        }}
+                        className="rounded p-1 text-text-muted hover:text-text-primary transition-colors"
+                        aria-label="Copy message"
+                        title="Copy"
+                      >
+                        {copyingId === index ? <Check size={13} /> : <Copy size={13} />}
+                      </button>
+                      {index === groupedMessages.length - 1 && !isStreaming && (
+                        <button
+                          onClick={() => {
+                            // Remove last assistant message and resend previous user message
+                            const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+                            if (lastUserMsg) {
+                              setMessages(prev => {
+                                const lastAssistantIdx = [...prev].reverse().findIndex(m => m.role === "assistant");
+                                if (lastAssistantIdx === -1) return prev;
+                                const realIdx = prev.length - 1 - lastAssistantIdx;
+                                return prev.slice(0, realIdx);
+                              });
+                              setTimeout(() => {
+                                setInput(lastUserMsg.content);
+                                sendMessage();
+                              }, 50);
+                            }
+                          }}
+                          className="rounded p-1 text-text-muted hover:text-text-primary transition-colors"
+                          aria-label="Regenerate response"
+                          title="Regenerate"
+                        >
+                          <RotateCw size={13} />
+                        </button>
+                      )}
+                    </div>
                     <SaveToMemoryButton content={msg.content} />
+                  </div>
+                )}
+                {msg.role === "user" && msg.timestamp !== "streaming" && (
+                  <div className="mt-1.5 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => {
+                        setMessages(prev => prev.filter((_, i) => i !== index));
+                        toast.success('Message deleted');
+                      }}
+                      className="rounded p-1 text-text-muted hover:text-error transition-colors"
+                      aria-label="Delete message"
+                      title="Delete"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
                 )}
                 {/* Plan confirm/cancel buttons */}
@@ -433,11 +532,34 @@ export function ChatPanel(props: ChatPanelProps) {
         }}
         followOutput={'auto'}
       />
+      {/* Scroll to bottom button */}
+      {showScrollBtn && (
+        <button
+          onClick={() => virtuosoRef.current?.scrollToIndex({ index: groupedMessages.length - 1, behavior: 'smooth' })}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 rounded-full border border-border bg-bg-secondary p-2 shadow-lg hover:bg-bg-tertiary transition-colors"
+          aria-label="Scroll to latest"
+          title="Scroll to bottom"
+        >
+          <ArrowDown size={16} />
+        </button>
+      )}
+      </div>
+
+      {/* ARIA live region for screen readers */}
+      <div aria-live="polite" className="sr-only">
+        {isStreaming ? t('chat.typing') : ''}
+      </div>
 
       <div className="border-t border-border bg-bg-secondary p-4">
         {!isConnected && (
-          <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
-            {t('chat.backendNotConnected')}
+          <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
+            <span>{wsReconnecting ? t('chat.reconnecting') : t('chat.backendNotConnected')}</span>
+            {wsReconnecting && (
+              <span className="ml-2 inline-flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
+                retrying…
+              </span>
+            )}
           </div>
         )}
 
@@ -606,11 +728,13 @@ export function ChatPanel(props: ChatPanelProps) {
           className={`flex items-end gap-3 rounded-lg transition-colors ${isDragOver ? 'border-2 border-dashed border-accent bg-accent/5 p-1' : 'border-2 border-transparent p-1'}`}
         >
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => {
               const val = e.target.value;
               setInput(val);
               setShowCommands(val.startsWith('/') && !val.includes(' '));
+              autoResize();
             }}
             onKeyDown={(e) => {
               if (showCommands && filteredCommands.length > 0) {
@@ -642,9 +766,43 @@ export function ChatPanel(props: ChatPanelProps) {
                   return;
                 }
               }
+              // Up arrow in empty input → recall last user message
+              if (e.key === 'ArrowUp' && !showCommands && input === '') {
+                const history = inputHistoryRef.current;
+                if (history.length > 0) {
+                  e.preventDefault();
+                  if (historyIdxRef.current === -1) {
+                    savedInputRef.current = input;
+                    historyIdxRef.current = history.length - 1;
+                  } else if (historyIdxRef.current > 0) {
+                    historyIdxRef.current--;
+                  }
+                  setInput(history[historyIdxRef.current]);
+                  setTimeout(autoResize, 0);
+                }
+              }
+              if (e.key === 'ArrowDown' && !showCommands && historyIdxRef.current !== -1) {
+                e.preventDefault();
+                const history = inputHistoryRef.current;
+                if (historyIdxRef.current < history.length - 1) {
+                  historyIdxRef.current++;
+                  setInput(history[historyIdxRef.current]);
+                } else {
+                  // back to saved input
+                  historyIdxRef.current = -1;
+                  setInput(savedInputRef.current);
+                }
+                setTimeout(autoResize, 0);
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                const val = input.trim();
+                if (val) {
+                  inputHistoryRef.current.push(val);
+                  historyIdxRef.current = -1;
+                }
                 sendMessage();
+                setTimeout(autoResize, 0);
               }
             }}
             placeholder={
@@ -658,12 +816,14 @@ export function ChatPanel(props: ChatPanelProps) {
             }
             rows={2}
             disabled={!isConnected || planLoading}
-            className="input min-h-[56px] resize-none flex-1"
+            className="input min-h-[56px] max-h-[200px] resize-none flex-1 overflow-y-auto"
+            aria-label="Message input"
           />
           <button
             onClick={sendMessage}
             disabled={!isConnected || !input.trim() || planLoading}
             className="btn-primary h-11 px-5"
+            aria-label={isStreaming ? t('chat.streaming') : t('chat.send')}
           >
             {planLoading ? t('chat.planning') : isStreaming ? t('chat.streaming') : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
           </button>
