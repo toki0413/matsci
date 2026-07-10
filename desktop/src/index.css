@@ -314,6 +314,24 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
+  /* Skeleton shimmer */
+  @keyframes skeleton-pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 0.3; }
+  }
+
+  /* Danger button — for delete/destructive actions */
+  .btn-danger {
+    background: var(--error);
+    color: white;
+    font-weight: 600;
+    border-radius: var(--radius);
+    padding: 0.5rem 1rem;
+    transition: opacity 0.15s;
+  }
+  .btn-danger:hover { opacity: 0.85; }
+  .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
+
   .card {
     @apply rounded-lg border border-border p-4;
     background: var(--bg-secondary);
@@ -1779,6 +1797,24 @@
 .save-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ── Responsive: narrow windows ────────────────────────────── */
+@media (max-width: 768px) {
+  /* Collapse sidebar to icons-only on small screens */
+  .sidebar-nav-item span:not(.sidebar-nav-icon) {
+    display: none;
+  }
+  /* Stack dual-pane layouts vertically */
+  .kh-dual-pane {
+    flex-direction: column;
+  }
+  .kh-dual-pane > aside {
+    width: 100% !important;
+    max-height: 200px;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border);
+  }
 }
 
 .save-btn--saved {

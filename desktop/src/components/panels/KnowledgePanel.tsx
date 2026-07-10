@@ -21,6 +21,7 @@ interface KnowledgePanelProps {
   fileInputRef: React.RefObject<HTMLInputElement>;
   parseFileInputRef: React.RefObject<HTMLInputElement>;
   parseLoading: boolean;
+  uploadPct?: number;
   kbMsg: string;
   kbDocs: KbDoc[];
   kbAvailable: boolean;
@@ -62,7 +63,7 @@ function highlightTerms(text: string, query: string) {
 
 export function KnowledgePanel({
   config, setConfig, saveConfig,
-  fileInputRef, parseFileInputRef, parseLoading,
+  fileInputRef, parseFileInputRef, parseLoading, uploadPct,
   kbMsg, kbDocs, kbAvailable, kbQuery, kbChunks, setKbQuery,
   uploadKnowledge, parseDocument, loadDocumentGraph, deleteKnowledge, queryKnowledge,
   ingestUrl, loadProvenanceDag,
@@ -228,6 +229,11 @@ export function KnowledgePanel({
           {kbMsg && (
             <div className="kb-status mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
               {kbMsg}
+              {uploadPct !== undefined && uploadPct > 0 && (
+                <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-bg-secondary">
+                  <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${uploadPct}%` }} />
+                </div>
+              )}
             </div>
           )}
 
@@ -431,7 +437,7 @@ function ProvenanceDagView({ nodes, edges }: { nodes: any[]; edges: any[] }) {
           if (!s || !t) return null;
           return (
             <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y}
-              stroke="var(--seed-border, #e5e5e5)" strokeWidth="1" opacity="0.5" />
+              stroke="var(--border, #e5e5e5)" strokeWidth="1" opacity="0.5" />
           );
         })}
         {/* nodes */}
@@ -442,7 +448,7 @@ function ProvenanceDagView({ nodes, edges }: { nodes: any[]; edges: any[] }) {
           return (
             <g key={n.id}>
               <circle cx={pos.x} cy={pos.y} r="4"
-                fill={n.tool ? 'var(--seed-accent, #3b82f6)' : 'var(--seed-text-muted, #999)'} />
+                fill={n.tool ? 'var(--accent, #3b82f6)' : 'var(--text-muted, #999)'} />
               <text x={pos.x + 7} y={pos.y + 3}
                 fontSize="9" fontFamily="Arial, sans-serif"
                 fill="var(--seed-text-secondary, #666)">

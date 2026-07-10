@@ -356,15 +356,29 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   type="password"
                   value={config.api_key}
                   onChange={(e) => { setConfig((prev) => ({ ...prev, api_key: e.target.value })); setConfigDirty(true); }}
+                  onBlur={(e) => {
+                    const val = e.target.value.trim();
+                    if (val && config.provider === 'openai' && !val.startsWith('sk-')) {
+                      setConfigSavedMsg('⚠ OpenAI keys usually start with "sk-"');
+                    } else if (val && config.provider === 'anthropic' && !val.startsWith('sk-ant-')) {
+                      setConfigSavedMsg('⚠ Anthropic keys usually start with "sk-ant-"');
+                    }
+                  }}
                   placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || t('settings.apiKeyPlaceholder')}
                   className="input"
                 />
               </ConfigField>
               <ConfigField label={t('settings.baseUrl')} full>
                 <input
-                  type="text"
+                  type="url"
                   value={config.base_url}
                   onChange={(e) => { setConfig({ ...config, base_url: e.target.value }); setConfigDirty(true); }}
+                  onBlur={(e) => {
+                    const val = e.target.value.trim();
+                    if (val && !val.startsWith('http://') && !val.startsWith('https://')) {
+                      setConfigSavedMsg('⚠ Base URL should start with http:// or https://');
+                    }
+                  }}
                   placeholder="https://api.openai.com/v1"
                   className="input"
                 />

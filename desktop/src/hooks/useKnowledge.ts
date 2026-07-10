@@ -28,31 +28,42 @@ export function useKnowledge() {
     }
   };
 
+  const [uploadPct, setUploadPct] = useState(0);
+
   const uploadKnowledge = async (file: File) => {
     setKbMsg('Uploading…');
+    setUploadPct(0);
     try {
-      const form = new FormData();
-      form.append('file', file);
-      const data = await api.upload<{ success?: boolean; error?: string; document?: { chunks: number } }>(
+      const data = await api.uploadWithProgress<{ success?: boolean; error?: string; document?: { chunks: number } }>(
         '/knowledge/upload',
-        form
+        file,
+        (loaded, total) => setUploadPct(Math.round((loaded / total) * 100)),
       );
       if (data.success) {
         setKbMsg(`Uploaded ${data.document?.chunks ?? 0} chunks from ${file.name}`);
+        setUploadPct(100);
+        setTimeout(() => setUploadPct(0), 2000);
         loadKnowledge();
       } else {
         setKbMsg(`Upload failed: ${data.error}`);
+        setUploadPct(0);
       }
     } catch (e: any) {
       setKbMsg(`Upload error: ${e.message}`);
+      setUploadPct(0);
     }
   };
 
   const parseDocument = async (file: File) => {
     setParseLoading(true);
     setKbMsg('Parsing document (6-stage pipeline)…');
+    setUploadPct(0);
     try {
-      const d = await api.upload<DocumentParseResult>('/document/parse', file);
+      const d = await api.uploadWithProgress<DocumentParseResult>('/document/parse', file, (loaded, total) => {
+        // Upload phase is ~30% of total; remaining 70% is server-side parsing
+        setUploadPct(Math.round((loaded / total) * 30));
+        if (loaded === total) setKbMsg('Upload complete, parsing (6-stage pipeline)…');
+      });
       setKbMsg(
         `✅ Parsed: ${d.info_packages || 0} info packages, ` +
         `${d.graph?.nodes?.length || 0} graph nodes, ` +
@@ -63,6 +74,7 @@ export function useKnowledge() {
       setKbMsg(`Parse error: ${(e as Error).message}`);
     } finally {
       setParseLoading(false);
+      setUploadPct(0);
     }
   };
 
@@ -131,7 +143,7 @@ export function useKnowledge() {
   }, []);
 
   return {
-    kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading,
+    kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
     fileInputRef, parseFileInputRef,
     setKbQuery, setKbMsg,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,

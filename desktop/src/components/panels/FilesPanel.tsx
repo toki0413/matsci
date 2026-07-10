@@ -25,15 +25,23 @@ export function FilesPanel({
   const [transferMsg, setTransferMsg] = useState('');
   const uploadRef = useRef<HTMLInputElement>(null);
 
+  const [uploadPct, setUploadPct] = useState(0);
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setTransferMsg(`Uploading ${file.name}…`);
+    setUploadPct(0);
     try {
-      await api.upload('/transfer/upload', file);
+      await api.uploadWithProgress('/transfer/upload', file, (loaded, total) => {
+        setUploadPct(Math.round((loaded / total) * 100));
+      });
       setTransferMsg(`Uploaded ${file.name}`);
+      setUploadPct(100);
+      setTimeout(() => setUploadPct(0), 2000);
     } catch (err: any) {
       setTransferMsg(`Upload failed: ${err.message}`);
+      setUploadPct(0);
     }
     e.target.value = '';
   };
@@ -110,6 +118,11 @@ export function FilesPanel({
         </div>
         <div className="border-t border-border p-3 text-xs text-text-muted truncate">
           {transferMsg || cwd}
+          {uploadPct > 0 && uploadPct < 100 && (
+            <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-bg-tertiary">
+              <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${uploadPct}%` }} />
+            </div>
+          )}
         </div>
       </aside>
 
