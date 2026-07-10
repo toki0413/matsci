@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, Wrench, Loader2, AlertCircle } from 'lucide-react';
+import { useState, useRef, useEffect, useMemo, type ReactNode, useCallback } from 'react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -339,6 +339,94 @@ export function ChatPanel(props: ChatPanelProps) {
     ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
     : messages;
   const groupedMessages = groupMessages(filteredMessages);
+
+  // ── Turn auto-collapse (Trae style) ───────────────────────
+  // A "turn" = user message + all subsequent assistant/tool messages
+  // until the next user message. Old turns auto-collapse to keep the
+  // conversation scannable.
+  interface TurnInfo {
+    idx: number;
+    startIdx: number;
+    endIdx: number;
+    userExcerpt: string;
+    toolCount: number;
+    assistantExcerpt: string;
+    msgCount: number;
+  }
+
+  const turns = useMemo<TurnInfo[]>(() => {
+    const result: TurnInfo[] = [];
+    let current: TurnInfo | null = null;
+    for (let i = 0; i < groupedMessages.length; i++) {
+      const msg = groupedMessages[i];
+      if (msg.role === "user") {
+        if (current) { current.endIdx = i - 1; result.push(current); }
+        current = {
+          idx: result.length, startIdx: i, endIdx: i,
+          userExcerpt: msg.content.slice(0, 60),
+          toolCount: 0, assistantExcerpt: "", msgCount: 1,
+        };
+      } else if (current) {
+        current.endIdx = i;
+        current.msgCount++;
+        if (msg.role === "tool") current.toolCount++;
+        if ((msg as any).role === "tool_group")
+          current.toolCount += (msg as any).tool_calls?.length || 0;
+        if (msg.role === "assistant" && msg.content && !current.assistantExcerpt)
+          current.assistantExcerpt = msg.content.slice(0, 80);
+      }
+    }
+    if (current) result.push(current);
+    return result;
+  }, [groupedMessages]);
+
+  const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set());
+  // auto-collapse old turns when there are more than 5
+  useEffect(() => {
+    if (turns.length > 5) {
+      setCollapsedTurns(prev => {
+        const next = new Set(prev);
+        for (let i = 0; i < turns.length - 3; i++) {
+          if (!prev.has(i)) next.add(i);
+        }
+        return next;
+      });
+    }
+  }, [turns.length]);
+
+  // build display list: replace collapsed turns with summary entries
+  const displayMessages = useMemo(() => {
+    if (collapsedTurns.size === 0) return groupedMessages;
+    const result: any[] = [];
+    let turnIdx = -1;
+    const inserted = new Set<number>();
+    for (let i = 0; i < groupedMessages.length; i++) {
+      const msg = groupedMessages[i];
+      if (msg.role === "user") {
+        turnIdx++;
+        if (collapsedTurns.has(turnIdx) && !inserted.has(turnIdx)) {
+          result.push({ isTurnSummary: true, turn: turns[turnIdx] });
+          inserted.add(turnIdx);
+          continue;
+        }
+      }
+      if (turnIdx >= 0 && collapsedTurns.has(turnIdx)) continue;
+      result.push(msg);
+    }
+    return result;
+  }, [groupedMessages, collapsedTurns, turns]);
+
+  // map displayMessages index → turn index (for collapse button)
+  const displayTurnMap = useMemo(() => {
+    const map: number[] = [];
+    let turnIdx = -1;
+    for (let i = 0; i < displayMessages.length; i++) {
+      if (displayMessages[i]?.role === "user") turnIdx++;
+      map.push(turnIdx);
+    }
+    return map;
+  }, [displayMessages]);
+
   const searchRegex = searchActive
     ? new RegExp(`(${chatSearchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")
     : null;
@@ -486,14 +574,42 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
       )}
 
-      <div className="relative flex-1">
+      <div className="relative flex-1 min-h-0">
       <Virtuoso
         ref={virtuosoRef}
-        data={groupedMessages}
+        data={displayMessages}
         className="cv-list"
         style={{ height: '100%' }}
         atBottomStateChange={(atBottom) => setShowScrollBtn(!atBottom)}
         itemContent={(index, msg) => {
+          // collapsed turn summary bar (Trae style)
+          if ((msg as any).isTurnSummary) {
+            const turn = (msg as any).turn;
+            return (
+              <div key={index} className="flex justify-center py-1">
+                <button
+                  onClick={() => {
+                    setCollapsedTurns(prev => {
+                      const next = new Set(prev);
+                      next.delete(turn.idx);
+                      return next;
+                    });
+                  }}
+                  className="flex items-center gap-2 rounded-full border border-border bg-bg-tertiary px-3 py-1 text-xs text-text-muted hover:bg-bg-secondary hover:text-text-primary transition-colors max-w-2xl w-full"
+                >
+                  <ChevronRight className="w-3 h-3 shrink-0" />
+                  <span className="truncate">
+                    <span className="text-text-secondary font-medium">#{turn.idx + 1}</span>
+                    {" "}
+                    {turn.userExcerpt}
+                  </span>
+                  <span className="text-text-muted/50 shrink-0">
+                    {turn.msgCount} msgs · {turn.toolCount} tools
+                  </span>
+                </button>
+              </div>
+            );
+          }
           if ((msg as any).role === "tool_group" && (msg as any).tool_calls) {
             return (
               <div key={index} className="flex justify-center">
@@ -671,7 +787,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       >
                         {copyingId === index ? <Check size={13} /> : <Copy size={13} />}
                       </button>
-                      {index === groupedMessages.length - 1 && !isStreaming && (
+                      {index === displayMessages.length - 1 && !isStreaming && (
                         <button
                           onClick={() => {
                             // Remove last assistant message and resend previous user message
@@ -702,6 +818,27 @@ export function ChatPanel(props: ChatPanelProps) {
                 )}
                 {msg.role === "user" && msg.timestamp !== "streaming" && (
                   <div className="relative mt-1.5 flex justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {(() => {
+                      const tIdx = displayTurnMap[index];
+                      const canCollapse = turns.length > 3 && tIdx < turns.length - 2 && tIdx >= 0;
+                      if (!canCollapse) return null;
+                      return (
+                        <button
+                          onClick={() => {
+                            setCollapsedTurns(prev => {
+                              const next = new Set(prev);
+                              next.add(tIdx);
+                              return next;
+                            });
+                          }}
+                          className="rounded p-1 text-text-muted hover:text-accent transition-colors"
+                          aria-label="Collapse turn"
+                          title="Collapse this turn"
+                        >
+                          <ChevronDown size={13} />
+                        </button>
+                      );
+                    })()}
                     <button
                       onClick={() => {
                         // Edit: save current content to history, fill input, remove message
@@ -864,7 +1001,7 @@ export function ChatPanel(props: ChatPanelProps) {
       {/* Scroll to bottom button */}
       {showScrollBtn && (
         <button
-          onClick={() => virtuosoRef.current?.scrollToIndex({ index: groupedMessages.length - 1, behavior: 'smooth' })}
+          onClick={() => virtuosoRef.current?.scrollToIndex({ index: displayMessages.length - 1, behavior: 'smooth' })}
           className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 rounded-full border border-border bg-bg-secondary p-2 shadow-lg hover:bg-bg-tertiary transition-colors"
           aria-label="Scroll to latest"
           title="Scroll to bottom"
@@ -928,7 +1065,7 @@ export function ChatPanel(props: ChatPanelProps) {
               <Pencil size={12} /> Edit
             </button>
           )}
-          {ctxMenu.index === groupedMessages.length - 1 && ctxMenu.msg.role === "assistant" && (
+          {ctxMenu.index === displayMessages.length - 1 && ctxMenu.msg.role === "assistant" && (
             <button
               onClick={() => {
                 const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
@@ -1168,8 +1305,24 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
 
         {pendingMessages.length > 0 && (
-          <div className="mb-2 rounded-lg border border-accent/20 bg-accent/5 px-3 py-1.5 text-[11px] text-accent">
-            📋 {pendingMessages.length} message{pendingMessages.length > 1 ? "s" : ""} queued — will send after current response
+          <div className="mb-2 space-y-1">
+            {pendingMessages.map((pmsg, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 rounded-lg border border-accent/20 bg-accent/5 px-3 py-1.5 text-xs"
+              >
+                <Clock className="w-3 h-3 text-accent shrink-0" />
+                <span className="text-accent/80 truncate flex-1">
+                  {pmsg.length > 80 ? pmsg.slice(0, 80) + "…" : pmsg}
+                </span>
+                <span className="text-text-muted/50 shrink-0">
+                  #{i + 1}
+                </span>
+              </div>
+            ))}
+            <div className="text-[10px] text-text-muted pl-1">
+              {pendingMessages.length} queued — will send after current response
+            </div>
           </div>
         )}
 
