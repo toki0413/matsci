@@ -160,7 +160,7 @@ export default function App() {
 
   const memory = useMemory();
   const {
-    memories, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
+    memories, memoriesLoading, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
     updateMemory, promoteMemory, pruneMemory, syncMemoryMd,
@@ -465,7 +465,7 @@ export default function App() {
     chatSearchOpen, chatSearchQuery,
     isStreaming,
     messagesEndRef,
-    isConnected, status,
+    isConnected, status, wsReconnecting,
     wsClientRef,
     personaList, personaEmotion, pendingClarifications,
     threads, activeThread,
@@ -636,12 +636,17 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
+      {/* Skip-link for keyboard users */}
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-[9999] focus:rounded-md focus:bg-accent focus:px-3 focus:py-1.5 focus:text-sm focus:text-white">
+        Skip to content
+      </a>
       {/* Sidebar — chat-first: 4 primary destinations + tool palette */}
       {sidebarHidden ? (
         <button
           onClick={() => setSidebarHidden(false)}
           className="z-50 flex h-full w-10 items-center justify-center border-r border-border bg-bg-secondary text-text-muted hover:text-text-primary transition-colors"
           title="Show sidebar"
+          aria-label="Show sidebar"
         >
           <ChevronDown size={16} className="-rotate-90" />
         </button>
@@ -657,6 +662,7 @@ export default function App() {
             onClick={() => setSidebarHidden(true)}
             className="text-text-muted hover:text-text-primary transition-colors"
             title="Hide sidebar"
+            aria-label="Hide sidebar"
           >
             <ChevronDown size={16} className="rotate-90" />
           </button>
@@ -673,6 +679,7 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
+              aria-current={activeTab === item.id ? "page" : undefined}
               className={`sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold transition-all duration-150 ${
                 activeTab === item.id
                   ? "sidebar-nav-active"
@@ -742,7 +749,7 @@ export default function App() {
       )}
 
       {/* Main */}
-      <main className="flex flex-1 flex-col min-w-0 bg-bg-primary">
+      <main id="main-content" className="flex flex-1 flex-col min-w-0 bg-bg-primary" aria-busy={isConnected ? undefined : "true"}>
         {/* Header */}
         <header className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
           <div className="flex items-center gap-2.5">
@@ -844,6 +851,7 @@ export default function App() {
               answerClarification={answerClarification}
               pendingClarifications={pendingClarifications}
               isConnected={isConnected}
+              wsReconnecting={wsReconnecting}
               sendMessage={sendMessage}
               pendingPlan={pendingPlan}
               setPendingPlan={setPendingPlan}
@@ -1003,6 +1011,7 @@ export default function App() {
           {activeTab === "memory" && (
             <MemoryPanel
               memories={memories}
+              memoriesLoading={memoriesLoading}
               memoryStats={memoryStats}
               memorySearch={memorySearch}
               memoryFilter={memoryFilter}
@@ -1526,6 +1535,9 @@ export default function App() {
         <div
           className="fixed inset-0 z-50 flex items-start justify-center bg-text-primary/40 p-4 pt-[15vh] backdrop-blur-sm"
           onClick={() => { setToolPaletteOpen(false); setToolSearch(""); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Command palette"
         >
           <div
             className="w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-bg-secondary shadow-2xl"
@@ -1592,7 +1604,7 @@ export default function App() {
       )}
 
       {showGuide && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Guide" onClick={() => setShowGuide(false)}>
           <div className="w-full max-w-lg rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl">
             <h2 className="mb-1 text-xl font-bold">{t('guide.title')}</h2>
             <p className="mb-5 text-sm italic text-text-secondary">

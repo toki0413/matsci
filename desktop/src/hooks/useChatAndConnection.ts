@@ -19,7 +19,7 @@ import { ReconnectingWebSocket } from "../lib/ws-client";
 import { getAuthToken } from "../lib/api-client";
 import { api } from "../lib/api";
 import {
-  API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK, loadStoredConfig,
+  API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK,
 } from "../lib/config-store";
 import { isWSMessage, type WSMessage } from "../types/ws";
 import type { AppConfig, PersonaSeed, PersonaEmotionResponse } from "../types/domain";
@@ -74,7 +74,7 @@ interface UseChatAndConnectionParams {
 }
 
 export function useChatAndConnection(params: UseChatAndConnectionParams) {
-  const { config, activeTab, pushConfig, onAutoCheckpoint, onExplorationResult,
+  const { config, activeTab, onAutoCheckpoint, onExplorationResult,
     toolsLength, skillsLength, setTools, setSkills } = params;
 
   // ── Per-thread message cache (reactive) ─────────────────────
@@ -96,6 +96,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [planLoading] = useState(false);
   const [status, setStatus] = useState<string>("connecting…");
   const [isConnected, setIsConnected] = useState(false);
+  const [wsReconnecting, setWsReconnecting] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pendingResponseRef = useRef<string>("");
@@ -673,6 +674,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         setIsConnected(wsStatus === "connected");
         if (wsStatus === "reconnecting") {
           setIsConnected(false);
+          setWsReconnecting(true);
+        } else if (wsStatus === "connected") {
+          setWsReconnecting(false);
         }
       },
       onMessage: (data) => {
@@ -680,7 +684,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         if (isWSMessage(data)) handleWsMessage(data);
       },
       onConnected: () => {
-        pushConfig(loadStoredConfig());
+        // Don't auto-push localStorage config to backend on connect —
+        // the backend is the source of truth, not the browser.
+        // Config is only pushed when the user explicitly saves in Settings.
         setIsStreaming(false);
         setMessages((prev) =>
           prev.map((m) =>
@@ -702,10 +708,25 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Auto-scroll on new messages ──────────────────────────────
+  // ── Dynamic tab title (unread count when tab hidden) ──────────
+  const lastSeenMsgCountRef = useRef(messages.length);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const onVis = () => {
+      if (!document.hidden) {
+        lastSeenMsgCountRef.current = messages.length;
+        document.title = "Huginn";
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (document.hidden && messages.length > lastSeenMsgCountRef.current) {
+      const unread = messages.length - lastSeenMsgCountRef.current;
+      document.title = `(${unread}) Huginn`;
+    }
+  }, [messages.length]);
 
   // ── Load tools and skills on tab switch ──────────────────────
   useEffect(() => {
@@ -915,7 +936,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     isStreaming,
     messagesEndRef,
     // Connection
-    isConnected, status,
+    isConnected, status, wsReconnecting,
     wsClientRef,
     // Persona
     personaList, personaEmotion, pendingClarifications,

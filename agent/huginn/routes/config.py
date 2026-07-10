@@ -67,6 +67,18 @@ def _load_runtime_config() -> HuginnConfig:
 
 def _persist_config(cfg: HuginnConfig) -> None:
     """落盘 + 同步内存缓存 + 重置 agent 工厂, 让新配置立刻生效。"""
+    # Guard against the most common corruption: API key value leaking
+    # into base_url or ollama_host. If it doesn't look like a URL, drop it.
+    for attr in ("base_url", "ollama_host"):
+        val = getattr(cfg, attr, None)
+        if val and not str(val).startswith(("http://", "https://", "ftp://")):
+            logger.warning("Rejecting suspicious %s=%r (not a URL), clearing", attr, val[:20])
+            setattr(cfg, attr, None if attr == "base_url" else "http://localhost:11434")
+    for m in cfg.models:
+        if m.base_url and not str(m.base_url).startswith(("http://", "https://", "ftp://")):
+            logger.warning("Rejecting suspicious model.base_url=%r, clearing", str(m.base_url)[:20])
+            m.base_url = None
+
     target = _config_path()
     cfg.save(target, format="toml")
     # 配置变更后清掉 API key SWR 缓存, 否则老 key 还会被复用

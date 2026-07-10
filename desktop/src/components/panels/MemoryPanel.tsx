@@ -6,6 +6,7 @@ import type { MemoryEntry, MemoryStats } from '../../types/domain';
 
 export interface MemoryPanelProps {
   memories: MemoryEntry[];
+  memoriesLoading?: boolean;
   memoryStats: MemoryStats | null;
   memorySearch: string;
   memoryFilter: { category: string; tier: string };
@@ -29,6 +30,7 @@ export interface MemoryPanelProps {
 
 export function MemoryPanel({
   memories,
+  memoriesLoading,
   memoryStats,
   memorySearch,
   memoryFilter,
@@ -171,7 +173,11 @@ export function MemoryPanel({
             </select>
           </div>
           <div className="flex-1 overflow-y-auto space-y-2">
-            {memories.length === 0 && (
+            {memoriesLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-accent" />
+              </div>
+            ) : memories.length === 0 && (
               <EmptyState
                 icon={Brain}
                 title={memorySearch.trim() ? "No matching memories" : "No memories yet"}

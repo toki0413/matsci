@@ -37,8 +37,8 @@ function _render() {
             boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
             animation: "toast-in 0.2s ease-out",
             ...(
-              t.kind === "success" ? { background: "#22c55e", color: "#fff" } :
-              t.kind === "error" ? { background: "#ef4444", color: "#fff" } :
+              t.kind === "success" ? { background: "var(--seed-success, #22c55e)", color: "#fff" } :
+              t.kind === "error" ? { background: "var(--seed-error, #ef4444)", color: "#fff" } :
               { background: "var(--bg-tertiary, #f0ede8)", color: "var(--text-primary, #1a1815)" }
             ),
           }}
