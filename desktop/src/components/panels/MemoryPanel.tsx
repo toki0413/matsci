@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useScrollMemory } from '../../hooks/useScrollMemory';
 import { ChevronDown, Brain, Pencil, Check, X } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
 import EmptyState from '../EmptyState';
@@ -55,6 +56,7 @@ export function MemoryPanel({
   syncMemoryMd,
 }: MemoryPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const scrollRef = useScrollMemory('memory-list');
   const [editContent, setEditContent] = useState("");
 
   const startEdit = (m: MemoryEntry) => {
@@ -176,7 +178,7 @@ export function MemoryPanel({
               <option value="long">long</option>
             </select>
           </div>
-          <div className="flex-1 overflow-y-auto space-y-2">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-2">
             {memoriesLoading ? (
               <div className="flex items-center justify-center py-16">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-accent" />

@@ -951,6 +951,56 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 {t('settings.export.importHint')}
               </p>
             </div>
+
+            {/* Config JSON export/import */}
+            <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+              <div className="mb-2 text-xs font-medium text-text-secondary">Config Backup</div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `huginn-config-${new Date().toISOString().slice(0, 10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="btn-secondary text-xs"
+                >
+                  Export Config
+                </button>
+                <button
+                  onClick={() => document.getElementById('config-import-input')?.click()}
+                  className="btn-secondary text-xs"
+                >
+                  Import Config
+                </button>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      try {
+                        const imported = JSON.parse(ev.target?.result as string);
+                        setConfig(imported);
+                        setConfigDirty(true);
+                        setConfigSavedMsg('Config imported — review and save to apply');
+                      } catch {
+                        setConfigSavedMsg('Invalid config file');
+                      }
+                    };
+                    reader.readAsText(file);
+                  }}
+                  className="hidden"
+                  id="config-import-input"
+                />
+              </div>
+              <p className="mt-1 text-xs text-text-muted">Export/import app configuration as JSON.</p>
+            </div>
           </div>
         )}
 

@@ -99,6 +99,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [wsReconnecting, setWsReconnecting] = useState(false);
   const [wsFailed, setWsFailed] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [undoWindow, setUndoWindow] = useState(false);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pendingResponseRef = useRef<string>("");
   const streamingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -818,6 +820,11 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     pendingResponseRef.current = "";
     streamBufferRef.current = { text: "", reasoning: "" };
 
+    // Undo window: 5 seconds to cancel the send (before streaming response arrives)
+    setUndoWindow(true);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => setUndoWindow(false), 5000);
+
     const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread, thinking: thinkingIntensity });
     try {
       wsClientRef.current!.send(payload);
@@ -848,6 +855,21 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       streamingTimeoutRef.current = null;
     }, 30_000);
   };
+
+  // Undo last send — removes the last user message + bot placeholder, restores input
+  const undoSend = useCallback(() => {
+    if (!undoWindow) return;
+    setMessages((prev) => {
+      if (prev.length < 2) return prev;
+      const lastUser = [...prev].reverse().find(m => m.role === "user");
+      if (lastUser) setInput(lastUser.content);
+      return prev.slice(0, -2); // remove user msg + bot placeholder
+    });
+    setUndoWindow(false);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    if (streamingTimeoutRef.current) clearTimeout(streamingTimeoutRef.current);
+    setIsStreaming(false);
+  }, [undoWindow]);
 
   // ── Drain queued messages when streaming finishes ─────────────
   // Fires on every isStreaming transition; only acts when streaming
@@ -943,6 +965,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     messagesEndRef,
     // Connection
     isConnected, status, wsReconnecting, wsFailed,
+    undoWindow, undoSend,
     wsClientRef,
     // Persona
     personaList, personaEmotion, pendingClarifications,
