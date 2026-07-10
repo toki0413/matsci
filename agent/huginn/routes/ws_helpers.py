@@ -244,12 +244,20 @@ async def _stream_agent_response(
     _clarify_sent = False
     _token_streamed = False
 
+    _ws_closed = [False]  # mutable holder so nested fn can update
+
     try:
         async def _ws_send(msg: dict) -> None:
             """Wrap send_json with thread_id for client-side routing."""
+            if _ws_closed[0]:
+                return
             if "thread_id" not in msg:
                 msg["thread_id"] = thread_id
-            await websocket.send_json(msg)
+            try:
+                await websocket.send_json(msg)
+            except Exception:
+                _ws_closed[0] = True
+                logger.debug("WS closed mid-stream, stopping sends")
 
         async for state in agent.chat(content, thread_id):
             if "_token" in state:
