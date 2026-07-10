@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2 } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -125,6 +125,11 @@ export function ChatPanel(props: ChatPanelProps) {
 
   const [showCommands, setShowCommands] = useState(false);
   const [cmdSelectIdx, setCmdSelectIdx] = useState(0);
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionIdx, setMentionIdx] = useState(0);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [editHistory, setEditHistory] = useState<Record<number, string[]>>({});
+  const [viewingHistory, setViewingHistory] = useState<number | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [copyingId, setCopyingId] = useState<number | null>(null);
@@ -221,6 +226,24 @@ export function ChatPanel(props: ChatPanelProps) {
     ? INLINE_COMMANDS.filter(c => c.cmd.startsWith(input))
     : [];
 
+  // ── @mention system ──────────────────────────────────────────
+  const MENTION_ITEMS = [
+    { id: 'agent', label: 'Agent', desc: 'Autonomous agent team' },
+    { id: 'coder', label: 'Coder', desc: 'Code execution assistant' },
+    { id: 'knowledge', label: 'Knowledge Base', desc: 'Search uploaded documents' },
+    { id: 'web', label: 'Web Search', desc: 'Search the internet' },
+    { id: 'periodic', label: 'Periodic Table', desc: 'Element properties' },
+    { id: 'structure', label: 'Structure Viewer', desc: '3D crystal structures' },
+    { id: 'notebook', label: 'Notebook', desc: 'Jupyter notebook' },
+    { id: 'sandbox', label: 'Sandbox', desc: 'Code sandbox' },
+    { id: 'sweep', label: 'Sweep Dashboard', desc: 'Parameter sweep' },
+    { id: 'memory', label: 'Memory', desc: 'Persistent memory store' },
+  ];
+
+  const filteredMentions = showMentions
+    ? MENTION_ITEMS.filter(m => m.label.toLowerCase().includes(mentionQuery.toLowerCase()))
+    : [];
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(true);
@@ -307,6 +330,7 @@ export function ChatPanel(props: ChatPanelProps) {
     return result;
   }
 
+  const [searchMatchIdx, setSearchMatchIdx] = useState(0);
   const searchActive = chatSearchQuery.trim().length > 0;
   const filteredMessages = searchActive
     ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
@@ -315,6 +339,14 @@ export function ChatPanel(props: ChatPanelProps) {
   const searchRegex = searchActive
     ? new RegExp(`(${chatSearchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")
     : null;
+
+  // Flatten match indices for prev/next navigation
+  const searchMatchCount = searchActive
+    ? filteredMessages.reduce((sum, m) => {
+        const matches = m.content.toLowerCase().match(new RegExp(chatSearchQuery.trim().toLowerCase(), "g"));
+        return sum + (matches?.length || 0);
+      }, 0)
+    : 0;
 
   function highlightText(text: string): ReactNode {
     if (!searchRegex) return text;
@@ -340,9 +372,29 @@ export function ChatPanel(props: ChatPanelProps) {
             className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
           {chatSearchQuery && (
-            <span className="shrink-0 text-[11px] text-text-muted">
-              {messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase())).length} {t('chat.matches')}
-            </span>
+            <div className="flex shrink-0 items-center gap-1">
+              <span className="text-[11px] text-text-muted">
+                {searchMatchCount > 0 ? `${Math.min(searchMatchIdx + 1, searchMatchCount)}/${searchMatchCount}` : '0'}
+              </span>
+              <button
+                onClick={() => setSearchMatchIdx(prev => (prev - 1 + searchMatchCount) % Math.max(searchMatchCount, 1))}
+                disabled={searchMatchCount === 0}
+                className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-tertiary disabled:opacity-30"
+                aria-label="Previous match"
+                title="Previous match"
+              >
+                <ChevronUp size={14} />
+              </button>
+              <button
+                onClick={() => setSearchMatchIdx(prev => (prev + 1) % Math.max(searchMatchCount, 1))}
+                disabled={searchMatchCount === 0}
+                className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-tertiary disabled:opacity-30"
+                aria-label="Next match"
+                title="Next match"
+              >
+                <ChevronDown size={14} />
+              </button>
+            </div>
           )}
           <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary" aria-label="Close search">
             <X size={14} />
@@ -598,10 +650,14 @@ export function ChatPanel(props: ChatPanelProps) {
                   </div>
                 )}
                 {msg.role === "user" && msg.timestamp !== "streaming" && (
-                  <div className="mt-1.5 flex justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="relative mt-1.5 flex justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => {
-                        // Edit: fill input with message content, remove this message
+                        // Edit: save current content to history, fill input, remove message
+                        setEditHistory(prev => ({
+                          ...prev,
+                          [index]: [...(prev[index] || []), msg.content],
+                        }));
                         setInput(msg.content);
                         setMessages(prev => prev.filter((_, i) => i !== index));
                         setTimeout(() => textareaRef.current?.focus(), 0);
@@ -612,6 +668,32 @@ export function ChatPanel(props: ChatPanelProps) {
                     >
                       <Pencil size={13} />
                     </button>
+                    {editHistory[index] && editHistory[index].length > 0 && (
+                      <button
+                        onClick={() => setViewingHistory(viewingHistory === index ? null : index)}
+                        className="text-[10px] italic text-text-muted hover:text-accent transition-colors cursor-pointer"
+                        title={`Edited ${editHistory[index].length}x — click to view history`}
+                      >
+                        edited ({editHistory[index].length}x)
+                      </button>
+                    )}
+                    {viewingHistory === index && editHistory[index] && (
+                      <div className="absolute right-0 top-full z-20 mt-1 w-72 rounded-lg border border-border bg-bg-secondary p-3 shadow-xl">
+                        <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-text-muted">Edit History</div>
+                        {editHistory[index].map((old, hi) => (
+                          <div key={hi} className="mb-2 border-b border-border pb-2 last:border-0">
+                            <div className="text-[10px] text-text-muted">v{hi + 1}</div>
+                            <div className="text-xs text-text-secondary line-clamp-3">{old}</div>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => setViewingHistory(null)}
+                          className="mt-1 text-[10px] text-accent hover:underline"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    )}
                     <button
                       onClick={() => {
                         setMessages(prev => prev.filter((_, i) => i !== index));
@@ -781,6 +863,10 @@ export function ChatPanel(props: ChatPanelProps) {
           {ctxMenu.msg.role === "user" && (
             <button
               onClick={() => {
+                setEditHistory(prev => ({
+                  ...prev,
+                  [ctxMenu.index]: [...(prev[ctxMenu.index] || []), ctxMenu.msg.content],
+                }));
                 setInput(ctxMenu.msg.content);
                 setMessages(prev => prev.filter((_, i) => i !== ctxMenu.index));
                 setCtxMenu(null);
@@ -931,6 +1017,40 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
+        {/* @mention popover */}
+        {showMentions && filteredMentions.length > 0 && (
+          <div className="mb-2 rounded-lg border border-border bg-bg-secondary shadow-lg overflow-hidden">
+            <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-text-muted border-b border-border">
+              Mention
+            </div>
+            {filteredMentions.map((m, i) => (
+              <button
+                key={m.id}
+                onClick={() => {
+                  const atIdx = input.lastIndexOf('@');
+                  if (atIdx !== -1) {
+                    setInput(input.slice(0, atIdx) + `@${m.label} `);
+                  }
+                  setShowMentions(false);
+                  setTimeout(() => textareaRef.current?.focus(), 0);
+                }}
+                onMouseEnter={() => setMentionIdx(i)}
+                className={`flex w-full items-center gap-3 px-4 py-2 text-left transition-colors ${
+                  i === mentionIdx ? 'bg-bg-tertiary' : 'hover:bg-bg-tertiary'
+                }`}
+              >
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent">
+                  {m.label[0]}
+                </span>
+                <div className="flex-1">
+                  <div className="text-xs font-medium text-text-primary">{m.label}</div>
+                  <div className="text-[11px] text-text-muted">{m.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="mb-2 flex items-center justify-between gap-2">
           {/* Mode selector — segmented control */}
           <div className="flex items-center gap-1 rounded-lg bg-bg-tertiary p-0.5" role="radiogroup" aria-label="Chat mode">
@@ -1053,6 +1173,23 @@ export function ChatPanel(props: ChatPanelProps) {
               const val = e.target.value;
               setInput(val);
               setShowCommands(val.startsWith('/') && !val.includes(' '));
+              // @mention detection: check if user just typed @
+              const atIdx = val.lastIndexOf('@');
+              if (atIdx !== -1 && atIdx === val.length - 1) {
+                setShowMentions(true);
+                setMentionQuery('');
+                setMentionIdx(0);
+              } else if (showMentions && atIdx !== -1) {
+                // Extract text after @ for filtering
+                const afterAt = val.slice(atIdx + 1);
+                if (afterAt.includes(' ') || afterAt.includes('\n')) {
+                  setShowMentions(false);
+                } else {
+                  setMentionQuery(afterAt);
+                }
+              } else if (showMentions && atIdx === -1) {
+                setShowMentions(false);
+              }
               autoResize();
             }}
             onKeyDown={(e) => {
@@ -1085,8 +1222,38 @@ export function ChatPanel(props: ChatPanelProps) {
                   return;
                 }
               }
+              // --- @mention navigation ---
+              if (showMentions && filteredMentions.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setMentionIdx(prev => (prev + 1) % filteredMentions.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setMentionIdx(prev => (prev - 1 + filteredMentions.length) % filteredMentions.length);
+                  return;
+                }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  const selected = filteredMentions[mentionIdx];
+                  if (selected) {
+                    const atIdx = input.lastIndexOf('@');
+                    if (atIdx !== -1) {
+                      setInput(input.slice(0, atIdx) + `@${selected.label} `);
+                    }
+                    setShowMentions(false);
+                    return;
+                  }
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setShowMentions(false);
+                  return;
+                }
+              }
               // Up arrow in empty input → recall last user message
-              if (e.key === 'ArrowUp' && !showCommands && input === '') {
+              if (e.key === 'ArrowUp' && !showCommands && !showMentions && input === '') {
                 const history = inputHistoryRef.current;
                 if (history.length > 0) {
                   e.preventDefault();
@@ -1100,7 +1267,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   setTimeout(autoResize, 0);
                 }
               }
-              if (e.key === 'ArrowDown' && !showCommands && historyIdxRef.current !== -1) {
+              if (e.key === 'ArrowDown' && !showCommands && !showMentions && historyIdxRef.current !== -1) {
                 e.preventDefault();
                 const history = inputHistoryRef.current;
                 if (historyIdxRef.current < history.length - 1) {
