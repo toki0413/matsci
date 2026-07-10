@@ -21,6 +21,21 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 
+def _get_full_agent_source():
+    """Collect source from HuginnAgent and all its mixin bases."""
+    import inspect
+    from huginn.agent import HuginnAgent
+    parts = []
+    for cls in HuginnAgent.__mro__:
+        if cls is object:
+            continue
+        try:
+            parts.append(inspect.getsource(cls))
+        except (TypeError, OSError):
+            pass
+    return "\n".join(parts)
+
+
 def test_cognitive_state_property_exists():
     """HuginnAgent must expose cognitive_state and l1_coordinates properties."""
     # We can't easily instantiate a full agent, but we can verify the class
@@ -28,7 +43,7 @@ def test_cognitive_state_property_exists():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert "def cognitive_state" in source
     assert "def l1_coordinates" in source
     assert "self._csm" in source
@@ -40,7 +55,7 @@ def test_build_compact_summary_method_exists():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert "_build_compact_summary" in source
     assert "Structural Position" in source
 
@@ -50,7 +65,7 @@ def test_init_session_continuity_restores_csm():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert "_csm.start_session" in source
     assert "_csm.l1_coordinates" in source
     assert "S4_CONSTRUCT" in source or "s4_construct" in source
@@ -61,7 +76,7 @@ def test_chat_emits_user_goal_signal():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert 'TransitionSignal("user_goal"' in source or '"user_goal"' in source
     assert '"new_question"' in source
 
@@ -71,7 +86,7 @@ def test_chat_syncs_cognitive_prompt():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert "_cognitive_prompt" in source
     assert "get_attention_prompt" in source
 
@@ -81,7 +96,7 @@ def test_chat_emits_reflection_transition_signals():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert "to_transition_signal" in source
     assert "_csm.transition" in source
 
@@ -91,7 +106,7 @@ def test_planstore_sync_in_chat():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert "list_plans(status=\"executing\")" in source or "list_plans" in source
     assert "set_plan" in source
 
@@ -101,7 +116,7 @@ def test_session_snapshot_includes_csm_state():
     import inspect
     from huginn.agent import HuginnAgent
 
-    source = inspect.getsource(HuginnAgent)
+    source = _get_full_agent_source()
     assert "cognitive_state" in source
     assert "get_snapshot" in source
 

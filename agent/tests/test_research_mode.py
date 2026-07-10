@@ -70,7 +70,7 @@ class TestModeSwitching:
 
     def test_set_mode_invalid_raises(self):
         agent = _make_agent_stub()
-        with pytest.raises(ValueError, match="未知模式"):
+        with pytest.raises(ValueError, match="unknown mode"):
             HuginnAgent.set_mode(agent, "bogus")
 
     def test_is_research_mode(self):

@@ -73,27 +73,27 @@ def test_viewer3d_trajectory_requires_auth(enforced_auth, monkeypatch):
 
 
 def test_bot_status_requires_auth(enforced_auth, monkeypatch):
-    """GET /bot/status without admin key → 401."""
+    """GET /bot/status without admin key → 403."""
     monkeypatch.setenv("HUGINN_ADMIN_API_KEY", "secret-admin")
     c = TestClient(_app())
     resp = c.get("/bot/status")
-    assert resp.status_code == 401
+    assert resp.status_code == 403
 
 
 def test_bot_start_requires_auth(enforced_auth, monkeypatch):
-    """POST /bot/start without admin key → 401."""
+    """POST /bot/start without admin key → 403."""
     monkeypatch.setenv("HUGINN_ADMIN_API_KEY", "secret-admin")
     c = TestClient(_app())
     resp = c.post("/bot/start")
-    assert resp.status_code == 401
+    assert resp.status_code == 403
 
 
 def test_bot_config_requires_auth(enforced_auth, monkeypatch):
-    """GET /bot/config without admin key → 401."""
+    """GET /bot/config without admin key → 403."""
     monkeypatch.setenv("HUGINN_ADMIN_API_KEY", "secret-admin")
     c = TestClient(_app())
     resp = c.get("/bot/config")
-    assert resp.status_code == 401
+    assert resp.status_code == 403
 
 
 if __name__ == "__main__":
