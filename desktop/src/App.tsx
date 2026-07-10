@@ -157,6 +157,14 @@ export default function App() {
   const [toolPaletteOpen, setToolPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
+  const [draggedTab, setDraggedTab] = useState<string | null>(null);
+  const [dragOverTab, setDragOverTab] = useState<string | null>(null);
+  const [customTabOrder, setCustomTabOrder] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('huginn:tab-order');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
 
   // ── Tools / Skills state arrays ──────────────────────────────
   const [tools, setTools] = useState<ToolInfo[]>([]);
@@ -671,7 +679,43 @@ export default function App() {
     },
   ];
 
-  // ── useEffect: tab data loading ──────────────────────────────
+  // Apply custom tab order if saved
+  const orderedSidebarGroups = (() => {
+    if (customTabOrder.length === 0) return sidebarGroupsData;
+    // Flatten all tabs, reorder by custom order, then re-group preserving original group structure
+    const allTabs = sidebarGroupsData.flatMap(g => g.tabs);
+    const reordered = [...allTabs].sort((a, b) => {
+      const ai = customTabOrder.indexOf(a.id);
+      const bi = customTabOrder.indexOf(b.id);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    // Rebuild groups: keep original group keys/labels, but distribute reordered tabs
+    const groupSizes = sidebarGroupsData.map(g => g.tabs.length);
+    let idx = 0;
+    return sidebarGroupsData.map((g, gi) => ({
+      key: g.key,
+      label: g.label,
+      tabs: reordered.slice(idx, idx + groupSizes[gi]),
+    }));
+  })();
+
+  const handleTabDrop = (targetId: string) => {
+    if (!draggedTab || draggedTab === targetId) return;
+    const allTabs = sidebarGroupsData.flatMap(g => g.tabs.map(t => t.id)) as any[];
+    const fromIdx = allTabs.indexOf(draggedTab);
+    const toIdx = allTabs.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const reordered = [...allTabs];
+    reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, draggedTab as any);
+    setCustomTabOrder(reordered);
+    localStorage.setItem('huginn:tab-order', JSON.stringify(reordered));
+    setDraggedTab(null);
+    setDragOverTab(null);
+  };
   useEffect(() => {
     if (activeTab === "knowledge") {
       loadKnowledge();
@@ -1724,7 +1768,7 @@ export default function App() {
               </button>
             </div>
             <div className="max-h-[55vh] overflow-y-auto p-3">
-              {sidebarGroupsData.map((group) => {
+              {orderedSidebarGroups.map((group) => {
                 const filtered = group.tabs.filter((tab) =>
                   tab.label.toLowerCase().includes(toolSearch.toLowerCase())
                 );
@@ -1738,16 +1782,24 @@ export default function App() {
                       {filtered.map((tab) => (
                         <button
                           key={tab.id}
+                          draggable
+                          onDragStart={() => setDraggedTab(tab.id)}
+                          onDragOver={(e) => { e.preventDefault(); setDragOverTab(tab.id); }}
+                          onDragLeave={() => setDragOverTab(null)}
+                          onDrop={() => handleTabDrop(tab.id)}
+                          onDragEnd={() => { setDraggedTab(null); setDragOverTab(null); }}
                           onClick={() => {
                             setActiveTab(tab.id);
                             setToolPaletteOpen(false);
                             setToolSearch("");
                           }}
                           className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-center transition-all ${
-                            activeTab === tab.id
+                            dragOverTab === tab.id && draggedTab !== tab.id
+                              ? 'border-accent bg-accent/20 ring-2 ring-accent/30'
+                              : activeTab === tab.id
                               ? "border-accent bg-accent/10"
                               : "border-border bg-bg-tertiary hover:border-accent/50 hover:bg-accent/5"
-                          }`}
+                          } ${draggedTab === tab.id ? 'opacity-40' : ''}`}
                         >
                           <span className="text-text-secondary">{tab.icon}</span>
                           <span className="text-[11px] font-medium leading-tight text-text-primary">
@@ -1771,7 +1823,7 @@ export default function App() {
                   </div>
                 );
               })}
-              {toolSearch && !sidebarGroupsData.some((g) => g.tabs.some((t) => t.label.toLowerCase().includes(toolSearch.toLowerCase()))) && (
+              {toolSearch && !orderedSidebarGroups.some((g) => g.tabs.some((t) => t.label.toLowerCase().includes(toolSearch.toLowerCase()))) && (
                 <div className="py-8 text-center text-sm text-text-muted">No tools match "{toolSearch}"</div>
               )}
             </div>
