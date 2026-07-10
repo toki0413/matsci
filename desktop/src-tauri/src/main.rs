@@ -135,6 +135,7 @@ async fn start_backend(
         let deepseek_key = std::env::var("DEEPSEEK_API_KEY").unwrap_or_default();
         let provider = std::env::var("HUGINN_PROVIDER").unwrap_or_default();
         let model = std::env::var("HUGINN_MODEL").unwrap_or_default();
+        let config_file = std::env::var("HUGINN_CONFIG_FILE").unwrap_or_default();
 
         if let Ok(sidecar) = app.shell().sidecar("huginn-sidecar") {
             eprintln!("[start_backend] Found huginn-sidecar, spawning...");
@@ -143,6 +144,7 @@ async fn start_backend(
                 .env("DEEPSEEK_API_KEY", &deepseek_key)
                 .env("HUGINN_PROVIDER", &provider)
                 .env("HUGINN_MODEL", &model)
+                .env("HUGINN_CONFIG_FILE", &config_file)
                 .env("PYTHONUNBUFFERED", "1")
                 .spawn()
                 .map_err(|e| format!("failed to spawn huginn-sidecar: {}", e))?;
@@ -174,6 +176,7 @@ async fn start_backend(
                 .env("DEEPSEEK_API_KEY", &deepseek_key)
                 .env("HUGINN_PROVIDER", &provider)
                 .env("HUGINN_MODEL", &model)
+                .env("HUGINN_CONFIG_FILE", &config_file)
                 .env("PYTHONUNBUFFERED", "1")
                 .spawn()
                 .map_err(|e| format!("failed to spawn huginn sidecar: {}", e))?;
@@ -238,6 +241,7 @@ async fn start_backend(
         .env("HUGINN_PROVIDER", std::env::var("HUGINN_PROVIDER").unwrap_or_default())
         .env("HUGINN_MODEL", std::env::var("HUGINN_MODEL").unwrap_or_default())
         .env("HUGINN_DEV_MODE", std::env::var("HUGINN_DEV_MODE").unwrap_or_default())
+        .env("HUGINN_CONFIG_FILE", std::env::var("HUGINN_CONFIG_FILE").unwrap_or_default())
         .spawn()
         .map_err(|e| format!("failed to start backend via python: {}", e))?;
 

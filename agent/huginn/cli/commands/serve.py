@@ -112,7 +112,10 @@ def _build_drainable_server(app: Any, host: str, port: int):
         def capture_signals(self):  # type: ignore[override]
             yield
 
-    config = uvicorn.Config(app, host=host, port=port)
+    # Long LLM calls (DeepSeek reasoner 60s+) outlast uvicorn's default
+    # 20s WS ping timeout. 5 min keeps the connection alive mid-response.
+    config = uvicorn.Config(app, host=host, port=port,
+                            ws_ping_interval=300, ws_ping_timeout=300)
     return _DrainableServer(config)
 
 
