@@ -117,6 +117,7 @@ export interface SettingsPanelProps {
   // From App.tsx / useChatAndConnection
   startBackend: () => void;
   status: string;
+  isConnected: boolean;
   personaList: Array<{ id: string; label: string; description?: string; avatar?: string }>;
   personaEmotion: { mood: string; valence: number; arousal: number; trust: number } | null;
 }
@@ -132,7 +133,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
     saveConfig, updateModel, addModel, removeModel,
     updateAgent, addAgent, removeAgent,
     toggleModelExpanded, toggleAgentExpanded, switchPersona,
-    startBackend, status, personaList, personaEmotion,
+   startBackend, isConnected, personaList, personaEmotion,
   } = props;
 
   return (
@@ -698,7 +699,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       a.click();
                       URL.revokeObjectURL(url);
                     } catch (e: any) {
-                      console.error("export error:", e);
+                      setConfigSavedMsg("Export failed: " + (e?.message || "unknown error"));
                     }
                   }}
                   className="btn-primary text-xs"
@@ -720,7 +721,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       a.click();
                       URL.revokeObjectURL(url);
                     } catch (e: any) {
-                      console.error("export memory error:", e);
+                      setConfigSavedMsg("Export failed: " + (e?.message || "unknown error"));
                     }
                   }}
                   className="btn-secondary text-xs"
@@ -742,7 +743,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       a.click();
                       URL.revokeObjectURL(url);
                     } catch (e: any) {
-                      console.error("export knowledge error:", e);
+                      setConfigSavedMsg("Export failed: " + (e?.message || "unknown error"));
                     }
                   }}
                   className="btn-secondary text-xs"
@@ -963,7 +964,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
             </button>
           </div>
           <p className="mt-2 text-xs text-text-muted">
-            {t('settings.statusLabel')} {status === "running" ? t('status.connected') : t('status.offline')}
+            {t('settings.statusLabel')} {isConnected ? t('status.connected') : t('status.offline')}
           </p>
         </div>
       </div>

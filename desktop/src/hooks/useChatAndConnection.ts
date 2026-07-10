@@ -156,7 +156,29 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
     // restore target thread's messages
     const cached = messagesByThread[threadId];
-    setMessages(cached || [WELCOME_MSG()]);
+
+    // After a page refresh the in-memory cache is gone, so pull from the
+    // backend checkpointer when we only have the welcome stub (or nothing).
+    if (cached && cached.length > 1) {
+      setMessages(cached);
+    } else {
+      setMessages(cached && cached.length > 0 ? cached : [WELCOME_MSG()]);
+      api.get<{ messages?: any[] }>(`/threads/${threadId}/messages`)
+        .then((data) => {
+          if (data.messages && data.messages.length > 0) {
+            const restored: Message[] = data.messages.map((m: any) => ({
+              role: m.role as Message["role"],
+              content: m.content,
+              timestamp: m.timestamp || formatTime(),
+              ...(m.tool_name ? { tool_name: m.tool_name } : {}),
+              ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+            }));
+            setMessages(restored);
+            setMessagesByThread((prev) => ({ ...prev, [threadId]: restored }));
+          }
+        })
+        .catch(() => { /* backend offline or no history — keep welcome */ });
+    }
     setActiveThread(threadId);
   };
 
@@ -171,7 +193,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   const createThread = async () => {
     try {
-      const data = await api.post<{ id: string; label: string }>("/threads", { label: "New thread" });
+      const data = await api.post<{ id: string; label: string }>("/threads", { title: "New thread" });
       // cache current thread before switching
       setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
       setActiveThread(data.id);
@@ -200,6 +222,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const deleteThread = async (id: string) => {
     try {
       await api.del(`/threads/${id}`);
+      setMessagesByThread((prev) => { const next = { ...prev }; delete next[id]; return next; });
       if (activeThread === id) {
         setActiveThread("desktop");
       }

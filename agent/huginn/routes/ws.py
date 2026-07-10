@@ -169,6 +169,8 @@ def _make_ws_approval_callback(
     websocket: WebSocket,
     session_auto_approve: dict | None = None,
     pending_approvals: dict | None = None,
+    last_user_context: dict | None = None,
+    pending_approval_contexts: dict | None = None,
 ):
     """Build a sync approval callback that notifies the WebSocket client.
 
@@ -178,12 +180,16 @@ def _make_ws_approval_callback(
     visibility. When False, dangerous / ASK-mode tools are denied so
     the client can toggle approval back on after reviewing the request.
 
-    ponytail: this is a sync callback running inside the event loop, so
-    we can't block on a client reply. The per-connection flag gates
-    whether dangerous tools proceed, but true interactive approval
-    (wait for client response) requires making the callback async.
-    Upgrade path: make ApprovalCallback async, create a Future, and
-    await it with a timeout in the adapter's _check_permission.
+    When auto-approve is off and a tool is denied, we stash the current
+    user message context (content, thread, agent, config) keyed by
+    request_id. If the client later sends approval_response with
+    approved=true, the handler re-queues that message with auto-approve
+    temporarily flipped on so the tool actually runs.
+
+    ponytail: the callback is sync (called from _check_permission which
+    is sync), so we can't await a client reply here. The re-queue in the
+    approval_response handler is the workaround — the user sees the
+    denial, reviews it, and approves; the original turn re-runs.
     """
 
     # Tools that warrant a client-visible warning when auto-approved.
@@ -200,12 +206,15 @@ def _make_ws_approval_callback(
         is_dangerous = tool_name in _DANGEROUS_TOOLS
         approved = _auto["enabled"]
 
-        # Register a future so a client that sends approval_response
-        # after the turn completes can still resolve it (best-effort).
-        if pending_approvals is not None and not approved:
-            loop = asyncio.get_event_loop()
-            fut = loop.create_future()
-            pending_approvals[request_id] = fut
+        # When denying, stash the message context so the approval_response
+        # handler can re-queue the turn if the user approves.
+        if not approved:
+            if pending_approvals is not None:
+                loop = asyncio.get_event_loop()
+                fut = loop.create_future()
+                pending_approvals[request_id] = fut
+            if pending_approval_contexts is not None and last_user_context:
+                pending_approval_contexts[request_id] = dict(last_user_context)
 
         try:
             loop = asyncio.get_running_loop()
@@ -592,10 +601,16 @@ async def agent_websocket(websocket: WebSocket):
     # client can deny dangerous tools for this session without touching the
     # shared global agent.
     session_auto_approve: dict[str, bool] = {"enabled": True}
+    # Tracks the current user message (content, thread, agent, config) so
+    # the approval callback can stash it for later re-queue.
+    _last_user_context: dict = {}
+    _pending_approval_contexts: dict[str, dict] = {}
     _ws_approval = _make_ws_approval_callback(
         websocket,
         session_auto_approve=session_auto_approve,
         pending_approvals=_pending_approvals,
+        last_user_context=_last_user_context,
+        pending_approval_contexts=_pending_approval_contexts,
     )
 
     # Per-connection plan contexts: plan_id -> execution context.
@@ -1137,6 +1152,12 @@ async def agent_websocket(websocket: WebSocket):
                         "plan_id": plan_data.get("summary", "")[:50],
                         "acceptance_criteria": plan_data["acceptance_criteria"],
                     }
+                # Stash context so the approval callback can re-queue
+                # this turn if the user later approves a denied tool.
+                _last_user_context.update({
+                    "content": content, "thread_id": thread_id,
+                    "cfg_chat": cfg_chat, "agent": agent,
+                })
                 await _stream_agent_response(
                     websocket,
                     agent,
@@ -1247,15 +1268,36 @@ async def agent_websocket(websocket: WebSocket):
                 await websocket.send_json({"type": "done"})
 
             elif msg_type == "approval_response":
-                # Client replied to an approval_request. The current
-                # callback auto-approves, so there may not be a pending
-                # future — resolve one if it exists, otherwise just
-                # acknowledge receipt.
+                # Client replied to an approval_request. Resolve the
+                # future (best-effort), then re-queue the original
+                # turn if the user approved a previously-denied tool.
                 request_id = data.get("request_id")
                 approved = data.get("approved", False)
                 future = _pending_approvals.pop(request_id, None)
                 if future is not None and not future.done():
                     future.set_result(approved)
+
+                ctx = _pending_approval_contexts.pop(request_id, None)
+                if approved and ctx:
+                    # Temporarily flip auto-approve on so the re-queued
+                    # turn actually runs the tool instead of denying
+                    # again. Restored to False after the turn completes.
+                    # ponytail: this re-runs the full turn, not just the
+                    # denied tool — acceptable since the user explicitly
+                    # approved and the agent may take a different path.
+                    session_auto_approve["enabled"] = True
+                    await _stream_agent_response(
+                        websocket,
+                        ctx["agent"],
+                        ctx["content"],
+                        ctx["thread_id"],
+                        ctx["cfg_chat"],
+                        auto_checkpoint=True,
+                        handle_clarification=True,
+                        error_log="approval re-queue error",
+                        error_label="Approval re-queue failed",
+                    )
+                    session_auto_approve["enabled"] = False
 
             elif msg_type == "plan_confirm":
                 # User confirmed or rejected a plan sent via type: "plan".
@@ -1304,6 +1346,10 @@ async def agent_websocket(websocket: WebSocket):
                         "plan_id": plan_id,
                         "acceptance_criteria": plan_data["acceptance_criteria"],
                     }
+                _last_user_context.update({
+                    "content": plan_context, "thread_id": thread_id,
+                    "cfg_chat": cfg_chat, "agent": agent,
+                })
                 await _stream_agent_response(
                     websocket,
                     agent,

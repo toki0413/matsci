@@ -1106,6 +1106,7 @@ export default function App() {
               switchPersona={switchPersona}
               startBackend={startBackend}
               status={status}
+              isConnected={isConnected}
               personaList={personaList}
               personaEmotion={personaEmotion}
             />
