@@ -88,6 +88,154 @@ function LocalModelDiscoverer({
   );
 }
 
+// ── BotPanel (extracted so it can own its own status state) ─────────────
+function BotPanel({ t }: { t: (k: string) => string }) {
+  const [botStatus, setBotStatus] = useState(t('settings.bot.notRunning'));
+
+  const startBot = async () => {
+    try {
+      const data = await api.post<{ running?: boolean }>("/bot/start");
+      setBotStatus(data.running ? t('settings.bot.running') : t('settings.bot.startFailed'));
+    } catch (e: any) {
+      console.error("bot start error:", e);
+    }
+  };
+
+  const stopBot = async () => {
+    try {
+      await api.post("/bot/stop");
+      setBotStatus(t('settings.bot.stopped'));
+    } catch (e: any) {
+      console.error("bot stop error:", e);
+    }
+  };
+
+  const refreshStatus = async () => {
+    try {
+      const data = await api.get<{ running?: boolean; platform?: string }>("/bot/status");
+      setBotStatus(data.running ? `${t('settings.bot.running')} (${data.platform})` : t('settings.bot.notRunning'));
+    } catch (e: any) {
+      console.error("bot status error:", e);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-text-primary">{t('settings.bot.title')}</h3>
+        <p className="mt-1 text-xs text-text-muted">
+          {t('settings.bot.desc')}
+        </p>
+      </div>
+
+      {/* Bot status */}
+      <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-xs font-medium text-text-secondary">{t('settings.bot.status')} </span>
+            <span className="text-xs text-text-muted">{botStatus}</span>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={startBot} className="btn-primary text-xs">
+              {t('settings.bot.start')}
+            </button>
+            <button onClick={stopBot} className="btn-secondary text-xs">
+              {t('settings.bot.stop')}
+            </button>
+          </div>
+        </div>
+        <button onClick={refreshStatus} className="btn-secondary text-xs mt-2">
+          {t('common.refresh')}
+        </button>
+      </div>
+
+      {/* Bot config */}
+      <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+        <div className="mb-2 text-xs font-medium text-text-secondary">{t('settings.bot.config')}</div>
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs text-text-muted">{t('settings.bot.platform')}</label>
+            <select
+              id="bot-platform"
+              className="input mt-1 w-full text-xs"
+              defaultValue="qq"
+            >
+              <option value="qq">QQ</option>
+              <option value="wechat">微信</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-text-muted">{t('settings.bot.botId')}</label>
+            <input
+              type="text"
+              id="bot-id"
+              className="input mt-1 w-full text-xs"
+              placeholder={t('settings.bot.botIdPlaceholder')}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-text-muted">{t('settings.bot.apiUrl')}</label>
+            <input
+              type="text"
+              id="bot-api-url"
+              className="input mt-1 w-full text-xs"
+              placeholder={t('settings.bot.apiUrlPlaceholder')}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-text-muted">{t('settings.bot.httpPort')}</label>
+            <input
+              type="number"
+              id="bot-http-port"
+              className="input mt-1 w-full text-xs"
+              defaultValue={8080}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-text-muted">{t('settings.bot.allowedGroups')}</label>
+            <input
+              type="text"
+              id="bot-allowed-groups"
+              className="input mt-1 w-full text-xs"
+              placeholder={t('settings.bot.allowedGroupsPlaceholder')}
+            />
+          </div>
+        </div>
+        <button
+          onClick={async () => {
+            const cfg: any = {
+              platform: (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq",
+              bot_id: (document.getElementById("bot-id") as HTMLInputElement)?.value || "",
+              api_url: (document.getElementById("bot-api-url") as HTMLInputElement)?.value || "",
+              http_port: parseInt((document.getElementById("bot-http-port") as HTMLInputElement)?.value || "8080"),
+              enabled: true,
+            };
+            const groups = (document.getElementById("bot-allowed-groups") as HTMLInputElement)?.value;
+            if (groups) {
+              cfg.allowed_groups = groups.split(",").map((s: string) => s.trim()).filter(Boolean);
+            }
+            try {
+              await api.put("/bot/config", cfg);
+              alert("配置已保存");
+            } catch (e: any) {
+              alert(`保存失败: ${e.message}`);
+            }
+          }}
+          className="btn-primary text-xs mt-2"
+        >
+          {t('settings.bot.saveConfig')}
+        </button>
+      </div>
+
+      <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
+        <p className="text-xs text-accent">
+          {t('settings.bot.hint')} <code className="mx-1 rounded bg-bg-tertiary px-1">{t('settings.bot.hintUrl')}</code> {t('settings.bot.hintTail')}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Props ────────────────────────────────────────────────────────────────
 
 export interface SettingsPanelProps {
@@ -794,152 +942,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
 
         {/* Bot Management Panel */}
         {settingsTab === "bot" && (
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold text-text-primary">{t('settings.bot.title')}</h3>
-              <p className="mt-1 text-xs text-text-muted">
-                {t('settings.bot.desc')}
-              </p>
-            </div>
-
-            {/* Bot status */}
-            <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-medium text-text-secondary">{t('settings.bot.status')} </span>
-                  <span id="bot-status-text" className="text-xs text-text-muted">{t('settings.bot.notRunning')}</span>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={async () => {
-                      try {
-                        const data = await api.post<{ running?: boolean }>("/bot/start");
-                        const el = document.getElementById("bot-status-text");
-                        if (el) el.textContent = data.running ? t('settings.bot.running') : t('settings.bot.startFailed');
-                      } catch (e: any) {
-                        console.error("bot start error:", e);
-                      }
-                    }}
-                    className="btn-primary text-xs"
-                  >
-                    {t('settings.bot.start')}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      try {
-                        await api.post("/bot/stop");
-                        const el = document.getElementById("bot-status-text");
-                        if (el) el.textContent = t('settings.bot.stopped');
-                      } catch (e: any) {
-                        console.error("bot stop error:", e);
-                      }
-                    }}
-                    className="btn-secondary text-xs"
-                  >
-                    {t('settings.bot.stop')}
-                  </button>
-                </div>
-              </div>
-              <button
-                onClick={async () => {
-                  try {
-                    const data = await api.get<{ running?: boolean; platform?: string }>("/bot/status");
-                    const el = document.getElementById("bot-status-text");
-                    if (el) el.textContent = data.running ? `${t('settings.bot.running')} (${data.platform})` : t('settings.bot.notRunning');
-                  } catch (e: any) {
-                    console.error("bot status error:", e);
-                  }
-                }}
-                className="btn-secondary text-xs mt-2"
-              >
-                {t('common.refresh')}
-              </button>
-            </div>
-
-            {/* Bot config */}
-            <div className="rounded-lg border border-border bg-bg-tertiary p-3">
-              <div className="mb-2 text-xs font-medium text-text-secondary">{t('settings.bot.config')}</div>
-              <div className="space-y-2">
-                <div>
-                  <label className="text-xs text-text-muted">{t('settings.bot.platform')}</label>
-                  <select
-                    id="bot-platform"
-                    className="input mt-1 w-full text-xs"
-                    defaultValue="qq"
-                  >
-                    <option value="qq">QQ</option>
-                    <option value="wechat">微信</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-text-muted">{t('settings.bot.botId')}</label>
-                  <input
-                    type="text"
-                    id="bot-id"
-                    className="input mt-1 w-full text-xs"
-                    placeholder={t('settings.bot.botIdPlaceholder')}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-text-muted">{t('settings.bot.apiUrl')}</label>
-                  <input
-                    type="text"
-                    id="bot-api-url"
-                    className="input mt-1 w-full text-xs"
-                    placeholder={t('settings.bot.apiUrlPlaceholder')}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-text-muted">{t('settings.bot.httpPort')}</label>
-                  <input
-                    type="number"
-                    id="bot-http-port"
-                    className="input mt-1 w-full text-xs"
-                    defaultValue={8080}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-text-muted">{t('settings.bot.allowedGroups')}</label>
-                  <input
-                    type="text"
-                    id="bot-allowed-groups"
-                    className="input mt-1 w-full text-xs"
-                    placeholder={t('settings.bot.allowedGroupsPlaceholder')}
-                  />
-                </div>
-              </div>
-              <button
-                onClick={async () => {
-                  const config: any = {
-                    platform: (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq",
-                    bot_id: (document.getElementById("bot-id") as HTMLInputElement)?.value || "",
-                    api_url: (document.getElementById("bot-api-url") as HTMLInputElement)?.value || "",
-                    http_port: parseInt((document.getElementById("bot-http-port") as HTMLInputElement)?.value || "8080"),
-                    enabled: true,
-                  };
-                  const groups = (document.getElementById("bot-allowed-groups") as HTMLInputElement)?.value;
-                  if (groups) {
-                    config.allowed_groups = groups.split(",").map((s: string) => s.trim()).filter(Boolean);
-                  }
-                  try {
-                    await api.put("/bot/config", config);
-                    alert("配置已保存");
-                  } catch (e: any) {
-                    alert(`保存失败: ${e.message}`);
-                  }
-                }}
-                className="btn-primary text-xs mt-2"
-              >
-                {t('settings.bot.saveConfig')}
-              </button>
-            </div>
-
-            <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
-              <p className="text-xs text-accent">
-                {t('settings.bot.hint')} <code className="mx-1 rounded bg-bg-tertiary px-1">{t('settings.bot.hintUrl')}</code> {t('settings.bot.hintTail')}
-              </p>
-            </div>
-          </div>
+          <BotPanel t={t} />
         )}
 
         <div className="mt-6 flex items-center gap-3 pt-2">

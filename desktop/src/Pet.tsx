@@ -262,7 +262,18 @@ export default function Pet() {
   const [tipIndex, setTipIndex] = useState(0);
   const [persistent, setPersistent] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [petName, setPetName] = useState("Muninn");
+  const [petName, setPetName] = useState(() => {
+    try {
+      const raw = localStorage.getItem("huginn:config");
+      if (raw) {
+        const cfg = JSON.parse(raw);
+        if (cfg.pet_name) return cfg.pet_name;
+      }
+    } catch {
+      // localStorage might not be available
+    }
+    return "Muninn";
+  });
   const [personality, setPersonality] = useState<PetPersonality>("cheerful");
   const [clickIndex, setClickIndex] = useState(0);
   const [experience, setExperience] = useState(0);

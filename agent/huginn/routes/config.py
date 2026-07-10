@@ -28,7 +28,7 @@ from huginn.models.registry import (
     resolve_provider_key,
 )
 from huginn.pet import configure_pet
-from huginn.security.auth import clear_api_key_cache, require_admin_key
+from huginn.security.auth import clear_api_key_cache, require_admin_key, require_api_key
 from huginn.server_core import get_context
 
 router = APIRouter(tags=["config"])
@@ -159,7 +159,7 @@ def _provider_info(provider: str) -> dict[str, Any]:
 # ── /config 顶层 ─────────────────────────────────────────────────
 
 
-@router.get("/config", dependencies=[Depends(require_admin_key)])
+@router.get("/config", dependencies=[Depends(require_api_key)])
 async def get_config_endpoint() -> dict[str, Any]:
     """返回当前配置, api_key 全部脱敏。"""
     cfg = _load_runtime_config()

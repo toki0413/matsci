@@ -452,14 +452,39 @@ export function ChatPanel(props: ChatPanelProps) {
               ))}
             </div>
 
+            {/* Plan mode toggle */}
+            <button
+              onClick={() => {
+                if (mode === "plan") {
+                  setMode("chat");
+                } else {
+                  setMode("plan");
+                  setResearchMode(false);
+                }
+              }}
+              disabled={researchMode}
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+                mode === "plan"
+                  ? "bg-accent/20 text-accent font-medium"
+                  : "text-text-muted hover:text-text-secondary"
+              } ${researchMode ? "opacity-40 cursor-not-allowed" : ""}`}
+            >
+              📋 Plan Mode
+            </button>
+
             {/* Research mode toggle */}
             <button
-              onClick={() => setResearchMode(!researchMode)}
+              onClick={() => {
+                const next = !researchMode;
+                setResearchMode(next);
+                if (next && mode === "plan") setMode("chat");
+              }}
+              disabled={mode === "plan"}
               className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
                 researchMode
                   ? "bg-accent/20 text-accent font-medium"
                   : "text-text-muted hover:text-text-secondary"
-              }`}
+              } ${mode === "plan" ? "opacity-40 cursor-not-allowed" : ""}`}
             >
               🔬 Research Mode
             </button>
