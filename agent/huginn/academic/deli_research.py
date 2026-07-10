@@ -26,7 +26,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # 阶段定义
 # ──────────────────────────────────────────────────────────────────────
 
-class ResearchStage(str, Enum):
+class ResearchStage(StrEnum):
     """管线阶段, 顺序即执行次序."""
     TOPIC_ANALYSIS = "topic_analysis"
     LITERATURE_SEARCH = "literature_search"
@@ -160,6 +160,7 @@ class ResearchAgent:
     async def run(self, user_prompt: str, config: Any = None) -> str:
         """执行一次 LLM 调用, 返回纯文本."""
         from langchain_core.messages import HumanMessage, SystemMessage
+
         from huginn.llm import get_model
 
         model = get_model(
@@ -524,8 +525,6 @@ class PaperWritingPipeline:
             # 没拿到大纲就按标准五段来
             sections_data = [{"name": s, "points": []} for s in self.SECTIONS]
 
-        section_names = [s["name"] for s in sections_data]
-
         # 并行起草各 section
         tasks = [
             self._draft_section(state, sec, config)
@@ -839,7 +838,6 @@ class DeliAutoResearch:
             try:
                 from huginn.academic.standards_checker import StandardsChecker
                 checker = StandardsChecker()
-                word_count = len(state.integrated_draft.split())
                 results = checker.check_compliance(
                     {
                         "title": state.topic,
@@ -919,9 +917,8 @@ class DeliAutoResearch:
         elif stage == ResearchStage.CITATION_VERIFY:
             if state.citation_issues:
                 issues.append(f"{len(state.citation_issues)} citation issues found")
-        elif stage == ResearchStage.PEER_REVIEW:
-            if len(state.reviews) < 3:
-                issues.append(f"only {len(state.reviews)} reviews (need ≥3)")
+        elif stage == ResearchStage.PEER_REVIEW and len(state.reviews) < 3:
+            issues.append(f"only {len(state.reviews)} reviews (need ≥3)")
 
         if issues:
             state.integrity_log.append(
@@ -968,7 +965,6 @@ def _get_rag_search_fn(context: ToolContext | None) -> Any | None:
         if rag is not None:
             # 调 RAGTool._search 的简化版
             async def _rag_search(query: str) -> list[dict]:
-                from huginn.types import ToolContext as _TC
                 result = await rag.call(
                     type(rag.input_schema)(action="search", query=query, top_k=5)
                     if hasattr(rag, "input_schema")

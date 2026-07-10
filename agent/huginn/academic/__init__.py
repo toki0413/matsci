@@ -8,23 +8,23 @@
   - paper_tool: PaperTool (HuginnTool 子类, 供 Agent 调用)
 """
 
-from huginn.academic.journal_db import (
-    JOURNAL_DATABASE,
-    JournalSpec,
-    REFERENCE_FORMATS,
-    get_journal,
-    get_reference_format,
-    list_journals,
-    search_journals,
-)
-from huginn.academic.standards_checker import CheckResult, StandardsChecker
-from huginn.academic.paper_tool import PaperTool, PaperToolInput
 from huginn.academic.deli_research import (
     DeliAutoResearch,
     DeliAutoResearchTool,
     ResearchStage,
     ResearchState,
 )
+from huginn.academic.journal_db import (
+    JOURNAL_DATABASE,
+    REFERENCE_FORMATS,
+    JournalSpec,
+    get_journal,
+    get_reference_format,
+    list_journals,
+    search_journals,
+)
+from huginn.academic.paper_tool import PaperTool, PaperToolInput
+from huginn.academic.standards_checker import CheckResult, StandardsChecker
 
 __all__ = [
     "JOURNAL_DATABASE",

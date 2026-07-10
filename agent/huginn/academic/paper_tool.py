@@ -16,14 +16,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.academic.journal_db import (
-    JOURNAL_DATABASE,
     JournalSpec,
     get_journal,
     get_reference_format,
     list_journals,
     search_journals,
 )
-from huginn.academic.standards_checker import CheckResult, StandardsChecker
+from huginn.academic.standards_checker import StandardsChecker
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
