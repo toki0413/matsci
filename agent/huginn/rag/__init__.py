@@ -4,6 +4,6 @@ Local vector database for material science knowledge retrieval.
 """
 
 from huginn.rag.rag_tool import RAGTool
-from huginn.rag.vector_store import VectorStore, ZvecBackend, create_vector_store
+from huginn.rag.vector_store import VectorStore
 
-__all__ = ["VectorStore", "ZvecBackend", "create_vector_store", "RAGTool"]
+__all__ = ["VectorStore", "RAGTool"]
