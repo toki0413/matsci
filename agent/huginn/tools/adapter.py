@@ -703,6 +703,7 @@ class ToolAdapter:
             output: dict[str, Any],
             context: Any,
             router: Any,
+            duration: float = 0.0,
         ) -> dict[str, Any]:
             """Post-execution: constraints, audit, cache, publish."""
             if router is not None:
@@ -723,13 +724,16 @@ class ToolAdapter:
                 except Exception:
                     logger.debug("provenance register failed (non-fatal)", exc_info=True)
 
-            # 贝叶斯技能进化: 记录工具调用结果, 更新参数信念
+            # 贝叶斯技能进化: 多维反馈信号 (success + duration + info_gain)
             try:
                 from huginn.skills.evolution import SkillEvolutionLayer
+                _ig = len(output) if isinstance(output, dict) else 0
                 SkillEvolutionLayer.shared().record_tool_call(
                     tool.name,
                     input_data.model_dump() if hasattr(input_data, "model_dump") else {},
                     result.success,
+                    duration=duration,
+                    info_gain=_ig,
                 )
             except Exception:
                 pass
@@ -830,7 +834,7 @@ class ToolAdapter:
                 span.metadata["result"] = _truncate_for_trajectory(output)
                 if result.error:
                     span.metadata["error"] = result.error
-            output = _run_post_checks(input_data, result, output, context, router)
+            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start)
             return output
 
         def _run(**kwargs: Any) -> dict[str, Any]:
@@ -946,7 +950,7 @@ class ToolAdapter:
                 span.metadata["result"] = _truncate_for_trajectory(output)
                 if result.error:
                     span.metadata["error"] = result.error
-            output = _run_post_checks(input_data, result, output, context, router)
+            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start)
             return output
 
         return StructuredTool.from_function(
