@@ -7,7 +7,7 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2, Zap, Star } from "lucide-react";
+import { Plus, Trash2, Zap, Star, Copy } from "lucide-react";
 import { api } from "../lib/api";
 
 // Built-in personas can't be deleted; the backend enforces this too,
@@ -318,6 +318,21 @@ export default function PersonaManager() {
                         <Trash2 size={12} /> {t("persona.delete")}
                       </button>
                     )}
+                    <button
+                      onClick={() => {
+                        setForm({
+                          name: `${detail.name}_copy`,
+                          description: detail.description || '',
+                          system_prompt: detail.system_prompt || '',
+                          when_to_use: (detail.when_to_use || []).join(', '),
+                        });
+                        setShowCreate(true);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-tertiary"
+                      title="Clone this persona"
+                    >
+                      <Copy size={12} /> Clone
+                    </button>
                   </div>
                 </div>
               </div>
@@ -338,10 +353,55 @@ export default function PersonaManager() {
 
               {/* system prompt */}
               <div className="card space-y-2">
-                <h4 className="text-xs font-semibold text-text-secondary">{t("persona.systemPrompt")}</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-text-secondary">{t("persona.systemPrompt")}</h4>
+                  <span className={`text-[10px] ${(detail.system_prompt || '').length > 4000 ? 'text-warning' : 'text-text-muted'}`}>
+                    {(detail.system_prompt || '').length} chars · ~{Math.round((detail.system_prompt || '').length / 4)} tokens
+                  </span>
+                </div>
                 <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-bg-tertiary p-3 text-xs leading-relaxed text-text-primary whitespace-pre-wrap">
                   {detail.system_prompt || "—"}
                 </pre>
+              </div>
+
+              {/* Personality traits radar visualization */}
+              <div className="card space-y-3">
+                <h4 className="text-xs font-semibold text-text-secondary">Personality Profile</h4>
+                {(() => {
+                  const prompt = (detail.system_prompt || '').toLowerCase();
+                  const traits = [
+                    { name: 'Analytical', keywords: ['analyz', 'logic', 'reason', 'precise', 'accurate', 'systematic'], color: 'var(--accent)' },
+                    { name: 'Creative', keywords: ['creativ', 'imagin', 'brainstorm', 'novel', 'innovativ'], color: '#ec4899' },
+                    { name: 'Helpful', keywords: ['help', 'assist', 'support', 'guide', 'explain'], color: '#22c55e' },
+                    { name: 'Formal', keywords: ['formal', 'professional', 'academic', 'rigor', 'precise'], color: '#3b82f6' },
+                    { name: 'Friendly', keywords: ['friend', 'warm', 'casual', 'conversational', 'approachable'], color: '#f59e0b' },
+                    { name: 'Technical', keywords: ['technical', 'code', 'program', 'algorithm', 'data', 'compute'], color: '#8b5cf6' },
+                  ];
+                  const scores = traits.map(t => {
+                    const score = t.keywords.reduce((sum, kw) => sum + (prompt.includes(kw) ? 1 : 0), 0);
+                    return { ...t, score: Math.min(score / 3, 1) }; // normalize 0-1
+                  });
+                  const activeTraits = scores.filter(t => t.score > 0);
+                  if (activeTraits.length === 0) {
+                    return <p className="text-xs text-text-muted">No personality traits detected from the system prompt.</p>;
+                  }
+                  return (
+                    <div className="space-y-2">
+                      {scores.map(t => (
+                        <div key={t.name} className="flex items-center gap-3">
+                          <span className="w-20 text-xs text-text-secondary">{t.name}</span>
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
+                            <div
+                              className="h-full rounded-full transition-all"
+                              style={{ width: `${t.score * 100}%`, backgroundColor: t.color, opacity: t.score > 0 ? 1 : 0.2 }}
+                            />
+                          </div>
+                          <span className="w-8 text-right text-[10px] text-text-muted">{Math.round(t.score * 100)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* begin dialogs */}

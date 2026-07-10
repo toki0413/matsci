@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useRef, lazy, Suspense, Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 import Pet from "./Pet";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
@@ -748,6 +749,19 @@ export default function App() {
       loadSolverModels();
     }
   }, [activeTab, memoryFilter.category, memoryFilter.tier]);
+
+  // ── System tray: restart backend from tray menu ────────────────
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    (async () => {
+      unlisten = await listen("tray-restart-backend", async () => {
+        const { invoke } = await import("@tauri-apps/api/core");
+        try { await invoke("stop_backend"); } catch { /* not running */ }
+        await startBackend();
+      });
+    })();
+    return () => { unlisten?.(); };
+  }, [startBackend]);
 
   // ── Keyboard shortcuts: Ctrl+K palette, Ctrl+F search, Ctrl+N new thread ──
   useEffect(() => {
