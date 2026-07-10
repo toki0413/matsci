@@ -36,6 +36,7 @@ import { ToolsPanel } from "./components/panels/ToolsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
 import { TeamPanel } from "./components/panels/TeamPanel";
 import { ProjectPanel } from "./components/panels/ProjectPanel";
+import { ResearchProjectPanel } from "./components/panels/ResearchProjectPanel";
 import { FilesPanel } from "./components/panels/FilesPanel";
 import { ThreadsPanel } from "./components/panels/ThreadsPanel";
 import { ReviewPanel } from "./components/panels/ReviewPanel";
@@ -105,7 +106,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<
     | "chat" | "tools" | "memory" | "skills" | "settings" | "files"
     | "terminal" | "review" | "knowledge" | "logs" | "plugins"
-    | "threads" | "project" | "team" | "coder" | "benchmark"
+    | "threads" | "project" | "projects" | "team" | "coder" | "benchmark"
     | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
     | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
     | "structure" | "emotion" | "provenance" | "side" | "solver"
@@ -672,6 +673,7 @@ export default function App() {
           {([
             { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={16} /> },
             { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={16} /> },
+            { id: "projects", label: "Projects", icon: <Briefcase size={16} /> },
             { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={16} /> },
             { id: "settings", label: t('tab.settings'), icon: <Settings size={16} /> },
           ] as const).map((item) => (
@@ -698,7 +700,7 @@ export default function App() {
           </button>
 
           {/* Quick access to active tool (if non-primary) */}
-          {activeTab !== "chat" && activeTab !== "knowledge" && activeTab !== "threads" && activeTab !== "settings" && activeTabInfo && (
+          {activeTab !== "chat" && activeTab !== "knowledge" && activeTab !== "projects" && activeTab !== "threads" && activeTab !== "settings" && activeTabInfo && (
             <div className="mt-2 flex items-center gap-2 rounded-md bg-bg-tertiary px-2.5 py-1.5">
               <span className="flex-shrink-0 text-accent">{activeTabInfo.icon}</span>
               <span className="truncate text-[13px] font-semibold text-text-primary">{activeTabInfo.label}</span>
@@ -979,6 +981,10 @@ export default function App() {
               ingestUrl={ingestUrl}
               loadProvenanceDag={loadProvenanceDag}
             />
+          )}
+
+          {activeTab === "projects" && (
+            <ResearchProjectPanel onOpenInChat={() => setActiveTab("chat")} />
           )}
 
           {activeTab === "logs" && (
