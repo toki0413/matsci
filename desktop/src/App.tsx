@@ -1452,7 +1452,7 @@ export default function App() {
 
           {activeTab === "periodic" && (
             <div className="h-full overflow-y-auto p-4">
-              <ErrorBoundary>
+              <ErrorBoundary name="Periodic Table">
                 <Suspense fallback={<LoadingFallback />}>
                   <PeriodicTable API_BASE={getApiBase()} />
                 </Suspense>
@@ -1462,7 +1462,7 @@ export default function App() {
 
           {activeTab === "notebook" && (
             <div className="h-full overflow-hidden p-4">
-              <ErrorBoundary>
+              <ErrorBoundary name="Notebook">
                 <Suspense fallback={<LoadingFallback />}>
                   <Notebook API_BASE={getApiBase()} />
                 </Suspense>
@@ -1472,7 +1472,7 @@ export default function App() {
 
           {activeTab === "sandbox" && (
             <div className="h-full overflow-hidden p-4">
-              <ErrorBoundary>
+              <ErrorBoundary name="Sandbox">
                 <Suspense fallback={<LoadingFallback />}>
                   <SandboxPanel API_BASE={getApiBase()} />
                 </Suspense>
@@ -1482,7 +1482,7 @@ export default function App() {
 
           {activeTab === "sweep" && (
             <div className="h-full overflow-y-auto p-4">
-              <ErrorBoundary>
+              <ErrorBoundary name="Sweep Dashboard">
                 <Suspense fallback={<LoadingFallback />}>
                   <SweepDashboard API_BASE={getApiBase()} />
                 </Suspense>
@@ -1492,7 +1492,7 @@ export default function App() {
 
           {activeTab === "structure" && (
             <div className="h-full overflow-hidden p-4">
-              <ErrorBoundary>
+              <ErrorBoundary name="Structure Viewer">
                 <Suspense fallback={<LoadingFallback />}>
                   <StructureViewer API_BASE={getApiBase()} />
                 </Suspense>
