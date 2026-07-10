@@ -182,7 +182,7 @@ export default function App() {
     fileInputRef, parseFileInputRef,
     setKbQuery,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
-    deleteKnowledge, queryKnowledge,
+    deleteKnowledge, queryKnowledge, ingestUrl, loadProvenanceDag,
   } = useKnowledge();
 
   const {
@@ -976,6 +976,8 @@ export default function App() {
               loadDocumentGraph={loadDocumentGraph}
               deleteKnowledge={deleteKnowledge}
               queryKnowledge={queryKnowledge}
+              ingestUrl={ingestUrl}
+              loadProvenanceDag={loadProvenanceDag}
             />
           )}
 

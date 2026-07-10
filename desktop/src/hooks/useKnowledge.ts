@@ -102,11 +102,39 @@ export function useKnowledge() {
     }
   };
 
+  const ingestUrl = async (url: string) => {
+    if (!url.trim()) return;
+    setKbMsg('Fetching web page…');
+    try {
+      const data = await api.post<{ success?: boolean; error?: string; document?: any; source_url?: string }>(
+        '/knowledge/ingest-url',
+        { url }
+      );
+      if (data.success) {
+        setKbMsg(`Added ${data.source_url || url} to knowledge base`);
+        loadKnowledge();
+      } else {
+        setKbMsg(`URL ingest failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setKbMsg(`URL ingest error: ${e.message}`);
+    }
+  };
+
+  const loadProvenanceDag = useCallback(async () => {
+    try {
+      const data = await api.get<{ success?: boolean; data?: { nodes: any[]; edges: any[] } }>('/provenance/dag?n=50');
+      return data;
+    } catch {
+      return { success: false, data: { nodes: [], edges: [] } };
+    }
+  }, []);
+
   return {
     kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading,
     fileInputRef, parseFileInputRef,
     setKbQuery, setKbMsg,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
-    deleteKnowledge, queryKnowledge,
+    deleteKnowledge, queryKnowledge, ingestUrl, loadProvenanceDag,
   };
 }

@@ -32,6 +32,8 @@ interface KnowledgePanelProps {
   loadDocumentGraph: (docId: string) => void;
   deleteKnowledge: (docId: string) => void;
   queryKnowledge: () => void;
+  ingestUrl: (url: string) => void;
+  loadProvenanceDag: () => Promise<any>;
 }
 
 type ViewMode = 'concise' | 'detailed' | 'research';
@@ -63,10 +65,14 @@ export function KnowledgePanel({
   fileInputRef, parseFileInputRef, parseLoading,
   kbMsg, kbDocs, kbAvailable, kbQuery, kbChunks, setKbQuery,
   uploadKnowledge, parseDocument, loadDocumentGraph, deleteKnowledge, queryKnowledge,
+  ingestUrl, loadProvenanceDag,
 }: KnowledgePanelProps) {
   const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<ViewMode>('detailed');
   const [searching, setSearching] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
+  const [showDag, setShowDag] = useState(false);
+  const [dagData, setDagData] = useState<{ nodes: any[]; edges: any[] } | null>(null);
   // per-chunk toggles — tracks which cards have their citation / thinking / body expanded
   const [openCitations, setOpenCitations] = useState<Set<number>>(new Set());
   const [openThinking, setOpenThinking] = useState<Set<number>>(new Set());
@@ -80,6 +86,20 @@ export function KnowledgePanel({
     } finally {
       setSearching(false);
     }
+  };
+
+  const handleIngestUrl = async () => {
+    if (!urlInput.trim()) return;
+    await ingestUrl(urlInput);
+    setUrlInput('');
+  };
+
+  const toggleDag = async () => {
+    if (!showDag && !dagData) {
+      const resp = await loadProvenanceDag();
+      if (resp?.success) setDagData(resp.data);
+    }
+    setShowDag(!showDag);
   };
 
   const toggle = (set: Set<number>, i: number, setter: (s: Set<number>) => void) => {
@@ -167,6 +187,43 @@ export function KnowledgePanel({
               6-stage: extract → figures → graph → relations → validate → assemble
             </p>
           </div>
+
+          {/* URL ingestion — Metaso-style multi-source input */}
+          <div className="kb-url-input mb-4 rounded-lg border border-border bg-bg-tertiary p-3">
+            <div className="mb-1.5 text-xs font-medium text-text-secondary">Add from URL</div>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="https://..."
+                className="input flex-1 text-xs"
+                onKeyDown={(e) => e.key === "Enter" && handleIngestUrl()}
+              />
+              <button
+                onClick={handleIngestUrl}
+                disabled={!urlInput.trim()}
+                className="btn-primary text-xs disabled:opacity-50"
+              >
+                Fetch
+              </button>
+            </div>
+          </div>
+
+          {/* Provenance DAG toggle */}
+          <button
+            onClick={toggleDag}
+            className="mb-3 flex w-full items-center justify-between rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-xs text-text-secondary hover:text-text-primary transition-colors"
+          >
+            <span>Provenance DAG</span>
+            <span className="text-text-muted">{showDag ? '▾' : '▸'}</span>
+          </button>
+          {showDag && dagData && (
+            <ProvenanceDagView nodes={dagData.nodes} edges={dagData.edges} />
+          )}
+          {showDag && !dagData && (
+            <div className="mb-3 text-xs text-text-muted">No provenance data yet</div>
+          )}
 
           {kbMsg && (
             <div className="kb-status mb-3 rounded-lg border border-border bg-bg-tertiary p-2 text-xs text-text-secondary">
@@ -343,6 +400,60 @@ export function KnowledgePanel({
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Provenance DAG view ── lightweight SVG, no extra deps ── */
+function ProvenanceDagView({ nodes, edges }: { nodes: any[]; edges: any[] }) {
+  if (!nodes?.length) {
+    return <div className="mb-3 text-xs text-text-muted">No provenance entries</div>;
+  }
+
+  // simple circular layout — fine for <50 nodes
+  const R = Math.max(80, nodes.length * 8);
+  const cx = R + 40;
+  const cy = R + 20;
+  const positions = new Map<string, { x: number; y: number }>();
+  nodes.forEach((n, i) => {
+    const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+    positions.set(n.id, { x: cx + R * Math.cos(angle), y: cy + R * Math.sin(angle) });
+  });
+
+  return (
+    <div className="mb-3 overflow-auto rounded-lg border border-border bg-bg-secondary p-2">
+      <svg width="100%" height={Math.max(200, cy * 2)} viewBox={`0 0 ${cx * 2 + 40} ${cy * 2 + 20}`}>
+        {/* edges */}
+        {edges.map((e, i) => {
+          const s = positions.get(e.source);
+          const t = positions.get(e.target);
+          if (!s || !t) return null;
+          return (
+            <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y}
+              stroke="var(--seed-border, #e5e5e5)" strokeWidth="1" opacity="0.5" />
+          );
+        })}
+        {/* nodes */}
+        {nodes.map((n) => {
+          const pos = positions.get(n.id);
+          if (!pos) return null;
+          const label = (n.label || n.id || '').toString().slice(0, 20);
+          return (
+            <g key={n.id}>
+              <circle cx={pos.x} cy={pos.y} r="4"
+                fill={n.tool ? 'var(--seed-accent, #3b82f6)' : 'var(--seed-text-muted, #999)'} />
+              <text x={pos.x + 7} y={pos.y + 3}
+                fontSize="9" fontFamily="Arial, sans-serif"
+                fill="var(--seed-text-secondary, #666)">
+                {label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="mt-1 text-[10px] text-text-muted">
+        {nodes.length} nodes · {edges.length} edges
       </div>
     </div>
   );
