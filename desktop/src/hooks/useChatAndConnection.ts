@@ -90,12 +90,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"chat" | "plan" | "build">("chat");
   const [pendingPlan, setPendingPlan] = useState<string>("");
-  const [planLoading, setPlanLoading] = useState(false);
+  const [planLoading] = useState(false);
   const [status, setStatus] = useState<string>("connecting…");
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pendingResponseRef = useRef<string>("");
+  const streamingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
 
@@ -313,6 +314,11 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     rafScheduledRef.current = false;
     const buf = streamBufferRef.current;
     if (!buf.text && !buf.reasoning) return;
+    // content arrived — cancel the connection-loss watchdog
+    if (streamingTimeoutRef.current) {
+      clearTimeout(streamingTimeoutRef.current);
+      streamingTimeoutRef.current = null;
+    }
     setMessages((prev) => {
       const updated = [...prev];
       const last = updated[updated.length - 1];
@@ -359,6 +365,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       case "done":
         // flush any remaining buffered tokens before finalizing
         flushStreamBuffer();
+        if (streamingTimeoutRef.current) {
+          clearTimeout(streamingTimeoutRef.current);
+          streamingTimeoutRef.current = null;
+        }
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
@@ -372,6 +382,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         notify("Huginn", pendingResponseRef.current.slice(0, 120) || "Agent finished");
         break;
       case "error":
+        if (streamingTimeoutRef.current) {
+          clearTimeout(streamingTimeoutRef.current);
+          streamingTimeoutRef.current = null;
+        }
         playErrorSound();
         setMessages((prev) => [
           ...prev,
@@ -643,7 +657,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       },
       onConnected: () => {
         pushConfig(loadStoredConfig());
-        setPendingClarifications([]);
         setIsStreaming(false);
         setMessages((prev) =>
           prev.map((m) =>
@@ -731,25 +744,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       content = "/research " + content;
     }
 
-    if (mode === "plan") {
-      setPlanLoading(true);
-      setPendingPlan("");
-      try {
-        const data = await api.post<{ error?: string; plan?: string } & Record<string, any>>(
-          "/plan",
-          { content, thread_id: activeThread }
-        );
-        if (data.error) {
-          setPendingPlan(`❌ ${data.error}`);
-        } else {
-          setPendingPlan(data.plan || "No plan returned.");
-        }
-      } catch (e: any) {
-        setPendingPlan(`❌ Plan request failed: ${e.message}`);
-      } finally {
-        setPlanLoading(false);
-      }
-      return;
+    // Plan mode: prefix /plan so the WS handler routes it as a plan request
+    if (mode === "plan" && !content.startsWith("/plan ")) {
+      content = "/plan " + content;
     }
 
     // Queue the message if the agent is still streaming (Kimi-style)
@@ -774,6 +771,26 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     if (wsClientRef.current) {
       wsClientRef.current.send(payload);
     }
+
+    // watchdog: if no tokens arrive in 30s the WS likely dropped silently
+    if (streamingTimeoutRef.current) clearTimeout(streamingTimeoutRef.current);
+    streamingTimeoutRef.current = setTimeout(() => {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === "assistant" && last.timestamp === "streaming" && !last.content) {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...last,
+            content: "Connection lost. Please try again.",
+            timestamp: formatTime(),
+          };
+          return updated;
+        }
+        return prev;
+      });
+      setIsStreaming(false);
+      streamingTimeoutRef.current = null;
+    }, 30_000);
   };
 
   // ── Drain queued messages when streaming finishes ─────────────

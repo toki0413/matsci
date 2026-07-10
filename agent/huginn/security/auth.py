@@ -317,8 +317,9 @@ def require_admin_key(
     provided = request.headers.get("X-HUGINN-ADMIN-API-KEY") or api_key
     if not provided or not secrets_match(provided, configured):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing admin API key",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required. Provide a valid admin API key "
+            "via the X-HUGINN-ADMIN-API-KEY header.",
         )
     return provided
 

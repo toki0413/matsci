@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 _MEM_CACHE_LIMIT = 200
 
 
+class VersionConflict(Exception):
+    """乐观并发冲突: 注册时版本号已变, 说明有其他写入插队."""
+
+
 @dataclass
 class ProvenanceEntry:
     """一次文件产出的溯源记录."""
@@ -44,6 +48,8 @@ class ProvenanceEntry:
     key_properties: dict[str, Any] = field(default_factory=dict)
     # 能量/带隙/晶格常数等关键值, 直接存在这里,
     # agent 压缩后仍可查询, 不需要重新解析文件.
+    snapshot_step_id: str | None = None  # 关联的文件快照 step_id (VC-1)
+    reverted: bool = False  # 是否已被 rollback 标记 (VC-2)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,11 +60,14 @@ class ProvenanceEntry:
             "parameters": self.parameters,
             "file_format": self.file_format,
             "key_properties": self.key_properties,
+            "snapshot_step_id": self.snapshot_step_id,
+            "reverted": self.reverted,
         }
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> ProvenanceEntry:
         """从 SQLite 行重建 entry."""
+        keys = set(row.keys())
         return cls(
             file_path=row["file_path"],
             produced_by=row["produced_by"],
@@ -67,6 +76,8 @@ class ProvenanceEntry:
             parameters=json.loads(row["parameters"] or "{}"),
             file_format=row["file_format"] or "",
             key_properties=json.loads(row["key_properties"] or "{}"),
+            snapshot_step_id=row["snapshot_step_id"] if "snapshot_step_id" in keys else None,
+            reverted=bool(row["reverted"]) if "reverted" in keys else False,
         )
 
 
@@ -100,22 +111,35 @@ class _ProvenanceStore:
                     input_files TEXT,
                     parameters  TEXT,
                     file_format TEXT,
-                    key_properties TEXT
+                    key_properties TEXT,
+                    snapshot_step_id TEXT,
+                    reverted INTEGER DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_path ON entries(file_path);
                 CREATE INDEX IF NOT EXISTS idx_tool ON entries(produced_by);
                 CREATE INDEX IF NOT EXISTS idx_time ON entries(produced_at);
                 CREATE INDEX IF NOT EXISTS idx_fmt  ON entries(file_format);
             """)
+            self._migrate_schema()
             self._conn.commit()
+
+    def _migrate_schema(self) -> None:
+        """老库可能缺 snapshot_step_id / reverted 列, 补上."""
+        cur = self._conn.execute("PRAGMA table_info(entries)")
+        existing = {row[1] for row in cur.fetchall()}
+        if "snapshot_step_id" not in existing:
+            self._conn.execute("ALTER TABLE entries ADD COLUMN snapshot_step_id TEXT")
+        if "reverted" not in existing:
+            self._conn.execute("ALTER TABLE entries ADD COLUMN reverted INTEGER DEFAULT 0")
 
     def save(self, entry: ProvenanceEntry) -> int:
         with self._lock:
             cur = self._conn.execute(
                 """INSERT INTO entries
                    (file_path, produced_by, produced_at, input_files,
-                    parameters, file_format, key_properties)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    parameters, file_format, key_properties,
+                    snapshot_step_id, reverted)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.file_path,
                     entry.produced_by,
@@ -124,6 +148,8 @@ class _ProvenanceStore:
                     json.dumps(entry.parameters),
                     entry.file_format,
                     json.dumps(entry.key_properties),
+                    entry.snapshot_step_id,
+                    int(entry.reverted),
                 ),
             )
             self._conn.commit()
@@ -287,6 +313,19 @@ class _ProvenanceStore:
             val = cur.fetchone()[0]
             return val if val is not None else 0
 
+    def mark_reverted(self, event_ids: list[int], reverted: bool = True) -> int:
+        """批量标记事件为已回滚/取消回滚. 返回受影响行数."""
+        if not event_ids:
+            return 0
+        placeholders = ",".join("?" * len(event_ids))
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE entries SET reverted = ? WHERE id IN ({placeholders})",
+                [int(reverted)] + event_ids,
+            )
+            self._conn.commit()
+            return cur.rowcount
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -344,8 +383,23 @@ class ProvenanceRegistry:
         parameters: dict[str, Any] | None = None,
         file_format: str = "",
         key_properties: dict[str, Any] | None = None,
+        snapshot_step_id: str | None = None,
+        expected_version: int | None = None,
     ) -> ProvenanceEntry:
-        """注册一条产出记录. 同时写内存和 SQLite."""
+        """注册一条产出记录. 同时写内存和 SQLite.
+
+        Args:
+            snapshot_step_id: 关联的文件快照 step_id, 用于 rollback 联动.
+            expected_version: 调用方读过的版本号; 不匹配则抛 VersionConflict.
+        """
+        # 乐观并发: 版本号变了说明有其他写入插队
+        if expected_version is not None and self._store is not None:
+            current = self._store.get_max_id()
+            if current != expected_version:
+                raise VersionConflict(
+                    f"Expected version {expected_version}, got {current}"
+                )
+
         entry = ProvenanceEntry(
             file_path=file_path,
             produced_by=produced_by,
@@ -354,6 +408,7 @@ class ProvenanceRegistry:
             parameters=parameters or {},
             file_format=file_format,
             key_properties=key_properties or {},
+            snapshot_step_id=snapshot_step_id,
         )
 
         # 写内存 (热路径)
@@ -554,24 +609,75 @@ class ProvenanceRegistry:
         return self._store.get_events_since(0, target_id + 1)
 
     def rollback_to(self, target_id: int) -> list[str]:
-        """Rollback: return list of file paths produced after target_id.
+        """回滚到 target_id 之前的状态: 调 SnapshotManager.revert() 回退文件.
 
-        Does NOT delete files — only returns which file paths would need
-        to be reverted. The caller (agent/UI) decides whether to actually
-        revert files, e.g. via SnapshotManager.revert().
+        找到 target_id 之后的所有事件, 对其中关联了 snapshot_step_id 的,
+        按 reverse 顺序调 SnapshotManager.revert() 做真正的文件回滚.
+        同时把事件标记为 reverted=True.
 
-        Returns list of file_path strings in reverse chronological order
-        (newest first, so caller can revert in the right order).
+        返回受影响的文件路径列表.
         """
         if self._store is None:
-            # Memory-only: filter entries
-            return [
-                e.file_path for e in self._entries
-                # ponytail: memory entries don't have id, approximate with index
-            ][::-1]
-        # Get all events after target_id
+            # 内存模式: 无 step_id 关联, 只返回路径
+            return [e.file_path for e in self._entries if not e.reverted][::-1]
+
         events = self._store.get_events_since(target_id, 10000)
-        return [e.file_path for e in reversed(events)]
+        if not events:
+            return []
+
+        reverted_paths: list[str] = []
+        snap_step_ids: list[str] = []
+
+        # reverse 顺序: 先回滚最新的
+        for ev in reversed(events):
+            if ev.reverted:
+                continue
+            reverted_paths.append(ev.file_path)
+            if ev.snapshot_step_id:
+                snap_step_ids.append(ev.snapshot_step_id)
+
+        # 真正的文件回滚: 调 SnapshotManager
+        if snap_step_ids:
+            try:
+                from huginn.snapshot import SnapshotManager
+
+                mgr = SnapshotManager()
+                for sid in snap_step_ids:
+                    # workspace 从 snapshot 记录里取
+                    snap = mgr._load(sid)
+                    if snap is not None and not snap.reverted:
+                        ws = Path(snap.workspace)
+                        try:
+                            mgr.revert(sid, ws)
+                        except Exception:
+                            logger.warning("revert %s failed (non-fatal)", sid, exc_info=True)
+            except ImportError:
+                logger.debug("SnapshotManager not available, skipping file revert")
+
+        # 标记 provenance 事件为已回滚
+        with self._store._lock:
+            cur = self._store._conn.execute(
+                "SELECT id FROM entries WHERE id > ? AND reverted = 0 ORDER BY id DESC",
+                (target_id,),
+            )
+            ev_ids = [r[0] for r in cur.fetchall()]
+        if ev_ids:
+            self._store.mark_reverted(ev_ids, reverted=True)
+
+        logger.info(
+            "rollback_to(%d): %d paths, %d snapshot reverts",
+            target_id, len(reverted_paths), len(snap_step_ids),
+        )
+        return reverted_paths
+
+    def revert_to_version(self, version: int) -> list[str]:
+        """统一版本时钟入口: 回滚到指定版本号.
+
+        version 是 current_version() 返回的 event id.
+        等价于 rollback_to(version), 但语义更明确: 调用方传的是
+        "我读到的版本号", 而非 "回滚到这个 id 之后".
+        """
+        return self.rollback_to(version)
 
     def get_event(self, event_id: int) -> ProvenanceEntry | None:
         """Get a single event by id."""
@@ -582,8 +688,8 @@ class ProvenanceRegistry:
         return self._store.get_event_by_id(event_id)
 
     def current_version(self) -> int:
-        """Current event log version (max id). For optimistic concurrency:
-        read version → modify → write → check version unchanged.
+        """当前版本号 (max event id). 乐观并发用:
+        读 version → 操作 → register(expected_version=version) → 冲突则报错.
         """
         if self._store is None:
             return len(self._entries)
@@ -601,6 +707,14 @@ def register_tool_output(
     """
     try:
         reg = ProvenanceRegistry.shared()
+
+        # 从 snapshot integration 拿 step_id, 建立 provenance↔snapshot 双向链
+        snap_step_id: str | None = None
+        try:
+            from huginn.snapshot.integration import consume_last_snapshot_step_id
+            snap_step_id = consume_last_snapshot_step_id()
+        except ImportError:
+            pass
 
         # 从 tool_input 提取输入文件
         input_files: list[str] = []
@@ -664,6 +778,7 @@ def register_tool_output(
                 parameters=params,
                 file_format=fmt,
                 key_properties=key_props,
+                snapshot_step_id=snap_step_id,
             )
     except Exception:
         logger.debug("register_tool_output failed (non-fatal)", exc_info=True)

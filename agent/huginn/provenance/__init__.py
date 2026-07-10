@@ -23,6 +23,7 @@ from huginn.provenance._legacy import (
 from huginn.provenance.registry import (
     ProvenanceEntry,
     ProvenanceRegistry,
+    VersionConflict,
     register_tool_output,
 )
 
@@ -53,6 +54,7 @@ __all__ = [
     # New: real-time registry
     "ProvenanceEntry",
     "ProvenanceRegistry",
+    "VersionConflict",
     "register_tool_output",
     # New: event-driven pipeline
     "PIPELINE_RULES",

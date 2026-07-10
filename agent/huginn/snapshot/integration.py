@@ -46,6 +46,22 @@ _watch_patterns: tuple[str, ...] | None = None
 # ponytail: 假设单线程; 真多线程时改成 thread_id+call_id 显式 correlation.
 _pending: dict[str, str] = {}
 
+# post_hook patch 完后把 step_id 暂存这里, register_tool_output 来取.
+# 单线程模型下一个 tool call 的 post→register 是顺序的, 单槽够用.
+_last_step_id: str | None = None
+
+
+def consume_last_snapshot_step_id() -> str | None:
+    """取走最近一次 snapshot_post_hook 留下的 step_id (一次性消费).
+
+    register_tool_output 调这个拿到快照关联, 建立
+    provenance event ↔ file snapshot 的双向链.
+    """
+    global _last_step_id
+    sid = _last_step_id
+    _last_step_id = None
+    return sid
+
 
 def _thread_key(ctx: HookContext) -> str:
     return str(ctx.metadata.get("thread_id") or "_no_thread")
@@ -87,8 +103,10 @@ async def snapshot_post_hook(ctx: HookContext) -> HookContext | None:
     step_id = _pending.pop(key, None)
     if not step_id:
         return None
+    global _last_step_id
     try:
         SnapshotManager().patch(step_id, _resolve_workspace())
+        _last_step_id = step_id
     except Exception:
         logger.warning("snapshot patch failed for %s", ctx.tool_name, exc_info=True)
     return None
