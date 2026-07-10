@@ -838,6 +838,7 @@ class ToolAdapter:
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
+                span.metadata["latency_ms"] = round((time.time() - _call_start) * 1000, 1)
                 if result.error:
                     span.metadata["error"] = result.error
             output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start)
@@ -960,6 +961,7 @@ class ToolAdapter:
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
+                span.metadata["latency_ms"] = round((time.time() - _call_start) * 1000, 1)
                 if result.error:
                     span.metadata["error"] = result.error
             output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start)

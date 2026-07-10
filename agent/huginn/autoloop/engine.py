@@ -1755,6 +1755,38 @@ class AutoloopEngine:
         except Exception as e:
             results["grader_error"] = str(e)
 
+        # Run a quick eval pass — MatWorldBench gives an objective quality
+        # signal independent of the grader. Best-effort: failures are logged
+        # but never block the autoloop.
+        try:
+            from huginn.evaluation.matworld_bench import MatWorldBench
+            bench = MatWorldBench()
+            # Use the execution result if it looks like structured data
+            exec_data = execution_result if isinstance(execution_result, dict) else {}
+            eval_scores: list[dict] = []
+            for task in bench.tasks:
+                if task.category in ("structure", "thermo", "electronic"):
+                    try:
+                        br = bench.evaluate(task.id, exec_data)
+                        eval_scores.append({
+                            "task_id": task.id,
+                            "category": task.category,
+                            "passed": br.passed,
+                            "score": br.score,
+                        })
+                    except Exception:
+                        pass
+            if eval_scores:
+                passed = sum(1 for e in eval_scores if e["passed"])
+                results["eval_summary"] = {
+                    "bench_passed": passed,
+                    "bench_total": len(eval_scores),
+                    "bench_pass_rate": round(passed / len(eval_scores), 4),
+                    "details": eval_scores,
+                }
+        except Exception as e:
+            logger.debug(f"[validate] eval bench failed: {e}")
+
         return results
 
     async def _literature_comparison(self, execution_result: Any) -> dict[str, Any]:

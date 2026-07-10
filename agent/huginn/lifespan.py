@@ -44,6 +44,24 @@ async def _connect_mcp_server(
     return False
 
 
+async def _bg_register_optional_tools():
+    """Register optional tools in the background after startup.
+
+    Runs in a thread pool because importlib.import_module is blocking.
+    Failures are logged but never crash the server.
+    """
+    try:
+        await asyncio.to_thread(_do_register_optional_tools_sync)
+    except Exception as e:
+        logger.warning(f"[startup] background tool registration failed: {e}")
+
+
+def _do_register_optional_tools_sync():
+    """Sync helper for _bg_register_optional_tools."""
+    from huginn.tools import register_optional_tools
+    register_optional_tools()
+
+
 async def _init_mcp_tools():
     """Connect to local MCP servers and register their tools.
 
@@ -86,12 +104,17 @@ async def _init_mcp_tools():
                 ))
             )
 
-        for name, cfg in servers:
-            task = asyncio.create_task(
-                _connect_mcp_server(get_context().mcp_manager, name, cfg)
-            )
-            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
-            await task
+        # Connect to all MCP servers in parallel instead of one-by-one.
+        # The old code did create_task + immediate await, which is serial.
+        connect_tasks = [
+            asyncio.create_task(_connect_mcp_server(get_context().mcp_manager, name, cfg))
+            for name, cfg in servers
+        ]
+        if connect_tasks:
+            results = await asyncio.gather(*connect_tasks, return_exceptions=True)
+            for name, result in zip([n for n, _ in servers], results):
+                if isinstance(result, Exception):
+                    logger.warning("[MCP] Failed to connect to '%s': %s", name, result)
 
         # ToolUniverse 单独走白名单 (只注册 7 个材料相关工具, 过滤 350+ 生物医学工具).
         # 不能先做一次无过滤的 generic 注册 —— 那会把 343 个非白名单 tooluniverse 工具
@@ -375,6 +398,17 @@ async def lifespan(app: FastAPI):
         set_main_loop(asyncio.get_running_loop())
     except Exception:
         pass
+    # Register core tools synchronously (fast — ~35 essential tools),
+    # then kick off optional tools in the background so they don't block
+    # the server from accepting health checks.
+    try:
+        from huginn.tools import register_core_tools, register_optional_tools
+        register_core_tools()
+        logger.info("[startup] core tools registered")
+        # Background-register the remaining ~55 optional tools (heavy imports)
+        asyncio.create_task(_bg_register_optional_tools())
+    except Exception as e:
+        logger.warning(f"[startup] tool registration failed: {e}")
     await _init_mcp_tools()
     if _KB_AVAILABLE and get_context().kb is None:
         try:
