@@ -18,6 +18,9 @@ use tauri_plugin_shell::ShellExt;
 struct AppState {
     backend: Mutex<Option<CommandChild>>,
     terminal: Mutex<Option<TerminalSession>>,
+    /// Port the backend is running on (dynamically allocated).
+    /// 0 means not yet assigned; fetch via get_backend_port.
+    backend_port: std::sync::atomic::AtomicU16,
 }
 
 struct TerminalSession {
@@ -30,8 +33,18 @@ impl Default for AppState {
         Self {
             backend: Mutex::new(None),
             terminal: Mutex::new(None),
+            backend_port: std::sync::atomic::AtomicU16::new(8000),
         }
     }
+}
+
+/// Ask the OS for a free TCP port by binding to port 0.
+/// The listener is immediately dropped, but on most OSes the port
+/// stays free for a brief window — enough to pass to the Python backend.
+fn find_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .map(|listener| listener.local_addr().map(|a| a.port()).unwrap_or(8000))
+        .unwrap_or(8000)
 }
 
 #[derive(Serialize)]
@@ -154,8 +167,10 @@ fn main() {
 }
 
 #[tauri::command]
-fn get_agent_status() -> serde_json::Value {
-    match reqwest::blocking::get("http://localhost:8000/health") {
+fn get_agent_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
+    let port = state.backend_port.load(std::sync::atomic::Ordering::Relaxed);
+    let url = format!("http://127.0.0.1:{}/health", port);
+    match reqwest::blocking::get(&url) {
         Ok(resp) if resp.status().is_success() => resp
             .json()
             .unwrap_or_else(|_| serde_json::json!({"status": "ok"})),
@@ -171,8 +186,8 @@ fn get_agent_status() -> serde_json::Value {
 }
 
 #[tauri::command]
-fn get_backend_port() -> u16 {
-    8000
+fn get_backend_port(state: tauri::State<'_, AppState>) -> u16 {
+    state.backend_port.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[tauri::command]
@@ -189,10 +204,16 @@ async fn start_backend(
     }
 
     // If a backend is already running externally, don't start another one.
-    // Use TCP connect instead of reqwest::blocking to avoid tokio runtime panic.
+    // Probe the default port first — if something is there, use it.
     if std::net::TcpStream::connect("127.0.0.1:8000").is_ok() {
+        state.backend_port.store(8000, std::sync::atomic::Ordering::Relaxed);
         return Ok("already running externally".to_string());
     }
+
+    // Allocate a free port for the backend to avoid conflicts.
+    let port = find_free_port();
+    state.backend_port.store(port, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[start_backend] allocated port {}", port);
 
     // Always use dev mode — the sidecar binary has frozen old code that
     // lacks our recent fixes (config loading, thread_id, reasoning, etc.).
@@ -309,8 +330,9 @@ async fn start_backend(
     };
 
     let python_cmd = app.shell().command(&python_exe);
+    let port_str = port.to_string();
     let (mut rx, child) = python_cmd
-        .args(["-m", "huginn.server", "--port", "8000"])
+        .args(["-m", "huginn.server", "--port", &port_str])
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONPATH", &pythonpath)
         .env("DEEPSEEK_API_KEY", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())

@@ -73,9 +73,11 @@ class ServerContext:
 def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
     """Create and initialize a server context.
 
-    Tool registration happens once at startup.
+    Core tools are registered synchronously; optional tools are registered
+    in the background by lifespan. This keeps context creation fast.
     """
-    register_all_tools()
+    from huginn.tools import register_core_tools
+    register_core_tools()
     # Use _load_runtime_config so huginn.toml is picked up the same way
     # the REST /config route does it — from_env() alone misses the file.
     if config is not None:

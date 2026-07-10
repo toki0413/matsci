@@ -54,9 +54,8 @@ from huginn.tools import register_all_tools
 import huginn.server_core as _sc
 import huginn.lifespan as _lf
 
-# Register all tools at import time so ToolRegistry is populated
-# before any route handler runs.
-register_all_tools()
+# Tool registration is deferred to lifespan startup so the server can
+# begin accepting health checks immediately. See lifespan._register_tools.
 
 # Hide interactive docs in production to avoid leaking API surface.
 _hide_docs = (

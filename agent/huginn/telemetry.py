@@ -166,11 +166,12 @@ class TelemetryCollector:
         return [r.to_dict() for r in self._roots]
 
     def summary(self) -> dict[str, Any]:
-        """Return a coarse summary: counts, durations, and memory by span name."""
+        """Return a coarse summary: counts, durations, memory, and latency by span name."""
         totals: dict[str, float] = defaultdict(float)
         counts: dict[str, int] = defaultdict(int)
         memory_deltas: dict[str, list[float]] = defaultdict(list)
         memory_peaks: dict[str, list[float]] = defaultdict(list)
+        latencies: dict[str, list[float]] = defaultdict(list)
 
         def walk(span: TelemetrySpan) -> None:
             totals[span.name] += span.duration_ms
@@ -179,6 +180,10 @@ class TelemetryCollector:
                 span.memory_end_mb - span.memory_start_mb
             )
             memory_peaks[span.name].append(span.memory_peak_mb)
+            # Collect per-span latency from metadata if present
+            lat = span.metadata.get("latency_ms")
+            if lat is not None:
+                latencies[span.name].append(float(lat))
             for child in span.children:
                 walk(child)
 
@@ -195,6 +200,10 @@ class TelemetryCollector:
                         sum(memory_deltas[name]) / counts[name], 3
                     ),
                     "max_memory_peak_mb": round(max(memory_peaks[name]), 3),
+                    **(
+                        {"avg_latency_ms": round(sum(latencies[name]) / len(latencies[name]), 1)}
+                        if latencies[name] else {}
+                    ),
                 }
                 for name in counts
             },
