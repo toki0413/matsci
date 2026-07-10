@@ -129,11 +129,14 @@ fn main() {
     app.run(|app_handle, event| {
         // Minimize to tray on close instead of quitting
         if let tauri::RunEvent::WindowEvent {
-            window,
+            label,
             event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
         } = &event
         {
-            let _ = window.hide();
+            if let Some(w) = app_handle.get_webview_window(label) {
+                let _ = w.hide();
+            }
             api.prevent_close();
         }
         if let tauri::RunEvent::ExitRequested { .. } = event {
@@ -205,8 +208,9 @@ async fn start_backend(
     let config_dir = std::path::PathBuf::from(&local_app).join("Huginn");
     let _ = std::fs::create_dir_all(&config_dir);
     let config_file = std::env::var("HUGINN_CONFIG_FILE")
+        .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|_| config_dir.join("huginn.toml").to_string_lossy().to_string());
+        .unwrap_or_else(|| config_dir.join("huginn.toml").to_string_lossy().to_string());
 
     // ── Production: try sidecars first ──────────────────────────────
     if !is_dev {

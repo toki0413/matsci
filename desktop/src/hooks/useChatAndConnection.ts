@@ -374,8 +374,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   // ── WebSocket message handler ────────────────────────────────
   const handleWsMessage = (data: WSMessage) => {
-    // Skip messages from other threads — they belong to a background session
-    if ("thread_id" in data && data.thread_id && data.thread_id !== activeThreadRef.current) return;
+    // Skip messages from other threads — except broadcast types (pet, ping, etc.)
+    const _BROADCAST_TYPES = new Set(["pet_update", "ping", "auto_approve_set", "context_compacted"]);
+    if ("thread_id" in data && data.thread_id && data.thread_id !== activeThreadRef.current
+        && !_BROADCAST_TYPES.has(data.type)) return;
     switch (data.type) {
       case "reasoning_delta":
         streamBufferRef.current.reasoning += data.text;
