@@ -100,6 +100,19 @@ export function useMemory() {
     }
   };
 
+  const updateMemory = async (id: string, patch: { content?: string; importance?: number; tags?: string[] }) => {
+    try {
+      const data = await api.patch<{ success?: boolean; error?: string }>(`/memory/${id}`, patch);
+      if (data.success) {
+        loadMemory();
+      } else {
+        setMemoryMsg(`Update failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      setMemoryMsg(`Update error: ${e.message}`);
+    }
+  };
+
   const promoteMemory = async (id: string) => {
     try {
       const data = await api.post<{ success?: boolean; error?: string }>(`/memory/promote/${id}`);
@@ -144,6 +157,6 @@ export function useMemory() {
     memories, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView, setMemoryMsg,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
-    promoteMemory, pruneMemory, syncMemoryMd,
+    updateMemory, promoteMemory, pruneMemory, syncMemoryMd,
   };
 }

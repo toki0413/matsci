@@ -263,18 +263,21 @@ class StreamingMixin:
         final_state: dict[str, Any],
         turn_span: Any,
         thread_id: str,
-    ) -> None:
-        """Trigger PRE_COMPACT hook + promote session summary when context > 70%."""
+    ) -> dict[str, Any] | None:
+        """Trigger PRE_COMPACT hook + promote session summary when context > 70%.
+
+        Returns ``{"before_pct": int, "after_pct": int}`` if compaction ran, else None.
+        """
         if self._model_context_window <= 0:
-            return
+            return None
 
         usage = self._extract_usage_tokens()
         if not any(usage.values()):
-            return
+            return None
 
         before = calculate_context_usage(usage, self._model_context_window)
         if before["used"] <= 70:
-            return
+            return None
 
         logger.info(
             "Context usage %d%%, triggering auto-compact",
@@ -360,6 +363,7 @@ class StreamingMixin:
             f"Context compacted ({before['used']}% -> {after_pct}%)",
             {"thread_id": thread_id},
         )
+        return {"before_pct": before["used"], "after_pct": after_pct}
 
     async def _maybe_inject_synthetic_continue(
         self,
@@ -741,6 +745,7 @@ class StreamingMixin:
             max_retries = 3
             states_yielded = 0
             final_state: dict[str, Any] | None = None
+            _last_reasoning = ""
 
             self._state_msg_offsets[thread_id] = 0
             if self.checkpointer is not None:
@@ -763,6 +768,16 @@ class StreamingMixin:
                                 )
                             )
                             for state in states:
+                                # Sync stream doesn't get per-chunk messages, so extract
+                                # reasoning from the accumulated AIMessage before yielding state
+                                msgs = state.get("messages", [])
+                                if msgs:
+                                    last_msg = msgs[-1]
+                                    if hasattr(last_msg, "additional_kwargs"):
+                                        r = last_msg.additional_kwargs.get("reasoning_content", "")
+                                        if r and r != _last_reasoning:
+                                            yield {"_reasoning": r}
+                                            _last_reasoning = r
                                 self._process_stream_state(
                                     state, turn_span, thread_id, pet
                                 )
@@ -883,9 +898,11 @@ class StreamingMixin:
                     await self._maybe_inject_proactive_suggestion()
 
                     # Auto-compact when context > 70%
-                    await self._maybe_auto_compact(
+                    compact_info = await self._maybe_auto_compact(
                         final_state, turn_span, thread_id
                     )
+                    if compact_info:
+                        yield {"_compacted": compact_info}
 
                     # Synthetic Continue after compaction / tool boundary
                     await self._maybe_inject_synthetic_continue(

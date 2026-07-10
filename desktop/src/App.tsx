@@ -26,6 +26,7 @@ import { useLogs } from "./hooks/useLogs";
 import { useConfig } from "./hooks/useConfig";
 import { useChatAndConnection } from "./hooks/useChatAndConnection";
 import { PetStatusWidget } from "./components/PetStatusWidget";
+import AutoloopProgress from "./components/AutoloopProgress";
 import { ChatPanel } from "./components/panels/ChatPanel";
 import { MetricsBar } from "./components/MetricsBar";
 import { MemoryPanel } from "./components/panels/MemoryPanel";
@@ -48,13 +49,11 @@ import { TerminalPanel } from "./components/panels/TerminalPanel";
 import { PanelHeader } from "./components/settings-shared";
 import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo } from "./types/domain";
 import {
-  MessageSquare, Wrench, Zap, FolderTree, Terminal, Settings,
-  Users, Code2, FlaskConical, Brain, BookOpen, GitBranch,
-  MessageCircle, Puzzle, FileText, Bird, Briefcase, HelpCircle,
-  Dna, Play, Compass, Stethoscope, Monitor, ChevronDown, Sparkles,
+  MessageSquare, Wrench, FolderTree, Terminal, Settings,
+  Users, Code2, BookOpen,
+  MessageCircle, Bird, Briefcase, HelpCircle,
+  ChevronDown, Sparkles,
   Search, Grid,
-  Atom, Notebook as NotebookIcon, TerminalSquare, BarChart3, Box, Activity,
-  History, Calculator, UserCircle,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -161,7 +160,7 @@ export default function App() {
     memories, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
-    promoteMemory, pruneMemory, syncMemoryMd,
+    updateMemory, promoteMemory, pruneMemory, syncMemoryMd,
   } = memory;
 
   const {
@@ -531,33 +530,11 @@ export default function App() {
       ],
     },
     {
-      key: "research",
-      label: t('nav.research'),
-      tabs: [
-        { id: "knowledge" as const, label: t('tab.knowledge'), icon: <BookOpen size={16} /> },
-        { id: "periodic" as const, label: t('tab.periodic'), icon: <Atom size={16} /> },
-        { id: "project" as const, label: t('tab.project'), icon: <Briefcase size={16} /> },
-        { id: "notebook" as const, label: t('tab.notebook'), icon: <NotebookIcon size={16} />, indented: true },
-        { id: "benchmark" as const, label: t('tab.benchmark'), icon: <FlaskConical size={16} />, indented: true },
-        { id: "evolution" as const, label: t('tab.evolution'), icon: <Dna size={16} />, indented: true },
-        { id: "execute" as const, label: t('tab.execute'), icon: <Play size={16} />, indented: true },
-        { id: "workflows" as const, label: t('tab.workflows'), icon: <Zap size={16} />, indented: true },
-        { id: "sweep" as const, label: t('tab.sweep'), icon: <BarChart3 size={16} />, indented: true },
-        { id: "explore" as const, label: t('tab.explore'), icon: <Compass size={16} />, indented: true },
-        { id: "diagnose" as const, label: t('tab.diagnose'), icon: <Stethoscope size={16} />, indented: true },
-        { id: "structure" as const, label: t('tab.structure'), icon: <Box size={16} />, indented: true },
-        { id: "hpc" as const, label: t('tab.hpc'), icon: <Monitor size={16} />, indented: true },
-        { id: "solver" as const, label: t('tab.solver'), icon: <Calculator size={16} />, indented: true },
-      ],
-    },
-    {
       key: "workspace",
       label: t('nav.workspace'),
       tabs: [
         { id: "files" as const, label: t('tab.files'), icon: <FolderTree size={16} /> },
         { id: "terminal" as const, label: t('tab.terminal'), icon: <Terminal size={16} /> },
-        { id: "sandbox" as const, label: t('tab.sandbox'), icon: <TerminalSquare size={16} /> },
-        { id: "review" as const, label: t('tab.review'), icon: <GitBranch size={16} /> },
         { id: "tools" as const, label: t('tab.tools'), icon: <Wrench size={16} /> },
         { id: "skills" as const, label: t('tab.skills'), icon: <Sparkles size={16} /> },
       ],
@@ -566,14 +543,7 @@ export default function App() {
       key: "system",
       label: t('nav.system'),
       tabs: [
-        { id: "memory" as const, label: t('tab.memory'), icon: <Brain size={16} /> },
-        { id: "persona" as const, label: t('tab.persona'), icon: <UserCircle size={16} /> },
-        { id: "emotion" as const, label: t('tab.emotion'), icon: <Activity size={16} /> },
-        { id: "provenance" as const, label: t('tab.provenance'), icon: <History size={16} /> },
-        { id: "plugins" as const, label: t('tab.plugins'), icon: <Puzzle size={16} /> },
         { id: "threads" as const, label: t('tab.threads'), icon: <MessageCircle size={16} /> },
-        { id: "logs" as const, label: t('tab.logs'), icon: <FileText size={16} /> },
-        { id: "side" as const, label: t('tab.side'), icon: <HelpCircle size={16} /> },
         { id: "settings" as const, label: t('tab.settings'), icon: <Settings size={16} /> },
       ],
     },
@@ -647,8 +617,6 @@ export default function App() {
   const handleExecuteRun = execute.run;
   const handleDiagnoseRun = diagnose.run;
   const handleWorkflowRun = workflow.run;
-
-  const AUTOLOOP_PHASES = ["perceive", "hypothesize", "plan", "execute", "validate", "learn", "report"];
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
@@ -835,26 +803,7 @@ export default function App() {
 
         {/* Autoloop progress bar */}
         {autoloopPhase && (
-          <div className="flex items-center gap-3 border-b border-border bg-bg-secondary px-6 py-2">
-            <span className="text-xs font-semibold text-text-secondary">{t('app.autoloop')}</span>
-            <div className="flex items-center gap-1.5">
-              {AUTOLOOP_PHASES.map((phase) => (
-                <div
-                  key={phase}
-                  className={`h-2.5 w-2.5 rounded-full transition-colors ${
-                    phase === autoloopPhase
-                      ? "bg-accent ring-2 ring-accent/30"
-                      : AUTOLOOP_PHASES.indexOf(phase) < AUTOLOOP_PHASES.indexOf(autoloopPhase)
-                      ? "bg-accent/40"
-                      : "bg-bg-tertiary"
-                  }`}
-                  title={phase}
-                />
-              ))}
-            </div>
-            <span className="text-xs font-medium text-accent">{autoloopPhase}</span>
-            <span className="text-xs text-text-muted">{autoloopProgress}%</span>
-          </div>
+          <AutoloopProgress currentPhase={autoloopPhase} progress={autoloopProgress} />
         )}
 
         {/* Content */}
@@ -1046,6 +995,7 @@ export default function App() {
               searchMemory={searchMemory}
               createMemory={createMemory}
               deleteMemory={deleteMemory}
+              updateMemory={updateMemory}
               promoteMemory={promoteMemory}
               pruneMemory={pruneMemory}
               syncMemoryMd={syncMemoryMd}

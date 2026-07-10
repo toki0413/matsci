@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, X, Settings } from 'lucide-react';
+import { Search, X, Settings, Archive } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { ToolResultRenderer } from '../ToolResultRenderer';
@@ -17,6 +17,20 @@ const INLINE_COMMANDS = [
   { cmd: '/tools', desc: 'Open the tools panel' },
   { cmd: '/settings', desc: 'Open settings' },
 ];
+
+// extensions we treat as plain text on drag-drop (materials-science friendly)
+const TEXT_FILE_EXTS = [
+  '.txt', '.py', '.json', '.cif', '.yaml', '.yml', '.toml', '.md',
+  '.csv', '.log', '.incar', '.poscar', '.potcar', '.in', '.out', '.dat',
+];
+
+// dev-only guard: make sure the domain extensions route to the text branch
+if (import.meta.env.DEV) {
+  const _ext = (name: string) => name.substring(name.lastIndexOf('.')).toLowerCase();
+  console.assert(TEXT_FILE_EXTS.includes(_ext('structure.cif')), 'cif should be text');
+  console.assert(TEXT_FILE_EXTS.includes(_ext('INCAR')), 'incar should be text');
+  console.assert(!TEXT_FILE_EXTS.includes(_ext('image.png')), 'png should NOT be text');
+}
 
 function CollapsibleMessageContent({ content, isStreaming }: { content: string; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(false);
@@ -57,7 +71,8 @@ interface ChatPanelProps {
   planLoading: boolean;
   setMode: (v: "chat" | "plan" | "build") => void;
   input: string;
-  setInput: (v: string) => void;
+  // real type from useState — allows functional updates (e.g. drag-drop appends)
+  setInput: React.Dispatch<React.SetStateAction<string>>;
   mode: "chat" | "plan" | "build";
   isStreaming: boolean;
   messagesEndRef: React.RefObject<HTMLDivElement>;
@@ -91,9 +106,42 @@ export function ChatPanel(props: ChatPanelProps) {
 
   const [showCommands, setShowCommands] = useState(false);
   const [cmdSelectIdx, setCmdSelectIdx] = useState(0);
+  const [isDragOver, setIsDragOver] = useState(false);
   const filteredCommands = showCommands
     ? INLINE_COMMANDS.filter(c => c.cmd.startsWith(input))
     : [];
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    // only clear when actually leaving the container, not when crossing into a child
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    for (const file of files) {
+      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      if (TEXT_FILE_EXTS.includes(ext) || file.type.startsWith('text/')) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const text = ev.target?.result as string;
+          setInput((prev) => prev + '\n\n--- ' + file.name + ' ---\n' + text);
+        };
+        reader.readAsText(file);
+      } else {
+        setInput((prev) => prev + '\n\n[Attached: ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)]');
+      }
+    }
+  };
 
   // Cline pattern: combine consecutive tool calls into groups
   function groupMessages(msgs: Message[]): Message[] {
@@ -223,6 +271,16 @@ export function ChatPanel(props: ChatPanelProps) {
                       <ToolResultRenderer content={msg.tool_result} toolName={msg.tool_name} />
                     </>
                   )}
+                </div>
+              </div>
+            );
+          }
+          if (msg.isCompacted) {
+            return (
+              <div key={index} className="flex justify-center py-1">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-bg-secondary px-3 py-1 text-xs text-text-muted">
+                  <Archive size={12} />
+                  <span>{t('chat.contextCompacted', { before: msg.compactBefore ?? '?', after: msg.compactAfter ?? '?' })}</span>
                 </div>
               </div>
             );
@@ -522,7 +580,12 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
-        <div className="flex items-end gap-3">
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`flex items-end gap-3 rounded-lg transition-colors ${isDragOver ? 'border-2 border-dashed border-accent bg-accent/5 p-1' : 'border-2 border-transparent p-1'}`}
+        >
           <textarea
             value={input}
             onChange={(e) => {
