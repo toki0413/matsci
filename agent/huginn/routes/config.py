@@ -180,6 +180,8 @@ _ALLOWED_LEGACY_KEYS = frozenset({
     "models", "agents",
     "pet_name", "pet_personality",
     "encrypt_config", "encryption_password", "encryption_key_file",
+    "privacy_redact_secrets", "privacy_block_on_secrets", "local_only_mode",
+    "max_tool_output_tokens", "context_budget_tokens", "pet_accessories",
 })
 
 

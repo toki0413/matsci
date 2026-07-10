@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -17,6 +18,8 @@ from huginn.server_core import (
     get_or_create_thread,
     touch_thread,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["threads"])
 
@@ -70,6 +73,45 @@ async def get_thread(thread_id: str) -> dict[str, Any]:
         if thread_id in _threads:
             return {"thread_id": thread_id, **dict(_threads[thread_id])}
     return {"thread_id": thread_id, "exists": False}
+
+
+# LangChain message types don't map 1:1 to our frontend roles
+_LC_ROLE_MAP = {"human": "user", "ai": "assistant", "tool": "tool"}
+
+
+@router.get("/threads/{thread_id}/messages")
+async def get_thread_messages(thread_id: str) -> dict[str, Any]:
+    """Return message history for a thread from the LangGraph checkpointer."""
+    try:
+        agent = await get_agent()
+        graph = agent.build_graph()
+        if graph is None:
+            return {"messages": [], "thread_id": thread_id}
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = graph.get_state(config)
+        raw_msgs = snapshot.values.get("messages", []) if snapshot else []
+    except Exception:
+        logger.debug("failed to fetch thread state for %s", thread_id, exc_info=True)
+        return {"messages": [], "thread_id": thread_id}
+
+    messages: list[dict[str, Any]] = []
+    for msg in raw_msgs:
+        lc_type = getattr(msg, "type", "") or getattr(msg, "role", "")
+        role = _LC_ROLE_MAP.get(lc_type)
+        if role is None:
+            continue  # skip system / unknown
+        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+        entry: dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "timestamp": "",
+        }
+        if role == "tool":
+            entry["tool_name"] = getattr(msg, "name", "") or ""
+            entry["tool_call_id"] = getattr(msg, "tool_call_id", "") or ""
+        messages.append(entry)
+
+    return {"messages": messages, "thread_id": thread_id}
 
 
 @router.patch("/threads/{thread_id}")

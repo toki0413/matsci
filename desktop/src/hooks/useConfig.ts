@@ -42,7 +42,11 @@ export function useConfig() {
   // ── Config push / save ──────────────────────────────────────
   const pushConfig = useCallback(async (cfg: AppConfig) => {
     try {
-      await api.post("/config", cfg);
+      const resp = await api.post<{ success?: boolean; error?: string }>("/config", cfg);
+      if (resp.success === false) {
+        console.warn("[config] backend rejected:", resp.error);
+        return false;
+      }
       return true;
     } catch (e) {
       console.warn("[config] failed to push:", e);
@@ -158,7 +162,11 @@ export function useConfig() {
   const switchPersona = async (personaName: string) => {
     try {
       await api.post(`/personas/${personaName}/switch`, {});
-      setConfig((prev) => ({ ...prev, persona: personaName }));
+      setConfig((prev) => {
+        const next = { ...prev, persona: personaName };
+        saveStoredConfig(next);
+        return next;
+      });
     } catch (e) {
       console.error("Failed to switch persona:", e);
     }
