@@ -403,6 +403,14 @@ class KnowledgeBase:
             # gptcache 没装或初始化失败 (模型下载/faiss 缺失等), 优雅降级
             self._semantic_cache = None
 
+        # Feedback tracker for confidence-based reranking (lazy init)
+        self._feedback_tracker: Any | None = None
+        try:
+            from huginn.rag.feedback import RetrievalFeedbackTracker
+            self._feedback_tracker = RetrievalFeedbackTracker()
+        except Exception:
+            pass
+
     @property
     def model(self) -> _EmbeddingModel:
         if self._model is None:
@@ -616,6 +624,13 @@ class KnowledgeBase:
                 }
             )
         self._query_cache.set(cache_key, chunks)
+
+        # Apply feedback-based reranking if tracker is available
+        if self._feedback_tracker is not None:
+            try:
+                chunks = self._feedback_tracker.adjust_search_results(chunks)
+            except Exception:
+                pass  # reranking is best-effort
 
         # 回写语义缓存, 下次相似 query 能命中
         if self._semantic_cache is not None:

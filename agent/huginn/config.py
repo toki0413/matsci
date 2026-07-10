@@ -1192,9 +1192,14 @@ class Settings:
     coder: CoderSettings = field(default_factory=CoderSettings.from_env)
 
 
+_cached_settings: Settings | None = None
+
 def get_settings() -> Settings:
-    """Load application settings from environment."""
-    return Settings()
+    """Load application settings — cached after first call."""
+    global _cached_settings
+    if _cached_settings is None:
+        _cached_settings = Settings()
+    return _cached_settings
 
 
 def get_config(

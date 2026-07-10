@@ -78,6 +78,10 @@ class HookContext:
     blocked: bool = False
     # 自由扩展位, 钩子之间传递数据用
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Cached serialization of result — 20+ hooks call _extract_text()
+    # on the same ctx, avoid 20× json.dumps. ponytail: simple memo,
+    # reset if result changes (it shouldn't post-creation).
+    _cached_text: str | None = field(default=None, repr=False)
 
 
 class HookManager:

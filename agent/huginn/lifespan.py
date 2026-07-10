@@ -457,9 +457,25 @@ async def lifespan(app: FastAPI):
         monitor_task = asyncio.create_task(_mcp_health_monitor(mcp_mgr))
         logger.info("[MCP] Health monitor started")
 
+    # Start memory decay/dedup maintainer in background (hourly)
+    memory_maintainer = None
+    try:
+        from huginn.memory.maintainer import MemoryMaintainer
+        memory_maintainer = MemoryMaintainer(interval_hours=1)
+        memory_maintainer.start()
+        logger.info("[startup] memory maintainer started")
+    except Exception as exc:
+        logger.debug(f"[startup] memory maintainer skipped: {exc}")
+
     yield
 
     # Shutdown: cancel background tasks first so they don't touch closing resources
+    if memory_maintainer:
+        try:
+            memory_maintainer.stop()
+        except Exception:
+            pass
+
     if warmup_task and not warmup_task.done():
         warmup_task.cancel()
         try:

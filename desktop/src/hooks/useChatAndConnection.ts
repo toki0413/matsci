@@ -19,7 +19,7 @@ import { ReconnectingWebSocket } from "../lib/ws-client";
 import { getAuthToken, getApiBase } from "../lib/api-client";
 import { api } from "../lib/api";
 import {
-  API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK,
+  API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK, wsUrlVersion,
 } from "../lib/config-store";
 import { isWSMessage, type WSMessage } from "../types/ws";
 import type { AppConfig, PersonaSeed, PersonaEmotionResponse } from "../types/domain";
@@ -386,10 +386,37 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   // ── WebSocket message handler ────────────────────────────────
   const handleWsMessage = (data: WSMessage) => {
-    // Skip messages from other threads — except broadcast types (pet, ping, etc.)
+    // Route messages to their thread's cache. Non-active thread messages
+    // are buffered so switching back doesn't lose them.
     const _BROADCAST_TYPES = new Set(["pet_update", "ping", "auto_approve_set", "context_compacted"]);
     if ("thread_id" in data && data.thread_id && data.thread_id !== activeThreadRef.current
-        && !_BROADCAST_TYPES.has(data.type)) return;
+        && !_BROADCAST_TYPES.has(data.type)) {
+      // Buffer for the other thread instead of dropping
+      const otherTid = data.thread_id as string;
+      setMessagesByThread((prev) => {
+        const existing = prev[otherTid] || [];
+        // Only buffer text/done/error — tool calls are too complex to merge
+        if (data.type === "text_delta") {
+          const last = existing[existing.length - 1];
+          if (last && last.role === "assistant" && last.timestamp === "streaming") {
+            last.content += (data as any).text || "";
+            return { ...prev, [otherTid]: [...existing] };
+          }
+          existing.push({ role: "assistant", content: (data as any).text || "", timestamp: "streaming" });
+          return { ...prev, [otherTid]: [...existing] };
+        }
+        if (data.type === "done" || data.type === "error") {
+          const last = existing[existing.length - 1];
+          if (last && last.timestamp === "streaming") {
+            last.timestamp = formatTime();
+            if (data.type === "error") last.content += "\n\n[error]";
+            return { ...prev, [otherTid]: [...existing] };
+          }
+        }
+        return prev;
+      });
+      return;
+    }
     switch (data.type) {
       case "reasoning_delta":
         streamBufferRef.current.reasoning += data.text;
@@ -582,6 +609,20 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         })));
         break;
       }
+      case "side_question_pending": {
+        // Side-channel questions from sub-agents — display inline
+        const questions = data.questions || [];
+        setPendingClarifications((prev) => [
+          ...prev,
+          ...questions.map((q: any) => ({
+            question_id: q.question_id,
+            question: q.question || q,
+            options: q.options || [],
+            thread_id: data.thread_id,
+          })),
+        ]);
+        break;
+      }
       case "citations": {
         const sources = data.sources || [];
         const sourceText = sources.map((s: any) =>
@@ -762,6 +803,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   };
 
   // ── WebSocket initialization ─────────────────────────────────
+  // Re-connect when wsUrlVersion changes (dynamic port assignment).
   useEffect(() => {
     const wsUrl = WS_URL || `${API_BASE.replace("http", "ws")}/ws/agent`;
 
@@ -782,6 +824,15 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         } else if (wsStatus === "failed") {
           setWsReconnecting(false);
           setWsFailed(true);
+          // Release isStreaming — backend can't send 'done' if WS is dead
+          setIsStreaming(false);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.timestamp === "streaming"
+                ? { ...m, timestamp: formatTime(), content: m.content + "\n\n[连接断开]" }
+                : m
+            )
+          );
         }
       },
       onMessage: (data) => {
@@ -826,7 +877,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       wsClientRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [wsUrlVersion]);
 
   // ── Dynamic tab title (unread count when tab hidden) ──────────
   const lastSeenMsgCountRef = useRef(messages.length);
