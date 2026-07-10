@@ -94,7 +94,7 @@ class ContextMixin:
                     "Answer parameter questions from knowledge."
                 )
         except Exception:
-            pass
+            logger.debug("tool availability check failed", exc_info=True)
 
         return base
 

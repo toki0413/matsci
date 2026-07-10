@@ -613,12 +613,21 @@ export default function App() {
     }
   }, [activeTab, memoryFilter.category, memoryFilter.tier]);
 
-  // ── Keyboard shortcuts: Ctrl+K palette, ESC close ────────────
+  // ── Keyboard shortcuts: Ctrl+K palette, Ctrl+F search, Ctrl+N new thread ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      const isMod = e.ctrlKey || e.metaKey;
+      if (isMod && e.key === "k") {
         e.preventDefault();
         setToolPaletteOpen((prev) => !prev);
+      }
+      if (isMod && e.key === "f" && activeTab === "chat") {
+        e.preventDefault();
+        setChatSearchOpen((prev) => !prev);
+      }
+      if (isMod && e.key === "n" && activeTab === "chat") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("huginn:new-thread"));
       }
       if (e.key === "Escape" && toolPaletteOpen) {
         setToolPaletteOpen(false);
@@ -627,7 +636,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toolPaletteOpen]);
+  }, [toolPaletteOpen, activeTab, setChatSearchOpen]);
 
   // ── Derived constants ────────────────────────────────────────
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
@@ -882,8 +891,6 @@ export default function App() {
               pendingMessages={pendingMessages}
               researchMode={researchMode}
               setResearchMode={setResearchMode}
-              autoloopPhase={autoloopPhase}
-              autoloopProgress={autoloopProgress}
             />
           </div>
 

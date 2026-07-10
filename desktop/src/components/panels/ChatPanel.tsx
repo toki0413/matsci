@@ -1,4 +1,5 @@
-import { Search, X } from 'lucide-react';
+import { useState } from 'react';
+import { Search, X, Settings } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { ToolResultRenderer } from '../ToolResultRenderer';
@@ -6,6 +7,38 @@ import { SaveToMemoryButton } from '../SaveToMemoryButton';
 import MessageContent from '../MessageContent';
 import type { Message } from '../../hooks/useChatAndConnection';
 import type { ReconnectingWebSocket } from '../../lib/ws-client';
+
+const INLINE_COMMANDS = [
+  { cmd: '/plan', desc: 'Switch to Plan mode — generate a plan before executing' },
+  { cmd: '/research', desc: 'Switch to Research mode — autonomous research loop' },
+  { cmd: '/clear', desc: 'Clear all messages in this thread' },
+  { cmd: '/new', desc: 'Create a new thread' },
+  { cmd: '/help', desc: 'Show available commands and shortcuts' },
+  { cmd: '/tools', desc: 'Open the tools panel' },
+  { cmd: '/settings', desc: 'Open settings' },
+];
+
+function CollapsibleMessageContent({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > 1500;
+  if (!isLong || isStreaming || expanded) {
+    return <MessageContent content={content} />;
+  }
+  return (
+    <div>
+      <div className="max-h-[400px] overflow-hidden relative">
+        <MessageContent content={content} />
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-bg-secondary to-transparent pointer-events-none" />
+      </div>
+      <button
+        onClick={() => setExpanded(true)}
+        className="mt-1 text-xs text-accent hover:underline"
+      >
+        Show more ({content.length.toLocaleString()} chars)
+      </button>
+    </div>
+  );
+}
 
 interface ChatPanelProps {
   messages: Message[];
@@ -42,8 +75,6 @@ interface ChatPanelProps {
   pendingMessages: string[];
   researchMode: boolean;
   setResearchMode: (v: boolean) => void;
-  autoloopPhase: string;
-  autoloopProgress: number;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -56,8 +87,13 @@ export function ChatPanel(props: ChatPanelProps) {
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages, researchMode, setResearchMode,
-    autoloopPhase, autoloopProgress,
   } = props;
+
+  const [showCommands, setShowCommands] = useState(false);
+  const [cmdSelectIdx, setCmdSelectIdx] = useState(0);
+  const filteredCommands = showCommands
+    ? INLINE_COMMANDS.filter(c => c.cmd.startsWith(input))
+    : [];
 
   // Cline pattern: combine consecutive tool calls into groups
   function groupMessages(msgs: Message[]): Message[] {
@@ -102,8 +138,6 @@ export function ChatPanel(props: ChatPanelProps) {
     ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
     : messages;
   const groupedMessages = groupMessages(filteredMessages);
-
-  const AUTOLOOP_PHASES = ["perceive", "hypothesize", "plan", "execute", "validate", "learn", "report"];
 
   return (
     <div className="flex h-full flex-col">
@@ -234,7 +268,9 @@ export function ChatPanel(props: ChatPanelProps) {
                   </details>
                 )}
                 <div className="text-[15px] leading-relaxed">
-                  {msg.content && <MessageContent content={msg.content} />}
+                  {msg.content && (
+                    <CollapsibleMessageContent content={msg.content} isStreaming={msg.timestamp === "streaming"} />
+                  )}
                 </div>
                 {msg.role === "assistant" && msg.content && msg.timestamp !== "streaming" && (
                   <div className="mt-1.5 flex justify-end">
@@ -321,31 +357,6 @@ export function ChatPanel(props: ChatPanelProps) {
         followOutput={'auto'}
       />
 
-      {autoloopPhase && (
-        <div className="flex items-center gap-2 border-b border-border bg-accent/5 px-6 py-1.5">
-          <span className="text-xs">🔬</span>
-          <div className="flex items-center gap-1 text-[11px]">
-            {AUTOLOOP_PHASES.map((phase, i, arr) => (
-              <span key={phase} className="flex items-center gap-1">
-                <span
-                  className={
-                    phase === autoloopPhase
-                      ? "font-bold text-accent"
-                      : AUTOLOOP_PHASES.indexOf(phase) < AUTOLOOP_PHASES.indexOf(autoloopPhase)
-                      ? "text-accent/50"
-                      : "text-text-muted"
-                  }
-                >
-                  {phase}
-                </span>
-                {i < arr.length - 1 && <span className="text-text-muted">→</span>}
-              </span>
-            ))}
-          </div>
-          <span className="ml-auto text-[11px] text-text-muted">{autoloopProgress}%</span>
-        </div>
-      )}
-
       <div className="border-t border-border bg-bg-secondary p-4">
         {!isConnected && (
           <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -422,82 +433,63 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-3">
-            <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-text-muted">
-              <input
-                type="checkbox"
-                checked={autoApprove}
-                onChange={(e) => toggleAutoApprove(e.target.checked)}
-                className="h-3 w-3"
-              />
-              Auto-approve
-            </label>
-
-            {/* Thinking intensity segmented control */}
-            <div className="flex items-center gap-1 text-[10px] text-text-muted">
-              <span>🧠</span>
-              {(["low", "medium", "high"] as const).map((level) => (
-                <button
-                  key={level}
-                  onClick={() => setThinkingIntensity(level)}
-                  className={`rounded px-1.5 py-0.5 transition-colors ${
-                    thinkingIntensity === level
-                      ? "bg-accent/20 text-accent font-medium"
-                      : "text-text-muted hover:text-text-secondary"
-                  }`}
-                >
-                  {level}
-                </button>
-              ))}
-            </div>
-
-            {/* Plan mode toggle */}
+        <div className="mb-2 flex items-center justify-between gap-2">
+          {/* Mode selector — segmented control */}
+          <div className="flex items-center gap-1 rounded-lg bg-bg-tertiary p-0.5">
             <button
-              onClick={() => {
-                if (mode === "plan") {
-                  setMode("chat");
-                } else {
-                  setMode("plan");
-                  setResearchMode(false);
-                }
-              }}
-              disabled={researchMode}
-              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
-                mode === "plan"
-                  ? "bg-accent/20 text-accent font-medium"
-                  : "text-text-muted hover:text-text-secondary"
-              } ${researchMode ? "opacity-40 cursor-not-allowed" : ""}`}
+              onClick={() => { setMode("chat"); setResearchMode(false); }}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "chat" && !researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
+              }`}
             >
-              📋 Plan Mode
+              {t('chat.mode.chat')}
             </button>
-
-            {/* Research mode toggle */}
             <button
-              onClick={() => {
-                const next = !researchMode;
-                setResearchMode(next);
-                if (next && mode === "plan") setMode("chat");
-              }}
-              disabled={mode === "plan"}
-              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
-                researchMode
-                  ? "bg-accent/20 text-accent font-medium"
-                  : "text-text-muted hover:text-text-secondary"
-              } ${mode === "plan" ? "opacity-40 cursor-not-allowed" : ""}`}
+              onClick={() => { setMode("plan"); setResearchMode(false); }}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "plan" ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
+              }`}
             >
-              🔬 Research Mode
+              {t('chat.mode.plan')}
+            </button>
+            <button
+              onClick={() => { setResearchMode(!researchMode); if (!researchMode) setMode("chat"); }}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
+              }`}
+            >
+              {t('chat.mode.research') || 'Research'}
             </button>
           </div>
 
-          {mode !== "chat" && (
-            <button
-              onClick={() => setMode("chat")}
-              className="text-[10px] text-accent hover:underline"
-            >
-              {t('chat.backToChat')}
-            </button>
-          )}
+          {/* Options popover */}
+          <details className="relative">
+            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors" title="Options">
+              <Settings size={14} />
+            </summary>
+            <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-secondary p-3 shadow-lg">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
+                <input type="checkbox" checked={autoApprove} onChange={(e) => toggleAutoApprove(e.target.checked)} className="h-3.5 w-3.5" />
+                {t('chat.autoApprove')}
+              </label>
+              <div className="mt-3 border-t border-border pt-3">
+                <div className="mb-1.5 text-xs text-text-muted">🧠 Thinking intensity</div>
+                <div className="flex gap-1">
+                  {(["low", "medium", "high"] as const).map((level) => (
+                    <button
+                      key={level}
+                      onClick={() => setThinkingIntensity(level)}
+                      className={`flex-1 rounded px-2 py-1 text-xs capitalize transition-colors ${
+                        thinkingIntensity === level ? "bg-accent/20 text-accent font-medium" : "text-text-muted hover:text-text-secondary"
+                      }`}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
 
         {pendingMessages.length > 0 && (
@@ -506,11 +498,68 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
+        {showCommands && filteredCommands.length > 0 && (
+          <div className="mb-2 rounded-lg border border-border bg-bg-secondary shadow-lg overflow-hidden">
+            {filteredCommands.map((c, i) => (
+              <button
+                key={c.cmd}
+                onClick={() => {
+                  if (c.cmd === '/plan') { setMode('plan'); setInput(''); }
+                  else if (c.cmd === '/research') { setResearchMode(true); setInput(''); }
+                  else if (c.cmd === '/clear') { setMessages([]); setInput(''); }
+                  else { setInput(c.cmd + ' '); }
+                  setShowCommands(false);
+                }}
+                onMouseEnter={() => setCmdSelectIdx(i)}
+                className={`flex w-full items-center gap-3 px-4 py-2 text-left transition-colors ${
+                  i === cmdSelectIdx ? 'bg-bg-tertiary' : 'hover:bg-bg-tertiary'
+                }`}
+              >
+                <code className="text-xs font-mono text-accent">{c.cmd}</code>
+                <span className="text-xs text-text-muted">{c.desc}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-end gap-3">
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setInput(val);
+              setShowCommands(val.startsWith('/') && !val.includes(' '));
+            }}
             onKeyDown={(e) => {
+              if (showCommands && filteredCommands.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setCmdSelectIdx((prev) => (prev + 1) % filteredCommands.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setCmdSelectIdx((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+                  return;
+                }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  const selected = filteredCommands[cmdSelectIdx];
+                  if (selected) {
+                    if (selected.cmd === '/plan') { setMode('plan'); setInput(''); }
+                    else if (selected.cmd === '/research') { setResearchMode(true); setInput(''); }
+                    else if (selected.cmd === '/clear') { setMessages([]); setInput(''); }
+                    else { setInput(selected.cmd + ' '); }
+                    setShowCommands(false);
+                    return;
+                  }
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setShowCommands(false);
+                  return;
+                }
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();

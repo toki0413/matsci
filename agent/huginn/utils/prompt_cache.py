@@ -13,6 +13,7 @@ To maximize cache hits we must keep the beginning of every request stable:
 from __future__ import annotations
 
 import hashlib
+import sys
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -88,6 +89,11 @@ class PromptCacheBuilder:
 
     @staticmethod
     def _inc_metric(kind: str) -> None:
+        # Skip if the routes package isn't loaded yet — importing it
+        # triggers a heavy chain (scipy, perception, 30+ route modules)
+        # that blocks the event loop during chat().
+        if "huginn.routes" not in sys.modules:
+            return
         try:
             from huginn.routes.metrics import (
                 PROMPT_CACHE_HITS_TOTAL,

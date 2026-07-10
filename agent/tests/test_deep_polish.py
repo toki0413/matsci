@@ -15,16 +15,16 @@ class TestNoSilentExceptions:
     """Verify agent.py no longer has except Exception: pass."""
 
     def test_no_silent_pass_in_agent(self):
-        """No `except Exception: pass` should remain in agent.py."""
-        agent_path = Path(__file__).resolve().parent.parent / "huginn" / "agent.py"
-        content = agent_path.read_text(encoding="utf-8")
-        # Count remaining silent pass patterns
+        """No `except Exception: pass` should remain in agent package."""
         import re
-        # Match "except Exception:" followed by a line with only "pass"
+        agent_dir = Path(__file__).resolve().parent.parent / "huginn" / "agent"
         pattern = r"except Exception:\s*\n\s*pass\s*$"
-        matches = re.findall(pattern, content, re.MULTILINE)
-        assert len(matches) == 0, (
-            f"Found {len(matches)} silent 'except Exception: pass' in agent.py"
+        total = 0
+        for f in agent_dir.glob("*.py"):
+            content = f.read_text(encoding="utf-8")
+            total += len(re.findall(pattern, content, re.MULTILINE))
+        assert total == 0, (
+            f"Found {total} silent 'except Exception: pass' in agent/"
         )
 
 

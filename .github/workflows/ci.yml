@@ -33,6 +33,7 @@ jobs:
           pip install langchain-openai langgraph-checkpoint-sqlite
           # Lightweight optional deps — keeps test coverage up on CI
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
+          pip install pytest-timeout
 
       - name: Run tests
         env:
@@ -40,9 +41,7 @@ jobs:
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
         run: |
           cd agent
-          # Exclude @pytest.mark.integration tests — they need full middleware
-          # stack and are run in the integration-tests job below.
-          pytest -q --cov-fail-under=0 -m "not integration"
+          pytest -q --cov-fail-under=0 -m "not integration" --timeout=120
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -65,6 +64,7 @@ jobs:
           pip install toml croniter fastapi uvicorn
           pip install langchain-openai langgraph-checkpoint-sqlite
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
+          pip install pytest-timeout
 
       - name: Run integration tests
         env:
@@ -72,4 +72,4 @@ jobs:
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
         run: |
           cd agent
-          pytest tests/test_api_contract.py tests/test_security_penetration.py tests/test_chaos_engineering.py -v --no-cov -m "integration" --tb=short
+          pytest tests/test_api_contract.py tests/test_security_penetration.py tests/test_chaos_engineering.py -v --no-cov -m "integration" --tb=short --timeout=300

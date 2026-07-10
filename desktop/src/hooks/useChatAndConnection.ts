@@ -24,6 +24,7 @@ import {
 import { isWSMessage, type WSMessage } from "../types/ws";
 import type { AppConfig, PersonaSeed, PersonaEmotionResponse } from "../types/domain";
 import type { PetStatusState } from "../components/PetStatusWidget";
+import i18n from "../i18n";
 
 // ── Types ──────────────────────────────────────────────────────
 export interface Message {
@@ -77,8 +78,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // AstrBot pattern: messagesBySession Map, each thread has its own list
   const WELCOME_MSG = (): Message => ({
     role: "assistant",
-    content:
-      "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat. I can help with DFT, molecular dynamics, packing, symbolic math, UQ/GP, and formal Lean verification.",
+    content: i18n.t('chat.welcomeMsg') || "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat.",
     timestamp: formatTime(),
   });
   const [messagesByThread, setMessagesByThread] = useState<Record<string, Message[]>>({
@@ -135,6 +135,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   // ── Research mode toggle (prepends /research to outgoing messages) ──
   const [researchMode, setResearchMode] = useState(false);
+
+  // ── Sound toggle (persisted in localStorage) ──
+  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('huginn:sound') !== 'false');
 
   // ── Persona state ────────────────────────────────────────────
   const [personaList, setPersonaList] = useState<{ id: string; label: string; description?: string; avatar?: string }[]>(PERSONAS_FALLBACK);
@@ -378,21 +381,21 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           return updated;
         });
         setIsStreaming(false);
-        playTaskComplete();
-        notify("Huginn", pendingResponseRef.current.slice(0, 120) || "Agent finished");
+        if (soundEnabled) playTaskComplete();
+        if (document.hidden) notify("Huginn", pendingResponseRef.current.slice(0, 120) || "Agent finished");
         break;
       case "error":
         if (streamingTimeoutRef.current) {
           clearTimeout(streamingTimeoutRef.current);
           streamingTimeoutRef.current = null;
         }
-        playErrorSound();
+        if (soundEnabled) playErrorSound();
         setMessages((prev) => [
           ...prev,
           { role: "assistant", content: `❌ ${data.error}`, timestamp: formatTime() },
         ]);
         setIsStreaming(false);
-        notify("Huginn", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
+        if (document.hidden) notify("Huginn", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
         break;
       case "tool_call":
         setMessages((prev) => [
@@ -768,8 +771,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     streamBufferRef.current = { text: "", reasoning: "" };
 
     const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread, thinking: thinkingIntensity });
-    if (wsClientRef.current) {
-      wsClientRef.current.send(payload);
+    try {
+      wsClientRef.current!.send(payload);
+    } catch {
+      // WS dropped mid-send — roll back the optimistic user msg + bot placeholder
+      setMessages((prev) => prev.slice(0, -2));
+      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Failed to send — WebSocket disconnected. Please wait for reconnection.", timestamp: formatTime() }]);
+      return;
     }
 
     // watchdog: if no tokens arrive in 30s the WS likely dropped silently
@@ -811,7 +819,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       pendingResponseRef.current = "";
 
       const payload = JSON.stringify({ type: "user_input", content, thread_id: activeThread, thinking: thinkingIntensity });
-      wsClientRef.current.send(payload);
+      try {
+        wsClientRef.current.send(payload);
+      } catch {
+        setMessages((prev) => prev.slice(0, -1));
+        setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Failed to send queued message — WebSocket disconnected. Please wait for reconnection.", timestamp: formatTime() }]);
+        return;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStreaming]);
@@ -905,6 +919,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     pendingMessages,
     // Research mode
     researchMode, setResearchMode,
+    // Sound toggle
+    soundEnabled, setSoundEnabled,
     // Pet state
     petState,
   };

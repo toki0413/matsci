@@ -81,7 +81,7 @@ const resources = {
       'guide.intro': 'A few quick tips to get you started:',
       'guide.step1': 'Open <strong>Settings</strong> and enter your LLM provider / API key. The app saves it locally and pushes it to the backend automatically.',
       'guide.step2': 'The Python backend starts automatically. If it doesn\'t, use the <strong>▶ Start backend</strong> button in the header or Settings.',
-      'guide.step3': 'Switch to <strong>Files</strong> to browse and edit scripts, or use <strong>Tools</strong> / <strong>Skills</strong> to run capabilities directly.',
+      'guide.step3': 'Click <b>More Tools</b> or press <kbd>Ctrl+K</kbd> to access Files, Tools, Skills, and other panels.',
       'guide.step4': 'In chat, tool calls appear as expandable cards so you can see exactly what the agent is doing.',
       'guide.gotIt': 'Got it',
 
@@ -131,9 +131,15 @@ const resources = {
       'chat.mode.chat': 'Chat',
       'chat.mode.plan': 'Plan',
       'chat.mode.build': 'Build',
+      'chat.mode.research': 'Research',
       'chat.mode.chat.desc': 'Normal assistant chat',
       'chat.mode.plan.desc': 'Generate a step-by-step plan without executing tools',
       'chat.mode.build.desc': 'Execute tools and edit files',
+      'chat.welcomeMsg': "Welcome to **Huginn**.\n\n*Magic springs from the wellspring of imagination.*\n\nI'm your materials-science research assistant. Set your LLM provider and API key in **Settings** on the left, then start a chat.",
+      'chat.showMore': 'Show more',
+      'chat.chars': 'chars',
+      'chat.failedToSend': '⚠️ Failed to send — WebSocket disconnected. Please wait for reconnection.',
+      'chat.commandHint': 'Type / for commands',
 
       /* ── Language switcher ── */
       'lang.label': 'EN',
@@ -163,6 +169,8 @@ const resources = {
       'threads.new': 'New thread',
       'threads.active': 'Active',
       'threads.switch': 'Switch',
+      'threads.empty': 'No threads yet',
+      'threads.emptyHint': 'Create a thread to start a new conversation',
 
       /* ── Provenance panel ── */
       'provenance.title': 'Provenance',
@@ -554,7 +562,7 @@ const resources = {
       'guide.intro': '几个快速上手提示：',
       'guide.step1': '打开<strong>设置</strong>，输入你的 LLM 服务商和 API 密钥。应用会本地保存并自动推送到后端。',
       'guide.step2': 'Python 后端会自动启动。如果没有，使用标题栏或设置中的<strong>▶ 启动后端</strong>按钮。',
-      'guide.step3': '切换到<strong>文件</strong>浏览和编辑脚本，或使用<strong>工具</strong> / <strong>技能</strong>直接运行功能。',
+      'guide.step3': '点击<b>更多工具</b>或按 <kbd>Ctrl+K</kbd> 访问文件、工具、技能等面板。',
       'guide.step4': '在对话中，工具调用以可展开卡片显示，让你清楚看到智能体的每一步操作。',
       'guide.gotIt': '知道了',
 
@@ -606,6 +614,12 @@ const resources = {
       'chat.mode.chat.desc': '常规助手对话',
       'chat.mode.plan.desc': '生成分步计划，不执行工具',
       'chat.mode.build.desc': '执行工具并编辑文件',
+      'chat.mode.research': '研究',
+      'chat.welcomeMsg': '欢迎使用 **Huginn**。\n\n*魔法源于想象之泉。*\n\n我是你的材料科学研究助手。请在左侧 **设置** 中配置 LLM 提供商和 API 密钥，然后开始对话。',
+      'chat.showMore': '展开更多',
+      'chat.chars': '字符',
+      'chat.failedToSend': '⚠️ 发送失败 — WebSocket 已断开。请等待重连。',
+      'chat.commandHint': '输入 / 查看命令',
 
       /* ── Language switcher ── */
       'lang.label': '中',
@@ -635,6 +649,8 @@ const resources = {
       'threads.new': '新对话',
       'threads.active': '当前',
       'threads.switch': '切换',
+      'threads.empty': '还没有对话',
+      'threads.emptyHint': '创建一个对话以开始新的交流',
 
       /* ── Provenance panel ── */
       'provenance.title': '溯源',
