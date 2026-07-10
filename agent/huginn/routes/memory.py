@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from huginn.server_core import get_agent, get_memory_manager
+from huginn.memory.types import MemoryType
 
 router = APIRouter(tags=["memory"])
 
@@ -186,3 +187,50 @@ async def memory_lint(params: dict[str, Any] | None = None) -> dict[str, Any]:
     except Exception as e:
         logger.error("lint error", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+# ── typed memory: filesystem-based topic notes ──────────────────────
+
+
+@router.get("/memory/typed")
+async def list_typed_memory(
+    memory_type: str, topic: str | None = None
+) -> dict[str, Any]:
+    """Recall topic-organized markdown notes by memory type."""
+    try:
+        mt = MemoryType(memory_type)
+    except ValueError:
+        return {"error": f"invalid memory_type: {memory_type}"}
+    try:
+        mgr = get_memory_manager()
+        results = mgr.recall_typed(mt, topic=topic)
+        return {"entries": results}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.post("/memory/typed")
+async def create_typed_memory(params: dict[str, Any]) -> dict[str, Any]:
+    """Store a topic-organized markdown note."""
+    try:
+        mt = MemoryType(params["memory_type"])
+    except (KeyError, ValueError) as e:
+        return {"error": f"invalid memory_type: {e}"}
+    try:
+        mgr = get_memory_manager()
+        path = mgr.store_typed_memory(
+            mt, params["topic"], params["content"]
+        )
+        return {"path": str(path), "success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
+
+
+@router.get("/memory/typed/index")
+async def typed_memory_index() -> dict[str, Any]:
+    """Return a text index of all topic files."""
+    try:
+        mgr = get_memory_manager()
+        return {"index": mgr.get_memory_index()}
+    except Exception as e:
+        return {"error": str(e)}
