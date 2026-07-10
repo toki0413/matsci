@@ -81,4 +81,4 @@ class TestRequireAdminKey:
         req = _make_request("/config", {"X-HUGINN-ADMIN-API-KEY": "wrong"})
         with pytest.raises(HTTPException) as exc:
             require_admin_key(req, None)
-        assert exc.value.status_code == 401
+        assert exc.value.status_code == 403

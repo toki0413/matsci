@@ -27,6 +27,7 @@ from huginn.routes.ws_helpers import (
     send_plan_and_wait,
 )
 from huginn.server_core import (
+    get_agent,
     get_agent_factory,
     get_context,
     get_memory_manager,
@@ -41,6 +42,7 @@ __all__ = [
     "_pending_plans",
     "_pending_tasks",
     "get_config",
+    "get_agent",
     "get_agent_factory",
     "get_context",
     "get_memory_manager",

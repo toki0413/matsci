@@ -22,6 +22,10 @@ _TEST_TIMEOUT = 60  # 秒
 
 async def test_stop_hook(ctx: HookContext) -> HookContext | None:
     """STOP 事件触发后跑 pytest, 把摘要写进 metadata."""
+    # Skip when already running inside pytest — otherwise each test
+    # that calls chat() spawns a recursive pytest run (60s timeout each).
+    if "pytest" in sys.modules:
+        return None
     workspace = ctx.metadata.get("workspace") or "."
     ws = Path(workspace)
     if not _has_pytest_config(ws):

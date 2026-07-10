@@ -22,6 +22,21 @@ from pathlib import Path
 import pytest
 
 
+def _get_full_agent_source() -> str:
+    """Collect source from HuginnAgent and all its mixin bases."""
+    import inspect
+    from huginn.agent import HuginnAgent
+    parts = []
+    for cls in HuginnAgent.__mro__:
+        if cls is object:
+            continue
+        try:
+            parts.append(inspect.getsource(cls))
+        except (TypeError, OSError):
+            pass
+    return "\n".join(parts)
+
+
 # ── P0-1: max_refines + severity ──────────────────────────────────
 
 
@@ -115,7 +130,7 @@ class TestSyntheticContinue:
         import inspect
         from huginn.agent import HuginnAgent
 
-        src = inspect.getsource(HuginnAgent)
+        src = _get_full_agent_source()
         assert "_pending_synthetic_messages" in src
         assert "Injected" in src  # 日志确认
 
