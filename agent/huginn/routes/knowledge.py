@@ -28,6 +28,10 @@ class KnowledgeQuery(BaseModel):
     top_k: int = 5
 
 
+class UrlIngestRequest(BaseModel):
+    url: str
+
+
 @router.post("/knowledge/upload")
 async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
     """Upload a document to the private knowledge base."""
@@ -78,6 +82,47 @@ async def list_knowledge() -> dict[str, Any]:
         }
     except Exception as e:
         return {"documents": [], "error": str(e), "available": False}
+
+
+@router.post("/knowledge/ingest-url")
+async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
+    """Fetch a web page and add it to the knowledge base."""
+    if get_context().kb is None:
+        return {"success": False, "error": "Knowledge base is not available"}
+
+    url = req.url.strip()
+    if not url.startswith(("http://", "https://")):
+        return {"success": False, "error": "URL must start with http:// or https://"}
+
+    try:
+        import urllib.request
+        import re
+
+        req_obj = urllib.request.Request(url, headers={"User-Agent": "Huginn/1.0"})
+        with urllib.request.urlopen(req_obj, timeout=30) as resp:
+            raw = resp.read(5 * 1024 * 1024)  # 5 MB cap
+            charset = resp.headers.get_content_charset() or "utf-8"
+            html = raw.decode(charset, errors="replace")
+
+        # crude HTML → text: strip tags, collapse whitespace
+        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.S | re.I)
+        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.S | re.I)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        if len(text) < 50:
+            return {"success": False, "error": "Page content too short after extraction"}
+
+        # use URL-derived filename
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc or "web"
+        filename = f"{domain}_{hash(url) % 100000}.txt"
+
+        result = get_context().kb.add_document(filename, text.encode("utf-8"))
+        return {"success": True, "document": result, "source_url": url}
+    except Exception as e:
+        logger.error("URL ingest failed", exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 @router.delete("/knowledge/{doc_id}")

@@ -71,6 +71,35 @@ async def lineage(path: str, depth: int = 5):
         return {"success": False, "error": str(exc)}
 
 
+@router.get("/dag")
+async def dag(n: int = 50):
+    """Return nodes + edges for provenance DAG visualization."""
+    try:
+        entries = _registry().recent(n)
+        nodes = []
+        edges = []
+        seen = set()
+        for e in entries:
+            d = e.to_dict()
+            node_id = d.get("path") or d.get("file_id") or d.get("id")
+            if node_id and node_id not in seen:
+                seen.add(node_id)
+                nodes.append({
+                    "id": node_id,
+                    "label": d.get("filename") or node_id.rsplit("/", 1)[-1],
+                    "tool": d.get("tool"),
+                    "format": d.get("format"),
+                    "timestamp": d.get("timestamp"),
+                })
+            # trace lineage edges
+            parent = d.get("derived_from") or d.get("parent_path")
+            if parent and node_id and parent != node_id:
+                edges.append({"source": parent, "target": node_id})
+        return {"success": True, "data": {"nodes": nodes, "edges": edges}}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 @router.delete("/cleanup")
 async def cleanup(days: int = 30):
     try:
