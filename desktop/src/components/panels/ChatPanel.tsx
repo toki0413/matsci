@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2 } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -128,6 +128,69 @@ export function ChatPanel(props: ChatPanelProps) {
   const [copyingId, setCopyingId] = useState<number | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msg: Message; index: number } | null>(null);
   const [quotedMsg, setQuotedMsg] = useState<string | null>(null);
+  const [showStats, setShowStats] = useState(false);
+  const [notifSound, setNotifSound] = useState(() => localStorage.getItem('chat-notif-sound') !== 'off');
+  const [streamingWasActive, setStreamingWasActive] = useState(false);
+
+  // Play notification sound when streaming completes
+  useEffect(() => {
+    if (isStreaming) {
+      setStreamingWasActive(true);
+    } else if (streamingWasActive && notifSound) {
+      // Simple beep using Web Audio API
+      try {
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 800;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      } catch {}
+      setStreamingWasActive(false);
+    }
+  }, [isStreaming, streamingWasActive, notifSound]);
+
+  const toggleNotifSound = () => {
+    const next = !notifSound;
+    setNotifSound(next);
+    localStorage.setItem('chat-notif-sound', next ? 'on' : 'off');
+  };
+
+  const exportConversation = (format: 'md' | 'json') => {
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const userMsgs = messages.filter(m => m.role === 'user').length;
+    const aiMsgs = messages.filter(m => m.role === 'assistant').length;
+    let content: string;
+    let mime: string;
+
+    if (format === 'json') {
+      content = JSON.stringify({ exported_at: new Date().toISOString(), message_count: messages.length, messages }, null, 2);
+      mime = 'application/json';
+    } else {
+      content = `# Huginn Conversation\n\nExported: ${new Date().toLocaleString()}\nMessages: ${messages.length} (${userMsgs} user, ${aiMsgs} assistant)\n\n---\n\n`;
+      for (const m of messages) {
+        if (m.role === 'user') content += `## 👤 You\n\n${m.content}\n\n`;
+        else if (m.role === 'assistant') content += `## 🤖 Assistant\n\n${m.content}\n\n`;
+        else if (m.role === 'tool') content += `### 🔧 ${m.tool_name}\n\n\`\`\`json\n${JSON.stringify(m.tool_args, null, 2)}\n\`\`\`\n\n`;
+        if (m.reasoning) content += `<details><summary>💭 Reasoning</summary>\n\n${m.reasoning}\n\n</details>\n\n`;
+      }
+      mime = 'text/markdown';
+    }
+
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `huginn-conversation-${ts}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${messages.length} messages as ${format.toUpperCase()}`);
+  };
 
   // Close context menu on any click outside
   useEffect(() => {
@@ -284,6 +347,69 @@ export function ChatPanel(props: ChatPanelProps) {
           </button>
         </div>
       )}
+      {/* Chat action toolbar — export, stats, sound */}
+      <div className="flex items-center gap-1 border-b border-border bg-bg-secondary/30 px-6 py-1">
+        <button
+          onClick={() => exportConversation('md')}
+          disabled={messages.length === 0}
+          className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-30"
+          title="Export as Markdown"
+        >
+          <Download size={12} /> MD
+        </button>
+        <button
+          onClick={() => exportConversation('json')}
+          disabled={messages.length === 0}
+          className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-30"
+          title="Export as JSON"
+        >
+          <Download size={12} /> JSON
+        </button>
+        <div className="mx-1 h-3 w-px bg-border" />
+        <button
+          onClick={() => setShowStats(s => !s)}
+          className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors ${showStats ? 'text-accent' : 'text-text-muted hover:text-text-primary'} hover:bg-bg-tertiary`}
+          title="Chat statistics"
+        >
+          <BarChart3 size={12} /> Stats
+        </button>
+        <div className="mx-1 h-3 w-px bg-border" />
+        <button
+          onClick={toggleNotifSound}
+          className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors ${notifSound ? 'text-accent' : 'text-text-muted'} hover:bg-bg-tertiary`}
+          title={notifSound ? 'Sound on (click to mute)' : 'Sound off (click to enable)'}
+        >
+          <Volume2 size={12} /> {notifSound ? 'On' : 'Off'}
+        </button>
+        <div className="ml-auto text-[10px] text-text-muted">
+          {messages.length} {messages.length === 1 ? 'message' : 'messages'}
+        </div>
+      </div>
+
+      {/* Stats panel */}
+      {showStats && messages.length > 0 && (
+        <div className="border-b border-border bg-bg-tertiary/50 px-6 py-2">
+          <div className="flex flex-wrap gap-4 text-xs">
+            {(() => {
+              const userMsgs = messages.filter(m => m.role === 'user');
+              const aiMsgs = messages.filter(m => m.role === 'assistant');
+              const toolMsgs = messages.filter(m => m.role === 'tool');
+              const totalChars = messages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
+              const estTokens = Math.round(totalChars / 4);
+              return (
+                <>
+                  <span className="text-text-secondary">👤 User: <strong className="text-text-primary">{userMsgs.length}</strong></span>
+                  <span className="text-text-secondary">🤖 AI: <strong className="text-text-primary">{aiMsgs.length}</strong></span>
+                  <span className="text-text-secondary">🔧 Tools: <strong className="text-text-primary">{toolMsgs.length}</strong></span>
+                  <span className="text-text-secondary">📝 Chars: <strong className="text-text-primary">{totalChars.toLocaleString()}</strong></span>
+                  <span className="text-text-secondary">🪙 ~Tokens: <strong className="text-text-primary">{estTokens.toLocaleString()}</strong></span>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       <div className="relative flex-1">
       <Virtuoso
         ref={virtuosoRef}
@@ -573,6 +699,30 @@ export function ChatPanel(props: ChatPanelProps) {
         }}
         components={{
           Footer: () => <div ref={messagesEndRef} style={{ height: 1 }} />,
+          EmptyPlaceholder: () => (
+            <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-accent/10">
+                <span className="text-3xl">🦅</span>
+              </div>
+              <div className="space-y-1">
+                <div className="text-lg font-bold text-text-primary">{t('chat.welcome') || 'Start a conversation'}</div>
+                <div className="max-w-sm text-sm text-text-muted">
+                  Ask about materials science, run simulations, analyze data, or use <kbd className="rounded border border-border bg-bg-tertiary px-1 text-xs">Ctrl+K</kbd> to explore tools.
+                </div>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2 pt-2">
+                {['Explain XRD patterns', 'Optimize a supercell', 'Calculate band structure', 'Find materials with E_g > 2eV'].map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => { setInput(s); textareaRef.current?.focus(); }}
+                    className="rounded-lg border border-border bg-bg-secondary px-3 py-1.5 text-xs text-text-secondary hover:border-accent/50 hover:text-accent transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ),
         }}
         followOutput={'auto'}
       />
