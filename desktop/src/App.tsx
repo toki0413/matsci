@@ -1130,7 +1130,7 @@ export default function App() {
           )}
 
           {activeTab === "emotion" && (
-            <ErrorBoundary>
+            <ErrorBoundary name="Emotion Tracker">
               <Suspense fallback={<LoadingFallback />}>
                 <EmotionTrackerPanel apiBase={getApiBase()} />
               </Suspense>
@@ -1138,7 +1138,7 @@ export default function App() {
           )}
 
           {activeTab === "persona" && (
-            <ErrorBoundary>
+            <ErrorBoundary name="Persona Manager">
               <Suspense fallback={<LoadingFallback />}>
                 <PersonaManager />
               </Suspense>

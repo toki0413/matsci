@@ -344,6 +344,34 @@
   .btn-success:hover { opacity: 0.85; }
   .btn-success:disabled { opacity: 0.4; cursor: not-allowed; }
 
+  /* Truncated text tooltip — shows full text on hover via ::after */
+  .truncate-tooltip {
+    position: relative;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .truncate-tooltip:hover::after {
+    content: attr(data-full-text);
+    position: absolute;
+    left: 0;
+    top: 100%;
+    z-index: 50;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm, 4px);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    font-size: 11px;
+    pointer-events: none;
+    animation: toast-in 0.1s ease-out;
+  }
+
   .card {
     @apply rounded-lg border border-border p-4;
     background: var(--bg-secondary);

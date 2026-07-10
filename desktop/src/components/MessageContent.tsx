@@ -1,7 +1,8 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { memo } from 'react';
+import { memo, useState } from 'react';
+import { Check, Copy } from 'lucide-react';
 
 // Renders assistant / user chat content as GitHub-flavoured markdown with
 // syntax-highlighted code blocks and a per-block copy button.
@@ -18,36 +19,7 @@ export const MessageContent = memo(function MessageContent({ content }: { conten
             if (isInline) {
               return <code {...props}>{children}</code>;
             }
-            return (
-              <div className="code-block-wrapper">
-                {match && <span className="code-block-lang">{match[1]}</span>}
-                <button
-                  className="code-block-copy"
-                  onClick={(e) => {
-                    const btn = e.currentTarget;
-                    const text = String(children).replace(/\n$/, '');
-                    navigator.clipboard.writeText(text)
-                      .then(() => {
-                        btn.textContent = '✓';
-                        setTimeout(() => { btn.textContent = '📋'; }, 1500);
-                      })
-                      .catch(() => {
-                        // Fallback for browsers without clipboard API
-                        const ta = document.createElement('textarea');
-                        ta.value = text;
-                        document.body.appendChild(ta);
-                        ta.select();
-                        document.execCommand('copy');
-                        document.body.removeChild(ta);
-                        btn.textContent = '✓';
-                        setTimeout(() => { btn.textContent = '📋'; }, 1500);
-                      });
-                  }}
-                  title="Copy"
-                >📋</button>
-                <code className={className} {...props}>{children}</code>
-              </div>
-            );
+            return <CodeBlock language={match?.[1]} code={String(children).replace(/\n$/, '')} className={className} props={props}>{children}</CodeBlock>;
           },
           pre({ children }) {
             return <pre>{children}</pre>;
@@ -59,5 +31,46 @@ export const MessageContent = memo(function MessageContent({ content }: { conten
     </div>
   );
 });
+
+function CodeBlock({ language, code, className, props, children }: {
+  language?: string;
+  code: string;
+  className?: string;
+  props: Record<string, unknown>;
+  children: React.ReactNode;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })
+      .catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+  };
+
+  return (
+    <div className="code-block-wrapper group/code">
+      {language && <span className="code-block-lang">{language}</span>}
+      <button
+        className="code-block-copy flex items-center gap-1"
+        onClick={handleCopy}
+        title="Copy code"
+        aria-label="Copy code"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+        <span className="text-[11px]">{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+      <code className={className} {...props}>{children}</code>
+    </div>
+  );
+}
 
 export default MessageContent;
