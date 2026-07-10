@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Response
 
 from huginn import __version__
-from huginn.config import HuginnConfig
+from huginn.config import HuginnConfig, get_config
 from huginn.server_core import _check_ollama_available, get_context
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ async def health_live() -> dict[str, Any]:
     return non-200 due to dependency failures, otherwise the pod gets
     killed and restarted (which doesn't fix the dependency).
     """
-    cfg = HuginnConfig.from_env()
+    cfg = get_config()
     return {
         "status": "alive",
         "version": __version__,
@@ -104,7 +104,7 @@ async def health_ready(response: Response) -> dict[str, Any]:
 
     # -- LLM provider ------------------------------------------------
     try:
-        cfg = HuginnConfig.from_env()
+        cfg = get_config()
         if _is_configured(cfg):
             checks["llm"] = {"status": "ok", "provider": cfg.provider}
         else:
@@ -153,7 +153,7 @@ async def health() -> dict[str, Any]:
         Use ``/health/live`` for liveness and ``/health/ready`` for
         readiness. This endpoint is kept for backward compatibility.
     """
-    cfg = HuginnConfig.from_env()
+    cfg = get_config()
     configured = _is_configured(cfg)
 
     result: dict[str, Any] = {
@@ -204,7 +204,7 @@ async def health_guidance() -> dict[str, Any]:
             "available": False,
         })
 
-    current = HuginnConfig.from_env()
+    current = get_config()
     recommendation: dict[str, Any] = {}
     if not _is_configured(current):
         if available_providers:

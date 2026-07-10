@@ -11,6 +11,7 @@ import type { KbDoc, DocumentParseResult, DocumentGraph } from '../types/domain'
 export function useKnowledge() {
   const [kbDocs, setKbDocs] = useState<KbDoc[]>([]);
   const [kbAvailable, setKbAvailable] = useState(false);
+  const [kbLoading, setKbLoading] = useState(true);
   const [kbMsg, setKbMsg] = useState('');
   const [kbQuery, setKbQuery] = useState('');
   const [kbChunks, setKbChunks] = useState<any[]>([]);
@@ -23,6 +24,7 @@ export function useKnowledge() {
       const data = await api.get<{ documents?: any[]; available?: any }>('/knowledge');
       setKbDocs(data.documents || []);
       setKbAvailable(data.available);
+      setKbLoading(false);
     } catch (e: any) {
       setKbMsg(`Failed to load knowledge base: ${e.message}`);
     }
@@ -143,7 +145,7 @@ export function useKnowledge() {
   }, []);
 
   return {
-    kbDocs, kbAvailable, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
+    kbDocs, kbAvailable, kbLoading, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
     fileInputRef, parseFileInputRef,
     setKbQuery, setKbMsg,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from huginn.config import HuginnConfig, Settings
+from huginn.config import HuginnConfig, Settings, get_config
 from huginn.models.registry import create_langchain_model
 
 
@@ -35,7 +35,7 @@ def get_model(
         A LangChain chat model with ``invoke`` / ``bind_tools`` support.
     """
     if config is None:
-        cfg = HuginnConfig.from_env()
+        cfg = get_config()
     elif isinstance(config, Settings):
         cfg = config.config
     else:

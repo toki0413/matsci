@@ -332,6 +332,18 @@
   .btn-danger:hover { opacity: 0.85; }
   .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
 
+  /* Success button — for approve/confirm actions */
+  .btn-success {
+    background: var(--success);
+    color: white;
+    font-weight: 600;
+    border-radius: var(--radius);
+    padding: 0.5rem 1rem;
+    transition: opacity 0.15s;
+  }
+  .btn-success:hover { opacity: 0.85; }
+  .btn-success:disabled { opacity: 0.4; cursor: not-allowed; }
+
   .card {
     @apply rounded-lg border border-border p-4;
     background: var(--bg-secondary);

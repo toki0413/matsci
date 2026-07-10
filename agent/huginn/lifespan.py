@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from huginn.config import HuginnConfig
+from huginn.config import HuginnConfig, get_config
 from huginn.pet import configure_pet
 from huginn.server_core import (
     _CODEBASE_AVAILABLE,
@@ -378,18 +378,18 @@ async def lifespan(app: FastAPI):
     await _init_mcp_tools()
     if _KB_AVAILABLE and get_context().kb is None:
         try:
-            cfg = HuginnConfig.from_env()
+            cfg = get_config()
             get_context().kb = get_knowledge_base(cfg.workspace)
         except Exception as e:
             logger.info(f"[KB] Warning: could not initialize knowledge base: {e}")
     if _CODEBASE_AVAILABLE and get_context().codebase is None:
         try:
-            cfg = HuginnConfig.from_env()
+            cfg = get_config()
             get_context().codebase = get_codebase_index(cfg.workspace)
         except Exception as e:
             logger.info(f"[Codebase] Warning: could not initialize codebase index: {e}")
     try:
-        cfg = HuginnConfig.from_env()
+        cfg = get_config()
         configure_pet(cfg.pet_name, cfg.pet_personality)
     except Exception as e:
         logger.info(f"[Pet] Warning: could not configure pet: {e}")

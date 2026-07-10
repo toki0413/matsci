@@ -22,6 +22,7 @@ interface KnowledgePanelProps {
   parseFileInputRef: React.RefObject<HTMLInputElement>;
   parseLoading: boolean;
   uploadPct?: number;
+  kbLoading?: boolean;
   kbMsg: string;
   kbDocs: KbDoc[];
   kbAvailable: boolean;
@@ -63,7 +64,7 @@ function highlightTerms(text: string, query: string) {
 
 export function KnowledgePanel({
   config, setConfig, saveConfig,
-  fileInputRef, parseFileInputRef, parseLoading, uploadPct,
+  fileInputRef, parseFileInputRef, parseLoading, uploadPct, kbLoading,
   kbMsg, kbDocs, kbAvailable, kbQuery, kbChunks, setKbQuery,
   uploadKnowledge, parseDocument, loadDocumentGraph, deleteKnowledge, queryKnowledge,
   ingestUrl, loadProvenanceDag,
@@ -238,6 +239,12 @@ export function KnowledgePanel({
           )}
 
           <div className="flex-1 overflow-y-auto">
+            {kbLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-accent" />
+              </div>
+            ) : (
+            <>
             <div className="mb-2 text-xs font-medium text-text-secondary">
               Documents ({kbDocs.length})
             </div>
@@ -270,6 +277,8 @@ export function KnowledgePanel({
                 </div>
               </div>
             ))}
+            </>
+            )}
           </div>
         </aside>
 
