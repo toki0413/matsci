@@ -96,6 +96,7 @@ export type WSMessage =
     }
   | { type: "ping" }
   | { type: "pong" }
+  | { type: "context_compacted"; before_pct: number; after_pct: number }
   | { type: "done" }
   | { type: "error"; error: string }
   | {

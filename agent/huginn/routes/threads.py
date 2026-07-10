@@ -25,7 +25,7 @@ router = APIRouter(tags=["threads"])
 
 
 @router.get("/threads")
-async def list_threads() -> dict[str, Any]:
+async def list_threads(include_archived: bool = False) -> dict[str, Any]:
     """List known conversation threads."""
     with _state_lock:
         threads = sorted(
@@ -33,6 +33,8 @@ async def list_threads() -> dict[str, Any]:
             key=lambda x: x.get("last_active", ""),
             reverse=True,
         )
+    if not include_archived:
+        threads = [t for t in threads if not t.get("archived", False)]
     return {
         "threads": [
             {
@@ -40,6 +42,7 @@ async def list_threads() -> dict[str, Any]:
                 "label": t.get("label", t["id"]),
                 "created_at": t.get("created_at", ""),
                 "last_active": t.get("last_active", ""),
+                "archived": t.get("archived", False),
             }
             for t in threads
         ]
@@ -131,6 +134,26 @@ async def delete_thread(thread_id: str) -> dict[str, Any]:
         if thread_id in _threads:
             del _threads[thread_id]
     return {"success": True}
+
+
+@router.post("/threads/{thread_id}/archive")
+async def archive_thread(thread_id: str) -> dict[str, Any]:
+    """Archive a thread — hides it from the active list."""
+    with _state_lock:
+        if thread_id not in _threads:
+            return {"success": False, "error": "thread not found"}
+        _threads[thread_id]["archived"] = True
+    return {"success": True, "archived": True}
+
+
+@router.post("/threads/{thread_id}/unarchive")
+async def unarchive_thread(thread_id: str) -> dict[str, Any]:
+    """Unarchive a thread — restores it to the active list."""
+    with _state_lock:
+        if thread_id not in _threads:
+            return {"success": False, "error": "thread not found"}
+        _threads[thread_id]["archived"] = False
+    return {"success": True, "archived": False}
 
 
 @router.post("/threads/{thread_id}/fork")

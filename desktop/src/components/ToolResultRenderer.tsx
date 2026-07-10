@@ -4,9 +4,13 @@
  * Detects structured JSON data in tool results and renders them
  * as tables or key-value pairs. Falls back to raw text for plain output.
  */
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Table2, List } from 'lucide-react';
+import { Table2, List, Box } from 'lucide-react';
+import { detectStructure } from './InlineStructure3D';
+
+// Lazy-load 3D viewer — three.js is heavy, only needed when structure detected
+const InlineStructure3D = lazy(() => import('./InlineStructure3D'));
 
 interface ToolResultRendererProps {
   content: string;
@@ -73,8 +77,9 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
 }) => {
   const { t } = useTranslation();
   const parsed = useMemo(() => tryParse(content), [content]);
-  const [view, setView] = useState<'table' | 'raw'>(
-    parsed.kind !== 'text' ? 'table' : 'raw'
+  const hasStructure = useMemo(() => detectStructure(content) !== null, [content]);
+  const [view, setView] = useState<'table' | 'raw' | '3d'>(
+    hasStructure ? '3d' : (parsed.kind !== 'text' ? 'table' : 'raw')
   );
 
   // Plain text — just render as preformatted
@@ -97,6 +102,15 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
     >
       <div className="so-toolbar">
         <div className="so-tabs">
+          {hasStructure && (
+            <button
+              className={`so-tab ${view === '3d' ? 'so-tab--active' : ''}`}
+              onClick={() => setView('3d')}
+            >
+              <Box size={10} style={{ display: 'inline', marginRight: 4 }} />
+              3D
+            </button>
+          )}
           <button
             className={`so-tab ${view === 'table' ? 'so-tab--active' : ''}`}
             onClick={() => setView('table')}
@@ -119,6 +133,11 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
         )}
       </div>
       <div className="so-body">
+        {view === '3d' && hasStructure && (
+          <Suspense fallback={<div className="p-4 text-xs text-text-muted">Loading 3D viewer…</div>}>
+            <InlineStructure3D content={content} />
+          </Suspense>
+        )}
         {view === 'table' && parsed.kind === 'table' && (
           <>
             <table className="so-table">

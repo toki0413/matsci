@@ -1,4 +1,4 @@
-﻿"""Application lifespan, MCP initialization, and CORS configuration."""
+"""Application lifespan, MCP initialization, and CORS configuration."""
 
 from __future__ import annotations
 
@@ -368,6 +368,13 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(run_all_migrations)
     except Exception as e:
         logger.warning(f"[migrations] startup sweep failed: {e}")
+    # Store the main event loop so sync code (tool adapter running in
+    # a thread) can schedule event publishes back on the main loop
+    try:
+        from huginn.events.integration import set_main_loop
+        set_main_loop(asyncio.get_running_loop())
+    except Exception:
+        pass
     await _init_mcp_tools()
     if _KB_AVAILABLE and get_context().kb is None:
         try:

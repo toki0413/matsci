@@ -1,4 +1,5 @@
-import { ChevronDown, Brain } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, Brain, Pencil, Check, X } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
 import type { MemoryEntry, MemoryStats } from '../../types/domain';
 
@@ -19,6 +20,7 @@ export interface MemoryPanelProps {
   searchMemory: () => void;
   createMemory: () => void;
   deleteMemory: (id: string) => void;
+  updateMemory: (id: string, patch: { content?: string; importance?: number; tags?: string[] }) => void;
   promoteMemory: (id: string) => void;
   pruneMemory: () => void;
   syncMemoryMd: () => void;
@@ -40,10 +42,35 @@ export function MemoryPanel({
   searchMemory,
   createMemory,
   deleteMemory,
+  updateMemory,
   promoteMemory,
   pruneMemory,
   syncMemoryMd,
 }: MemoryPanelProps) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
+
+  const startEdit = (m: MemoryEntry) => {
+    setEditingId(m.id);
+    setEditContent(m.content);
+  };
+
+  const saveEdit = (id: string) => {
+    updateMemory(id, { content: editContent });
+    setEditingId(null);
+  };
+
+  // Sort by last_accessed descending — most recent on top
+  const sortedMemories = [...memories].sort((a, b) => {
+    const da = new Date(a.last_accessed || a.created_at).getTime();
+    const db = new Date(b.last_accessed || b.created_at).getTime();
+    return db - da;
+  });
+
+  const isRecent = (m: MemoryEntry) => {
+    const last = new Date(m.last_accessed || m.created_at).getTime();
+    return Date.now() - last < 3600_000; // within 1 hour
+  };
   return (
     <div data-component="memory-panel" className="mem-panel flex h-full flex-col">
       <PanelHeader title="Memory" className="mem-header px-6">
@@ -163,20 +190,49 @@ export function MemoryPanel({
                 )}
               </div>
             )}
-            {memories.map((m) => (
-              <div key={m.id} className="card mem-entry">
+            {sortedMemories.map((m) => (
+              <div key={m.id} className={`card mem-entry ${isRecent(m) ? 'ring-1 ring-accent/30' : ''}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 text-xs">
                       <span className={`mem-badge mem-badge--tier-${m.tier}`}>{m.tier}</span>
                       <span className="mem-badge mem-badge--category">{m.category}</span>
                       <span className="text-text-muted">importance {m.importance}</span>
+                      {isRecent(m) && (
+                        <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                          recent
+                        </span>
+                      )}
                     </div>
-                    <p className="mt-1 whitespace-pre-wrap text-sm">{m.content}</p>
+                    {editingId === m.id ? (
+                      <div className="mt-1">
+                        <textarea
+                          className="input-field min-h-[60px] w-full text-sm"
+                          value={editContent}
+                          onChange={(e) => setEditContent(e.target.value)}
+                          autoFocus
+                        />
+                        <div className="mt-1 flex gap-1">
+                          <button onClick={() => saveEdit(m.id)} className="btn-primary px-2 py-1 text-xs">
+                            <Check size={12} className="inline mr-1" />Save
+                          </button>
+                          <button onClick={() => setEditingId(null)} className="btn-secondary px-2 py-1 text-xs">
+                            <X size={12} className="inline mr-1" />Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-1 whitespace-pre-wrap text-sm">{m.content}</p>
+                    )}
                     <p className="mt-1 text-xs text-text-muted">tags: {m.tags || "\u2014"} · source: {m.source || "\u2014"}</p>
                     <p className="text-xs text-text-muted">expires: {m.expires_at ? new Date(m.expires_at).toLocaleString() : "never"} · accessed {m.access_count ?? 0}</p>
                   </div>
                   <div className="flex flex-col gap-1">
+                    {editingId !== m.id && (
+                      <button onClick={() => startEdit(m)} className="btn-secondary px-2 py-1 text-xs" title="Edit" aria-label="Edit memory">
+                        <Pencil size={12} />
+                      </button>
+                    )}
                     {m.tier !== "long" && (
                       <button onClick={() => promoteMemory(m.id)} className="btn-secondary px-2 py-1 text-xs" title="Promote to long" aria-label="Promote memory to long-term">
                         ⬆

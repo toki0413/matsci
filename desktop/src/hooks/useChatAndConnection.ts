@@ -48,6 +48,9 @@ export interface Message {
   taskType?: string;
   jobId?: string;
   reasoning?: string;
+  isCompacted?: boolean;
+  compactBefore?: number;
+  compactAfter?: number;
 }
 
 export interface Thread {
@@ -152,6 +155,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     { id: "desktop", label: "Default", created_at: "", last_active: "" },
   ]);
   const [activeThread, setActiveThread] = useState<string>("desktop");
+  const activeThreadRef = useRef(activeThread);
+  useEffect(() => { activeThreadRef.current = activeThread; }, [activeThread]);
 
   // switch thread: cache current messages, restore target thread's messages
   const switchThread = (threadId: string) => {
@@ -353,6 +358,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   // ── WebSocket message handler ────────────────────────────────
   const handleWsMessage = (data: WSMessage) => {
+    // Skip messages from other threads — they belong to a background session
+    if ("thread_id" in data && data.thread_id && data.thread_id !== activeThreadRef.current) return;
     switch (data.type) {
       case "reasoning_delta":
         streamBufferRef.current.reasoning += data.text;
@@ -471,6 +478,20 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         break;
       case "pong":
         break;
+      case "context_compacted": {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant" as const,
+            content: "",
+            timestamp: new Date().toISOString(),
+            isCompacted: true,
+            compactBefore: data.before_pct,
+            compactAfter: data.after_pct,
+          },
+        ]);
+        break;
+      }
       case "plan": {
         const planData = data.plan;
         const planId = data.plan_id;

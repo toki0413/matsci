@@ -28,6 +28,17 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Reference to the main event loop, set at startup.
+# Used by _schedule_sync when no loop is running in the current thread.
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Store the main event loop for cross-thread event scheduling."""
+    global _main_loop
+    _main_loop = loop
+
+
 # Set to False to globally disable event publishing (e.g. in tests).
 _ENABLED = True
 
@@ -163,8 +174,10 @@ def _schedule_sync(coro) -> None:
         loop = asyncio.get_running_loop()
         asyncio.ensure_future(coro)
     except RuntimeError:
-        # No running loop — can't schedule. Drop the event.
-        pass
+        # No running loop in this thread — schedule on the main loop
+        if _main_loop and _main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, _main_loop)
+        # else: no loop available, drop the event
     except Exception:
         logger.debug("sync event schedule failed", exc_info=True)
 

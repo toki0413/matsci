@@ -245,30 +245,45 @@ async def _stream_agent_response(
     _token_streamed = False
 
     try:
+        async def _ws_send(msg: dict) -> None:
+            """Wrap send_json with thread_id for client-side routing."""
+            if "thread_id" not in msg:
+                msg["thread_id"] = thread_id
+            await websocket.send_json(msg)
+
         async for state in agent.chat(content, thread_id):
             if "_token" in state:
                 _token_streamed = True
                 text = state["_token"]
                 if text:
                     full_response += text
-                    await websocket.send_json(
+                    await _ws_send(
                         {"type": "text_delta", "text": text}
                     )
                 continue
             if "_reasoning" in state:
                 reasoning = state["_reasoning"]
                 if reasoning:
-                    await websocket.send_json(
+                    await _ws_send(
                         {"type": "reasoning_delta", "text": reasoning}
                     )
                 continue
 
+            if "_compacted" in state:
+                c = state["_compacted"]
+                await _ws_send({
+                    "type": "context_compacted",
+                    "before_pct": c.get("before_pct", 0),
+                    "after_pct": c.get("after_pct", 0),
+                })
+                continue
+
             if handle_clarification and state.get("thought_loop_terminated"):
-                await websocket.send_json({
+                await _ws_send({
                     "type": "text_delta",
                     "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
                 })
-                await websocket.send_json({"type": "done"})
+                await _ws_send({"type": "done"})
                 break
 
             if (
@@ -278,7 +293,7 @@ async def _stream_agent_response(
                 and state.get("clarify_questions")
             ):
                 questions = state["clarify_questions"]
-                await websocket.send_json(
+                await _ws_send(
                     {
                         "type": "clarification_request",
                         "thread_id": thread_id,
@@ -296,10 +311,10 @@ async def _stream_agent_response(
                     )
                     if text:
                         full_response = text
-                        await websocket.send_json(
+                        await _ws_send(
                             {"type": "text_delta", "text": text}
                         )
-                await websocket.send_json({"type": "done"})
+                await _ws_send({"type": "done"})
                 break
 
             messages = state.get("messages", [])
@@ -329,7 +344,7 @@ async def _stream_agent_response(
                                         workspace_path,
                                         snapshot,
                                     )
-                                await websocket.send_json(
+                                await _ws_send(
                                     {
                                         "type": "auto_checkpoint",
                                         "id": auto_cp_id,
@@ -339,7 +354,7 @@ async def _stream_agent_response(
                                 )
                             except Exception as e:
                                 logger.debug("[auto-cp] failed: %s", e)
-                        await websocket.send_json(
+                        await _ws_send(
                             {
                                 "type": "tool_call",
                                 "id": tid,
@@ -363,13 +378,13 @@ async def _stream_agent_response(
                     _warnings = _extract_tool_warnings(tool_content)
                     if _warnings:
                         tool_result_msg["warnings"] = _warnings
-                    await websocket.send_json(tool_result_msg)
+                    await _ws_send(tool_result_msg)
 
                     _progress = _extract_task_progress(
                         tool_content
                     )
                     if _progress:
-                        await websocket.send_json({
+                        await _ws_send({
                             "type": "task_progress",
                             **_progress,
                         })
@@ -381,7 +396,7 @@ async def _stream_agent_response(
                     delta = last_msg.content[len(full_response) :]
                     if delta:
                         full_response = last_msg.content
-                        await websocket.send_json(
+                        await _ws_send(
                             {
                                 "type": "text_delta",
                                 "text": delta,
@@ -399,7 +414,7 @@ async def _stream_agent_response(
                     "passed": True,
                     "note": "Verified after execution",
                 })
-            await websocket.send_json({
+            await _ws_send({
                 "type": "plan_result",
                 "plan_id": plan_result.get("plan_id", ""),
                 "criteria": criteria_results,
@@ -407,7 +422,7 @@ async def _stream_agent_response(
             })
 
         if citations:
-            await websocket.send_json({
+            await _ws_send({
                 "type": "citations",
                 "sources": citations,
             })
@@ -435,7 +450,7 @@ async def _stream_agent_response(
                         "source": "auto_sediment",
                     },
                 )
-                await websocket.send_json({
+                await _ws_send({
                     "type": "sediment",
                     "stored": True,
                     "preview": sediment_text[:100],
@@ -455,16 +470,16 @@ async def _stream_agent_response(
             else:
                 fallback = "（Agent 未能生成回复，可能是内部处理超时或出错。请尝试换一种问法，或稍后重试。）"
             full_response = fallback
-            await websocket.send_json({
+            await _ws_send({
                 "type": "text_delta",
                 "text": fallback,
             })
 
-        await websocket.send_json({"type": "done"})
+        await _ws_send({"type": "done"})
 
     except Exception as e:
         logger.error(error_log, exc_info=True)
-        await websocket.send_json(
+        await _ws_send(
             {"type": "error", "error": f"{error_label}: {str(e)}"}
         )
 
