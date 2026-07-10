@@ -199,7 +199,7 @@ export default function App() {
 
   const memory = useMemory();
   const {
-    memories, memoriesLoading, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
+    memories, memoriesLoading, memoryHasMore, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
     updateMemory, promoteMemory, pruneMemory, syncMemoryMd,
@@ -240,6 +240,27 @@ export default function App() {
 
   // ── Provenance state ─────────────────────────────────────────
   const [provenanceRecords, setProvenanceRecords] = useState<any[]>([]);
+  const [provSortCol, setProvSortCol] = useState<'tool' | 'file' | 'format' | 'time' | null>(null);
+  const [provSortDir, setProvSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const toggleProvSort = (col: 'tool' | 'file' | 'format' | 'time') => {
+    if (provSortCol === col) {
+      setProvSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setProvSortCol(col);
+      setProvSortDir('asc');
+    }
+  };
+
+  const sortedProvRecords = (() => {
+    if (!provSortCol) return provenanceRecords;
+    const sorted = [...provenanceRecords].sort((a, b) => {
+      const av = (provSortCol === 'time') ? (a.timestamp || a.time || '') : (a[provSortCol] || a.path || '');
+      const bv = (provSortCol === 'time') ? (b.timestamp || b.time || '') : (b[provSortCol] || b.path || '');
+      return String(av).localeCompare(String(bv));
+    });
+    return provSortDir === 'asc' ? sorted : sorted.reverse();
+  })();
   const [provenanceExpanded, setProvenanceExpanded] = useState<number | null>(null);
 
   const loadProvenance = async () => {
@@ -541,6 +562,60 @@ export default function App() {
   // Focus trap for modals — must be after toolPaletteOpen/showGuide are available
   useFocusTrap(toolPaletteRef, toolPaletteOpen);
   useFocusTrap(guideModalRef, showGuide);
+
+  // Dynamic favicon based on connection/streaming state
+  useEffect(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32; canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    let raf: number;
+
+    const draw = (progress = 0) => {
+      ctx.clearRect(0, 0, 32, 32);
+      // Circle background
+      ctx.beginPath();
+      ctx.arc(16, 16, 14, 0, Math.PI * 2);
+      if (isStreaming) {
+        ctx.fillStyle = '#3b82f6'; // accent blue
+      } else if (!isConnected) {
+        ctx.fillStyle = '#ef4444'; // error red
+      } else {
+        ctx.fillStyle = '#22c55e'; // success green
+      }
+      ctx.fill();
+      // Streaming: draw rotating arc overlay
+      if (isStreaming) {
+        ctx.beginPath();
+        ctx.arc(16, 16, 12, progress * Math.PI * 2, progress * Math.PI * 2 + Math.PI * 1.2);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      // Letter H
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('H', 16, 16);
+      setFavicon(canvas.toDataURL());
+      if (isStreaming) {
+        raf = requestAnimationFrame(() => draw(progress + 0.02));
+      }
+    };
+    draw();
+
+    function setFavicon(href: string) {
+      let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = href;
+    }
+    return () => cancelAnimationFrame(raf);
+  }, [isStreaming, isConnected]);
 
   // ── loadWorkflowTemplates ────────────────────────────────────
   const loadWorkflowTemplates = async () => {
@@ -1074,6 +1149,8 @@ export default function App() {
             <MemoryPanel
               memories={memories}
               memoriesLoading={memoriesLoading}
+              memoryHasMore={memoryHasMore}
+              loadMoreMemory={() => loadMemory(true)}
               memoryStats={memoryStats}
               memorySearch={memorySearch}
               memoryFilter={memoryFilter}
@@ -1435,15 +1512,23 @@ export default function App() {
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-border text-text-muted">
-                        <th className="py-2 pr-4 font-semibold">{t('provenance.tool')}</th>
-                        <th className="py-2 pr-4 font-semibold">{t('provenance.file')}</th>
-                        <th className="py-2 pr-4 font-semibold">{t('provenance.format')}</th>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('tool')}>
+                          {t('provenance.tool')}{provSortCol === 'tool' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
+                        </th>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('file')}>
+                          {t('provenance.file')}{provSortCol === 'file' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
+                        </th>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('format')}>
+                          {t('provenance.format')}{provSortCol === 'format' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
+                        </th>
                         <th className="py-2 pr-4 font-semibold">{t('provenance.keyProps')}</th>
-                        <th className="py-2 pr-4 font-semibold">{t('provenance.time')}</th>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('time')}>
+                          {t('provenance.time')}{provSortCol === 'time' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {provenanceRecords.map((rec, i) => (
+                      {sortedProvRecords.map((rec, i) => (
                         <Fragment key={i}>
                           <tr
                             onClick={() => setProvenanceExpanded(provenanceExpanded === i ? null : i)}

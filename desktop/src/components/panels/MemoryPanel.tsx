@@ -7,6 +7,8 @@ import type { MemoryEntry, MemoryStats } from '../../types/domain';
 export interface MemoryPanelProps {
   memories: MemoryEntry[];
   memoriesLoading?: boolean;
+  memoryHasMore?: boolean;
+  loadMoreMemory?: () => void;
   memoryStats: MemoryStats | null;
   memorySearch: string;
   memoryFilter: { category: string; tier: string };
@@ -31,6 +33,8 @@ export interface MemoryPanelProps {
 export function MemoryPanel({
   memories,
   memoriesLoading,
+  memoryHasMore,
+  loadMoreMemory,
   memoryStats,
   memorySearch,
   memoryFilter,
@@ -242,6 +246,14 @@ export function MemoryPanel({
                 </div>
               </div>
             ))}
+            {memoryHasMore && (
+              <button
+                onClick={loadMoreMemory}
+                className="w-full rounded-lg border border-border py-2 text-xs text-text-secondary hover:bg-bg-tertiary transition-colors"
+              >
+                Load more memories…
+              </button>
+            )}
           </div>
         </div>
       </div>

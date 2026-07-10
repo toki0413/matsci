@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -127,6 +127,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [copyingId, setCopyingId] = useState<number | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msg: Message; index: number } | null>(null);
+  const [quotedMsg, setQuotedMsg] = useState<string | null>(null);
 
   // Close context menu on any click outside
   useEffect(() => {
@@ -612,6 +613,19 @@ export function ChatPanel(props: ChatPanelProps) {
               <Copy size={12} /> Copy message
             </button>
           )}
+          {ctxMenu.msg.content && (
+            <button
+              onClick={() => {
+                const snippet = ctxMenu.msg.content.substring(0, 200);
+                setQuotedMsg(`${ctxMenu.msg.role === 'user' ? 'You' : 'Assistant'}: ${snippet}${ctxMenu.msg.content.length > 200 ? '…' : ''}`);
+                setCtxMenu(null);
+                setTimeout(() => textareaRef.current?.focus(), 0);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
+            >
+              <CornerUpLeft size={12} /> Quote reply
+            </button>
+          )}
           {ctxMenu.msg.role === "user" && (
             <button
               onClick={() => {
@@ -848,6 +862,20 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
+        {quotedMsg && (
+          <div className="mb-2 flex items-start gap-2 rounded-lg border-l-2 border-accent bg-accent/5 px-3 py-2">
+            <CornerUpLeft size={14} className="mt-0.5 shrink-0 text-accent" />
+            <div className="flex-1 truncate text-xs text-text-secondary">{quotedMsg}</div>
+            <button
+              onClick={() => setQuotedMsg(null)}
+              className="shrink-0 text-text-muted hover:text-text-primary"
+              aria-label="Remove quote"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -946,14 +974,19 @@ export function ChatPanel(props: ChatPanelProps) {
             className="input min-h-[56px] max-h-[200px] resize-none flex-1 overflow-y-auto"
             aria-label="Message input"
           />
-          <button
-            onClick={sendMessage}
-            disabled={!isConnected || !input.trim() || planLoading}
-            className="btn-primary h-11 px-5"
-            aria-label={isStreaming ? t('chat.streaming') : t('chat.send')}
-          >
-            {planLoading ? t('chat.planning') : isStreaming ? t('chat.streaming') : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
-          </button>
+          <div className="flex flex-col items-center gap-1">
+            <button
+              onClick={() => { setQuotedMsg(null); sendMessage(); }}
+              disabled={!isConnected || !input.trim() || planLoading}
+              className="btn-primary h-11 px-5"
+              aria-label={isStreaming ? t('chat.streaming') : t('chat.send')}
+            >
+              {planLoading ? t('chat.planning') : isStreaming ? t('chat.streaming') : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
+            </button>
+          </div>
+        </div>
+        <div className="mt-1 px-1 text-[10px] text-text-muted">
+          <kbd className="rounded border border-border bg-bg-tertiary px-1">Enter</kbd> send · <kbd className="rounded border border-border bg-bg-tertiary px-1">Shift+Enter</kbd> newline · <kbd className="rounded border border-border bg-bg-tertiary px-1">↑</kbd> history
         </div>
       </div>
     </div>
