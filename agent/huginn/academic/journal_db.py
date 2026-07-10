@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -24,52 +23,52 @@ class JournalSpec:
     field: str                      # 学科领域
 
     # ── 标题限制 ──
-    title_max_chars: Optional[int] = None       # 标题最大字符数
-    title_zh_max_chars: Optional[int] = None    # 中文标题最大字符数
-    title_en_max_words: Optional[int] = None    # 英文标题最大词数
+    title_max_chars: int | None = None       # 标题最大字符数
+    title_zh_max_chars: int | None = None    # 中文标题最大字符数
+    title_en_max_words: int | None = None    # 英文标题最大词数
 
     # ── 摘要限制 ──
-    abstract_max_words: Optional[int] = None    # 摘要最大词数 (英文)
-    abstract_max_chars: Optional[int] = None    # 摘要最大字符数
-    abstract_zh_max_chars: Optional[int] = None # 中文摘要最大字符数
-    abstract_en_max_words: Optional[int] = None # 英文摘要最大词数
+    abstract_max_words: int | None = None    # 摘要最大词数 (英文)
+    abstract_max_chars: int | None = None    # 摘要最大字符数
+    abstract_zh_max_chars: int | None = None # 中文摘要最大字符数
+    abstract_en_max_words: int | None = None # 英文摘要最大词数
 
     # ── 正文限制 ──
-    body_max_words: Optional[int] = None        # 正文最大词数
-    methods_max_words: Optional[int] = None     # Methods 部分最大词数
-    pages_max: Optional[int] = None             # 最大页数
-    max_double_spaced_pages: Optional[int] = None  # 双倍行距最大页数
+    body_max_words: int | None = None        # 正文最大词数
+    methods_max_words: int | None = None     # Methods 部分最大词数
+    pages_max: int | None = None             # 最大页数
+    max_double_spaced_pages: int | None = None  # 双倍行距最大页数
 
     # ── 图表限制 ──
-    display_items_max: Optional[int] = None     # 图表总数上限
-    figures_max: Optional[int] = None           # 图数量上限
-    figure_width_single: Optional[str] = None   # 单栏图宽度
-    figure_width_double: Optional[str] = None   # 双栏图宽度
-    figure_min_font_pt: Optional[int] = None    # 图内最小字号
-    figure_max_font_pt: Optional[int] = None    # 图内最大字号
-    figure_panel_label: Optional[str] = None    # 分图标签格式
-    figure_dpi: Optional[int] = None            # 图分辨率 DPI
-    figure_color_mode: Optional[str] = None     # 色彩模式
+    display_items_max: int | None = None     # 图表总数上限
+    figures_max: int | None = None           # 图数量上限
+    figure_width_single: str | None = None   # 单栏图宽度
+    figure_width_double: str | None = None   # 双栏图宽度
+    figure_min_font_pt: int | None = None    # 图内最小字号
+    figure_max_font_pt: int | None = None    # 图内最大字号
+    figure_panel_label: str | None = None    # 分图标签格式
+    figure_dpi: int | None = None            # 图分辨率 DPI
+    figure_color_mode: str | None = None     # 色彩模式
 
     # ── 参考文献 ──
-    references_max: Optional[int] = None        # 参考文献最大数
-    references_min: Optional[int] = None        # 参考文献最小数
-    reference_format: Optional[str] = None      # 参考文献格式标识
+    references_max: int | None = None        # 参考文献最大数
+    references_min: int | None = None        # 参考文献最小数
+    reference_format: str | None = None      # 参考文献格式标识
 
     # ── 关键词 ──
-    keywords_max: Optional[int] = None          # 关键词最大数
+    keywords_max: int | None = None          # 关键词最大数
 
     # ── 作者 ──
-    authors_max: Optional[int] = None           # 作者最大数
+    authors_max: int | None = None           # 作者最大数
     requires_all_authors: bool = False          # 是否需列出全部作者
     requires_orcid: bool = False                # 是否要求 ORCID
 
     # ── 格式要求 ──
-    font: Optional[str] = None                  # 正文字体
-    line_spacing: Optional[str] = None          # 行距
+    font: str | None = None                  # 正文字体
+    line_spacing: str | None = None          # 行距
     requires_revtex: bool = False               # 是否要求 REVTeX
     requires_toc_graphic: bool = False          # 是否要求 TOC 图
-    toc_size: Optional[str] = None              # TOC 图尺寸
+    toc_size: str | None = None              # TOC 图尺寸
     requires_graphical_abstract: bool = False   # 是否要求图文摘要
     requires_bilingual: bool = False            # 是否要求中英文双语
     requires_data_availability: bool = False    # 数据可用性声明
@@ -84,13 +83,13 @@ class JournalSpec:
 
     # ── AI / 预印本政策 ──
     allows_preprints: bool = False              # 是否允许预印本
-    ai_policy: Optional[str] = None             # AI 使用政策
-    ai_image_policy: Optional[str] = None       # AI 图片政策
+    ai_policy: str | None = None             # AI 使用政策
+    ai_image_policy: str | None = None       # AI 图片政策
 
     # ── 审稿 ──
     review_criteria: list[str] = field(default_factory=list)      # 审稿标准
     review_max: list[str] = field(default_factory=list)           # 各类型字数上限
-    revision_deadline_days: Optional[int] = None  # 修回期限 (天)
+    revision_deadline_days: int | None = None  # 修回期限 (天)
 
     # ── 特殊要求 ──
     special_requirements: list[str] = field(default_factory=list)
@@ -99,11 +98,11 @@ class JournalSpec:
     new_compound_characterization: list[str] = field(default_factory=list)  # 新化合物表征要求
 
     # ── 查重 / 文件 ──
-    plagiarism_check: Optional[str] = None      # 查重要求
-    file_size_max_mb: Optional[int] = None      # 文件大小上限
+    plagiarism_check: str | None = None      # 查重要求
+    file_size_max_mb: int | None = None      # 文件大小上限
 
     # ── 系列 (中国科学) ──
-    has_series: Optional[list[str]] = None
+    has_series: list[str] | None = None
 
 
 # ──────────────────────────────────────────────────────────────────────
