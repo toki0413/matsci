@@ -580,12 +580,13 @@ async def _handle_user_input(
     if any(kw in content.lower() for kw in ("/plan", "plan mode")):
         plan_mode = True
 
-    # Research mode trigger
+    # Research mode trigger — guard for agents without mode tracking
     if any(kw in content.lower() for kw in ("/research", "research mode")):
-        agent.set_mode("research")
+        if hasattr(agent, "set_mode"):
+            agent.set_mode("research")
 
     # ── Research mode ──
-    if agent.is_research_mode():
+    if hasattr(agent, "is_research_mode") and agent.is_research_mode():
         try:
             from huginn.personas.research import RESEARCH_PERSONA
             from huginn.research_workflow import ResearchWorkflow, ResearchWorkflowConfig

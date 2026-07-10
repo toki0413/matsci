@@ -533,6 +533,24 @@ class ToolAdapter:
             with contextlib.suppress(Exception):
                 get_pet_bus().publish(mood, message, details)
 
+        def _publish_blocked(
+            tool_name: str, input_data: Any, reason: str, context: Any
+        ) -> None:
+            """发布 tool.blocked 事件到事件总线."""
+            with contextlib.suppress(Exception):
+                from huginn.events.integration import _publish as _evt_publish
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    asyncio.ensure_future(_evt_publish(
+                        "tool.blocked",
+                        {"tool": tool_name, "reason": reason},
+                        thread_id=getattr(context, "thread_id", ""),
+                        source="tool_adapter",
+                    ))
+                except RuntimeError:
+                    pass
+
         def _cache_key(input_data: BaseModel) -> str:
             return f"{tool.name}:{json.dumps(input_data.model_dump(), sort_keys=True, default=str)}"
 
@@ -666,6 +684,7 @@ class ToolAdapter:
                     output = {"error": loop_reason, "_loop_detected": True}
                     _audit(input_data, output, approved=False, reason="loop_detected")
                     _publish(PetMood.ERROR, f"{tool.name} blocked by loop detector", {"reason": loop_reason})
+                    _publish_blocked(tool.name, input_data, loop_reason, context)
                     return output, router
 
             # 6. Circuit breaker
@@ -673,6 +692,7 @@ class ToolAdapter:
             if blocked is not None:
                 _audit(input_data, blocked, approved=False, reason="circuit_open")
                 _publish(PetMood.ERROR, f"{tool.name} circuit open", {"retry_after": blocked.get("retry_after", 0)})
+                _publish_blocked(tool.name, input_data, "circuit_open", context)
                 return blocked, router
 
             return None, router
@@ -703,6 +723,17 @@ class ToolAdapter:
                 except Exception:
                     logger.debug("provenance register failed (non-fatal)", exc_info=True)
 
+            # 贝叶斯技能进化: 记录工具调用结果, 更新参数信念
+            try:
+                from huginn.skills.evolution import SkillEvolutionLayer
+                SkillEvolutionLayer.shared().record_tool_call(
+                    tool.name,
+                    input_data.model_dump() if hasattr(input_data, "model_dump") else {},
+                    result.success,
+                )
+            except Exception:
+                pass
+
             result = _check_constraints(result, context)
             output = _serialize(result)
             _audit(input_data, output, approved=True, reason=None)
@@ -711,6 +742,18 @@ class ToolAdapter:
                 _set_cached(input_data, output)
             else:
                 _publish(PetMood.ERROR, f"{tool.name} failed", {"tool": tool.name, "error": result.error})
+            # 事件总线: 发布 tool.result / tool.error
+            try:
+                from huginn.events.integration import publish_tool_event_sync
+                publish_tool_event_sync(
+                    tool.name,
+                    input_data.model_dump() if hasattr(input_data, "model_dump") else {},
+                    output,
+                    thread_id=context.thread_id if hasattr(context, "thread_id") else "",
+                    error=result.error if not result.success else None,
+                )
+            except Exception:
+                pass
             return output
 
         async def _arun(**kwargs: Any) -> dict[str, Any]:

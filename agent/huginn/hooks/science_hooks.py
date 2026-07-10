@@ -822,6 +822,21 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("unit_check hook not available (non-fatal)")
 
+    # lint hook — POST_TOOL_USE, 文件改动后自动 lint
+    try:
+        from huginn.hooks.lint_hook import lint_post_tool_hook
+        hm.register(POST_TOOL_USE, lint_post_tool_hook)
+    except ImportError:
+        logger.debug("lint_hook not available (non-fatal)")
+
+    # test hook — STOP, 一轮回复后跑 pytest
+    try:
+        from huginn.hooks.test_hook import test_stop_hook
+        from huginn.hooks import STOP
+        hm.register(STOP, test_stop_hook)
+    except ImportError:
+        logger.debug("test_hook not available (non-fatal)")
+
     hm._science_hooks_registered = True
     logger.info(
         "Science hooks registered: vasp_convergence, lammps_stability, "

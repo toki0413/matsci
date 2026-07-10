@@ -463,6 +463,18 @@ class SnapshotManager:
 
         self._mark_reverted(step_id, True)
         logger.info("snapshot revert %s: %d paths", step_id, len(restored))
+        # 发布 snapshot.revert 事件
+        try:
+            from huginn.events.integration import _publish
+            import asyncio
+            loop = asyncio.get_running_loop()
+            asyncio.ensure_future(_publish(
+                "snapshot.revert",
+                {"step_id": step_id, "paths": restored},
+                source="snapshot_manager",
+            ))
+        except Exception:
+            pass
         return restored
 
     def unrevert(self, step_id: str, workspace: Path) -> list[str]:

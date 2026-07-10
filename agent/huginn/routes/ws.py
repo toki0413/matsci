@@ -169,67 +169,74 @@ async def agent_websocket(websocket: WebSocket):
             content = msg.content
             thread_id = msg.thread_id
 
-            if msg_type == "user_input":
-                await _handle_user_input(
-                    websocket,
-                    msg,
-                    data,
-                    ws_approval=_ws_approval,
-                    session_auto_approve=session_auto_approve,
-                    last_user_context=_last_user_context,
-                    pending_plan_contexts=_pending_plan_contexts,
-                )
-
-            elif msg_type == "explore_start":
-                await _handle_explore_start(websocket, content, data)
-
-            elif msg_type == "approval_response":
-                await _handle_approval_response(
-                    websocket,
-                    data,
-                    pending_approvals=_pending_approvals,
-                    pending_approval_contexts=_pending_approval_contexts,
-                    session_auto_approve=session_auto_approve,
-                )
-
-            elif msg_type == "plan_confirm":
-                await _handle_plan_confirm(
-                    websocket,
-                    data,
-                    pending_plan_contexts=_pending_plan_contexts,
-                    last_user_context=_last_user_context,
-                )
-
-            elif msg_type == "clarification_response":
-                question_id = data.get("question_id")
-                answer = data.get("answer", "")
-                thread_id = data.get("thread_id", "default")
-                if question_id:
-                    from huginn.interaction.clarification import (
-                        ClarificationManager,
+            # Wrap handlers so errors always reach the client instead of
+            # silently killing the connection and hanging on receive_json.
+            try:
+                if msg_type == "user_input":
+                    await _handle_user_input(
+                        websocket,
+                        msg,
+                        data,
+                        ws_approval=_ws_approval,
+                        session_auto_approve=session_auto_approve,
+                        last_user_context=_last_user_context,
+                        pending_plan_contexts=_pending_plan_contexts,
                     )
-                    mgr = ClarificationManager()
-                    mgr.resolve(question_id, answer)
-                else:
-                    from huginn.interaction.clarification import (
-                        ClarificationManager,
+
+                elif msg_type == "explore_start":
+                    await _handle_explore_start(websocket, content, data)
+
+                elif msg_type == "approval_response":
+                    await _handle_approval_response(
+                        websocket,
+                        data,
+                        pending_approvals=_pending_approvals,
+                        pending_approval_contexts=_pending_approval_contexts,
+                        session_auto_approve=session_auto_approve,
                     )
-                    mgr = ClarificationManager()
-                    mgr.resolve_thread(thread_id, answer)
 
-            elif msg_type == "set_auto_approve":
-                enabled = bool(data.get("enabled", True))
-                session_auto_approve["enabled"] = enabled
-                await websocket.send_json(
-                    {
-                        "type": "auto_approve_set",
-                        "enabled": enabled,
-                        "scope": "session",
-                    }
-                )
+                elif msg_type == "plan_confirm":
+                    await _handle_plan_confirm(
+                        websocket,
+                        data,
+                        pending_plan_contexts=_pending_plan_contexts,
+                        last_user_context=_last_user_context,
+                    )
 
-            elif msg_type == "ping":
-                await websocket.send_json({"type": "pong"})
+                elif msg_type == "clarification_response":
+                    question_id = data.get("question_id")
+                    answer = data.get("answer", "")
+                    thread_id = data.get("thread_id", "default")
+                    if question_id:
+                        from huginn.interaction.clarification import (
+                            ClarificationManager,
+                        )
+                        mgr = ClarificationManager()
+                        mgr.resolve(question_id, answer)
+                    else:
+                        from huginn.interaction.clarification import (
+                            ClarificationManager,
+                        )
+                        mgr = ClarificationManager()
+                        mgr.resolve_thread(thread_id, answer)
+
+                elif msg_type == "set_auto_approve":
+                    enabled = bool(data.get("enabled", True))
+                    session_auto_approve["enabled"] = enabled
+                    await websocket.send_json(
+                        {
+                            "type": "auto_approve_set",
+                            "enabled": enabled,
+                            "scope": "session",
+                        }
+                    )
+
+                elif msg_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+
+            except Exception as dispatch_exc:
+                logger.error("dispatch error: %s", dispatch_exc, exc_info=True)
+                await _send_error(websocket, f"Handler error: {dispatch_exc}")
 
     except WebSocketDisconnect:
         pass
