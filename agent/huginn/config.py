@@ -1214,13 +1214,18 @@ def get_config(
     global _config_cache, _config_cache_path, _config_cache_mtime
 
     with _config_lock:
-        # 没指定路径，走环境变量
         if path is None:
-            if _config_cache is None or force_reload:
+            # check HUGINN_CONFIG_FILE before falling back to from_env
+            env_path = os.environ.get("HUGINN_CONFIG_FILE")
+            if env_path:
+                path = env_path
+            elif _config_cache is None or force_reload:
                 _config_cache = HuginnConfig.from_env()
                 _config_cache_path = None
                 _config_cache_mtime = 0.0
-            return _config_cache
+                return _config_cache
+            else:
+                return _config_cache
 
         target = pathlib.Path(path)
 
@@ -1233,8 +1238,13 @@ def get_config(
 
         if _config_cache is None or force_reload or disk_changed or not same_path:
             if target.exists():
-                _config_cache = HuginnConfig.load(target)
-                _config_cache_path = target
+                try:
+                    _config_cache = HuginnConfig.load(target)
+                    _config_cache_path = target
+                except Exception:
+                    # toml parse error or missing dep — fall back to env
+                    _config_cache = HuginnConfig.from_env()
+                    _config_cache_path = None
                 try:
                     _config_cache_mtime = target.stat().st_mtime
                 except OSError:
