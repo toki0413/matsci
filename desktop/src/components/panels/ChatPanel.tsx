@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Search, X, Settings, Archive } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
+import { formatTimeAgo } from '../../lib/constants';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 import { SaveToMemoryButton } from '../SaveToMemoryButton';
 import MessageContent from '../MessageContent';
@@ -182,10 +183,24 @@ export function ChatPanel(props: ChatPanelProps) {
     return result;
   }
 
-  const filteredMessages = chatSearchQuery.trim()
+  const searchActive = chatSearchQuery.trim().length > 0;
+  const filteredMessages = searchActive
     ? messages.filter((m) => m.content.toLowerCase().includes(chatSearchQuery.toLowerCase()))
     : messages;
   const groupedMessages = groupMessages(filteredMessages);
+  const searchRegex = searchActive
+    ? new RegExp(`(${chatSearchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")
+    : null;
+
+  function highlightText(text: string): ReactNode {
+    if (!searchRegex) return text;
+    const parts = text.split(searchRegex);
+    return parts.map((part, i) =>
+      searchRegex.test(part)
+        ? <mark key={i} className="search-hl">{part}</mark>
+        : part
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -307,7 +322,7 @@ export function ChatPanel(props: ChatPanelProps) {
                 <div className="mb-1 flex items-center gap-2 text-xs opacity-70">
                   <span>{msg.role === "user" ? t('chat.you') : t('chat.assistant')}</span>
                   <span>
-                    {msg.timestamp === "streaming" ? t('chat.typing') : msg.timestamp}
+                    {msg.timestamp === "streaming" ? t('chat.typing') : formatTimeAgo(msg.timestamp)}
                   </span>
                 </div>
                 {msg.reasoning && (
@@ -327,7 +342,11 @@ export function ChatPanel(props: ChatPanelProps) {
                 )}
                 <div className="text-[15px] leading-relaxed">
                   {msg.content && (
-                    <CollapsibleMessageContent content={msg.content} isStreaming={msg.timestamp === "streaming"} />
+                    searchActive && msg.role === "user" ? (
+                      <div className="whitespace-pre-wrap">{highlightText(msg.content)}</div>
+                    ) : (
+                      <CollapsibleMessageContent content={msg.content} isStreaming={msg.timestamp === "streaming"} />
+                    )
                   )}
                 </div>
                 {msg.role === "assistant" && msg.content && msg.timestamp !== "streaming" && (

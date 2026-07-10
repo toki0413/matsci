@@ -1,5 +1,6 @@
 import { Puzzle } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
+import EmptyState from '../EmptyState';
 
 interface McpTool {
   name: string;
@@ -131,13 +132,11 @@ export function PluginsPanel({
           <h3 className="mb-3 text-sm font-semibold">Connected servers</h3>
           <div className="flex-1 overflow-y-auto space-y-3">
             {mcpServers.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <Puzzle size={36} className="text-text-muted opacity-40" />
-                <p className="mt-3 text-sm font-medium text-text-secondary">No plugins connected</p>
-                <p className="mt-1 max-w-xs text-xs text-text-muted">
-                  Connect an MCP server from the sidebar to extend Huginn with additional tools and capabilities.
-                </p>
-              </div>
+              <EmptyState
+                icon={Puzzle}
+                title="No plugins connected"
+                subtitle="Connect an MCP server from the sidebar to extend Huginn with additional tools and capabilities."
+              />
             )}
             {mcpServers.map((srv) => (
               <div key={srv.name} className="rounded-xl border border-border bg-bg-secondary p-4">

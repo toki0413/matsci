@@ -44,6 +44,8 @@ import { ReviewPanel } from "./components/panels/ReviewPanel";
 import { CoderPanel } from "./components/panels/CoderPanel";
 import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
 import { HPCPanel } from "./components/panels/HPCPanel";
+import { useTheme } from "./hooks/useTheme";
+import { toast } from "./components/Toast";
 import { LogsPanel } from "./components/panels/LogsPanel";
 import { TerminalPanel } from "./components/panels/TerminalPanel";
 import { PanelHeader } from "./components/settings-shared";
@@ -53,7 +55,7 @@ import {
   Users, Code2, BookOpen,
   MessageCircle, Bird, Briefcase, HelpCircle,
   ChevronDown, Sparkles,
-  Search, Grid,
+  Search, Grid, Sun, Moon,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -100,6 +102,7 @@ export default function App() {
   }
 
   const { t } = useTranslation();
+  const { theme, toggleTheme } = useTheme();
 
   // ── Sidebar state ────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<
@@ -599,6 +602,19 @@ export default function App() {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("huginn:new-thread"));
       }
+      if (isMod && e.key === "b") {
+        e.preventDefault();
+        setSidebarHidden((prev) => !prev);
+      }
+      if (isMod && e.key === ",") {
+        e.preventDefault();
+        setActiveTab("settings");
+      }
+      if (isMod && e.key === "l" && activeTab === "chat") {
+        e.preventDefault();
+        setMessages([]);
+        toast.success(t('chat.cleared'));
+      }
       if (e.key === "Escape" && toolPaletteOpen) {
         setToolPaletteOpen(false);
         setToolSearch("");
@@ -606,7 +622,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toolPaletteOpen, activeTab, setChatSearchOpen]);
+  }, [toolPaletteOpen, activeTab, setChatSearchOpen, setSidebarHidden, setActiveTab, setMessages, t]);
 
   // ── Derived constants ────────────────────────────────────────
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
@@ -705,6 +721,13 @@ export default function App() {
               title="Help"
             >
               <HelpCircle size={13} /> Guide
+            </button>
+            <button
+              onClick={toggleTheme}
+              className="sidebar-footer-btn flex items-center justify-center rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary"
+              title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+            >
+              {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
             </button>
             <button
               onClick={openPetWindow}

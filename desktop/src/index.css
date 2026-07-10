@@ -290,6 +290,30 @@
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--seed-primary) 15%, transparent);
   }
 
+  /* Global focus-visible — keyboard users get a clear ring on buttons/links */
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--seed-primary);
+    outline-offset: 1px;
+    border-radius: 4px;
+  }
+
+  /* Search highlight in chat */
+  mark.search-hl {
+    background: color-mix(in srgb, var(--seed-accent) 25%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
+  /* Toast animation */
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
   .card {
     @apply rounded-lg border border-border p-4;
     background: var(--bg-secondary);

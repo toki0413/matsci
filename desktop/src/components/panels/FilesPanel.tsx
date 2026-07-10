@@ -1,5 +1,7 @@
 import { useState, useRef } from 'react';
+import { FolderTree } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
+import EmptyState from '../EmptyState';
 import { api } from '../../lib/api';
 
 interface FilesPanelProps {
@@ -93,7 +95,7 @@ export function FilesPanel({
           {remoteFiles ? (
             <div className="space-y-1">
               {remoteFiles.length === 0 ? (
-                <p className="p-2 text-xs text-text-muted">No files on remote</p>
+                <EmptyState icon={FolderTree} title="No files on remote" subtitle="Connect to a remote host in SSH Jobs to browse files." />
               ) : remoteFiles.map((f, i) => (
                 <div key={i} className="rounded px-2 py-1 text-xs hover:bg-bg-tertiary">
                   {f.is_dir ? '\u{1F4C1} ' : '\u{1F4C4} '}{f.name || f.path || String(f)}
