@@ -597,7 +597,7 @@ export function ChatPanel(props: ChatPanelProps) {
                 {msg.reasoning && (
                   <details
                     className={`mb-2 rounded-lg ${msg.reasoning && !msg.content ? "" : ""}`}
-                    open={msg.timestamp === "streaming" && !msg.content}
+                    open={msg.timestamp === "streaming"}
                   >
                     <summary className="cursor-pointer select-none text-xs font-medium text-text-muted hover:text-text-secondary">
                       {msg.timestamp === "streaming" && !msg.content
