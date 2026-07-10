@@ -1462,6 +1462,9 @@ class AutoloopEngine:
         elif mode == "explore":
             # Use ExplorationOrchestrator to search design space
             result = await self._execute_explore(description, context)
+        elif mode == "skill":
+            # Run a pre-built composite skill pipeline
+            result = await self._execute_skill(plan, context)
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
 
@@ -2616,6 +2619,32 @@ Please modify the code to address this task."""
         except Exception as e:
             return {"mode": "explore", "success": False, "error": str(e)}
 
+    async def _execute_skill(self, plan: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        """Run a pre-built composite skill pipeline."""
+        try:
+            from huginn.skills.registry import SkillRegistry
+            from huginn.skills.base import DeclarativeSkillExecutor
+            from huginn.skills.composite import _ensure_registered
+            _ensure_registered()
+
+            skill_name = plan.get("skill", "")
+            skill = SkillRegistry.get(skill_name)
+            if not skill:
+                # Fuzzy match if exact name missing
+                matches = SkillRegistry.search(skill_name or plan.get("description", ""))
+                skill = matches[0] if matches else None
+            if not skill:
+                return {"mode": "skill", "success": False,
+                        "error": f"no matching skill for '{skill_name}'"}
+
+            # Reuse the same tool registry as the rest of the engine
+            from huginn.tools.registry import ToolRegistry
+            executor = DeclarativeSkillExecutor(ToolRegistry)
+            result = await executor.execute(skill, {}, context)
+            return {"mode": "skill", "skill": skill.name, **result}
+        except Exception as e:
+            return {"mode": "skill", "success": False, "error": str(e)}
+
     # ──────────────────────────────────────────────────────────────
     # LLM helpers
     # ──────────────────────────────────────────────────────────────
@@ -2725,8 +2754,24 @@ Math depth guidance (treat physics/chemistry as mathematics):
         except Exception:
             logger.warning("error in _build_plan_prompt: evolution skill/patch fetch failed", exc_info=True)
 
+        # Inject matching composite skills — lets the LLM pick a pre-built
+        # multi-tool pipeline instead of improvising from scratch.
+        composite_block = ""
+        try:
+            from huginn.skills.registry import SkillRegistry
+            from huginn.skills.composite import _ensure_registered
+            _ensure_registered()
+            matches = SkillRegistry.search(hypothesis)
+            if not matches:
+                matches = SkillRegistry.get_all_definitions()
+            if matches:
+                lines = [s.to_prompt() for s in matches[:4]]
+                composite_block = "\nAvailable composite skills (prefer these over manual workflow):\n" + "\n\n".join(lines) + "\n"
+        except Exception:
+            logger.debug("composite skill lookup failed", exc_info=True)
+
         return f"""Given the hypothesis: "{hypothesis}"
-{kb_block}{kg_block}{math_block}{skill_hints}{patch_hints}
+{kb_block}{kg_block}{math_block}{skill_hints}{patch_hints}{composite_block}
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
 
@@ -2734,28 +2779,36 @@ Choose ONE mode and describe the plan:
 - coder: modify code/files to fix or improve something
 - workflow: run a computational simulation pipeline
 - explore: search a design space for optimal parameters
+- skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
 
 When the hypothesis involves a PDE / variational principle / curved
 geometry, prefer the symbolic_math_tool actions listed in the math
 depth block above before falling back to numerical solvers.
 
 Respond in this exact format:
-MODE: <coder|workflow|explore>
+MODE: <coder|workflow|explore|skill>
 DESCRIPTION: <brief description of what to do>
+SKILL: <composite skill name, only if MODE is skill>
 """
 
     def _parse_plan(self, response: str) -> dict[str, Any]:
         """Parse LLM plan response."""
         mode = "coder"
         description = response.strip()
+        skill_name = ""
 
         for line in response.split("\n"):
             if line.startswith("MODE:"):
                 mode = line.replace("MODE:", "").strip().lower()
             elif line.startswith("DESCRIPTION:"):
                 description = line.replace("DESCRIPTION:", "").strip()
+            elif line.startswith("SKILL:"):
+                skill_name = line.replace("SKILL:", "").strip()
 
-        return {"mode": mode, "description": description}
+        plan = {"mode": mode, "description": description}
+        if skill_name:
+            plan["skill"] = skill_name
+        return plan
 
     # ──────────────────────────────────────────────────────────────
     # Phase runner utilities
