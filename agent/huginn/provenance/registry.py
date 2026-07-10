@@ -253,6 +253,40 @@ class _ProvenanceStore:
             self._conn.commit()
             return cur.rowcount
 
+    def get_events_since(self, since_id: int = 0, limit: int = 100) -> list[ProvenanceEntry]:
+        """Event sourcing: fetch all events after a given id."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT * FROM entries WHERE id > ? ORDER BY id ASC LIMIT ?""",
+                (since_id, limit),
+            )
+            return [ProvenanceEntry.from_row(r) for r in cur.fetchall()]
+
+    def get_events_by_tool(
+        self, tool_name: str, limit: int = 50
+    ) -> list[ProvenanceEntry]:
+        """Fetch events for a specific tool, oldest first (for replay)."""
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT * FROM entries WHERE produced_by = ? ORDER BY id ASC LIMIT ?""",
+                (tool_name, limit),
+            )
+            return [ProvenanceEntry.from_row(r) for r in cur.fetchall()]
+
+    def get_event_by_id(self, event_id: int) -> ProvenanceEntry | None:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM entries WHERE id = ?", (event_id,)
+            )
+            row = cur.fetchone()
+            return ProvenanceEntry.from_row(row) if row else None
+
+    def get_max_id(self) -> int:
+        with self._lock:
+            cur = self._conn.execute("SELECT MAX(id) FROM entries")
+            val = cur.fetchone()[0]
+            return val if val is not None else 0
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -481,6 +515,79 @@ class ProvenanceRegistry:
                 logger.info("Cleaned up %d provenance entries older than %d days", deleted, days)
             return deleted
         return 0
+
+    # ── Event Sourcing API ──────────────────────────────────────
+
+    def get_events(
+        self,
+        since_id: int = 0,
+        limit: int = 100,
+        tool: str | None = None,
+    ) -> list[ProvenanceEntry]:
+        """Query historical events — the core event sourcing API.
+
+        Agent can use this to:
+        - Resume from a checkpoint: get_events(since_id=last_seen_id)
+        - Inspect a specific tool's history: get_events(tool="vasp_tool")
+        - Full audit: get_events(limit=10000)
+
+        Returns events in chronological order (oldest first).
+        """
+        if self._store is None:
+            # Memory-only fallback
+            if tool:
+                return [e for e in self._entries if e.produced_by == tool][:limit]
+            return self._entries[since_id:since_id + limit]
+        if tool:
+            return self._store.get_events_by_tool(tool, limit)
+        return self._store.get_events_since(since_id, limit)
+
+    def replay_to(self, target_id: int) -> list[ProvenanceEntry]:
+        """Replay all events up to a given event id.
+
+        Returns the full sequence of events from the beginning to
+        target_id (inclusive). Agent can reconstruct state at any
+        point by replaying from event 1 to target_id.
+        """
+        if self._store is None:
+            return list(self._entries)
+        return self._store.get_events_since(0, target_id + 1)
+
+    def rollback_to(self, target_id: int) -> list[str]:
+        """Rollback: return list of file paths produced after target_id.
+
+        Does NOT delete files — only returns which file paths would need
+        to be reverted. The caller (agent/UI) decides whether to actually
+        revert files, e.g. via SnapshotManager.revert().
+
+        Returns list of file_path strings in reverse chronological order
+        (newest first, so caller can revert in the right order).
+        """
+        if self._store is None:
+            # Memory-only: filter entries
+            return [
+                e.file_path for e in self._entries
+                # ponytail: memory entries don't have id, approximate with index
+            ][::-1]
+        # Get all events after target_id
+        events = self._store.get_events_since(target_id, 10000)
+        return [e.file_path for e in reversed(events)]
+
+    def get_event(self, event_id: int) -> ProvenanceEntry | None:
+        """Get a single event by id."""
+        if self._store is None:
+            if 0 <= event_id < len(self._entries):
+                return self._entries[event_id]
+            return None
+        return self._store.get_event_by_id(event_id)
+
+    def current_version(self) -> int:
+        """Current event log version (max id). For optimistic concurrency:
+        read version → modify → write → check version unchanged.
+        """
+        if self._store is None:
+            return len(self._entries)
+        return self._store.get_max_id()
 
 
 def register_tool_output(

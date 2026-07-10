@@ -815,6 +815,13 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("physical_precheck hooks not available (non-fatal)")
 
+    # 量纲一致性 hook — POST_TOOL_USE, 检查输出值物理范围
+    try:
+        from huginn.hooks.unit_check import register_dimensional_hook
+        register_dimensional_hook(hm)
+    except ImportError:
+        logger.debug("unit_check hook not available (non-fatal)")
+
     hm._science_hooks_registered = True
     logger.info(
         "Science hooks registered: vasp_convergence, lammps_stability, "
