@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Sparkles, Search, Package, Download, Check } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { SkillInfo } from '../../types/domain';
 
@@ -108,6 +108,33 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
   const [skillArgs, setSkillArgs] = useState<Record<string, any>>({});
   const [skillResult, setSkillResult] = useState<string>("");
   const [skillLoading, setSkillLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [installingSkill, setInstallingSkill] = useState<string | null>(null);
+  const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
+
+  // Category extraction + filtering
+  const categories = useMemo(() => {
+    const cats = new Set<string>();
+    skills.forEach(s => cats.add(s.category));
+    return Array.from(cats).sort();
+  }, [skills]);
+
+  const filteredSkills = useMemo(() => {
+    let result = skills;
+    if (activeCategory !== 'all') {
+      result = result.filter(s => s.category === activeCategory);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(s =>
+        s.name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q) ||
+        s.tags.some(t => t.toLowerCase().includes(q))
+      );
+    }
+    return result;
+  }, [skills, searchQuery, activeCategory]);
 
   const runSkill = async () => {
     if (!selectedSkill) return;
@@ -126,7 +153,10 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Declarative Skills</h2>
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <Package size={18} className="text-accent" />
+          Skills Marketplace
+        </h2>
         {selectedSkill && (
           <button onClick={() => setSelectedSkill(null)} className="btn-secondary text-xs">
             ← Back
@@ -151,16 +181,100 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
             </div>
           )
         ) : (
+        <>
+        {/* Search bar + category filter */}
+        <div className="mb-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search skills by name, description, or tags..."
+                className="input w-full pl-9 text-sm"
+              />
+            </div>
+            <span className="shrink-0 text-xs text-text-muted">
+              {filteredSkills.length}/{skills.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setActiveCategory('all')}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                activeCategory === 'all' ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-accent/10'
+              }`}
+            >
+              All ({skills.length})
+            </button>
+            {categories.map(cat => {
+              const count = skills.filter(s => s.category === cat).length;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setActiveCategory(cat)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    activeCategory === cat ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-accent/10'
+                  }`}
+                >
+                  {cat} ({count})
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {filteredSkills.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <Search size={28} className="text-text-muted opacity-30" />
+            <p className="mt-3 text-sm text-text-muted">
+              No skills match "{searchQuery}"
+            </p>
+            <button onClick={() => { setSearchQuery(''); setActiveCategory('all'); }} className="mt-2 text-xs text-accent hover:underline">
+              Clear filters
+            </button>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {skills.map((skill) => (
+          {filteredSkills.map((skill) => {
+            const isInstalled = installedSkills.has(skill.name);
+            return (
             <div key={skill.name} className="card flex flex-col">
-              <div className="text-xs font-semibold uppercase text-accent">{skill.category}</div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="text-xs font-semibold uppercase text-accent">{skill.category}</div>
+                {isInstalled ? (
+                  <span className="flex items-center gap-1 text-[10px] text-success"><Check size={10} /> Installed</span>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      setInstallingSkill(skill.name);
+                      try {
+                        // Simulate install — in real use this would POST to /skills/install
+                        await new Promise(r => setTimeout(r, 800));
+                        setInstalledSkills(prev => new Set([...prev, skill.name]));
+                      } catch { /* ignore */ }
+                      setInstallingSkill(null);
+                    }}
+                    disabled={installingSkill === skill.name}
+                    className="flex items-center gap-1 text-[10px] text-accent hover:underline disabled:opacity-50"
+                  >
+                    {installingSkill === skill.name ? (
+                      <><div className="h-2.5 w-2.5 animate-spin rounded-full border border-accent border-t-transparent" /> Installing</>
+                    ) : (
+                      <><Download size={10} /> Install</>
+                    )}
+                  </button>
+                )}
+              </div>
               <div className="mt-1 text-sm font-semibold">{skill.name}</div>
               <div className="mt-1 flex-1 text-xs text-text-secondary line-clamp-3">
                 {skill.description}
               </div>
-              <div className="mt-3 text-xs text-text-muted">
-                Tags: {skill.tags.join(", ")}
+              <div className="mt-3 flex flex-wrap gap-1">
+                {skill.tags.map(tag => (
+                  <span key={tag} className="rounded bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-muted">{tag}</span>
+                ))}
               </div>
               <button
                 onClick={() => {
@@ -174,13 +288,16 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
                   setSkillArgs(defaults);
                   setSkillResult("");
                 }}
-                className="btn-secondary mt-3 w-full text-xs"
+                className="btn-primary mt-3 w-full text-xs"
               >
                 Execute
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
+        )}
+        </>
         )
       ) : (
         <div className="max-w-3xl space-y-4">

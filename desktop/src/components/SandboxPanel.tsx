@@ -358,6 +358,20 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
           Python Sandbox
         </h2>
 
+        {/* Sandbox status indicator */}
+        <div className="flex items-center gap-1.5 text-[10px]" title={running ? "Code executing in sandbox" : output ? "Sandbox ready" : "Sandbox idle"}>
+          <span className={`h-2 w-2 rounded-full ${running ? 'bg-warning animate-pulse' : output ? 'bg-success' : 'bg-text-muted opacity-30'}`} />
+          <span className="text-[var(--text-muted,#9a9590)]">
+            {running ? 'Running' : output ? 'Ready' : 'Idle'}
+          </span>
+          {output?.execution_time != null && !running && (
+            <span className="text-[var(--text-muted,#9a9590)]">· {output.execution_time.toFixed(2)}s</span>
+          )}
+          {history.length > 0 && (
+            <span className="text-[var(--text-muted,#9a9590)]">· {history.length} runs</span>
+          )}
+        </div>
+
         {/* Template dropdown */}
         <div ref={templateMenuRef} className="relative">
           <button

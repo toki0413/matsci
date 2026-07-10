@@ -7,7 +7,11 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{Emitter, Manager};
+use tauri::{
+    Emitter, Manager,
+    menu::{Menu, MenuItem},
+    tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent},
+};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -51,6 +55,60 @@ fn main() {
             }
             // Start integrated terminal in the background
             let _ = spawn_terminal(app.handle().clone(), app.state::<AppState>());
+
+            // ── System tray ──────────────────────────────────────────
+            let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
+            let hide_item = MenuItem::with_id(app, "hide", "Hide Window", true, None::<&str>)?;
+            let restart_item = MenuItem::with_id(app, "restart", "Restart Backend", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &hide_item, &restart_item, &quit_item])?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .tooltip("Huginn Agent")
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "hide" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.hide();
+                            }
+                        }
+                        "restart" => {
+                            let _ = app.emit("tray-restart-backend", ());
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -69,6 +127,15 @@ fn main() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        // Minimize to tray on close instead of quitting
+        if let tauri::RunEvent::WindowEvent {
+            window,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+        } = &event
+        {
+            let _ = window.hide();
+            api.prevent_close();
+        }
         if let tauri::RunEvent::ExitRequested { .. } = event {
             let state = app_handle.state::<AppState>();
             let mut backend = state.backend.lock().unwrap();
