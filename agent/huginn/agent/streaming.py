@@ -210,6 +210,15 @@ class StreamingMixin:
         if cache_stats:
             self._last_cache_stats = cache_stats
             turn_span.metadata.update(cache_stats)
+            # Wire token usage + cost to Prometheus
+            try:
+                from huginn.routes.metrics import track_llm_usage
+                track_llm_usage(
+                    getattr(self, "config", None) and self.config.model or "unknown",
+                    cache_stats,
+                )
+            except Exception:
+                pass
             pet.publish(
                 PetMood.SUCCESS,
                 "Turn complete",
@@ -554,6 +563,13 @@ class StreamingMixin:
 
         from huginn.security.rate_limiter import get_rate_limiter
         get_rate_limiter().reset_turn(thread_id=thread_id)
+
+        # Wire Prometheus turn counter
+        try:
+            from huginn.routes.metrics import track_agent_turn
+            track_agent_turn(thread_id)
+        except Exception:
+            pass
 
         with self._telemetry_collector.span(
             "agent_turn", thread_id=thread_id
