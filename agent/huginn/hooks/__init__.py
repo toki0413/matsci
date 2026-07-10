@@ -33,6 +33,7 @@ SESSION_END = "session_end"                # 会话结束时触发
 STOP = "stop"                              # agent 完成一轮回复后触发
 SUBAGENT_STOP = "subagent_stop"            # 子 agent 完成时触发
 PRE_COMPACT = "pre_compact"                # 上下文压缩前触发
+POST_COMPACT = "post_compact"              # 上下文压缩后触发
 USER_PROMPT_SUBMIT = "user_prompt_submit"  # 用户提交输入后触发
 POST_TOOL_USE_FAILURE = "post_tool_use_failure"  # 工具调用失败后触发
 
@@ -45,6 +46,7 @@ ALL_EVENTS: tuple[str, ...] = (
     STOP,
     SUBAGENT_STOP,
     PRE_COMPACT,
+    POST_COMPACT,
     USER_PROMPT_SUBMIT,
     POST_TOOL_USE_FAILURE,
 )

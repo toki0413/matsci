@@ -51,6 +51,17 @@ _pending: dict[str, str] = {}
 _last_step_id: str | None = None
 
 
+def _emit(event_type: str, data: dict, thread_id: str = "") -> None:
+    """Fire-and-forget 事件发布到 EventBus."""
+    try:
+        from huginn.events.integration import _publish
+        import asyncio
+        loop = asyncio.get_running_loop()
+        asyncio.ensure_future(_publish(event_type, data, thread_id, source="snapshot"))
+    except Exception:
+        pass
+
+
 def consume_last_snapshot_step_id() -> str | None:
     """取走最近一次 snapshot_post_hook 留下的 step_id (一次性消费).
 
@@ -88,6 +99,9 @@ async def snapshot_pre_hook(ctx: HookContext) -> HookContext | None:
             watch_patterns=list(_watch_patterns) if _watch_patterns else None,
         )
         _pending[_thread_key(ctx)] = step_id
+        # 发布 snapshot.take 事件
+        _emit("snapshot.take", {"step_id": step_id, "tool": ctx.tool_name},
+              ctx.metadata.get("thread_id", ""))
     except Exception:
         logger.warning("snapshot track failed for %s", ctx.tool_name, exc_info=True)
     return None

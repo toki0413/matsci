@@ -62,6 +62,14 @@ class AgentFactory:
         # 跟 anomalies.db 同目录; 构造失败退回 NullCampaignStore 纯内存模式.
         self._shared_scheduler = self._build_shared_scheduler()
 
+        # 事件总线审计订阅 — 启动时装一次, 所有 publish 的事件落 audit.jsonl
+        try:
+            from huginn.events.audit_log import install_audit_subscriber
+            self._audit_unsub = install_audit_subscriber()
+        except Exception:
+            logger.debug("audit subscriber install failed (non-fatal)", exc_info=True)
+            self._audit_unsub = None
+
     def _build_shared_scheduler(self) -> Any:
         from huginn.persistence.campaign import (
             NullCampaignStore,

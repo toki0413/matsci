@@ -706,6 +706,12 @@ class AutoloopEngine:
         while self._iteration < max_iterations and not self._should_stop:
             self._iteration += 1
             print(f"\n[Autoloop] Iteration {self._iteration}/{max_iterations}: {objective}")
+            # 发布 campaign.iteration 事件
+            self._emit_campaign("campaign.iteration", {
+                "iteration": self._iteration,
+                "max": max_iterations,
+                "objective": objective[:200],
+            })
 
             # 1. Perceive
             phase = self._run_phase("perceive", self._perceive)
@@ -733,6 +739,11 @@ class AutoloopEngine:
                 print("  → No hypothesis generated, skipping iteration")
                 continue
             print(f"  → Hypothesis: {hypothesis}")
+            # 发布 campaign.hypothesis 事件
+            self._emit_campaign("campaign.hypothesis", {
+                "iteration": self._iteration,
+                "hypothesis": str(hypothesis)[:300],
+            })
             # 把假设记进 hypothesis graph, 方便后续 support/refute 追踪
             _current_hyp_id = None
             try:
@@ -867,6 +878,14 @@ class AutoloopEngine:
                                     self._refine_count, self._max_refines,
                                     _current_hyp_id, new_hyp,
                                 )
+                                # 发布 campaign.refine 事件
+                                self._emit_campaign("campaign.refine", {
+                                    "iteration": self._iteration,
+                                    "refine_count": self._refine_count,
+                                    "max_refines": self._max_refines,
+                                    "old_hypothesis": str(_current_hyp_id),
+                                    "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
+                                })
                             except Exception:
                                 logger.warning("refine_failed failed", exc_info=True)
                         else:
@@ -954,6 +973,16 @@ class AutoloopEngine:
             objective, phases, run_id, provenance_record,
             run_collector, tracker, progress_task_id, completed_steps,
         )
+
+    def _emit_campaign(self, event_type: str, data: dict) -> None:
+        """发布 campaign.* 事件到 EventBus, fire-and-forget."""
+        try:
+            from huginn.events.integration import _publish
+            import asyncio
+            loop = asyncio.get_running_loop()
+            asyncio.ensure_future(_publish(event_type, data, source="autoloop"))
+        except Exception:
+            pass
 
     def _prepare_run(
         self, objective: str, progressive_budget: bool, goal: Goal | None
