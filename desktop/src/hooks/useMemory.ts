@@ -24,15 +24,23 @@ export function useMemory() {
   });
   const [memoryMsg, setMemoryMsg] = useState('');
   const [memoryView, setMemoryView] = useState<'browse' | 'add'>('browse');
+  const [memoryHasMore, setMemoryHasMore] = useState(false);
 
-  const loadMemory = async () => {
+  const loadMemory = async (loadMore = false) => {
     try {
       const params = new URLSearchParams();
       if (memoryFilter.category) params.set('category', memoryFilter.category);
       if (memoryFilter.tier) params.set('tier', memoryFilter.tier);
-      params.set('limit', '200');
-      const data = await api.get<{ entries?: MemoryEntry[] }>(`/memory?${params.toString()}`);
-      setMemories(data.entries || []);
+      const limit = loadMore ? memories.length + 100 : 100;
+      params.set('limit', String(limit));
+      const data = await api.get<{ entries?: MemoryEntry[]; total?: number }>(`/memory?${params.toString()}`);
+      const newEntries = data.entries || [];
+      if (loadMore) {
+        setMemories(prev => [...prev, ...newEntries.slice(prev.length)]);
+      } else {
+        setMemories(newEntries);
+      }
+      setMemoryHasMore((data.total ?? 0) > newEntries.length);
       setMemoriesLoading(false);
     } catch (e: any) {
       setMemoryMsg(`Load failed: ${e.message}`);
@@ -167,7 +175,7 @@ export function useMemory() {
   };
 
   return {
-    memories, memoriesLoading, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
+    memories, memoriesLoading, memoryHasMore, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView, setMemoryMsg,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
     updateMemory, promoteMemory, pruneMemory, syncMemoryMd,
