@@ -48,7 +48,7 @@ export async function syncBackendUrl(): Promise<void> {
     const { invoke } = await import("@tauri-apps/api/core");
     const port = await invoke<number>("get_backend_port").catch(() => null);
     if (port) {
-      const base = `http://localhost:${port}`;
+      const base = `http://127.0.0.1:${port}`;
       setApiBase(base);
       recomputeWsUrl();
     }

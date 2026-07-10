@@ -7,7 +7,7 @@
  * actually import.
  */
 
-let apiBase: string = 'http://localhost:8000';
+let apiBase: string = 'http://127.0.0.1:8000';
 let authToken: string | null = null;
 
 export function setApiBase(base: string): void {

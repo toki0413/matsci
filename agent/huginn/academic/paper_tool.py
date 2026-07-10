@@ -86,6 +86,7 @@ class PaperTool(HuginnTool):
         "按期刊格式生成参考文献, 生成投稿检查清单."
     )
     read_only = True
+    input_schema = PaperToolInput
 
     def __init__(self) -> None:
         super().__init__()

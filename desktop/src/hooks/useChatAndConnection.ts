@@ -16,7 +16,7 @@ import {
 import { playTaskComplete, playError as playErrorSound } from "../sounds";
 import { formatTime } from "../lib/constants";
 import { ReconnectingWebSocket } from "../lib/ws-client";
-import { getAuthToken } from "../lib/api-client";
+import { getAuthToken, getApiBase } from "../lib/api-client";
 import { api } from "../lib/api";
 import {
   API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK,
@@ -282,7 +282,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       await syncBackendUrl();
       setStatus(`${result} • waiting for health…`);
     } catch (e: any) {
-      setStatus(`backend start failed: ${e}`);
+      // Not in Tauri — backend should already be running externally
+      await syncBackendUrl();
+      setStatus("external backend • waiting for health…");
     }
   }, []);
 
@@ -298,7 +300,17 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           if (s.status === "ok") return true;
         }
       } catch {
-        if (alive) setStatus("desktop ready");
+        // Not in Tauri (browser/dev) — try direct HTTP health check
+        try {
+          const resp = await fetch(`${getApiBase()}/health`, { signal: AbortSignal.timeout(3000) });
+          if (resp.ok) {
+            const s = await resp.json();
+            if (alive) {
+              setStatus(`${s.status} • v${s.version || "0.1.0"}`);
+              if (s.status === "ok") return true;
+            }
+          }
+        } catch { /* still down */ }
       }
       return false;
     };
@@ -615,13 +627,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         break;
       }
       case "approval_request": {
-        setPendingApproval({
-          request_id: data.request_id,
-          tool_name: data.tool_name,
-          reason: data.reason,
-          dangerous: data.dangerous,
-        });
         if (data.auto_approved) {
+          // Already approved by backend — just log it, no dialog needed
           const icon = data.dangerous ? "🔴" : "⚠️";
           setMessages((prev) => [
             ...prev,
@@ -631,6 +638,14 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
               timestamp: formatTime(),
             },
           ]);
+        } else {
+          // Need explicit user approval
+          setPendingApproval({
+            request_id: data.request_id,
+            tool_name: data.tool_name,
+            reason: data.reason,
+            dangerous: data.dangerous,
+          });
         }
         break;
       }
