@@ -40,6 +40,7 @@ from huginn.routes.memory import router as memory_router
 from huginn.routes.pet import router as pet_router
 from huginn.routes.planner import router as planner_router
 from huginn.routes.project import router as project_router
+from huginn.routes.research_project import router as research_project_router
 from huginn.routes.skills import router as skills_router
 from huginn.routes.system import router as system_router
 from huginn.routes.team import router as team_router
@@ -73,6 +74,7 @@ ALL_ROUTERS = [
     health_router,
     config_router,
     project_router,
+    research_project_router,
     planner_router,
     codebase_router,
     knowledge_router,
