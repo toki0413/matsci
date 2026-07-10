@@ -155,6 +155,7 @@ export default function App() {
     };
   }, [sidebarWidth]);
   const [toolPaletteOpen, setToolPaletteOpen] = useState(false);
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
 
   // ── Tools / Skills state arrays ──────────────────────────────
@@ -525,7 +526,7 @@ export default function App() {
     chatSearchOpen, chatSearchQuery,
     isStreaming,
     messagesEndRef,
-    isConnected, status, wsReconnecting, wsFailed,
+    isConnected, status, wsReconnecting, wsFailed, undoWindow, undoSend,
     wsClientRef,
     personaList, personaEmotion, pendingClarifications,
     threads, activeThread,
@@ -737,10 +738,17 @@ export default function App() {
         setToolPaletteOpen(false);
         setToolSearch("");
       }
+      if (isMod && e.key === "/") {
+        e.preventDefault();
+        setShortcutHelpOpen(prev => !prev);
+      }
+      if (e.key === "Escape" && shortcutHelpOpen) {
+        setShortcutHelpOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toolPaletteOpen, activeTab, setChatSearchOpen, setSidebarHidden, setActiveTab, setMessages, t]);
+  }, [toolPaletteOpen, activeTab, setChatSearchOpen, setSidebarHidden, setActiveTab, setMessages, t, shortcutHelpOpen]);
 
   // ── Derived constants ────────────────────────────────────────
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
@@ -840,8 +848,12 @@ export default function App() {
         {petState && <PetStatusWidget petState={petState} />}
         <div className="border-t border-border px-3 py-3">
           <div className="flex items-center gap-2 text-[13px] text-text-muted">
-            <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-success" : "bg-error"}`} />
-            <span className="truncate">{status || (isConnected ? t('status.connected') : t('status.offline'))}</span>
+            <span className={`h-2 w-2 rounded-full ${
+              isConnected ? "bg-success" : wsFailed ? "bg-error" : "bg-warning animate-pulse"
+            }`} />
+            <span className="truncate">
+              {wsFailed ? "Backend stopped" : wsReconnecting ? t('chat.reconnecting') + '…' : status || (isConnected ? t('status.connected') : t('status.offline'))}
+            </span>
           </div>
           <div className="mt-2 flex gap-1.5">
             <button
@@ -987,6 +999,8 @@ export default function App() {
               isConnected={isConnected}
               wsReconnecting={wsReconnecting}
               wsFailed={wsFailed}
+              undoWindow={undoWindow}
+              undoSend={undoSend}
               sendMessage={sendMessage}
               pendingPlan={pendingPlan}
               setPendingPlan={setPendingPlan}
@@ -1736,7 +1750,21 @@ export default function App() {
                           }`}
                         >
                           <span className="text-text-secondary">{tab.icon}</span>
-                          <span className="text-[11px] font-medium leading-tight text-text-primary">{tab.label}</span>
+                          <span className="text-[11px] font-medium leading-tight text-text-primary">
+                            {toolSearch
+                              ? (() => {
+                                  const idx = tab.label.toLowerCase().indexOf(toolSearch.toLowerCase());
+                                  if (idx === -1) return tab.label;
+                                  return (
+                                    <>
+                                      {tab.label.slice(0, idx)}
+                                      <mark className="rounded-sm bg-accent/30 text-accent">{tab.label.slice(idx, idx + toolSearch.length)}</mark>
+                                      {tab.label.slice(idx + toolSearch.length)}
+                                    </>
+                                  );
+                                })()
+                              : tab.label}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -1791,6 +1819,44 @@ export default function App() {
               <button onClick={closeGuide} className="btn-primary px-5 py-2">
                 {t('guide.gotIt')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Keyboard shortcuts help */}
+      {shortcutHelpOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-text-primary/40 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+          onClick={() => setShortcutHelpOpen(false)}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-bg-secondary p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="mb-4 text-lg font-bold">Keyboard Shortcuts</h2>
+            <div className="space-y-2">
+              {[
+                { key: "Ctrl+K", desc: "Open tool palette" },
+                { key: "Ctrl+F", desc: "Search in chat" },
+                { key: "Ctrl+N", desc: "New conversation thread" },
+                { key: "Ctrl+B", desc: "Toggle sidebar" },
+                { key: "Ctrl+,", desc: "Open settings" },
+                { key: "Ctrl+L", desc: "Clear chat messages" },
+                { key: "Ctrl+/", desc: "Toggle this help" },
+                { key: "Esc", desc: "Close modal / cancel" },
+                { key: "Enter", desc: "Send message" },
+                { key: "Shift+Enter", desc: "New line in message" },
+                { key: "↑ (empty)", desc: "Recall last message" },
+              ].map((s) => (
+                <div key={s.key} className="flex items-center justify-between gap-4 rounded-lg px-2 py-1 hover:bg-bg-tertiary">
+                  <span className="text-sm text-text-secondary">{s.desc}</span>
+                  <kbd className="rounded border border-border bg-bg-tertiary px-2 py-0.5 text-xs font-mono text-text-primary">{s.key}</kbd>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button onClick={() => setShortcutHelpOpen(false)} className="btn-primary px-4 py-2 text-sm">Close</button>
             </div>
           </div>
         </div>

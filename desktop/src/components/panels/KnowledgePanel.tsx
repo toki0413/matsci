@@ -72,6 +72,7 @@ export function KnowledgePanel({
   const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<ViewMode>('detailed');
   const [searching, setSearching] = useState(false);
+  const [kbDocLimit, setKbDocLimit] = useState(20);
   const [urlInput, setUrlInput] = useState('');
   const [showDag, setShowDag] = useState(false);
   const [dagData, setDagData] = useState<{ nodes: any[]; edges: any[] } | null>(null);
@@ -246,14 +247,14 @@ export function KnowledgePanel({
             ) : (
             <>
             <div className="mb-2 text-xs font-medium text-text-secondary">
-              Documents ({kbDocs.length})
+              Documents ({kbDocs.length}{kbDocs.length > 20 ? ` · showing ${kbDocLimit}` : ''})
             </div>
             {!kbAvailable && (
               <div className="text-xs text-text-muted">
                 Knowledge base backend is not available. Install chromadb and sentence-transformers.
               </div>
             )}
-            {kbDocs.map((doc) => (
+            {kbDocs.slice(0, kbDocLimit).map((doc) => (
               <div
                 key={doc.doc_id}
                 className="kb-doc-item mb-2 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2"
@@ -277,6 +278,14 @@ export function KnowledgePanel({
                 </div>
               </div>
             ))}
+            {kbDocs.length > kbDocLimit && (
+              <button
+                onClick={() => setKbDocLimit(prev => prev + 20)}
+                className="w-full rounded-lg border border-border py-2 text-xs text-text-secondary hover:bg-bg-tertiary transition-colors"
+              >
+                Show more ({kbDocs.length - kbDocLimit} remaining)…
+              </button>
+            )}
             </>
             )}
           </div>

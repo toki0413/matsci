@@ -82,6 +82,8 @@ interface ChatPanelProps {
   isConnected: boolean;
   wsReconnecting?: boolean;
   wsFailed?: boolean;
+  undoWindow?: boolean;
+  undoSend?: () => void;
   sendMessage: () => void;
   pendingPlan: string;
   setPendingPlan: (v: string) => void;
@@ -114,7 +116,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const {
     messages, chatSearchOpen, chatSearchQuery, setChatSearchOpen, setChatSearchQuery,
     wsClientRef, setMessages, answerClarification, pendingClarifications,
-    isConnected, wsReconnecting, wsFailed, sendMessage, pendingPlan, setPendingPlan, planLoading,
+    isConnected, wsReconnecting, wsFailed, undoWindow, undoSend, sendMessage, pendingPlan, setPendingPlan, planLoading,
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
@@ -848,6 +850,18 @@ export function ChatPanel(props: ChatPanelProps) {
             </div>
           )}
 
+        {undoWindow && undoSend && (
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs">
+            <span className="text-accent">Message sent · Undo available for 5s</span>
+            <button
+              onClick={undoSend}
+              className="rounded bg-accent/20 px-2 py-0.5 font-medium text-accent hover:bg-accent/30"
+            >
+              Undo
+            </button>
+          </div>
+        )}
+
         {pendingClarifications.length > 0 && (
           <div className="mb-3 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs text-accent">
             💡 Agent is waiting for your clarification — answer above or type below
@@ -1135,8 +1149,11 @@ export function ChatPanel(props: ChatPanelProps) {
             </button>
           </div>
         </div>
-        <div className="mt-1 px-1 text-[10px] text-text-muted">
-          <kbd className="rounded border border-border bg-bg-tertiary px-1">Enter</kbd> send · <kbd className="rounded border border-border bg-bg-tertiary px-1">Shift+Enter</kbd> newline · <kbd className="rounded border border-border bg-bg-tertiary px-1">↑</kbd> history
+        <div className="mt-1 flex items-center justify-between px-1 text-[10px] text-text-muted">
+          <span>
+            <kbd className="rounded border border-border bg-bg-tertiary px-1">Enter</kbd> send · <kbd className="rounded border border-border bg-bg-tertiary px-1">Shift+Enter</kbd> newline · <kbd className="rounded border border-border bg-bg-tertiary px-1">↑</kbd> history
+          </span>
+          {input.length > 0 && <span className={input.length > 4000 ? 'text-warning' : ''}>{input.length} chars</span>}
         </div>
       </div>
     </div>

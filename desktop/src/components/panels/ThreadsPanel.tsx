@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PanelHeader } from '../settings-shared';
 
@@ -20,6 +22,10 @@ export function ThreadsPanel({
   threads, activeThread, setThreads, switchThread, createThread, renameThread, deleteThread,
 }: ThreadsPanelProps) {
   const { t } = useTranslation();
+  const [threadSearch, setThreadSearch] = useState('');
+  const filteredThreads = threadSearch
+    ? threads.filter(th => th.label.toLowerCase().includes(threadSearch.toLowerCase()))
+    : threads;
   return (
     <div className="flex h-full flex-col">
       <PanelHeader title="Threads" className="px-6">
@@ -27,6 +33,19 @@ export function ThreadsPanel({
           + {t('threads.new')}
         </button>
       </PanelHeader>
+      {threads.length > 3 && (
+        <div className="flex items-center gap-2 border-b border-border px-6 py-2">
+          <Search size={14} className="shrink-0 text-text-muted" />
+          <input
+            type="text"
+            value={threadSearch}
+            onChange={(e) => setThreadSearch(e.target.value)}
+            placeholder="Search threads..."
+            className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+          />
+          {threadSearch && <span className="text-[11px] text-text-muted">{filteredThreads.length}/{threads.length}</span>}
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-4">
         {threads.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
@@ -39,9 +58,14 @@ export function ThreadsPanel({
               + {t('threads.new')}
             </button>
           </div>
+        ) : filteredThreads.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-text-muted">
+            <Search size={28} className="opacity-30" />
+            <span className="text-sm">No threads match "{threadSearch}"</span>
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {threads.map((th) => (
+            {filteredThreads.map((th) => (
               <div
                 key={th.id}
                 className={`rounded-xl border p-4 transition-colors ${
