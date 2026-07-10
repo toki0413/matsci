@@ -163,7 +163,7 @@ class AutoloopEngine:
         # 共享 MemoryManager: 由 agent/CLI 传入, 避免引擎私有实例和 agent 的
         # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
         self.memory = memory_manager or MemoryManager()
-        self.kg = ProjectKnowledgeGraph()
+        self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
