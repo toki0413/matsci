@@ -707,9 +707,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         if (isWSMessage(data)) handleWsMessage(data);
       },
       onConnected: () => {
-        // Don't auto-push localStorage config to backend on connect —
-        // the backend is the source of truth, not the browser.
-        // Config is only pushed when the user explicitly saves in Settings.
         setIsStreaming(false);
         setMessages((prev) =>
           prev.map((m) =>
@@ -718,6 +715,24 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
               : m
           )
         );
+        // Restore chat history from backend on (re)connect
+        loadThreads();
+        const tid = activeThreadRef.current;
+        api.get<{ messages?: any[] }>(`/threads/${tid}/messages`)
+          .then((data) => {
+            if (data.messages && data.messages.length > 0) {
+              const restored: Message[] = data.messages.map((m: any) => ({
+                role: m.role as Message["role"],
+                content: m.content || "",
+                timestamp: m.timestamp || formatTime(),
+                ...(m.tool_name ? { tool_name: m.tool_name } : {}),
+                ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+              }));
+              setMessages(restored);
+              setMessagesByThread((prev) => ({ ...prev, [tid]: restored }));
+            }
+          })
+          .catch(() => { /* backend offline — keep welcome */ });
       },
     });
 
