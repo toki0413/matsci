@@ -102,6 +102,11 @@ export type WSMessage =
       status?: string;
       output?: string;
     }
+  | {
+      type: "side_question_pending";
+      questions: ClarificationQuestion[];
+      thread_id: string;
+    }
   | { type: "ping" }
   | { type: "pong" }
   | { type: "context_compacted"; before_pct: number; after_pct: number }

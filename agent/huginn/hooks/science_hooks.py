@@ -37,16 +37,22 @@ def _extract_text(ctx: HookContext) -> str:
     序列化后的结构: 成功 {"result": {...}}, 失败 {"error": "..."}.
     把 result 里的数据序列化成字符串再 lower, stdout/stderr 等子字段也能扫到.
     """
+    # Memoize on ctx — 20+ hooks share the same ctx, avoid 20× json.dumps
+    if ctx._cached_text is not None:
+        return ctx._cached_text
     result = ctx.result if isinstance(ctx.result, dict) else {}
     data = result.get("result", result)
     if isinstance(data, dict):
         import json
 
         try:
-            return json.dumps(data, ensure_ascii=False, default=str).lower()
+            text = json.dumps(data, ensure_ascii=False, default=str).lower()
         except Exception:
-            return str(data).lower()
-    return str(data).lower()
+            text = str(data).lower()
+    else:
+        text = str(data).lower()
+    ctx._cached_text = text
+    return text
 
 
 def _result_data(ctx: HookContext) -> dict:

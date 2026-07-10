@@ -36,11 +36,15 @@ export const API_BASE = new Proxy(
 /** Derived WS URL. */
 export let WS_URL: string = "";
 
+/** Bumped every time syncBackendUrl() updates the port. Components that
+ *  depend on WS_URL should track this counter to re-connect. */
+export let wsUrlVersion: number = 0;
+
 function recomputeWsUrl() {
   const base = getApiBase();
   WS_URL = base.replace(/^http/, "ws") + "/ws/agent";
+  wsUrlVersion++;
 }
-recomputeWsUrl();
 
 export async function syncBackendUrl(): Promise<void> {
   // Try to read the actual port from the Tauri-managed sidecar

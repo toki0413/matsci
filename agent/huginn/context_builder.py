@@ -334,6 +334,9 @@ class ContextBuilder:
         parts.append("### End Tool Preference Hint")
         return "\n".join(parts)
 
+    _evolution_rules_cache: str | None = None
+    _evolution_rules_mtime: float = 0.0
+
     def build_evolution_rules(self) -> str:
         """Inject learned evolution rules into context.
 
@@ -343,7 +346,6 @@ class ContextBuilder:
         benefits from the lesson.
         """
         try:
-            from huginn.evolution.logger import ExecutionLogger
             from pathlib import Path
             import os
             import json
@@ -353,9 +355,16 @@ class ContextBuilder:
             if not rules_path.exists():
                 return ""
 
+            # Cache by mtime — file rarely changes during a session
+            mtime = rules_path.stat().st_mtime
+            if self._evolution_rules_cache is not None and mtime == self._evolution_rules_mtime:
+                return self._evolution_rules_cache
+            self._evolution_rules_mtime = mtime
+
             with rules_path.open("r", encoding="utf-8") as f:
                 rules = json.load(f)
             if not rules:
+                self._evolution_rules_cache = ""
                 return ""
 
             # Only inject high-confidence rules, max 5 to keep prompt small
@@ -364,6 +373,7 @@ class ContextBuilder:
                 if r.get("confidence", 0) >= 0.5
             ][:5]
             if not relevant:
+                self._evolution_rules_cache = ""
                 return ""
 
             lines = ["### Learned Lessons (from past executions)"]
@@ -373,7 +383,8 @@ class ContextBuilder:
                     f"(confidence: {r.get('confidence', 0):.0%})"
                 )
             lines.append("### End Learned Lessons")
-            return "\n".join(lines)
+            self._evolution_rules_cache = "\n".join(lines)
+            return self._evolution_rules_cache
         except Exception:
             return ""
 

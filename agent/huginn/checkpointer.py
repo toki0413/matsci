@@ -72,9 +72,13 @@ def create_checkpointer(
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     # ``from_conn_string`` is a context-manager factory; we enter it once and
-    # keep the saver alive for the lifetime of the agent.
+    # keep the saver alive for the lifetime of the agent. Store the cm on the
+    # saver so it can be closed properly — leaks SQLite connections otherwise.
     cm = SqliteSaver.from_conn_string(str(path))
     saver = cm.__enter__()
+    # Keep ref so __exit__ can be called during shutdown (ponytail: prevents
+    # SQLite handle accumulation across agent rebuilds)
+    saver._context_manager = cm  # type: ignore[attr-defined]
     return saver
 
 
