@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, Brain, Pencil, Check, X } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
+import EmptyState from '../EmptyState';
 import type { MemoryEntry, MemoryStats } from '../../types/domain';
 
 export interface MemoryPanelProps {
@@ -171,24 +172,14 @@ export function MemoryPanel({
           </div>
           <div className="flex-1 overflow-y-auto space-y-2">
             {memories.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <Brain size={36} className="text-text-muted opacity-40" />
-                {memorySearch.trim() ? (
-                  <>
-                    <p className="mt-3 text-sm font-medium text-text-secondary">No matching memories</p>
-                    <p className="mt-1 max-w-xs text-xs text-text-muted">
-                      No memories match your search. Try different keywords or clear the filter.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="mt-3 text-sm font-medium text-text-secondary">No memories yet</p>
-                    <p className="mt-1 max-w-xs text-xs text-text-muted">
-                      Memories help Huginn remember context across conversations. Add your first memory using the panel on the left.
-                    </p>
-                  </>
-                )}
-              </div>
+              <EmptyState
+                icon={Brain}
+                title={memorySearch.trim() ? "No matching memories" : "No memories yet"}
+                subtitle={memorySearch.trim()
+                  ? "No memories match your search. Try different keywords or clear the filter."
+                  : "Memories help Huginn remember context across conversations. Add your first memory using the panel on the left."
+                }
+              />
             )}
             {sortedMemories.map((m) => (
               <div key={m.id} className={`card mem-entry ${isRecent(m) ? 'ring-1 ring-accent/30' : ''}`}>

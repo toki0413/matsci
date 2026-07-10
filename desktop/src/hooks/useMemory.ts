@@ -6,6 +6,7 @@
  */
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { toast } from '../components/Toast';
 import type { MemoryEntry, MemoryStats } from '../types/domain';
 
 export function useMemory() {
@@ -79,10 +80,12 @@ export function useMemory() {
       if (data.success) {
         setMemoryForm({ content: '', category: 'fact', tags: '', importance: 0.5, tier: 'mid' });
         setMemoryMsg('Memory saved.');
+        toast.success('Memory saved');
         loadMemory();
         loadMemoryStats();
       } else {
         setMemoryMsg(`Save failed: ${data.error}`);
+        toast.error(`Save failed: ${data.error}`);
       }
     } catch (e: any) {
       setMemoryMsg(`Save error: ${e.message}`);
@@ -93,10 +96,12 @@ export function useMemory() {
     if (!confirm('Delete this memory?')) return;
     try {
       await api.del(`/memory/${id}`);
+      toast.success('Memory deleted');
       loadMemory();
       loadMemoryStats();
     } catch (e: any) {
       setMemoryMsg(`Delete error: ${e.message}`);
+      toast.error(`Delete error: ${e.message}`);
     }
   };
 
@@ -104,12 +109,15 @@ export function useMemory() {
     try {
       const data = await api.patch<{ success?: boolean; error?: string }>(`/memory/${id}`, patch);
       if (data.success) {
+        toast.success('Memory updated');
         loadMemory();
       } else {
         setMemoryMsg(`Update failed: ${data.error}`);
+        toast.error(`Update failed: ${data.error}`);
       }
     } catch (e: any) {
       setMemoryMsg(`Update error: ${e.message}`);
+      toast.error(`Update error: ${e.message}`);
     }
   };
 
@@ -117,6 +125,7 @@ export function useMemory() {
     try {
       const data = await api.post<{ success?: boolean; error?: string }>(`/memory/promote/${id}`);
       if (data.success) {
+        toast.success('Promoted to long-term');
         loadMemory();
         loadMemoryStats();
       } else {
@@ -132,6 +141,7 @@ export function useMemory() {
     try {
       const data = await api.post<{ expired?: number; low_importance?: number }>('/memory/prune');
       setMemoryMsg(`Pruned ${data.expired ?? 0} expired, ${data.low_importance ?? 0} low-importance.`);
+      toast.success(`Pruned ${data.expired ?? 0} expired, ${data.low_importance ?? 0} low-importance`);
       loadMemory();
       loadMemoryStats();
     } catch (e: any) {
@@ -145,6 +155,7 @@ export function useMemory() {
       const data = await api.post<{ path?: string }>('/memory/sync-md');
       if (data.path) {
         setMemoryMsg(`Synced to ${data.path}`);
+        toast.success(`Synced to ${data.path}`);
       } else {
         setMemoryMsg('Sync returned no path.');
       }
