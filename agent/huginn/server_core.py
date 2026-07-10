@@ -200,7 +200,10 @@ def get_agent_factory() -> AgentFactory:
     """Get or create the global AgentFactory from current config."""
     if get_context().agent_factory is not None:
         return get_context().agent_factory
-    cfg = HuginnConfig.from_env()
+    # Use the same config source as the REST config route —
+    # huginn.toml if it exists, otherwise env vars.
+    from huginn.routes.config import _load_runtime_config
+    cfg = _load_runtime_config()
     registry = ModelRegistry.from_config(cfg)
     get_context().agent_factory = AgentFactory(
         config=cfg,

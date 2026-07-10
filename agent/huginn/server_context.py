@@ -17,6 +17,7 @@ from huginn.agents.orchestrator import Orchestrator
 from huginn.autoloop.plan_store import PlanStore
 from huginn.config import HuginnConfig
 from huginn.memory.manager import MemoryConfig, MemoryManager
+from huginn.models.registry import ModelRegistry
 from huginn.permissions import PermissionConfig
 from huginn.persistence import (
     CheckpointerBackend,
@@ -75,7 +76,13 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
     Tool registration happens once at startup.
     """
     register_all_tools()
-    cfg = config or HuginnConfig.from_env()
+    # Use _load_runtime_config so huginn.toml is picked up the same way
+    # the REST /config route does it — from_env() alone misses the file.
+    if config is not None:
+        cfg = config
+    else:
+        from huginn.routes.config import _load_runtime_config
+        cfg = _load_runtime_config()
 
     permission_config = PermissionConfig()
     audit_logger = _default_audit_logger()
@@ -89,6 +96,7 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
 
     agent_factory = AgentFactory(
         config=cfg,
+        model_registry=ModelRegistry.from_config(cfg),
         memory_manager=memory_manager,
     )
 
