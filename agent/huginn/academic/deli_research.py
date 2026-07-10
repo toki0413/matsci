@@ -520,10 +520,21 @@ class PaperWritingPipeline:
         state.stage = ResearchStage.DRAFTING
         state.touch()
 
-        sections_data = outline_data.get("sections", [])
-        if not sections_data:
+        raw_sections = outline_data.get("sections", [])
+        if not raw_sections:
             # 没拿到大纲就按标准五段来
-            sections_data = [{"name": s, "points": []} for s in self.SECTIONS]
+            raw_sections = [{"name": s, "points": []} for s in self.SECTIONS]
+
+        # normalize: LLM 可能用 title/heading 而不是 name，也可能返回纯字符串
+        sections_data = []
+        for sec in raw_sections:
+            if isinstance(sec, str):
+                sections_data.append({"name": sec, "points": []})
+            elif isinstance(sec, dict):
+                name = sec.get("name") or sec.get("title") or sec.get("heading") or "section"
+                sections_data.append({"name": name, "points": sec.get("points", [])})
+            else:
+                sections_data.append({"name": str(sec), "points": []})
 
         # 并行起草各 section
         tasks = [

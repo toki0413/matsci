@@ -171,6 +171,11 @@ class ContextMixin:
                 always_on.append(t)
                 continue
 
+            # user mentioned the tool by name → always include it
+            if name and name in query_lower:
+                always_on.append(t)
+                continue
+
             score = sum(1 for kw in keywords if kw in blob)
 
             # SkillEvolutionLayer 信念加成: 高置信度工具小幅提分
