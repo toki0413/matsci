@@ -103,6 +103,10 @@ class ResearchState:
     meta_review: str = ""
     revision_notes: list[str] = field(default_factory=list)
 
+    # 计算数据 (由 AutoloopEngine 内层循环注入)
+    computational_data: dict[str, Any] = field(default_factory=dict)
+    gaps_filled: list[str] = field(default_factory=list)
+
     # 元信息
     target_journal: str | None = None
     integrity_log: list[str] = field(default_factory=list)
@@ -608,6 +612,19 @@ class PaperWritingPipeline:
             "Write at least 300 words. Use academic tone."
         )
 
+        # 注入计算数据 (内层循环产出)
+        if state.computational_data and name.lower() in (
+            "methods", "results", "results and discussion", "methodology"
+        ):
+            comp_summary = json.dumps(
+                state.computational_data, ensure_ascii=False, default=str
+            )[:3000]
+            prompt += (
+                f"\n\nComputational data from autonomous simulations:\n{comp_summary}\n"
+                "Use these quantitative results in this section. "
+                "Reference as 'our calculations' or 'our DFT results'."
+            )
+
         self._draft_agent.system_prompt = (
             f"You are an expert academic writer specializing in materials science. "
             f"Write the '{name}' section. {hint} "
@@ -775,6 +792,101 @@ class DeliAutoResearch:
     def list_sessions(self) -> list[dict[str, Any]]:
         return [s.to_summary() for s in self._sessions.values()]
 
+    async def _run_computational_loop(
+        self,
+        state: ResearchState,
+        workspace: str | None = None,
+    ) -> None:
+        """内层循环: 对需要计算数据的 gap 跑 AutoloopEngine.
+
+        ponytail: 不建新类, 直接在 DeliAutoResearch 里做桥接。
+        AutoloopEngine 是重量级组件, 只在确实有计算 gap 时才实例化。
+        如果 AutoloopEngine 不可用或 gap 不需要计算, 静默跳过。
+        """
+        if not state.gaps:
+            return
+
+        # 用 LLM 判断哪些 gap 需要计算数据
+        gap_classifier = ResearchAgent(
+            role="gap_classifier",
+            system_prompt=(
+                "You are a research methodology expert. Given a list of research gaps, "
+                "classify each as 'computational' (needs DFT/MD/simulation data) or "
+                'non-computational. Return JSON: [{"gap": "...", "needs_computation": true, '
+                '"objective": "concise autoloop objective"}]'
+            ),
+            temperature=0.2,
+            max_tokens=2000,
+        )
+        gaps_json = json.dumps(state.gaps, ensure_ascii=False)
+        result = await gap_classifier.run(
+            f"Research topic: {state.topic}\nGaps:\n{gaps_json}", None
+        )
+        comp_gaps = []
+        try:
+            classified = _safe_json_load(result, [])
+            if isinstance(classified, list):
+                comp_gaps = [
+                    g for g in classified
+                    if g.get("needs_computation") and g.get("objective")
+                ]
+        except Exception:
+            pass
+
+        if not comp_gaps:
+            state.integrity_log.append("[compute] no computational gaps identified")
+            return
+
+        # 懒加载 AutoloopEngine — 不可用就跳过
+        try:
+            from huginn.autoloop.engine import AutoloopEngine
+        except ImportError:
+            state.integrity_log.append(
+                "[compute] AutoloopEngine unavailable, skipping computational loop"
+            )
+            return
+
+        ws_path = workspace or "."
+        engine = AutoloopEngine(workspace=ws_path)
+
+        for gap in comp_gaps:
+            objective = gap["objective"]
+            try:
+                result = await engine.run(
+                    objective=objective,
+                    max_iterations=5,
+                )
+                # 提取关键结果: report + provenance
+                comp_entry = {
+                    "gap": gap.get("gap", ""),
+                    "objective": objective,
+                    "success": result.success,
+                    "report_path": result.report_path,
+                    "provenance_path": result.provenance_path,
+                    "phases_count": len(result.phases),
+                }
+                # 读取 report 内容 (如果存在)
+                if result.report_path:
+                    try:
+                        report_path = Path(result.report_path)
+                        if report_path.exists():
+                            comp_entry["report_excerpt"] = report_path.read_text(
+                                encoding="utf-8"
+                            )[:3000]
+                    except Exception:
+                        pass
+
+                state.computational_data[objective] = comp_entry
+                state.gaps_filled.append(gap.get("gap", objective))
+                state.integrity_log.append(
+                    f"[compute] gap '{gap.get('gap', '?')[:50]}' → "
+                    f"{'success' if result.success else 'partial'}"
+                )
+            except Exception as e:
+                state.integrity_log.append(
+                    f"[compute] gap '{gap.get('gap', '?')[:50]}' failed: {e}"
+                )
+
     async def run_full_pipeline(
         self,
         topic: str,
@@ -790,6 +902,10 @@ class DeliAutoResearch:
         state = await self.deep_research.run(state, rag_search_fn, config)
         self._check_gate(state, ResearchStage.LITERATURE_SEARCH)
         self._check_gate(state, ResearchStage.GAP_ANALYSIS)
+
+        # 1.5 内层循环: 对需要计算数据的 gap 跑 AutoloopEngine
+        if state.gaps:
+            await self._run_computational_loop(state)
 
         # 2. Paper Writing
         state = await self.paper_writing.run(state, config)
@@ -1018,7 +1134,7 @@ class DeliResearchInput(BaseModel):
         "verify",       # 单独跑引用验证
     ] = Field(
         description=(
-            "start=创建新研究session; full_run=跑完整管线; "
+            "start=创建新研究session; full_run=跑完整管线(含计算gap自动填补); "
             "next_stage=只跑下一阶段; status=查看状态; "
             "get_draft=获取草稿; get_citations=获取引用; "
             "get_reviews=获取审稿意见; list_sessions=列出所有session; "
@@ -1051,9 +1167,10 @@ class DeliAutoResearchTool(HuginnTool):
     category = "sci"
     description = (
         "多智能体自主学术研究管线 (Deli AutoResearch). "
-        "9阶段: 课题分析→文献检索→gap分析→大纲→分节起草→引用验证→同行评审→修订→定稿. "
+        "9阶段: 课题分析→文献检索→gap分析→[计算gap自动跑AutoloopEngine]→大纲→分节起草→引用验证→同行评审→修订→定稿. "
         "支持完整运行或增量执行, 每阶段有integrity gate, 引用反幻觉验证. "
-        "可与RAG知识库、PaperTool期刊规范检查、Provenance追踪联动."
+        "可与RAG知识库、PaperTool期刊规范检查、Provenance追踪联动. "
+        "full_run 会自动在 gap_analysis 后启动内层 AutoloopEngine 计算循环 (loop嵌套loop)."
     )
     read_only = False  # 会创建研究 session 和草稿
     input_schema = DeliResearchInput
