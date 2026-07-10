@@ -21,6 +21,18 @@ class ContextMixin:
         "vasp_tool", "lammps_tool", "cp2k_tool", "transolver_tool",
     }
 
+    # Tools that stay visible regardless of query relevance.
+    _ALWAYS_ON_TOOLS: set[str] = {
+        "memory_tool", "knowledge_search", "structure_tool",
+        "periodic_table_tool", "search_tool",
+    }
+
+    # Above this tool count, switch to query-aware retrieval.
+    _TOOL_RETRIEVAL_THRESHOLD = 25
+
+    # How many tools to keep after relevance filtering.
+    _TOOL_RETRIEVAL_TOP_K = 15
+
     def _effective_system_prompt(self) -> str:
         """Base system prompt + mode prefix + phase prefix + env context."""
         if self._mode == "research":
@@ -98,14 +110,16 @@ class ContextMixin:
 
         return base
 
-    def _effective_tools(self) -> list[Any]:
-        """Return the tool list filtered by mode and research phase.
+    def _effective_tools(self, query: str | None = None) -> list[Any]:
+        """Return the tool list filtered by mode, phase, and query relevance.
 
-        Two layers of filtering, applied in order:
+        Three layers of filtering, applied in order:
         1. Mode filter: chat mode drops expensive simulation tools;
            research mode keeps everything.
         2. Phase filter: when the current phase has a tool filter, only
            tools whose names appear in it are exposed.
+        3. Query retrieval: when tool count exceeds threshold and a query
+           is available, keep top-K by keyword relevance + always-on tools.
         """
         tools = list(self.langchain_tools)
 
@@ -118,7 +132,72 @@ class ContextMixin:
         if phase_tools is not None:
             tools = [t for t in tools if t.name in phase_tools]
 
+        # query-aware retrieval: 只在工具数多且无 phase 约束时触发
+        if (
+            query
+            and phase_tools is None
+            and len(tools) > self._TOOL_RETRIEVAL_THRESHOLD
+        ):
+            tools = self._retrieve_relevant_tools(tools, query)
+
         return tools
+
+    def _retrieve_relevant_tools(
+        self, tools: list[Any], query: str,
+    ) -> list[Any]:
+        """Keyword-based tool retrieval — keep top-K by relevance score.
+
+        Scoring: 1 point per query keyword found in tool name or description,
+        plus a small bonus from SkillEvolutionLayer's confidence in the tool.
+        Always-on tools bypass scoring.
+        """
+        query_lower = query.lower()
+        # 分词: 空格 + 常见标点
+        keywords = {
+            w for w in query_lower.replace(",", " ").replace(".", " ")
+            .replace("?", " ").replace("/", " ").split()
+            if len(w) > 2
+        }
+
+        scored: list[tuple[float, Any]] = []
+        always_on: list[Any] = []
+
+        for t in tools:
+            name = getattr(t, "name", "") or ""
+            desc = getattr(t, "description", "") or ""
+            blob = f"{name} {desc}".lower()
+
+            if name in self._ALWAYS_ON_TOOLS:
+                always_on.append(t)
+                continue
+
+            score = sum(1 for kw in keywords if kw in blob)
+
+            # SkillEvolutionLayer 信念加成: 高置信度工具小幅提分
+            try:
+                from huginn.skills.evolution import SkillEvolutionLayer
+                layer = SkillEvolutionLayer.shared()
+                beliefs = layer.get_tool_beliefs(name)
+                if beliefs:
+                    avg_conf = sum(b.confidence for b in beliefs) / len(beliefs)
+                    score += avg_conf * 0.5
+            except Exception:
+                pass
+
+            scored.append((score, t))
+
+        # 按分数降序, 取 top-K, 加上 always-on
+        scored.sort(key=lambda x: -x[0])
+        top_k = self._TOOL_RETRIEVAL_TOP_K - len(always_on)
+        retrieved = [t for _, t in scored[:max(0, top_k)]]
+
+        result = always_on + retrieved
+        if len(result) < len(tools):
+            logger.debug(
+                "tool retrieval: %d → %d (query: %s)",
+                len(tools), len(result), query[:60],
+            )
+        return result
 
     def _tool_names_for_validation(self) -> set[str]:
         """Collect all visible tool names for ToolNameValidationHook."""

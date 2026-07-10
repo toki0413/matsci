@@ -1,0 +1,63 @@
+provider = "openai"
+team_mode_enabled = false
+max_concurrent_subagents = 3
+plan_auto_confirm = false
+ollama_host = "http://localhost:11434"
+execution_backend = "local"
+hpc_scheduler = "local"
+hpc_port = 22
+remote_work_dir = "~/huginn_jobs"
+hpc_default_walltime = "24:00:00"
+hpc_default_nodes = 1
+hpc_default_ntasks_per_node = 4
+hpc_default_gpus_per_node = 0
+hpc_max_retries = 3
+hpc_retry_backoff = 1.0
+hpc_strict_host_key_checking = true
+workspace = "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent"
+auto_approve = false
+enable_exploration = true
+max_parallel_branches = 5
+persona = "default"
+persona_auto_route = true
+persona_auto_route_threshold = 0.3
+rag_enabled = false
+kg_enabled = false
+kg_depth = 1
+kg_top_k = 10
+local_only_mode = false
+encryption_enabled = false
+encrypt_rag_documents = true
+encrypt_rag_metadata = true
+encrypt_config = false
+privacy_redact_secrets = true
+privacy_block_on_secrets = false
+max_tool_output_tokens = 25000
+context_budget_tokens = 0
+prompt_cache_control = true
+telemetry_enabled = true
+memory_decay_enabled = false
+memory_decay_interval_turns = 0
+memory_decay_prune_threshold = 0.15
+tool_compression_max_tokens = 8000
+pet_name = "Huginn"
+pet_personality = "cheerful"
+config_version = 1
+[[models]]
+alias = "default"
+provider = "openai"
+temperature = 0.7
+enabled = true
+
+[[agents]]
+id = "lead"
+name = "Lead"
+model_alias = "default"
+persona = "default"
+tools = []
+enabled = true
+max_steps = 10
+
+[hpc_queue_map]
+
+[feature_flags]

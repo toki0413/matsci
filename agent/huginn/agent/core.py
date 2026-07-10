@@ -231,6 +231,9 @@ class HuginnAgent(
 
         self._phase_manager = PhaseManager(initial=ResearchPhase.OPEN)
 
+        # 当前用户消息, 用于 query-aware tool retrieval
+        self._current_user_message: str | None = None
+
         self.prompt_cache_control = m.prompt_cache_control
 
         self._cache_builder = PromptCacheBuilder(
@@ -652,7 +655,7 @@ class HuginnAgent(
             self._agent_graph = create_deep_agent(
                 name="HuginnAgent",
                 model=self.select_model("agent"),
-                tools=self._effective_tools(),
+                tools=self._effective_tools(query=self._current_user_message),
                 system_prompt=system_message,
                 checkpointer=self.checkpointer,
                 middleware=[
@@ -677,14 +680,14 @@ class HuginnAgent(
             try:
                 agent = create_react_agent(
                     model=self.select_model("agent"),
-                    tools=self._effective_tools(),
+                    tools=self._effective_tools(query=self._current_user_message),
                     prompt=SystemMessage(content=system_prompt),
                     checkpointer=self.checkpointer,
                 )
             except TypeError:
                 agent = create_react_agent(
                     model=self.select_model("agent"),
-                    tools=self._effective_tools(),
+                    tools=self._effective_tools(query=self._current_user_message),
                     state_modifier=[SystemMessage(content=system_prompt)],
                     checkpointer=self.checkpointer,
                 )

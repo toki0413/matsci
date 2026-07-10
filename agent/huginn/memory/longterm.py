@@ -705,12 +705,17 @@ class LongTermMemory:
             summary["deduplicated"] = self.deduplicate()
         return summary
 
-    def lint(self, limit: int = 100) -> dict[str, Any]:
+    def lint(self, limit: int = 100, auto_fix: bool = False) -> dict[str, Any]:
         """LLM Wiki Lint: knowledge base health check.
 
         Inspired by Karpathy's LLM Wiki concept — periodically scan
         the knowledge base for contradictions, orphan entries, stale
         assertions, and missing cross-references.
+
+        Args:
+            limit: max number of entries to scan.
+            auto_fix: if True, write discovered links (contradicts:/crossref:)
+                back to tags.
 
         Returns a report dict with issues found.
         """
@@ -729,7 +734,7 @@ class LongTermMemory:
         with self._connect() as conn:
             alive_where, alive_params = self._where_alive()
             rows = conn.execute(
-                f"""SELECT * FROM memories WHERE {alive_where}
+                f"""SELECT * FROM memories AS m WHERE {alive_where}
                     ORDER BY importance DESC, access_count DESC
                     LIMIT ?""",
                 (*alive_params, limit),
@@ -867,5 +872,53 @@ class LongTermMemory:
             f"{len(report['low_confidence'])} low-confidence, "
             f"{len(report['cross_ref_candidates'])} cross-ref candidates."
         )
+
+        # auto_fix: write discovered links back into tags so later
+        # queries can piggyback on them
+        if auto_fix:
+            import json as _json
+
+            fixed = 0
+            with self._connect() as conn:
+                # contradictions: tag both sides so each points at the other
+                for c in report["contradictions"]:
+                    for eid in (c["entry1_id"], c["entry2_id"]):
+                        row = conn.execute(
+                            "SELECT tags FROM memories WHERE id = ?", (eid,)
+                        ).fetchone()
+                        if not row:
+                            continue
+                        tags = _json.loads(row["tags"] or "[]")
+                        other = (
+                            c["entry2_id"] if eid == c["entry1_id"] else c["entry1_id"]
+                        )
+                        tag = f"contradicts:{other}"
+                        if tag not in tags:
+                            tags.append(tag)
+                            conn.execute(
+                                "UPDATE memories SET tags = ? WHERE id = ?",
+                                (_json.dumps(tags), eid),
+                            )
+                            fixed += 1
+                # cross-ref candidates: stamp the shared formula on each entry
+                for x in report["cross_ref_candidates"]:
+                    for ref in x["entries"]:
+                        cat, eid = ref.split(":", 1)
+                        row = conn.execute(
+                            "SELECT tags FROM memories WHERE id = ?", (eid,)
+                        ).fetchone()
+                        if not row:
+                            continue
+                        tags = _json.loads(row["tags"] or "[]")
+                        tag = f"crossref:{x['formula']}"
+                        if tag not in tags:
+                            tags.append(tag)
+                            conn.execute(
+                                "UPDATE memories SET tags = ? WHERE id = ?",
+                                (_json.dumps(tags), eid),
+                            )
+                            fixed += 1
+                conn.commit()
+            report["auto_fixed"] = fixed
 
         return report
