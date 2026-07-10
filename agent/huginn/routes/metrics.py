@@ -281,6 +281,91 @@ PROMPT_CACHE_MISSES_TOTAL = Counter(
 # Small convenience helpers for future instrumentation points
 # ---------------------------------------------------------------------------
 
+# Approximate USD per 1M tokens for common models. Used when the router
+# doesn't have explicit cost data. ponytail: coarse rates, good enough
+# for cost dashboards — exact billing comes from the provider invoice.
+_MODEL_COST_RATES: dict[str, tuple[float, float]] = {
+    # (input_per_1m, output_per_1m) in USD
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4-turbo": (10.00, 30.00),
+    "claude-3-5-sonnet": (3.00, 15.00),
+    "claude-3-5-haiku": (0.80, 4.00),
+    "claude-3-opus": (15.00, 75.00),
+    "deepseek-chat": (0.14, 0.28),
+    "deepseek-reasoner": (0.55, 2.19),
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-1.5-pro": (1.25, 5.00),
+}
+
+
+def _lookup_cost(model: str) -> tuple[float, float]:
+    """Best-effort cost lookup by model name prefix."""
+    if not model:
+        return (0.0, 0.0)
+    lower = model.lower()
+    for prefix, rates in _MODEL_COST_RATES.items():
+        if prefix in lower:
+            return rates
+    return (0.0, 0.0)
+
+
+def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
+    """Wire LLM token usage and cost to Prometheus metrics.
+
+    Call this after extracting cache_stats from an LLM response.
+    Safe to call with partial/empty stats — no-ops on missing fields.
+    """
+    try:
+        input_tokens = int(stats.get("input_tokens", 0) or stats.get("usage_input_tokens", 0) or 0)
+        output_tokens = int(stats.get("output_tokens", 0) or stats.get("usage_output_tokens", 0) or 0)
+        cache_read = int(stats.get("cache_read_input_tokens", 0) or 0)
+        cache_creation = int(stats.get("cache_creation_input_tokens", 0) or 0)
+
+        # Total input = fresh input + cache reads (already billed at cache rate)
+        total_input = input_tokens + cache_read + cache_creation
+        if total_input:
+            LLM_TOKENS_TOTAL.labels(model=model, kind="prompt").inc(total_input)
+        if output_tokens:
+            LLM_TOKENS_TOTAL.labels(model=model, kind="completion").inc(output_tokens)
+
+        # Cost: cache reads are ~10% of normal input cost
+        cost_in, cost_out = _lookup_cost(model)
+        if cost_in or cost_out:
+            cost = (
+                input_tokens / 1_000_000 * cost_in
+                + cache_read / 1_000_000 * cost_in * 0.1
+                + cache_creation / 1_000_000 * cost_in * 1.25
+                + output_tokens / 1_000_000 * cost_out
+            )
+            if cost > 0:
+                LLM_COST_USD.labels(model=model).inc(cost)
+
+        # Track cache hit/miss
+        if cache_read > 0:
+            PROMPT_CACHE_HITS_TOTAL.inc()
+        if cache_creation > 0 or (total_input > 0 and cache_read == 0 and cache_creation == 0):
+            PROMPT_CACHE_MISSES_TOTAL.inc()
+    except Exception:
+        pass  # metrics are best-effort, never break the agent
+
+
+def track_tool_call(tool_name: str) -> None:
+    """Increment the tool call counter."""
+    try:
+        TOOL_CALLS_TOTAL.labels(tool_name=tool_name).inc()
+    except Exception:
+        pass
+
+
+def track_agent_turn(thread_id: str) -> None:
+    """Increment the agent turn counter."""
+    try:
+        AGENT_TURNS_TOTAL.labels(thread_id=thread_id).inc()
+    except Exception:
+        pass
+
+
 def track_websocket_connection() -> None:
     """Call when a WS client connects."""
     ACTIVE_WS_CONNECTIONS.inc()

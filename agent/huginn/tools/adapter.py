@@ -796,6 +796,12 @@ class ToolAdapter:
             # 按工具类型分级超时，防止外部 API 卡死整个 agent
             timeout = get_timeout(tool.name)
             _call_start = time.time()
+            # Wire Prometheus tool call counter
+            try:
+                from huginn.routes.metrics import track_tool_call
+                track_tool_call(tool.name)
+            except Exception:
+                pass
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
                 try:
                     if is_async:
@@ -906,6 +912,12 @@ class ToolAdapter:
             _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
             timeout = get_timeout(tool.name)
             _call_start = time.time()
+            # Wire Prometheus tool call counter
+            try:
+                from huginn.routes.metrics import track_tool_call
+                track_tool_call(tool.name)
+            except Exception:
+                pass
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
                 try:
                     if is_async:
