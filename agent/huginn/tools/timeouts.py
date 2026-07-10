@@ -84,6 +84,10 @@ TOOL_TIMEOUT_MAP = {
     "diagnose_tool": "long_running",
     "job_tool": "long_running",
     "skill_tool": "long_running",
+    "deli_research": "long_running",
+    "paper_tool": "medium",
+    "agentic_search_tool": "slow",
+    "literature_tool": "slow",
 }
 
 
