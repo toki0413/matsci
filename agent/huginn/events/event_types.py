@@ -37,6 +37,9 @@ CAMPAIGN_HYPOTHESIS = "campaign.hypothesis"
 SNAPSHOT_TAKE = "snapshot.take"
 SNAPSHOT_REVERT = "snapshot.revert"
 
+# ── Quality ────────────────────────────────────────────────────────
+QUALITY_CHECK = "quality.check"
+
 # ── Session ─────────────────────────────────────────────────────────
 SESSION_START = "session.start"
 SESSION_END = "session.end"
@@ -52,5 +55,6 @@ ALL_TYPES = frozenset({
     PIPELINE_SUGGEST, PIPELINE_STAGE_CHANGE,
     CAMPAIGN_ITERATION, CAMPAIGN_REFINE, CAMPAIGN_HYPOTHESIS,
     SNAPSHOT_TAKE, SNAPSHOT_REVERT,
+    QUALITY_CHECK,
     SESSION_START, SESSION_END,
 })

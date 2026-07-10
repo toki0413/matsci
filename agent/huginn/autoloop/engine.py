@@ -889,10 +889,32 @@ class AutoloopEngine:
                             except Exception:
                                 logger.warning("refine_failed failed", exc_info=True)
                         else:
-                            logger.warning(
-                                "max_refines (%d) reached, skipping refine for %s",
-                                self._max_refines, _current_hyp_id,
-                            )
+                            # refine 次数耗尽 → 战略 pivot, 不再修参数, 换方向
+                            try:
+                                _obj = self._objective if hasattr(self, "_objective") else ""
+                                new_hyp = self.hypothesis_graph.pivot(
+                                    _current_hyp_id,
+                                    evidence={"errors": validation.get("errors", "tests failed")},
+                                    model=self._get_refine_model(),
+                                    objective=_obj,
+                                )
+                                self._refine_count = 0  # reset: 新方向有新的 refine 预算
+                                logger.info(
+                                    "PIVOT: %s → %s (refine budget reset)",
+                                    _current_hyp_id, new_hyp,
+                                )
+                                self._emit_campaign("campaign.refine", {
+                                    "iteration": self._iteration,
+                                    "pivot": True,
+                                    "old_hypothesis": str(_current_hyp_id),
+                                    "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
+                                    "reason": "max_refines_reached",
+                                })
+                            except Exception:
+                                logger.warning(
+                                    "pivot failed for %s, giving up on this hypothesis",
+                                    _current_hyp_id, exc_info=True,
+                                )
             except Exception:
                 logger.warning("error in run: hypothesis_graph support/refute update failed", exc_info=True)
 
@@ -990,6 +1012,7 @@ class AutoloopEngine:
         """Set up run state: provenance, telemetry, budget, speculator."""
         run_id = f"loop_{uuid.uuid4().hex[:8]}"
         self._run_start_time = time.time()
+        self._objective = objective
 
         from huginn.provenance import ProvenanceLogger, ProvenanceRecord
         provenance_logger = ProvenanceLogger(
@@ -1714,6 +1737,18 @@ class AutoloopEngine:
             if grader_list:
                 avg_score = sum(gr.score for gr in grader_list) / len(grader_list)
                 results["grader_reward"] = round(avg_score, 4)
+                # 发布质量事件到 EventBus, 让 SSE/audit 能看到
+                try:
+                    from huginn.events.integration import _publish
+                    import asyncio
+                    loop = asyncio.get_running_loop()
+                    asyncio.ensure_future(_publish("quality.check", {
+                        "iteration": self._iteration,
+                        "graders": results["grader_scores"],
+                        "reward": results.get("grader_reward", 0),
+                    }, source="autoloop"))
+                except Exception:
+                    pass
         except Exception as e:
             results["grader_error"] = str(e)
 

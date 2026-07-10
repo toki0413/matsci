@@ -237,6 +237,104 @@ class HypothesisGraph:
 
     # ── 失败驱动的假设修正 ───────────────────────────────────────────
 
+    def pivot(
+        self,
+        failed_node_id: str,
+        evidence: dict[str, Any],
+        model: Any | None = None,
+        objective: str = "",
+    ) -> str:
+        """战略转向: 放弃当前假设方向, 生成全新假设.
+
+        与 refine_failed 的区别: refine 在原假设基础上修正参数或条件,
+        pivot 彻底换一个方向. 在 refine 次数耗尽时触发.
+
+        流程:
+        1. 收集所有已反驳假设的失败模式, 避免重走老路
+        2. 调 LLM 生成一个与失败方向不同的新假设
+           - 不可用时回退到模板: 换一个变量维度
+        3. 新假设不继承 parent (不是 derive 关系, 是 pivot 关系)
+        """
+        self._check_node(failed_node_id)
+        failed_node = self._nodes[failed_node_id]
+
+        # 收集所有 refuted 节点的 statement, 让 LLM 知道哪些路走不通
+        failed_statements = [
+            n.statement for n in self._nodes.values()
+            if n.status in ("refuted", "superseded")
+        ]
+
+        # 调 LLM 生成战略转向
+        if model is not None and self._is_real_model(model):
+            new_statement = self._llm_pivot(
+                failed_node.statement, failed_statements, evidence, objective, model,
+            )
+        else:
+            new_statement = self._template_pivot(
+                failed_node.statement, failed_statements,
+            )
+
+        # 加节点 + pivot 边 (不是 derive, 是独立的 pivot 关系)
+        new_id = self.add_hypothesis(
+            statement=new_statement,
+            rationale=f"战略转向: refine 次数耗尽, 放弃 {failed_node_id} 方向",
+        )
+        # 把 pivot 关系记到边里
+        self._edges.append(HypothesisEdge(
+            from_id=failed_node_id, to_id=new_id, edge_type="derive",
+            evidence={"pivot": True, "reason": "max_refines_reached"},
+        ))
+        self._log_research(
+            "conjecture", f"PIVOT: {new_statement[:60]}",
+            f"战略转向 — refine 次数耗尽后放弃原方向.\n\n"
+            f"新假设: {new_statement}\n"
+            f"放弃方向: {failed_node.statement}\n"
+            f"已尝试的失败假设数: {len(failed_statements)}",
+            parent_id=new_id, status="proposed",
+            tags=["autoloop", "pivot"],
+        )
+        return new_id
+
+    def _llm_pivot(
+        self,
+        failed_statement: str,
+        failed_statements: list[str],
+        evidence: dict[str, Any],
+        objective: str,
+        model: Any,
+    ) -> str:
+        """调 LLM 生成一个全新方向的假设."""
+        failed_list = "\n".join(f"  - {s}" for s in failed_statements[:8])
+        prompt = (
+            f"研究目标: {objective}\n\n"
+            f"已尝试但失败的假设:\n{failed_list}\n\n"
+            f"最新失败: {failed_statement}\n"
+            f"失败证据: {evidence}\n\n"
+            "以上方向都不行. 请提出一个完全不同的假设方向 — "
+            "不是修正参数, 而是换一个变量维度或方法论.\n"
+            "用一句话陈述新假设:"
+        )
+        try:
+            resp = model.invoke(prompt)
+            text = resp.content if hasattr(resp, "content") else str(resp)
+            # 取第一行, 去掉引号和前缀
+            line = text.strip().split("\n")[0].strip()
+            return line.lstrip("- *•").strip().strip('"\'')
+        except Exception:
+            return self._template_pivot(failed_statement, failed_statements)
+
+    @staticmethod
+    def _template_pivot(
+        failed_statement: str,
+        failed_statements: list[str],
+    ) -> str:
+        """无 LLM 时的降级: 换一个变量维度."""
+        # 简单启发: 把原假设的关键词反一下
+        return (
+            f"与之前方向不同: 在排除了 {len(failed_statements)} 个假设后, "
+            "考虑从另一个物理量或方法角度重新切入问题"
+        )
+
     def refine_failed(
         self,
         node_id: str,
