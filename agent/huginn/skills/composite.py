@@ -504,6 +504,13 @@ MOLECULE_SCREENING = register_skill(_make_molecule_screening())
 PHONON_ANALYSIS = register_skill(_make_phonon_analysis())
 FRACTURE_ASSESSMENT = register_skill(_make_fracture_assessment())
 
+
+def _ensure_registered() -> None:
+    """Idempotent — safe to call multiple times."""
+    # Importing this module already registers everything above.
+    # This exists so callers can be explicit without relying on side effects.
+    pass
+
 __all__ = [
     "BAND_STRUCTURE_ANALYSIS",
     "MECHANICAL_PROPERTIES",
