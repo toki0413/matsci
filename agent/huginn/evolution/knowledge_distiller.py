@@ -28,7 +28,7 @@ class DistilledKnowledge:
 
     knowledge_id: str
     content: str  # The actual text to store in RAG
-    source_type: str  # "error_lesson", "success_pattern", "tool_tip", "domain_fact"
+    source_type: str  # "error_lesson", "success_pattern", "tool_tip", "domain_fact", "feynman_note"
     source_evidence: list[str]  # IDs of source logs that support this
     confidence: float = 0.5
     category: str = "general"  # For routing in hierarchical RAG
@@ -268,6 +268,53 @@ class KnowledgeDistiller:
         if new_knowledge:
             self._save()
         return new_knowledge
+
+    # ------------------------------------------------------------------
+    # Feynman learning: 用通俗语言重组知识, 暴露理解缺口
+    # ------------------------------------------------------------------
+
+    def store_feynman_note(
+        self,
+        explanation: str,
+        gaps: list[str],
+        *,
+        iteration: int = 0,
+        hypothesis: str = "",
+        tags: list[str] | None = None,
+        confidence: float = 0.7,
+    ) -> str:
+        """存储 Feynman 式教学笔记到蒸馏知识库.
+
+        Feynman 学习法: 如果不能用简单语言解释清楚, 就没真正理解.
+        explanation 是 agent 用通俗语言写的解释, gaps 是解释不出来的部分.
+        feynman_note 在 KB 检索时获得优先级 (基础概念 > 细节技巧).
+        """
+        import hashlib
+
+        content_parts = [f"# Feynman Note (iter {iteration})"]
+        if hypothesis:
+            content_parts.append(f"## Hypothesis\n{hypothesis[:200]}")
+        content_parts.append(f"## Simple Explanation\n{explanation}")
+        if gaps:
+            content_parts.append("## Knowledge Gaps\n" + "\n".join(f"- {g}" for g in gaps))
+        content = "\n\n".join(content_parts)
+
+        kid = f"feynman_{iteration}_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+        dk = DistilledKnowledge(
+            knowledge_id=kid,
+            content=content,
+            source_type="feynman_note",
+            source_evidence=[f"autoloop_iter_{iteration}"],
+            confidence=confidence,
+            category="feynman",
+            tags=tags or ["feynman", "autoloop"],
+        )
+        # 去重: 同 iteration 不重复存
+        existing = {k.knowledge_id for k in self.knowledge_base}
+        if kid not in existing:
+            self.knowledge_base.append(dk)
+            self._save()
+        return kid
 
     # ------------------------------------------------------------------
     # Export to RAG
