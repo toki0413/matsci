@@ -122,7 +122,10 @@ class ContextBuilder:
     def build_kg_text(self, query: str) -> str:
         """Query the project knowledge graph and format results."""
         if not self.kg_enabled:
-            return ""
+            # Auto-enable if a graph file was built previously
+            graph_path = Path(self.workspace) / ".huginn" / "project_kg.json"
+            if not graph_path.exists():
+                return ""
         try:
             from huginn.kg.graph import ProjectKnowledgeGraph
 

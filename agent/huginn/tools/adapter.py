@@ -484,6 +484,13 @@ class ToolAdapter:
             except Exception:
                 logger.debug("offload_tool_output failed (non-fatal)", exc_info=True)
 
+            # Auto-render numerical results as chart for VLM analysis
+            try:
+                from huginn.tools.visual_hook import enrich_with_visual
+                data = enrich_with_visual(tool.name, data)
+            except Exception:
+                pass  # non-fatal
+
             return data
 
         def _sanitize_and_compress(obj: Any) -> Any:
