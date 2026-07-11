@@ -110,6 +110,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [wsReconnecting, setWsReconnecting] = useState(false);
   const [wsFailed, setWsFailed] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [undoWindow, setUndoWindow] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -208,7 +209,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   const loadThreads = async () => {
     try {
-      const data = await api.get<{ threads?: Thread[] }>("/threads");
+      const data = await api.get<{ threads?: Thread[] }>("/threads?include_archived=false");
       setThreads(data.threads || []);
     } catch (e: any) {
       console.error("[threads] load failed:", e);
@@ -253,6 +254,47 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       loadThreads();
     } catch (e: any) {
       console.error("[threads] delete failed:", e);
+    }
+  };
+
+  const forkThread = async (id: string) => {
+    try {
+      const data = await api.post<{ thread_id: string; label: string }>(`/threads/${id}/fork`);
+      // cache current thread before switching
+      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
+      setActiveThread(data.thread_id);
+      setMessages([
+        {
+          role: "assistant",
+          content: `Forked from **${id}** — new thread **${data.label}**.`,
+          timestamp: formatTime(),
+        },
+      ]);
+      loadThreads();
+    } catch (e: any) {
+      console.error("[threads] fork failed:", e);
+    }
+  };
+
+  const archiveThread = async (id: string) => {
+    try {
+      await api.post(`/threads/${id}/archive`);
+      // drop from local list immediately
+      setThreads((prev) => prev.filter((t) => t.id !== id));
+      if (activeThread === id) {
+        setActiveThread("desktop");
+      }
+    } catch (e: any) {
+      console.error("[threads] archive failed:", e);
+    }
+  };
+
+  const unarchiveThread = async (id: string) => {
+    try {
+      await api.post(`/threads/${id}/unarchive`);
+      loadThreads();
+    } catch (e: any) {
+      console.error("[threads] unarchive failed:", e);
     }
   };
 
@@ -1091,6 +1133,31 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     });
   }, []);
 
+  // ── Pause / resume generation ───────────────────────────────
+  const pauseGeneration = useCallback(async () => {
+    try {
+      await api.post('/agents/default/interrupt', {
+        type: 'pause',
+        thread_id: activeThreadRef.current,
+      });
+      setIsPaused(true);
+    } catch {
+      // backend might not support pause yet — ignore silently
+    }
+  }, []);
+
+  const resumeGeneration = useCallback(async () => {
+    try {
+      await api.post('/agents/default/interrupt', {
+        type: 'resume',
+        thread_id: activeThreadRef.current,
+      });
+      setIsPaused(false);
+    } catch {
+      // backend might not support resume yet — ignore silently
+    }
+  }, []);
+
   // ── Answer clarification ─────────────────────────────────────
   const answerClarification = (questionId: string | undefined, answer: string) => {
     const payload = JSON.stringify({
@@ -1170,6 +1237,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // Functions
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
+    forkThread, archiveThread, unarchiveThread,
     startBackend, notify,
     // Approval
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
@@ -1181,6 +1249,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     pendingMessages,
     // Stop generation
     stopGeneration,
+    // Pause / resume generation
+    pauseGeneration, resumeGeneration, isPaused,
     // Research mode
     researchMode, setResearchMode,
     // Sound toggle
