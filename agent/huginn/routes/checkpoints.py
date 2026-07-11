@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 import uuid
@@ -63,7 +64,7 @@ def _validate_workspace_path(raw_path: str) -> Path:
 async def create_checkpoint(params: dict[str, Any]) -> dict[str, Any]:
     """Create a checkpoint of the given directory for later diff review."""
     base = _validate_workspace_path(params.get("path", "."))
-    snapshot = _snapshot_directory(base)
+    snapshot = await asyncio.to_thread(_snapshot_directory, base)
     cp_id = uuid.uuid4().hex[:8]
     with _state_lock:
         _checkpoints[cp_id] = (base, snapshot)
@@ -85,7 +86,7 @@ async def checkpoint_diff(cp_id: str) -> dict[str, Any]:
         if cp_id not in _checkpoints:
             return {"error": "checkpoint not found"}
         base, snapshot = _checkpoints[cp_id]
-    current = _snapshot_directory(base)
+    current = await asyncio.to_thread(_snapshot_directory, base)
     diffs = []
     all_files = set(snapshot.keys()) | set(current.keys())
     for rel in sorted(all_files):
@@ -135,7 +136,7 @@ async def reject_checkpoint(cp_id: str) -> dict[str, Any]:
             return {"error": "checkpoint not found"}
         base, snapshot = _checkpoints[cp_id]
         del _checkpoints[cp_id]
-    current = _snapshot_directory(base)
+    current = await asyncio.to_thread(_snapshot_directory, base)
     for rel, content in snapshot.items():
         if rel in current:
             path = base / rel

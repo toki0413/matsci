@@ -156,7 +156,8 @@ async def memory_maintenance(params: dict[str, Any] | None = None) -> dict[str, 
     try:
         agent = await get_agent()
         p = params or {}
-        summary = agent.memory.maintenance(
+        summary = await asyncio.to_thread(
+            agent.memory.maintenance,
             prune_threshold=p.get("prune_threshold", 0.15),
             deduplicate=p.get("deduplicate", True),
         )
@@ -168,19 +169,12 @@ async def memory_maintenance(params: dict[str, Any] | None = None) -> dict[str, 
 
 @router.post("/memory/lint")
 async def memory_lint(params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """LLM Wiki Lint: knowledge base health check.
-
-    Scans the long-term memory for contradictions, orphan entries,
-    stale assertions, low-confidence distilled knowledge, and
-    cross-reference candidates.
-
-    Inspired by Karpathy's LLM Wiki concept — periodically checking
-    the knowledge base for issues that manual review would miss.
-    """
+    """LLM Wiki Lint: knowledge base health check."""
     try:
         agent = await get_agent()
         p = params or {}
-        report = agent.memory.longterm.lint(
+        report = await asyncio.to_thread(
+            agent.memory.longterm.lint,
             limit=p.get("limit", 100),
         )
         return {"success": True, "report": report}

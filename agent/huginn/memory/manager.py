@@ -587,9 +587,7 @@ class MemoryManager:
         if not path:
             return None
         path.parent.mkdir(parents=True, exist_ok=True)
-        long_entries = self.longterm.list_all(limit=9999, alive_only=True)
-        long_entries = [e for e in long_entries if e.get("tier") == "long"]
-        long_entries.sort(key=lambda e: e.get("importance", 0.0), reverse=True)
+        long_entries = self.longterm.list_long_tier(limit=200)
         lines = ["# MEMORY.md — Curated long-term memory", ""]
         for e in long_entries:
             tag_str = ", ".join(json.loads(e.get("tags", "[]")) or [])
@@ -761,15 +759,15 @@ class MemoryManager:
         )
 
     def stats(self) -> dict[str, Any]:
-        all_entries = self.longterm.list_all(limit=9999, alive_only=True)
+        tier_counts = self.longterm.count_alive_by_tier()
         return {
             "session_id": self.session.session_id,
             "session_messages": len(self.session.messages),
             "session_tool_calls": len(self.session.tool_calls),
-            "longterm_entries": len(all_entries),
+            "longterm_entries": tier_counts["total"],
             "tier_counts": {
-                "short": sum(1 for e in all_entries if e.get("tier") == "short"),
-                "mid": sum(1 for e in all_entries if e.get("tier") == "mid"),
-                "long": sum(1 for e in all_entries if e.get("tier") == "long"),
+                "short": tier_counts["short"],
+                "mid": tier_counts["mid"],
+                "long": tier_counts["long"],
             },
         }
