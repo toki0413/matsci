@@ -298,6 +298,27 @@ class ContextBuilder:
         lines.append("### End Sub-goal Constraints")
         return "\n".join(lines)
 
+    def build_goal_text(self, session_state=None) -> str:
+        """Inject active persistent goal from GoalStore."""
+        try:
+            from huginn.autoloop.goal_store import get_goal_store
+            store = get_goal_store()
+            active = store.get_active()
+            if not active:
+                return ""
+            lines = [
+                f"### Persistent Goal (iter {active.iteration})",
+                f"Goal: {active.text}",
+            ]
+            if active.sub_goals:
+                lines.append("Sub-goal constraints:")
+                for i, sg in enumerate(active.sub_goals, 1):
+                    lines.append(f"  {i}. {sg}")
+            lines.append("### End Persistent Goal")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     def build_session_continuity(self, session_state=None) -> str:
         """Inject previous session summary for cross-session continuity.
 
@@ -475,6 +496,10 @@ class ContextBuilder:
         subgoal_text = self.build_subgoal_text(session_state)
         if subgoal_text:
             ctx_parts.append(subgoal_text)
+
+        goal_text = self.build_goal_text(session_state)
+        if goal_text:
+            ctx_parts.append(goal_text)
 
         if ctx_parts:
             from langchain_core.messages import SystemMessage
