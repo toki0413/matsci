@@ -468,13 +468,11 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
     连接建立后先发一段历史输出, 然后持续 tail -f 新增内容,
     直到客户端断开或作业结束。
     """
-    # WebSocket 路由不走 router 级依赖, 手动鉴权
-    from huginn.security.auth import require_api_key
+    # WebSocket 路由不走 router 级依赖, 走统一的 ws_auth_and_track
+    from huginn.middleware.ws_governance import get_tracker, ws_auth_and_track
 
-    try:
-        require_api_key(request=None, websocket=websocket)
-    except Exception:
-        await websocket.close(code=4001, reason="Unauthorized")
+    identity = await ws_auth_and_track(websocket)
+    if identity is None:
         return
 
     await websocket.accept()
@@ -484,12 +482,14 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
     if record is None:
         await websocket.send_json({"type": "error", "error": f"job '{local_id}' not found"})
         await websocket.close()
+        get_tracker().release(identity)
         return
 
     cfg, err = _resolve_hpc_config({"credential_id": record.credential_id})
     if err or cfg is None:
         await websocket.send_json({"type": "error", "error": "无法解析 HPC 配置"})
         await websocket.close()
+        get_tracker().release(identity)
         return
 
     output_file = _job_output_path(cfg.scheduler, record.scheduler_id, cfg.remote_work_dir)
@@ -576,7 +576,7 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                 elif kind == "error":
                     await websocket.send_json({"type": "error", "error": content})
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 idle_count += 1
                 # 每隔 ~15 秒轮一次作业状态, 看是不是结束了
                 if idle_count % 15 == 0:
@@ -608,3 +608,4 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
             await websocket.close()
         except Exception:
             logger.debug("websocket.close 收尾失败", exc_info=True)
+        get_tracker().release(identity)

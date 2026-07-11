@@ -48,6 +48,7 @@ from huginn.routes.team import router as team_router
 from huginn.routes.threads import router as threads_router
 from huginn.routes.tools import router as tools_router
 from huginn.routes.unified import router as unified_router
+from huginn.routes.users import router as users_router
 from huginn.routes.workflows import router as workflows_router
 from huginn.routes.data_dict import router as data_dict_router
 from huginn.routes.document import router as document_router
@@ -97,6 +98,7 @@ ALL_ROUTERS = [
     skills_router,
     mcp_router,
     threads_router,
+    users_router,
     checkpoints_router,
     compat_router,
     hpc_router,
