@@ -71,6 +71,8 @@ class PetMood(StrEnum):
 
     IDLE = "idle"
     THINKING = "thinking"
+    CODING = "coding"
+    REVIEWING = "reviewing"
     WORKING = "working"
     SUCCESS = "success"
     ERROR = "error"
