@@ -86,6 +86,7 @@ app.add_middleware(
 # ── Rate limiting (sliding window per client IP) ──────────────────────
 # Default to 120 req/min when not explicitly configured. Set to 0 to disable.
 _RATE_LIMIT = int(os.environ.get("HUGINN_RATE_LIMIT_PER_MINUTE", "120"))
+_AUTH_RATE_LIMIT = 10  # stricter per-IP limit for /auth/login and /auth/token
 _rate_buckets: dict[str, deque] = defaultdict(deque)
 _RATE_WINDOW = 60.0  # seconds
 # Sweep empty buckets every N requests so _rate_buckets doesn't grow
@@ -113,6 +114,32 @@ async def rate_limit_middleware(request: Request, call_next):
 
     client_ip = request.client.host if request.client else "unknown"
     now = time.monotonic()
+
+    # Stricter limit for auth endpoints — brute-force protection
+    if path in ("/auth/login", "/auth/token", "/v1/auth/login", "/v1/auth/token"):
+        auth_key = f"auth:{client_ip}"
+        auth_bucket = _rate_buckets[auth_key]
+        while auth_bucket and auth_bucket[0] < now - _RATE_WINDOW:
+            auth_bucket.popleft()
+        if not auth_bucket:
+            del _rate_buckets[auth_key]
+        if len(auth_bucket) >= _AUTH_RATE_LIMIT:
+            RATE_LIMIT_BLOCKED_TOTAL.labels(session="all").inc()
+            from huginn.errors import huginn_error_response
+            request_id = getattr(request.state, "request_id", "unknown")
+            return JSONResponse(
+                status_code=429,
+                content=huginn_error_response(
+                    "RATE_LIMITED",
+                    "Too many auth attempts, slow down.",
+                    request_id,
+                    status_code=429,
+                ),
+                headers={"Retry-After": str(int(_RATE_WINDOW))},
+            )
+        _rate_buckets[auth_key].append(now)
+        return await call_next(request)
+
     bucket = _rate_buckets[client_ip]
 
     # Drop timestamps older than the window
@@ -169,6 +196,13 @@ app.add_middleware(RequestTimeoutMiddleware)
 # Request-ID middleware — registered last so it runs outermost and the
 # correlation id is in place before any other middleware / handler logs.
 app.add_middleware(RequestIDMiddleware)
+
+# Error normalization — rewrites legacy {"error": "..."} responses to the
+# unified envelope. Opt-out via HUGINN_NORMALIZE_ERRORS=0.
+from huginn.middleware.error_normalize import ErrorNormalizeMiddleware, should_enable_normalize
+
+if should_enable_normalize():
+    app.add_middleware(ErrorNormalizeMiddleware)
 
 # Maintenance mode middleware — returns 503 for non-health requests
 # when HUGINN_MAINTENANCE=1 or runtime toggle is on.

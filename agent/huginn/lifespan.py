@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from huginn.config import HuginnConfig, get_config
+from huginn.config import get_config
 from huginn.pet import configure_pet
 from huginn.server_core import (
     _CODEBASE_AVAILABLE,
@@ -37,7 +37,7 @@ async def _connect_mcp_server(
     try:
         await asyncio.wait_for(manager.connect(config), timeout=timeout)
         return True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info(f"[MCP] Warning: {name} connection timed out ({timeout}s)")
     except Exception as e:
         logger.info(f"[MCP] Warning: failed to connect to {name}: {e}")
@@ -402,7 +402,7 @@ async def lifespan(app: FastAPI):
     # then kick off optional tools in the background so they don't block
     # the server from accepting health checks.
     try:
-        from huginn.tools import register_core_tools, register_optional_tools
+        from huginn.tools import register_core_tools
         register_core_tools()
         logger.info("[startup] core tools registered")
         # Background-register the remaining ~55 optional tools (heavy imports)
@@ -467,12 +467,30 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.debug(f"[startup] memory maintainer skipped: {exc}")
 
+    # Start HPC job monitor — auto-tracks submitted remote jobs
+    job_monitor = None
+    try:
+        from huginn.hpc.monitor import JobMonitor
+        job_monitor = JobMonitor(
+            workspace=os.environ.get("HUGINN_WORKSPACE", ".")
+        )
+        job_monitor.start()
+        logger.info("[startup] HPC job monitor started")
+    except Exception as exc:
+        logger.debug(f"[startup] HPC job monitor skipped: {exc}")
+
     yield
 
     # Shutdown: cancel background tasks first so they don't touch closing resources
     if memory_maintainer:
         try:
             memory_maintainer.stop()
+        except Exception:
+            pass
+
+    if job_monitor:
+        try:
+            job_monitor.stop()
         except Exception:
             pass
 

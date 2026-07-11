@@ -17,8 +17,6 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from huginn.security.auth import require_api_key
-
 router = APIRouter(tags=["terminal"])
 
 logger = logging.getLogger(__name__)
@@ -43,11 +41,15 @@ async def terminal_websocket(websocket: WebSocket):
         {"type": "closed", "exit_code": n}     shell 结束
         {"type": "error", "error": "..."}     出错
     """
-    # WebSocket 不走 router 级依赖, 手动鉴权
-    try:
-        require_api_key(request=None, websocket=websocket)
-    except Exception:
-        await websocket.close(code=4001, reason="Unauthorized")
+    # WebSocket 不走 router 级依赖, 走统一的 ws_auth_and_track
+    from huginn.middleware.ws_governance import (
+        WSMessageRateLimiter,
+        get_tracker,
+        ws_auth_and_track,
+    )
+
+    identity = await ws_auth_and_track(websocket)
+    if identity is None:
         return
 
     await websocket.accept()
@@ -57,6 +59,7 @@ async def terminal_websocket(websocket: WebSocket):
     if not credential_id:
         await websocket.send_json({"type": "error", "error": "缺少 credential_id 参数"})
         await websocket.close()
+        get_tracker().release(identity)
         return
 
     cols = int(websocket.query_params.get("cols", "80"))
@@ -70,11 +73,13 @@ async def terminal_websocket(websocket: WebSocket):
     if err or cfg is None:
         await websocket.send_json({"type": "error", "error": err or "无法解析 SSH 配置"})
         await websocket.close()
+        get_tracker().release(identity)
         return
 
     if not cfg.host or not cfg.username:
         await websocket.send_json({"type": "error", "error": "host 和 username 不能为空"})
         await websocket.close()
+        get_tracker().release(identity)
         return
 
     # 用 paramiko 建一条带 PTY 的交互式 shell
@@ -85,6 +90,7 @@ async def terminal_websocket(websocket: WebSocket):
         logger.warning("终端连接失败 (%s): %s", cfg.host, exc)
         await websocket.send_json({"type": "error", "error": f"SSH 连接失败: {exc}"})
         await websocket.close()
+        get_tracker().release(identity)
         return
 
     await websocket.send_json({
@@ -99,11 +105,15 @@ async def terminal_websocket(websocket: WebSocket):
     output_queue: asyncio.Queue = asyncio.Queue()
     # 用来通知读线程该退出了
     closed = {"flag": False}
+    rate_limiter = WSMessageRateLimiter()
 
     async def _pump_input():
         """从 WebSocket 读输入, 喂给 SSH channel。"""
         while True:
             msg = await websocket.receive_text()
+            if not rate_limiter.check():
+                await websocket.send_json({"type": "error", "error": "消息频率过高, 请放慢"})
+                continue
             try:
                 import json
                 data = json.loads(msg)
@@ -183,6 +193,7 @@ async def terminal_websocket(websocket: WebSocket):
             await websocket.close()
         except Exception:
             logger.debug("websocket.close 收尾失败", exc_info=True)
+        get_tracker().release(identity)
 
 
 # ── 内部工具函数 ─────────────────────────────────────────────────

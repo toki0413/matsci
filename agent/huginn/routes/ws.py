@@ -63,13 +63,14 @@ async def agent_websocket(websocket: WebSocket):
     Authenticates, sets up heartbeat + pet event forwarding, then dispatches
     incoming messages to handler functions in ws_helpers.py.
     """
-    from huginn.security.auth import require_api_key
+    from huginn.middleware.ws_governance import (
+        WSMessageRateLimiter,
+        get_tracker,
+        ws_auth_and_track,
+    )
 
-    try:
-        require_api_key(request=None, websocket=websocket)
-    except Exception as auth_exc:
-        logger.warning("WebSocket auth failed: %s", auth_exc)
-        await websocket.close(code=4001, reason="Unauthorized")
+    identity = await ws_auth_and_track(websocket)
+    if identity is None:
         return
 
     await websocket.accept()
@@ -139,9 +140,13 @@ async def agent_websocket(websocket: WebSocket):
     _pending_tasks.add(pet_task)
     pet_task.add_done_callback(_pending_tasks.discard)
 
+    rate_limiter = WSMessageRateLimiter()
     try:
         while True:
             message = await websocket.receive_text()
+            if not rate_limiter.check():
+                await _send_error(websocket, "Too many messages, slow down.")
+                continue
             last_recv["t"] = asyncio.get_event_loop().time()
 
             # Handle client-side pong
@@ -252,3 +257,4 @@ async def agent_websocket(websocket: WebSocket):
                     await _t
                 except asyncio.CancelledError:
                     pass
+        get_tracker().release(identity)

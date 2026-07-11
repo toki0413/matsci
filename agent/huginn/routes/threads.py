@@ -24,15 +24,39 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["threads"])
 
 
+def _check_thread_owner(thread_id: str, request: Request) -> dict[str, Any] | None:
+    """Return error dict if the caller doesn't own the thread, None if OK.
+
+    Dev/shared mode bypasses the check so existing single-user setups
+    keep working without a configured user store.
+    """
+    user_id = _current_user_id(request)
+    if user_id in ("dev", "shared", None):
+        return None
+    with _state_lock:
+        thread = _threads.get(thread_id)
+        if thread is None:
+            return {"success": False, "error": "thread not found"}
+        owner = thread.get("user_id")
+        if owner and owner != user_id:
+            return {"success": False, "error": "forbidden: thread belongs to another user"}
+    return None
+
+
 @router.get("/threads")
-async def list_threads(include_archived: bool = False) -> dict[str, Any]:
+async def list_threads(request: Request, include_archived: bool = False) -> dict[str, Any]:
     """List known conversation threads."""
+    user_id = _current_user_id(request)
     with _state_lock:
         threads = sorted(
             list(_threads.values()),
             key=lambda x: x.get("last_active", ""),
             reverse=True,
         )
+    # Filter to the caller's own threads in multi-tenant mode. Dev/shared
+    # sessions see everything for backward compat.
+    if user_id not in ("dev", "shared", None):
+        threads = [t for t in threads if not t.get("user_id") or t.get("user_id") == user_id]
     if not include_archived:
         threads = [t for t in threads if not t.get("archived", False)]
     return {
@@ -70,8 +94,11 @@ async def create_thread(params: dict[str, Any], request: Request) -> dict[str, A
 
 
 @router.get("/threads/{thread_id}")
-async def get_thread(thread_id: str) -> dict[str, Any]:
+async def get_thread(thread_id: str, request: Request) -> dict[str, Any]:
     """Return metadata for a conversation thread."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id in _threads:
             return {"thread_id": thread_id, **dict(_threads[thread_id])}
@@ -83,8 +110,11 @@ _LC_ROLE_MAP = {"human": "user", "ai": "assistant", "tool": "tool"}
 
 
 @router.get("/threads/{thread_id}/messages")
-async def get_thread_messages(thread_id: str) -> dict[str, Any]:
+async def get_thread_messages(thread_id: str, request: Request) -> dict[str, Any]:
     """Return message history for a thread from the LangGraph checkpointer."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     try:
         agent = await get_agent()
         graph = agent.build_graph()
@@ -118,8 +148,11 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
 
 
 @router.patch("/threads/{thread_id}")
-async def rename_thread(thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
+async def rename_thread(thread_id: str, params: dict[str, Any], request: Request) -> dict[str, Any]:
     """Rename a thread."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id not in _threads:
             return {"success": False, "error": "thread not found"}
@@ -128,8 +161,11 @@ async def rename_thread(thread_id: str, params: dict[str, Any]) -> dict[str, Any
 
 
 @router.delete("/threads/{thread_id}")
-async def delete_thread(thread_id: str) -> dict[str, Any]:
+async def delete_thread(thread_id: str, request: Request) -> dict[str, Any]:
     """Remove a thread from the registry."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id in _threads:
             del _threads[thread_id]
@@ -137,8 +173,11 @@ async def delete_thread(thread_id: str) -> dict[str, Any]:
 
 
 @router.post("/threads/{thread_id}/archive")
-async def archive_thread(thread_id: str) -> dict[str, Any]:
+async def archive_thread(thread_id: str, request: Request) -> dict[str, Any]:
     """Archive a thread — hides it from the active list."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id not in _threads:
             return {"success": False, "error": "thread not found"}
@@ -147,8 +186,11 @@ async def archive_thread(thread_id: str) -> dict[str, Any]:
 
 
 @router.post("/threads/{thread_id}/unarchive")
-async def unarchive_thread(thread_id: str) -> dict[str, Any]:
+async def unarchive_thread(thread_id: str, request: Request) -> dict[str, Any]:
     """Unarchive a thread — restores it to the active list."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id not in _threads:
             return {"success": False, "error": "thread not found"}
@@ -157,8 +199,11 @@ async def unarchive_thread(thread_id: str) -> dict[str, Any]:
 
 
 @router.post("/threads/{thread_id}/fork")
-async def fork_thread(thread_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+async def fork_thread(thread_id: str, request: Request, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Fork the conversation tree from the current position (or a given node)."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id not in _threads:
             return {"success": False, "error": "thread not found"}
@@ -175,8 +220,11 @@ async def fork_thread(thread_id: str, params: dict[str, Any] | None = None) -> d
 
 
 @router.get("/threads/{thread_id}/branches")
-async def list_branches(thread_id: str) -> dict[str, Any]:
+async def list_branches(thread_id: str, request: Request) -> dict[str, Any]:
     """List all branches in the conversation tree for this thread."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id not in _threads:
             return {"success": False, "error": "thread not found"}
@@ -187,8 +235,11 @@ async def list_branches(thread_id: str) -> dict[str, Any]:
 
 
 @router.post("/threads/{thread_id}/switch-branch")
-async def switch_branch(thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
+async def switch_branch(thread_id: str, params: dict[str, Any], request: Request) -> dict[str, Any]:
     """Switch the active conversation path to end at the given node."""
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
     with _state_lock:
         if thread_id not in _threads:
             return {"success": False, "error": "thread not found"}

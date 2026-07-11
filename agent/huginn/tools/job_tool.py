@@ -6,6 +6,9 @@ Supports both local mock mode and remote HPC submission via SSH.
 from __future__ import annotations
 
 import os
+import shlex
+import time
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -265,6 +268,26 @@ class JobTool(HuginnTool):
                     )
 
                 job_id = client.submit_job(script_content, job_name=job_name)
+
+                # Track in RemoteJobStore so the monitor picks it up
+                try:
+                    from huginn.execution.remote_job_store import (
+                        RemoteJobRecord,
+                        RemoteJobStore,
+                    )
+                    workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
+                    store = RemoteJobStore(workspace=workspace)
+                    record = RemoteJobRecord(
+                        local_id=str(uuid.uuid4())[:8],
+                        scheduler_id=str(job_id),
+                        command=shlex.split(args.command) if args.command else [],
+                        cwd=cfg.remote_work_dir,
+                        status="PENDING",
+                        submitted_at=time.time(),
+                    )
+                    store.add_or_update(record)
+                except Exception:
+                    pass
 
                 output = JobToolOutput(
                     job_id=job_id,

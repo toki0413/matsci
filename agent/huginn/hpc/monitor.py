@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
-from huginn.hpc.client import HPCClient
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +53,6 @@ class JobMonitor:
         self._store = RemoteJobStore(workspace=self.workspace)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        # Reuse SSH connections across poll cycles to avoid reconnect churn
-        self._client_cache: dict[str, HPCClient] = {}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -71,12 +68,6 @@ class JobMonitor:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=timeout)
-        for client in self._client_cache.values():
-            try:
-                client.disconnect()
-            except Exception:
-                logger.debug("disconnect failed", exc_info=True)
-        self._client_cache.clear()
         logger.info("job monitor stopped")
 
     def _run(self) -> None:
@@ -119,7 +110,9 @@ class JobMonitor:
             return
 
         try:
-            with HPCClient(cfg) as client:
+            from huginn.hpc.connection_pool import get_pool
+
+            with get_pool().borrow(cfg) as client:
                 status = client.poll_status(record.scheduler_id)
                 old_state = record.status
                 record.status = status.state
