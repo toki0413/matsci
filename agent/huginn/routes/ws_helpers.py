@@ -12,7 +12,6 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
 
 from fastapi import WebSocket
 from langchain_core.messages import AIMessage, ToolMessage
@@ -136,7 +135,7 @@ async def send_plan_and_wait(
     try:
         result = await asyncio.wait_for(future, timeout=timeout)
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"confirmed": True, "edited_plan": None}
     finally:
         _pending_plans.pop(plan_id, None)
@@ -676,9 +675,7 @@ async def _handle_user_input(
 
     # Team mode trigger — keyword OR config flag
     use_team = False
-    if any(kw in content.lower() for kw in ("/team", "delegate", "collaborate")):
-        use_team = True
-    elif getattr(cfg_chat, "team_mode_enabled", False):
+    if any(kw in content.lower() for kw in ("/team", "delegate", "collaborate")) or getattr(cfg_chat, "team_mode_enabled", False):
         use_team = True
 
     # Fusion mode trigger — parallel multi-model + synthesis
@@ -689,6 +686,8 @@ async def _handle_user_input(
     plan_data: dict = {}
     if any(kw in content.lower() for kw in ("/plan", "plan mode")):
         plan_mode = True
+        if hasattr(agent, "set_mode"):
+            agent.set_mode("plan")
 
     # Research mode trigger — guard for agents without mode tracking
     if any(kw in content.lower() for kw in ("/research", "research mode")):
@@ -698,8 +697,10 @@ async def _handle_user_input(
     # ── Research mode ──
     if hasattr(agent, "is_research_mode") and agent.is_research_mode():
         try:
-            from huginn.personas.research import RESEARCH_PERSONA
-            from huginn.research_workflow import ResearchWorkflow, ResearchWorkflowConfig
+            from huginn.research_workflow import (
+                ResearchWorkflow,
+                ResearchWorkflowConfig,
+            )
         except ImportError:
             pass
         try:
@@ -763,7 +764,6 @@ async def _handle_user_input(
     if use_fusion and not use_team:
         try:
             from huginn.routes.team import _build_model_team
-            from huginn.agents.team import TeamRole
 
             team = _build_model_team()
             # Strip the /fusion keyword from the query
@@ -772,7 +772,7 @@ async def _handle_user_input(
                 fusion_query = content
 
             await websocket.send_json(
-                {"type": "text_delta", "text": f"⚡ Fusion mode activated.\n"}
+                {"type": "text_delta", "text": "⚡ Fusion mode activated.\n"}
             )
             await websocket.send_json(
                 {"type": "text_delta", "text": f"Panel: {len(team.members)} members\n"}
@@ -845,6 +845,20 @@ async def _handle_user_input(
             plan_objective = content.replace("/plan", "").replace("plan mode", "").strip()
             if not plan_objective:
                 plan_objective = content
+
+            # 注入知识库上下文，让计划生成有据可依
+            plan_context_hint = ""
+            try:
+                _ctx = get_context()
+                if _ctx.kb is not None and _ctx.kb.count() > 0:
+                    _chunks = await asyncio.to_thread(_ctx.kb.query, plan_objective, 3)
+                    if _chunks:
+                        plan_context_hint = "\n\nRelevant context from knowledge base:\n" + "\n".join(
+                            f"- {(c.get('text') or '')[:200]}" for c in _chunks[:3]
+                        )
+            except Exception:
+                pass
+
             plan_prompt = (
                 f"Break down the following task into a structured plan.\n\n"
                 f"Task: {plan_objective}\n\n"
@@ -854,6 +868,7 @@ async def _handle_user_input(
                 f'  "tools_needed": ["tool1", "tool2", ...]\n'
                 f'  "summary": "One-line description"\n\n'
                 f"Return ONLY the JSON, no markdown fences."
+                f"{plan_context_hint}"
             )
 
             plan_response = await agent.model.ainvoke(plan_prompt)
@@ -867,7 +882,7 @@ async def _handle_user_input(
 
             try:
                 plan_data = _json.loads(plan_text)
-            except (Exception,):
+            except Exception:
                 import re
 
                 if not isinstance(plan_text, str):
@@ -913,6 +928,26 @@ async def _handle_user_input(
                 "cfg_chat": cfg_chat,
                 "rag_sources": [],
             }
+
+            # 持久化到 PlanStore，支持跨会话恢复
+            try:
+                from huginn.autoloop.plan_store import PlanStep, PlanStore
+                _store = PlanStore()
+                _steps = [
+                    PlanStep(
+                        id=f"step_{i}",
+                        description=s.get("description") or s.get("name", ""),
+                        tool=s.get("tool"),
+                    )
+                    for i, s in enumerate(plan_data.get("steps", []))
+                ]
+                _store.create_plan(
+                    objective=plan_objective,
+                    steps=_steps,
+                    auto_confirm=False,
+                )
+            except Exception:
+                pass
 
             await websocket.send_json({
                 "type": "plan",
@@ -1169,15 +1204,24 @@ async def _handle_plan_confirm(
         "content": plan_context, "thread_id": thread_id,
         "cfg_chat": cfg_chat, "agent": agent,
     })
-    await _stream_agent_response(
-        websocket,
-        agent,
-        plan_context,
-        thread_id,
-        cfg_chat,
-        plan_result=_plan_result,
-        sediment_question=plan_objective,
-        sediment_type="plan_execution",
-        error_log="plan execution error",
-        error_label="Plan execution failed",
-    )
+
+    # 执行阶段开启 plan_mode — 写工具强制 ASK，只读工具放行
+    _prev_plan_mode = getattr(agent._permission_config, 'plan_mode', False) if hasattr(agent, '_permission_config') else False
+    if hasattr(agent, '_permission_config'):
+        agent._permission_config.plan_mode = True
+    try:
+        await _stream_agent_response(
+            websocket,
+            agent,
+            plan_context,
+            thread_id,
+            cfg_chat,
+            plan_result=_plan_result,
+            sediment_question=plan_objective,
+            sediment_type="plan_execution",
+            error_log="plan execution error",
+            error_label="Plan execution failed",
+        )
+    finally:
+        if hasattr(agent, '_permission_config'):
+            agent._permission_config.plan_mode = _prev_plan_mode

@@ -837,8 +837,8 @@ def register_science_hooks(hm: HookManager) -> None:
 
     # test hook — STOP, 一轮回复后跑 pytest
     try:
-        from huginn.hooks.test_hook import test_stop_hook
         from huginn.hooks import STOP
+        from huginn.hooks.test_hook import test_stop_hook
         hm.register(STOP, test_stop_hook)
     except ImportError:
         logger.debug("test_hook not available (non-fatal)")
@@ -849,6 +849,20 @@ def register_science_hooks(hm: HookManager) -> None:
         register_browser_gate_hooks(hm)
     except ImportError:
         logger.debug("browser_gate_hook not available (non-fatal)")
+
+    # 研究模式安全门 — PRE_TOOL_USE, 昂贵工具调用需确认
+    try:
+        from huginn.hooks.research_safety_hook import register_research_safety_hooks
+        register_research_safety_hooks(hm)
+    except ImportError:
+        logger.debug("research_safety_hook not available (non-fatal)")
+
+    # 研究预算追踪 — POST_TOOL_USE, 按会话限制昂贵工具
+    try:
+        from huginn.research_budget import research_budget_hook
+        hm.register(POST_TOOL_USE, research_budget_hook)
+    except ImportError:
+        logger.debug("research_budget_hook not available (non-fatal)")
 
     hm._science_hooks_registered = True
     logger.info(
