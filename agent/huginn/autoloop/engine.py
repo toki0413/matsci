@@ -1711,6 +1711,9 @@ class AutoloopEngine:
 
         # Conditional verification: run cheap generative_verify first,
         # only call expensive reviewer critique when score < 0.5.
+        # ponytail: _generative_verify 依赖 results (被 math_evidence 修改过),
+        # 不能和 _collect_math_evidence 并行. 但可以和 emergent_complexity/
+        # literature_comparison 并行 — 它们在下面已经 gather 了.
         gen_verify = None
         try:
             gen_verify = await self._generative_verify(execution_result, results)
@@ -2904,29 +2907,25 @@ Please modify the code to address this task."""
 
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
-        # 预测只是 hint, LLM 可以无视, 不强制
+        # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
+        # — _speculator_hint 有 5 处 append, 不截断 20 轮后可能数 KB.
         hint_block = ""
         if self._speculator_hint:
-            hint_block = f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint}\n"
-        # 领域知识库检索: 用 context 序列化串当 query, 命中 first-principles
-        # 参考块就拼进 prompt, 让假设接地已知理论而非凭空臆造
-        kb_block = self._build_kb_text(
-            query=json.dumps(context, ensure_ascii=False)[:500]
-        )
+            hint_block = f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[:500]}\n"
+        # 三路检索共用一个 query, 避免重复序列化 context 3 次
+        ctx_query = json.dumps(context, ensure_ascii=False)[:500]
+        # 领域知识库检索: 命中 first-principles 参考块就拼进 prompt
+        kb_block = self._build_kb_text(query=ctx_query)
         if kb_block:
             kb_block = f"\n{kb_block}\n"
         # 知识图谱检索: 把之前 run 发现的实体和关系拉回来, 避免
         # 重复发现已有结论, 也让假设能建立在已有发现上
-        kg_block = self._build_kg_text(
-            query=json.dumps(context, ensure_ascii=False)[:500]
-        )
+        kg_block = self._build_kg_text(query=ctx_query)
         if kg_block:
             kg_block = f"\n{kg_block}\n"
         # 长期记忆检索: 跨会话的失败教训和发现. 之前只写不读,
         # 现在闭合 — _learn 写入的迭代记录下次能检索到.
-        mem_block = self._build_memory_text(
-            query=json.dumps(context, ensure_ascii=False)[:500]
-        )
+        mem_block = self._build_memory_text(query=ctx_query)
         if mem_block:
             mem_block = f"\n{mem_block}\n"
         # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
@@ -2937,8 +2936,14 @@ Please modify the code to address this task."""
             visual_block = f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
         # 数学深度引导: 提醒 agent 优先识别 PDE / 变分原理 / 微分几何结构,
         # 并用符号回归 + Sobol 灵敏度 + 物理约束先验 反复试探.
-        # 这一段是把"物理化学是数学的一部分"落到 prompt 的具体抓手.
-        math_block = self._MATH_DEPTH_PROMPT_BLOCK
+        # 条件化: 只在 context 含数学信号时注入, coder-only 任务不需要.
+        # 节省 ~150 tokens × 2 calls/iter × 20 iters = 6K tokens/run.
+        ctx_blob = json.dumps(context, ensure_ascii=False).lower()
+        _math_signals = ("equation", "lagrangian", "pde", "hamiltonian", "derivative",
+                         "differential", "integral", "eigenvalue", "tensor", "manifold",
+                         "symmetry", "conservation", "variational", "continuum",
+                         "stress", "strain", "energy", "phonon", "band")
+        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in ctx_blob for s in _math_signals) else ""
         return f"""You are an autonomous material science research agent.
 {hint_block}{kb_block}{kg_block}{mem_block}{visual_block}{math_block}
 Perceived context:
@@ -2989,7 +2994,9 @@ Math depth guidance (treat physics/chemistry as mathematics):
         visual_block = getattr(self, '_last_visual_context', '')
         if visual_block:
             visual_block = f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
-        math_block = self._MATH_DEPTH_PROMPT_BLOCK
+        # 条件化 math_block (同 hypothesize)
+        hyp_blob = hypothesis.lower() + json.dumps(context, ensure_ascii=False).lower()[:500]
+        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in hyp_blob for s in _math_signals) else ""
 
         # Inject learned skills + prompt patches from evolution engine.
         # This is the "use what you learned" half of the Learn→Plan loop.
