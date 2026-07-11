@@ -871,7 +871,7 @@ class AutoloopEngine:
                 print("  → No changes detected, waiting...")
                 # 轮空时 drain 侧边对话: 有 pending 问题就顺手答掉, 不白等.
                 await self._drain_side_questions()
-                await asyncio.sleep(2)
+                await asyncio.sleep(0.5)  # reduced from 2s for faster response
                 continue
 
             context = phase.result

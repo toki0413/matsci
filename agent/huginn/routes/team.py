@@ -273,6 +273,91 @@ async def delete_plan(plan_id: str) -> dict[str, Any]:
 # ── 老接口: Orchestrator (保留向后兼容) ─────────────────────────
 
 
+@router.post("/team/v2/fusion")
+async def team_v2_fusion(params: dict[str, Any]) -> dict[str, Any]:
+    """Fusion 模式: 并行多模型回答 → 裁判合成.
+
+    和 /team/v2/run 的区别:
+    - run: 串行流水线 (plan → execute → review)
+    - fusion: 并行 fan-out → 合成 fan-in
+
+    适合开放性研究问题, 不适合有明确步骤的执行任务.
+
+    参数:
+        query: 要查询的问题
+        thread_id: 可选, 用于对话上下文
+        panel_roles: 可选, 指定参与并行回答的角色列表
+        synthesizer_role: 可选, 负责合成的角色 (默认 critic)
+        max_panel: 可选, 最多并行成员数 (默认 5)
+    """
+    query = params.get("query") or params.get("objective") or ""
+    if not query:
+        return {"success": False, "error": "query is required"}
+
+    thread_id = params.get("thread_id")
+    panel_roles_raw = params.get("panel_roles")
+    synthesizer_role_raw = params.get("synthesizer_role", "critic")
+    max_panel = int(params.get("max_panel", 5))
+    rounds = max(1, int(params.get("rounds", 1)))
+
+    bus = get_pet_bus()
+
+    def _publish(mood: PetMood, msg: str, details: dict | None = None) -> None:
+        try:
+            bus.publish(mood=mood, message=msg, details=details or {})
+        except Exception:
+            pass
+
+    try:
+        from huginn.agents.team import TeamRole
+
+        # 解析角色参数
+        panel_roles = None
+        if panel_roles_raw and isinstance(panel_roles_raw, list):
+            try:
+                panel_roles = [TeamRole(r) for r in panel_roles_raw]
+            except ValueError:
+                pass
+
+        try:
+            synthesizer_role = TeamRole(synthesizer_role_raw)
+        except ValueError:
+            synthesizer_role = TeamRole.CRITIC
+
+        team = _build_model_team()
+        _publish(
+            PetMood.WORKING,
+            f"Fusion 启动: {len(team.members)} 个成员, panel ≤ {max_panel}, {rounds} 轮",
+        )
+
+        ctx: dict[str, Any] = {}
+        if thread_id:
+            ctx["thread_id"] = thread_id
+
+        result = await team.fusion_query(
+            query,
+            ctx,
+            panel_roles=panel_roles,
+            synthesizer_role=synthesizer_role,
+            max_panel=max_panel,
+            rounds=rounds,
+        )
+
+        panel_count = len(result.get("panel_responses", []))
+        _publish(
+            PetMood.SUCCESS if result.get("final_answer") else PetMood.ERROR,
+            f"Fusion 完成 · {panel_count} 个 panel 回答已合成",
+        )
+
+        return {"success": True, **result}
+    except Exception as e:
+        _publish(PetMood.ERROR, f"Fusion 执行失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ── 老接口: Orchestrator (保留向后兼容) ─────────────────────────
+
+
 @router.get("/team/profiles")
 async def team_profiles() -> dict[str, Any]:
     """List enabled agent profiles available for team tasks."""

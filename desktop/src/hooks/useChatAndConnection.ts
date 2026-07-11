@@ -116,6 +116,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pendingResponseRef = useRef<string>("");
   const streamingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Always-current snapshot of messages for the active thread — avoids
+  // stale closure captures in switchThread/createThread/forkThread.
+  const messagesRef = useRef<Message[]>([WELCOME_MSG()]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  // Tracks which thread we last sent a user_input to, so WS messages
+  // without an explicit thread_id can still be routed correctly.
+  const pendingThreadIdRef = useRef<string>("desktop");
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
 
@@ -144,6 +151,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // ── Autoloop progress (SSE) ──────────────────────────────────
   const [autoloopPhase, setAutoloopPhase] = useState<string>("");
   const [autoloopProgress, setAutoloopProgress] = useState<number>(0);
+
+  // ── Context window usage (from context_compacted WS) ─────────
+  const [contextPct, setContextPct] = useState<number>(0);
 
   // ── Thinking intensity (per-request override sent to backend) ──
   const [thinkingIntensity, setThinkingIntensity] = useState<"low" | "medium" | "high">("medium");
@@ -177,8 +187,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // switch thread: cache current messages, restore target thread's messages
   const switchThread = (threadId: string) => {
     if (threadId === activeThread) return;
-    // save current thread's messages to reactive store
-    setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
+    // save current thread's messages to reactive store — use ref to avoid stale closure
+    const currentMsgs = messagesRef.current;
+    setMessagesByThread((prev) => ({ ...prev, [activeThread]: currentMsgs }));
     // restore target thread's messages
     const cached = messagesByThread[threadId];
 
@@ -219,8 +230,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const createThread = async () => {
     try {
       const data = await api.post<{ id: string; label: string }>("/threads", { title: "New thread" });
-      // cache current thread before switching
-      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
+      // cache current thread before switching — use ref to avoid stale closure
+      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messagesRef.current }));
       setActiveThread(data.id);
       setMessages([
         {
@@ -260,8 +271,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const forkThread = async (id: string) => {
     try {
       const data = await api.post<{ thread_id: string; label: string }>(`/threads/${id}/fork`);
-      // cache current thread before switching
-      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messages }));
+      // cache current thread before switching — use ref to avoid stale closure
+      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messagesRef.current }));
       setActiveThread(data.thread_id);
       setMessages([
         {
@@ -345,26 +356,31 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     let alive = true;
 
     const check = async () => {
-      try {
-        const s: any = await invoke("get_agent_status");
-        if (alive) {
-          await syncBackendUrl();
-          setStatus(`${s.status} • v${s.version || "0.1.0"}`);
-          if (s.status === "ok") return true;
-        }
-      } catch {
-        // Not in Tauri (browser/dev) — try direct HTTP health check
+      // Skip Tauri invoke in browser/dev — go straight to HTTP fetch
+      const inTauri = "__TAURI_INTERNALS__" in window;
+      if (inTauri) {
         try {
-          const resp = await fetch(`${getApiBase()}/health`, { signal: AbortSignal.timeout(3000) });
-          if (resp.ok) {
-            const s = await resp.json();
-            if (alive) {
-              setStatus(`${s.status} • v${s.version || "0.1.0"}`);
-              if (s.status === "ok") return true;
-            }
+          const s: any = await invoke("get_agent_status");
+          if (alive) {
+            await syncBackendUrl();
+            setStatus(`${s.status} • v${s.version || "0.1.0"}`);
+            if (s.status === "ok") return true;
           }
-        } catch { /* still down */ }
+        } catch {
+          // Tauri invoke failed — fall through to HTTP check
+        }
       }
+      try {
+        const resp = await fetch(`${getApiBase()}/health`, { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+          const s = await resp.json();
+          if (alive) {
+            await syncBackendUrl();
+            setStatus(`${s.status} • v${s.version || "0.1.0"}`);
+            if (s.status === "ok") return true;
+          }
+        }
+      } catch { /* still down */ }
       return false;
     };
 
@@ -430,32 +446,84 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // Route messages to their thread's cache. Non-active thread messages
     // are buffered so switching back doesn't lose them.
     const _BROADCAST_TYPES = new Set(["pet_update", "ping", "auto_approve_set", "context_compacted"]);
-    // Backend injects thread_id on all messages at runtime, but TS union
-    // only declares it on some variants — cast to avoid narrowing.
+    // Backend injects thread_id on most messages, but some (tool_call,
+    // task_progress, etc.) may omit it. Fall back to the thread we last
+    // sent a user_input to so messages never cross into the wrong thread.
     const _tid = (data as any).thread_id as string | undefined;
-    if (_tid && _tid !== activeThreadRef.current
+    const _effectiveTid = _tid || pendingThreadIdRef.current;
+    if (_effectiveTid !== activeThreadRef.current
         && !_BROADCAST_TYPES.has(data.type)) {
-      // Buffer for the other thread instead of dropping
-      const otherTid = _tid;
+      // Buffer for the other thread — handle all message types, not just text
+      const otherTid = _effectiveTid;
       setMessagesByThread((prev) => {
-        const existing = prev[otherTid] || [];
-        // Only buffer text/done/error — tool calls are too complex to merge
+        const existing = prev[otherTid] ? [...prev[otherTid]] : [];
         if (data.type === "text_delta") {
           const last = existing[existing.length - 1];
           if (last && last.role === "assistant" && last.timestamp === "streaming") {
-            last.content += (data as any).text || "";
-            return { ...prev, [otherTid]: [...existing] };
+            // immutable update — copy the object, don't mutate
+            existing[existing.length - 1] = { ...last, content: last.content + ((data as any).text || "") };
+          } else {
+            existing.push({ role: "assistant", content: (data as any).text || "", timestamp: "streaming" });
           }
-          existing.push({ role: "assistant", content: (data as any).text || "", timestamp: "streaming" });
-          return { ...prev, [otherTid]: [...existing] };
+          return { ...prev, [otherTid]: existing };
+        }
+        if (data.type === "reasoning_delta") {
+          // buffer reasoning silently — it'll be re-fetched on switch if needed
+          return prev;
         }
         if (data.type === "done" || data.type === "error") {
           const last = existing[existing.length - 1];
           if (last && last.timestamp === "streaming") {
-            last.timestamp = formatTime();
-            if (data.type === "error") last.content += "\n\n[error]";
-            return { ...prev, [otherTid]: [...existing] };
+            existing[existing.length - 1] = {
+              ...last,
+              timestamp: formatTime(),
+              ...(data.type === "error" ? { content: last.content + "\n\n[error]" } : {}),
+            };
           }
+          return { ...prev, [otherTid]: existing };
+        }
+        if (data.type === "tool_call") {
+          existing.push({
+            role: "tool",
+            content: `Using tool **${(data as any).name}**…`,
+            timestamp: formatTime(),
+            tool_call_id: (data as any).id,
+            tool_name: (data as any).name,
+            tool_args: (data as any).args,
+            tool_status: "running",
+          });
+          return { ...prev, [otherTid]: existing };
+        }
+        if (data.type === "tool_result") {
+          const idx = existing.findIndex(
+            (m) => m.role === "tool" && m.tool_call_id === (data as any).id && m.tool_status === "running"
+          );
+          if (idx !== -1) {
+            existing[idx] = {
+              ...existing[idx],
+              content: `Tool **${existing[idx].tool_name}** finished`,
+              tool_status: "done",
+              tool_result: (data as any).content,
+            };
+          }
+          return { ...prev, [otherTid]: existing };
+        }
+        if (data.type === "task_progress") {
+          existing.push({
+            role: "assistant",
+            content: `📊 ${(data as any).stage || "pipeline"}: ${(data as any).status || ""}`,
+            timestamp: formatTime(),
+          });
+          return { ...prev, [otherTid]: existing };
+        }
+        // other types (plan, citations, etc.) — store as assistant text
+        if (data.type === "plan" || data.type === "citations") {
+          existing.push({
+            role: "assistant",
+            content: JSON.stringify(data).slice(0, 500),
+            timestamp: formatTime(),
+          });
+          return { ...prev, [otherTid]: existing };
         }
         return prev;
       });
@@ -580,6 +648,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       case "pong":
         break;
       case "context_compacted": {
+        setContextPct(data.after_pct || 0);
         setMessages((prev) => [
           ...prev,
           {
@@ -1034,6 +1103,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     undoTimerRef.current = setTimeout(() => setUndoWindow(false), 5000);
 
     const payload = JSON.stringify({ type: "user_input", content: userMsg.content, thread_id: activeThread, thinking: thinkingIntensity });
+    // Track which thread this request belongs to, so WS messages
+    // without an explicit thread_id can still be routed correctly.
+    pendingThreadIdRef.current = activeThread;
     try {
       wsClientRef.current!.send(payload);
     } catch {
@@ -1097,6 +1169,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       pendingResponseRef.current = "";
 
       const payload = JSON.stringify({ type: "user_input", content, thread_id: activeThread, thinking: thinkingIntensity });
+      pendingThreadIdRef.current = activeThread;
       try {
         wsClientRef.current.send(payload);
       } catch {
@@ -1166,6 +1239,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       answer,
       thread_id: activeThread,
     });
+    pendingThreadIdRef.current = activeThread;
     if (wsClientRef.current) {
       wsClientRef.current.send(payload);
     }
@@ -1199,19 +1273,23 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   };
 
   // ── Autoloop SSE subscription ────────────────────────────────
+  // Backend emits named events (snapshot/update), not unnamed messages.
+  // The old es.onmessage handler never fired — autoloop progress was dead.
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/tasks/stream`);
-    es.onmessage = (e) => {
+    const handleProgress = (e: MessageEvent) => {
       try {
-        const data = JSON.parse(e.data);
-        if (data.type === "task" && data.task_type === "autoloop") {
-          setAutoloopPhase(data.status || "");
-          setAutoloopProgress(data.progress_pct || 0);
+        const t = JSON.parse(e.data);
+        if (t.engine_kind === "autoloop") {
+          setAutoloopPhase(t.current_label || t.status || "");
+          setAutoloopProgress(t.percentage || 0);
         }
       } catch {
         // ignore malformed frames
       }
     };
+    es.addEventListener("snapshot", handleProgress);
+    es.addEventListener("update", handleProgress);
     return () => es.close();
   }, []);
 
@@ -1243,6 +1321,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
     // Autoloop
     autoloopPhase, autoloopProgress,
+    // Context window
+    contextPct,
     // Thinking intensity
     thinkingIntensity, setThinkingIntensity,
     // Message queue

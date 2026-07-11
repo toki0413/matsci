@@ -263,6 +263,10 @@ async def _stream_agent_response(
         # let tools push progress events back through the same WS
         progress_cb.set(_ws_send)
 
+        _auto_continue_count = 0
+        _MAX_AUTO_CONTINUES = 3  # max auto-continue iterations per turn
+        _pending_auto = False
+
         async for state in agent.chat(content, thread_id):
             if "_token" in state:
                 _token_streamed = True
@@ -288,6 +292,28 @@ async def _stream_agent_response(
                     "before_pct": c.get("before_pct", 0),
                     "after_pct": c.get("after_pct", 0),
                 })
+                continue
+
+            if state.get("_auto_continue"):
+                # Pipeline/proactive suggestions injected — trigger another
+                # agent.chat() iteration automatically instead of waiting for
+                # the user to send a new message.
+                if _auto_continue_count < _MAX_AUTO_CONTINUES:
+                    _auto_continue_count += 1
+                    _pending_auto = True
+                    logger.info(
+                        "Auto-continue %d/%d (pipeline suggestions pending)",
+                        _auto_continue_count, _MAX_AUTO_CONTINUES,
+                    )
+                    await _ws_send({
+                        "type": "text_delta",
+                        "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+                    })
+                else:
+                    logger.warning(
+                        "Auto-continue limit (%d) reached, stopping",
+                        _MAX_AUTO_CONTINUES,
+                    )
                 continue
 
             if handle_clarification and state.get("thought_loop_terminated"):
@@ -475,6 +501,46 @@ async def _stream_agent_response(
                     exc_info=True,
                 )
 
+        # Auto-continue: if pipeline suggestions were injected during the
+        # stream, trigger additional chat() iterations to consume them
+        # immediately instead of waiting for the user's next message.
+        while _pending_auto and _auto_continue_count <= _MAX_AUTO_CONTINUES:
+            _pending_auto = False
+            _token_streamed = False
+            async for state in agent.chat("Continue", thread_id):
+                if "_token" in state:
+                    _token_streamed = True
+                    text = state["_token"]
+                    if text:
+                        full_response += text
+                        await _ws_send({"type": "text_delta", "text": text})
+                    continue
+                if "_reasoning" in state:
+                    reasoning = state["_reasoning"]
+                    if reasoning:
+                        await _ws_send({"type": "reasoning_delta", "text": reasoning})
+                    continue
+                if state.get("_auto_continue"):
+                    if _auto_continue_count < _MAX_AUTO_CONTINUES:
+                        _auto_continue_count += 1
+                        _pending_auto = True
+                        await _ws_send({
+                            "type": "text_delta",
+                            "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+                        })
+                    continue
+                msgs = state.get("messages", [])
+                if msgs:
+                    lm = msgs[-1]
+                    if isinstance(lm, AIMessage):
+                        if _token_streamed:
+                            full_response = lm.content
+                        elif isinstance(lm.content, str):
+                            delta = lm.content[len(full_response):]
+                            if delta:
+                                full_response = lm.content
+                                await _ws_send({"type": "text_delta", "text": delta})
+
         if not full_response:
             if _tool_names_used:
                 names_str = ", ".join(sorted(_tool_names_used))
@@ -597,10 +663,15 @@ async def _handle_user_input(
                 except Exception as e:
                     logger.warning("Failed to create agent %s: %s", agent_cfg, e)
 
-    # Team mode trigger
+    # Team mode trigger — keyword OR config flag
     use_team = False
     if any(kw in content.lower() for kw in ("/team", "delegate", "collaborate")):
         use_team = True
+    elif getattr(cfg_chat, "team_mode_enabled", False):
+        use_team = True
+
+    # Fusion mode trigger — parallel multi-model + synthesis
+    use_fusion = "/fusion" in content.lower()
 
     # Plan mode trigger
     plan_mode = False
@@ -653,20 +724,109 @@ async def _handle_user_input(
     # ── Team mode ──
     if use_team:
         try:
-            from huginn.team_orchestrator import TeamOrchestrator
-            orch = TeamOrchestrator(factory=factory, thread_id=thread_id)
+            from huginn.agents.orchestrator import Orchestrator
+            orch = Orchestrator(factory=factory)
             await websocket.send_json(
                 {"type": "text_delta", "text": "👥 Team mode activated.\n\n"}
             )
-            team_result = await orch.delegate(content)
+            # Stream progress as the orchestrator runs
+            async def _team_status(msg: str):
+                await websocket.send_json({"type": "text_delta", "text": f"  → {msg}\n"})
+
+            result = await orch.run(content, on_status=_team_status, auto_confirm=True)
+            summary = result.summary if hasattr(result, "summary") else str(result)
             await websocket.send_json({
                 "type": "text_delta",
-                "text": f"\n{team_result}\n",
+                "text": f"\n{summary}\n",
             })
             await websocket.send_json({"type": "done"})
             return
         except Exception as e:
             logger.error("Team mode failed, falling back to single agent: %s", e, exc_info=True)
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": f"⚠️ Team mode unavailable ({e}), using single agent.\n\n",
+            })
+
+    # ── Fusion mode ──
+    if use_fusion and not use_team:
+        try:
+            from huginn.routes.team import _build_model_team
+            from huginn.agents.team import TeamRole
+
+            team = _build_model_team()
+            # Strip the /fusion keyword from the query
+            fusion_query = content.replace("/fusion", "").strip()
+            if not fusion_query:
+                fusion_query = content
+
+            await websocket.send_json(
+                {"type": "text_delta", "text": f"⚡ Fusion mode activated.\n"}
+            )
+            await websocket.send_json(
+                {"type": "text_delta", "text": f"Panel: {len(team.members)} members\n"}
+            )
+
+            # Show panel members
+            for m in team.list_members():
+                await websocket.send_json({
+                    "type": "text_delta",
+                    "text": f"  • [{m['role']}] {m['name']} ({m['model']})\n",
+                })
+
+            # Parse /fusionN suffix for rounds (e.g. /fusion3 = 3 rounds)
+            fusion_rounds = 1
+            for tag in ["/fusion1", "/fusion2", "/fusion3"]:
+                if tag in content.lower():
+                    fusion_rounds = int(tag[-1])
+                    break
+
+            result = await team.fusion_query(fusion_query, rounds=fusion_rounds)
+
+            # Stream all rounds
+            all_rounds = result.get("all_rounds", [])
+            for round_idx, round_responses in enumerate(all_rounds):
+                if len(all_rounds) > 1:
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"\n{'='*40}\n📝 Round {round_idx + 1}/{len(all_rounds)}\n{'='*40}\n",
+                    })
+                for r in round_responses:
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"\n--- [{r['role']} ({r['model']})] ({r['duration_ms']}ms) ---\n",
+                    })
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": r["answer"] + "\n",
+                    })
+
+            # Stream consensus
+            if result.get("consensus"):
+                await websocket.send_json({
+                    "type": "text_delta",
+                    "text": "\n## 共识\n" + result["consensus"] + "\n",
+                })
+            if result.get("dissent"):
+                await websocket.send_json({
+                    "type": "text_delta",
+                    "text": "\n## 分歧\n" + result["dissent"] + "\n",
+                })
+
+            # Stream final answer
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": "\n## 综合答案\n" + result.get("final_answer", "") + "\n",
+            })
+
+            await websocket.send_json({"type": "done"})
+            return
+        except Exception as e:
+            logger.error("Fusion mode failed, falling back to single agent: %s", e, exc_info=True)
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": f"⚠️ Fusion mode unavailable ({e}), using single agent.\n\n",
+            })
 
     # ── Plan mode ──
     if plan_mode and not use_team:

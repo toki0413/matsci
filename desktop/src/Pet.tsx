@@ -187,7 +187,7 @@ function moodClass(mood: PetMood, hopping: boolean): string {
 function RavenAvatar({ mood: _mood, accessory: _accessory, imgRef }: { mood: PetMood; accessory: AccessoryId; imgRef?: React.Ref<HTMLDivElement> }) {
   return (
     <div ref={imgRef} className="raven-img-wrapper">
-      <img src="/raven-logo.png" alt="Huginn" className="raven-img" draggable={false} />
+      <img src="/raven-logo-128.png" alt="Huginn" className="raven-img" draggable={false} />
     </div>
   );
 }
@@ -594,8 +594,26 @@ export default function Pet() {
     };
   }, [backendOnline, hop, mood, muted, persistent, pack, petName, speak, tipIndex, updateFromState, gainXp, spawnParticles, hunger]);
 
-  const handlePointerDown = () => {
-    appWindow.current?.startDragging();
+  // Track pointer start so we can distinguish click vs drag.
+  // startDragging() eats subsequent pointer events, so we only call it
+  // after the pointer moves past a threshold — clicks stay responsive.
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    pointerStart.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const s = pointerStart.current;
+    if (!s) return;
+    if (Math.abs(e.clientX - s.x) > 4 || Math.abs(e.clientY - s.y) > 4) {
+      pointerStart.current = null;
+      appWindow.current?.startDragging();
+    }
+  };
+
+  const handlePointerUp = () => {
+    pointerStart.current = null;
   };
 
   const handleClick = () => {
@@ -680,6 +698,8 @@ export default function Pet() {
     <div
       className="pet-container"
       onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
     >
@@ -809,6 +829,14 @@ export default function Pet() {
           }}>
             <span className="pet-menu-item-icon">{muted ? "\uD83D\uDD0A" : "\uD83D\uDD07"}</span>
             {muted ? "Unmute tips" : "Mute tips"}
+          </button>
+          <div className="pet-menu-divider" />
+          <button className="pet-menu-item" onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen(false);
+            appWindow.current?.close();
+          }}>
+            <span className="pet-menu-item-icon">{"\u274C"}</span> Close
           </button>
         </div>
       )}

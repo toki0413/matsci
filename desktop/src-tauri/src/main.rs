@@ -140,13 +140,20 @@ fn main() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        // Minimize to tray on close instead of quitting
+        // Minimize to tray on close instead of quitting — except pet window
         if let tauri::RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
         } = &event
         {
+            if label == "pet" {
+                // Pet window closes for real
+                if let Some(w) = app_handle.get_webview_window(label) {
+                    let _ = w.destroy();
+                }
+                return;
+            }
             if let Some(w) = app_handle.get_webview_window(label) {
                 let _ = w.hide();
             }

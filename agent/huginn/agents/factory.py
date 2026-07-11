@@ -223,11 +223,11 @@ class AgentFactory:
         agent.register_hook(USER_PROMPT_SUBMIT, ToolNameValidationHook())
 
         # Design Plan gate: 调用 vasp/lammps 等执行类工具前,
-        # 必须先有用户确认的 plan. 由 PRE_TOOL_USE 钩子强制,
-        # 不依赖 LLM 自觉. 配合 design_plan_tool 使用.
+        # 建议先有用户确认的 plan. Chat 模式下 advisory (不硬阻塞),
+        # 避免工作流堵点. autoloop 有自己的 plan 确认机制.
         from huginn.hooks import PRE_TOOL_USE
         from huginn.hooks.design_plan_gate_hook import DesignPlanGateHook
-        agent.register_hook(PRE_TOOL_USE, DesignPlanGateHook())
+        agent.register_hook(PRE_TOOL_USE, DesignPlanGateHook(mode="advisory"))
 
         return agent
 

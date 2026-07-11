@@ -70,6 +70,7 @@ export function useWorkspace() {
 
   // Load initial CWD and directory listing
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     (async () => {
       try {
         const path = (await invoke('get_cwd')) as string;
@@ -84,6 +85,7 @@ export function useWorkspace() {
 
   // Listen to integrated terminal output
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     let unlisten: UnlistenFn | undefined;
     (async () => {
       unlisten = await listen('terminal-output', (event) => {
