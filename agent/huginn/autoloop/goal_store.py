@@ -39,6 +39,12 @@ class Goal:
     updated_at: str = ""
     session_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Unknown tracking — 诊断指标, 不是奖励信号.
+    # 避免 self-reference paradox: 不追踪 discovery rate (会发现越多分越高 → 刷分),
+    # 追踪 resolution ratio 和 half-life (解决才加分, 发现不解决 = ratio 下降).
+    unknowns: list[dict[str, Any]] = field(default_factory=list)  # [{id, text, type, discovered_at, resolved_at}]
+    unknowns_discovered: int = 0  # cumulative counter
+    unknowns_resolved: int = 0    # cumulative counter
 
     def __post_init__(self) -> None:
         if not self.created_at:
@@ -61,6 +67,9 @@ class Goal:
             updated_at=data.get("updated_at", ""),
             session_id=data.get("session_id", ""),
             metadata=data.get("metadata", {}),
+            unknowns=data.get("unknowns", []),
+            unknowns_discovered=data.get("unknowns_discovered", 0),
+            unknowns_resolved=data.get("unknowns_resolved", 0),
         )
 
 
@@ -173,6 +182,84 @@ class GoalStore:
             goal.updated_at = _now_iso()
             self._save()
             return goal
+
+    def add_unknown(
+        self, goal_id: str, text: str, unknown_type: str = "unknown_unknown"
+    ) -> str | None:
+        """记录一个新发现的 unknown.
+
+        unknown_type:
+          - "known_unknown": 知道自己不知道 (e.g. "PBE 会低估带隙但我不知道具体差多少")
+          - "unknown_unknown": 完全没想到的盲区 (e.g. "GaN 有两种结构我之前完全没考虑")
+          - "blind_spot": 盲区扫描发现的 (pre-implementation)
+
+        返回 unknown_id, 可用于后续 resolve_unknown.
+        不追踪 discovery rate — 只追踪 resolution ratio 和 half-life.
+        """
+        import uuid as _uuid
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            if goal is None:
+                return None
+            uid = f"unk_{_uuid.uuid4().hex[:8]}"
+            goal.unknowns.append({
+                "id": uid,
+                "text": text,
+                "type": unknown_type,
+                "discovered_at": _now_iso(),
+                "resolved_at": None,
+                "iteration": goal.iteration,
+            })
+            goal.unknowns_discovered += 1
+            goal.updated_at = _now_iso()
+            self._save()
+            return uid
+
+    def resolve_unknown(self, goal_id: str, unknown_id: str) -> bool:
+        """标记一个 unknown 已解决. 返回是否找到并更新了."""
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            if goal is None:
+                return False
+            for u in goal.unknowns:
+                if u["id"] == unknown_id and u["resolved_at"] is None:
+                    u["resolved_at"] = _now_iso()
+                    goal.unknowns_resolved += 1
+                    goal.updated_at = _now_iso()
+                    self._save()
+                    return True
+            return False
+
+    def unknown_stats(self, goal_id: str) -> dict[str, Any]:
+        """诊断统计: 消解率 + 半衰期. 纯观察量, 不作为奖励信号."""
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            if goal is None:
+                return {}
+        total = goal.unknowns_discovered
+        resolved = goal.unknowns_resolved
+        ratio = resolved / total if total > 0 else 0.0
+        # half-life: 已解决的 unknown 从发现到解决的中位时间 (hours)
+        from datetime import datetime
+        durations: list[float] = []
+        for u in goal.unknowns:
+            if u["resolved_at"] and u["discovered_at"]:
+                try:
+                    d = datetime.fromisoformat(u["discovered_at"])
+                    r = datetime.fromisoformat(u["resolved_at"])
+                    durations.append((r - d).total_seconds() / 3600)
+                except Exception:
+                    pass
+        durations.sort()
+        median_h = durations[len(durations) // 2] if durations else None
+        open_count = total - resolved
+        return {
+            "discovered": total,
+            "resolved": resolved,
+            "open": open_count,
+            "resolution_ratio": round(ratio, 2),
+            "median_half_life_h": round(median_h, 1) if median_h else None,
+        }
 
     def pause(self, goal_id: str) -> Goal:
         return self.update_goal(goal_id, status="paused")

@@ -898,6 +898,18 @@ class AutoloopEngine:
 
             context = phase.result
 
+            # 1b. Blind spot pass — 在 hypothesize 之前扫描盲区
+            # 借鉴 "Finding Your Unknowns" 文章: 事前发现 unknown unknowns
+            # 只在第 1 轮和每隔 5 轮做 (不是每轮都需要, 避免 token 浪费)
+            if self._iteration == 1 or self._iteration % 5 == 0:
+                try:
+                    blind_spots = await self._blind_spot_pass(context, self._objective)
+                    if blind_spots:
+                        context["blind_spots"] = blind_spots
+                        print(f"  → Blind spot pass: {len(blind_spots)} potential unknowns found")
+                except Exception:
+                    logger.warning("blind spot pass failed", exc_info=True)
+
             # 2. Hypothesize
             phase = await self._run_phase_async("hypothesize", self._hypothesize, context)
             phases.append(phase)
@@ -967,6 +979,10 @@ class AutoloopEngine:
                 print(f"  → Execution failed: {phase.error}")
                 continue
             print(f"  → Execution complete: {execution_result}")
+
+            # Deviation log: 执行结果与 plan 预期不符时记录
+            # 借鉴 "Finding Your Unknowns" 的 implementation-notes 技术
+            self._log_deviation(plan, execution_result, context)
 
             # plan 跑完了, 标记 PlanStore 里的 plan 为 completed
             _plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
@@ -2976,7 +2992,7 @@ class AutoloopEngine:
 
         if _should_feynman:
             try:
-                await self._feynman_learn(hypothesis, plan, validation, r_phys)
+                await self._feynman_learn(hypothesis, plan, validation, r_phys, context)
             except Exception:
                 logger.warning("error in _learn: feynman note generation failed", exc_info=True)
 
@@ -3055,6 +3071,7 @@ The core principle: if you can't explain it in simple terms, you don't truly und
 - R_phys (physical reward): {r_phys}
 - Surprise: {surprise} (how much the actual result differed from prediction)
 - Validation summary: {validation}
+- Deviations from plan: {deviations}
 
 ## Your Task
 Write TWO sections:
@@ -3064,21 +3081,24 @@ Explain what happened in this iteration as if teaching a newcomer who has basic
 materials science knowledge but no experience with computational tools.
 Focus on: What was the physical question? What did the calculation reveal?
 Why does the result make sense (or not)? Use analogies where helpful.
+If there were deviations from the plan, explain WHY the path changed.
 
 ### Knowledge Gaps
 List specific things you CANNOT confidently explain. Be honest — admitting
-gaps is the point of this exercise. Examples:
-- "I don't understand why the band gap changed non-monotonically with doping"
-- "I can't explain why ENCUT=520 converged but 500 didn't"
-- "The elastic constant C44 is anomalous but I don't have a physical picture for why"
+gaps is the point of this exercise. Mark each gap:
+- [KU] for "known unknown" — you know you don't understand this
+- [UU] for "unknown unknown" — you didn't even think about this until now
+Examples:
+- "[KU] I don't understand why the band gap changed non-monotonically with doping"
+- "[UU] I never considered that GaN has two polymorphs until the result came back"
 
 Output format (Markdown, no code blocks):
 ## Simple Explanation
 ...
 
 ## Knowledge Gaps
-- gap 1
-- gap 2
+- [KU] gap 1
+- [UU] gap 2
 ..."""
 
     async def _feynman_learn(
@@ -3087,6 +3107,7 @@ Output format (Markdown, no code blocks):
         plan: dict[str, Any],
         validation: dict[str, Any],
         r_phys: Any,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Feynman 学习法: 让 agent 用通俗语言解释本轮发现, 暴露知识缺口.
 
@@ -3096,12 +3117,22 @@ Output format (Markdown, no code blocks):
         pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
         surprise_val = pred_err.get("surprise", 0) if isinstance(pred_err, dict) else 0
 
+        # 收集 deviation log, 让 Feynman 解释也覆盖 "为什么偏移了计划"
+        deviation_text = ""
+        if context and context.get("_deviation_log"):
+            deviations = context["_deviation_log"]
+            deviation_text = "\n".join(
+                f"- [{d.get('type', '?')}] {d.get('deviation', '')}"
+                for d in deviations[-3:]  # 最近 3 条
+            )
+
         prompt = self._FEYNMAN_PROMPT.format(
             hypothesis=hypothesis[:300],
             mode=plan.get("mode", "unknown") if isinstance(plan, dict) else "unknown",
             r_phys=r_phys,
             surprise=f"{surprise_val:.2f}",
             validation=json.dumps(validation, default=str)[:600],
+            deviations=deviation_text or "(none)",
         )
 
         # 用 summarize task 路由到便宜模型 — Feynman note 不需要强推理
@@ -3117,11 +3148,25 @@ Output format (Markdown, no code blocks):
         # 简单解析: ## Simple Explanation 和 ## Knowledge Gaps 两段
         parts = text.split("## Knowledge Gaps")
         explanation_part = parts[0].replace("## Simple Explanation", "", 1).strip()
+        # gaps 带 [KU]/[UU] 分类, 传给 GoalStore
+        gaps: list[tuple[str, str]] = []  # (text, unknown_type)
         if len(parts) > 1:
             for line in parts[1].strip().split("\n"):
                 line = line.strip().lstrip("-").strip()
-                if line and len(line) > 5:
-                    gaps.append(line)
+                if not line or len(line) <= 5:
+                    continue
+                # 解析 [KU] / [UU] 标记
+                if line.startswith("[UU]"):
+                    gaps.append((line[4:].strip(), "unknown_unknown"))
+                elif line.startswith("[KU]"):
+                    gaps.append((line[4:].strip(), "known_unknown"))
+                else:
+                    # 无标记时用启发式分类
+                    gap_lower = line.lower()
+                    is_uu = any(kw in gap_lower for kw in
+                                ["didn't", "never", "wasn't aware", "didn't think",
+                                 "hadn't", "overlooked", "完全没", "之前没", "没想到"])
+                    gaps.append((line, "unknown_unknown" if is_uu else "known_unknown"))
 
         if not explanation_part:
             explanation_part = text[:500]
@@ -3135,9 +3180,11 @@ Output format (Markdown, no code blocks):
             tags = ["feynman", "autoloop", f"iter_{self._iteration}"]
             if surprise_val > 0.5:
                 tags.append("high_surprise")
+            # gaps 现在是 list[tuple[str, str]], 转回 list[str] 给 distiller
+            gap_texts = [g[0] for g in gaps]
             distiller.store_feynman_note(
                 explanation=explanation,
-                gaps=gaps,
+                gaps=gap_texts,
                 iteration=self._iteration,
                 hypothesis=hypothesis,
                 tags=tags,
@@ -3146,15 +3193,19 @@ Output format (Markdown, no code blocks):
         except Exception:
             logger.warning("feynman note storage failed", exc_info=True)
 
-        # 缺口写入 GoalStore 作为下轮子目标
+        # 缺口写入 GoalStore, 分类为 known_unknown / unknown_unknown
+        # known_unknown: "我知道我不懂X" → 直接当子目标, 下轮解决
+        # unknown_unknown: "我之前完全没想到X" → 标记为需要更深的探索
+        # 借鉴 "Finding Your Unknowns" 四象限框架
         if gaps:
             try:
                 from huginn.autoloop.goal_store import get_goal_store
                 _gs = get_goal_store()
                 _active = _gs.get_active()
                 if _active:
-                    for gap in gaps[:3]:  # 最多 3 个, 避免子目标爆炸
-                        _gs.add_sub_goal(_active.id, f"[Feynman gap] {gap}")
+                    for gap_text, gap_type in gaps[:3]:  # 最多 3 个, 避免子目标爆炸
+                        _gs.add_sub_goal(_active.id, f"[Feynman {gap_type}] {gap_text}")
+                        _gs.add_unknown(_active.id, gap_text, unknown_type=gap_type)
             except Exception:
                 pass
 
@@ -3163,14 +3214,158 @@ Output format (Markdown, no code blocks):
             kb = self._get_kb()
             if kb:
                 note_text = f"# Feynman Note (iter {self._iteration})\n\n{explanation}\n\n## Gaps\n"
-                for g in gaps:
-                    note_text += f"- {g}\n"
+                for g_text, g_type in gaps:
+                    note_text += f"- [{g_type}] {g_text}\n"
                 kb.add_document(
                     filename=f"feynman_iter_{self._iteration}.txt",
                     content=note_text.encode("utf-8"),
                 )
         except Exception:
             pass
+
+    # ── Blind spot pass ───────────────────────────────────────────
+
+    _BLIND_SPOT_PROMPT = """You are about to start a research task. Before diving in, do a blindspot pass.
+
+## Task
+Objective: {objective}
+
+## Current Context
+{context_summary}
+
+## Your Job
+Identify potential UNKNOWN UNKNOWNS — things that might go wrong, assumptions that might
+be invalid, or aspects of the problem that haven't been considered yet.
+
+Think about:
+1. Physical assumptions: Are there structural/phase/electronic considerations being missed?
+2. Computational pitfalls: Convergence, basis set, pseudopotential, k-grid issues?
+3. Data gaps: Is there reference data missing? Are there known experimental values to compare against?
+4. Methodology blind spots: Could the chosen method give qualitatively wrong results for this system?
+5. Edge cases: Temperature, pressure, doping level boundaries?
+
+Output up to 5 potential blind spots, one per line, prefixed with "BS:".
+For each, also note the type: [structural], [computational], [data], [method], [edge_case].
+Format: BS: [type] description
+
+If you genuinely can't find any blind spots (unlikely), output: NONE"""
+
+    async def _blind_spot_pass(
+        self, context: dict[str, Any], objective: str
+    ) -> list[dict[str, str]]:
+        """Pre-implementation blind spot scan.
+
+        借鉴 "Finding Your Unknowns" 的 Blind Spot Pass 技术:
+        在开始工作前主动问 "我可能没想到什么?"
+        发现的盲区写入 GoalStore.unknowns 供后续消解追踪.
+        """
+        # 压缩 context 到摘要, 避免太长
+        ctx_parts: list[str] = []
+        for k, v in context.items():
+            if isinstance(v, str):
+                ctx_parts.append(f"- {k}: {v[:150]}")
+            elif isinstance(v, list) and v:
+                ctx_parts.append(f"- {k}: {len(v)} items")
+            elif isinstance(v, dict):
+                ctx_parts.append(f"- {k}: {len(v)} keys")
+        ctx_summary = "\n".join(ctx_parts[:10]) or "(minimal context)"
+
+        prompt = self._BLIND_SPOT_PROMPT.format(
+            objective=objective[:300],
+            context_summary=ctx_summary,
+        )
+
+        response = await self._llm_chat(prompt, task="summarize")
+        if not response or not response.strip():
+            return []
+
+        results: list[dict[str, str]] = []
+        for line in response.strip().split("\n"):
+            line = line.strip()
+            if not line.startswith("BS:"):
+                continue
+            content = line[3:].strip()
+            # 解析 [type] 前缀
+            btype = "general"
+            if content.startswith("["):
+                end = content.find("]")
+                if end > 0:
+                    btype = content[1:end].strip()
+                    content = content[end + 1:].strip()
+            if content and content != "NONE":
+                results.append({"type": btype, "text": content})
+                # 写入 GoalStore
+                try:
+                    from huginn.autoloop.goal_store import get_goal_store
+                    _gs = get_goal_store()
+                    _active = _gs.get_active()
+                    if _active:
+                        _gs.add_unknown(
+                            _active.id, content,
+                            unknown_type="blind_spot",
+                        )
+                except Exception:
+                    pass
+
+        return results
+
+    # ── Deviation log ─────────────────────────────────────────────
+
+    def _log_deviation(
+        self,
+        plan: dict[str, Any],
+        result: Any,
+        context: dict[str, Any],
+    ) -> None:
+        """记录执行偏离计划的决策.
+
+        借鉴 "Finding Your Unknowns" 的 implementation-notes.md 技术:
+        agent 执行中发现需要换路径时, 记录 WHY — 不只记 WHAT (provenance 已做).
+
+        触发条件:
+        1. plan 有 expected_prediction 但 result 明显不符
+        2. result 含 error/warning 字段
+        3. _try_evolved_fix 被触发 (heuristic fix = 偏离了原 plan)
+
+        存入 context['_deviation_log'] 供 _learn() 和 Feynman 使用.
+        """
+        deviations: list[dict[str, str]] = context.setdefault("_deviation_log", [])
+        plan_mode = plan.get("mode", "unknown")
+        plan_desc = plan.get("description", "")[:200]
+        expected = plan.get("expected_prediction", "")
+
+        # 检查 1: 有 error
+        if isinstance(result, dict) and result.get("error"):
+            deviations.append({
+                "iteration": str(self._iteration),
+                "type": "execution_error",
+                "plan_mode": plan_mode,
+                "plan_desc": plan_desc,
+                "deviation": f"Execution failed: {str(result['error'])[:200]}",
+                "expected": expected[:100] if expected else "(none)",
+            })
+
+        # 检查 2: evolved fix 被使用
+        if isinstance(context, dict) and context.get("_evolved_fix"):
+            deviations.append({
+                "iteration": str(self._iteration),
+                "type": "heuristic_fix",
+                "plan_mode": plan_mode,
+                "plan_desc": plan_desc,
+                "deviation": "Applied evolved heuristic fix instead of following original plan",
+                "expected": expected[:100] if expected else "(none)",
+            })
+
+        # 检查 3: result success=False
+        if isinstance(result, dict) and result.get("success") is False:
+            deviations.append({
+                "iteration": str(self._iteration),
+                "type": "plan_mismatch",
+                "plan_mode": plan_mode,
+                "plan_desc": plan_desc,
+                "deviation": "Plan produced unsuccessful result, will need refinement",
+                "expected": expected[:100] if expected else "(none)",
+            })
 
     @staticmethod
     def _build_tutor_report_prompt(
