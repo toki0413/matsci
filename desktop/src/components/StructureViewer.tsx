@@ -5,6 +5,7 @@ import * as THREE from "three";
 import {
   Upload, Eye, EyeOff, Crosshair, Info, Box,
 } from "lucide-react";
+import { api } from "../lib/api";
 
 /* ── Element color/size data (CPK) ── */
 const ELEMENT_COLORS: Record<string, string> = {
@@ -180,7 +181,7 @@ function CameraFitter({ atoms }: { atoms: Atom[] }) {
 }
 
 /* ── Main component ── */
-export default function StructureViewer({ API_BASE }: { API_BASE: string }) {
+export default function StructureViewer({ API_BASE: _API_BASE }: { API_BASE: string }) {
   const [structure, setStructure] = useState<StructureData | null>(null);
   const [rawInput, setRawInput] = useState("");
   const [showUnitCell, setShowUnitCell] = useState(true);
@@ -231,34 +232,24 @@ export default function StructureViewer({ API_BASE }: { API_BASE: string }) {
     if (!rawInput.trim()) return;
     setInfo("Analyzing via backend…");
     try {
-      const res = await fetch(`${API_BASE}/tools/structure_tool`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "analyze", content: rawInput, format: inputFormat }),
-      });
-      const data = await res.json();
+      const data = await api.post<{ result?: unknown }>('/tools/structure_tool', { action: "analyze", content: rawInput, format: inputFormat });
       if (data.result) setInfo(typeof data.result === "string" ? data.result : JSON.stringify(data.result, null, 2));
     } catch (e: any) {
       setInfo(`Backend error: ${e.message}`);
     }
-  }, [API_BASE, rawInput, inputFormat]);
+  }, [rawInput, inputFormat]);
 
   const handleBackendLoad = useCallback(async () => {
     if (!rawInput.trim()) return;
     setInfo("Syncing structure to backend…");
     try {
-      const res = await fetch(`${API_BASE}/load`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: rawInput, format: inputFormat }),
-      });
-      const data = await res.json();
+      const data = await api.post<{ success?: boolean; error?: string }>('/viewer3d/load', { content: rawInput, format: inputFormat });
       if (data.success !== false) setInfo("Structure loaded to backend.");
       else setInfo(`Load failed: ${data.error || "unknown"}`);
     } catch (e: any) {
       setInfo(`Backend error: ${e.message}`);
     }
-  }, [API_BASE, rawInput, inputFormat]);
+  }, [rawInput, inputFormat]);
 
   const bonds = useMemo(() => structure && showBonds ? detectBonds(structure.atoms) : [], [structure, showBonds]);
 

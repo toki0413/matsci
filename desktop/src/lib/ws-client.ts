@@ -142,7 +142,7 @@ export class ReconnectingWebSocket {
     this.ws.onerror = () => {
       // error 后通常会跟一个 onclose，重连交给 onclose 触发
     };
-    this.ws.onclose = () => this.handleClose();
+    this.ws.onclose = (ev: CloseEvent) => this.handleClose(ev);
   }
 
   private handleOpen(): void {
@@ -171,10 +171,15 @@ export class ReconnectingWebSocket {
     this.opts.onMessage?.(data);
   }
 
-  private handleClose(): void {
+  private handleClose(ev?: CloseEvent): void {
     this.stopPing();
     this.ws = null;
     if (this.manuallyClosed) return;
+    // 4001 = auth failure from backend, don't retry
+    if (ev?.code === 4001) {
+      this.setStatus('failed');
+      return;
+    }
     this.scheduleReconnect();
   }
 
@@ -248,10 +253,4 @@ export class ReconnectingWebSocket {
   }
 }
 
-/**
- * 根据后端端口构造 WebSocket 地址。
- * sidecar 的 agent 端点固定在 /ws/agent。
- */
-export function buildWsUrl(port: number, path = '/ws/agent'): string {
-  return `ws://127.0.0.1:${port}${path}`;
-}
+

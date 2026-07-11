@@ -88,7 +88,6 @@ interface ChatPanelProps {
   sendMessage: () => void;
   pendingPlan: string;
   setPendingPlan: (v: string) => void;
-  planLoading: boolean;
   setMode: (v: "chat" | "plan" | "build") => void;
   input: string;
   // real type from useState — allows functional updates (e.g. drag-drop appends)
@@ -118,7 +117,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const {
     messages, chatSearchOpen, chatSearchQuery, setChatSearchOpen, setChatSearchQuery,
     wsClientRef, setMessages, answerClarification, pendingClarifications,
-    isConnected, wsReconnecting, wsFailed, undoWindow, undoSend, sendMessage, pendingPlan, setPendingPlan, planLoading,
+    isConnected, wsReconnecting, wsFailed, undoWindow, undoSend, sendMessage, pendingPlan, setPendingPlan,
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
@@ -1158,7 +1157,7 @@ export function ChatPanel(props: ChatPanelProps) {
                     setMode("build");
                     sendMessage();
                   }}
-                  disabled={!input.trim() || planLoading}
+                  disabled={!input.trim()}
                   className="btn-primary px-3 py-1 text-xs"
                 >
                   {t('chat.runPlan')}
@@ -1505,18 +1504,18 @@ export function ChatPanel(props: ChatPanelProps) {
                 : t('chat.placeholderOffline')
             }
             rows={2}
-            disabled={!isConnected || planLoading}
+            disabled={!isConnected}
             className="input min-h-[56px] max-h-[200px] resize-none flex-1 overflow-y-auto"
             aria-label="Message input"
           />
           <div className="flex flex-col items-center gap-1">
             <button
               onClick={() => { setQuotedMsg(null); sendMessage(); }}
-              disabled={!isConnected || !input.trim() || planLoading}
+              disabled={!isConnected || !input.trim()}
               className="btn-primary h-11 px-5"
               aria-label={isStreaming ? t('chat.streaming') : t('chat.send')}
             >
-              {planLoading ? t('chat.planning') : isStreaming ? t('chat.streaming') : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
+              {isStreaming ? t('chat.streaming') : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
             </button>
           </div>
         </div>

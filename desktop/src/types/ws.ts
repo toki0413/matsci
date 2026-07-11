@@ -25,6 +25,7 @@ export interface PlanData {
 export interface CriterionResult {
   criterion: string;
   passed: boolean;
+  note?: string;
 }
 
 export interface ClarificationQuestion {
@@ -40,8 +41,9 @@ export interface Citation {
 }
 
 export interface ExplorationResult {
-  best_branch?: { name: string };
+  best_branch?: { name: string; hypothesis?: string; objectives?: Record<string, number> };
   convergence_reason?: string;
+  pareto_front?: unknown[];
 }
 
 // ── Discriminated union ───────────────────────────────────────────
@@ -50,7 +52,7 @@ export type WSMessage =
   | { type: "text_delta"; text: string }
   | { type: "reasoning_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
-  | { type: "tool_result"; id: string; content: string }
+  | { type: "tool_result"; id: string; content: string; warnings?: Array<{ severity: string; message: string }> }
   | { type: "plan"; plan_id: string; plan: PlanData }
   | { type: "plan_confirm"; plan_id: string; confirmed: boolean }
   | { type: "plan_result"; plan_id: string; criteria: CriterionResult[]; all_passed: boolean }
@@ -69,9 +71,9 @@ export type WSMessage =
       completed?: number;
       total?: number;
       progress_pct?: number;
+      message?: string;
       // pipeline-specific fields
       pipeline?: string;
-      stage?: string;
       stage_label?: string;
       stage_index?: number;
       total_stages?: number;
@@ -104,8 +106,10 @@ export type WSMessage =
     }
   | {
       type: "side_question_pending";
-      questions: ClarificationQuestion[];
-      thread_id: string;
+      question_id?: string;
+      question?: string;
+      created_at?: string;
+      thread_id?: string;
     }
   | { type: "ping" }
   | { type: "pong" }

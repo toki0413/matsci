@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { api } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,7 +169,7 @@ function extractImages(text: string): { cleaned: string; images: string[] } {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
+export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string }) {
   const [code, setCode] = useState<string>(TEMPLATES[0].code);
   const [output, setOutput] = useState<ExecutionResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -216,28 +217,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
     setOutput(null);
 
     try {
-      const res = await fetch(`${API_BASE}/sandbox/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        setOutput({
-          stdout: '',
-          stderr: `HTTP ${res.status}: ${errText}`,
-          return_value: null,
-          execution_time: 0,
-        });
-        setHistory((h) => [
-          { id: ++historyIdRef.current, code, timestamp: new Date(), success: false, executionTime: 0 },
-          ...h,
-        ]);
-        return;
-      }
-
-      const data: ExecutionResult = await res.json();
+      const data = await api.post<ExecutionResult>('/sandbox/execute', { code });
       setOutput(data);
       setHistory((h) => [
         {
@@ -252,7 +232,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
     } catch (err: any) {
       setOutput({
         stdout: '',
-        stderr: `Network error: ${err.message ?? String(err)}`,
+        stderr: err.message ?? String(err),
         return_value: null,
         execution_time: 0,
       });
@@ -263,7 +243,7 @@ export default function SandboxPanel({ API_BASE }: { API_BASE: string }) {
     } finally {
       setRunning(false);
     }
-  }, [API_BASE, code, running]);
+  }, [code, running]);
 
   // ----- Template selection -----
   const selectTemplate = useCallback(

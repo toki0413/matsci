@@ -8,7 +8,7 @@ export interface MemoryEntry {
   id: string;
   category: string;
   content: string;
-  tags: string;
+  tags: string[];
   source: string;
   importance: number;
   tier: string;

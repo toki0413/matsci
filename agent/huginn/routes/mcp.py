@@ -130,7 +130,7 @@ async def connect_mcp_server(
         return {"success": False, "error": str(e)}
 
 
-@router.post("/mcp/servers/{name}/disconnect")
+@router.post("/mcp/servers/{name}/disconnect", dependencies=[Depends(require_admin)])
 async def disconnect_mcp_server(name: str) -> dict[str, Any]:
     """Disconnect an MCP server and unregister its tools."""
     if get_context().mcp_manager is None:
@@ -157,7 +157,7 @@ async def mcp_server_status() -> dict[str, Any]:
     return {"servers": mgr.get_server_status()}
 
 
-@router.post("/mcp/servers/{name}/reconnect")
+@router.post("/mcp/servers/{name}/reconnect", dependencies=[Depends(require_admin)])
 async def reconnect_mcp_server(name: str) -> dict[str, Any]:
     """Manually trigger a reconnection to an MCP server."""
     mgr = get_context().mcp_manager
@@ -186,7 +186,7 @@ async def reconnect_mcp_server(name: str) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@router.post("/mcp/tools/{tool_name}/call")
+@router.post("/mcp/tools/{tool_name}/call", dependencies=[Depends(require_admin)])
 async def call_mcp_tool(
     tool_name: str, args: dict[str, Any]
 ) -> dict[str, Any]:

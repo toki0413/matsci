@@ -24,6 +24,7 @@ import {
   XCircle,
   Clock,
 } from "lucide-react";
+import { api } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -145,7 +146,7 @@ function ChartTooltipContent({
 // Main component
 // ---------------------------------------------------------------------------
 
-export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
+export default function SweepDashboard({ API_BASE: _API_BASE }: { API_BASE: string }) {
   // -- Templates
   const [templates, setTemplates] = useState<string[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState("");
@@ -172,9 +173,8 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
   // -- Load templates on mount
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_BASE}/workflows`)
-      .then((r) => r.json())
-      .then((data: { templates: string[] }) => {
+    api.get<{ templates: string[] }>('/workflows')
+      .then((data) => {
         if (!cancelled) {
           setTemplates(data.templates ?? []);
           if (data.templates?.length) setSelectedTemplate(data.templates[0]);
@@ -184,7 +184,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
     return () => {
       cancelled = true;
     };
-  }, [API_BASE]);
+  }, []);
 
   // -- Derived: total combinations
   const totalCombinations = useMemo(() => {
@@ -267,15 +267,10 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
 
       const start = performance.now();
       try {
-        const resp = await fetch(`${API_BASE}/workflows/execute`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            template: selectedTemplate,
-            args: initialJobs[idx].params,
-          }),
+        const result = await api.post('/workflows/execute', {
+          template: selectedTemplate,
+          args: initialJobs[idx].params,
         });
-        const result = await resp.json();
         const duration = performance.now() - start;
 
         setJobs((prev) => {
@@ -304,7 +299,7 @@ export default function SweepDashboard({ API_BASE }: { API_BASE: string }) {
     }
 
     setSweepRunning(false);
-  }, [selectedTemplate, sweepParams, sweepRunning, API_BASE, chartXAxis]);
+  }, [selectedTemplate, sweepParams, sweepRunning, chartXAxis]);
 
   // -- Cancel sweep
   const handleCancel = useCallback(() => {
