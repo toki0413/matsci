@@ -371,13 +371,14 @@ the default and proceed.
 # 都看到同一套 PDE/变分/微分几何/符号回归 工具清单. 与 engine.py 的
 # _MATH_DEPTH_PROMPT_BLOCK 在工具列表上保持一致.
 MATH_DEPTH_GUIDE = """
-## Math Depth Guidance (treat physics/chemistry as mathematics)
+## Math Depth Guidance (advisory, not prescriptive)
 
-Physical and chemical phenomena are mathematical structures in disguise. Before
-reaching for a numerical solver, identify the governing mathematical structure
-and exploit it analytically. The symbolic_math_tool and symbolic_regression_tool
-expose the following actions for this purpose:
+Mathematical structure can illuminate physical and chemical problems. When the
+structure is clear, symbolic methods are powerful. When it is not, data-driven
+methods are equally valid. The choice depends on the data and the researcher's
+judgment, not on a hierarchy.
 
+Available symbolic tools (use when the structure is known or suspected):
 - **PDE analysis** — `symbolic_math_tool action=pde_classify` with expression
   `"A;B;C"` (the second-order coefficients) classifies elliptic / parabolic /
   hyperbolic via the discriminant B²−4AC. Follow with `pde_separation`
@@ -403,10 +404,10 @@ expose the following actions for this purpose:
   `action=constraint_check` (positivity / monotonic_in / monotonic_decreasing /
   finiteness / dimensional_check priors).
 
-**Decision rule**: if the hypothesis can be expressed as a PDE, variational
-principle, or conservation law, derive it symbolically first and only fall
-back to numerical solvers when the analytic form is intractable. The
-phase-gate will check for this evidence at validate→learn.
+**Advisory hint**: if the hypothesis can be expressed as a PDE, variational
+principle, or conservation law, symbolic derivation may save computation and
+reveal structure. But numerical and data-driven methods are not inferior —
+they are different tools for different situations. The researcher decides.
 """
 
 

@@ -162,6 +162,11 @@ class ResearchAgent:
     内部就是一次 LLM 调用, 不搞多轮对话——管线状态显式传递.
     """
 
+    # ponytail: class-level prefix, 由 DeliAutoResearch 设置.
+    # ceiling: 单进程内只有一个 DeliAutoResearch 实例活跃时安全;
+    # 并发多实例需要改为 instance-level 传参.
+    _context_prefix: str = ""
+
     def __init__(
         self,
         role: str,
@@ -170,7 +175,7 @@ class ResearchAgent:
         max_tokens: int = 8000,
     ) -> None:
         self.role = role
-        self.system_prompt = system_prompt
+        self.system_prompt = self._context_prefix + system_prompt
         self.temperature = temperature
         self.max_tokens = max_tokens
 
@@ -790,7 +795,13 @@ class PeerReviewPipeline:
 class DeliAutoResearch:
     """编排四个子管线, 管理 integrity gate."""
 
-    def __init__(self) -> None:
+    def __init__(self, persona_system_prompt: str | None = None) -> None:
+        # 注入 persona system prompt 作为所有 ResearchAgent 的前缀
+        if persona_system_prompt:
+            ResearchAgent._context_prefix = persona_system_prompt + "\n\n"
+        else:
+            ResearchAgent._context_prefix = ""
+
         self.deep_research = DeepResearchPipeline()
         self.paper_writing = PaperWritingPipeline()
         self.peer_review = PeerReviewPipeline()
