@@ -378,6 +378,8 @@ class KnowledgeBase:
         self._query_cache: TimedLRUCache[list[dict[str, Any]]] = TimedLRUCache(
             max_size=256, ttl=60.0
         )
+        # 检索命中计数: 用于智能 KB 淘汰评分 (频率维度)
+        self._hit_counts: dict[str, int] = {}
         # 语义缓存: gptcache 可选, 没装就退回上面的 TimedLRUCache
         self._semantic_cache: Any | None = None
         try:
@@ -587,45 +589,90 @@ class KnowledgeBase:
     def cleanup_old_documents(
         self, max_docs: int = 200, prefix: str = "autoloop_iter_"
     ) -> int:
-        """自动清理旧文档, 防止 KB 无限增长.
+        """智能清理旧文档, 基于**信息价值三维评分**决定保留哪些.
+
+        评分 = retrieval_frequency × information_density × recency
+        - retrieval_frequency: 被检索命中次数 (需要 _hit_counts 追踪)
+        - information_density: structure_aware/visual_primitives chunk 分数更高
+        - recency: 时间衰减 (autoloop 迭代文档衰减快, 用户上传文档衰减慢)
 
         策略:
-        1. 对 prefix 匹配的文档 (如 autoloop_iter_), 只保留最近 N 个
-        2. 对总文档数超过 max_docs 的情况, 按时间倒序保留最新的
+        1. autoloop_iter_ 文档: 只保留最近 50 轮 + 高分文档
+        2. 总文档数超上限: 按信息价值评分排序, 淘汰低分文档
         3. 返回删除的文档数.
-
-        这解决了 autoloop 每轮写入但永不删除的问题.
         """
         try:
             all_docs = self.list_documents()
+            if len(all_docs) <= max_docs:
+                return 0
+
             deleted = 0
 
-            # 1. 清理 autoloop 迭代文档: 只保留最近 50 轮
+            # 1. autoloop 迭代文档: 保留最近 50 轮
             auto_docs = [d for d in all_docs if d.get("filename", "").startswith(prefix)]
             if len(auto_docs) > 50:
-                # 按文件名排序 (包含迭代号, 字典序 = 时间序)
                 auto_docs.sort(key=lambda d: d.get("filename", ""))
                 for d in auto_docs[:-50]:
                     if self.delete_document(d["doc_id"]):
                         deleted += 1
+                all_docs = [d for d in all_docs if not d.get("filename", "").startswith(prefix) or d in auto_docs[-50:]]
 
-            # 2. 总文档数超过上限: 删最老的
-            if len(all_docs) - deleted > max_docs:
-                # 按摄入时间排序 (ingested_at metadata)
-                remaining = [d for d in all_docs if d.get("filename", "")[:len(prefix)] != prefix]
-                # 无时间戳就按文件名排
-                remaining.sort(key=lambda d: d.get("filename", ""))
-                excess = len(all_docs) - deleted - max_docs
-                for d in remaining[:excess]:
-                    if self.delete_document(d["doc_id"]):
-                        deleted += 1
+            # 2. 总文档数仍超上限: 按信息价值评分淘汰
+            excess = len(all_docs) - deleted - max_docs
+            if excess <= 0:
+                if deleted:
+                    logger.info("KB cleanup: removed %d old iterations", deleted)
+                return deleted
 
-            if deleted > 0:
-                logger.info("KB cleanup: removed %d old documents (max=%d)", deleted, max_docs)
+            # 为每个文档计算信息价值评分
+            scored = []
+            for d in all_docs:
+                score = self._score_document_value(d)
+                scored.append((score, d))
+
+            # 按评分升序, 淘汰最低分的
+            scored.sort(key=lambda x: x[0])
+            for score, d in scored[:excess]:
+                if self.delete_document(d["doc_id"]):
+                    deleted += 1
+
+            if deleted:
+                logger.info("KB cleanup: removed %d low-value documents (max=%d)", deleted, max_docs)
             return deleted
         except Exception as exc:
             logger.warning("KB cleanup failed: %s", exc)
             return 0
+
+    def _score_document_value(self, doc: dict[str, Any]) -> float:
+        """计算文档的信息价值评分: 频率 × 密度 × 时效性.
+        0.0 = 无价值 (可删除), 1.0 = 高价值 (必须保留)."""
+        score = 0.5  # 基线
+
+        # 维度 1: 检索频率 (命中次数)
+        hit_count = getattr(self, "_hit_counts", {}).get(doc.get("doc_id", ""), 0)
+        freq_score = min(hit_count / 5.0, 1.0)  # 5 次命中 = 满分
+        score = freq_score
+
+        # 维度 2: 信息密度 (structure_aware/visual 分数更高)
+        filename = doc.get("filename", "")
+        if filename.startswith("autoloop_iter_"):
+            score *= 0.6  # 迭代文档信息密度低 (是摘要, 不是原始参考)
+        elif any(ext in filename.lower() for ext in (".cif", ".poscar", ".contcar")):
+            score *= 1.0  # 结构文件信息密度高
+        elif filename.endswith(".pdf"):
+            score *= 0.9  # PDF 文档有视觉提取, 密度较高
+        else:
+            score *= 0.7  # 普通文本
+
+        # 维度 3: 时效性 (用户上传文档时效性弱, 保留更久)
+        if not filename.startswith("autoloop_iter_"):
+            score = max(score, 0.3)  # 用户上传文档至少 0.3 分, 不轻易删
+
+        # 永不删除: 用户手动上传的非 autoloop 文档, 如果被检索过
+        if hit_count > 0 and not filename.startswith("autoloop_iter_"):
+            score = max(score, 0.8)
+
+        return score
 
     def query_with_dedup(
         self, text: str, top_k: int = 5, domain: str | None = None,
@@ -721,6 +768,12 @@ class KnowledgeBase:
                 self._semantic_cache.put(prompt=text.strip(), data=chunks)
             except Exception:
                 logger.debug("put failed", exc_info=True)
+
+        # 记录检索命中: 用于智能 KB 淘汰评分
+        for c in chunks:
+            did = c.get("metadata", {}).get("doc_id", "")
+            if did:
+                self._hit_counts[did] = self._hit_counts.get(did, 0) + 1
 
         return chunks
 
