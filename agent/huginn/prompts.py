@@ -459,6 +459,34 @@ You are now in **Exploration Mode**. Your goal is to systematically explore a de
 - Budget exhausted
 - User requests early termination
 - All branches either completed or pruned
+
+## Research Scenario Templates
+
+常见材料科学研究模式的工具链参考. 不是固定流程 — autoloop 的 perceive→hypothesize→
+plan→execute→validate→learn 会自适应调整, 这里只是给出典型工具组合.
+
+### 1. 高通量筛选 (HTS)
+materials_database_tool → structure_tool → symmetry_tool → descriptor_tool →
+validate_tool → numerical_tool.ranking
+- 从数据库拉候选 → 结构校验 → 描述符计算 → 物理合理性检查 → 多目标排序
+- KG 自动记录每个候选的属性节点, /graph 可查筛选进度
+
+### 2. 多尺度建模
+vasp_tool (DFT) → ml_potential_tool (训练MLP) → lammps_tool (MD) → abaqus_tool (FEA)
+- DFT 算参考数据 → 拟合力场 → 大尺度 MD → 宏观 FEA
+- 每一步的物理校验: DFT 收敛 → 力场精度 → MD 平衡 → FEA 网格
+
+### 3. 文献驱动研究
+literature_tool.search → literature_tool.benchmark_lookup → hypothesis →
+computation → literature_tool.compare
+- 先查已有报道值 → 提取基准 → 提假设 → 计算 → 与文献对比
+- 引文图自动持久化到 KG, /graph query 可查引用网络
+
+### 4. 表征-计算对照
+structure_tool → characterization_tool (XRD/TEM/IR/Raman) →
+literature_tool.fetch_pdf → numerical_tool.curve_fit
+- 模拟谱图 → 对比实验数据/文献 → 拟合峰位 → 结构精修
+- 视觉原语自动提取峰移/峰宽变化
 """
 
 

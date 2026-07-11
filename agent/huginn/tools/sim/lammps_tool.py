@@ -1358,18 +1358,14 @@ class LammpsTool(HuginnTool):
                 return ToolResult(data=data, success=True,
                                   error="LAMMPS executable not found. Script generated only.")
 
-        # 执行 LAMMPS
+        # 执行 LAMMPS — 走 sandbox, 不能裸 subprocess
         try:
-            import subprocess
-
             cmd = [str(self.lammps_executable), "-in", str(script_path)]
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=3600, cwd=str(work_dir)
-            )
-            ok = proc.returncode == 0
-            data["returncode"] = proc.returncode
-            data["stdout_tail"] = proc.stdout[-2000:] if proc.stdout else ""
-            data["stderr_tail"] = proc.stderr[-2000:] if proc.stderr else ""
+            result = self.sandbox.run(cmd, cwd=str(work_dir), timeout=3600)
+            ok = result.returncode == 0
+            data["returncode"] = result.returncode
+            data["stdout_tail"] = result.stdout[-2000:] if result.stdout else ""
+            data["stderr_tail"] = result.stderr[-2000:] if result.stderr else ""
 
             if ok:
                 data["output_dir"] = str(work_dir)
