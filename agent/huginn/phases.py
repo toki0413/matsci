@@ -95,6 +95,7 @@ _CORE_TOOLS: set[str] = {
     "unit_tool",
     "numerical_tool",
     "skill",
+    "tool_search",
 }
 
 PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {}

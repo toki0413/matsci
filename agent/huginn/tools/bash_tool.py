@@ -7,8 +7,6 @@ Always requires approval.
 from __future__ import annotations
 
 import shutil
-import subprocess
-import threading
 from pathlib import Path
 from typing import Any, Literal
 
@@ -42,52 +40,6 @@ class BashTool(HuginnTool):
     )
     destructive = True
     input_schema = BashToolInput
-
-    def _stream_command(
-        self,
-        command: list[str],
-        cwd: Path,
-        timeout: float,
-    ) -> tuple[str, str, int]:
-        """Run a command and stream stdout/stderr line-by-line.
-
-        Returns the accumulated stdout, stderr, and exit code.
-        """
-        stdout_chunks: list[str] = []
-        stderr_chunks: list[str] = []
-
-        def _reader(pipe, buffer: list[str]) -> None:
-            try:
-                for line in iter(pipe.readline, ""):
-                    buffer.append(line)
-                    # Emit line in real-time so users see progress.
-                    print(line, end="", flush=True)
-            finally:
-                pipe.close()
-
-        with subprocess.Popen(
-            command,
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        ) as proc:
-            t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks))
-            t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks))
-            t_out.start()
-            t_err.start()
-            try:
-                returncode = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                t_out.join()
-                t_err.join()
-                return "".join(stdout_chunks), "".join(stderr_chunks), -1
-            t_out.join()
-            t_err.join()
-        return "".join(stdout_chunks), "".join(stderr_chunks), returncode
 
     async def call(
         self, args: dict[str, Any], context: ToolContext | None = None

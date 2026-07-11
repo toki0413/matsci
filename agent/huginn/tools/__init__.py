@@ -64,6 +64,7 @@ _CORE_MODULES = [
     ("huginn.plugins.autoresearch", "AutoresearchTool"),
     ("huginn.academic.paper_tool", "PaperTool"),
     ("huginn.academic.deli_research", "DeliAutoResearchTool"),
+    ("huginn.tools.tool_search_tool", "ToolSearchTool"),
 ]
 
 # Optional tools — heavy imports (numpy/scipy/simulation), safe to defer

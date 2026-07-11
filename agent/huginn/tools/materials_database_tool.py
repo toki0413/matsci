@@ -173,6 +173,10 @@ class MaterialsDatabaseTool(HuginnTool):
     async def _call_cached(
         self, args: MaterialsDatabaseInput, context: ToolContext
     ) -> ToolResult:
+        # 属性别名归一化: 用户/LLM 可能写 "bg"/"Eg"/"band-gap" 等, 统一到 canonical name
+        if args.fields:
+            from huginn.data.property_aliases import normalize_property_name
+            args.fields = [normalize_property_name(f) for f in args.fields]
         # omat24_predict 走 MLIP 预测 + MP hull 比对, 不走本地结构库
         if args.action == "omat24_predict":
             return await self._handle_omat24_predict(args, context)
