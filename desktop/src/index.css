@@ -394,10 +394,11 @@
   }
 
   .pet-avatar {
-    @apply drop-shadow-2xl cursor-grab active:cursor-grabbing;
-    width: 110px;
-    height: 110px;
+    @apply cursor-grab active:cursor-grabbing;
+    width: 120px;
+    height: 120px;
     position: relative;
+    overflow: visible;
   }
 
   .pet-avatar-wrapper {
@@ -547,38 +548,80 @@
            border-b border-border/50 last:border-0;
   }
 
-  /* ── Raven animation states (container-level, works with image) ── */
-  .raven-idle { animation: raven-idle-float 3s ease-in-out infinite; }
-  .raven-thinking { animation: raven-head-tilt 2s ease-in-out infinite; }
-  .raven-working { animation: raven-working-wobble 0.6s ease-in-out infinite; }
-  .raven-happy { animation: raven-bounce 0.5s ease-out; }
+  /* ── SVG Raven state-based animations ── */
+  .raven-idle .raven-svg { animation: raven-svg-float 2.8s ease-in-out infinite; }
+  .raven-thinking .raven-svg { animation: raven-svg-think 2.5s ease-in-out infinite; }
+  .raven-thinking .raven-svg #ravenEyes { transform: scaleY(0.5); }
+  .raven-working .raven-svg { animation: raven-svg-work 0.8s ease-in-out infinite; }
+  .raven-working .raven-svg #ravenEyes { transform: scaleY(0.55) scaleX(0.95); }
+  .raven-working .raven-svg #ravenWingL { animation: raven-wing-flap-l 0.6s ease-in-out infinite; }
+  .raven-working .raven-svg #ravenWingR { animation: raven-wing-flap-r 0.6s ease-in-out infinite; }
+  .raven-happy .raven-svg { animation: raven-svg-bounce 0.6s ease-out; }
   .raven-hop { animation: raven-hop 0.6s ease-out; }
-  .raven-error { animation: raven-shake 0.5s ease-in-out; }
-  .raven-sleeping { animation: raven-breathe 4s ease-in-out infinite; }
-  .raven-eating { animation: raven-peck 0.4s ease-in-out 3; }
-  .raven-levelup { animation: raven-levelup-glow 1.5s ease-out; }
+  .raven-error .raven-svg { animation: raven-svg-shake 0.4s ease-in-out 3; }
+  .raven-sleeping .raven-svg { animation: raven-svg-breathe 3s ease-in-out infinite; }
+  .raven-sleeping .raven-svg #ravenEyes { transform: scaleY(0.15) translateY(2px); }
+  .raven-eating .raven-svg { animation: raven-svg-peck 0.4s ease-in-out 3; }
+  .raven-levelup .raven-svg { animation: raven-svg-levelup 1.2s ease-out; }
+  .raven-coding .raven-svg { animation: raven-svg-code 1.2s ease-in-out infinite; }
+  .raven-coding .raven-svg #ravenEyes { transform: scaleY(0.35); }
+  .raven-coding .raven-svg #ravenWingL { animation: raven-wing-flap-l 1.5s ease-in-out infinite; }
+  .raven-coding .raven-svg #ravenWingR { animation: raven-wing-flap-r 1.5s ease-in-out infinite; }
+  .raven-reviewing .raven-svg { animation: raven-svg-review 2s ease-in-out infinite; }
+  .raven-reviewing .raven-svg #ravenEyes { transform: scale(1.08); }
 
-  /* Raven blink (subtle opacity dip for image avatar) */
-  .raven-blink {
-    animation: raven-blink-fade 0.25s ease-in-out;
+  /* SVG Raven blink (scaleY on eyes group) */
+  .raven-blink > .raven-svg > #ravenEyes {
+    animation: raven-blink-svg 0.18s ease-in-out;
+    transform-box: fill-box;
+    transform-origin: center center;
   }
 
-  /* ── Image-based avatar styles ── */
-  .raven-img-wrapper {
+  /* ── SVG Raven element styles ── */
+  .raven-svg-wrapper {
     width: 100%;
     height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: relative;
   }
 
-  .raven-img {
+  .raven-svg {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 110px;
+    height: 110px;
+    overflow: visible;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.25));
+  }
+
+  .raven-svg #ravenEyes,
+  .raven-svg #ravenBeak {
+    transition: transform 0.25s ease;
+    transform-box: fill-box;
+    transform-origin: center center;
+  }
+
+  .raven-svg #ravenWingL {
+    transform-box: fill-box;
+    transform-origin: 100% 50%;
+    transition: transform 0.3s ease;
+  }
+
+  .raven-svg #ravenWingR {
+    transform-box: fill-box;
+    transform-origin: 0% 50%;
+    transition: transform 0.3s ease;
+  }
+
+  .raven-accessory-slot {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
-    object-fit: contain;
-    filter: drop-shadow(0 4px 12px rgba(42, 37, 32, 0.15));
-    user-select: none;
-    -webkit-user-drag: none;
+    pointer-events: none;
+    z-index: 3;
   }
 
   /* ── Task indicator ── */
@@ -605,6 +648,34 @@
     border-radius: 50%;
     background: var(--accent);
     animation: task-pulse 1.5s ease-in-out infinite;
+  }
+
+  /* Focus mode badge */
+  .pet-focus-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    background: color-mix(in srgb, var(--seed-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--seed-accent) 25%, transparent);
+    border-radius: 10px;
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--seed-accent);
+    z-index: 5;
+    animation: pet-bubble-in 0.3s ease-out;
+  }
+
+  .pet-focus-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--seed-accent);
+    box-shadow: 0 0 4px var(--seed-accent);
+    animation: task-pulse 2s ease-in-out infinite;
   }
 
   /* ── XP gain popup ── */
@@ -838,29 +909,39 @@
   60% { transform: translateY(-18px) scale(1.05); }
 }
 
-/* ── Raven-specific keyframes ── */
-@keyframes raven-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+/* ── SVG Raven keyframes ── */
+@keyframes raven-svg-float {
+  0%, 100% { transform: translateX(-50%) translateY(0) rotate(0deg); }
+  25% { transform: translateX(-50%) translateY(-3px) rotate(-1deg); }
+  50% { transform: translateX(-50%) translateY(-6px) rotate(0deg); }
+  75% { transform: translateX(-50%) translateY(-3px) rotate(1deg); }
 }
 
-@keyframes raven-idle-float {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  25% { transform: translateY(-3px) rotate(-1deg); }
-  50% { transform: translateY(-6px) rotate(0deg); }
-  75% { transform: translateY(-3px) rotate(1deg); }
+@keyframes raven-svg-think {
+  0%, 100% { transform: translateX(-50%) rotate(0deg); }
+  30% { transform: translateX(-50%) rotate(-6deg); }
+  70% { transform: translateX(-50%) rotate(6deg); }
 }
 
-@keyframes raven-head-tilt {
+@keyframes raven-svg-work {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-3px); }
+}
+
+@keyframes raven-wing-flap-l {
   0%, 100% { transform: rotate(0deg); }
-  30% { transform: rotate(-5deg); }
-  70% { transform: rotate(5deg); }
+  50% { transform: rotate(-12deg); }
 }
 
-@keyframes raven-working-wobble {
-  0%, 100% { transform: rotate(0deg) scale(1); }
-  25% { transform: rotate(-3deg) scale(1.02); }
-  75% { transform: rotate(3deg) scale(1.02); }
+@keyframes raven-wing-flap-r {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(12deg); }
+}
+
+@keyframes raven-svg-bounce {
+  0%, 100% { transform: translateX(-50%) translateY(0) scaleY(1); }
+  25% { transform: translateX(-50%) translateY(-12px) scaleY(1.03); }
+  50% { transform: translateX(-50%) translateY(-4px) scaleY(1.01); }
 }
 
 @keyframes raven-hop {
@@ -869,41 +950,172 @@
   60% { transform: translateY(-20px) scale(1.05); }
 }
 
-@keyframes raven-shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-5px) rotate(-3deg); }
-  40% { transform: translateX(5px) rotate(3deg); }
-  60% { transform: translateX(-3px) rotate(-2deg); }
-  80% { transform: translateX(3px) rotate(2deg); }
+@keyframes raven-svg-shake {
+  0%, 100% { transform: translateX(-50%) translateX(0); }
+  25% { transform: translateX(-50%) translateX(-5px); }
+  75% { transform: translateX(-50%) translateX(5px); }
 }
 
-@keyframes raven-breathe {
-  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.88; }
-  30% { transform: scale(1.02) rotate(-3deg); opacity: 0.92; }
-  50% { transform: scale(1.03) rotate(-4deg); opacity: 1; }
-  70% { transform: scale(1.02) rotate(-2deg); opacity: 0.92; }
+@keyframes raven-svg-breathe {
+  0%, 100% { transform: translateX(-50%) scale(1) rotate(0deg); opacity: 0.88; }
+  30% { transform: translateX(-50%) scale(1.02) rotate(-3deg); opacity: 0.92; }
+  50% { transform: translateX(-50%) scale(1.03) rotate(-4deg); opacity: 1; }
+  70% { transform: translateX(-50%) scale(1.02) rotate(-2deg); opacity: 0.92; }
 }
 
-@keyframes raven-bounce {
-  0%, 100% { transform: translateY(0); }
-  40% { transform: translateY(-12px); }
-  60% { transform: translateY(-4px); }
+@keyframes raven-svg-peck {
+  0%, 100% { transform: translateX(-50%) translateY(0) rotate(0deg); }
+  50% { transform: translateX(-50%) translateY(4px) rotate(8deg); }
 }
 
-@keyframes raven-peck {
-  0%, 100% { transform: rotate(0deg); }
-  50% { transform: rotate(12deg); }
+@keyframes raven-blink-svg {
+  0%, 100% { transform: scaleY(1); }
+  40% { transform: scaleY(0.08); }
+  60% { transform: scaleY(0.08); }
 }
 
-@keyframes raven-blink-fade {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+@keyframes raven-svg-levelup {
+  0% { filter: drop-shadow(0 0 0px #fbbf24); }
+  50% { filter: drop-shadow(0 0 14px #fbbf24) drop-shadow(0 0 28px rgba(251,191,36,0.4)); }
+  100% { filter: drop-shadow(0 0 0px #fbbf24); }
 }
 
-@keyframes raven-levelup-glow {
-  0% { filter: drop-shadow(0 0 0px var(--seed-accent)); }
-  50% { filter: drop-shadow(0 0 20px var(--seed-accent)) drop-shadow(0 0 40px color-mix(in srgb, var(--seed-accent) 30%, transparent)); }
-  100% { filter: drop-shadow(0 0 0px var(--seed-accent)); }
+@keyframes raven-svg-code {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  20% { transform: translateX(-50%) translateY(-1px); }
+  40% { transform: translateX(-50%) translateY(0); }
+  60% { transform: translateX(-50%) translateY(-1px); }
+  80% { transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes raven-svg-review {
+  0%, 100% { transform: translateX(-50%) rotate(0deg); }
+  25% { transform: translateX(-50%) rotate(-4deg) translateY(-2px); }
+  50% { transform: translateX(-50%) rotate(0deg); }
+  75% { transform: translateX(-50%) rotate(4deg) translateY(-2px); }
+}
+
+/* ── Approval floating card ── */
+.pet-approval-card {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 20;
+  background: var(--bg-secondary);
+  border: 1px solid var(--warning);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 12px color-mix(in srgb, var(--warning) 25%, transparent);
+  animation: pet-approval-in 0.3s ease-out;
+  backdrop-filter: blur(8px);
+}
+
+.pet-approval-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.pet-approval-icon {
+  font-size: 14px;
+}
+
+.pet-approval-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+  flex: 1;
+}
+
+.pet-approval-count {
+  font-size: 10px;
+  background: var(--warning);
+  color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-weight: 700;
+}
+
+.pet-approval-body {
+  margin-bottom: 8px;
+}
+
+.pet-approval-tool {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+}
+
+.pet-approval-dangerous {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--error);
+  color: white;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.pet-approval-reason {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin: 4px 0 0;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pet-approval-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.pet-approval-btn {
+  flex: 1;
+  padding: 6px 0;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pet-approval-btn-approve {
+  background: color-mix(in srgb, var(--success) 90%, transparent);
+  color: white;
+}
+
+.pet-approval-btn-approve:hover {
+  background: var(--success);
+  transform: scale(1.02);
+}
+
+.pet-approval-btn-deny {
+  background: color-mix(in srgb, var(--error) 15%, transparent);
+  color: var(--error);
+  border: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
+}
+
+.pet-approval-btn-deny:hover {
+  background: color-mix(in srgb, var(--error) 25%, transparent);
+  transform: scale(1.02);
+}
+
+@keyframes pet-approval-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ── Bubble & menu animations ── */
@@ -1205,13 +1417,9 @@
   100% { opacity: 0; transform: translate(2px, -24px) scale(0.5); }
 }
 
-/* Skip layout/paint work for off-screen list items so long chat histories
-   and job lists keep scrolling smoothly. `auto` lets the browser remember the
-   last rendered size instead of guessing a fixed height. */
-.cv-list > * {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 80px;
-}
+/* ponytail: removed content-visibility from .cv-list > * — react-virtuoso
+   already virtualizes, and content-visibility corrupts its height/scroll
+   measurement in Tauri WebView2, causing the chat to not scroll. */
 
 /* ═══════════════════════════════════════════════
    Animations (from Canvas prototype)

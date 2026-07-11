@@ -1012,7 +1012,7 @@ export default function App() {
       )}
 
       {/* Main */}
-      <main id="main-content" className="flex flex-1 flex-col min-w-0 bg-bg-primary" aria-busy={isConnected ? undefined : "true"}>
+      <main id="main-content" className="flex flex-1 flex-col min-h-0 min-w-0 bg-bg-primary" aria-busy={isConnected ? undefined : "true"}>
         {/* Header */}
         <header className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-6">
           <div className="flex items-center gap-2.5">
@@ -1103,7 +1103,7 @@ export default function App() {
         <ContextBar pct={contextPct} />
 
         {/* Content */}
-        <div className="relative flex-1 overflow-hidden">
+        <div className="relative flex-1 min-h-0 overflow-hidden">
           {/* Restart waiting overlay */}
           {(wsReconnecting || wsFailed) && (
             <div className="absolute inset-0 z-40 flex items-center justify-center bg-bg-primary/80 backdrop-blur-sm">

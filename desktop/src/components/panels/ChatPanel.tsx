@@ -1135,7 +1135,7 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
       )}
 
-      <div className="border-t border-border bg-bg-secondary p-4">
+      <div className="shrink-0 border-t border-border bg-bg-secondary p-4">
         {!isConnected && (wsFailed || wsReconnecting) && (
             <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
               {wsFailed ? (

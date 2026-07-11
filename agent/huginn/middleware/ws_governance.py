@@ -6,6 +6,7 @@ a connection with messages. Used by all /ws/* endpoints via ws_auth_and_track().
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import defaultdict
@@ -16,7 +17,7 @@ from fastapi import WebSocket, status
 class WSConnectionTracker:
     """Track active WebSocket connections per identity for resource governance."""
 
-    def __init__(self, max_per_user: int = 10, max_msgs_per_sec: int = 5):
+    def __init__(self, max_per_user: int = 50, max_msgs_per_sec: int = 5):
         self._connections: dict[str, int] = defaultdict(int)
         self._lock = threading.Lock()
         self._max_per_user = max_per_user
@@ -53,7 +54,9 @@ _tracker: WSConnectionTracker | None = None
 def get_tracker() -> WSConnectionTracker:
     global _tracker
     if _tracker is None:
-        _tracker = WSConnectionTracker()
+        max_conn = int(os.environ.get("HUGINN_WS_MAX_CONNECTIONS", "50"))
+        max_msgs = int(os.environ.get("HUGINN_WS_MAX_MSGS_PER_SEC", "20"))
+        _tracker = WSConnectionTracker(max_per_user=max_conn, max_msgs_per_sec=max_msgs)
     return _tracker
 
 
