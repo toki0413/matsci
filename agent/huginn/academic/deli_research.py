@@ -1151,6 +1151,12 @@ class DeliAutoResearch:
                         await self._run_blackbox_fallback(
                             state, gap_info, features, target_key
                         )
+                    else:
+                        # 提示用户有黑箱选项 — 不替用户决定
+                        state.integrity_log.append(
+                            "[sr_gp] Tip: set allow_blackbox=True to try "
+                            "black-box GP fallback for this gap"
+                        )
                     continue
 
                 sr_data = result.data or {}
@@ -1173,6 +1179,13 @@ class DeliAutoResearch:
                     f"[sr_gp] gap '{gap_text[:40]}...' → equation: "
                     f"{equation[:80]} (R2={r2:.3f})"
                 )
+
+                # R2 不足时提示用户 — 不自动跳黑箱, 让用户决定
+                if r2 < 0.5 and not allow_blackbox:
+                    state.integrity_log.append(
+                        f"[sr_gp] Low R2 ({r2:.3f}) — SR equation may be unreliable. "
+                        f"Set allow_blackbox=True for GP-only fallback."
+                    )
 
                 # 回注数学验证: 发现的方程作为一个新的 math_structure
                 state.math_structures.append(
@@ -1443,6 +1456,7 @@ class DeliAutoResearch:
         target_journal: str | None = None,
         rag_search_fn: Any | None = None,
         config: Any = None,
+        allow_blackbox: bool = False,
     ) -> ResearchState:
         """从头到尾跑完整管线."""
         state = ResearchState(topic=topic, target_journal=target_journal)
@@ -1496,7 +1510,7 @@ class DeliAutoResearch:
                     f"Running SR+GP discovery for {len(data_gaps)} "
                     f"data-driven gaps...",
                 )
-                await self._run_sr_gp_loop(state)
+                await self._run_sr_gp_loop(state, allow_blackbox=allow_blackbox)
                 await self._emit_progress(
                     state, ResearchStage.GAP_ANALYSIS, "done",
                     f"SR+GP: {len(state.sr_gp_results)} equations "
@@ -1818,6 +1832,14 @@ class DeliResearchInput(BaseModel):
         default=None,
         description="研究 session ID (next_stage/status/get_draft/verify 时必填)",
     )
+    allow_blackbox: bool = Field(
+        default=False,
+        description=(
+            "允许黑箱 ML fallback (默认 False). "
+            "SR+GP 拟合不足时, 若 True 则 fallback 到 GP 直接拟合 (无可解释方程). "
+            "用户在对话中说 '用神经网络'/'用深度学习'/'force blackbox' 时可设为 True."
+        ),
+    )
 
 
 class DeliAutoResearchTool(HuginnTool):
@@ -1879,6 +1901,7 @@ class DeliAutoResearchTool(HuginnTool):
                 topic=args.topic,
                 target_journal=args.target_journal,
                 rag_search_fn=rag_fn,
+                allow_blackbox=args.allow_blackbox,
             )
             return ToolResult(
                 data={
