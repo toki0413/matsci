@@ -1,0 +1,43 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_60ca0855",
+  "description": "Compute strain-modulated band alignment in MoS2 heterostructures with graphene, hBN, and other TMDs using DFT.",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-07-11T06:55:14.623361+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_60ca0855",
+    "description": "Compute strain-modulated band alignment in MoS2 heterostructures with graphene, hBN, and other TMDs using DFT.",
+    "instrument": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_60ca0855.json",
+    "object": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\provenance.jsonl",
+    "startTime": "2026-07-11T14:54:54.810345",
+    "endTime": "2026-07-11T14:55:14.621366"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\huginn_autoloop_report_loop_4d96df10.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_60ca0855.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

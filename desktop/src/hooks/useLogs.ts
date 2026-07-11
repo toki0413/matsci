@@ -16,6 +16,7 @@ export function useLogs() {
 
   // Listen to backend stdout/stderr
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     let unlisten: UnlistenFn | undefined;
     (async () => {
       unlisten = await listen("backend-log", (event) => {

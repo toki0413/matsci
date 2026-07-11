@@ -24,9 +24,9 @@ export const PROVIDERS = [
   { id: "default", label: "Default", keyVar: "" },
 ];
 
-// Short HH:MM stamp used on every chat / log message.
+// ISO timestamp for message/log entries. formatTimeAgo() parses this back.
 export function formatTime() {
-  return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date().toISOString();
 }
 
 // Relative time: "3m ago", "2h ago", "1d ago"

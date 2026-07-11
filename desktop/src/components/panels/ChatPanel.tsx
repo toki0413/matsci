@@ -6,6 +6,7 @@ import { formatTimeAgo } from '../../lib/constants';
 import { api } from '../../lib/api';
 import { toast } from '../Toast';
 import { ToolResultRenderer } from '../ToolResultRenderer';
+import { IterationTimeline } from '../IterationTimeline';
 import { SaveToMemoryButton } from '../SaveToMemoryButton';
 import { PipelineProgressCard } from '../PipelineProgressCard';
 import MessageContent from '../MessageContent';
@@ -114,6 +115,7 @@ interface ChatPanelProps {
   researchMode: boolean;
   setResearchMode: (v: boolean) => void;
   contextBudgetTokens?: number;
+  onExpandResult?: (content: string, toolName?: string) => void;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -126,10 +128,11 @@ export function ChatPanel(props: ChatPanelProps) {
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages, stopGeneration, pauseGeneration, resumeGeneration, isPaused, researchMode, setResearchMode,
-    contextBudgetTokens,
+    contextBudgetTokens, onExpandResult,
   } = props;
 
   const [showCommands, setShowCommands] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(true);
   const [cmdSelectIdx, setCmdSelectIdx] = useState(0);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionIdx, setMentionIdx] = useState(0);
@@ -578,6 +581,22 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
       )}
 
+      {/* Iteration timeline — collapsible bar, reuses existing messages */}
+      <div className="border-b border-border" data-timeline-wrapper>
+        <button
+          onClick={() => setShowTimeline(v => !v)}
+          className="flex w-full items-center gap-1 px-3 py-1 text-xs text-text-muted hover:text-text-primary"
+        >
+          {showTimeline ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          Iterations
+        </button>
+        {showTimeline && (
+          <div className="max-h-40 overflow-y-auto px-3 pb-2">
+            <IterationTimeline messages={messages as unknown as Array<Record<string, unknown>>} />
+          </div>
+        )}
+      </div>
+
       <div className="relative flex-1 min-h-0">
       <Virtuoso
         ref={virtuosoRef}
@@ -642,9 +661,10 @@ export function ChatPanel(props: ChatPanelProps) {
                         <pre className="mt-1 max-h-40 overflow-auto text-xs">
                           {JSON.stringify(tc.tool_args, null, 2)}
                         </pre>
-                        {tc.tool_status === "done" && tc.tool_result !== undefined && (
-                          <ToolResultRenderer content={tc.tool_result} toolName={tc.tool_name} />
-                        )}
+                        {tc.tool_status === "done" && tc.tool_result !== undefined && (() => {
+                          const result = tc.tool_result;
+                          return <ToolResultRenderer content={result} toolName={tc.tool_name} onExpand={onExpandResult ? () => onExpandResult(result, tc.tool_name) : undefined} />;
+                        })()}
                       </details>
                     ))}
                   </div>
@@ -679,14 +699,17 @@ export function ChatPanel(props: ChatPanelProps) {
                       {JSON.stringify(msg.tool_args, null, 2)}
                     </pre>
                   </details>
-                  {msg.tool_status === "done" && msg.tool_result !== undefined && (
+                  {msg.tool_status === "done" && msg.tool_result !== undefined && (() => {
+                    const result = msg.tool_result;
+                    return (
                     <>
                       <div className="mt-3 text-xs text-text-secondary">
                         {t('chat.result')}
                       </div>
-                      <ToolResultRenderer content={msg.tool_result} toolName={msg.tool_name} />
+                      <ToolResultRenderer content={result} toolName={msg.tool_name} onExpand={onExpandResult ? () => onExpandResult(result, msg.tool_name) : undefined} />
                     </>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -1278,7 +1301,22 @@ export function ChatPanel(props: ChatPanelProps) {
             </button>
           </div>
 
-          {/* Options popover */}
+          {/* Thinking intensity — always visible */}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-text-muted">🧠</span>
+            {(["low", "medium", "high"] as const).map((level) => (
+              <button
+                key={level}
+                onClick={() => setThinkingIntensity(level)}
+                className={`rounded px-1.5 py-0.5 text-[10px] capitalize transition-colors ${
+                  thinkingIntensity === level ? "bg-accent/20 text-accent font-medium" : "text-text-muted hover:text-text-secondary"
+                }`}
+                title={`Thinking: ${level}`}
+              >
+                {level[0].toUpperCase()}
+              </button>
+            ))}
+          </div>
           <details className="relative">
             <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors" title="Options" aria-label="Chat options" role="button" aria-expanded="false">
               <Settings size={14} />

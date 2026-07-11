@@ -28,6 +28,7 @@ import { useConfig } from "./hooks/useConfig";
 import { useChatAndConnection } from "./hooks/useChatAndConnection";
 import { PetStatusWidget } from "./components/PetStatusWidget";
 import AutoloopProgress from "./components/AutoloopProgress";
+import { ContextBar } from "./components/ContextBar";
 import { ChatPanel } from "./components/panels/ChatPanel";
 import { MetricsBar } from "./components/MetricsBar";
 import { MemoryPanel } from "./components/panels/MemoryPanel";
@@ -44,6 +45,9 @@ import { ThreadsPanel } from "./components/panels/ThreadsPanel";
 import { ReviewPanel } from "./components/panels/ReviewPanel";
 import { CoderPanel } from "./components/panels/CoderPanel";
 import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
+import { ResultPanel } from "./components/panels/ResultPanel";
+import { CodeSearchPanel } from "./components/panels/CodeSearchPanel";
+import { GitPanel } from "./components/panels/GitPanel";
 import { HPCPanel } from "./components/panels/HPCPanel";
 import { useTheme } from "./hooks/useTheme";
 import { useFocusTrap } from "./hooks/useFocusTrap";
@@ -58,6 +62,7 @@ import {
   MessageCircle, Bird, Briefcase, HelpCircle,
   ChevronDown, Sparkles,
   Search, Grid, Sun, Moon, Plus, Trash2,
+  Maximize2, GitBranch,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -99,12 +104,13 @@ function LoadingFallback() {
 }
 
 export default function App() {
+  const { theme, toggleTheme } = useTheme();
+
   if (IS_PET_MODE) {
     return <Pet />;
   }
 
   const { t } = useTranslation();
-  const { theme, toggleTheme } = useTheme();
 
   // Focus trap for modals
   const toolPaletteRef = useRef<HTMLDivElement>(null);
@@ -118,9 +124,12 @@ export default function App() {
     | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
     | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
     | "structure" | "emotion" | "provenance" | "side" | "solver"
-    | "persona"
+    | "persona" | "result" | "code" | "git"
   >("chat");
   const [sidebarHidden, setSidebarHidden] = useState(false);
+  // Result panel state: content + toolName for the expanded view
+  const [resultContent, setResultContent] = useState("");
+  const [resultToolName, setResultToolName] = useState<string | undefined>(undefined);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem('sidebar-width');
     return saved ? parseInt(saved) : 224;
@@ -184,9 +193,9 @@ export default function App() {
   } = useConfig();
 
   const {
-    teamObjective, teamPlan, teamRunning, teamResult, teamError,
+    teamObjective, teamPlan, teamRunning, teamResult, teamFusionResult, teamError,
     setTeamObjective,
-    handleTeamPlan, handleTeamRun,
+    handleTeamPlan, handleTeamRun, handleTeamFusion,
   } = useTeam();
 
   const {
@@ -547,6 +556,7 @@ export default function App() {
     startBackend,
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
     autoloopPhase, autoloopProgress,
+    contextPct,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages,
     stopGeneration,
@@ -667,6 +677,8 @@ export default function App() {
       label: t('nav.workspace'),
       tabs: [
         { id: "files" as const, label: t('tab.files'), icon: <FolderTree size={16} /> },
+        { id: "code" as const, label: t('tab.code'), icon: <Search size={16} /> },
+        { id: "git" as const, label: t('tab.git'), icon: <GitBranch size={16} /> },
         { id: "terminal" as const, label: t('tab.terminal'), icon: <Terminal size={16} /> },
         { id: "tools" as const, label: t('tab.tools'), icon: <Wrench size={16} /> },
         { id: "skills" as const, label: t('tab.skills'), icon: <Sparkles size={16} /> },
@@ -754,6 +766,7 @@ export default function App() {
 
   // ── System tray: restart backend from tray menu ────────────────
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     let unlisten: (() => void) | null = null;
     (async () => {
       unlisten = await listen("tray-restart-backend", async () => {
@@ -843,7 +856,7 @@ export default function App() {
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
-          <img src="/raven-logo.png" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
+          <img src="/raven-logo-64.png" srcSet="/raven-logo-64.png 1x, /raven-logo-128.png 2x" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
           <div className="flex flex-1 flex-col">
             <div className="text-[15px] font-bold tracking-tight">Huginn</div>
             <div className="text-[12px] text-text-muted leading-none font-medium">{t('app.subtitle')}</div>
@@ -865,6 +878,7 @@ export default function App() {
             { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={16} /> },
             { id: "projects", label: "Projects", icon: <Briefcase size={16} /> },
             { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={16} /> },
+            { id: "result", label: "Result", icon: <Maximize2 size={16} /> },
             { id: "settings", label: t('tab.settings'), icon: <Settings size={16} /> },
           ] as const).map((item) => (
             <button
@@ -1085,6 +1099,9 @@ export default function App() {
           <AutoloopProgress currentPhase={autoloopPhase} progress={autoloopProgress} />
         )}
 
+        {/* Context window usage indicator */}
+        <ContextBar pct={contextPct} />
+
         {/* Content */}
         <div className="relative flex-1 overflow-hidden">
           {/* Restart waiting overlay */}
@@ -1149,6 +1166,11 @@ export default function App() {
               researchMode={researchMode}
               setResearchMode={setResearchMode}
               contextBudgetTokens={config.context_budget_tokens}
+              onExpandResult={(content, toolName) => {
+                setResultContent(content);
+                setResultToolName(toolName);
+                setActiveTab("result");
+              }}
             />
           </div>
 
@@ -1165,8 +1187,10 @@ export default function App() {
               teamError={teamError}
               teamPlan={teamPlan || []}
               teamResult={teamResult}
+              teamFusionResult={teamFusionResult}
               handleTeamPlan={handleTeamPlan}
               handleTeamRun={handleTeamRun}
+              handleTeamFusion={handleTeamFusion}
             />
           )}
 
@@ -1200,6 +1224,14 @@ export default function App() {
               renderTree={renderTree}
             />
           </div>
+
+          {activeTab === "code" && (
+            <CodeSearchPanel apiBase={getApiBase()} />
+          )}
+
+          {activeTab === "git" && (
+            <GitPanel apiBase={getApiBase()} />
+          )}
 
           {activeTab === "terminal" && (
             <TerminalPanel
@@ -1357,6 +1389,13 @@ export default function App() {
               createThread={createThread}
               renameThread={renameThread}
               deleteThread={deleteThread}
+            />
+          )}
+
+          {activeTab === "result" && (
+            <ResultPanel
+              resultContent={resultContent}
+              resultToolName={resultToolName}
             />
           )}
 

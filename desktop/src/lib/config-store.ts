@@ -9,22 +9,17 @@
 import { getApiBase, setApiBase } from "./api-client";
 import type { AppConfig } from "../types/domain";
 
-/** Reactive API base — reads from api-client's module state.
+/** Reactive API base — reads from api-client's module state on every access.
  *  Proxy intercepts property access so callers always get the latest value.
  *  Must handle toString / Symbol.toPrimitive for template-literal coercion. */
 export const API_BASE = new Proxy(
-  { _v: "" },
+  {},
   {
-    get(t, prop) {
+    get(_t, prop) {
+      const val = getApiBase();
       if (prop === "toString" || prop === Symbol.toPrimitive || prop === "valueOf") {
-        return () => {
-          if (!t._v) t._v = getApiBase();
-          return t._v;
-        };
+        return () => val;
       }
-      if (!t._v) t._v = getApiBase();
-      const val = t._v;
-      // delegate string method calls (.replace, .startsWith, etc.)
       if (typeof (val as any)[prop] === "function") {
         return (val as any)[prop].bind(val);
       }
@@ -42,22 +37,26 @@ export let wsUrlVersion: number = 0;
 
 function recomputeWsUrl() {
   const base = getApiBase();
-  WS_URL = base.replace(/^http/, "ws") + "/ws/agent";
-  wsUrlVersion++;
+  const newUrl = base.replace(/^http/, "ws") + "/ws/agent";
+  // Only bump version when URL actually changes — avoids reconnect storms
+  if (newUrl !== WS_URL) {
+    WS_URL = newUrl;
+    wsUrlVersion++;
+  }
 }
 
 export async function syncBackendUrl(): Promise<void> {
-  // Try to read the actual port from the Tauri-managed sidecar
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const port = await invoke<number>("get_backend_port").catch(() => null);
-    if (port) {
-      const base = `http://127.0.0.1:${port}`;
-      setApiBase(base);
-      recomputeWsUrl();
+  // In Tauri, read the sidecar port. In browser/dev, skip — invoke hangs.
+  if ("__TAURI_INTERNALS__" in window) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const port = await invoke<number>("get_backend_port").catch(() => null);
+      if (port) {
+        setApiBase(`http://127.0.0.1:${port}`);
+      }
+    } catch {
+      // Tauri invoke failed — fall through with existing apiBase
     }
-  } catch {
-    // Not in Tauri context (dev mode) — use whatever api-client already has
   }
   recomputeWsUrl();
 }

@@ -461,6 +461,210 @@ class ModelTeam:
             for m in self.members.values()
         ]
 
+    # ── Fusion 模式 ────────────────────────────────────────
+
+    async def fusion_query(
+        self,
+        query: str,
+        context: dict[str, Any] | None = None,
+        *,
+        panel_roles: list[TeamRole] | None = None,
+        synthesizer_role: TeamRole = TeamRole.CRITIC,
+        max_panel: int = 5,
+        rounds: int = 1,
+    ) -> dict[str, Any]:
+        """Fusion 模式: 并行分发 → 多轮讨论 → 裁判合成.
+
+        灵感来自 OpenRouter Fusion (2026.06):
+        1. 将用户 query 并行分发给 panel 成员 (默认所有 tools-capable 成员)
+        2. 每个成员独立推理, 可以调工具
+        3. rounds > 1 时, 后续轮次每个成员能看到其他人的回答, 进行补充/修正
+        4. 所有轮次结束后, 由 synthesizer 成员做差异驱动的信息蒸馏:
+           - 共识提取: 多个模型一致的结论
+           - 分歧标注: 矛盾的观点 + 证据判断
+           - 盲区补全: 单一模型独有的有效信息
+
+        和 ModelTeam.run() 的区别:
+        - run() 是串行流水线 (plan → execute → review)
+        - fusion_query() 是并行 fan-out + (可选)多轮讨论 + 合成 fan-in
+        - fusion 适合开放性研究问题, run 适合有明确步骤的执行任务
+
+        参数:
+            panel_roles: 参与并行回答的角色, 默认所有 tools-capable 成员
+            synthesizer_role: 负责合成的角色, 默认 critic
+            max_panel: 最多并行成员数 (成本控制)
+            rounds: 讨论轮数, 1=单轮(纯并行), 2+=多轮讨论(协作)
+
+        返回:
+            dict 包含 final_answer, panel_responses, all_rounds, consensus, dissent
+        """
+        traces: list[TeamTrace] = []
+        ctx = dict(context or {})
+        ctx["original_task"] = query
+
+        # 1. 选择 panel 成员
+        if panel_roles is None:
+            # 默认: 所有有 tools 能力的成员 (不含 synthesizer)
+            panel_roles = [
+                role for role, member in self.members.items()
+                if role != synthesizer_role and member.caps.tools
+            ]
+        if not panel_roles:
+            # 退化为所有非 synthesizer 成员
+            panel_roles = [
+                role for role in self.members if role != synthesizer_role
+            ]
+
+        # 限制 panel 大小
+        panel_roles = panel_roles[:max_panel]
+        if not panel_roles:
+            return {
+                "task": query,
+                "final_answer": "No panel members available for fusion.",
+                "panel_responses": [],
+                "consensus": "",
+                "dissent": "",
+            }
+
+        # 2. 并行分发 (多轮讨论)
+        async def _parallel_delegate(
+            role: TeamRole, task: str
+        ) -> tuple[TeamRole, str, float]:
+            start = time.time()
+            output = await self._delegate(role, task, ctx, traces)
+            duration = round((time.time() - start) * 1000, 2)
+            return role, output, duration
+
+        all_rounds: list[list[dict]] = []
+        panel_responses: list[dict] = []
+
+        for round_idx in range(rounds):
+            if round_idx == 0:
+                # 第一轮: 原始 query
+                task_for_round = query
+            else:
+                # 后续轮次: 把上一轮所有回答作为同侪上下文
+                peer_text = "\n\n".join(
+                    f"[{r['role']} ({r['model']})]\n{r['answer']}"
+                    for r in panel_responses
+                )
+                task_for_round = (
+                    f"{query}\n\n"
+                    f"=== 同侪回答 (第 {round_idx} 轮) ===\n"
+                    f"{peer_text}\n\n"
+                    f"=== 你的任务 ===\n"
+                    f"请审视其他模型的回答, 补充遗漏的信息, "
+                    f"修正错误, 或坚持你的观点并给出理由."
+                )
+
+            round_results = await asyncio.gather(
+                *(_parallel_delegate(role, task_for_round) for role in panel_roles)
+            )
+
+            panel_responses = []
+            for role, output, duration in round_results:
+                member = self.members.get(role)
+                panel_responses.append({
+                    "role": role.value,
+                    "model": member.model_name if member else "?",
+                    "answer": output,
+                    "duration_ms": duration,
+                    "round": round_idx + 1,
+                })
+            all_rounds.append(list(panel_responses))
+
+        # panel_responses 现在是最后一轮的结果
+
+        # 3. 裁判合成
+        synthesizer_member = self.members.get(synthesizer_role)
+        if synthesizer_member is None:
+            # 没有 synthesizer, 退化为拼接
+            combined = "\n\n---\n\n".join(
+                f"[{r['role']} ({r['model']})]\n{r['answer']}"
+                for r in panel_responses
+            )
+            return {
+                "task": query,
+                "final_answer": combined,
+                "panel_responses": panel_responses,
+                "all_rounds": all_rounds,
+                "rounds": rounds,
+                "consensus": "No synthesizer available — raw concatenation.",
+                "dissent": "",
+                "trace": [self._trace_to_dict(t) for t in traces],
+            }
+
+        # 构建合成 prompt
+        panel_text = "\n\n".join(
+            f"=== [{r['role']} ({r['model']})] ===\n{r['answer']}"
+            for r in panel_responses
+        )
+
+        synthesis_prompt = f"""以下是多个独立模型对同一问题的回答:
+
+原始问题: {query}
+
+{panel_text}
+
+请作为综合分析师, 完成以下任务:
+1. **共识提取**: 提取多个模型一致认同的结论 (标注哪些模型支持)
+2. **分歧标注**: 标注存在矛盾或不同观点的地方, 分析哪方证据更充分
+3. **盲区补全**: 补充单一模型遗漏但有价值的信息
+4. **最终结论**: 输出一个结构完整、逻辑清晰的综合答案
+
+请按以下格式输出:
+
+## 共识
+(多个模型一致的结论)
+
+## 分歧
+(矛盾的观点 + 判断)
+
+## 综合答案
+(最终结论)
+"""
+
+        synth_output = await self._delegate(
+            synthesizer_role, synthesis_prompt, ctx, traces
+        )
+
+        # 解析合成结果
+        consensus = ""
+        dissent = ""
+        final_answer = synth_output
+        if "## 共识" in synth_output:
+            parts = synth_output.split("## 共识", 1)
+            if len(parts) > 1:
+                rest = "## 共识" + parts[1]
+                if "## 分歧" in rest:
+                    consensus_part = rest.split("## 分歧", 1)
+                    consensus = consensus_part[0].replace("## 共识", "").strip()
+                    if len(consensus_part) > 1 and "## 综合答案" in consensus_part[1]:
+                        dissent_part = consensus_part[1].split("## 综合答案", 1)
+                        dissent = dissent_part[0].strip()
+                        final_answer = dissent_part[1].strip()
+                    else:
+                        dissent = consensus_part[1].strip()
+                else:
+                    consensus = rest.replace("## 共识", "").strip()
+        elif "## 综合答案" in synth_output:
+            final_answer = synth_output.split("## 综合答案", 1)[-1].strip()
+
+        return {
+            "task": query,
+            "final_answer": final_answer,
+            "panel_responses": panel_responses,
+            "all_rounds": all_rounds,
+            "rounds": rounds,
+            "consensus": consensus,
+            "dissent": dissent,
+            "synthesizer": {
+                "role": synthesizer_role.value,
+                "model": synthesizer_member.model_name,
+            },
+            "trace": [self._trace_to_dict(t) for t in traces],
+        }
+
 
 # ── 辅助函数 ──────────────────────────────────────────────
 

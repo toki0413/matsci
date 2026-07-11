@@ -44,6 +44,8 @@ const resources = {
 
       /* ── Workspace tabs ── */
       'tab.files': 'Files',
+      'tab.code': 'Code Search',
+      'tab.git': 'Git',
       'tab.terminal': 'Terminal',
       'tab.sandbox': 'Sandbox',
       'tab.review': 'Review',
@@ -490,6 +492,66 @@ const resources = {
       'persona.cancel': 'Cancel',
       'persona.save': 'Save',
 
+      /* ── Team panel ── */
+      'team.title': '👥 Multi-Agent Team',
+      'team.desc': 'The lead agent breaks your objective into subtasks and delegates them to the configured agent profiles.',
+      'team.enable': 'Enable team mode',
+      'team.hintKeyword': '(also activates on /team keyword in chat)',
+      'team.objective': 'Objective / Query',
+      'team.placeholder': 'e.g. Compare VASP and Quantum ESPRESSO for silicon band structure...',
+      'team.plan': '📋 Plan',
+      'team.run': '▶ Run team',
+      'team.running': 'Running…',
+      'team.working': 'Working with the team…',
+      'team.plannedTasks': 'Planned tasks',
+      'team.dependsOn': 'Depends on:',
+      'team.result': 'Result',
+      'team.subOutputs': 'Sub-agent outputs',
+
+      /* ── Fusion ── */
+      'fusion.button': '⚡ Fusion',
+      'fusion.button2': '⚡⚡ Fusion×2',
+      'fusion.button3': '⚡⚡⚡ Fusion×3',
+      'fusion.title1': '单轮并行: 所有模型同时回答, 裁判合成',
+      'fusion.title2': '两轮协作: 第一轮并行回答, 第二轮看到同侪回答后修正',
+      'fusion.title3': '三轮深度协作: 回答 → 审视同侪 → 深入修正',
+      'fusion.result': '⚡ Fusion Result',
+      'fusion.models': 'models',
+      'fusion.round': 'round',
+      'fusion.rounds': 'rounds',
+      'fusion.synthesizer': 'synthesizer',
+      'fusion.panelResponses': 'Panel Responses',
+      'fusion.independent': '独立回答',
+      'fusion.reviewPeers': '审视同侪后修正',
+      'fusion.roundLabel': 'Round',
+      'fusion.consensus': '✓ Consensus',
+      'fusion.divergence': '⚠ Divergence',
+      'fusion.synthesized': 'Synthesized Answer',
+      'fusion.hintPlan': 'Plan/Run: serial pipeline (plan → execute → review)',
+      'fusion.hintFusion': 'Fusion: parallel fan-out + synthesis',
+      'fusion.hintRounds': 'Fusion×N: N rounds, each round sees peer answers then revises',
+
+      /* ── Code Search ── */
+      'codesearch.notAvailable': 'Codebase index not available.',
+      'codesearch.hint': 'Set HUGINN_CODEBASE_ENABLED=1 and install chromadb.',
+      'codesearch.placeholder': 'Search codebase...',
+      'codesearch.search': 'Search',
+      'codesearch.noResults': 'No results',
+
+      /* ── Git ── */
+      'git.detached': 'detached',
+      'git.refresh': 'Refresh',
+      'git.clean': 'Working tree clean',
+      'git.commitPlaceholder': 'Commit message...',
+      'git.commit': 'Commit',
+      'git.commitTitle': 'git add . && git commit',
+      'git.recentCommits': 'Recent commits',
+
+      /* ── Context bar ── */
+      'context.full': 'Context nearly full',
+      'context.filling': 'Context filling up',
+      'context.ok': 'Context OK',
+
       /* ── Empty states ── */
       'empty.noData': 'No data available',
       'empty.loading': 'Loading...',
@@ -528,6 +590,8 @@ const resources = {
 
       /* ── Workspace tabs ── */
       'tab.files': '文件',
+      'tab.code': '代码搜索',
+      'tab.git': 'Git',
       'tab.terminal': '终端',
       'tab.sandbox': '沙箱',
       'tab.review': '审查',
@@ -972,6 +1036,66 @@ const resources = {
       'persona.selectPrompt': '选择一个人格查看详情。',
       'persona.cancel': '取消',
       'persona.save': '保存',
+
+      /* ── Team panel ── */
+      'team.title': '👥 多 Agent 团队',
+      'team.desc': '主 Agent 将目标分解为子任务, 委派给配置好的 Agent 执行.',
+      'team.enable': '启用团队模式',
+      'team.hintKeyword': '(也可在聊天中用 /team 关键词激活)',
+      'team.objective': '目标 / 查询',
+      'team.placeholder': '例如: 比较 VASP 和 Quantum ESPRESSO 计算 Si 能带, 建议 50 原子单胞哪个更经济',
+      'team.plan': '📋 规划',
+      'team.run': '▶ 运行团队',
+      'team.running': '运行中…',
+      'team.working': '团队协作中…',
+      'team.plannedTasks': '规划的任务',
+      'team.dependsOn': '依赖于:',
+      'team.result': '结果',
+      'team.subOutputs': '子 Agent 输出',
+
+      /* ── Fusion ── */
+      'fusion.button': '⚡ Fusion',
+      'fusion.button2': '⚡⚡ Fusion×2',
+      'fusion.button3': '⚡⚡⚡ Fusion×3',
+      'fusion.title1': '单轮并行: 所有模型同时回答, 裁判合成',
+      'fusion.title2': '两轮协作: 第一轮并行回答, 第二轮看到同侪回答后修正',
+      'fusion.title3': '三轮深度协作: 回答 → 审视同侪 → 深入修正',
+      'fusion.result': '⚡ Fusion 结果',
+      'fusion.models': '个模型',
+      'fusion.round': '轮',
+      'fusion.rounds': '轮',
+      'fusion.synthesizer': '合成器',
+      'fusion.panelResponses': '面板回答',
+      'fusion.independent': '独立回答',
+      'fusion.reviewPeers': '审视同侪后修正',
+      'fusion.round': '第',
+      'fusion.consensus': '✓ 共识',
+      'fusion.divergence': '⚠ 分歧',
+      'fusion.synthesized': '综合答案',
+      'fusion.hintPlan': 'Plan/Run: 串行流水线 (规划 → 执行 → 审查)',
+      'fusion.hintFusion': 'Fusion: 并行扇出 + 合成',
+      'fusion.hintRounds': 'Fusion×N: N 轮讨论, 每轮看到同侪回答后修正',
+
+      /* ── Code Search ── */
+      'codesearch.notAvailable': '代码库索引不可用.',
+      'codesearch.hint': '设置 HUGINN_CODEBASE_ENABLED=1 并安装 chromadb.',
+      'codesearch.placeholder': '搜索代码库...',
+      'codesearch.search': '搜索',
+      'codesearch.noResults': '无结果',
+
+      /* ── Git ── */
+      'git.detached': '游离',
+      'git.refresh': '刷新',
+      'git.clean': '工作区干净',
+      'git.commitPlaceholder': '提交消息...',
+      'git.commit': '提交',
+      'git.commitTitle': 'git add . && git commit',
+      'git.recentCommits': '最近提交',
+
+      /* ── Context bar ── */
+      'context.full': '上下文即将满',
+      'context.filling': '上下文占用中',
+      'context.ok': '上下文正常',
 
       /* ── Empty states ── */
       'empty.noData': '暂无数据',

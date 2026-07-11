@@ -925,6 +925,13 @@ class StreamingMixin:
                         final_state, thread_id
                     )
 
+                    # If synthetic messages were injected, signal auto-continue
+                    # so the WS handler can trigger another turn immediately
+                    # instead of waiting for the user to send a new message.
+                    pending = getattr(self, '_pending_synthetic_messages', None)
+                    if pending:
+                        yield {"_auto_continue": True}
+
                     ai_content = self._extract_last_ai_content(final_state)
                     if ai_content:
                         if self.style_learner is not None:
