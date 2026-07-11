@@ -290,6 +290,28 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "MiniMax-M2.7-highspeed": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "MiniMax-M2.5": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "MiniMax-M2": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # ── 本地多模态模型 (Ollama / vLLM / LM Studio) ────────────
+    # vision=True 标记让 VisionRouter 走 NATIVE_LLM / BOTH 路径
+    # 前缀模糊匹配会自动覆盖 :7b, :32b, :latest, -q4_0 等标签变体
+    "qwen2.5-vl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "qwen2-vl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "qwen-vl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "llava": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "llama3.2-vision": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "minicpm-v": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "minicpm-v2.6": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "internvl2": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "internvl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "mllama": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "phi3.5-vision": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "pixtral": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    # ── 本地文本模型 ──────────────────────────────────────────
+    "qwen2.5": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen2": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "llama3.1": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "llama3": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "deepseek-r1": ModelCaps(vision=False, tools=False, reasoning=True, streaming=True),
+    "deepseek-v3": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
 }
 
 

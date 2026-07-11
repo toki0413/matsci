@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+
 interface CoderPanelProps {
   isConnected: boolean;
   coderTask: string;
@@ -17,23 +19,24 @@ export function CoderPanel({
   coderMaxIters, setCoderMaxIters, coderRunning, coderError, coderResult,
   handleCoderRun,
 }: CoderPanelProps) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-3xl space-y-5">
           <div className="card">
-            <h2 className="mb-2 text-base font-semibold">💻 Coder Mode</h2>
+            <h2 className="mb-2 text-base font-semibold">{t('coder.title')}</h2>
             <p className="text-sm text-text-secondary">
-              Give Muninn a coding task and let it read, write, edit, run shell commands, and commit changes autonomously.
+              {t('coder.desc')}
             </p>
           </div>
 
           <div className="card space-y-3">
-            <label className="block text-xs font-medium text-text-secondary">Task</label>
+            <label className="block text-xs font-medium text-text-secondary">{t('coder.task')}</label>
             <textarea
               value={coderTask}
               onChange={(e) => setCoderTask(e.target.value)}
-              placeholder="e.g. Refactor the VASP parser to use the Rust extension, then add a test."
+              placeholder={t('coder.taskPh')}
               rows={5}
               disabled={coderRunning}
               className="input resize-none"
@@ -47,10 +50,10 @@ export function CoderPanel({
                   disabled={coderRunning}
                   className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
                 />
-                Auto-approve destructive actions
+                {t('coder.autoApprove')}
               </label>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-text-secondary">Max iterations</label>
+                <label className="text-xs text-text-secondary">{t('coder.maxIter')}</label>
                 <input
                   type="number"
                   min={1}
@@ -68,12 +71,12 @@ export function CoderPanel({
               disabled={!isConnected || coderRunning || !coderTask.trim()}
               className="btn-primary px-4 py-1.5 text-xs"
             >
-              {coderRunning ? "Coding…" : "▶ Run coder"}
+              {coderRunning ? t('coder.running') : t('coder.run')}
             </button>
             {coderRunning && (
               <div className="flex items-center gap-2 text-xs text-text-secondary">
                 <span className="inline-flex h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                Muninn is coding…
+                {t('coder.working')}
               </div>
             )}
             {coderError && (
@@ -85,7 +88,7 @@ export function CoderPanel({
 
           {coderResult && (
             <div className="card space-y-3">
-              <h3 className="text-sm font-semibold">Result</h3>
+              <h3 className="text-sm font-semibold">{t('coder.result')}</h3>
               <div className="rounded-lg border border-border bg-bg-tertiary p-3 text-sm whitespace-pre-wrap">
                 {coderResult}
               </div>

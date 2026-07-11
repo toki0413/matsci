@@ -152,7 +152,7 @@ export function TeamPanel({
                   {teamFusionResult.all_rounds.map((round: any[], ri: number) => (
                     <div key={ri} className="space-y-2">
                       <h4 className="text-xs font-semibold text-text-secondary border-b border-border pb-1">
-                        📝 {t('fusion.round')} {ri + 1}/{teamFusionResult.all_rounds.length}
+                        📝 {t('fusion.roundLabel')} {ri + 1}/{teamFusionResult.all_rounds.length}
                         {ri === 0 && <span className="ml-2 text-text-muted">{t('fusion.independent')}</span>}
                         {ri > 0 && <span className="ml-2 text-text-muted">{t('fusion.reviewPeers')}</span>}
                       </h4>

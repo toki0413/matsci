@@ -8,7 +8,7 @@
 import { useState, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, Zap, Check, X, Loader2 } from "lucide-react";
+import { ChevronDown, Zap, Check, X, Loader2, Eye, EyeOff, Save } from "lucide-react";
 import { SettingsTabNav, ConfigField } from "../settings-shared";
 import type { SettingsTab } from "../settings-shared";
 import { PROVIDERS } from "../../lib/constants";
@@ -148,6 +148,35 @@ function ProviderTestButton({ model, apiBase }: { model: import("../../types/dom
       {status === 'fail' && (
         <span className="text-[10px] text-error truncate max-w-[200px]" title={error}>{error}</span>
       )}
+    </div>
+  );
+}
+
+// ── ApiKeyInput: password field with show/hide toggle ──────────────────
+function ApiKeyInput({ value, onChange, placeholder, inputClassName }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  inputClassName?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        className={`${inputClassName || ""} pr-8`}
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+      <button
+        type="button"
+        onClick={() => setShow(!show)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+        tabIndex={-1}
+      >
+        {show ? <EyeOff size={14} /> : <Eye size={14} />}
+      </button>
     </div>
   );
 }
@@ -416,21 +445,38 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 </label>
               </div>
               <ConfigField label={t('settings.apiKey')} full>
-                <input
-                  type="password"
-                  value={config.api_key}
-                  onChange={(e) => { setConfig((prev) => ({ ...prev, api_key: e.target.value })); setConfigDirty(true); }}
-                  onBlur={(e) => {
-                    const val = e.target.value.trim();
-                    if (val && config.provider === 'openai' && !val.startsWith('sk-')) {
-                      setConfigSavedMsg('⚠ OpenAI keys usually start with "sk-"');
-                    } else if (val && config.provider === 'anthropic' && !val.startsWith('sk-ant-')) {
-                      setConfigSavedMsg('⚠ Anthropic keys usually start with "sk-ant-"');
-                    }
-                  }}
-                  placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || t('settings.apiKeyPlaceholder')}
-                  className="input"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={config.api_key}
+                    onChange={(e) => { setConfig((prev) => ({ ...prev, api_key: e.target.value })); setConfigDirty(true); }}
+                    onBlur={(e) => {
+                      const val = e.target.value.trim();
+                      if (val && config.provider === 'openai' && !val.startsWith('sk-')) {
+                        setConfigSavedMsg('⚠ OpenAI keys usually start with "sk-"');
+                      } else if (val && config.provider === 'anthropic' && !val.startsWith('sk-ant-')) {
+                        setConfigSavedMsg('⚠ Anthropic keys usually start with "sk-ant-"');
+                      }
+                    }}
+                    placeholder={PROVIDERS.find((p) => p.id === config.provider)?.keyVar || t('settings.apiKeyPlaceholder')}
+                    className="input flex-1"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!config.api_key) { setConfigSavedMsg('⚠ API key is empty'); return; }
+                      try {
+                        await api.post('/credentials', { name: `${config.provider}-key`, provider: config.provider, key: config.api_key });
+                        setConfigSavedMsg('✓ Credential saved');
+                        setTimeout(() => setConfigSavedMsg(''), 3000);
+                      } catch (e: any) {
+                        setConfigSavedMsg(`✗ Save failed: ${e.message}`);
+                      }
+                    }}
+                    className="btn-secondary px-3 py-1.5 text-xs whitespace-nowrap"
+                  >
+                    <Save size={12} className="inline mr-1" /> 保存为凭证
+                  </button>
+                </div>
               </ConfigField>
               <ConfigField label={t('settings.baseUrl')} full>
                 <input
@@ -447,6 +493,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   className="input"
                 />
               </ConfigField>
+              {/* Quick test: hit the provider with a 1-token request */}
+              <div className="md:col-span-2 flex items-center gap-2">
+                <ProviderTestButton
+                  model={{ provider: config.provider, model: config.model, api_key: config.api_key, base_url: config.base_url } as ModelConfig}
+                  apiBase={config.base_url || 'https://api.openai.com/v1'}
+                />
+              </div>
               <ConfigField label="Ollama Host" full>
                 <input
                   type="text"
@@ -518,7 +571,12 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       ))}
                     </select>
                     <input className="input-field text-xs" value={m.model} onChange={(e) => updateModel(i, { model: e.target.value })} placeholder="model name" />
-                    <input className="input-field text-xs" type="password" value={m.api_key} onChange={(e) => updateModel(i, { api_key: e.target.value })} placeholder="API key (optional)" />
+                    <ApiKeyInput
+                      inputClassName="input-field text-xs"
+                      value={m.api_key}
+                      onChange={(v) => updateModel(i, { api_key: v })}
+                      placeholder="API key (optional)"
+                    />
                     <input className="input-field text-xs" value={m.base_url} onChange={(e) => updateModel(i, { base_url: e.target.value })} placeholder="base URL (optional)" />
                     <div className="flex items-center gap-2 text-xs">
                       <span className="text-text-muted">{t('settings.temp')}</span>

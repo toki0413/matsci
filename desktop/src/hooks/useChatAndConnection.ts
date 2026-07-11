@@ -354,6 +354,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   useEffect(() => {
     let alive = true;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let backoff = 1000; // start at 1s, double on each failure
 
     const check = async () => {
       // Skip Tauri invoke in browser/dev — go straight to HTTP fetch
@@ -386,17 +388,28 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
     const run = async () => {
       const online = await check();
-      if (online) return;
+      if (online) {
+        // Healthy — poll every 30s to catch disconnects
+        pollTimer = setTimeout(run, 30000);
+        return;
+      }
+      // Not online yet — try startBackend, then poll with backoff
       await startBackend();
       for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 500));
-        if (await check()) return;
+        await new Promise((r) => setTimeout(r, backoff));
+        if (!alive) return;
+        if (await check()) {
+          backoff = 1000; // reset on success
+          pollTimer = setTimeout(run, 30000);
+          return;
+        }
+        backoff = Math.min(backoff * 2, 16000); // cap at 16s
       }
       if (alive) setStatus("backend did not come online");
     };
 
     run();
-    return () => { alive = false; };
+    return () => { alive = false; if (pollTimer) clearTimeout(pollTimer); };
   }, [startBackend]);
 
   // ── Stream batching (assistant-UI pattern: batch tokens to reduce renders) ─
@@ -1113,6 +1126,12 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       setMessages((prev) => prev.slice(0, -2));
       setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Failed to send — WebSocket disconnected. Please wait for reconnection.", timestamp: formatTime() }]);
       return;
+    }
+
+    // First message in a new thread → auto-generate a title from the user's input
+    if (messagesRef.current.length <= 1 && activeThread !== "desktop") {
+      const raw = input.trim();
+      renameThread(activeThread, raw.length > 40 ? raw.slice(0, 40) + "..." : raw);
     }
 
     // watchdog: if no tokens arrive in 30s the WS likely dropped silently

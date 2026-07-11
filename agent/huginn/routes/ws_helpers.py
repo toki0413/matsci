@@ -663,6 +663,17 @@ async def _handle_user_input(
                 except Exception as e:
                     logger.warning("Failed to create agent %s: %s", agent_cfg, e)
 
+    # Build a ModelTeam reference for cross-agent vision delegation.
+    # The team is lazily constructed from config; the agent can use it
+    # to delegate image analysis to a local vision model when the
+    # primary model doesn't support vision.
+    try:
+        from huginn.routes.team import _build_model_team
+        _team = _build_model_team()
+        agent._team_ref = _team
+    except Exception:
+        pass  # No team config or team module — fine, just no vision delegation
+
     # Team mode trigger — keyword OR config flag
     use_team = False
     if any(kw in content.lower() for kw in ("/team", "delegate", "collaborate")):

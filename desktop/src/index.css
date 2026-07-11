@@ -2101,3 +2101,13 @@
 .animate-fade-slide-in {
   animation: fadeSlideIn 0.2s var(--ease-out) both;
 }
+
+/* Streaming typing indicator — three bouncing dots */
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-6px); opacity: 1; }
+}
+
+.animate-bounce-dot {
+  animation: bounce-dot 1.4s ease-in-out infinite;
+}

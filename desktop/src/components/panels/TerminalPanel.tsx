@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { PanelHeader } from '../settings-shared';
 import { ReconnectingWebSocket, type WsStatus } from '../../lib/ws-client';
@@ -16,6 +17,7 @@ export function TerminalPanel({
   terminalOutput, terminalInput, terminalEndRef,
   setTerminalOutput, setTerminalInput,
 }: TerminalPanelProps) {
+  const { t } = useTranslation();
   const [isRemote, setIsRemote] = useState(false);
   const [remoteStatus, setRemoteStatus] = useState<WsStatus>('idle');
   const wsRef = useRef<ReconnectingWebSocket | null>(null);
@@ -63,25 +65,25 @@ export function TerminalPanel({
 
   return (
     <div className="flex h-full flex-col bg-bg-tertiary text-text-primary">
-      <PanelHeader title="Integrated Terminal">
+      <PanelHeader title={t('terminal.title')}>
         <button
           onClick={toggleRemote}
           className={`px-3 py-1.5 text-xs ${isRemote ? 'btn-primary' : 'btn-secondary'}`}
         >
-          {isRemote ? `Remote: ${remoteStatus}` : 'Remote'}
+          {isRemote ? `${t('terminal.remote')}: ${remoteStatus}` : t('terminal.remote')}
         </button>
         <button
           onClick={() => setTerminalOutput("")}
           className="btn-secondary px-3 py-1.5 text-xs"
         >
-          Clear
+          {t('terminal.clear')}
         </button>
         {!isRemote && (
           <button
             onClick={() => invoke("stop_terminal")}
             className="btn-secondary px-3 py-1.5 text-xs"
           >
-            Stop
+            {t('terminal.stop')}
           </button>
         )}
       </PanelHeader>
@@ -98,7 +100,7 @@ export function TerminalPanel({
           value={terminalInput}
           onChange={(e) => setTerminalInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
-          placeholder={isRemote ? "Remote terminal — type and press Enter" : "Type a command and press Enter"}
+          placeholder={isRemote ? t('terminal.remotePh') : t('terminal.localPh')}
           className="input flex-1 bg-bg-tertiary font-mono text-sm border-border text-text-primary"
           spellCheck={false}
         />
