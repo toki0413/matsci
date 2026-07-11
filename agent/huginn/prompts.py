@@ -68,35 +68,7 @@ error forward.
 
 ### Tool Reference
 
-When using computational tools:
-- **vasp_tool**: For electronic structure (DFT). Remember: ENCUT must exceed max(ENMAX), ISMEAR choice depends on metallicity, and ALGO selection affects convergence stability.
-- **qe_tool**: For open-source DFT via Quantum ESPRESSO. Good alternative to VASP; check ecutrho convergence for norm-conserving vs ultrasoft pseudopotentials.
-- **cp2k_tool**: For DFT with localized basis sets (Gaussian + plane wave). Efficient for large systems; use OT minimizer for SCF.
-- **lammps_tool**: For molecular dynamics. Classical MD is cheap but approximate; always report the force field and its limitations.
-- **abaqus_tool**: For finite element analysis (FEA). Solid mechanics, structural analysis, crystal plasticity. Always verify mesh convergence and boundary condition adequacy.
-- **comsol_tool**: For multiphysics FEA/CFD coupling. Check dependent variable scaling and segregated solver convergence.
-- **openfoam_tool**: For computational fluid dynamics (CFD). Turbulence modeling, multiphase flow, heat transfer. Check y+ for wall-bounded flows and Courant number for stability.
-- **structure_tool**: For structural analysis. Space group, Wyckoff positions, and symmetry are mathematical facts — verify them.
-- **job_tool**: For HPC submission. Respect queue policies, request reasonable walltimes, and never submit untested jobs to production queues.
-- **potential_tool**: For ML potentials. NEP training requires careful dataset curation; garbage in, garbage out.
-- **ml_potential_tool**: For training and evaluating machine learning interatomic potentials. Validate against DFT reference data.
-- **diff_tool**: For comparing calculations semantically. "ENCUT changed from 400 to 520" is trivia; "basis set completeness improved" is insight.
-- **rag_tool**: For retrieving domain knowledge. Use when the user asks about wavefunction analysis methods, quantum chemistry software usage, FEA/CFD procedures, phase-field modeling, or post-processing workflows.
-- **symbolic_math_tool**: For symbolic mathematics (SymPy). Differentiation, integration, equation solving, tensor calculus, constitutive derivation, and FEM weak-form generation.
-- **symbolic_regression_tool**: For discovering mathematical formulas from data. Uses Pareto frontier to balance accuracy and complexity.
-- **code_tool**: For executing custom Python code in a sandbox. Use for ad-hoc analysis, visualization, UQ, GP modeling, and post-processing when a dedicated tool is too restrictive.
-- **uq_tool**: For uncertainty quantification. Monte Carlo propagation, local sensitivity analysis, and Sobol indices for symbolic models.
-- **gp_tool**: For Gaussian process surrogate modeling and Bayesian optimization.
-- **validate_tool**: For physics validation of calculation results. Checks energy signs, convergence, band gaps, force thresholds, and physical reasonableness.
-- **diagnose_tool**: For diagnosing convergence problems in DFT/MD calculations.
-- **materials_database_tool**: For querying Materials Project, OQMD, and other materials databases for reference structures and properties.
-- **packing_tool**: For molecular/particle packing (packmol-style). Generates input geometries for OpenFOAM, COMSOL, Abaqus, and LAMMPS.
-- **visualize_tool**: For generating plots and visualizations of calculation results.
-- **lean_tool**: For formal verification of mathematical results in Lean 4. Verifies tensor algebra, FEM weak forms, numerical linear algebra, DFT theory, thermodynamics, and probability.
-- **descriptor_tool**: For computing materials descriptors (structural, electronic, topological) for ML and screening.
-- **characterization_tool**: For simulating characterization experiments (XRD, TEM, STM, XAS) from structural data.
-- **report_tool**: For generating formatted reports (Markdown, LaTeX, HTML, JSON) from calculation results.
-- **literature_tool**: For academic literature survey. Seven actions: `search` (parallel query 7 sources — arXiv/Semantic Scholar/CrossRef/OpenAlex/PubMed/DOAJ/CORE, dedup, return structured paper metadata), `summarize` (LLM multi-paper review + BibTeX), `benchmark_lookup` (extract literature-reported values for a system+property, complements validate_tool's built-in benchmarks), `fetch_pdf` (download OA PDF via multi-source OpenAlex/Unpaywall/Europe PMC/CORE/arXiv, PyMuPDF text extraction + section splitting; Sci-Hub opt-in via `HUGINN_ENABLE_SCIHUB=1`, last-resort fallback), `citations` (S2 forward/backward citation network), `ingest_to_rag` (store papers into local RAG for future retrieval), `crawl_web` (general web crawler via crawl4ai with JS rendering; engines: `direct` for single-URL fetch returning Markdown, `google_scholar`/`google_patents`/`duckduckgo` for search-result link lists; falls back to web_search_tool when crawl4ai blocked; **authenticated access** for non-OA subscription sources — `crawl_web auth_action=login provider=cnki|wanfang|elsevier|ieee|springer|wiley|acs|rsc|nature|wos|tandfonline|cqvip` opens a non-headless browser for one-time manual login, profile saved to `~/.huginn/sessions/{provider}/` and reused headlessly thereafter; `auth_action=status` lists saved sessions, `auth_action=logout` clears a profile; EZproxy rewriting via `HUGINN_EZPROXY_PREFIX` env var for institutions that provide VPN/proxy URLs). **Limitation**: `auth_action=login` works for sources with login forms or slider CAPTCHA (CNKI/万方/IEEE/etc.) where session cookies are long-lived and not fingerprint-bound. It does NOT work for Cloudflare-protected sites (ScienceDirect/Wiley/etc.) where cf_clearance cookie is bound to browser fingerprint and cannot be reused across sessions — for those, configure EZproxy via `HUGINN_EZPROXY_PREFIX`, or fall back to `fetch_pdf` OA sources, or have the user manually download the PDF. When `crawl_web engine=direct` hits a subscription URL, it auto-detects the provider and reuses the saved session if present; if Cloudflare/CAPTCHA blocks it, returns an error with the three fallback options (EZproxy / fetch_pdf OA / manual download). Use this BEFORE running calculations to find known values and AFTER to compare your results against the literature; for sources without API (Google Scholar, specific journal pages), use `crawl_web engine=direct`.
+Tool descriptions are provided in the tool schemas — refer to them directly.
 
 ## Least Effort Path（最简路径优先）
 
