@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Wrench } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { ToolInfo } from '../../types/domain';
@@ -128,6 +129,7 @@ interface ToolsPanelProps {
 }
 
 export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
+  const { t } = useTranslation();
   const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
   const [toolArgs, setToolArgs] = useState<Record<string, any>>({});
   const [toolResult, setToolResult] = useState<string>("");
@@ -137,7 +139,7 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
     if (!selectedTool) return;
     if (selectedTool.destructive) {
       const ok = window.confirm(
-        `⚠️ ${selectedTool.function.name} may overwrite files or run shell commands. Run it anyway?`
+        `⚠️ ${selectedTool.function.name} ${t('tools.destructiveWarn')}`
       );
       if (!ok) return;
     }
@@ -148,7 +150,7 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
       const data = await api.post(`/tools/${name}`, toolArgs);
       setToolResult(JSON.stringify(data, null, 2));
     } catch (e: any) {
-      setToolResult(`Error: ${e.message}`);
+      setToolResult(`${t('tools.error')} ${e.message}`);
     } finally {
       setToolLoading(false);
     }
@@ -157,10 +159,10 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Available Tools</h2>
+        <h2 className="text-lg font-semibold">{t('tools.available')}</h2>
         {selectedTool && (
           <button onClick={() => setSelectedTool(null)} className="btn-secondary text-xs">
-            ← Back
+            {t('tools.back')}
           </button>
         )}
       </div>
@@ -170,15 +172,15 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
           !isConnected ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <Wrench size={40} className="text-text-muted opacity-40" />
-              <p className="mt-4 text-sm font-medium text-text-secondary">Backend not connected</p>
+              <p className="mt-4 text-sm font-medium text-text-secondary">{t('tools.notConnected')}</p>
               <p className="mt-1 max-w-xs text-xs text-text-muted">
-                Tools are loaded from the AI backend. Make sure the server is running and reconnect to see available tools.
+                {t('tools.loadHint')}
               </p>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-              <p className="mt-4 text-sm text-text-muted">Loading tools…</p>
+              <p className="mt-4 text-sm text-text-muted">{t('tools.loading')}</p>
             </div>
           )
         ) : (
@@ -194,10 +196,10 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
               className="card text-left transition-colors hover:border-accent"
             >
               <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold uppercase text-accent">Tool</div>
+                <div className="text-xs font-semibold uppercase text-accent">{t('tools.tool')}</div>
                 {tool.destructive && (
                   <span className="rounded bg-error/10 px-1.5 py-0.5 text-[10px] text-error">
-                    destructive
+                    {t('tools.destructive')}
                   </span>
                 )}
               </div>
@@ -213,10 +215,10 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
         <div className="max-w-3xl space-y-4">
           <div className="card">
             <div className="flex items-center justify-between">
-              <div className="text-xs uppercase text-accent font-semibold">Tool</div>
+              <div className="text-xs uppercase text-accent font-semibold">{t('tools.tool')}</div>
               {selectedTool.destructive && (
                 <span className="rounded bg-error/10 px-1.5 py-0.5 text-[10px] text-error">
-                  destructive
+                  {t('tools.destructive')}
                 </span>
               )}
             </div>
@@ -227,14 +229,14 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
           </div>
           <div className="card">
             <div className="mb-3 flex items-center justify-between">
-              <label className="text-xs font-medium text-text-secondary">Arguments</label>
+              <label className="text-xs font-medium text-text-secondary">{t('tools.arguments')}</label>
               <button
                 onClick={() =>
                   setToolArgs(buildDefaultArgs(selectedTool.function.parameters))
                 }
                 className="text-xs text-accent hover:underline"
               >
-                Reset defaults
+                {t('tools.resetDefaults')}
               </button>
             </div>
             <JsonSchemaForm
@@ -245,14 +247,14 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
           </div>
           <button onClick={runTool} disabled={toolLoading} className="btn-primary">
             {toolLoading
-              ? "Running…"
+              ? t('tools.runningBtn')
               : selectedTool.destructive
-              ? "⚠️ Run Tool"
-              : "Run Tool"}
+              ? t('tools.runToolWarn')
+              : t('tools.runTool')}
           </button>
           {toolResult && (
             <div className="card border-accent/20 bg-bg-secondary">
-              <div className="mb-2 text-xs font-semibold text-accent">Result</div>
+              <div className="mb-2 text-xs font-semibold text-accent">{t('tools.result')}</div>
               <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">
                 {toolResult}
               </pre>

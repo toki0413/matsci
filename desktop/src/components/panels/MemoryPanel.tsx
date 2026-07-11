@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useScrollMemory } from '../../hooks/useScrollMemory';
 import { ChevronDown, Brain, Pencil, Check, X } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
@@ -55,6 +56,7 @@ export function MemoryPanel({
   pruneMemory,
   syncMemoryMd,
 }: MemoryPanelProps) {
+  const { t } = useTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
   const scrollRef = useScrollMemory('memory-list');
   const [editContent, setEditContent] = useState("");
@@ -82,22 +84,22 @@ export function MemoryPanel({
   };
   return (
     <div data-component="memory-panel" className="mem-panel flex h-full flex-col">
-      <PanelHeader title="Memory" className="mem-header px-6">
+      <PanelHeader title={t('memory.title')} className="mem-header px-6">
         <div className="mem-header-actions flex items-center gap-2">
-          <button onClick={syncMemoryMd} className="btn-secondary px-3 py-1.5 text-xs">Sync MEMORY.md</button>
-          <button onClick={pruneMemory} className="btn-secondary px-3 py-1.5 text-xs">Prune</button>
-          <button onClick={loadMemory} className="btn-secondary px-3 py-1.5 text-xs">Refresh</button>
+          <button onClick={syncMemoryMd} className="btn-secondary px-3 py-1.5 text-xs">{t('memory.sync')}</button>
+          <button onClick={pruneMemory} className="btn-secondary px-3 py-1.5 text-xs">{t('memory.prune')}</button>
+          <button onClick={loadMemory} className="btn-secondary px-3 py-1.5 text-xs">{t('memory.refresh')}</button>
         </div>
       </PanelHeader>
       <div className="flex flex-1 overflow-hidden">
         <div className="w-80 overflow-y-auto border-r border-border bg-bg-secondary p-4">
           <div className="card mem-stats mb-4">
-            <h3 className="text-sm font-semibold">Stats</h3>
+            <h3 className="text-sm font-semibold">{t('memory.stats')}</h3>
             <div className="mt-2">
-              <div className="mem-stats-row"><span className="text-text-muted">Total</span><span>{memoryStats?.longterm_entries ?? "\u2014"}</span></div>
-              <div className="mem-stats-row"><span className="text-text-muted">Short</span><span>{memoryStats?.tier_counts?.short ?? 0}</span></div>
-              <div className="mem-stats-row"><span className="text-text-muted">Mid</span><span>{memoryStats?.tier_counts?.mid ?? 0}</span></div>
-              <div className="mem-stats-row"><span className="text-text-muted">Long</span><span>{memoryStats?.tier_counts?.long ?? 0}</span></div>
+              <div className="mem-stats-row"><span className="text-text-muted">{t('memory.total')}</span><span>{memoryStats?.longterm_entries ?? "\u2014"}</span></div>
+              <div className="mem-stats-row"><span className="text-text-muted">{t('memory.short')}</span><span>{memoryStats?.tier_counts?.short ?? 0}</span></div>
+              <div className="mem-stats-row"><span className="text-text-muted">{t('memory.mid')}</span><span>{memoryStats?.tier_counts?.mid ?? 0}</span></div>
+              <div className="mem-stats-row"><span className="text-text-muted">{t('memory.long')}</span><span>{memoryStats?.tier_counts?.long ?? 0}</span></div>
             </div>
           </div>
           <div className="card mb-4">
@@ -106,7 +108,7 @@ export function MemoryPanel({
               className="flex w-full items-center justify-between text-left"
             >
               <h3 className="text-sm font-semibold">
-                {memoryView === "add" ? "Add Memory" : "+ Add memory"}
+                {memoryView === "add" ? t('memory.add') : t('memory.addBtn')}
               </h3>
               <ChevronDown size={14} className={`text-text-muted transition-transform duration-150 ${memoryView === "add" ? "rotate-0" : "-rotate-90"}`} />
             </button>
@@ -114,7 +116,7 @@ export function MemoryPanel({
               <div className="mt-3">
                 <textarea
                   className="input-field mb-2 min-h-[80px] text-xs"
-                  placeholder="Content..."
+                  placeholder={t('memory.contentPh')}
                   value={memoryForm.content}
                   onChange={(e) => setMemoryForm({ ...memoryForm, content: e.target.value })}
                 />
@@ -140,12 +142,12 @@ export function MemoryPanel({
                   onChange={(e) => setMemoryForm({ ...memoryForm, tags: e.target.value })}
                 />
                 <div className="mb-2 flex items-center gap-2 text-xs">
-                  <span className="text-text-muted">Importance</span>
+                  <span className="text-text-muted">{t('memory.importance')}</span>
                   <input type="range" min={0} max={1} step={0.05} value={memoryForm.importance} onChange={(e) => setMemoryForm({ ...memoryForm, importance: parseFloat(e.target.value) })} />
                   <span>{memoryForm.importance.toFixed(2)}</span>
                 </div>
                 <button onClick={createMemory} className="btn-primary w-full py-1.5 text-xs" disabled={!memoryForm.content.trim()}>
-                  Remember
+                  {t('memory.remember')}
                 </button>
               </div>
             )}
@@ -156,14 +158,14 @@ export function MemoryPanel({
           <div className="mem-search-bar items-center gap-2">
             <input
               className="input-field flex-1 text-xs"
-              placeholder="Search memory..."
+              placeholder={t('memory.searchPh')}
               value={memorySearch}
               onChange={(e) => setMemorySearch(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && searchMemory()}
             />
-            <button onClick={searchMemory} className="btn-primary px-3 py-1.5 text-xs">Search</button>
+            <button onClick={searchMemory} className="btn-primary px-3 py-1.5 text-xs">{t('memory.search')}</button>
             <select className="input-field text-xs" value={memoryFilter.category} onChange={(e) => setMemoryFilter({ ...memoryFilter, category: e.target.value })}>
-              <option value="">all categories</option>
+              <option value="">{t('memory.allCats')}</option>
               <option value="fact">fact</option>
               <option value="insight">insight</option>
               <option value="conversation">conversation</option>
@@ -172,7 +174,7 @@ export function MemoryPanel({
               <option value="episode">episode</option>
             </select>
             <select className="input-field text-xs" value={memoryFilter.tier} onChange={(e) => setMemoryFilter({ ...memoryFilter, tier: e.target.value })}>
-              <option value="">all tiers</option>
+              <option value="">{t('memory.allTiers')}</option>
               <option value="short">short</option>
               <option value="mid">mid</option>
               <option value="long">long</option>
@@ -186,10 +188,10 @@ export function MemoryPanel({
             ) : memories.length === 0 && (
               <EmptyState
                 icon={Brain}
-                title={memorySearch.trim() ? "No matching memories" : "No memories yet"}
+                title={memorySearch.trim() ? t('memory.noMatch') : t('memory.noMemories')}
                 subtitle={memorySearch.trim()
-                  ? "No memories match your search. Try different keywords or clear the filter."
-                  : "Memories help Huginn remember context across conversations. Add your first memory using the panel on the left."
+                  ? t('memory.noMatchHint')
+                  : t('memory.emptyHint')
                 }
               />
             )}
@@ -203,7 +205,7 @@ export function MemoryPanel({
                       <span className="text-text-muted">importance {m.importance}</span>
                       {isRecent(m) && (
                         <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                          recent
+                          {t('memory.recent')}
                         </span>
                       )}
                     </div>
@@ -217,18 +219,18 @@ export function MemoryPanel({
                         />
                         <div className="mt-1 flex gap-1">
                           <button onClick={() => saveEdit(m.id)} className="btn-primary px-2 py-1 text-xs">
-                            <Check size={12} className="inline mr-1" />Save
+                            <Check size={12} className="inline mr-1" />{t('memory.save')}
                           </button>
                           <button onClick={() => setEditingId(null)} className="btn-secondary px-2 py-1 text-xs">
-                            <X size={12} className="inline mr-1" />Cancel
+                            <X size={12} className="inline mr-1" />{t('memory.cancel')}
                           </button>
                         </div>
                       </div>
                     ) : (
                       <p className="mt-1 whitespace-pre-wrap text-sm">{m.content}</p>
                     )}
-                    <p className="mt-1 text-xs text-text-muted">tags: {m.tags || "\u2014"} · source: {m.source || "\u2014"}</p>
-                    <p className="text-xs text-text-muted">expires: {m.expires_at ? new Date(m.expires_at).toLocaleString() : "never"} · accessed {m.access_count ?? 0}</p>
+                    <p className="mt-1 text-xs text-text-muted">{t('memory.tags')} {m.tags || "\u2014"} · {t('memory.source')} {m.source || "\u2014"}</p>
+                    <p className="text-xs text-text-muted">{t('memory.expires')} {m.expires_at ? new Date(m.expires_at).toLocaleString() : t('memory.never')} · {t('memory.accessed')} {m.access_count ?? 0}</p>
                   </div>
                   <div className="flex flex-col gap-1">
                     {editingId !== m.id && (
@@ -253,7 +255,7 @@ export function MemoryPanel({
                 onClick={loadMoreMemory}
                 className="w-full rounded-lg border border-border py-2 text-xs text-text-secondary hover:bg-bg-tertiary transition-colors"
               >
-                Load more memories…
+                {t('memory.loadMore')}
               </button>
             )}
           </div>

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,7 @@ function extractImages(text: string): { cleaned: string; images: string[] } {
 // ---------------------------------------------------------------------------
 
 export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string }) {
+  const { t } = useTranslation();
   const [code, setCode] = useState<string>(TEMPLATES[0].code);
   const [output, setOutput] = useState<ExecutionResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -268,7 +270,7 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
     if (!output) {
       return (
         <div className="flex h-full items-center justify-center text-[var(--text-muted,#9a9590)]">
-          <p className="text-sm">Run your code to see output here</p>
+          <p className="text-sm">{t('sandbox.runHint')}</p>
         </div>
       );
     }
@@ -291,7 +293,7 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
           <img
             key={i}
             src={src}
-            alt={`Output plot ${i + 1}`}
+            alt={`${t('sandbox.outputPlot')} ${i + 1}`}
             className="max-w-full rounded border border-[var(--border,#d5cfc6)]"
           />
         ))}
@@ -300,7 +302,7 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
         {output.return_value !== null && output.return_value !== undefined && (
           <div className="rounded border border-[var(--border,#d5cfc6)] bg-[var(--bg-tertiary,#e8e2d9)] p-3">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--text-muted,#9a9590)]">
-              Return value
+              {t('sandbox.returnValue')}
             </span>
             <pre className="whitespace-pre-wrap break-words text-[var(--success,#6b9e8a)]">
               {typeof output.return_value === 'object'
@@ -320,7 +322,7 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
         {/* Execution time */}
         {output.execution_time > 0 && (
           <p className="text-xs text-[var(--text-muted,#9a9590)]">
-            Executed in {output.execution_time.toFixed(3)}s
+            {t('sandbox.executedIn')} {output.execution_time.toFixed(3)}s
           </p>
         )}
       </div>
@@ -335,20 +337,20 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
       {/* Toolbar */}
       <div className="flex items-center gap-3 border-b border-[var(--border,#d5cfc6)] px-4 py-2">
         <h2 className="text-sm font-semibold tracking-wide text-[var(--text-secondary,#6b665f)]">
-          Python Sandbox
+          {t('sandbox.title')}
         </h2>
 
         {/* Sandbox status indicator */}
-        <div className="flex items-center gap-1.5 text-[10px]" title={running ? "Code executing in sandbox" : output ? "Sandbox ready" : "Sandbox idle"}>
+        <div className="flex items-center gap-1.5 text-[10px]" title={running ? t('sandbox.executing') : output ? t('sandbox.ready') : t('sandbox.idle')}>
           <span className={`h-2 w-2 rounded-full ${running ? 'bg-warning animate-pulse' : output ? 'bg-success' : 'bg-text-muted opacity-30'}`} />
           <span className="text-[var(--text-muted,#9a9590)]">
-            {running ? 'Running' : output ? 'Ready' : 'Idle'}
+            {running ? t('sandbox.running') : output ? t('sandbox.readyLabel') : t('sandbox.idleLabel')}
           </span>
           {output?.execution_time != null && !running && (
             <span className="text-[var(--text-muted,#9a9590)]">· {output.execution_time.toFixed(2)}s</span>
           )}
           {history.length > 0 && (
-            <span className="text-[var(--text-muted,#9a9590)]">· {history.length} runs</span>
+            <span className="text-[var(--text-muted,#9a9590)]">· {history.length} {t('sandbox.runs')}</span>
           )}
         </div>
 
@@ -411,14 +413,14 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
                   strokeDashoffset="8"
                 />
               </svg>
-              Running...
+              {t('sandbox.runningBtn')}
             </>
           ) : (
             <>
               <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M4 2.5v11l9-5.5L4 2.5z" />
               </svg>
-              Run
+              {t('sandbox.run')}
             </>
           )}
         </button>
@@ -447,7 +449,7 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
               onKeyDown={handleKeyDown}
               spellCheck={false}
               className="flex-1 resize-none bg-[var(--bg-primary,#f8f4ef)] p-3 font-mono text-xs leading-[1.625rem] text-[var(--text-primary,#2a2520)] caret-[var(--accent,#d4884a)] outline-none placeholder:text-[var(--text-muted,#9a9590)]"
-              placeholder="# Write your Python code here..."
+              placeholder={t('sandbox.codePh')}
             />
           </div>
         </div>
@@ -473,13 +475,13 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
               >
                 <path d="M3 4.5L6 7.5L9 4.5" />
               </svg>
-              History ({history.length})
+              {t('sandbox.history')} ({history.length})
             </button>
 
             {historyOpen && (
               <div className="max-h-44 overflow-auto px-4 pb-3">
                 {history.length === 0 ? (
-                  <p className="text-xs text-[var(--text-muted,#9a9590)]">No executions yet</p>
+                  <p className="text-xs text-[var(--text-muted,#9a9590)]">{t('sandbox.noExecutions')}</p>
                 ) : (
                   <ul className="space-y-1">
                     {history.map((entry) => {
