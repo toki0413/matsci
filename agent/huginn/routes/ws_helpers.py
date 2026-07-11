@@ -177,18 +177,23 @@ def _make_ws_approval_callback(
 
         try:
             loop = asyncio.get_running_loop()
-            task = loop.create_task(
-                websocket.send_json(
-                    {
-                        "type": "approval_request",
-                        "request_id": request_id,
-                        "tool_name": tool_name,
-                        "reason": reason,
-                        "auto_approved": approved,
-                        "dangerous": is_dangerous,
-                    }
-                )
-            )
+
+            async def _safe_send():
+                try:
+                    await websocket.send_json(
+                        {
+                            "type": "approval_request",
+                            "request_id": request_id,
+                            "tool_name": tool_name,
+                            "reason": reason,
+                            "auto_approved": approved,
+                            "dangerous": is_dangerous,
+                        }
+                    )
+                except Exception:
+                    pass
+
+            task = loop.create_task(_safe_send())
             _pending_tasks.add(task)
             task.add_done_callback(_pending_tasks.discard)
         except RuntimeError:
@@ -412,9 +417,16 @@ async def _stream_agent_response(
                         "id": tid,
                         "content": tool_content,
                     }
+                    _tool_name = getattr(last_msg, "name", "") or tid
                     _warnings = _extract_tool_warnings(tool_content)
                     if _warnings:
                         tool_result_msg["warnings"] = _warnings
+                        # 前端有专门的 hook_warning UI 渲染, 单独发一个事件
+                        await _ws_send({
+                            "type": "hook_warning",
+                            "tool_name": _tool_name,
+                            "warnings": _warnings,
+                        })
                     await _ws_send(tool_result_msg)
 
                     _progress = _extract_task_progress(

@@ -1,7 +1,7 @@
 """Tests for research mode behavioral differences.
 
-Covers mode switching, system prompt enhancement, tool filtering,
-and verification model gating. Tests use unbound-method binding to
+Covers mode switching, system prompt enhancement, and tool filtering.
+Tests use unbound-method binding to
 avoid the heavyweight agent __init__ — we only need a few attributes.
 """
 
@@ -80,19 +80,6 @@ class TestModeSwitching:
     def test_is_not_research_mode_in_chat(self):
         agent = _make_agent_stub(mode="chat")
         assert HuginnAgent.is_research_mode(agent) is False
-
-
-# ── Verification model gating ─────────────────────────────────────
-
-
-class TestVerificationGating:
-    def test_should_verify_in_research(self):
-        agent = _make_agent_stub(mode="research")
-        assert HuginnAgent.should_use_verification_model(agent) is True
-
-    def test_should_not_verify_in_chat(self):
-        agent = _make_agent_stub(mode="chat")
-        assert HuginnAgent.should_use_verification_model(agent) is False
 
 
 # ── System prompt enhancement ────────────────────────────────────

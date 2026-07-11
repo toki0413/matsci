@@ -473,16 +473,13 @@ async def handle_401_error(failed_token: str) -> bool:
 async def _do_refresh_401(failed_token: str) -> bool:
     """实际的 401 刷新逻辑。
 
-    1. 清除旧的 SWR 缓存
-    2. 尝试用 refresh token 刷新（具体实现取决于认证方式）
-    3. 返回是否成功
+    清掉 SWR 缓存让下次请求重新拉 key，返回 True 让调用方重试。
+    真正的 key 刷新发生在重试时 get_api_key_with_swr 的同步刷新里，
+    这里只负责把旧缓存作废。
     """
     try:
-        # 先清掉可能失效的 SWR 缓存，强制下次重新拉取
         clear_api_key_cache()
-        # TODO: 接入实际的 refresh token 流程
-        # 当前版本不支持自动刷新，由上层决定是否重新登录
-        return False
+        return True
     except Exception as e:
         logger.warning("401 refresh failed: %s", e)
         return False

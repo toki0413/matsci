@@ -50,6 +50,8 @@ _BUILTIN_COMMANDS: frozenset[str] = frozenset(
         "bg",
         "step",
         "map",
+        "plan",
+        "research",
     }
 )
 
@@ -68,7 +70,9 @@ def _print_help(console: Any) -> None:
   [cyan]/sessions[/cyan]  列出历史会话
   [cyan]/bg[/cyan]        后台任务: /bg <objective> | /bg list | /bg status <id> | /bg stop <id> | /bg result <id>
   [cyan]/step[/cyan]      单步执行: /step on | /step off | /step (切换)
-  [cyan]/map[/cyan]       显示代码库地图: /map | /map <query>"""
+  [cyan]/map[/cyan]       显示代码库地图: /map | /map <query>
+  [cyan]/plan[/cyan]     进入计划模式 (只规划不执行, 写工具需确认)
+  [cyan]/research[/cyan] 进入研究模式 (全工具, 数学深度引导, Deli 管线)"""
     console.print(help_text)
 
     # 顺便列一下当前 workspace 的自定义命令
@@ -785,6 +789,22 @@ def handle_slash_command(
 
     if name == "map":
         _handle_map(command, con, ctx=ctx)
+        return None
+
+    if name == "plan":
+        if agent is not None and hasattr(agent, "set_mode"):
+            agent.set_mode("plan")
+            con.print("[green]✓[/green] Plan mode: write tools require confirmation")
+        else:
+            con.print("[yellow]Agent 未初始化[/yellow]")
+        return None
+
+    if name == "research":
+        if agent is not None and hasattr(agent, "set_mode"):
+            agent.set_mode("research")
+            con.print("[green]✓[/green] Research mode: all tools, math depth guide, Deli pipeline")
+        else:
+            con.print("[yellow]Agent 未初始化[/yellow]")
         return None
 
     # 不在内置命令里, 试自定义命令

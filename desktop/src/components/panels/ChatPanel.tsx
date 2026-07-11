@@ -1193,7 +1193,7 @@ export function ChatPanel(props: ChatPanelProps) {
                 </button>
                 <button
                   onClick={() => {
-                    setMode("build");
+                    setMode("chat");
                     sendMessage();
                   }}
                   disabled={!input.trim()}
@@ -1574,8 +1574,6 @@ export function ChatPanel(props: ChatPanelProps) {
             placeholder={
               mode === "plan"
                 ? t('chat.placeholderPlan')
-                : mode === "build"
-                ? t('chat.placeholderBuild')
                 : isConnected
                 ? t('chat.placeholderConnected')
                 : wsFailed
