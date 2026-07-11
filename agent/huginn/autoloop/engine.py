@@ -214,6 +214,8 @@ class AutoloopEngine:
         # 执行前预测, 执行后对比, 误差驱动探索. 升级路径: 训练真正的编码器+预测器.
         self._current_prediction: str = ""
         self._last_surprise: float = 0.0
+        # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
+        self._last_execution_result: dict | None = None
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -413,6 +415,25 @@ class AutoloopEngine:
             return mem.recall_for_prompt(query, max_entries=3)
         except Exception:
             return ""
+
+    # 上下文预算: 防止 prompt block 累积超过 token 上限.
+    # 优先级: context > math > kg > visual > kb > mem > hint > pipeline > composite
+    # 低优先级 block 先被裁剪. ponytail: 字符级近似, 不算 token, 够用.
+    _PROMPT_BUDGET = 12000  # chars, 约 3K tokens
+
+    def _trim_to_budget(self, blocks: list[tuple[str, str]]) -> str:
+        """按优先级拼接 blocks, 超预算时从低优先级开始裁剪."""
+        total = sum(len(v) for _, v in blocks)
+        if total <= self._PROMPT_BUDGET:
+            return "".join(v for _, v in blocks)
+        # 从尾部 (低优先级) 开始删
+        kept = [v for _, v in blocks]
+        for i in range(len(kept) - 1, -1, -1):
+            total -= len(kept[i])
+            kept[i] = ""
+            if total <= self._PROMPT_BUDGET:
+                break
+        return "".join(kept)
 
     def _persona_system_prompt(self, persona_name: str | None) -> str:
         """取 persona 的 system prompt. 找不到就返回空串, 不报错."""
@@ -695,7 +716,6 @@ class AutoloopEngine:
         progressive_budget: bool = True,
         goal: Goal | None = None,
         max_refines: int = 8,
-        use_director_pilot: bool = False,
     ) -> AutoloopResult:
         """Run the full autonomous loop for the given objective.
 
@@ -729,12 +749,6 @@ class AutoloopEngine:
         )
         completed_steps = 0
         phases: list[LoopPhase] = []
-
-        # Director/Pilot 双层: use_director_pilot=True 时策略和执行分离
-        _director = _pilot = None
-        if use_director_pilot:
-            from huginn.agents.director import create_director_pilot
-            _director, _pilot = create_director_pilot(self)
 
         while self._iteration < max_iterations and not self._should_stop:
             self._iteration += 1
@@ -787,48 +801,17 @@ class AutoloopEngine:
             except Exception:
                 logger.warning("error in run: hypothesis_graph.add_hypothesis failed", exc_info=True)
 
-            # 3. Plan — Director/Pilot 模式时由 DirectorAgent 产出 Directive
-            if _director is not None:
-                directive = _director.propose(context=context, hypothesis=hypothesis)
-                if directive is not None:
-                    # 把 hypothesis_id 绑上, 让 validate 阶段能追溯
-                    directive.hypothesis_id = _current_hyp_id or ""
-                    plan = directive.to_plan_dict()
-                    plan["plan_id"] = None  # 跳过 PlanStore 二次确认
-                    phase = LoopPhase(
-                        name="plan",
-                        result=plan,
-                        status="completed",
-                        duration=0.0,
-                    )
-                    phases.append(phase)
-                    completed_steps += 1
-                    tracker.update(progress_task_id, current_step=completed_steps,
-                                   current_label=f"iter {self._iteration}: plan (director)")
-                    print(f"  → Director plan: {plan['mode']} | {plan['description']}")
-                else:
-                    # Director 没产出, 退回正常 _plan
-                    phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
-                    phases.append(phase)
-                    completed_steps += 1
-                    tracker.update(progress_task_id, current_step=completed_steps,
-                                   current_label=f"iter {self._iteration}: plan ({phase.status})")
-                    plan = phase.result
-                    if not plan:
-                        print("  → No plan generated, skipping iteration")
-                        continue
-                    print(f"  → Plan: {plan['mode']} | {plan['description']}")
-            else:
-                phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
-                phases.append(phase)
-                completed_steps += 1
-                tracker.update(progress_task_id, current_step=completed_steps,
-                               current_label=f"iter {self._iteration}: plan ({phase.status})")
-                plan = phase.result
-                if not plan:
-                    print("  → No plan generated, skipping iteration")
-                    continue
-                print(f"  → Plan: {plan['mode']} | {plan['description']}")
+            # 3. Plan
+            phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
+            phases.append(phase)
+            completed_steps += 1
+            tracker.update(progress_task_id, current_step=completed_steps,
+                           current_label=f"iter {self._iteration}: plan ({phase.status})")
+            plan = phase.result
+            if not plan:
+                print("  → No plan generated, skipping iteration")
+                continue
+            print(f"  → Plan: {plan['mode']} | {plan['description']}")
 
             # 高成本 plan 时问用户确认. 有 plan_id 说明 _plan 里已经走过
             # PlanStore 确认门了, 别重复问; 没 plan_id (PlanStore 不可用)
@@ -1530,6 +1513,12 @@ class AutoloopEngine:
 
         # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
         self._record_provenance(mode, plan, result)
+        # 缓存给 _build_plan_prompt 的 pipeline suggest_next 用
+        self._last_execution_result = {
+            '_tool_name': mode,
+            '_tool_input': plan,
+            'result': result if isinstance(result, dict) else {'value': str(result)[:500]},
+        }
         return result
 
     def _record_provenance(
@@ -2944,8 +2933,10 @@ Please modify the code to address this task."""
                          "symmetry", "conservation", "variational", "continuum",
                          "stress", "strain", "energy", "phonon", "band")
         math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in ctx_blob for s in _math_signals) else ""
-        return f"""You are an autonomous material science research agent.
-{hint_block}{kb_block}{kg_block}{mem_block}{visual_block}{math_block}
+        # 按优先级拼接, 超预算自动裁剪低优先级 block
+        return self._trim_to_budget([
+            ("body", f"""You are an autonomous material science research agent.
+
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
@@ -2956,7 +2947,14 @@ Prefer hypotheses that can be expressed as governing PDEs, variational
 principles, or conservation laws; identify the mathematical structure
 before proposing numerical experiments.
 
-Hypothesis:"""
+Hypothesis:"""),
+            ("math", math_block),
+            ("kg", kg_block),
+            ("visual", visual_block),
+            ("kb", kb_block),
+            ("mem", mem_block),
+            ("hint", hint_block),
+        ])
 
     # 数学深度提示块: 在 hypothesis / plan prompt 里持续提醒 agent 用
     # 符号数学工具把"现象"翻译成"PDE / 变分 / 几何 / 灵敏度"语言.
@@ -3016,22 +3014,52 @@ Math depth guidance (treat physics/chemistry as mathematics):
 
         # Inject matching composite skills — lets the LLM pick a pre-built
         # multi-tool pipeline instead of improvising from scratch.
+        # 条件化: 只在 hypothesis 涉及仿真/计算/材料性质时注入, coder-only
+        # 任务不需要 composite skill 列表. 节省 ~500 tokens.
         composite_block = ""
-        try:
-            from huginn.skills.registry import SkillRegistry
-            from huginn.skills.composite import _ensure_registered
-            _ensure_registered()
-            matches = SkillRegistry.search(hypothesis)
-            if not matches:
-                matches = SkillRegistry.get_all_definitions()
-            if matches:
-                lines = [s.to_prompt() for s in matches[:4]]
-                composite_block = "\nAvailable composite skills (prefer these over manual workflow):\n" + "\n\n".join(lines) + "\n"
-        except Exception:
-            logger.debug("composite skill lookup failed", exc_info=True)
+        hyp_lower = hypothesis.lower()
+        _workflow_signals = ("workflow", "simulation", "band", "dos", "phonon",
+                              "mechanical", "thermal", "optical", "dft", "vasp",
+                              "lammps", "md ", "structure", "property", "energy",
+                              "convergence", "optimize", "calc")
+        if any(s in hyp_lower for s in _workflow_signals):
+            try:
+                from huginn.skills.registry import SkillRegistry
+                from huginn.skills.composite import _ensure_registered
+                _ensure_registered()
+                matches = SkillRegistry.search(hypothesis)
+                if not matches:
+                    matches = SkillRegistry.get_all_definitions()
+                if matches:
+                    lines = [s.to_prompt() for s in matches[:4]]
+                    composite_block = "\nAvailable composite skills (prefer these over manual workflow):\n" + "\n\n".join(lines) + "\n"
+            except Exception:
+                logger.debug("composite skill lookup failed", exc_info=True)
 
-        return f"""Given the hypothesis: "{hypothesis}"
-{kb_block}{kg_block}{mem_block}{visual_block}{math_block}{skill_hints}{patch_hints}{composite_block}
+        # Pipeline 建议: 基于 provenance 规则推荐下一步工具.
+        # 42 条领域规则, 零 LLM 调用. 让 plan 知道"这类任务通常下一步是 X".
+        pipeline_block = ""
+        try:
+            from huginn.provenance.pipeline import SimulationPipeline
+            pipeline = SimulationPipeline(self.kg.root if hasattr(self.kg, 'root') else None)
+            # 用上一轮的 execution_result 触发 suggest_next
+            last_result = getattr(self, '_last_execution_result', None)
+            if last_result and isinstance(last_result, dict):
+                tool_name = last_result.get('_tool_name', '')
+                suggestions = pipeline.suggest_next(
+                    tool_name=tool_name,
+                    tool_input=last_result.get('_tool_input', {}),
+                    tool_output=last_result.get('result', last_result),
+                )
+                if suggestions:
+                    s_lines = [f"  - {s.tool_hint}: {s.description}" for s in suggestions[:3]]
+                    pipeline_block = "\nPipeline suggestions (based on provenance):\n" + "\n".join(s_lines) + "\n"
+        except Exception:
+            pass  # pipeline 是 advisory, 失败不阻塞
+
+        return self._trim_to_budget([
+            ("body", f"""Given the hypothesis: "{hypothesis}"
+
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
 
@@ -3050,7 +3078,16 @@ MODE: <coder|workflow|explore|skill>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
-"""
+"""),
+            ("math", math_block),
+            ("kg", kg_block),
+            ("visual", visual_block),
+            ("kb", kb_block),
+            ("mem", mem_block),
+            ("skill", skill_hints + patch_hints),
+            ("composite", composite_block),
+            ("pipeline", pipeline_block),
+        ])
 
     def _parse_plan(self, response: str) -> dict[str, Any]:
         """Parse LLM plan response."""
