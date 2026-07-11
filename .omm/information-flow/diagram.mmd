@@ -1,0 +1,90 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '20px', 'fontFamily': 'Arial'}}}%%
+flowchart LR
+    subgraph Input["输入 + 目标持久化"]
+        USER["用户输入"]
+        GOAL_STORE["GoalStore<br/>goals.json<br/>active / paused / completed"]
+        SUB_GOALS["sub_goals<br/>/subgoal 动态追加"]
+    end
+
+    subgraph CtxBuild["上下文构建<br/>ContextBuilder.build_input_messages"]
+        BUILD_MEM["build_memory_text<br/>recall_for_prompt<br/>+ research_log 猜想"]
+        BUILD_KB["build_kb_text<br/>KB.query 向量检索<br/>+ KB↔Memory 交叉引用"]
+        BUILD_KG["build_kg_text<br/>KG.query 实体关系"]
+        BUILD_GOAL["build_goal_text<br/>GoalStore.get_active"]
+        BUILD_SUB["build_subgoal_text<br/>sub_goals 约束"]
+        SYS_MSG["SystemMessage<br/>persona system_prompt"]
+        CTX_BLOCK["context block<br/>emotion + plan + cognitive<br/>+ goal + subgoal + evolution"]
+    end
+
+    subgraph Exec["LLM 推理 + 工具循环"]
+        LLM["LLM 推理"]
+        TOOL_CALL["tool_call<br/>(action: 改变环境)"]
+        TOOL_EXEC["工具执行<br/>vasp / lammps / ..."]
+        TOOL_RESULT["tool_result<br/>(perception: 环境反馈)"]
+    end
+
+    subgraph Learn["_learn 并行写入"]
+        MEM_WRITE["MemoryManager.remember<br/>hypothesis + r_phys<br/>+ persona tag + surprise"]
+        KB_WRITE["KnowledgeBase.add_document<br/>实验摘要 + surprise"]
+        KG_WRITE["KG.add_entity + hyperedge<br/>experiment + Method + Fact"]
+    end
+
+    subgraph Repos["三个并列仓库 (不互流)"]
+        MEMORY["Memory<br/>SQLite + 向量检索<br/>会话 + 长期 + 研究日志"]
+        KB["KnowledgeBase<br/>ChromaDB<br/>种子知识 + 实验回写"]
+        KG["KnowledgeGraph<br/>project_kg.json<br/>实体 + 关系 + 超边"]
+    end
+
+    subgraph Signals["反馈信号"]
+        SURPRISE["surprise<br/>_compute_surprise_robust<br/>worst-case 分布鲁棒"]
+        PICK["_pick_hypothesis_persona<br/>surprise > 0.6 → reviewer<br/>查 memory 历史 r_phys"]
+        HYPOTHESIZE["_hypothesize<br/>surprise → _speculator_hint<br/>intrinsic motivation"]
+    end
+
+    %% 输入 → 上下文构建
+    USER --> BUILD_MEM
+    USER --> BUILD_KB
+    USER --> BUILD_KG
+    GOAL_STORE -->|目标| BUILD_GOAL
+    SUB_GOALS -->|目标| BUILD_SUB
+
+    %% 上下文合并 → prompt
+    BUILD_MEM -->|知识| CTX_BLOCK
+    BUILD_KB -->|知识| CTX_BLOCK
+    BUILD_KG -->|结构| CTX_BLOCK
+    BUILD_GOAL -->|目标| CTX_BLOCK
+    BUILD_SUB -->|目标| CTX_BLOCK
+    SYS_MSG --> LLM
+    CTX_BLOCK --> LLM
+
+    %% LLM → 工具 → 结果 (有向循环)
+    LLM -->|过程| TOOL_CALL
+    TOOL_CALL --> TOOL_EXEC
+    TOOL_EXEC -->|过程| TOOL_RESULT
+    TOOL_RESULT --> LLM
+
+    %% 结果 → _learn → 仓库 (并行写入)
+    TOOL_RESULT -->|过程| MEM_WRITE
+    TOOL_RESULT -->|过程| KB_WRITE
+    TOOL_RESULT -->|过程| KG_WRITE
+    MEM_WRITE -->|知识| MEMORY
+    KB_WRITE -->|知识| KB
+    KG_WRITE -->|结构| KG
+
+    %% 仓库 → 下轮 prompt (信息回流)
+    MEMORY -->|知识| BUILD_MEM
+    KB -->|知识| BUILD_KB
+    KG -->|结构| BUILD_KG
+
+    %% surprise 信号 → hypothesize
+    TOOL_RESULT -->|信号| SURPRISE
+    SURPRISE -->|信号| HYPOTHESIZE
+    HYPOTHESIZE --> LLM
+
+    %% memory → persona 反馈环
+    MEMORY -->|信号| PICK
+    SURPRISE -->|信号| PICK
+    PICK -->|过程| HYPOTHESIZE
+
+    %% goal 持久化跨 session
+    GOAL_STORE -->|目标| BUILD_GOAL
