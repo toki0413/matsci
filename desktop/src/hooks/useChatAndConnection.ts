@@ -1066,6 +1066,31 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStreaming]);
 
+  // ── Stop generation ──────────────────────────────────────────
+  const stopGeneration = useCallback(async () => {
+    try {
+      await api.post('/agents/default/interrupt', {
+        type: 'cancel',
+        thread_id: activeThreadRef.current,
+      });
+    } catch {
+      // Fallback: close WS to force-stop
+      wsClientRef.current?.close();
+    }
+    setIsStreaming(false);
+    setPendingMessages([]);
+    setMessages((prev) => {
+      if (prev.length > 0 && prev[prev.length - 1].role === 'assistant') {
+        const last = prev[prev.length - 1];
+        if (last.content === '' || last.content === '…') {
+          return prev.slice(0, -1);
+        }
+        return [...prev.slice(0, -1), { ...last, content: last.content + '\n\n*[stopped]*' }];
+      }
+      return prev;
+    });
+  }, []);
+
   // ── Answer clarification ─────────────────────────────────────
   const answerClarification = (questionId: string | undefined, answer: string) => {
     const payload = JSON.stringify({
@@ -1154,6 +1179,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     thinkingIntensity, setThinkingIntensity,
     // Message queue
     pendingMessages,
+    // Stop generation
+    stopGeneration,
     // Research mode
     researchMode, setResearchMode,
     // Sound toggle

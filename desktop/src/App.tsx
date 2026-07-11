@@ -549,6 +549,7 @@ export default function App() {
     autoloopPhase, autoloopProgress,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages,
+    stopGeneration,
     researchMode, setResearchMode,
     petState,
   } = useChatAndConnection({
@@ -1097,6 +1098,7 @@ export default function App() {
               thinkingIntensity={thinkingIntensity}
               setThinkingIntensity={setThinkingIntensity}
               pendingMessages={pendingMessages}
+              stopGeneration={stopGeneration}
               researchMode={researchMode}
               setResearchMode={setResearchMode}
               contextBudgetTokens={config.context_budget_tokens}

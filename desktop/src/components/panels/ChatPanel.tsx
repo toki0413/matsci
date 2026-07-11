@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -107,6 +107,7 @@ interface ChatPanelProps {
   thinkingIntensity: "low" | "medium" | "high";
   setThinkingIntensity: (v: "low" | "medium" | "high") => void;
   pendingMessages: string[];
+  stopGeneration: () => void;
   researchMode: boolean;
   setResearchMode: (v: boolean) => void;
   contextBudgetTokens?: number;
@@ -121,7 +122,7 @@ export function ChatPanel(props: ChatPanelProps) {
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
-    pendingMessages, researchMode, setResearchMode,
+    pendingMessages, stopGeneration, researchMode, setResearchMode,
     contextBudgetTokens,
   } = props;
 
@@ -129,6 +130,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const [cmdSelectIdx, setCmdSelectIdx] = useState(0);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionIdx, setMentionIdx] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [mentionQuery, setMentionQuery] = useState('');
   const [editHistory, setEditHistory] = useState<Record<number, string[]>>({});
   const [viewingHistory, setViewingHistory] = useState<number | null>(null);
@@ -1369,6 +1371,29 @@ export function ChatPanel(props: ChatPanelProps) {
           onDrop={handleDrop}
           className={`flex items-end gap-3 rounded-lg transition-colors ${isDragOver ? 'border-2 border-dashed border-accent bg-accent/5 p-1' : 'border-2 border-transparent p-1'}`}
         >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) {
+                const files = Array.from(e.target.files);
+                const fakeEvent = { dataTransfer: { files } } as unknown as React.DragEvent;
+                handleDrop(fakeEvent);
+                e.target.value = '';
+              }
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="btn-ghost h-9 w-9 shrink-0 rounded-lg"
+            aria-label={t('chat.attachFile') || 'Attach file'}
+            title={t('chat.attachFile') || 'Attach file'}
+            disabled={!isConnected}
+          >
+            <Paperclip size={18} />
+          </button>
           <textarea
             ref={textareaRef}
             value={input}
@@ -1509,14 +1534,28 @@ export function ChatPanel(props: ChatPanelProps) {
             aria-label="Message input"
           />
           <div className="flex flex-col items-center gap-1">
-            <button
-              onClick={() => { setQuotedMsg(null); sendMessage(); }}
-              disabled={!isConnected || !input.trim()}
-              className="btn-primary h-11 px-5"
-              aria-label={isStreaming ? t('chat.streaming') : t('chat.send')}
-            >
-              {isStreaming ? t('chat.streaming') : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
-            </button>
+            {isStreaming ? (
+              <button
+                onClick={stopGeneration}
+                className="btn-danger h-11 px-5"
+                aria-label={t('chat.stop') || 'Stop'}
+                title={t('chat.stop') || 'Stop generation'}
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className="h-3 w-3 rounded-sm bg-current" />
+                  {t('chat.stop') || 'Stop'}
+                </span>
+              </button>
+            ) : (
+              <button
+                onClick={() => { setQuotedMsg(null); sendMessage(); }}
+                disabled={!isConnected || !input.trim()}
+                className="btn-primary h-11 px-5"
+                aria-label={mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
+              >
+                {mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
+              </button>
+            )}
           </div>
         </div>
         <div className="mt-1 flex items-center justify-between px-1 text-[10px] text-text-muted">
