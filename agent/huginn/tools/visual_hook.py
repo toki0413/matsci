@@ -143,8 +143,11 @@ def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]
         output["_visual_base64"] = b64
         output["_visual_hint"] = (
             "A chart has been auto-generated from this tool's numerical output. "
-            "If you have vision capability, analyze the chart for trends, anomalies, "
-            "or patterns that may not be obvious from the raw numbers."
+            "Even without vision capability, visualize the data shape in your reasoning: "
+            "describe trends, identify peaks/anomalies, and compare against expected patterns. "
+            # ponytail: Mirage effect — text LLMs have latent visual reasoning
+            # (Mirage: The Illusion of Visual Understanding, arXiv:2603.21687).
+            # We exploit it by prompting the LLM to "imagine" the chart.
         )
 
     return output

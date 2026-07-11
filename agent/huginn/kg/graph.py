@@ -106,6 +106,42 @@ class ProjectKnowledgeGraph:
                 **normalize_props(attrs),
             )
 
+    def add_hyperedge(
+        self,
+        node_ids: list[str],
+        relation: str,
+        *,
+        source: str = "auto",
+        confidence: float = 0.5,
+        **attrs: Any,
+    ) -> str | None:
+        """Add an n-ary relationship (hyperedge) as a clique + metadata node.
+
+        ponytail: SimplicialComplex (TopoNetX) is the proper structure for this,
+        but requires rewriting the KG layer. This clique-based approach captures
+        n-ary semantics with zero new dependencies. Upgrade to SimplicialComplex
+        when >3-ary relations become common.
+
+        Returns the hyperedge node ID, or None if <2 nodes.
+        """
+        if len(node_ids) < 2:
+            return None
+        now = datetime.now().isoformat()
+        he_id = f"he_{relation}_{hash(tuple(sorted(node_ids))) & 0xFFFFFFFF:x}"
+
+        # Create metadata node for the hyperedge
+        self._graph.add_node(he_id, type="hyperedge", relation=relation,
+                             created_at=now, last_seen=now, mentions=1,
+                             members=node_ids, **normalize_props(attrs))
+
+        # Connect all members to the hyperedge node (star topology)
+        for nid in node_ids:
+            if nid in self._graph:
+                self._graph.add_edge(nid, he_id, relation="member_of",
+                                     source=source, confidence=confidence,
+                                     created_at=now, last_seen=now, mentions=1)
+        return he_id
+
     def has_entity(self, label: str, entity_type: str) -> bool:
         return node_id(label, entity_type) in self._graph
 

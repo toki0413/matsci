@@ -1240,7 +1240,7 @@ class AutoloopEngine:
         # 这俩 persona 在 personas.py 内置, 直接取就行.
         persona_name = self._pick_hypothesis_persona(context)
         try:
-            response = await self._llm_chat(prompt, persona_name=persona_name)
+            response = await self._llm_chat(prompt, persona_name=persona_name, task="reasoning")
             return response.strip()
         except Exception:
             return None
@@ -1391,7 +1391,7 @@ class AutoloopEngine:
         """
         prompt = self._build_plan_prompt(hypothesis, context)
         try:
-            response = await self._llm_chat(prompt, persona_name="default")
+            response = await self._llm_chat(prompt, persona_name="default", task="reasoning")
             plan = self._parse_plan(response)
         except Exception:
             return None
@@ -2567,6 +2567,7 @@ class AutoloopEngine:
             tutor_narrative = await self._llm_chat(
                 self._build_tutor_report_prompt(report_data, kb_text),
                 persona_name="tutor",
+                task="summarize",  # ponytail: report 用便宜模型, 不需要强推理
             )
             tutor_narrative = (tutor_narrative or "").strip()
         except Exception:
@@ -2697,7 +2698,13 @@ Please modify the code to address this task."""
     # LLM helpers
     # ──────────────────────────────────────────────────────────────
 
-    async def _llm_chat(self, prompt: str, persona_name: str | None = None, model: Any = None) -> str:
+    async def _llm_chat(
+        self,
+        prompt: str,
+        persona_name: str | None = None,
+        model: Any = None,
+        task: str | None = None,
+    ) -> str:
         """Send a prompt to the LLM and return the response.
 
         persona_name 不为空时, 把对应 persona 的 system prompt 作为
@@ -2705,8 +2712,25 @@ Please modify the code to address this task."""
         persona 找不到就退化为不注入, 行为跟改动前一致.
 
         model 不为空时用传入的模型 (用于三槽 verification), 否则用默认 self.model.
+
+        task 不为空时, 优先从 model_router 路由 (team 模式):
+        - "reasoning"/"science" → 强模型 (云端)
+        - "summarize"/"format" → 便宜模型 (本地/小模型)
+        - "verification" → 独立验证模型
+        model 参数优先于 task — 显式指定的模型不被路由覆盖.
         """
         from langchain_core.messages import HumanMessage, SystemMessage
+
+        # Team 模式: task 路由优先, 但显式 model 不被覆盖
+        if model is None and task is not None:
+            router = getattr(self, 'model_router', None)
+            if router is not None:
+                try:
+                    routed = router.select(task, prefer_cheap=(task in ("summarize", "format", "archival")))
+                    if routed is not None:
+                        model = routed
+                except Exception:
+                    pass
 
         llm = model or self.model
         messages: list[Any] = []
