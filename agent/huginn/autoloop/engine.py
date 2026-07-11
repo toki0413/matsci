@@ -208,6 +208,12 @@ class AutoloopEngine:
         # 视觉基元: _validate 从 tool 输出提取, _build_*_prompt 注入 LLM.
         # 跨迭代传递 — 上轮 tool 的数值指针下轮假设/计划能用到.
         self._last_visual_context: str = ""
+        # JEPA 式预测: plan 阶段 LLM 预测预期结果, validate 阶段对比实际,
+        # 预测误差 = surprise = intrinsic motivation 信号.
+        # ponytail: 文本空间预测, 不是真正的嵌入空间 JEPA. 但原理一致 —
+        # 执行前预测, 执行后对比, 误差驱动探索. 升级路径: 训练真正的编码器+预测器.
+        self._current_prediction: str = ""
+        self._last_surprise: float = 0.0
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -828,6 +834,8 @@ class AutoloopEngine:
                 continue
 
             # 4. Execute
+            # JEPA: stash plan's prediction for validate to compare against actual
+            self._current_prediction = plan.get("expected_prediction", "")
             phase = await self._run_phase_async("execute", self._execute, plan, context)
             phases.append(phase)
             completed_steps += 1
@@ -1002,6 +1010,25 @@ class AutoloopEngine:
                     except Exception:
                         logger.warning("error in run: GoalJudge evaluation failed", exc_info=True)
 
+            # JEPA intrinsic motivation: 高 surprise = 预测误差大 = 这个方向
+            # agent 的心智模型不准, 值得继续探索. 把 surprise 信号注入
+            # _speculator_hint, 下轮 hypothesize/plan 会看到并优先关注.
+            # MPC 的 receding horizon: 每轮用预测误差调整下一步, 不是固定计划.
+            surprise = getattr(self, "_last_surprise", 0.0)
+            if surprise > 0.5:
+                surprise_hint = (
+                    f"High prediction surprise ({surprise:.2f}) last iteration: "
+                    "the actual result differed significantly from what was predicted. "
+                    "This area is poorly understood — consider exploring why."
+                )
+                self._speculator_hint = (
+                    (self._speculator_hint + "\n" + surprise_hint).strip()
+                    if self._speculator_hint else surprise_hint
+                )
+                print(f"  → Surprise: {surprise:.2f} (high — exploring)")
+            elif surprise > 0 and self._iteration > 1:
+                print(f"  → Surprise: {surprise:.2f} (low — model matches reality)")
+
         # 7. Report + finalize
         return await self._finalize_run(
             objective, phases, run_id, provenance_record,
@@ -1057,6 +1084,8 @@ class AutoloopEngine:
 
         self._speculator_hint = ""
         self._last_visual_context = ""  # reset per run, stale data shapes mislead
+        self._current_prediction = ""  # reset JEPA prediction buffer
+        self._last_surprise = 0.0
         try:
             from huginn.agents.speculator import on_turn_start
             spec_result = on_turn_start(objective)
@@ -1751,6 +1780,20 @@ class AutoloopEngine:
         except Exception as e:
             logger.debug(f"[validate] eval bench failed: {e}")
 
+        # JEPA 式预测误差: 对比 plan 阶段的预测 vs 实际结果.
+        # 预测误差高 = surprise = 值得探索的方向 (intrinsic motivation).
+        # 低误差 = agent 对这类任务已有良好心智模型.
+        prediction = getattr(self, "_current_prediction", "")
+        if prediction:
+            actual_text = self._extract_text(execution_result)[:500]
+            surprise = self._compute_surprise(prediction, actual_text)
+            results["prediction_error"] = {
+                "predicted": prediction[:200],
+                "actual": actual_text[:200],
+                "surprise": round(surprise, 3),
+            }
+            self._last_surprise = surprise
+
         return results
 
     async def _run_pytest(self) -> dict[str, Any]:
@@ -2043,6 +2086,35 @@ class AutoloopEngine:
                             if sv:
                                 parts.append(str(sv))
         return " ".join(parts)
+
+    def _compute_surprise(self, prediction: str, actual: str) -> float:
+        """JEPA 式预测误差: 预测文本 vs 实际文本的语义距离.
+
+        ponytail: 用关键词 Jaccard 距离代替真正的嵌入余弦距离.
+        纯文本操作, 零依赖, 零 LLM 调用. 对于"预测说了 energy, 实际也出了
+        energy"这种常见场景已经够用. 升级路径: 用 sentence-transformers
+        算 cosine distance, 或训练专门的 JEPA 编码器.
+        """
+        if not prediction or not actual:
+            return 0.0
+        # 提取关键词: 去标点, 小写, 过滤停用词和短词
+        import re
+        stop = {"the", "a", "an", "is", "are", "was", "were", "be", "to", "of",
+                "in", "on", "at", "for", "and", "or", "not", "this", "that",
+                "it", "with", "from", "by", "as", "will", "can", "may"}
+        def keywords(text: str) -> set[str]:
+            words = re.findall(r'[a-zA-Z_]\w{2,}', text.lower())
+            return {w for w in words if w not in stop}
+        pred_kw = keywords(prediction)
+        actual_kw = keywords(actual)
+        if not pred_kw and not actual_kw:
+            return 0.0
+        # Jaccard distance = 1 - intersection/union
+        union = pred_kw | actual_kw
+        if not union:
+            return 0.0
+        intersection = pred_kw & actual_kw
+        return 1.0 - len(intersection) / len(union)
 
     async def _generative_verify(
         self, execution_result: Any, results: dict[str, Any]
@@ -2485,14 +2557,21 @@ class AutoloopEngine:
 
         # KB 回写: 把本次实验结论存入知识库, 下次同类问题能从 KB 召回.
         # 不存原始数据 (太大), 只存 hypothesis + validation 摘要.
+        # JEPA: 预测误差也写入, 下次同类任务能从 KB 检索到"这类任务
+        # agent 的预测准不准", 帮助判断是否需要更多探索.
         try:
             kb = self._get_kb()
             if kb:
+                pred_err = validation.get("prediction_error", {})
+                surprise_line = ""
+                if pred_err:
+                    surprise_line = f"\nPrediction surprise: {pred_err.get('surprise', 0)}\nPredicted: {pred_err.get('predicted', '')[:100]}\nActual: {pred_err.get('actual', '')[:100]}"
                 summary_text = (
                     f"Iteration {self._iteration}: {hypothesis[:200]}\n"
                     f"Mode: {plan.get('mode', 'unknown')}\n"
                     f"R_phys: {r_phys}\n"
                     f"Validation: {json.dumps(validation, default=str)[:500]}"
+                    f"{surprise_line}"
                 )
                 kb.add_document(
                     filename=f"autoloop_iter_{self._iteration}.txt",
@@ -2895,6 +2974,7 @@ Respond in this exact format:
 MODE: <coder|workflow|explore|skill>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
+PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
 """
 
     def _parse_plan(self, response: str) -> dict[str, Any]:
@@ -2902,6 +2982,7 @@ SKILL: <composite skill name, only if MODE is skill>
         mode = "coder"
         description = response.strip()
         skill_name = ""
+        prediction = ""
 
         for line in response.split("\n"):
             if line.startswith("MODE:"):
@@ -2910,10 +2991,14 @@ SKILL: <composite skill name, only if MODE is skill>
                 description = line.replace("DESCRIPTION:", "").strip()
             elif line.startswith("SKILL:"):
                 skill_name = line.replace("SKILL:", "").strip()
+            elif line.startswith("PREDICTION:"):
+                prediction = line.replace("PREDICTION:", "").strip()
 
         plan = {"mode": mode, "description": description}
         if skill_name:
             plan["skill"] = skill_name
+        if prediction:
+            plan["expected_prediction"] = prediction
         return plan
 
     # ──────────────────────────────────────────────────────────────
