@@ -205,6 +205,9 @@ class AutoloopEngine:
         self.progress_tracker: ProgressTracker | None = None
         # 投机执行 hint: on_turn_start 写入, _build_*_prompt 读出注入 LLM
         self._speculator_hint: str = ""
+        # 视觉基元: _validate 从 tool 输出提取, _build_*_prompt 注入 LLM.
+        # 跨迭代传递 — 上轮 tool 的数值指针下轮假设/计划能用到.
+        self._last_visual_context: str = ""
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -1053,6 +1056,7 @@ class AutoloopEngine:
         self._budget_degraded = False
 
         self._speculator_hint = ""
+        self._last_visual_context = ""  # reset per run, stale data shapes mislead
         try:
             from huginn.agents.speculator import on_turn_start
             spec_result = on_turn_start(objective)
@@ -1577,6 +1581,14 @@ class AutoloopEngine:
         }
 
         if isinstance(execution_result, dict):
+            # Extract visual primitives from tool output — the deictic pointers
+            # that let the next iteration's hypothesis/plan reason about data
+            # shape without needing image input (Mirage + Visual Primitives).
+            visual_hint = execution_result.get("_visual_hint")
+            if visual_hint:
+                results["visual_primitives"] = visual_hint
+                self._last_visual_context = visual_hint
+
             r_phys = execution_result.get("r_phys")
             if r_phys is None:
                 result_type = execution_result.get("result_type")
@@ -2491,14 +2503,21 @@ class AutoloopEngine:
 
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
         # 让 ProjectKnowledgeGraph 随实验增长而非只读展示.
+        # 视觉基元也写入实体属性, 下次 KG 查询能检索到数据形状线索.
         try:
+            kg_attrs: dict[str, Any] = {
+                "iteration": self._iteration,
+                "r_phys": r_phys,
+            }
+            visual_ctx = validation.get("visual_primitives") if isinstance(validation, dict) else None
+            if visual_ctx:
+                kg_attrs["visual_primitives"] = visual_ctx[:500]
             self.kg.add_entity(
                 label=hypothesis[:80],
                 entity_type="experiment",
                 source="autoloop",
                 confidence=float(r_phys) if r_phys is not None else 0.5,
-                iteration=self._iteration,
-                r_phys=r_phys,
+                **kg_attrs,
             )
             self.kg.save()
         except Exception:
@@ -2767,12 +2786,18 @@ Please modify the code to address this task."""
         )
         if kg_block:
             kg_block = f"\n{kg_block}\n"
+        # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
+        # 给 LLM 具体坐标锚定推理 — Thinking with Visual Primitives 的
+        # "point while it reasons" 原则, Mirage 效应的文本路径
+        visual_block = getattr(self, '_last_visual_context', '')
+        if visual_block:
+            visual_block = f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
         # 数学深度引导: 提醒 agent 优先识别 PDE / 变分原理 / 微分几何结构,
         # 并用符号回归 + Sobol 灵敏度 + 物理约束先验 反复试探.
         # 这一段是把"物理化学是数学的一部分"落到 prompt 的具体抓手.
         math_block = self._MATH_DEPTH_PROMPT_BLOCK
         return f"""You are an autonomous material science research agent.
-{hint_block}{kb_block}{kg_block}{math_block}
+{hint_block}{kb_block}{kg_block}{visual_block}{math_block}
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
@@ -2813,6 +2838,10 @@ Math depth guidance (treat physics/chemistry as mathematics):
         kg_block = self._build_kg_text(query=hypothesis)
         if kg_block:
             kg_block = f"\n{kg_block}\n"
+        # 视觉基元注入 (同 hypothesize)
+        visual_block = getattr(self, '_last_visual_context', '')
+        if visual_block:
+            visual_block = f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
         math_block = self._MATH_DEPTH_PROMPT_BLOCK
 
         # Inject learned skills + prompt patches from evolution engine.
@@ -2848,7 +2877,7 @@ Math depth guidance (treat physics/chemistry as mathematics):
             logger.debug("composite skill lookup failed", exc_info=True)
 
         return f"""Given the hypothesis: "{hypothesis}"
-{kb_block}{kg_block}{math_block}{skill_hints}{patch_hints}{composite_block}
+{kb_block}{kg_block}{visual_block}{math_block}{skill_hints}{patch_hints}{composite_block}
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
 
