@@ -422,7 +422,7 @@ def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AutoloopEngine:
         "huginn.autoloop.engine.MemoryManager", lambda: MagicMock()
     )
     monkeypatch.setattr(
-        "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda: MagicMock()
+        "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock()
     )
     monkeypatch.setattr("huginn.autoloop.engine.BenchmarkRunner", lambda: MagicMock())
     monkeypatch.setattr("huginn.autoloop.engine.CoderRunner", lambda: MagicMock())

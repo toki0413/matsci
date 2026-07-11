@@ -5,20 +5,22 @@ Prefers connecting to a remote browser service (via ws_endpoint or browser_url);
 falls back to local Playwright launch, then mock mode.
 """
 from __future__ import annotations
+
 import asyncio
+import logging
 import os
-from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
+
 from pydantic import BaseModel, Field
+
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
-from huginn.validation.handle_validator import HandleValidator
-import logging
+
 logger = logging.getLogger(__name__)
 
 
-class BrowserAction(str, Enum):
+class BrowserAction(StrEnum):
     NAVIGATE = "navigate"
     CLICK = "click"
     TYPE = "type"
@@ -127,7 +129,6 @@ class BrowserTool(HuginnTool):
         if selenium_url:
             try:
                 from selenium import webdriver
-                from selenium.webdriver.remote.webdriver import WebDriver
                 options = webdriver.ChromeOptions()
                 if args.headless:
                     options.add_argument("--headless")
@@ -326,8 +327,6 @@ class BrowserTool(HuginnTool):
     async def _call_selenium(self, args: BrowserToolInput) -> ToolResult:
         """Execute actions via Selenium WebDriver."""
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
 
         try:
             driver = self._driver
@@ -366,7 +365,6 @@ class BrowserTool(HuginnTool):
                 return ToolResult(data={"status": "scrolled", "direction": args.direction, "amount": args.scroll_amount, "mode": "remote_selenium"}, success=True)
 
             elif args.action == BrowserAction.SCREENSHOT:
-                import base64
                 b64 = driver.get_screenshot_as_base64()
                 return ToolResult(data={"status": "screenshot", "image_base64": b64[:100] + "...", "size_bytes": len(b64), "mode": "remote_selenium"}, success=True)
 

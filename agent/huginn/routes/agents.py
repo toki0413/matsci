@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import logging
-import traceback
+import os
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, WebSocket
 from pydantic import ValidationError
 
-from huginn.config import HuginnConfig, get_config
+from huginn.config import get_config
 from huginn.models.registry import ModelRegistry
 from huginn.routes.schemas import ChatRequest
 from huginn.server_core import (
@@ -174,7 +173,7 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
             result["clarify_questions"] = clarify_questions
             result["needs_clarification"] = True
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # 分段返回: 超时不等于全白干. LangGraph checkpointer 每个 superstep
         # 都落了盘 (SqliteSaver 走文件锁, InMemorySaver 走 factory 共享实例),
         # 同一 thread_id 下次请求会从 checkpoint 接着跑, 不用从头再来.
@@ -223,6 +222,72 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
     except Exception as e:
         logger.error("unexpected error", exc_info=True)
         return {"error": str(e)}
+
+
+@router.websocket("/agents/{agent_id}/ws/chat")
+async def ws_chat_with_agent(websocket: WebSocket, agent_id: str):
+    """WS 版 chat_with_agent, 流式推送 agent_status 给前端 Team/Fusion 模式."""
+    await websocket.accept()
+    try:
+        data = await websocket.receive_json()
+        content = data.get("content", "")
+        thread_id = data.get("thread_id", "default")
+
+        await websocket.send_json({
+            "type": "agent_status",
+            "task_id": thread_id,
+            "agent_id": agent_id,
+            "status": "thinking",
+            "output": "",
+        })
+
+        if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
+            os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
+
+        factory = get_agent_factory()
+        agent = factory.create(agent_id, thread_id=thread_id)
+        agent._permission_config.auto_approve_all = True
+
+        timeout = float(data.get("timeout", 180))
+        state = await asyncio.wait_for(
+            asyncio.to_thread(agent.invoke, content, thread_id=thread_id),
+            timeout=timeout,
+        )
+
+        messages = state.get("messages", []) if isinstance(state, dict) else []
+        output = ""
+        if messages and hasattr(messages[-1], "content"):
+            output = messages[-1].content
+
+        await websocket.send_json({
+            "type": "agent_status",
+            "task_id": thread_id,
+            "agent_id": agent_id,
+            "status": "done",
+            "output": output[:500],
+        })
+        await websocket.send_json({"type": "done"})
+    except TimeoutError:
+        await websocket.send_json({
+            "type": "agent_status",
+            "task_id": thread_id,
+            "agent_id": agent_id,
+            "status": "timeout",
+            "output": f"agent invoke timed out after {timeout}s",
+        })
+        await websocket.send_json({"type": "done"})
+    except Exception as e:
+        logger.error("ws_chat_with_agent error", exc_info=True)
+        await websocket.send_json({
+            "type": "agent_status",
+            "task_id": "",
+            "agent_id": agent_id,
+            "status": "error",
+            "output": str(e)[:200],
+        })
+        await websocket.send_json({"type": "error", "message": str(e)})
+    finally:
+        await websocket.close()
 
 
 # ── Personas ─────────────────────────────────────────────────────
