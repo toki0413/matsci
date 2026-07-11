@@ -584,6 +584,86 @@ class KnowledgeBase:
             path.unlink(missing_ok=True)
         return len(ids) > 0
 
+    def cleanup_old_documents(
+        self, max_docs: int = 200, prefix: str = "autoloop_iter_"
+    ) -> int:
+        """自动清理旧文档, 防止 KB 无限增长.
+
+        策略:
+        1. 对 prefix 匹配的文档 (如 autoloop_iter_), 只保留最近 N 个
+        2. 对总文档数超过 max_docs 的情况, 按时间倒序保留最新的
+        3. 返回删除的文档数.
+
+        这解决了 autoloop 每轮写入但永不删除的问题.
+        """
+        try:
+            all_docs = self.list_documents()
+            deleted = 0
+
+            # 1. 清理 autoloop 迭代文档: 只保留最近 50 轮
+            auto_docs = [d for d in all_docs if d.get("filename", "").startswith(prefix)]
+            if len(auto_docs) > 50:
+                # 按文件名排序 (包含迭代号, 字典序 = 时间序)
+                auto_docs.sort(key=lambda d: d.get("filename", ""))
+                for d in auto_docs[:-50]:
+                    if self.delete_document(d["doc_id"]):
+                        deleted += 1
+
+            # 2. 总文档数超过上限: 删最老的
+            if len(all_docs) - deleted > max_docs:
+                # 按摄入时间排序 (ingested_at metadata)
+                remaining = [d for d in all_docs if d.get("filename", "")[:len(prefix)] != prefix]
+                # 无时间戳就按文件名排
+                remaining.sort(key=lambda d: d.get("filename", ""))
+                excess = len(all_docs) - deleted - max_docs
+                for d in remaining[:excess]:
+                    if self.delete_document(d["doc_id"]):
+                        deleted += 1
+
+            if deleted > 0:
+                logger.info("KB cleanup: removed %d old documents (max=%d)", deleted, max_docs)
+            return deleted
+        except Exception as exc:
+            logger.warning("KB cleanup failed: %s", exc)
+            return 0
+
+    def query_with_dedup(
+        self, text: str, top_k: int = 5, domain: str | None = None,
+        similarity_threshold: float = 0.85
+    ) -> list[dict[str, Any]]:
+        """带去重的检索: 相似度 > threshold 的 chunk 只保留第一个.
+        解决分块重叠导致的近似重复段落问题.
+        """
+        # 多捞 2x 候选, 去重后截断到 top_k
+        raw = self.query(text, top_k=top_k * 2, domain=domain)
+        if not raw or len(raw) <= 1:
+            return raw
+
+        # 简单文本 Jaccard 相似度去重
+        def keywords(t: str) -> set[str]:
+            import re
+            words = re.findall(r'[a-zA-Z_]\w{2,}', t.lower())
+            return set(words[:50])  # 只看前 50 词, 够快
+
+        kept: list[dict] = []
+        for chunk in raw:
+            text_i = chunk.get("text", "")
+            kw_i = keywords(text_i)
+            is_dup = False
+            for kept_chunk in kept:
+                kw_j = keywords(kept_chunk.get("text", ""))
+                if kw_i and kw_j:
+                    jaccard = len(kw_i & kw_j) / len(kw_i | kw_j)
+                    if jaccard > similarity_threshold:
+                        is_dup = True
+                        break
+            if not is_dup:
+                kept.append(chunk)
+            if len(kept) >= top_k:
+                break
+
+        return kept
+
     def query(
         self, text: str, top_k: int = 5, domain: str | None = None
     ) -> list[dict[str, Any]]:
