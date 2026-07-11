@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
 _DATA_SUFFIXES = {".csv", ".json", ".jsonl", ".tsv"}
 _TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".log"}
+# 压缩包格式 — 解压后递归摄入每个文件
+_ARCHIVE_SUFFIXES = {".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".gz", ".7z", ".rar"}
+_STRUCTURE_SUFFIXES = {".cif", ".poscar", ".contcar", ".vasp"}
 
 # PDF 文本量低于这个阈值认为是扫描件, 走 OCR
 _PDF_OCR_THRESHOLD = 100
@@ -45,15 +48,26 @@ class SmartIngester:
     # ── 入口: 按类型路由 ──────────────────────────────────────────
 
     async def ingest(self, filename: str, content: bytes) -> dict[str, Any]:
-        """智能摄入入口, 根据文件扩展名路由到对应解析器."""
+        """智能摄入入口, 根据文件扩展名路由到对应解析器.
+        支持压缩包: zip/tar.gz 等会解压后递归摄入每个文件.
+        支持结构文件: CIF/POSCAR 走 StructureChunker 结构化分块.
+        """
         suffix = Path(filename).suffix.lower()
+        # tar.gz / tar.bz2 双扩展名特殊处理
+        lower_name = filename.lower()
+        if lower_name.endswith((".tar.gz", ".tar.bz2")):
+            suffix = "." + ".".join(lower_name.rsplit(".", 2)[-2:])
         try:
+            if suffix in _ARCHIVE_SUFFIXES or lower_name.endswith((".tar.gz", ".tar.bz2")):
+                return await self.ingest_archive(filename, content)
             if suffix in _IMAGE_SUFFIXES:
                 return await self.ingest_image(filename, content)
             if suffix == ".pdf":
                 return await self.ingest_pdf(filename, content)
             if suffix in _DATA_SUFFIXES:
                 return await self.ingest_data(filename, content)
+            if suffix in _STRUCTURE_SUFFIXES:
+                return await self.ingest_structure(filename, content)
             return await self.ingest_text(filename, content)
         except Exception as exc:
             logger.warning("smart ingest '%s' 失败, 退回普通摄入: %s", filename, exc)
@@ -65,6 +79,134 @@ class SmartIngester:
                 return result
             except Exception:
                 return {"doc_id": "", "smart_ingest": False, "error": str(exc)}
+
+    # ── 压缩包: 解压后递归摄入 ─────────────────────────────────────
+
+    async def ingest_archive(self, filename: str, content: bytes) -> dict[str, Any]:
+        """解压压缩包, 对每个文件递归调用 ingest.
+        支持 zip, tar.gz, tar.bz2, tar. 7z/rar 在有对应工具时也支持.
+        这是 loop-of-loops: archive → files → each file is its own ingest loop.
+        """
+        import tempfile
+        import zipfile
+        import tarfile
+        import shutil
+
+        results: list[dict[str, Any]] = []
+        total_files = 0
+        total_chunks = 0
+
+        with tempfile.TemporaryDirectory(prefix="huginn_archive_") as tmpdir:
+            tmp_path = Path(tmpdir)
+            archive_file = tmp_path / filename
+            archive_file.write_bytes(content)
+
+            extract_dir = tmp_path / "extracted"
+            extract_dir.mkdir()
+
+            lower = filename.lower()
+            try:
+                if lower.endswith(".zip"):
+                    with zipfile.ZipFile(archive_file, "r") as zf:
+                        zf.extractall(extract_dir)
+                elif lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar")):
+                    mode = "r:gz" if lower.endswith((".tar.gz", ".tgz")) else \
+                           "r:bz2" if lower.endswith((".tar.bz2", ".tbz2")) else "r:"
+                    with tarfile.open(archive_file, mode) as tf:
+                        tf.extractall(extract_dir)
+                elif lower.endswith(".gz"):
+                    import gzip
+                    out_name = Path(filename).stem  # remove .gz
+                    with gzip.open(archive_file, "rb") as gz:
+                        (extract_dir / out_name).write_bytes(gz.read())
+                elif lower.endswith(".7z"):
+                    try:
+                        import py7zr
+                        with py7zr.SevenZipFile(archive_file, "r") as sz:
+                            sz.extractall(extract_dir)
+                    except ImportError:
+                        return {"doc_id": "", "smart_ingest": False,
+                                "error": "7z files require py7zr: pip install py7zr"}
+                elif lower.endswith(".rar"):
+                    try:
+                        import rarfile
+                        with rarfile.RarFile(archive_file) as rf:
+                            rf.extractall(extract_dir)
+                    except ImportError:
+                        return {"doc_id": "", "smart_ingest": False,
+                                "error": "rar files require rarfile: pip install rarfile"}
+                else:
+                    return {"doc_id": "", "smart_ingest": False,
+                            "error": f"unsupported archive format: {filename}"}
+            except Exception as exc:
+                return {"doc_id": "", "smart_ingest": False,
+                        "error": f"archive extraction failed: {exc}"}
+
+            # 递归摄入每个文件 — 这就是内层 loop
+            for inner_file in sorted(extract_dir.rglob("*")):
+                if not inner_file.is_file():
+                    continue
+                # 跳过隐藏文件和 __MACOSX 等
+                if any(part.startswith(".") or part == "__MACOSX" for part in inner_file.parts):
+                    continue
+                try:
+                    inner_content = inner_file.read_bytes()
+                    # 限制单文件 100MB 防止解压炸弹
+                    if len(inner_content) > 100 * 1024 * 1024:
+                        logger.warning("skip oversized file in archive: %s (%d bytes)",
+                                       inner_file.name, len(inner_content))
+                        continue
+                    inner_result = await self.ingest(inner_file.name, inner_content)
+                    results.append(inner_result)
+                    total_files += 1
+                    total_chunks += inner_result.get("n_chunks", 0)
+                except Exception as exc:
+                    logger.warning("failed to ingest %s from archive: %s",
+                                   inner_file.name, exc)
+                    results.append({"filename": inner_file.name, "error": str(exc)})
+
+        return {
+            "doc_id": f"archive:{filename}",
+            "smart_ingest": True,
+            "archive": True,
+            "n_files": total_files,
+            "n_chunks": total_chunks,
+            "files": [r.get("filename", r.get("doc_id", "")) for r in results],
+            "errors": [r for r in results if "error" in r],
+        }
+
+    # ── 结构文件: CIF/POSCAR 结构化分块 ──────────────────────────────
+
+    async def ingest_structure(self, filename: str, content: bytes) -> dict[str, Any]:
+        """CIF/POSCAR 结构文件: 提取结构化元数据 + 文本入库.
+        激活了 chunker.py 里死掉的 StructureChunker — 它能解析空间群、
+        晶格参数、原子坐标, 生成结构化摘要. 这比直接 UTF-8 入库信息密度高."""
+        try:
+            from huginn.knowledge.chunker import StructureChunker
+            text = content.decode("utf-8", errors="ignore")
+            chunks = StructureChunker.chunk(text, filename=filename)
+            if not chunks:
+                # StructureChunker 无法解析, 退回普通文本摄入
+                return await self.ingest_text(filename, content)
+
+            # 把结构化摘要 + 原始文本都入库
+            all_texts = []
+            for chunk in chunks:
+                all_texts.append(chunk.text if hasattr(chunk, "text") else str(chunk))
+
+            combined = f"# Structure: {filename}\n\n"
+            combined += "\n\n---\n\n".join(all_texts)
+            result = self.kb.add_document(filename, combined.encode("utf-8"))
+            result["smart_ingest"] = True
+            result["structure_aware"] = True
+            result["n_chunks"] = len(all_texts)
+            return result
+        except ImportError:
+            # StructureChunker 不可用, 退回普通文本
+            return await self.ingest_text(filename, content)
+        except Exception as exc:
+            logger.warning("structure ingest failed for %s: %s", filename, exc)
+            return await self.ingest_text(filename, content)
 
     # ── 图片 ──────────────────────────────────────────────────────
 

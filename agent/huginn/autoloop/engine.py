@@ -330,7 +330,8 @@ class AutoloopEngine:
 
     def _build_kb_text(self, query: str) -> str:
         """检索领域知识库, 把命中 chunk 拼成 prompt 上下文块. KB 没装、
-        空、查询失败都返回空串, 不影响 loop."""
+        空、查询失败都返回空串, 不影响 loop. 用 query_with_dedup 去重,
+        避免分块重叠导致的近似重复段落浪费 token."""
         if not query:
             return ""
         kb = self._get_kb()
@@ -339,7 +340,11 @@ class AutoloopEngine:
         try:
             if kb.count() == 0:
                 return ""
-            chunks = kb.query(query, top_k=5)
+            # 优先用带去重的检索
+            if hasattr(kb, "query_with_dedup"):
+                chunks = kb.query_with_dedup(query, top_k=5)
+            else:
+                chunks = kb.query(query, top_k=5)
             if not chunks:
                 return ""
             lines = []
@@ -2655,6 +2660,19 @@ class AutoloopEngine:
                 )
         except Exception:
             logger.warning("error in _learn: KB writeback failed", exc_info=True)
+
+        # KB 自动清理: 每 10 轮迭代清理一次旧文档, 防止 KB 无限增长.
+        # autoloop_iter_ 文档只保留最近 50 轮, 总文档上限 200.
+        # 这解决了"每轮写入但永不删除"的内存泄漏问题.
+        if self._iteration > 0 and self._iteration % 10 == 0:
+            try:
+                kb = self._get_kb()
+                if kb and hasattr(kb, "cleanup_old_documents"):
+                    deleted = kb.cleanup_old_documents(max_docs=200)
+                    if deleted:
+                        print(f"  → KB cleanup: removed {deleted} old documents")
+            except Exception:
+                pass
 
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
         # 让 ProjectKnowledgeGraph 随实验增长而非只读展示.
