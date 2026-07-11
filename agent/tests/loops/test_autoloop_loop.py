@@ -12,7 +12,6 @@ Test matrix:
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,7 +20,6 @@ from huginn.autoloop.engine import AutoloopEngine, AutoloopResult
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.memory.manager import MemoryManager
 from tests.fixtures.fake_llm import make_callable_llm
-
 
 # ── shared helpers (trimmed from test_autoloop_e2e) ───────────────
 
@@ -93,7 +91,7 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
     monkeypatch.setattr("huginn.autoloop.engine.get_model", lambda settings: fake_llm)
     monkeypatch.setattr("huginn.autoloop.engine.BenchmarkRunner", lambda: _StubBenchRunner())
     monkeypatch.setattr("huginn.autoloop.engine.CoderRunner", lambda: MagicMock())
-    monkeypatch.setattr("huginn.autoloop.engine.ProjectKnowledgeGraph", lambda: MagicMock())
+    monkeypatch.setattr("huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
         "huginn.agents.speculator.on_turn_start",
         lambda *a, **kw: {"hint": "", "predictions": []},

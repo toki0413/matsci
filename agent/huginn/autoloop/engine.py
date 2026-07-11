@@ -65,6 +65,12 @@ AUTOLOOP_PHASES = (
 # 7 阶段 → persona 分派表. None 表示该阶段不走 LLM persona 注入
 # (比如 Execute 直接调 workflow, 不需要 persona 影响输出).
 # Hypothesize 用 default, 真正的 persona 在 _hypothesize 里按研究类型动态选.
+_MATH_SIGNALS = (
+    "equation", "lagrangian", "pde", "hamiltonian", "derivative",
+    "differential", "integral", "eigenvalue", "tensor", "manifold",
+    "symmetry", "conservation", "variational", "continuum",
+    "stress", "strain", "energy", "phonon", "band",
+)
 _PHASE_PERSONAS: dict[str, str | None] = {
     "perceive": "default",
     "hypothesize": None,  # 动态选 dft_expert / md_expert, 见 _hypothesize
@@ -3227,11 +3233,7 @@ Please modify the code to address this task."""
         # 条件化: 只在 context 含数学信号时注入, coder-only 任务不需要.
         # 节省 ~150 tokens × 2 calls/iter × 20 iters = 6K tokens/run.
         ctx_blob = json.dumps(context, ensure_ascii=False).lower()
-        _math_signals = ("equation", "lagrangian", "pde", "hamiltonian", "derivative",
-                         "differential", "integral", "eigenvalue", "tensor", "manifold",
-                         "symmetry", "conservation", "variational", "continuum",
-                         "stress", "strain", "energy", "phonon", "band")
-        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in ctx_blob for s in _math_signals) else ""
+        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in ctx_blob for s in _MATH_SIGNALS) else ""
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         return self._trim_to_budget([
             ("body", f"""You are an autonomous material science research agent.
@@ -3293,7 +3295,7 @@ Math depth guidance (treat physics/chemistry as mathematics):
             visual_block = f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
         # 条件化 math_block (同 hypothesize)
         hyp_blob = hypothesis.lower() + json.dumps(context, ensure_ascii=False).lower()[:500]
-        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in hyp_blob for s in _math_signals) else ""
+        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in hyp_blob for s in _MATH_SIGNALS) else ""
 
         # Inject learned skills + prompt patches from evolution engine.
         # This is the "use what you learned" half of the Learn→Plan loop.
