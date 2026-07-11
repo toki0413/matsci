@@ -23,10 +23,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Persona:
-    """A character/personality configuration for Huginn."""
+    """A character/personality configuration for Huginn.
+
+    Field layering (SillyTavern-inspired):
+    - permanent_core: identity, role, safety constraints — always injected.
+      If empty, falls back to system_prompt (backward compat).
+    - system_prompt: legacy field, holds the full prompt for old personas.
+    - adaptive_layer: session-specific style/preferences — conditionally
+      injected after the core. Populated by StyleLearner/TasteProfile.
+    """
 
     name: str
     system_prompt: str = ""
+    permanent_core: str = ""
+    adaptive_layer: str = ""
     begin_dialogs: list[dict[str, str]] = field(default_factory=list)
     mood_dialogs: list[dict[str, str]] = field(default_factory=list)
     variables: dict[str, Any] = field(default_factory=dict)
@@ -44,6 +54,8 @@ class Persona:
         return cls(
             name=data.get("name", "default"),
             system_prompt=data.get("system_prompt", data.get("prompt", "")),
+            permanent_core=data.get("permanent_core", ""),
+            adaptive_layer=data.get("adaptive_layer", ""),
             begin_dialogs=data.get("begin_dialogs", []),
             mood_dialogs=data.get("mood_dialogs", []),
             variables=data.get("variables", {}),

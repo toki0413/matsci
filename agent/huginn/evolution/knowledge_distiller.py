@@ -84,6 +84,29 @@ class KnowledgeDistiller:
     # Distillation Methods
     # ------------------------------------------------------------------
 
+    def _is_semantically_duplicate(self, content: str, threshold: float = 0.65) -> bool:
+        """检查是否已有语义相似的蒸馏知识 (Jaccard 词集重叠).
+
+        现有 knowledge_id (md5) 只防完全相同的 error, 不防措辞不同但
+        内容相同的 lesson. 这里用 Jaccard 做轻量语义去重.
+        ponytail: word-level Jaccard, ok for <500 entries;
+        switch to embedding similarity if knowledge_base grows past 5K.
+        """
+        import re
+        # 去标点再分词, 否则 "convergence:" 和 "convergence" 算不同词
+        words_new = set(re.sub(r'[^\w\s]', '', content.lower()).split())
+        if not words_new or len(words_new) < 4:
+            return False
+        for k in self.knowledge_base:
+            words_old = set(re.sub(r'[^\w\s]', '', k.content.lower()).split())
+            if not words_old:
+                continue
+            overlap = len(words_new & words_old)
+            union = len(words_new | words_old)
+            if union > 0 and overlap / union >= threshold:
+                return True
+        return False
+
     def distill_error_lessons(
         self, failure_logs: list[dict[str, Any]]
     ) -> list[DistilledKnowledge]:
@@ -103,6 +126,9 @@ class KnowledgeDistiller:
             if lesson:
                 kid = f"err_{tool}_{hashlib.md5(error.encode()).hexdigest()[:8]}"
                 if any(k.knowledge_id == kid for k in self.knowledge_base):
+                    continue
+                # 语义去重: 不同 error message 可能生成相同 lesson
+                if self._is_semantically_duplicate(lesson):
                     continue
 
                 dk = DistilledKnowledge(
