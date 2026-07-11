@@ -540,6 +540,24 @@ class ToolAdapter:
             with contextlib.suppress(Exception):
                 get_pet_bus().publish(mood, message, details)
 
+        # Tool-name → fine-grained pet mood classification.
+        _CODING_TOOLS = frozenset({
+            "code_tool", "python_tool", "bash_tool", "terminal_tool",
+            "notebook_tool", "run_code", "execute",
+        })
+        _REVIEWING_TOOLS = frozenset({
+            "file_read_tool", "search_tool", "grep_tool", "list_tool",
+            "read_file", "web_search_tool", "web_fetch_tool",
+            "lean_tool", "proof_check", "review", "summarize",
+        })
+
+        def _classify_mood(tool_name: str) -> PetMood:
+            if tool_name in _CODING_TOOLS:
+                return PetMood.CODING
+            if tool_name in _REVIEWING_TOOLS:
+                return PetMood.REVIEWING
+            return PetMood.WORKING
+
         def _publish_blocked(
             tool_name: str, input_data: Any, reason: str, context: Any
         ) -> None:
@@ -800,7 +818,7 @@ class ToolAdapter:
                 _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
                 return output
 
-            _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
+            _publish(_classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name})
             # 按工具类型分级超时，防止外部 API 卡死整个 agent
             timeout = get_timeout(tool.name)
             _call_start = time.time()
@@ -918,7 +936,7 @@ class ToolAdapter:
                 _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
                 return output
 
-            _publish(PetMood.WORKING, f"Running {tool.name}…", {"tool": tool.name})
+            _publish(_classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name})
             timeout = get_timeout(tool.name)
             _call_start = time.time()
             # Wire Prometheus tool call counter

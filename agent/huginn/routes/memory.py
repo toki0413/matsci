@@ -150,6 +150,61 @@ async def memory_stats() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+@router.get("/pet/memory-summary")
+async def pet_memory_summary() -> dict[str, Any]:
+    """Lightweight memory summary for the pet UI.
+
+    Returns recent conversation topics, tool usage patterns,
+    and memory health — enough for the pet to display context-aware
+    tips and personality-driven dialogue.
+    """
+    try:
+        mgr = get_memory_manager()
+        stats = mgr.stats()
+
+        # Recent session messages (last 5 user messages as topics)
+        recent_topics: list[str] = []
+        for msg in mgr.session.messages[-10:]:
+            role = getattr(msg, "role", None) or (msg.get("role") if isinstance(msg, dict) else "")
+            content = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else "")
+            if role == "user" and isinstance(content, str):
+                snippet = content[:80].strip()
+                if snippet:
+                    recent_topics.append(snippet)
+        recent_topics = recent_topics[-5:]
+
+        # Recent tool usage (last 5 tool calls)
+        recent_tools: list[dict[str, Any]] = []
+        for tc in mgr.session.tool_calls[-5:]:
+            name = getattr(tc, "tool_name", None) or (tc.get("tool_name") if isinstance(tc, dict) else "")
+            if name:
+                recent_tools.append({"tool": name})
+
+        # Top long-term memory categories
+        top_categories: list[str] = []
+        try:
+            all_entries = mgr.longterm.list_all(limit=50, alive_only=True)
+            cat_counts: dict[str, int] = {}
+            for e in all_entries:
+                cat = e.get("category", "fact")
+                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+            top_categories = sorted(cat_counts, key=cat_counts.get, reverse=True)[:5]
+        except Exception:
+            pass
+
+        return {
+            "session_topics": recent_topics,
+            "tool_calls_recent": recent_tools,
+            "tool_calls_total": stats.get("session_tool_calls", 0),
+            "memory_entries": stats.get("longterm_entries", 0),
+            "top_categories": top_categories,
+            "session_messages": stats.get("session_messages", 0),
+        }
+    except Exception as e:
+        logger.warning("pet memory summary failed", exc_info=True)
+        return {"error": str(e)}
+
+
 @router.post("/memory/maintenance")
 async def memory_maintenance(params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Run long-term memory decay, prune, and deduplication."""
