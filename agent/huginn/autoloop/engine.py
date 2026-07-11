@@ -552,10 +552,8 @@ class AutoloopEngine:
         except Exception:
             return ""
 
-    @staticmethod
-    def _phase_persona(phase_name: str) -> str | None:
-        """查表拿阶段对应的 persona 名."""
-        return _PHASE_PERSONAS.get(phase_name)
+    # _phase_persona removed — per-call persona_name= in each phase method
+    # is the active injection path. _PHASE_PERSONAS stays as documentation.
 
     # ──────────────────────────────────────────────────────────────
     # Phase-gate
@@ -729,11 +727,8 @@ class AutoloopEngine:
 
         没有就用 None, hypothesis_graph.refine_failed 会走 findings 模板拼接.
         """
-        try:
-            from huginn.llm_config import get_verification_model
-            return get_verification_model()
-        except Exception:
-            return None
+        # ponytail: 直接用已有的 verification_model, 不需要额外的 llm_config 模块
+        return getattr(self, "verification_model", None) or None
 
     async def _maybe_clarify(
         self,
