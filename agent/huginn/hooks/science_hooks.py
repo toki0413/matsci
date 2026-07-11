@@ -843,6 +843,13 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("test_hook not available (non-fatal)")
 
+    # 浏览器操作确认门控 — PRE_TOOL_USE, 敏感操作先警告
+    try:
+        from huginn.hooks.browser_gate_hook import register_browser_gate_hooks
+        register_browser_gate_hooks(hm)
+    except ImportError:
+        logger.debug("browser_gate_hook not available (non-fatal)")
+
     hm._science_hooks_registered = True
     logger.info(
         "Science hooks registered: vasp_convergence, lammps_stability, "

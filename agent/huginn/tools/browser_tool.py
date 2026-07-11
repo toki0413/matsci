@@ -26,6 +26,7 @@ class BrowserAction(str, Enum):
     SCROLL = "scroll"
     SCREENSHOT = "screenshot"
     EXTRACT = "extract"
+    STATE = "state"
     LOGIN = "login"
     WAIT = "wait"
     CLOSE = "close"
@@ -226,6 +227,62 @@ class BrowserTool(HuginnTool):
                 else:
                     content = await self._page.content()
                     return ToolResult(data={"status": "extracted", "content_length": len(content), "content_preview": content[:500], "mode": self._connection_mode}, success=True)
+
+            elif args.action == BrowserAction.STATE:
+                # 索引化页面状态 (BrowserAct 风格)
+                # 返回可交互元素的索引列表, agent 用 click(index) / type(index) 操作
+                js_state = """() => {
+                    const interactive = [];
+                    const els = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [onclick]');
+                    for (let i = 0; i < els.length && i < 50; i++) {
+                        const el = els[i];
+                        const tag = el.tagName.toLowerCase();
+                        const text = (el.innerText || el.value || el.placeholder || '').trim().substring(0, 80);
+                        const id = el.id || '';
+                        const cls = el.className || '';
+                        const href = el.href || '';
+                        const type = el.type || '';
+                        let selector = '';
+                        if (id) selector = '#' + id;
+                        else if (cls) selector = tag + '.' + cls.split(' ')[0];
+                        else selector = tag;
+                        interactive.push({
+                            index: i, tag, text, selector,
+                            is_link: tag === 'a',
+                            is_input: ['input','textarea','select'].includes(tag),
+                            is_button: tag === 'button' || type === 'submit',
+                            href: href ? href.substring(0, 100) : '',
+                        });
+                    }
+                    return {url: location.href, title: document.title, interactive};
+                }"""
+                state = await self._page.evaluate(js_state)
+                # 生成索引化文本输出 (token 高效)
+                lines = []
+                for item in state.get("interactive", []):
+                    tag = item["tag"]
+                    text = item["text"]
+                    idx = item["index"]
+                    hint = ""
+                    if item["is_link"]:
+                        hint = f" → {item['href']}"
+                    elif item["is_input"]:
+                        hint = " [input]"
+                    elif item["is_button"]:
+                        hint = " [button]"
+                    lines.append(f"[{idx}] <{tag}> {text}{hint}")
+                return ToolResult(
+                    data={
+                        "status": "state",
+                        "url": state.get("url", ""),
+                        "title": state.get("title", ""),
+                        "interactive_count": len(state.get("interactive", [])),
+                        "interactive": state.get("interactive", []),
+                        "indexed": "\n".join(lines),
+                        "mode": self._connection_mode,
+                    },
+                    success=True,
+                )
 
             elif args.action == BrowserAction.LOGIN:
                 await self._page.goto(args.url, timeout=args.timeout_ms)
