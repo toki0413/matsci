@@ -57,7 +57,7 @@ import {
   Users, Code2, BookOpen,
   MessageCircle, Bird, Briefcase, HelpCircle,
   ChevronDown, Sparkles,
-  Search, Grid, Sun, Moon,
+  Search, Grid, Sun, Moon, Plus, Trash2,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -550,6 +550,7 @@ export default function App() {
     thinkingIntensity, setThinkingIntensity,
     pendingMessages,
     stopGeneration,
+    pauseGeneration, resumeGeneration, isPaused,
     researchMode, setResearchMode,
     petState,
   } = useChatAndConnection({
@@ -857,7 +858,8 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Main navigation">
+        {/* Compact icon tabs — horizontal bar */}
+        <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
           {([
             { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={16} /> },
             { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={16} /> },
@@ -869,21 +871,63 @@ export default function App() {
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               aria-current={activeTab === item.id ? "page" : undefined}
-              className={`sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold transition-all duration-150 ${
+              title={item.label}
+              className={`flex flex-1 items-center justify-center rounded-md px-1 py-1.5 transition-all duration-150 ${
                 activeTab === item.id
-                  ? "sidebar-nav-active"
-                  : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                  ? "bg-bg-tertiary text-text-primary"
+                  : "text-text-muted hover:bg-bg-tertiary hover:text-text-secondary"
               }`}
             >
-              <span className="flex-shrink-0">{item.icon}</span>
-              <span>{item.label}</span>
+              {item.icon}
             </button>
           ))}
+        </div>
 
+        {/* Thread list when chat is active */}
+        {activeTab === "chat" && (
+          <div className="flex flex-col border-b border-border">
+            <button
+              onClick={() => { createThread(); }}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
+            >
+              <Plus size={16} /> {t('threads.new') || 'New Chat'}
+            </button>
+            <div className="max-h-[calc(100vh-320px)] overflow-y-auto px-1 pb-2">
+              {threads.map((th) => (
+                <div
+                  key={th.id}
+                  onClick={() => switchThread(th.id)}
+                  className={`group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors ${
+                    activeThread === th.id
+                      ? "bg-accent/15 text-text-primary"
+                      : "text-text-secondary hover:bg-bg-tertiary"
+                  }`}
+                >
+                  <MessageSquare size={13} className="shrink-0 opacity-50" />
+                  <span className="flex-1 truncate">{th.label}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteThread(th.id); }}
+                    className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-error transition-opacity"
+                    title={t('common.delete') || 'Delete'}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+              {threads.length === 0 && (
+                <div className="px-3 py-4 text-center text-xs text-text-muted">
+                  {t('threads.emptyHint') || 'No conversations yet'}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Main navigation">
           {/* More tools — opens command palette */}
           <button
             onClick={() => setToolPaletteOpen(true)}
-            className="sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-all duration-150 mt-3 border-t border-border/50 pt-3"
+            className="sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-all duration-150 border-t border-border/50 pt-3"
           >
             <Grid size={16} /> More Tools
           </button>
@@ -1099,6 +1143,9 @@ export default function App() {
               setThinkingIntensity={setThinkingIntensity}
               pendingMessages={pendingMessages}
               stopGeneration={stopGeneration}
+              pauseGeneration={pauseGeneration}
+              resumeGeneration={resumeGeneration}
+              isPaused={isPaused}
               researchMode={researchMode}
               setResearchMode={setResearchMode}
               contextBudgetTokens={config.context_budget_tokens}

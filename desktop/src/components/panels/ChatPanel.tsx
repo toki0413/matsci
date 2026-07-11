@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -108,6 +108,9 @@ interface ChatPanelProps {
   setThinkingIntensity: (v: "low" | "medium" | "high") => void;
   pendingMessages: string[];
   stopGeneration: () => void;
+  pauseGeneration: () => void;
+  resumeGeneration: () => void;
+  isPaused: boolean;
   researchMode: boolean;
   setResearchMode: (v: boolean) => void;
   contextBudgetTokens?: number;
@@ -122,7 +125,7 @@ export function ChatPanel(props: ChatPanelProps) {
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
-    pendingMessages, stopGeneration, researchMode, setResearchMode,
+    pendingMessages, stopGeneration, pauseGeneration, resumeGeneration, isPaused, researchMode, setResearchMode,
     contextBudgetTokens,
   } = props;
 
@@ -1535,17 +1538,38 @@ export function ChatPanel(props: ChatPanelProps) {
           />
           <div className="flex flex-col items-center gap-1">
             {isStreaming ? (
-              <button
-                onClick={stopGeneration}
-                className="btn-danger h-11 px-5"
-                aria-label={t('chat.stop') || 'Stop'}
-                title={t('chat.stop') || 'Stop generation'}
-              >
-                <span className="flex items-center gap-1.5">
-                  <span className="h-3 w-3 rounded-sm bg-current" />
-                  {t('chat.stop') || 'Stop'}
-                </span>
-              </button>
+              <div className="flex items-center gap-1">
+                {isPaused ? (
+                  <button
+                    onClick={resumeGeneration}
+                    className="btn-ghost h-11 px-3"
+                    aria-label="Resume"
+                    title="Resume generation"
+                  >
+                    <Play className="h-4 w-4" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={pauseGeneration}
+                    className="btn-ghost h-11 px-3"
+                    aria-label="Pause"
+                    title="Pause generation"
+                  >
+                    <Pause className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  onClick={stopGeneration}
+                  className="btn-danger h-11 px-5"
+                  aria-label={t('chat.stop') || 'Stop'}
+                  title={t('chat.stop') || 'Stop generation'}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-3 w-3 rounded-sm bg-current" />
+                    {t('chat.stop') || 'Stop'}
+                  </span>
+                </button>
+              </div>
             ) : (
               <button
                 onClick={() => { setQuotedMsg(null); sendMessage(); }}
