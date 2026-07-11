@@ -518,6 +518,15 @@ class AutoloopEngine:
             return 0
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        # Side questions are low-priority — use a cheap model when available
+        side_model = self.model
+        router = getattr(self, 'model_router', None) or getattr(getattr(self, 'agent', None), 'model_router', None)
+        if router is not None:
+            try:
+                side_model = router.select("cheap", prefer_cheap=True) or self.model
+            except Exception:
+                pass
+
         answered = 0
         for sq in pending:
             try:
@@ -530,7 +539,7 @@ class AutoloopEngine:
                     ),
                     HumanMessage(content=sq.question),
                 ]
-                response = await self.model.ainvoke(messages)
+                response = await side_model.ainvoke(messages)
                 answer = str(response.content).strip()
                 if answer:
                     channel.respond(sq.id, answer)
@@ -1218,12 +1227,10 @@ class AutoloopEngine:
     async def _hypothesize(self, context: dict[str, Any]) -> str | None:
         """Generate a hypothesis from perceived context."""
         # Use knowledge graph + LLM to generate hypothesis
-        # 先试一把符号回归: 若 context 带 observation_data, 发现的解析表达式
-        # 作为 data-driven candidate law 拼进 prompt, 让假设接地数据
-        symreg_hint = await self._symreg_hint(context)
-        # Moonshine 跨域猜想: 从 context 提取源问题, 跑三步流水线,
-        # 把跨域类比猜想作为 hint 注入 prompt. 失败静默跳过.
+        # symreg (async, up to 60s) and conjecture (sync, fast) are independent
+        symreg_task = asyncio.create_task(self._symreg_hint(context))
         conjecture_hint = self._conjecture_hint(context)
+        symreg_hint = await symreg_task
         prompt = self._build_hypothesis_prompt(context)
         if symreg_hint:
             prompt = f"{symreg_hint}\n{prompt}"
@@ -1563,15 +1570,12 @@ class AutoloopEngine:
 
     async def _validate(self, execution_result: Any) -> dict[str, Any]:
         """Validate execution results using benchmarks and constraints."""
-        # Run quick validation checks
         results = {
             "tests_passed": False,
             "constraints_satisfied": False,
             "benchmarks": {},
         }
 
-        # 物理校验: 执行结果带物理数据时跑 validate_tool 拿 R_phys
-        # 这是阶段4 单轨奖励回流的入口——R_phys 会传给 _learn 喂 evolution
         if isinstance(execution_result, dict):
             r_phys = execution_result.get("r_phys")
             if r_phys is None:
@@ -1605,8 +1609,6 @@ class AutoloopEngine:
             if r_phys is not None:
                 results["r_phys"] = r_phys
 
-        # 思维坍塌检测: 检查 LLM 输出是否陷入重复推理 / 发散 / 工具循环.
-        # 纯规则, 不需要 LLM, 先跑一遍把信号收集回来.
         try:
             collapse = self._detect_thinking_collapse(execution_result)
             if collapse:
@@ -1614,44 +1616,29 @@ class AutoloopEngine:
         except Exception as e:
             results["thinking_collapse_error"] = str(e)
 
-        # Try to run pytest on modified files
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["python", "-m", "pytest", "-x", "-q", "--tb=line"],
-                cwd=self.workspace,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            results["tests_passed"] = result.returncode == 0
-            results["test_output"] = result.stdout + result.stderr
-        except Exception as e:
-            results["test_output"] = f"Test execution error: {e}"
+        # pytest, benchmark, math validation — sync, offload to thread
+        py_test, bench_report, math_val = await asyncio.gather(
+            self._run_pytest(),
+            self._run_benchmark(),
+            self._run_math_validation(execution_result),
+            return_exceptions=True,
+        )
 
-        # Run bench if available
-        try:
-            runner = BenchmarkRunner()
-            report = runner.run(categories=["math", "coding"])
-            results["benchmarks"] = {
-                "passed": report.passed,
-                "failed": report.failed,
-                "skipped": report.skipped,
-            }
-        except Exception:
-            logger.warning("error in _validate: BenchmarkRunner.run failed", exc_info=True)
+        if isinstance(py_test, dict):
+            results.update(py_test)
+        elif isinstance(py_test, Exception):
+            results["test_output"] = f"Test execution error: {py_test}"
 
-        # 数学结构校验: 守恒律 (Bourbaki) + 变分原理 (Lean) + 自动微分 (AutoDiff).
-        # 把物理/化学结论还原成数学约束来验证, 而非只靠 reviewer 文字点评.
-        try:
-            results["math_validation"] = await self._run_math_validation(execution_result)
-        except Exception as e:
-            results["math_validation_error"] = str(e)
+        if isinstance(bench_report, dict):
+            results["benchmarks"] = bench_report
+        elif isinstance(bench_report, Exception):
+            logger.warning("BenchmarkRunner failed", exc_info=True)
 
-        # 收集 5 个数学证据 key (conservation_law / dimensional_consistent /
-        # pde_classification / sobol_top_features / constraint_check), 平铺到
-        # results 顶层. validate→learn gate 会透传给 MathEvidenceChecker 做
-        # Dempster-Shafer 合成. best-effort: 数据不全/工具报错就跳过.
+        if isinstance(math_val, dict):
+            results["math_validation"] = math_val
+        elif isinstance(math_val, Exception):
+            results["math_validation_error"] = str(math_val)
+
         try:
             math_ev = await self._collect_math_evidence(
                 execution_result, results.get("math_validation", {})
@@ -1661,29 +1648,9 @@ class AutoloopEngine:
         except Exception as e:
             results["math_evidence_error"] = str(e)
 
-        # Reviewer persona 批判性审视: 让 LLM 戴 reviewer 帽子点评本次结果.
-        # 这是 validate 阶段接入对话层的关键点 — reviewer persona 的 system
-        # prompt 会强约束 LLM 走"挑毛病 + 提改进"的语气, 而不是默认的助手语气.
-        # 失败不影响 validation 流程, 只是不带 reviewer_critique 字段.
-        # A1: KB 注入 — reviewer 拿 first-principles 已知结论对照判断结果合理性
-        # Moonshine 三槽: reviewer 用独立 verification_model, 避免确认偏差.
-        try:
-            reviewer_kb = self._build_kb_text(
-                query=self._summarize_for_kb(execution_result, results)
-            )
-            critique = await self._llm_chat(
-                self._build_reviewer_prompt(execution_result, results, reviewer_kb),
-                persona_name="reviewer",
-                model=self.verification_model,
-            )
-            if critique and critique.strip():
-                results["reviewer_critique"] = critique.strip()
-        except Exception as e:
-            results["reviewer_critique_error"] = str(e)
-
-        # 生成式验证: 用 verification_model 给 agent 输出打 0-1 分.
-        # 分数 < 0.5 时标记 needs_retry, 让上层决定是否重试或升级 prompt.
-        # verification_model 不可用时优雅降级到上面的规则检查.
+        # Conditional verification: run cheap generative_verify first,
+        # only call expensive reviewer critique when score < 0.5.
+        gen_verify = None
         try:
             gen_verify = await self._generative_verify(execution_result, results)
             if gen_verify:
@@ -1691,38 +1658,30 @@ class AutoloopEngine:
         except Exception as e:
             results["generative_verify_error"] = str(e)
 
-        # 涌现复杂度 (EC): 4 维度量 agent 行为的"涌现"程度.
-        # 工具多样性 + 推理熵 + 跨域连接 + 新颖性, 几何平均.
-        try:
-            from huginn.validation.emergent_complexity import compute_ec
-            results["emergent_complexity"] = compute_ec(execution_result, results)
-            # EC 反馈: 低 EC (< 0.2) 说明 agent 行为太模板化,
-            # 提示下轮多探索; 高 EC (> 0.6) 说明行为已足够涌现.
-            ec_score = results["emergent_complexity"].get("ec_score", 0)
-            if ec_score < 0.2 and self._iteration > 0:
-                ec_hint = f"EC={ec_score:.2f}: low emergent complexity, try diverse tools or cross-domain reasoning"
-                self._speculator_hint = (
-                    (self._speculator_hint + "\n" + ec_hint).strip()
-                    if self._speculator_hint else ec_hint
+        needs_review = gen_verify is None or gen_verify.get("score", 0.5) < 0.5
+        if needs_review:
+            try:
+                reviewer_kb = self._build_kb_text(
+                    query=self._summarize_for_kb(execution_result, results)
                 )
-        except Exception as e:
-            results["emergent_complexity_error"] = str(e)
+                critique = await self._llm_chat(
+                    self._build_reviewer_prompt(execution_result, results, reviewer_kb),
+                    persona_name="reviewer",
+                    model=self.verification_model,
+                )
+                if critique and critique.strip():
+                    results["reviewer_critique"] = critique.strip()
+            except Exception as e:
+                results["reviewer_critique_error"] = str(e)
 
-        # 文献对比: 抽取数值结果, 查文献基准, 跑创新信号检测.
-        # best-effort: 文献工具不可用或网络超时就跳过, 不影响主校验流程.
-        try:
-            lit_comp = await self._literature_comparison(execution_result)
-            if lit_comp:
-                results["literature_comparison"] = lit_comp
-        except Exception as e:
-            results["literature_comparison_error"] = str(e)
+        # emergent complexity + literature + grader + eval — independent
+        ec_task = asyncio.create_task(self._safe_emergent_complexity(execution_result, results))
+        lit_task = asyncio.create_task(self._safe_literature_comparison(execution_result, results))
+        await asyncio.gather(ec_task, lit_task)
 
-        # 统一 Grader: 用 GraderRegistry 跑 physics + dimensional + hallucination + literature,
-        # 把分数和 reward 信号收集起来. 这步替换了部分 ad-hoc 校验, 统一接口.
         try:
             from huginn.validation.grader import default_registry
             reg = default_registry()
-            # 合并 execution_result 和 results, 让 LiteratureGrader 能拿到 literature_comparison
             merged: dict[str, Any] = {}
             if isinstance(execution_result, dict):
                 merged.update(execution_result)
@@ -1736,14 +1695,11 @@ class AutoloopEngine:
                 }
                 for gr in grader_list
             }
-            # 把整体 reward 算出来给 evolution engine 用
             if grader_list:
                 avg_score = sum(gr.score for gr in grader_list) / len(grader_list)
                 results["grader_reward"] = round(avg_score, 4)
-                # 发布质量事件到 EventBus, 让 SSE/audit 能看到
                 try:
                     from huginn.events.integration import _publish
-                    import asyncio
                     loop = asyncio.get_running_loop()
                     asyncio.ensure_future(_publish("quality.check", {
                         "iteration": self._iteration,
@@ -1755,13 +1711,9 @@ class AutoloopEngine:
         except Exception as e:
             results["grader_error"] = str(e)
 
-        # Run a quick eval pass — MatWorldBench gives an objective quality
-        # signal independent of the grader. Best-effort: failures are logged
-        # but never block the autoloop.
         try:
             from huginn.evaluation.matworld_bench import MatWorldBench
             bench = MatWorldBench()
-            # Use the execution result if it looks like structured data
             exec_data = execution_result if isinstance(execution_result, dict) else {}
             eval_scores: list[dict] = []
             for task in bench.tasks:
@@ -1788,6 +1740,70 @@ class AutoloopEngine:
             logger.debug(f"[validate] eval bench failed: {e}")
 
         return results
+
+    async def _run_pytest(self) -> dict[str, Any]:
+        """Run pytest in workspace, return results dict."""
+        import subprocess
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["python", "-m", "pytest", "-x", "-q", "--tb=line"],
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            return {
+                "tests_passed": result.returncode == 0,
+                "test_output": result.stdout + result.stderr,
+            }
+        except Exception as e:
+            return {"test_output": f"Test execution error: {e}"}
+
+    async def _run_benchmark(self) -> dict[str, Any]:
+        """Run BenchmarkRunner, return results dict."""
+        try:
+            from huginn.validation.benchmarks import BenchmarkRunner
+            runner = BenchmarkRunner()
+            report = await asyncio.to_thread(
+                runner.run, categories=["math", "coding"]
+            )
+            return {
+                "passed": report.passed,
+                "failed": report.failed,
+                "skipped": report.skipped,
+            }
+        except Exception:
+            logger.warning("BenchmarkRunner failed", exc_info=True)
+            return {}
+
+    async def _safe_emergent_complexity(
+        self, execution_result: Any, results: dict[str, Any]
+    ) -> None:
+        """Compute emergent complexity, mutate results in place."""
+        try:
+            from huginn.validation.emergent_complexity import compute_ec
+            results["emergent_complexity"] = compute_ec(execution_result, results)
+            ec_score = results["emergent_complexity"].get("ec_score", 0)
+            if ec_score < 0.2 and self._iteration > 0:
+                ec_hint = f"EC={ec_score:.2f}: low emergent complexity, try diverse tools or cross-domain reasoning"
+                self._speculator_hint = (
+                    (self._speculator_hint + "\n" + ec_hint).strip()
+                    if self._speculator_hint else ec_hint
+                )
+        except Exception as e:
+            results["emergent_complexity_error"] = str(e)
+
+    async def _safe_literature_comparison(
+        self, execution_result: Any, results: dict[str, Any]
+    ) -> None:
+        """Run literature comparison, mutate results in place."""
+        try:
+            lit_comp = await self._literature_comparison(execution_result)
+            if lit_comp:
+                results["literature_comparison"] = lit_comp
+        except Exception as e:
+            results["literature_comparison_error"] = str(e)
 
     async def _literature_comparison(self, execution_result: Any) -> dict[str, Any]:
         """Extract numeric results, look up literature benchmarks, run innovation
@@ -2692,13 +2708,18 @@ Please modify the code to address this task."""
         """
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        llm = model or self.model
         messages: list[Any] = []
         if persona_name:
             sys_prompt = self._persona_system_prompt(persona_name)
             if sys_prompt:
-                messages.append(SystemMessage(content=sys_prompt))
+                sys_msg = SystemMessage(content=sys_prompt)
+                # 静态 system prompt 跨调用不变, 给 Anthropic/Kimi 打 cache 标记
+                _ident = f"{type(llm).__name__}{getattr(llm, 'model', '')}".lower()
+                if any(k in _ident for k in ("anthropic", "claude", "kimi", "moonshot")):
+                    sys_msg.additional_kwargs["cache_control"] = {"type": "ephemeral"}
+                messages.append(sys_msg)
         messages.append(HumanMessage(content=prompt))
-        llm = model or self.model
         response = await llm.ainvoke(messages)
         return str(response.content)
 

@@ -428,39 +428,39 @@ class ContextBuilder:
             kb_text=kb_text,
         )
 
+        # Merge all context injections into one SystemMessage to reduce
+        # message overhead (each role tag costs tokens in the prompt).
+        # Order: emotion → plan → cognitive → tool_hint → evolution → continuity
+        ctx_parts: list[str] = []
         emotion_text = self.build_emotion_text(message)
         if emotion_text:
-            from langchain_core.messages import SystemMessage
-            messages.insert(-1, SystemMessage(content=emotion_text, id="ctx_emotion"))
+            ctx_parts.append(emotion_text)
 
-        # Plan + cross-session context sit right before the user message,
-        # mirroring how emotion text is injected above.
         plan_text = self.build_plan_text(session_state)
         if plan_text:
-            from langchain_core.messages import SystemMessage
-            messages.insert(-1, SystemMessage(content=plan_text, id="ctx_plan"))
+            ctx_parts.append(plan_text)
 
-        # Cognitive mode attention prompt (discovery vs construction)
         cognitive_text = self.build_cognitive_prompt(session_state)
         if cognitive_text:
-            from langchain_core.messages import SystemMessage
-            messages.insert(-1, SystemMessage(content=cognitive_text, id="ctx_cognitive"))
+            ctx_parts.append(cognitive_text)
 
-        # Tool preference hint — cognitive state driven advisory
         tool_hint = self.build_tool_preference_hint(session_state)
         if tool_hint:
-            from langchain_core.messages import SystemMessage
-            messages.insert(-1, SystemMessage(content=tool_hint, id="ctx_tool_hint"))
+            ctx_parts.append(tool_hint)
 
-        # Evolution rules — lessons from past failures/successes
         evolution_text = self.build_evolution_rules()
         if evolution_text:
-            from langchain_core.messages import SystemMessage
-            messages.insert(-1, SystemMessage(content=evolution_text, id="ctx_evolution"))
+            ctx_parts.append(evolution_text)
 
         continuity_text = self.build_session_continuity(session_state)
         if continuity_text:
+            ctx_parts.append(continuity_text)
+
+        if ctx_parts:
             from langchain_core.messages import SystemMessage
-            messages.insert(-1, SystemMessage(content=continuity_text, id="ctx_continuity"))
+            messages.insert(-1, SystemMessage(
+                content="\n\n".join(ctx_parts),
+                id="ctx_block",
+            ))
 
         return messages
