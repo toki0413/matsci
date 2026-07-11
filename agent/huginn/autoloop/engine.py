@@ -2960,6 +2960,26 @@ class AutoloopEngine:
             except Exception:
                 logger.warning("error in _learn: benchmark_failure memory writeback failed", exc_info=True)
 
+        # Feynman learning: 高 surprise 或高奖励时, 让 agent 用通俗语言重新解释本轮发现.
+        # 解释不出来的部分就是知识缺口, 写入 GoalStore 作为下轮子目标.
+        # 触发条件: surprise > 0.5 (预测错误大) 或 r_phys > 0.7 (值得总结的成功)
+        _should_feynman = False
+        try:
+            _surprise_val = 0.0
+            if isinstance(validation, dict):
+                _pe = validation.get("prediction_error", {})
+                _surprise_val = _pe.get("surprise", 0) if isinstance(_pe, dict) else 0
+            if _surprise_val > 0.5 or (r_phys is not None and r_phys > 0.7):
+                _should_feynman = True
+        except Exception:
+            pass
+
+        if _should_feynman:
+            try:
+                await self._feynman_learn(hypothesis, plan, validation, r_phys)
+            except Exception:
+                logger.warning("error in _learn: feynman note generation failed", exc_info=True)
+
         # 把 plan 进度存进 long-term memory, 下次会话能接续
         _plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
         if _plan_id:
@@ -3023,6 +3043,134 @@ class AutoloopEngine:
         report_path.write_text(report_content, encoding="utf-8")
 
         return str(report_path)
+
+    # ── Feynman learning ──────────────────────────────────────────
+
+    _FEYNMAN_PROMPT = """You are studying your own research iteration using the Feynman Learning Method.
+The core principle: if you can't explain it in simple terms, you don't truly understand it.
+
+## Iteration Context
+- Hypothesis: {hypothesis}
+- Plan mode: {mode}
+- R_phys (physical reward): {r_phys}
+- Surprise: {surprise} (how much the actual result differed from prediction)
+- Validation summary: {validation}
+
+## Your Task
+Write TWO sections:
+
+### Simple Explanation
+Explain what happened in this iteration as if teaching a newcomer who has basic
+materials science knowledge but no experience with computational tools.
+Focus on: What was the physical question? What did the calculation reveal?
+Why does the result make sense (or not)? Use analogies where helpful.
+
+### Knowledge Gaps
+List specific things you CANNOT confidently explain. Be honest — admitting
+gaps is the point of this exercise. Examples:
+- "I don't understand why the band gap changed non-monotonically with doping"
+- "I can't explain why ENCUT=520 converged but 500 didn't"
+- "The elastic constant C44 is anomalous but I don't have a physical picture for why"
+
+Output format (Markdown, no code blocks):
+## Simple Explanation
+...
+
+## Knowledge Gaps
+- gap 1
+- gap 2
+..."""
+
+    async def _feynman_learn(
+        self,
+        hypothesis: str,
+        plan: dict[str, Any],
+        validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        """Feynman 学习法: 让 agent 用通俗语言解释本轮发现, 暴露知识缺口.
+
+        生成的教学笔记存入蒸馏知识库 (feynman_note 类型, KB 检索优先).
+        知识缺口写入 GoalStore 作为下轮子目标.
+        """
+        pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
+        surprise_val = pred_err.get("surprise", 0) if isinstance(pred_err, dict) else 0
+
+        prompt = self._FEYNMAN_PROMPT.format(
+            hypothesis=hypothesis[:300],
+            mode=plan.get("mode", "unknown") if isinstance(plan, dict) else "unknown",
+            r_phys=r_phys,
+            surprise=f"{surprise_val:.2f}",
+            validation=json.dumps(validation, default=str)[:600],
+        )
+
+        # 用 summarize task 路由到便宜模型 — Feynman note 不需要强推理
+        response = await self._llm_chat(prompt, task="summarize")
+        if not response or not response.strip():
+            return
+
+        # 解析 explanation 和 gaps
+        text = response.strip()
+        explanation = ""
+        gaps: list[str] = []
+
+        # 简单解析: ## Simple Explanation 和 ## Knowledge Gaps 两段
+        parts = text.split("## Knowledge Gaps")
+        explanation_part = parts[0].replace("## Simple Explanation", "", 1).strip()
+        if len(parts) > 1:
+            for line in parts[1].strip().split("\n"):
+                line = line.strip().lstrip("-").strip()
+                if line and len(line) > 5:
+                    gaps.append(line)
+
+        if not explanation_part:
+            explanation_part = text[:500]
+
+        explanation = explanation_part
+
+        # 存入蒸馏知识库
+        try:
+            from huginn.evolution.knowledge_distiller import KnowledgeDistiller
+            distiller = KnowledgeDistiller()
+            tags = ["feynman", "autoloop", f"iter_{self._iteration}"]
+            if surprise_val > 0.5:
+                tags.append("high_surprise")
+            distiller.store_feynman_note(
+                explanation=explanation,
+                gaps=gaps,
+                iteration=self._iteration,
+                hypothesis=hypothesis,
+                tags=tags,
+                confidence=min(0.9, 0.5 + (r_phys or 0) * 0.3),
+            )
+        except Exception:
+            logger.warning("feynman note storage failed", exc_info=True)
+
+        # 缺口写入 GoalStore 作为下轮子目标
+        if gaps:
+            try:
+                from huginn.autoloop.goal_store import get_goal_store
+                _gs = get_goal_store()
+                _active = _gs.get_active()
+                if _active:
+                    for gap in gaps[:3]:  # 最多 3 个, 避免子目标爆炸
+                        _gs.add_sub_goal(_active.id, f"[Feynman gap] {gap}")
+            except Exception:
+                pass
+
+        # 同时把 feynman note 写入 KB, 下次检索能命中
+        try:
+            kb = self._get_kb()
+            if kb:
+                note_text = f"# Feynman Note (iter {self._iteration})\n\n{explanation}\n\n## Gaps\n"
+                for g in gaps:
+                    note_text += f"- {g}\n"
+                kb.add_document(
+                    filename=f"feynman_iter_{self._iteration}.txt",
+                    content=note_text.encode("utf-8"),
+                )
+        except Exception:
+            pass
 
     @staticmethod
     def _build_tutor_report_prompt(

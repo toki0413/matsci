@@ -78,6 +78,9 @@ class ToolBelief:
     avg_duration: float = 0.0    # EMA of tool call duration (seconds)
     avg_info_gain: float = 0.0  # EMA of output info content (key count)
     n_obs: int = 0               # total observations (for EMA weighting)
+    # Feynman understanding: 不只参数好用, 还要知道为什么.
+    # 当 feynman note 覆盖了这个 tool 的参数时, understanding_confidence 上升.
+    understanding_confidence: float = 0.0  # 0-1, 独立于 success rate
 
     @property
     def total(self) -> int:
@@ -279,6 +282,18 @@ class SkillEvolutionLayer:
         if self._beliefs:
             self._save()
 
+    def boost_understanding(self, tool_name: str, param_key: str, param_value: str) -> None:
+        """当 feynman note 覆盖某个工具参数时, 提升理解置信度.
+
+        Feynman 学习法的核心: 能解释清楚 = 真正理解.
+        understanding_confidence 独立于 success rate — 一个参数可能 100% 成功
+        但 agent 不知道为什么 (低 understanding), 也可能经常失败但 agent 清楚原因 (高 understanding).
+        """
+        b = self._beliefs.get((tool_name, param_key, param_value))
+        if b is not None:
+            b.understanding_confidence = min(1.0, b.understanding_confidence + 0.2)
+            self._save()
+
     # ── Query ─────────────────────────────────────────────────────
 
     def get_belief(
@@ -333,10 +348,12 @@ class SkillEvolutionLayer:
             extra = ""
             if b.avg_duration > 0:
                 extra = f" [{b.avg_duration:.1f}s, {b.avg_info_gain:.0f}k]"
+            # 理解置信度: 有 feynman note 覆盖的参数会标注, 帮 agent 判断是"知其然"还是"知其所以然"
+            u_tag = " ★" if b.understanding_confidence > 0.5 else ""
             lines.append(
                 f"  {b.tool_name}.{b.param_key}={b.param_value}: "
                 f"{b.successes}/{b.total} success "
-                f"(P={b.posterior_mean:.0%}, conf={b.confidence:.0%}){extra}"
+                f"(P={b.posterior_mean:.0%}, conf={b.confidence:.0%}){extra}{u_tag}"
             )
         return "\n".join(lines)
 

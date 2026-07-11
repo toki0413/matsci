@@ -778,6 +778,15 @@ class KnowledgeBase:
             except Exception:
                 pass  # reranking is best-effort
 
+        # Feynman note 优先: 基础概念解释 > 细节技巧, 检索时排前面
+        # ponytail: filename 前缀匹配, 不需要额外 metadata 字段
+        chunks.sort(
+            key=lambda c: (
+                0 if c.get("metadata", {}).get("filename", "").startswith("feynman_") else 1,
+                c.get("distance", 1.0),
+            )
+        )
+
         # 回写语义缓存, 下次相似 query 能命中
         if self._semantic_cache is not None:
             try:
