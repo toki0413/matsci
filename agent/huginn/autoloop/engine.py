@@ -399,6 +399,21 @@ class AutoloopEngine:
         except Exception:
             return ""
 
+    def _build_memory_text(self, query: str) -> str:
+        """检索长期记忆, 把跨会话的教训/发现拼成 prompt 上下文块.
+        Memory 之前只写不读 — _learn 写入的迭代记录和失败教训,
+        下轮 hypothesize/plan 完全看不到. 这个函数闭合了 memory 读回环.
+        查询失败/空结果返回空串, 不影响 prompt."""
+        if not query:
+            return ""
+        mem = getattr(self, "memory", None)
+        if mem is None:
+            return ""
+        try:
+            return mem.recall_for_prompt(query, max_entries=3)
+        except Exception:
+            return ""
+
     def _persona_system_prompt(self, persona_name: str | None) -> str:
         """取 persona 的 system prompt. 找不到就返回空串, 不报错."""
         if not persona_name:
@@ -1407,9 +1422,14 @@ class AutoloopEngine:
         except Exception:
             return ""
 
-    @staticmethod
-    def _pick_hypothesis_persona(context: dict[str, Any]) -> str:
-        """根据 context 内容判断走 DFT 还是 MD 专家 persona."""
+    def _pick_hypothesis_persona(self, context: dict[str, Any]) -> str:
+        """根据 context + surprise 选择 persona.
+        高 surprise → 切换到 reviewer persona, 更批判地审视上轮意外结果.
+        否则按内容走 DFT/MD 专家."""
+        # JEPA: 上轮预测误差大时, 用 reviewer persona 审视 —
+        # 预测错了说明 agent 的心智模型不准, 需要更批判的视角.
+        if getattr(self, "_last_surprise", 0.0) > 0.6:
+            return "reviewer"
         blob = json.dumps(context, ensure_ascii=False).lower()
         md_markers = ("md", "lammps", "molecular dynamics", "nvt", "npt", "md_steps")
         if any(m in blob for m in md_markers):
@@ -2521,9 +2541,19 @@ class AutoloopEngine:
         )
 
         # Long-term memory: 把关键迭代写入 long-term, 下次 RAG 能检索到
+        # 包含 visual primitives 和 surprise 分数, 跨会话完整恢复上下文
         try:
+            mem_content = f"iter {self._iteration}: {hypothesis[:120]}"
+            # Visual primitives 入 memory, 下次 recall_for_prompt 能检索到数据形状
+            visual_ctx = validation.get("visual_primitives") if isinstance(validation, dict) else None
+            if visual_ctx:
+                mem_content += f"\nVisual: {visual_ctx[:200]}"
+            # Surprise 入 memory, 下次能检索到"这类任务预测准不准"
+            pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
+            if pred_err:
+                mem_content += f"\nSurprise: {pred_err.get('surprise', 0)} (predicted: {pred_err.get('predicted', '')[:80]})"
             self.memory.remember(
-                content=f"iter {self._iteration}: {hypothesis[:120]}",
+                content=mem_content,
                 category="autoloop_iteration",
                 importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
                 tier="mid",
@@ -2582,7 +2612,7 @@ class AutoloopEngine:
 
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
         # 让 ProjectKnowledgeGraph 随实验增长而非只读展示.
-        # 视觉基元也写入实体属性, 下次 KG 查询能检索到数据形状线索.
+        # 视觉基元 + surprise 都写入实体属性, 下次 KG 查询能检索到.
         try:
             kg_attrs: dict[str, Any] = {
                 "iteration": self._iteration,
@@ -2591,13 +2621,40 @@ class AutoloopEngine:
             visual_ctx = validation.get("visual_primitives") if isinstance(validation, dict) else None
             if visual_ctx:
                 kg_attrs["visual_primitives"] = visual_ctx[:500]
-            self.kg.add_entity(
+            # JEPA: surprise 分数存入 KG, 下次查同类实验能看到"这类任务
+            # agent 预测准不准", 帮助判断是否值得继续探索.
+            pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
+            if pred_err:
+                kg_attrs["surprise"] = pred_err.get("surprise", 0)
+                kg_attrs["predicted"] = pred_err.get("predicted", "")[:200]
+            exp_id = self.kg.add_entity(
                 label=hypothesis[:80],
                 entity_type="experiment",
                 source="autoloop",
                 confidence=float(r_phys) if r_phys is not None else 0.5,
                 **kg_attrs,
             )
+            # Hyperedge: 把 hypothesis → plan_mode → validation 结果
+            # 连成 n-ary 关系. 之前 add_hyperedge 是死代码, 现在接上.
+            plan_id = self.kg.add_entity(
+                label=f"plan_{plan.get('mode', 'unknown')}_iter{self._iteration}",
+                entity_type="Method",
+                source="autoloop",
+            )
+            result_label = "pass" if (validation.get("tests_passed") if isinstance(validation, dict) else False) else "fail"
+            result_id = self.kg.add_entity(
+                label=f"{result_label}_iter{self._iteration}",
+                entity_type="Fact",
+                source="autoloop",
+                surprise=pred_err.get("surprise", 0) if pred_err else 0,
+            )
+            if exp_id and plan_id and result_id:
+                self.kg.add_hyperedge(
+                    [exp_id, plan_id, result_id],
+                    relation="experiment_pipeline",
+                    source="autoloop",
+                    iteration=self._iteration,
+                )
             self.kg.save()
         except Exception:
             logger.warning("error in _learn: KG add_entity failed", exc_info=True)
@@ -2865,6 +2922,13 @@ Please modify the code to address this task."""
         )
         if kg_block:
             kg_block = f"\n{kg_block}\n"
+        # 长期记忆检索: 跨会话的失败教训和发现. 之前只写不读,
+        # 现在闭合 — _learn 写入的迭代记录下次能检索到.
+        mem_block = self._build_memory_text(
+            query=json.dumps(context, ensure_ascii=False)[:500]
+        )
+        if mem_block:
+            mem_block = f"\n{mem_block}\n"
         # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
         # 给 LLM 具体坐标锚定推理 — Thinking with Visual Primitives 的
         # "point while it reasons" 原则, Mirage 效应的文本路径
@@ -2876,7 +2940,7 @@ Please modify the code to address this task."""
         # 这一段是把"物理化学是数学的一部分"落到 prompt 的具体抓手.
         math_block = self._MATH_DEPTH_PROMPT_BLOCK
         return f"""You are an autonomous material science research agent.
-{hint_block}{kb_block}{kg_block}{visual_block}{math_block}
+{hint_block}{kb_block}{kg_block}{mem_block}{visual_block}{math_block}
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
@@ -2917,6 +2981,10 @@ Math depth guidance (treat physics/chemistry as mathematics):
         kg_block = self._build_kg_text(query=hypothesis)
         if kg_block:
             kg_block = f"\n{kg_block}\n"
+        # 长期记忆检索 (同 hypothesize)
+        mem_block = self._build_memory_text(query=hypothesis)
+        if mem_block:
+            mem_block = f"\n{mem_block}\n"
         # 视觉基元注入 (同 hypothesize)
         visual_block = getattr(self, '_last_visual_context', '')
         if visual_block:
@@ -2956,7 +3024,7 @@ Math depth guidance (treat physics/chemistry as mathematics):
             logger.debug("composite skill lookup failed", exc_info=True)
 
         return f"""Given the hypothesis: "{hypothesis}"
-{kb_block}{kg_block}{visual_block}{math_block}{skill_hints}{patch_hints}{composite_block}
+{kb_block}{kg_block}{mem_block}{visual_block}{math_block}{skill_hints}{patch_hints}{composite_block}
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
 
