@@ -285,6 +285,19 @@ class ContextBuilder:
 
         return "\n".join(parts) if parts else ""
 
+    def build_subgoal_text(self, session_state=None) -> str:
+        """Inject active sub-goal constraints from /subgoal command."""
+        if session_state is None:
+            return ""
+        sub_goals = getattr(session_state, "_sub_goals", [])
+        if not sub_goals:
+            return ""
+        lines = ["### Active Sub-goal Constraints"]
+        for i, sg in enumerate(sub_goals, 1):
+            lines.append(f"{i}. {sg}")
+        lines.append("### End Sub-goal Constraints")
+        return "\n".join(lines)
+
     def build_session_continuity(self, session_state=None) -> str:
         """Inject previous session summary for cross-session continuity.
 
@@ -458,6 +471,10 @@ class ContextBuilder:
         continuity_text = self.build_session_continuity(session_state)
         if continuity_text:
             ctx_parts.append(continuity_text)
+
+        subgoal_text = self.build_subgoal_text(session_state)
+        if subgoal_text:
+            ctx_parts.append(subgoal_text)
 
         if ctx_parts:
             from langchain_core.messages import SystemMessage

@@ -1,0 +1,89 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '20px', 'fontFamily': 'Arial'}}}%%
+flowchart TD
+    USER["用户输入"]
+
+    subgraph Entry["接入层"]
+        CLI["CLI<br/>cli/main.py"]
+        WS["WebSocket<br/>routes/ws.py"]
+    end
+
+    subgraph Dispatch["调度"]
+        AGENT["HuginnAgent.chat()<br/>agent/streaming.py"]
+    end
+
+    subgraph CtxBuild["上下文构建<br/>ContextBuilder.build_input_messages"]
+        MEM_RECALL["记忆召回<br/>MemoryManager.recall_for_prompt"]
+        RESEARCH_LOG["研究日志<br/>research_log 猜想注入"]
+        KG_QUERY["知识图谱查询<br/>ProjectKnowledgeGraph.query"]
+        KB_QUERY["知识库检索<br/>KnowledgeBase.query<br/>(ChromaDB 向量)"]
+        KB_MEM_XREF["KB ↔ Memory<br/>交叉引用"]
+        EMOTION["情绪追踪<br/>EmotionTracker.update"]
+        CONV_HIST["对话历史<br/>ConversationTree"]
+        PLAN_CTX["计划/会话上下文<br/>L1 坐标 / Plan / 摘要"]
+        COGNITIVE["认知提示<br/>CognitiveStateMachine"]
+        EVOLUTION["演化规则<br/>evolution_rules.json"]
+    end
+
+    subgraph LLMExec["LLM 推理 + 工具循环"]
+        GRAPH["Agent Graph<br/>deepagents / react_agent"]
+        HOOK_PRE["pre_tool_use 钩子"]
+        TOOL_EXEC["工具执行<br/>HuginnTool.call()"]
+        HOOK_POST["post_tool_use 钩子"]
+        TOOL_RESULT["ToolMessage"]
+    end
+
+    subgraph Persist["持久化"]
+        MEM_WRITE["记忆写入<br/>MemoryManager.add_message<br/>add_tool_call"]
+        CONV_TREE["对话树<br/>ConversationTree.add_message"]
+        AUTO_PROMOTE["自动提升<br/>重要结果 → 长期记忆"]
+        PROVENANCE["Provenance JSONL"]
+    end
+
+    subgraph Output["响应"]
+        STREAM["流式 chunk"]
+        WS_SEND["WebSocket 推送"]
+        PHASE_TRANS["阶段转换检测<br/>[PHASE:XXX]"]
+    end
+
+    USER --> CLI
+    USER --> WS
+    CLI --> AGENT
+    WS --> AGENT
+
+    AGENT --> MEM_RECALL
+    AGENT --> KG_QUERY
+    AGENT --> KB_QUERY
+    AGENT --> EMOTION
+    AGENT --> CONV_HIST
+    AGENT --> PLAN_CTX
+    AGENT --> COGNITIVE
+    AGENT --> EVOLUTION
+    MEM_RECALL --> RESEARCH_LOG
+    KB_QUERY --> KB_MEM_XREF
+    KB_MEM_XREF --> MEM_RECALL
+
+    MEM_RECALL --> GRAPH
+    KG_QUERY --> GRAPH
+    KB_QUERY --> GRAPH
+    EMOTION --> GRAPH
+    CONV_HIST --> GRAPH
+    PLAN_CTX --> GRAPH
+    COGNITIVE --> GRAPH
+    EVOLUTION --> GRAPH
+
+    GRAPH --> HOOK_PRE
+    HOOK_PRE --> TOOL_EXEC
+    TOOL_EXEC --> HOOK_POST
+    HOOK_POST --> TOOL_RESULT
+    TOOL_RESULT --> GRAPH
+
+    TOOL_EXEC --> PROVENANCE
+    GRAPH --> MEM_WRITE
+    GRAPH --> CONV_TREE
+    MEM_WRITE --> AUTO_PROMOTE
+
+    GRAPH --> STREAM
+    STREAM --> PHASE_TRANS
+    STREAM --> WS_SEND
+    WS_SEND --> USER
+    PHASE_TRANS --> GRAPH

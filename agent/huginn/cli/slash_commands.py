@@ -52,6 +52,7 @@ _BUILTIN_COMMANDS: frozenset[str] = frozenset(
         "map",
         "plan",
         "research",
+        "subgoal",
     }
 )
 
@@ -72,7 +73,8 @@ def _print_help(console: Any) -> None:
   [cyan]/step[/cyan]      单步执行: /step on | /step off | /step (切换)
   [cyan]/map[/cyan]       显示代码库地图: /map | /map <query>
   [cyan]/plan[/cyan]     进入计划模式 (只规划不执行, 写工具需确认)
-  [cyan]/research[/cyan] 进入研究模式 (全工具, 数学深度引导, Deli 管线)"""
+  [cyan]/research[/cyan] 进入研究模式 (全工具, 数学深度引导, Deli 管线)
+  [cyan]/subgoal[/cyan]  追加子目标约束: /subgoal <约束描述> (不中断当前任务)"""
     console.print(help_text)
 
     # 顺便列一下当前 workspace 的自定义命令
@@ -726,6 +728,34 @@ def _try_custom_command(
 # ── 主入口 ──────────────────────────────────────────────────────────
 
 
+def _handle_subgoal(command: str, agent: Any, console: Any) -> None:
+    """/subgoal <text> — 追加子目标约束到当前任务.
+
+    存到 agent._sub_goals, context builder 会注入到后续 prompt.
+    不中断当前任务, 不需要重开 goal.
+    """
+    parts = command.split(None, 1)
+    if len(parts) < 2 or not parts[1].strip():
+        console.print("[yellow]用法: /subgoal <约束描述>[/yellow]")
+        console.print("[dim]例: /subgoal 所有修改不改动原有接口[/dim]")
+        existing = getattr(agent, "_sub_goals", [])
+        if existing:
+            console.print(f"[dim]当前子目标 ({len(existing)}):[/dim]")
+            for i, sg in enumerate(existing, 1):
+                console.print(f"  [dim]{i}. {sg}[/dim]")
+        return
+
+    text = parts[1].strip()
+    if agent is None:
+        console.print("[yellow]Agent 未初始化[/yellow]")
+        return
+    if not hasattr(agent, "_sub_goals"):
+        agent._sub_goals = []
+    agent._sub_goals.append(text)
+    console.print(f"[green]✓[/green] 子目标已追加 ({len(agent._sub_goals)}): {text}")
+    console.print("[dim]后续 LLM 调用会自动包含此约束[/dim]")
+
+
 def handle_slash_command(
     command: str,
     agent: Any | None = None,
@@ -805,6 +835,10 @@ def handle_slash_command(
             con.print("[green]✓[/green] Research mode: all tools, math depth guide, Deli pipeline")
         else:
             con.print("[yellow]Agent 未初始化[/yellow]")
+        return None
+
+    if name == "subgoal":
+        _handle_subgoal(command, agent, con)
         return None
 
     # 不在内置命令里, 试自定义命令

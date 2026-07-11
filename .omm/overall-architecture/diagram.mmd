@@ -1,0 +1,83 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '20px', 'fontFamily': 'Arial'}}}%%
+graph TD
+    subgraph Entry["入口层"]
+        CLI["cli/ (main.py)"]
+        SERVER["server.py + server_core.py"]
+        ROUTES["routes/ (50+ 模块)"]
+    end
+
+    subgraph AgentCore["Agent 核心层"]
+        HAGENT["HuginnAgent<br/>(agent/core.py)"]
+        MIXINS["Mixins<br/>ContextMixin / StreamingMixin<br/>SessionMixin / CallbackMixin / ReflectionMixin"]
+    end
+
+    subgraph ContextLayer["上下文构建层"]
+        CTXBUILDER["ContextBuilder<br/>(context_builder.py)"]
+        PROMPTS["prompts.py<br/>HUGINN_SYSTEM_PROMPT"]
+        PHASES["phases.py<br/>ResearchPhase 状态机"]
+    end
+
+    subgraph ExecEngine["执行引擎层"]
+        AUTOLOOP["autoloop/engine.py<br/>七阶段自主循环"]
+        DELI["academic/deli_research.py<br/>学术研究管线"]
+        RWF["research_workflow.py<br/>Deli → WS 事件流"]
+        AGENTS["agents/<br/>Orchestrator / Swarm / Subagent"]
+        EXPLORATION["exploration/<br/>探索编排器"]
+    end
+
+    subgraph Infra["基础设施层"]
+        MEMORY["memory/<br/>MemoryManager"]
+        KB["knowledge/<br/>ChromaDB 向量检索"]
+        KG["kg/<br/>项目知识图谱"]
+        TOOLS["tools/<br/>ToolRegistry + 130+ 工具"]
+        HOOKS["hooks/<br/>HookManager"]
+        PERSONAS["personas.py<br/>PersonaManager"]
+        SKILLS["skills/<br/>声明式技能"]
+        MODELS["models/<br/>ModelRouter"]
+    end
+
+    subgraph ServerCtx["ServerContext"]
+        SCTX["server_context.py<br/>配置 / 注册表 / 工厂 / 记忆 / KB"]
+    end
+
+    CLI --> HAGENT
+    SERVER --> ROUTES
+    ROUTES --> SCTX
+    SCTX --> HAGENT
+    SCTX --> TOOLS
+    SCTX --> MEMORY
+    SCTX --> KB
+
+    HAGENT --> MIXINS
+    HAGENT --> CTXBUILDER
+    HAGENT --> TOOLS
+    HAGENT --> HOOKS
+    HAGENT --> MODELS
+
+    MIXINS --> CTXBUILDER
+    MIXINS --> PHASES
+    MIXINS --> MEMORY
+
+    CTXBUILDER --> MEMORY
+    CTXBUILDER --> KB
+    CTXBUILDER --> KG
+    CTXBUILDER --> PERSONAS
+    CTXBUILDER --> PROMPTS
+
+    AUTOLOOP --> HAGENT
+    AUTOLOOP --> AGENTS
+    AUTOLOOP --> EXPLORATION
+    AUTOLOOP --> TOOLS
+    AUTOLOOP --> MEMORY
+
+    DELI --> RWF
+    RWF --> HAGENT
+    RWF --> ROUTES
+    DELI --> TOOLS
+
+    AGENTS --> HAGENT
+    SKILLS --> TOOLS
+
+    HOOKS --> TOOLS
+    PERSONAS --> PROMPTS
+    PHASES --> PROMPTS

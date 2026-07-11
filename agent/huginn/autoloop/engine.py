@@ -3271,6 +3271,17 @@ Math depth guidance (treat physics/chemistry as mathematics):
   (positivity / monotonicity / finiteness priors).
 """
 
+    def _build_subgoal_block(self) -> str:
+        """从 agent 或 self 上读 sub_goals, 注入到 prompt."""
+        sgs = getattr(self, "_sub_goals", None) or []
+        if not sgs:
+            return ""
+        lines = ["\n### Active Sub-goal Constraints (from /subgoal)"]
+        for i, sg in enumerate(sgs, 1):
+            lines.append(f"{i}. {sg}")
+        lines.append("### End Sub-goal Constraints\n")
+        return "\n".join(lines)
+
     def _build_plan_prompt(self, hypothesis: str, context: dict[str, Any]) -> str:
         # 同 hypothesize: 用 hypothesis 串检索 KB, 把参考块喂给 planner
         kb_block = self._build_kb_text(query=hypothesis)
@@ -3367,8 +3378,8 @@ Choose ONE mode and describe the plan:
 - visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
 
 When the hypothesis involves a PDE / variational principle / curved
-geometry, prefer the symbolic_math_tool actions listed in the math
-depth block above before falling back to numerical solvers.
+geometry, consider the symbolic_math_tool actions listed in the math
+depth block above — but numerical solvers are equally valid.
 
 Respond in this exact format:
 MODE: <coder|workflow|explore|skill>
@@ -3384,6 +3395,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
             ("skill", skill_hints + patch_hints),
             ("composite", composite_block),
             ("pipeline", pipeline_block),
+            ("subgoal", self._build_subgoal_block()),
         ])
 
     def _parse_plan(self, response: str) -> dict[str, Any]:

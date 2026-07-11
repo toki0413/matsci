@@ -1,0 +1,93 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '20px', 'fontFamily': 'Arial'}}}%%
+flowchart TD
+    subgraph PersonaSelect["1. Persona 注入"]
+        MATCHER["PersonaMatcher<br/>语义/关键词匹配"]
+        PM["PersonaManager<br/>内置 + JSON + Nuwa SKILL.md"]
+        PHASE_PERSONA["_PHASE_PERSONAS<br/>阶段→角色映射表"]
+        PICK["_pick_hypothesis_persona<br/>按研究类型动态选"]
+        SYS_PROMPT["Persona system_prompt<br/>dft_expert / md_expert<br/>reviewer / tutor / research"]
+    end
+
+    subgraph Emotion["情绪状态"]
+        EMOTION_TRACK["EmotionTracker<br/>valence / arousal / trust<br/>interest / fatigue"]
+        EMOTION_CTX["context_prompt()<br/>情绪上下文注入"]
+    end
+
+    subgraph LLMOut["2. LLM 输出 + 工具执行"]
+        LLM["LLM 推理<br/>(受 persona 塑造)"]
+        TOOLS["工具执行<br/>vasp / lammps / structure<br/>search / code / ..."]
+    end
+
+    subgraph MemWrite["3. Memory 写入"]
+        MEM_MGR["MemoryManager"]
+        SESSION_MEM["SessionContext<br/>会话记忆"]
+        LONGTERM["LongTermMemory<br/>SQLite + 向量检索"]
+        RESEARCH_LOG["ResearchLog<br/>猜想: verified / in_progress"]
+        AUTO_LEARN["_learn()<br/>写入: hypothesis + r_phys<br/>+ persona tag + surprise"]
+        AUTO_PROMOTE["自动提升<br/>重要工具结果 → 长期记忆"]
+    end
+
+    subgraph KnowWrite["Knowledge 写入"]
+        KG_BUILD["ProjectKnowledgeGraph<br/>实体 + 关系积累"]
+        KB_SEED["KnowledgeBase<br/>ChromaDB 种子知识"]
+    end
+
+    subgraph Query["4. KB/KG/Memory 查询"]
+        MEM_RECALL["build_memory_text()<br/>recall_for_prompt()"]
+        KB_QUERY["build_kb_text()<br/>KnowledgeBase.query()"]
+        KG_QUERY["build_kg_text()<br/>ProjectKnowledgeGraph.query()"]
+        KB_XREF["KB ↔ Memory<br/>交叉引用"]
+    end
+
+    subgraph Feedback["Persona 反馈"]
+        MEM_TAGS["Memory tags<br/>persona:name / r_phys:score"]
+        EVOLUTION["EvolutionEngine<br/>规则学习 + reward 回流"]
+        EVOLUTION_CTX["build_evolution_rules()<br/>注入历史教训"]
+        PHASE_GATE["PhaseGate<br/>阶段转换触发 persona 切换"]
+    end
+
+    %% Persona injection
+    MATCHER --> PM
+    PM --> SYS_PROMPT
+    PHASE_PERSONA --> PICK
+    PICK --> SYS_PROMPT
+    SYS_PROMPT --> LLM
+    EMOTION_TRACK --> EMOTION_CTX
+    EMOTION_CTX --> LLM
+
+    %% LLM output → memory/knowledge
+    LLM --> TOOLS
+    TOOLS --> MEM_MGR
+    MEM_MGR --> SESSION_MEM
+    MEM_MGR --> LONGTERM
+    MEM_MGR --> AUTO_PROMOTE
+    AUTO_PROMOTE --> LONGTERM
+    TOOLS --> RESEARCH_LOG
+    TOOLS --> KG_BUILD
+
+    %% Autoloop learn
+    LLM --> AUTO_LEARN
+    AUTO_LEARN --> LONGTERM
+    AUTO_LEARN --> MEM_TAGS
+    AUTO_LEARN --> EVOLUTION
+
+    %% Query → context
+    MEM_RECALL --> LONGTERM
+    MEM_RECALL --> RESEARCH_LOG
+    KB_QUERY --> KB_SEED
+    KB_QUERY --> KB_XREF
+    KB_XREF --> MEM_RECALL
+    KG_QUERY --> KG_BUILD
+
+    %% Feedback loop
+    MEM_TAGS --> PICK
+    EVOLUTION --> EVOLUTION_CTX
+    EVOLUTION_CTX --> LLM
+    PHASE_GATE --> PHASE_PERSONA
+    LONGTERM --> MEM_RECALL
+    MEM_RECALL --> LLM
+    KB_QUERY --> LLM
+    KG_QUERY --> LLM
+
+    %% Emotion feedback
+    LLM --> EMOTION_TRACK
