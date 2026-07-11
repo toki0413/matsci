@@ -1,4 +1,4 @@
-"""Research workflow — bridges Deli AutoResearch pipeline to the WS event stream.
+"""Research workflow: bridges Deli AutoResearch pipeline to the WS event stream.
 
 Wraps DeliAutoResearch.run_full_pipeline() behind an async generator that
 yields progress/hypothesis/experiment/result/draft events for the WebSocket
@@ -24,6 +24,7 @@ from huginn.phases import (
     ResearchPhase,
     stage_to_phase,
 )
+from huginn.prompts import MATH_DEPTH_GUIDE
 from huginn.types import progress_cb
 
 logger = logging.getLogger(__name__)
@@ -55,22 +56,23 @@ RESEARCH_PERSONA = Persona(
         "- Flag unexpected or anomalous results as potential discoveries\n\n"
         "## Deli Research Pipeline\n"
         "You drive the Deli 9-stage autonomous research pipeline:\n"
-        "  1. Topic Analysis  — extract research question and keywords\n"
-        "  2. Literature Search — retrieve and cluster relevant papers\n"
-        "  3. Gap Analysis  — identify unaddressed research gaps\n"
-        "  4. Outline  — design paper structure around gaps\n"
-        "  5. Drafting  — write sections in parallel, cite literature\n"
-        "  6. Citation Verify — anti-hallucination check on all references\n"
-        "  7. Peer Review  — EIC + expert reviewers + devil's advocate\n"
-        "  8. Revision  — address must-fix items from review\n"
-        "  9. Final  — compliance check and polishing\n\n"
+        "  1. Topic Analysis  -- extract research question and keywords\n"
+        "  2. Literature Search -- retrieve and cluster relevant papers\n"
+        "  3. Gap Analysis  -- identify unaddressed research gaps\n"
+        "  4. Outline  -- design paper structure around gaps\n"
+        "  5. Drafting  -- write sections in parallel, cite literature\n"
+        "  6. Citation Verify -- anti-hallucination check on all references\n"
+        "  7. Peer Review  -- EIC + expert reviewers + devil's advocate\n"
+        "  8. Revision  -- address must-fix items from review\n"
+        "  9. Final  -- compliance check and polishing\n\n"
         "## Computational Gaps\n"
         "When gap analysis reveals a gap that needs computational data "
         "(DFT, MD, FEM, etc.), proactively suggest running simulation tools "
         "(vasp_tool, lammps_tool, cp2k_tool) to fill the gap with quantitative "
         "results. Do not leave computational gaps as 'future work' if the "
         "tools are available."
-    ),
+    )
+    + MATH_DEPTH_GUIDE,
 )
 
 
@@ -109,14 +111,12 @@ class ResearchWorkflow:
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
         async def _on_progress(event: dict[str, Any]) -> None:
-            stage = event.get("stage", "")
-            detail = event.get("detail", "")
-            await queue.put({
-                "type": "status",
-                "stage": stage,
-                "message": detail,
-            })
+            # 透传完整事件, 保留 stage_index/total_stages/progress_pct 等字段
+            event["type"] = "status"
+            event["message"] = event.pop("detail", "")
+            await queue.put(event)
             # keep PhaseManager in sync with the current Deli stage
+            stage = event.get("stage", "")
             if stage:
                 phase = stage_to_phase(stage)
                 if phase != ResearchPhase.OPEN:
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     assert "Deli" in RESEARCH_PERSONA.system_prompt
     assert "gap" in RESEARCH_PERSONA.system_prompt.lower()
 
-    # PHASE_STAGE_MAP imported from phases — StrEnum values match strings
+    # PHASE_STAGE_MAP imported from phases -- StrEnum values match strings
     assert PHASE_STAGE_MAP[ResearchPhase.LITERATURE] == [
         "topic_analysis", "literature_search", "gap_analysis"
     ]

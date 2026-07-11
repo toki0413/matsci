@@ -713,20 +713,48 @@ async def _handle_user_input(
                 {"type": "text_delta", "text": "🔬 Research mode activated.\n\n"}
             )
             async for result in workflow.run(content, thread_id=thread_id):
-                if result.get("type") == "hypothesis":
+                evt_type = result.get("type")
+                if evt_type == "status":
+                    # 透传结构化进度事件, 前端 PipelineProgressCard 可渲染
+                    await websocket.send_json({
+                        "type": "task_progress",
+                        "task_type": "pipeline",
+                        "pipeline": "deli_research",
+                        "stage": result.get("stage", ""),
+                        "message": result.get("message", ""),
+                        "stage_index": result.get("stage_index"),
+                        "total_stages": result.get("total_stages"),
+                        "progress_pct": result.get("progress_pct"),
+                        "status": result.get("status", "running"),
+                        "topic": result.get("topic", ""),
+                    })
+                elif evt_type == "hypothesis":
                     await websocket.send_json({
                         "type": "text_delta",
                         "text": f"📋 Hypothesis: {result.get('hypothesis', '')}\n",
                     })
-                elif result.get("type") == "experiment":
+                elif evt_type == "experiment":
                     await websocket.send_json({
                         "type": "text_delta",
                         "text": f"🧪 Experiment: {result.get('description', '')}\n",
                     })
-                elif result.get("type") == "result":
+                elif evt_type == "result":
                     await websocket.send_json({
                         "type": "text_delta",
                         "text": f"📊 Result: {result.get('summary', '')}\n",
+                    })
+                elif evt_type == "draft":
+                    # 最终草稿作为文本发送
+                    draft = result.get("content", "")
+                    if draft:
+                        await websocket.send_json({
+                            "type": "text_delta",
+                            "text": f"\n{'='*40}\n📝 Draft:\n{'='*40}\n{draft}\n",
+                        })
+                elif evt_type == "error":
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"❌ Error: {result.get('message', '')}\n",
                     })
             await websocket.send_json({"type": "done"})
             return
@@ -973,6 +1001,7 @@ async def _handle_user_input(
             chunks = await asyncio.to_thread(
                 get_context().kb.query, content, 5
             )
+            context = ""  # ponytail: defensive init, not all branches assign
             if chunks:
                 context = "\n\n".join(
                     f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)

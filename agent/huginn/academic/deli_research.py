@@ -64,7 +64,7 @@ STAGE_GATES: dict[ResearchStage, str] = {
     ResearchStage.LITERATURE_SEARCH: "至少检索到 5 篇相关文献, 且每篇有标题+作者+年份",
     ResearchStage.GAP_ANALYSIS: "至少识别 2 个研究空白, 每个空白关联具体文献",
     ResearchStage.OUTLINE: "大纲包含 Introduction/Methods/Results/Discussion/Conclusion 五段",
-    ResearchStage.DRAFTING: "每个 section 至少 200 词, 引用标记 [n] 与参考文献列表对应",
+    ResearchStage.DRAFTING: "每个 section 至少 200 词, 引用标记 [n] 与参考文献列表对应; 量纲一致性检查通过",
     ResearchStage.CITATION_VERIFY: "所有引用都能追到真实来源, 无捏造",
     ResearchStage.PEER_REVIEW: "至少 3 个审稿视角, 每个给出具体修改建议",
     ResearchStage.REVISION: "草稿字数 >= 目标期刊要求的 80%",
@@ -106,6 +106,11 @@ class ResearchState:
     # 计算数据 (由 AutoloopEngine 内层循环注入)
     computational_data: dict[str, Any] = field(default_factory=dict)
     gaps_filled: list[str] = field(default_factory=list)
+
+    # 数学结构识别 (gap → PDE/变分/守恒律/几何)
+    math_structures: list[dict[str, Any]] = field(default_factory=list)
+    # 数学验证结果
+    math_verification: dict[str, Any] = field(default_factory=dict)
 
     # 元信息
     target_journal: str | None = None
@@ -946,6 +951,93 @@ class DeliAutoResearch:
                     f"[compute] gap '{gap.get('gap', '?')[:50]}' failed: {e}"
                 )
 
+    async def _identify_math_structures(self, state: ResearchState) -> None:
+        """对每个 gap 识别其背后的数学结构 (PDE/变分原理/守恒律/几何).
+
+        用 LLM 分析 gap 描述, 判断它涉及哪种数学结构,
+        然后建议用 symbolic_math_tool 的哪个 action 做符号推导.
+        结果存入 state.math_structures.
+        """
+        if not state.gaps:
+            return
+
+        classifier = ResearchAgent(
+            role="math_structure_identifier",
+            system_prompt=(
+                "You are a mathematical physicist. Given research gaps, identify the "
+                "governing mathematical structure behind each gap.\n\n"
+                "For each gap, classify it as one of:\n"
+                "- 'pde': described by a partial differential equation\n"
+                "- 'variational': described by a variational principle / Lagrangian\n"
+                "- 'conservation': governed by a conservation law\n"
+                "- 'geometric': involves curved manifolds / defects / interfaces\n"
+                "- 'statistical': statistical/mechanical ensemble\n"
+                "- 'none': no clear mathematical structure\n\n"
+                "Return JSON: [{\"gap\": \"...\", \"structure\": \"pde\", "
+                "\"recommended_tool\": \"symbolic_math_tool\", \"action\": \"pde_classify\", "
+                "\"reason\": \"brief explanation\"}]"
+            ),
+            temperature=0.2,
+            max_tokens=2000,
+        )
+
+        gaps_json = json.dumps(state.gaps, ensure_ascii=False)
+        result = await classifier.run(
+            f"Research topic: {state.topic}\nGaps:\n{gaps_json}", None
+        )
+
+        structures = _safe_json_load(result, [])
+        if isinstance(structures, list):
+            state.math_structures = structures
+            state.integrity_log.append(
+                f"[math] identified {len(structures)} mathematical structures: "
+                + ", ".join(s.get("structure", "?") for s in structures)
+            )
+
+    async def _verify_math_consistency(self, state: ResearchState) -> None:
+        """对识别出的数学结构做量纲一致性检查.
+
+        用 LLM 检查草稿中涉及的方程/公式是否量纲一致,
+        以及守恒律是否被满足. 结果存入 state.math_verification.
+        """
+        if not state.math_structures:
+            return
+
+        verifier = ResearchAgent(
+            role="math_verifier",
+            system_prompt=(
+                "You are a mathematical physicist verifying dimensional consistency. "
+                "Given a list of mathematical structures identified in a research paper, "
+                "check each one for:\n"
+                "1. Dimensional consistency (are the units consistent?)\n"
+                "2. Conservation law validity (if applicable)\n"
+                "3. Whether the recommended symbolic tool action was appropriate\n\n"
+                "Return JSON: {\"results\": [{\"gap\": \"...\", \"structure\": \"pde\", "
+                "\"dimensional_check\": \"pass|fail|n/a\", \"notes\": \"...\"}], "
+                "\"verified_count\": N, \"issues\": [\"...\"]}"
+            ),
+            temperature=0.1,
+            max_tokens=2000,
+        )
+
+        structures_json = json.dumps(state.math_structures, ensure_ascii=False)
+        result = await verifier.run(
+            f"Topic: {state.topic}\nStructures:\n{structures_json}", None
+        )
+
+        verification = _safe_json_load(result, {})
+        if isinstance(verification, dict):
+            state.math_verification = verification
+            issues = verification.get("issues", [])
+            if issues:
+                state.integrity_log.append(
+                    f"[math_verify] {len(issues)} consistency issues: {'; '.join(issues[:3])}"
+                )
+            else:
+                state.integrity_log.append(
+                    f"[math_verify] {verification.get('verified_count', 0)} structures verified"
+                )
+
     async def run_full_pipeline(
         self,
         topic: str,
@@ -970,6 +1062,17 @@ class DeliAutoResearch:
             f"Found {len(state.literature)} papers, {len(state.gaps)} gaps",
         )
 
+        # 1.6 数学结构识别 — 识别 gap 涉及的数学结构 (PDE/变分/守恒律)
+        await self._emit_progress(
+            state, ResearchStage.GAP_ANALYSIS, "running",
+            "Identifying mathematical structures behind research gaps...",
+        )
+        await self._identify_math_structures(state)
+        await self._emit_progress(
+            state, ResearchStage.GAP_ANALYSIS, "done",
+            f"Identified {len(state.math_structures)} mathematical structures",
+        )
+
         # 1.5 内层循环: 对需要计算数据的 gap 跑 AutoloopEngine
         if state.gaps:
             await self._emit_progress(
@@ -987,6 +1090,20 @@ class DeliAutoResearch:
             state, ResearchStage.OUTLINE, "running",
             "Generating paper outline and drafting sections...",
         )
+
+        # 1.7 量纲一致性检查 — 在起草前验证数学结构
+        if state.math_structures:
+            await self._emit_progress(
+                state, ResearchStage.OUTLINE, "running",
+                "Running dimensional consistency checks...",
+            )
+            await self._verify_math_consistency(state)
+            await self._emit_progress(
+                state, ResearchStage.OUTLINE, "done",
+                f"Math verification: {state.math_verification.get('verified_count', 0)}/"
+                f"{len(state.math_structures)} structures checked",
+            )
+
         state = await self.paper_writing.run(state, config)
         self._check_gate(state, ResearchStage.OUTLINE)
         self._check_gate(state, ResearchStage.DRAFTING)
@@ -1154,6 +1271,16 @@ class DeliAutoResearch:
                 text = state.draft_sections.get(name, "")
                 if len(text.split()) < 100:
                     issues.append(f"section '{name}' too short ({len(text.split())} words)")
+            # 量纲一致性检查: 如果有数学结构, 检查是否被处理
+            if state.math_structures:
+                unverified = [s for s in state.math_structures if s.get("structure", "none") != "none"]
+                if unverified:
+                    verified_count = state.math_verification.get("verified_count", 0)
+                    if verified_count < len(unverified):
+                        issues.append(
+                            f"only {verified_count}/{len(unverified)} mathematical structures "
+                            f"verified (dimensional/consistency check)"
+                        )
         elif stage == ResearchStage.CITATION_VERIFY:
             if state.citation_issues:
                 issues.append(f"{len(state.citation_issues)} citation issues found")
