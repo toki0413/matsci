@@ -113,10 +113,12 @@ class ResearchState:
     # 数学验证结果
     math_verification: dict[str, Any] = field(default_factory=dict)
 
-    # SR+GP 发现结果 (数据驱动 gap 填充)
+    # SR+GP 发现结果 (可解释路径)
     sr_gp_results: list[dict[str, Any]] = field(default_factory=list)
-    # 黑箱 ML 结果 (用户 opt-in)
-    blackbox_results: list[dict[str, Any]] = field(default_factory=list)
+    # 经验模型结果 (GP/NN/其他数据驱动方法, 用户选择)
+    empirical_results: list[dict[str, Any]] = field(default_factory=list)
+    # 研究直觉 — 研究者的模糊直觉/跨领域类比/技术偏好
+    research_intuition: dict[str, Any] = field(default_factory=dict)
 
     # 元信息
     target_journal: str | None = None
@@ -957,33 +959,61 @@ class DeliAutoResearch:
                     f"[compute] gap '{gap.get('gap', '?')[:50]}' failed: {e}"
                 )
 
-    async def _identify_math_structures(self, state: ResearchState) -> None:
-        """对每个 gap 识别其背后的数学结构 (PDE/变分原理/守恒律/几何).
+    def _capture_research_intuition(
+        self, raw: str
+    ) -> dict[str, Any]:
+        """记录研究者的模糊直觉/跨领域类比/技术偏好.
 
-        用 LLM 分析 gap 描述, 判断它涉及哪种数学结构,
-        然后建议用 symbolic_math_tool 的哪个 action 做符号推导.
-        结果存入 state.math_structures.
+        不做任何判断或过滤 — 原样保留, 供后续结构识别参考.
+        研究者可能在形式化之前就有强烈直觉, 这不该被系统覆盖.
+        """
+        return {
+            "raw": raw,
+            "captured_at": ResearchStage.GAP_ANALYSIS.value,
+        }
+
+    async def _identify_math_structures(self, state: ResearchState) -> None:
+        """对每个 gap 识别其背后的数学结构 (advisory, 非强制).
+
+        如果研究者提供了直觉/类比, 会注入到 prompt 中作为参考,
+        但不强制 LLM 遵循 — 最终分类仍是开放的.
+        'exploratory' 表示尚不确定结构, 保留开放探索空间.
         """
         if not state.gaps:
             return
 
+        intuition_block = ""
+        if state.research_intuition and state.research_intuition.get("raw"):
+            intuition_block = (
+                f"\n\n## Researcher's Intuition (advisory, not binding)\n"
+                f"The researcher provides the following intuition / cross-domain "
+                f"analogy / technical preference:\n"
+                f"\"{state.research_intuition['raw']}\"\n"
+                f"Consider this as a hint. It may or may not match the actual "
+                f"mathematical structure — respect it but don't force it."
+            )
+
         classifier = ResearchAgent(
             role="math_structure_identifier",
             system_prompt=(
-                "You are a mathematical physicist. Given research gaps, identify the "
-                "governing mathematical structure behind each gap.\n\n"
+                "You are a mathematical physicist advising a researcher. Given research "
+                "gaps, suggest the governing mathematical structure behind each gap.\n\n"
                 "For each gap, classify it as one of:\n"
                 "- 'pde': described by a partial differential equation\n"
                 "- 'variational': described by a variational principle / Lagrangian\n"
                 "- 'conservation': governed by a conservation law\n"
                 "- 'geometric': involves curved manifolds / defects / interfaces\n"
                 "- 'statistical': statistical/mechanical ensemble\n"
-                "- 'none': no clear mathematical structure\n\n"
+                "- 'exploratory': structure not yet clear — researcher is still "
+                "exploring, and that's valid. Don't force a classification.\n"
+                "- 'none': no mathematical structure needed\n\n"
                 "Return JSON: [{\"gap\": \"...\", \"structure\": \"pde\", "
                 "\"recommended_tool\": \"symbolic_math_tool\", \"action\": \"pde_classify\", "
-                "\"reason\": \"brief explanation\"}]"
-            ),
-            temperature=0.2,
+                "\"reason\": \"brief explanation\", "
+                "\"researcher_notes\": \"how the researcher's intuition (if any) "
+                "influenced this suggestion\"]}"
+            ) + intuition_block,
+            temperature=0.3,
             max_tokens=2000,
         )
 
@@ -1069,12 +1099,12 @@ class DeliAutoResearch:
     async def _run_sr_gp_loop(
         self,
         state: ResearchState,
-        allow_blackbox: bool = False,
+        allow_empirical: bool = False,
     ) -> None:
         """对数据驱动 gap 走 SR+GP 发现路径.
 
-        默认走可解释路径 (SR + GP). allow_blackbox=True 时,
-        SR 拟合不足且用户要求, 才 fallback 到黑箱 NN.
+        默认走可解释路径 (SR + GP). allow_empirical=True 时,
+        SR 拟合不足可尝试经验模型 (GP 直接拟合等).
         发现的方程回注 state.math_structures 供 _verify_math_consistency 检查.
         """
         data_gaps = [
@@ -1147,15 +1177,14 @@ class DeliAutoResearch:
                     state.integrity_log.append(
                         f"[sr_gp] SR failed for gap: {gap_text[:60]}..."
                     )
-                    if allow_blackbox:
-                        await self._run_blackbox_fallback(
+                    if allow_empirical:
+                        await self._run_empirical_approach(
                             state, gap_info, features, target_key
                         )
                     else:
-                        # 提示用户有黑箱选项 — 不替用户决定
                         state.integrity_log.append(
-                            "[sr_gp] Tip: set allow_blackbox=True to try "
-                            "black-box GP fallback for this gap"
+                            "[sr_gp] Tip: set allow_empirical=True to try "
+                            "GP-only or other data-driven methods for this gap"
                         )
                     continue
 
@@ -1181,10 +1210,10 @@ class DeliAutoResearch:
                 )
 
                 # R2 不足时提示用户 — 不自动跳黑箱, 让用户决定
-                if r2 < 0.5 and not allow_blackbox:
+                if r2 < 0.5 and not allow_empirical:
                     state.integrity_log.append(
                         f"[sr_gp] Low R2 ({r2:.3f}) — SR equation may be unreliable. "
-                        f"Set allow_blackbox=True for GP-only fallback."
+                        f"Set allow_empirical=True for GP-only or other methods."
                     )
 
                 # 回注数学验证: 发现的方程作为一个新的 math_structure
@@ -1251,14 +1280,19 @@ class DeliAutoResearch:
                     f"[sr_gp] error for gap '{gap_text[:40]}...': {e}"
                 )
 
-    async def _run_blackbox_fallback(
+    async def _run_empirical_approach(
         self,
         state: ResearchState,
         gap_info: dict[str, Any],
         features: dict[str, list[float]],
         target_key: str,
     ) -> None:
-        """黑箱 NN fallback — 用户 opt-in, 结果标记为不可解释."""
+        """经验模型路径 — GP 直接拟合, 无 SR 方程提取.
+
+        不同数据结构适合不同算法: 小样本高维适合 GP,
+        大样本低维可能适合 NN, 时序适合 RNN 等.
+        这里先用 GP (与 SR 路径同体系), 后续可扩展.
+        """
         try:
             from huginn.tools.sci.gp_tool import GPTool, GPToolInput
 
@@ -1271,30 +1305,30 @@ class DeliAutoResearch:
             ]
             y = features[target_key]
 
-            # GPTool.call 是同步方法, 接受 dict
             gp_args = GPToolInput(action="fit", X=X, y=y)
             result = await asyncio.to_thread(
                 gp_tool.call, gp_args.model_dump(), None
             )
 
             if result and result.success:
-                state.blackbox_results.append(
+                state.empirical_results.append(
                     {
                         "gap": gap_info.get("gap", ""),
-                        "approach": "blackbox GP (no SR)",
-                        "warning": (
-                            "Black-box surrogate, equation not interpretable. "
-                            "Results must be verified independently."
+                        "approach": "GP direct fit (no SR)",
+                        "note": (
+                            "Empirical surrogate model. "
+                            "No closed-form equation extracted. "
+                            "Suitable for small-sample high-dimensional regimes."
                         ),
                         "data": result.data,
                     }
                 )
                 state.integrity_log.append(
-                    f"[blackbox] gap '{gap_info.get('gap', '')[:40]}...' → "
-                    f"GP fit (no interpretable equation)"
+                    f"[empirical] gap '{gap_info.get('gap', '')[:40]}...' → "
+                    f"GP fit (no closed-form equation)"
                 )
         except Exception as e:
-            state.integrity_log.append(f"[blackbox] error: {e}")
+            state.integrity_log.append(f"[empirical] error: {e}")
 
     async def _maybe_transfer_learning(
         self,
@@ -1456,7 +1490,8 @@ class DeliAutoResearch:
         target_journal: str | None = None,
         rag_search_fn: Any | None = None,
         config: Any = None,
-        allow_blackbox: bool = False,
+        allow_empirical: bool = False,
+        research_intuition: str | None = None,
     ) -> ResearchState:
         """从头到尾跑完整管线."""
         state = ResearchState(topic=topic, target_journal=target_journal)
@@ -1475,7 +1510,11 @@ class DeliAutoResearch:
             f"Found {len(state.literature)} papers, {len(state.gaps)} gaps",
         )
 
-        # 1.6 数学结构识别 — 识别 gap 涉及的数学结构 (PDE/变分/守恒律)
+        # 1.6 数学结构识别 — 结合研究直觉, advisory 而非强制
+        if research_intuition:
+            state.research_intuition = self._capture_research_intuition(
+                research_intuition
+            )
         await self._emit_progress(
             state, ResearchStage.GAP_ANALYSIS, "running",
             "Identifying mathematical structures behind research gaps...",
@@ -1498,11 +1537,11 @@ class DeliAutoResearch:
                 f"Computational loop: {len(state.gaps_filled)} gaps filled",
             )
 
-        # 1.8 SR+GP 数据驱动发现 — 对 statistical/none 类型 gap
+        # 1.8 SR+GP 数据驱动发现 — 对 statistical/none/exploratory 类型 gap
         if state.math_structures:
             data_gaps = [
                 s for s in state.math_structures
-                if s.get("structure") in ("statistical", "none")
+                if s.get("structure") in ("statistical", "none", "exploratory")
             ]
             if data_gaps:
                 await self._emit_progress(
@@ -1510,12 +1549,12 @@ class DeliAutoResearch:
                     f"Running SR+GP discovery for {len(data_gaps)} "
                     f"data-driven gaps...",
                 )
-                await self._run_sr_gp_loop(state, allow_blackbox=allow_blackbox)
+                await self._run_sr_gp_loop(state, allow_empirical=allow_empirical)
                 await self._emit_progress(
                     state, ResearchStage.GAP_ANALYSIS, "done",
                     f"SR+GP: {len(state.sr_gp_results)} equations "
-                    f"discovered, {len(state.blackbox_results)} "
-                    f"black-box fits",
+                    f"discovered, {len(state.empirical_results)} "
+                    f"empirical fits",
                 )
 
         # 2. Paper Writing (outline + drafting)
@@ -1540,8 +1579,8 @@ class DeliAutoResearch:
         # 把 SR+GP 发现注入 state, 供起草使用
         if state.sr_gp_results:
             state.computational_data["sr_gp_discoveries"] = state.sr_gp_results
-        if state.blackbox_results:
-            state.computational_data["blackbox_results"] = state.blackbox_results
+        if state.empirical_results:
+            state.computational_data["empirical_results"] = state.empirical_results
 
         state = await self.paper_writing.run(state, config)
         self._check_gate(state, ResearchStage.OUTLINE)
@@ -1832,12 +1871,20 @@ class DeliResearchInput(BaseModel):
         default=None,
         description="研究 session ID (next_stage/status/get_draft/verify 时必填)",
     )
-    allow_blackbox: bool = Field(
+    allow_empirical: bool = Field(
         default=False,
         description=(
-            "允许黑箱 ML fallback (默认 False). "
-            "SR+GP 拟合不足时, 若 True 则 fallback 到 GP 直接拟合 (无可解释方程). "
-            "用户在对话中说 '用神经网络'/'用深度学习'/'force blackbox' 时可设为 True."
+            "允许经验模型路径 (GP/NN/其他, 默认 False). "
+            "SR+GP 拟合不足时, 若 True 则尝试 GP 直接拟合. "
+            "不同算法适合不同数据结构, 非优劣之分."
+        ),
+    )
+    research_intuition: str | None = Field(
+        default=None,
+        description=(
+            "研究者的模糊直觉/跨领域类比/技术偏好 (可选). "
+            "在结构识别前注入, 帮助系统理解研究者想走的路线. "
+            "例如: '这个问题让我联想到湍流中的能量级串' 或 '我想试试图神经网络'."
         ),
     )
 
@@ -1901,7 +1948,8 @@ class DeliAutoResearchTool(HuginnTool):
                 topic=args.topic,
                 target_journal=args.target_journal,
                 rag_search_fn=rag_fn,
-                allow_blackbox=args.allow_blackbox,
+                allow_empirical=args.allow_empirical,
+                research_intuition=args.research_intuition,
             )
             return ToolResult(
                 data={

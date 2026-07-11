@@ -147,6 +147,8 @@ class GoalJudge:
 
         try:
             data = json.loads(text)
+            if not isinstance(data, dict):
+                raise ValueError(f"expected JSON object, got {type(data).__name__}")
             return {
                 "achieved": bool(data.get("achieved", False)),
                 "score": float(data.get("score", 0.0)),
@@ -154,8 +156,8 @@ class GoalJudge:
                 "gaps": data.get("gaps", []),
                 "reasoning": data.get("reasoning", ""),
             }
-        except (json.JSONDecodeError, ValueError):
-            # JSON 解析失败, 降级到规则判定
+        except (json.JSONDecodeError, ValueError, TypeError):
+            # JSON 解析失败或类型不对, 降级到规则判定
             logger.warning("GoalJudge JSON parse failed, falling back to rules")
             return None  # signal fallback needed
 
