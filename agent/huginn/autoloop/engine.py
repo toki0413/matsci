@@ -543,14 +543,24 @@ class AutoloopEngine:
         return "".join(v for _, v in kept)
 
     def _persona_system_prompt(self, persona_name: str | None) -> str:
-        """取 persona 的 system prompt. 找不到就返回空串, 不报错."""
+        """取 persona 的 system prompt, 按层组装.
+
+        层级 (SillyTavern 角色卡分层启发):
+        1. permanent_core (或 system_prompt 向后兼容) — 身份/角色/安全约束
+        2. adaptive_layer — 会话级风格/偏好 (由 StyleLearner/TasteProfile 填充)
+        """
         if not persona_name:
             return ""
         try:
             persona = self._get_persona_manager().get(persona_name)
-            return persona.system_prompt or ""
         except Exception:
             return ""
+        # 优先用 permanent_core, 没设就退回 system_prompt (老 persona)
+        core = persona.permanent_core or persona.system_prompt or ""
+        adaptive = persona.adaptive_layer or ""
+        if adaptive:
+            return f"{core}\n\n--- Adaptive ---\n{adaptive}"
+        return core
 
     # _phase_persona removed — per-call persona_name= in each phase method
     # is the active injection path. _PHASE_PERSONAS stays as documentation.

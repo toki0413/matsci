@@ -753,6 +753,22 @@ class KnowledgeBase:
                     "distance": results["distances"][0][i],
                 }
             )
+
+        # 递归激活: 从首轮结果的 domain_tags 提取标签, 再查一轮关联 chunks.
+        # SillyTavern World Info 的递归激活模式 — chunk A 的内容触发 chunk B.
+        # 这里用 metadata 里的 domain_tags 做二次检索, 补充语义没命中但同域的块.
+        if chunks and len(chunks) < top_k + 3:
+            activated = self._recursive_activate(chunks, text, top_k)
+            if activated:
+                # 去重后合并, 不超过 top_k + 2 (多给 2 条关联结果)
+                seen_ids = {c["chunk_id"] for c in chunks}
+                for c in activated:
+                    if c["chunk_id"] not in seen_ids:
+                        chunks.append(c)
+                        seen_ids.add(c["chunk_id"])
+                        if len(chunks) >= top_k + 2:
+                            break
+
         self._query_cache.set(cache_key, chunks)
 
         # Apply feedback-based reranking if tracker is available
@@ -776,6 +792,81 @@ class KnowledgeBase:
                 self._hit_counts[did] = self._hit_counts.get(did, 0) + 1
 
         return chunks
+
+    def _recursive_activate(
+        self, chunks: list[dict[str, Any]], original_query: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        """从首轮结果的 tags 做二次检索, 补充同域关联块.
+
+        SillyTavern World Info 递归激活的简化版: 不做多跳 (避免无界扩散),
+        只做一轮 tag-based 扩展. 提取首轮结果的 domain_tags, 用 OR 条件查
+        同标签的块, 排除已命中的.
+        """
+        # 收集首轮结果的所有 domain_tags
+        all_tags: set[str] = set()
+        for c in chunks:
+            meta = c.get("metadata", {})
+            raw_tags = meta.get("domain_tags", "[]")
+            if isinstance(raw_tags, str):
+                try:
+                    import json
+                    tags = json.loads(raw_tags)
+                    if isinstance(tags, list):
+                        all_tags.update(tags)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            elif isinstance(raw_tags, list):
+                all_tags.update(raw_tags)
+
+        if not all_tags:
+            return []
+
+        # 用 tags 做 metadata 过滤的二次查询. ChromaDB 的 $in 操作符
+        # 需要 domain_tags 是 list 类型, 但我们存的是 JSON string —
+        # 所以改用纯语义查询 + 结果过滤的方式, 不依赖 where 子句.
+        # ponytail: O(n) scan over 2x candidates, ok for <10K chunks;
+        # switch to ChromaDB where-filter if KB grows past 50K.
+        try:
+            embedding = self.model.encode([original_query]).tolist()
+            results = self.collection.query(
+                query_embeddings=embedding,
+                n_results=min(top_k * 2, max(1, self.collection.count())),
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception:
+            return []
+
+        seen_ids = {c["chunk_id"] for c in chunks}
+        activated: list[dict[str, Any]] = []
+        for i, doc_id in enumerate(results.get("ids", [[]])[0]):
+            if doc_id in seen_ids:
+                continue
+            meta = results["metadatas"][0][i]
+            raw_tags = meta.get("domain_tags", "[]")
+            chunk_tags: set[str] = set()
+            if isinstance(raw_tags, str):
+                try:
+                    import json
+                    t = json.loads(raw_tags)
+                    if isinstance(t, list):
+                        chunk_tags.update(t)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            elif isinstance(raw_tags, list):
+                chunk_tags.update(raw_tags)
+            # 有交集就算命中
+            if chunk_tags & all_tags:
+                activated.append(
+                    {
+                        "chunk_id": doc_id,
+                        "text": results["documents"][0][i],
+                        "metadata": meta,
+                        "distance": results["distances"][0][i],
+                    }
+                )
+                if len(activated) >= 2:
+                    break
+        return activated
 
     def count(self) -> int:
         return self.collection.count()
