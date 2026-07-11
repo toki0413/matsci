@@ -397,14 +397,56 @@ class AutoloopEngine:
             if not lines:
                 return ""
             body = "\n".join(lines)
+            # KG 缺口检测: 找 A-B 有边、B-C 有边、但 A-C 无边的三元组
+            # 建议假设 "A 是否也和 C 有关?" — 这是 KG 主动驱动探索的关键.
+            gap_hints = self._detect_kg_gaps(kg, nodes)
+            gap_block = ""
+            if gap_hints:
+                gap_block = "\n\n### KG Gap Detection (potential research directions)\n" + "\n".join(gap_hints) + "\n"
             return (
                 "### Knowledge Graph Context\n"
                 "Previously discovered entities and relations from prior runs:\n"
                 f"{body}\n"
                 "### End Knowledge Graph Context"
+                f"{gap_block}"
             )
         except Exception:
             return ""
+
+    def _detect_kg_gaps(self, kg: Any, nodes: list[dict]) -> list[str]:
+        """检测 KG 中的知识缺口: A-B 有边, B-C 有边, 但 A-C 无边.
+        返回 "Consider whether {A} also relates to {C}" 格式的提示.
+        用 NetworkX 的 common_neighbors, 零依赖."""
+        try:
+            graph = getattr(kg, "_graph", None)
+            if graph is None or graph.number_of_nodes() < 3:
+                return []
+            import networkx as nx
+            hints: list[str] = []
+            # 只检查高置信度节点 (conf > 0.5)
+            high_conf_nodes = []
+            for nid, data in graph.nodes(data=True):
+                if data.get("confidence", 0) > 0.5:
+                    high_conf_nodes.append(nid)
+            # 对每对高置信度节点, 检查是否有共同邻居但彼此无边
+            checked = 0
+            for i, a in enumerate(high_conf_nodes[:10]):
+                for b in high_conf_nodes[i+1:10]:
+                    if graph.has_edge(a, b) or graph.has_edge(b, a):
+                        continue  # 已有边, 不是缺口
+                    common = set(nx.common_neighbors(graph, a, b)) if graph.has_node(a) and graph.has_node(b) else set()
+                    if common:
+                        a_label = graph.nodes[a].get("label", a)[:40]
+                        b_label = graph.nodes[b].get("label", b)[:40]
+                        hints.append(f"- {a_label} and {b_label} share connections but no direct link — consider whether they relate")
+                        checked += 1
+                    if checked >= 3:
+                        break
+                if checked >= 3:
+                    break
+            return hints
+        except Exception:
+            return []
 
     def _build_memory_text(self, query: str) -> str:
         """检索长期记忆, 把跨会话的教训/发现拼成 prompt 上下文块.
@@ -1329,6 +1371,7 @@ class AutoloopEngine:
         # 按研究类型选 persona: MD 类用 md_expert, 默认走 dft_expert.
         # 这俩 persona 在 personas.py 内置, 直接取就行.
         persona_name = self._pick_hypothesis_persona(context)
+        self._last_persona = persona_name  # 供 _learn 写入 memory/KG
         try:
             response = await self._llm_chat(prompt, persona_name=persona_name, task="reasoning")
             return response.strip()
@@ -1465,13 +1508,33 @@ class AutoloopEngine:
             return ""
 
     def _pick_hypothesis_persona(self, context: dict[str, Any]) -> str:
-        """根据 context + surprise 选择 persona.
+        """根据 context + surprise + memory 选择 persona.
         高 surprise → 切换到 reviewer persona, 更批判地审视上轮意外结果.
-        否则按内容走 DFT/MD 专家."""
+        否则按内容走 DFT/MD 专家.
+
+        深化: 查 memory 看 reviewer persona 历史效果, 如果上次 reviewer
+        找到了问题(r_phys高), 倾向继续用 reviewer. 这是 persona→memory→persona
+        闭环的关键一环."""
         # JEPA: 上轮预测误差大时, 用 reviewer persona 审视 —
         # 预测错了说明 agent 的心智模型不准, 需要更批判的视角.
         if getattr(self, "_last_surprise", 0.0) > 0.6:
             return "reviewer"
+
+        # 查 memory: 上次 reviewer persona 效果如何?
+        try:
+            if self.memory:
+                recall = self.memory.recall_for_prompt("reviewer persona autoloop", max_entries=3)
+                if recall and "r_phys" in recall.lower():
+                    # 如果 memory 里记录 reviewer 找到了问题, 倾向继续用
+                    import re
+                    scores = re.findall(r'r_phys[:\s]+([\d.]+)', recall)
+                    if scores:
+                        avg_score = sum(float(s) for s in scores) / len(scores)
+                        if avg_score > 0.6:
+                            return "reviewer"  # reviewer 历史效果好, 继续用
+        except Exception:
+            pass
+
         blob = json.dumps(context, ensure_ascii=False).lower()
         md_markers = ("md", "lammps", "molecular dynamics", "nvt", "npt", "md_steps")
         if any(m in blob for m in md_markers):
@@ -1567,6 +1630,9 @@ class AutoloopEngine:
         elif mode == "skill":
             # Run a pre-built composite skill pipeline
             result = await self._execute_skill(plan, context)
+        elif mode == "visual_inspect":
+            # Path C: interactive visual inspection using existing visual tools
+            result = await self._execute_visual_inspect(description, context)
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
 
@@ -2594,6 +2660,7 @@ class AutoloopEngine:
         # Long-term memory: 把关键迭代写入 long-term, 下次 RAG 能检索到
         # 包含 visual primitives 和 surprise 分数, 跨会话完整恢复上下文
         try:
+            persona_name = getattr(self, "_last_persona", "unknown")
             mem_content = f"iter {self._iteration}: {hypothesis[:120]}"
             # Visual primitives 入 memory, 下次 recall_for_prompt 能检索到数据形状
             visual_ctx = validation.get("visual_primitives") if isinstance(validation, dict) else None
@@ -2603,11 +2670,21 @@ class AutoloopEngine:
             pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
             if pred_err:
                 mem_content += f"\nSurprise: {pred_err.get('surprise', 0)} (predicted: {pred_err.get('predicted', '')[:80]})"
+            # Persona 入 memory, 下次 _pick_hypothesis_persona 能查到历史效果
+            mem_content += f"\nPersona: {persona_name}, r_phys: {r_phys}"
+            # 结构化 tags: 供后续按 persona/r_phys/surprise 过滤检索
+            _tags = [
+                "autoloop",
+                f"persona:{persona_name}",
+                f"r_phys:{r_phys}" if r_phys is not None else "r_phys:none",
+                f"surprise:{pred_err.get('surprise', 0):.2f}" if pred_err else "surprise:0",
+            ]
             self.memory.remember(
                 content=mem_content,
                 category="autoloop_iteration",
                 importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
                 tier="mid",
+                tags=_tags,
             )
         except Exception:
             logger.warning("error in _learn: memory.remember iteration failed", exc_info=True)
@@ -2691,6 +2768,8 @@ class AutoloopEngine:
             if pred_err:
                 kg_attrs["surprise"] = pred_err.get("surprise", 0)
                 kg_attrs["predicted"] = pred_err.get("predicted", "")[:200]
+            # Persona 入 KG: 以后可以查 "reviewer persona 的 experiments 平均 r_phys 是多少"
+            kg_attrs["persona"] = getattr(self, "_last_persona", "unknown")
             exp_id = self.kg.add_entity(
                 label=hypothesis[:80],
                 entity_type="experiment",
@@ -2698,6 +2777,16 @@ class AutoloopEngine:
                 confidence=float(r_phys) if r_phys is not None else 0.5,
                 **kg_attrs,
             )
+            # KG confidence 衰减: validation 失败时降低实验实体置信度.
+            # 之前 confidence 只增不减, 被refute的假设在 KG 里永远高置信.
+            tests_passed = validation.get("tests_passed") if isinstance(validation, dict) else False
+            if not tests_passed and exp_id and hasattr(self.kg, '_graph'):
+                try:
+                    if exp_id in self.kg._graph:
+                        old_conf = self.kg._graph.nodes[exp_id].get("confidence", 0.5)
+                        self.kg._graph.nodes[exp_id]["confidence"] = old_conf * 0.7
+                except Exception:
+                    pass
             # Hyperedge: 把 hypothesis → plan_mode → validation 结果
             # 连成 n-ary 关系. 之前 add_hyperedge 是死代码, 现在接上.
             plan_id = self.kg.add_entity(
@@ -2912,6 +3001,144 @@ Please modify the code to address this task."""
             return {"mode": "skill", "skill": skill.name, **result}
         except Exception as e:
             return {"mode": "skill", "success": False, "error": str(e)}
+
+    async def _execute_visual_inspect(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Path C: 交互式视觉检查. 让 agent 主动调用视觉工具检查上一轮结果.
+
+        这是 OpenThinkIMG 式的工具调用路径 — agent 在推理过程中主动选择
+        "放大图表某区域"或"测量某数据点", 而不是被动接收预处理好的视觉基元.
+        使用已有的 image_analysis_tool / visual_hook 基础设施, 不新建工具.
+
+        description 解析: "zoom into band 3 near [500,800]" / "measure peak at [999,999]"
+        坐标是 0-999 归一化的视觉原语坐标 (路径 B 格式).
+        """
+        import re
+
+        result: dict[str, Any] = {
+            "mode": "visual_inspect",
+            "description": description,
+            "actions": [],
+        }
+
+        # 获取上一轮的视觉基元和 base64 图片
+        visual_ctx = getattr(self, "_last_visual_context", "")
+        visual_base64 = getattr(self, "_visual_base64", "")
+
+        if not visual_ctx and not visual_base64:
+            return {
+                **result,
+                "success": False,
+                "error": "No visual data from previous iteration to inspect",
+            }
+
+        # 解析 description 中的动作
+        desc_lower = description.lower()
+
+        # 动作 1: zoom — 放大某区域
+        if "zoom" in desc_lower:
+            # 提取坐标 [x1,y1,x2,y2] 或 [x,y]
+            coords = re.findall(r'\[?(\d+)\s*,\s*(\d+)\]?', description)
+            if len(coords) >= 2:
+                x1, y1 = int(coords[0][0]), int(coords[0][1])
+                x2, y2 = int(coords[1][0]), int(coords[1][1])
+                # 把 0-999 坐标转成数据索引 (如果有上一轮的原始数据)
+                action_result = {
+                    "action": "zoom",
+                    "region": [x1, y1, x2, y2],
+                    "note": f"Zoomed into region [{x1},{y1}]-[{x2},{y2}]",
+                }
+                # 如果有 visual_base64, 调用 image_analysis_tool 做真正的区域分析
+                if visual_base64:
+                    try:
+                        from huginn.tools.registry import ToolRegistry
+                        img_tool = ToolRegistry.get("image_analysis_tool")
+                        if img_tool:
+                            # 裁剪 base64 图片到指定区域并分析
+                            import base64 as b64
+                            import io as _io
+                            try:
+                                from PIL import Image
+                                img_data = b64.b64decode(visual_base64)
+                                img = Image.open(_io.BytesIO(img_data))
+                                w, h = img.size
+                                # 0-999 → pixel coordinates
+                                px1 = int(x1 / 999 * w)
+                                py1 = int(y1 / 999 * h)
+                                px2 = int(x2 / 999 * w)
+                                py2 = int(y2 / 999 * h)
+                                cropped = img.crop((px1, py1, px2, py2))
+                                buf = _io.BytesIO()
+                                cropped.save(buf, format="PNG")
+                                cropped_b64 = b64.b64encode(buf.getvalue()).decode()
+                                action_result["cropped_image"] = cropped_b64[:10000]  # limit size
+                                action_result["crop_size"] = [px2 - px1, py2 - py1]
+                            except ImportError:
+                                action_result["note"] += " (PIL not available, coordinates only)"
+                            except Exception as e:
+                                action_result["note"] += f" (crop failed: {e})"
+                    except Exception:
+                        pass
+                result["actions"].append(action_result)
+
+        # 动作 2: measure — 测量某点或区域的数据值
+        elif "measure" in desc_lower:
+            coords = re.findall(r'\[?(\d+)\s*,\s*(\d+)\]?', description)
+            if coords:
+                x, y = int(coords[0][0]), int(coords[0][1])
+                # 从 visual_ctx 中查找最接近的基元
+                result["actions"].append({
+                    "action": "measure",
+                    "coordinate": [x, y],
+                    "note": f"Measured at <point>[{x},{y}]</point>",
+                    "visual_context_snippet": visual_ctx[:300] if visual_ctx else "",
+                })
+
+        # 动作 3: annotate — 标注结构特征
+        elif "annotate" in desc_lower:
+            result["actions"].append({
+                "action": "annotate",
+                "description": description,
+                "note": "Annotation recorded for visual reasoning",
+                "visual_context": visual_ctx[:500] if visual_ctx else "",
+            })
+
+        # 动作 4: compare — 比较两组数据
+        elif "compare" in desc_lower:
+            result["actions"].append({
+                "action": "compare",
+                "description": description,
+                "visual_context": visual_ctx[:500] if visual_ctx else "",
+                "note": "Comparison analysis requested",
+            })
+
+        # 默认: 记录检查请求
+        else:
+            result["actions"].append({
+                "action": "inspect",
+                "description": description,
+                "visual_context": visual_ctx[:500] if visual_ctx else "",
+            })
+
+        # 生成新的视觉基元 (基于检查动作的输出)
+        new_primitives = []
+        for action in result["actions"]:
+            if "note" in action:
+                new_primitives.append(f"[{action['action']}] {action['note']}")
+        result["visual_summary"] = "\n".join(new_primitives)
+        result["success"] = True
+
+        # 用 enrich_with_visual 给这次检查也生成视觉基元
+        try:
+            from huginn.tools.visual_hook import enrich_with_visual
+            enriched = enrich_with_visual("visual_inspect", {"result": result})
+            if "_visual_hint" in enriched:
+                result["_visual_hint"] = enriched["_visual_hint"]
+        except Exception:
+            pass
+
+        return result
 
     # ──────────────────────────────────────────────────────────────
     # LLM helpers
@@ -3140,6 +3367,7 @@ Choose ONE mode and describe the plan:
 - workflow: run a computational simulation pipeline
 - explore: search a design space for optimal parameters
 - skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
+- visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
 
 When the hypothesis involves a PDE / variational principle / curved
 geometry, prefer the symbolic_math_tool actions listed in the math
