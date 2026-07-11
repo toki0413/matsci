@@ -148,6 +148,7 @@ _long_task_results.json
 
 # Generated analysis reports
 *_report.md
+agents-cli-analysis/
 
 # Screenshots from UI / e2e runs
 screenshot_*.png

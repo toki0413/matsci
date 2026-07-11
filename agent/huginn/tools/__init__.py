@@ -8,14 +8,13 @@ import sys
 from typing import Any
 
 from huginn.tools.base import HuginnTool
-from huginn.tools.registry import ToolRegistry, register_tool
+from huginn.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "HuginnTool",
     "ToolRegistry",
-    "register_tool",
     "register_all_tools",
     "register_core_tools",
     "register_optional_tools",

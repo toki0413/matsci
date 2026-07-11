@@ -22,7 +22,6 @@ TIMEOUT_PRESETS = {
 # 工具名 -> 档位
 TOOL_TIMEOUT_MAP = {
     # 快档：本地操作
-    "kb_tool": "fast",
     "structure_tool": "fast",
     "symmetry_tool": "fast",
     "unit_tool": "fast",
@@ -40,7 +39,6 @@ TOOL_TIMEOUT_MAP = {
     "browser_tool": "medium",
     "characterization_tool": "medium",
     "experimental_data_tool": "medium",
-    "knowledge_tool": "medium",
     # 外部 API 档：查材料数据库
     "materials_database_tool": "external_api",
     "database_tool": "external_api",
