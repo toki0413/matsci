@@ -15,6 +15,7 @@ import {
   Legend,
 } from "recharts";
 import { RefreshCw, Activity } from "lucide-react";
+import { api } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Types — mirrors backend EmotionState / EmotionEvent
@@ -117,7 +118,7 @@ const LINE_COLORS: string[] = [
 ];
 
 export default function EmotionTrackerPanel({
-  apiBase,
+  apiBase: _apiBase,
   personaName = "default",
 }: EmotionTrackerProps) {
   const [data, setData] = useState<EmotionResponse | null>(null);
@@ -129,9 +130,7 @@ export default function EmotionTrackerPanel({
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${apiBase}/personas/${personaName}/emotion`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: EmotionResponse = await res.json();
+      const json = await api.get<EmotionResponse>(`/personas/${personaName}/emotion`);
       if (json.success) {
         setData(json);
       } else {
@@ -142,7 +141,7 @@ export default function EmotionTrackerPanel({
     } finally {
       setLoading(false);
     }
-  }, [apiBase, personaName]);
+  }, [personaName]);
 
   useEffect(() => {
     fetchEmotion();

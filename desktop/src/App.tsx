@@ -531,7 +531,7 @@ export default function App() {
 
   // ── Chat and connection hook ─────────────────────────────────
   const {
-    messages, input, mode, pendingPlan, planLoading,
+    messages, input, mode, pendingPlan,
     chatSearchOpen, chatSearchQuery,
     isStreaming,
     messagesEndRef,
@@ -1084,7 +1084,6 @@ export default function App() {
               sendMessage={sendMessage}
               pendingPlan={pendingPlan}
               setPendingPlan={setPendingPlan}
-              planLoading={planLoading}
               setMode={setMode}
               input={input}
               setInput={setInput}

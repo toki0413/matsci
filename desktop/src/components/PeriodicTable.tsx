@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, memo } from "react";
 import elementsData from "../data/elements.json";
+import { api } from "../lib/api";
 
 /* ────────────────────────────── Types ────────────────────────────── */
 
@@ -126,7 +127,7 @@ const ElementCell = memo(function ElementCell({
   );
 });
 
-export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
+export default function PeriodicTable({ API_BASE: _API_BASE }: { API_BASE: string }) {
   const [selectedElements, setSelectedElements] = useState<Set<number>>(new Set());
   const [colorMode, setColorMode] = useState<ColorMode>("category");
   const [search, setSearch] = useState("");
@@ -184,13 +185,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
       setMpResult(null);
       setMpError(null);
       try {
-        const res = await fetch(`${API_BASE}/tools/materials_database_tool`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "mp_summary", element: symbol }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const data = await api.post<MpResult>('/tools/materials_database_tool', { action: "mp_summary", element: symbol });
         setMpResult(data);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -199,7 +194,7 @@ export default function PeriodicTable({ API_BASE }: { API_BASE: string }) {
         setMpLoading(false);
       }
     },
-    [API_BASE],
+    [],
   );
 
   /* ── Build grid cells (with placeholders for lanthanide/actinide markers) ── */

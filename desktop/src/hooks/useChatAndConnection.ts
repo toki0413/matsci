@@ -105,7 +105,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"chat" | "plan" | "build">("chat");
   const [pendingPlan, setPendingPlan] = useState<string>("");
-  const [planLoading] = useState(false);
   const [status, setStatus] = useState<string>("connecting…");
   const [isConnected, setIsConnected] = useState(false);
   const [wsReconnecting, setWsReconnecting] = useState(false);
@@ -389,10 +388,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // Route messages to their thread's cache. Non-active thread messages
     // are buffered so switching back doesn't lose them.
     const _BROADCAST_TYPES = new Set(["pet_update", "ping", "auto_approve_set", "context_compacted"]);
-    if ("thread_id" in data && data.thread_id && data.thread_id !== activeThreadRef.current
+    // Backend injects thread_id on all messages at runtime, but TS union
+    // only declares it on some variants — cast to avoid narrowing.
+    const _tid = (data as any).thread_id as string | undefined;
+    if (_tid && _tid !== activeThreadRef.current
         && !_BROADCAST_TYPES.has(data.type)) {
       // Buffer for the other thread instead of dropping
-      const otherTid = data.thread_id as string;
+      const otherTid = _tid;
       setMessagesByThread((prev) => {
         const existing = prev[otherTid] || [];
         // Only buffer text/done/error — tool calls are too complex to merge
@@ -610,16 +612,17 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         break;
       }
       case "side_question_pending": {
-        // Side-channel questions from sub-agents — display inline
-        const questions = data.questions || [];
+        // Backend sends a single question, not an array
+        const q = data.question;
+        if (!q) break;
         setPendingClarifications((prev) => [
           ...prev,
-          ...questions.map((q: any) => ({
-            question_id: q.question_id,
-            question: q.question || q,
-            options: q.options || [],
-            thread_id: data.thread_id,
-          })),
+          {
+            question_id: data.question_id || "",
+            question: q,
+            options: [],
+            thread_id: data.thread_id || activeThreadRef.current,
+          },
         ]);
         break;
       }
@@ -657,8 +660,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
                   stages.push({ name: "", label: "", status: "pending" });
                 }
                 stages[sIdx] = {
-                  name: tp.stage || "",
-                  label: tp.stage_label || tp.stage || "",
+                  name: tp.message || "",
+                  label: tp.stage_label || tp.message || "",
                   status: (tp.status as PipelineStage["status"]) || "pending",
                   detail: tp.detail,
                 };
@@ -688,8 +691,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
             const stages: PipelineStage[] = Array.from(
               { length: sTotal },
               (_, idx) => ({
-                name: idx === sIdx ? (tp.stage || "") : "",
-                label: idx === sIdx ? (tp.stage_label || tp.stage || "") : "",
+                name: idx === sIdx ? (tp.message || "") : "",
+                label: idx === sIdx ? (tp.stage_label || tp.message || "") : "",
                 status: idx === sIdx ? ((tp.status as PipelineStage["status"]) || "pending") : "pending",
                 detail: idx === sIdx ? tp.detail : undefined,
               })
@@ -1122,7 +1125,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   return {
     // Chat state
-    messages, input, mode, pendingPlan, planLoading,
+    messages, input, mode, pendingPlan,
     chatSearchOpen, chatSearchQuery,
     isStreaming,
     messagesEndRef,

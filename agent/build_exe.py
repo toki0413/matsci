@@ -44,7 +44,7 @@ def main() -> None:
         "huginn.autoloop.budget", "huginn.autoloop.campaign",
         "huginn.autoloop.dynamic_workflow", "huginn.autoloop.goal_scheduler",
         "huginn.autoloop.hypothesis_loop", "huginn.autoloop.plan_store",
-        "huginn.autoloop.red_team", "huginn.autoloop.uq_propagation",
+        "huginn.autoloop.red_team",
         "huginn.tools.symbolic_math.tool", "huginn.tools.symbolic_math.pde",
         "huginn.tools.symbolic_math.variational", "huginn.tools.symbolic_math.diffgeo",
         "huginn.tools.symbolic_math.algebra", "huginn.tools.symbolic_math.calculus",

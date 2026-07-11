@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { api } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -82,7 +83,7 @@ function formatDate(iso: string | undefined): string {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Notebook({ API_BASE }: { API_BASE: string }) {
+export default function Notebook({ API_BASE: _API_BASE }: { API_BASE: string }) {
   // ---- State --------------------------------------------------------------
   const [entries, setEntries] = useState<NotebookEntry[]>([]);
   const [activeEntry, setActiveEntry] = useState<NotebookEntry | null>(null);
@@ -99,11 +100,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
   const fetchEntries = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/memory?category=notebook&limit=200`,
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const raw: MemoryEntry[] = await res.json();
+      const raw = await api.get<MemoryEntry[]>('/memory?category=notebook&limit=200');
       const parsed = raw.map(parseEntry);
       // newest first
       parsed.sort((a, b) => {
@@ -117,7 +114,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
     } finally {
       setLoading(false);
     }
-  }, [API_BASE]);
+  }, []);
 
   useEffect(() => {
     fetchEntries();
@@ -128,13 +125,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
     if (!search.trim()) return;
     const id = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_BASE}/memory/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: search, category: 'notebook' }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const raw: MemoryEntry[] = await res.json();
+        const raw = await api.post<MemoryEntry[]>('/memory/search', { query: search, category: 'notebook' });
         const parsed = raw.map(parseEntry);
         parsed.sort((a, b) => {
           const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -147,7 +138,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
       }
     }, 400);
     return () => clearTimeout(id);
-  }, [search, API_BASE]);
+  }, [search]);
 
   // ---- New entry ----------------------------------------------------------
   const handleNewEntry = () => {
@@ -186,12 +177,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
         importance: 7,
       };
 
-      const res = await fetch(`${API_BASE}/memory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await api.post('/memory', payload);
       await fetchEntries();
       // Refresh the active entry from the latest list
       setActiveEntry(null);
@@ -209,10 +195,7 @@ export default function Notebook({ API_BASE }: { API_BASE: string }) {
   const handleDelete = async (id: string) => {
     if (!window.confirm('Delete this entry permanently?')) return;
     try {
-      const res = await fetch(`${API_BASE}/memory/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await api.del(`/memory/${id}`);
       setActiveEntry(null);
       setEditing(false);
       setIsNew(false);
