@@ -415,31 +415,10 @@ class HuginnAgent(
     def is_research_mode(self) -> bool:
         return self._mode == "research"
 
-    def should_use_verification_model(self) -> bool:
-        return self._mode == "research"
-
     # ── Specialised model selection ───────────────────────────────
-
-    def select_verification_model(self) -> Any:
-        if self.model_router is not None:
-            try:
-                return self.model_router.select_verification()
-            except Exception:
-                logger.warning("model_router.select failed for reasoning model fallback", exc_info=True)
-        return self.select_model("reasoning")
-
-    def has_dedicated_verification(self) -> bool:
-        if self.model_router is None:
-            return False
-        return self.model_router.has_dedicated_verification()
-
-    def select_archival_model(self) -> Any:
-        if self.model_router is not None:
-            try:
-                return self.model_router.select_archival()
-            except Exception:
-                logger.warning("select_archival_model failed", exc_info=True)
-        return self.select_model("cheap")
+    # ponytail: select_verification_model/select_archival_model/has_dedicated_verification
+    # 已删除 — 全代码库无调用方. ModelRouter.select_verification() 在 routes/eval.py
+    # 直接调用, 不需要 core.py 的包装层. 如需恢复, git log 找到此 commit.
 
     def _detect_provider(self) -> str | None:
         if self.model is None:
