@@ -139,17 +139,21 @@ def render_tool_output(tool_name: str, output: dict[str, Any]) -> str | None:
 
 
 def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
-    """Extract numerical deictic pointers from tool output.
+    """Extract coordinate-tagged visual primitives from tool output.
 
-    Inspired by Thinking with Visual Primitives: instead of vague "imagine
-    the chart", give the LLM concrete coordinates — peak positions, trends,
-    anomaly indices — that anchor its reasoning to the data shape.
+    Inspired by DeepSeek's Thinking with Visual Primitives: instead of vague
+    "peak at index 3", give the LLM normalized coordinates <point>[[x,y]]</point>
+    that anchor its reasoning to the data shape — bridging the Reference Gap.
 
     Also draws on 3D Primitives are a Spatial Language: structured primitives
     (here numerical, not geometric) serve as a bridge between text reasoning
     and visual understanding. This is the text-only path of our Mirage
     strategy — we don't need the LLM to see the image, we give it the
     primitives that describe the image.
+
+    Coordinate system: normalized to 0-999 (same as DeepSeek paper), where
+    x = data index (0=first point, 999=last point), y = data value (0=min, 999=max).
+    This lets a text-only LLM "point" at specific locations in the data.
     """
     result = output.get("result", {})
     if not isinstance(result, dict):
@@ -172,9 +176,12 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
                     continue
                 if not nums:
                     continue
-                pk = max(range(len(nums)), key=lambda i: nums[i])
-                mn = min(range(len(nums)), key=lambda i: nums[i])
-                sub_lines.append(f"  band{bi}: peak=idx {pk}({nums[pk]:.4f}), min=idx {mn}({nums[mn]:.4f})")
+                pk, pk_xy = _to_coord(nums, max(range(len(nums)), key=lambda i: nums[i]))
+                mn, mn_xy = _to_coord(nums, min(range(len(nums)), key=lambda i: nums[i]))
+                sub_lines.append(
+                    f"  band{bi}: peak=<point>[{pk_xy}]</point>({nums[pk]:.4f}), "
+                    f"min=<point>[{mn_xy}]</point>({nums[mn]:.4f})"
+                )
             if sub_lines:
                 lines.append(f"[{key}] {len(data)} bands:\n" + "\n".join(sub_lines))
             continue
@@ -191,6 +198,10 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
         mean_v = sum(nums) / n
         std_v = (sum((x - mean_v) ** 2 for x in nums) / n) ** 0.5
 
+        # 坐标化: 归一化到 0-999, 让 LLM 可以"指向"数据位置
+        peak_xy = _normalize_coord(peak_idx, n, nums[peak_idx], nums)
+        min_xy = _normalize_coord(min_idx, n, nums[min_idx], nums)
+
         # trend: compare first half mean vs second half mean
         mid = n // 2
         if mid > 0:
@@ -205,29 +216,40 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
         else:
             trend = "unknown"
 
-        # anomalies: points > 2 std from mean
+        # anomalies: points > 2 std from mean, with coordinates
         anomalies = []
         if std_v > 0:
             for i, v in enumerate(nums):
                 if abs(v - mean_v) > 2 * std_v:
-                    anomalies.append(f"idx {i}={v:.4f}")
+                    ax, ay = _normalize_coord(i, n, v, nums)
+                    anomalies.append(f"<point>[{ax},{ay}]</point>={v:.4f}")
         anomalies_str = ", ".join(anomalies[:5]) if anomalies else "none"
 
         lines.append(
-            f"[{key}] n={n}, peak=idx {peak_idx} ({nums[peak_idx]:.4f}), "
-            f"min=idx {min_idx} ({nums[min_idx]:.4f}), "
+            f"[{key}] n={n}, peak=<point>[{peak_xy}]</point>({nums[peak_idx]:.4f}), "
+            f"min=<point>[{min_xy}]</point>({nums[min_idx]:.4f}), "
             f"mean={mean_v:.4f}, std={std_v:.4f}, "
             f"trend={trend}, anomalies={anomalies_str}"
         )
 
-    # Dict scores: top/bottom items
+    # Dict scores: top/bottom items with box coordinates
     scores = result.get("scores")
     if isinstance(scores, dict) and scores:
         try:
             items = sorted(scores.items(), key=lambda kv: float(kv[1]), reverse=True)
-            top = ", ".join(f"{k}={v:.3f}" for k, v in items[:3])
-            bot = ", ".join(f"{k}={v:.3f}" for k, v in items[-2:])
-            lines.append(f"[scores] top3: {top}; bottom: {bot}")
+            # 坐标化: 每个分数项占一个虚拟 x 位置, y 归一化
+            vals = [float(v) for _, v in items]
+            v_min, v_max = min(vals), max(vals)
+            v_range = v_max - v_min if v_max != v_min else 1.0
+            top_parts = []
+            for k, v in items[:3]:
+                yi = int((float(v) - v_min) / v_range * 999)
+                top_parts.append(f"{k}=<point>[{yi}]</point>={float(v):.3f}")
+            bot_parts = []
+            for k, v in items[-2:]:
+                yi = int((float(v) - v_min) / v_range * 999)
+                bot_parts.append(f"{k}=<point>[{yi}]</point>={float(v):.3f}")
+            lines.append(f"[scores] top3: {', '.join(top_parts)}; bottom: {', '.join(bot_parts)}")
         except (ValueError, TypeError):
             pass
 
@@ -235,6 +257,25 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
         return ""
 
     return "\n".join(lines)
+
+
+def _normalize_coord(idx: int, n: int, val: float, all_vals: list[float]) -> str:
+    """归一化数据点到 0-999 坐标空间 (DeepSeek 格式).
+    x: 数据索引位置 (0=第一个点, 999=最后一个点)
+    y: 数据值位置 (0=最小值, 999=最大值)
+    返回 "x,y" 字符串."""
+    x = int(idx / max(n - 1, 1) * 999)
+    v_min = min(all_vals)
+    v_max = max(all_vals)
+    v_range = v_max - v_min if v_max != v_min else 1.0
+    y = int((val - v_min) / v_range * 999)
+    return f"{x},{y}"
+
+
+def _to_coord(nums: list[float], idx: int) -> tuple[int, str]:
+    """返回 (原始索引, 归一化坐标) 用于嵌套列表."""
+    xy = _normalize_coord(idx, len(nums), nums[idx], nums)
+    return idx, xy
 
 
 def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]:
@@ -259,11 +300,12 @@ def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]
         # when not, _visual_primitives gives the LLM enough structure to
         # "visualize" the data shape through coordinates alone.
         output["_visual_hint"] = (
-            "Visual primitives extracted from tool output (use as deictic pointers):\n"
+            "Visual primitives (coordinate-tagged, DeepSeek format):\n"
             f"{primitives}\n"
-            "Reason about the data shape using these coordinates: "
-            "where are peaks/valleys, what does the trend imply, "
-            "do anomalies suggest physics or noise?"
+            "Coordinates are normalized 0-999: x=data position, y=value.\n"
+            "<point>[x,y]</point> tags are deictic pointers — reason about\n"
+            "data shape by referencing these coordinates. Where are peaks?\n"
+            "What does the trend imply? Do anomalies suggest physics or noise?"
         )
 
     return output
