@@ -1105,6 +1105,40 @@ class LiteratureTool(HuginnTool):
             current_layer = next_layer
             current_dois = next_dois
 
+        # 引文图持久化到 KG — Zotero 启发: 引用关系应持久存储供后续查询.
+        # 之前是 ephemeral 的, agent 每次都要重新 BFS. 现在写一次, 后续
+        # KG query 和 /graph 可视化都能看到.
+        try:
+            from huginn.kg.graph import ProjectKnowledgeGraph
+            from huginn.kg.entities import EntityType, Relation
+            from pathlib import Path
+            kg = ProjectKnowledgeGraph(Path("."))
+            # pid -> node eid, 供 add_relation 用
+            eid_map: dict[str, str] = {}
+            for node in nodes:
+                pid = node.get("paper_id", "")
+                if not pid:
+                    continue
+                title = node.get("title", "") or pid
+                eid = kg.add_entity(
+                    title, EntityType.LITERATURE,
+                    source="citation_graph",
+                    confidence=0.8 if node.get("depth", 99) <= 1 else 0.6,
+                    paper_id=pid,
+                    doi=node.get("doi", ""),
+                    year=node.get("year"),
+                    depth=node.get("depth", 0),
+                )
+                eid_map[pid] = eid
+            for edge in edges:
+                src = eid_map.get(edge.get("source", ""))
+                dst = eid_map.get(edge.get("target", ""))
+                if src and dst:
+                    kg.add_relation(src, Relation.CITES, dst, source="citation_graph")
+            kg.save()
+        except Exception:
+            pass  # best-effort, 不影响引文图返回
+
         return ToolResult(
             data={
                 "action": "citation_graph",

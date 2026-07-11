@@ -86,6 +86,38 @@ class TestProjectKnowledgeGraph:
         assert "Material:Si" in text
         assert "applies" in text
 
+    def test_to_mermaid_empty_graph(self, tmp_path: Path) -> None:
+        kg = ProjectKnowledgeGraph(tmp_path)
+        out = kg.to_mermaid()
+        assert "graph TD" in out
+        assert "empty" in out
+
+    def test_to_mermaid_with_nodes_and_edges(self, tmp_path: Path) -> None:
+        kg = ProjectKnowledgeGraph(tmp_path)
+        a = kg.add_entity("VASP", EntityType.TOOL, confidence=0.9)
+        b = kg.add_entity("Si", EntityType.MATERIAL, confidence=0.7)
+        kg.add_relation(a, Relation.APPLIES, b)
+        out = kg.to_mermaid()
+        assert out.startswith("graph TD")
+        # 节点 label 出现在输出里
+        assert "VASP" in out
+        assert "Si" in out
+        # 边的关系类型出现
+        assert "applies" in out
+        # classDef 按类型着色
+        assert "classDef" in out
+
+    def test_to_mermaid_max_nodes_truncation(self, tmp_path: Path) -> None:
+        kg = ProjectKnowledgeGraph(tmp_path)
+        # 加 20 个节点, max_nodes=5 应该只保留 5 个
+        for i in range(20):
+            kg.add_entity(f"Mat{i}", EntityType.MATERIAL)
+        out = kg.to_mermaid(max_nodes=5)
+        # 统计 K{n} 节点声明数
+        import re
+        node_lines = re.findall(r"K\d+\[", out)
+        assert len(node_lines) <= 5
+
 
 class TestGraphQuery:
     def test_find_nodes_prioritizes_exact_match(self, tmp_path: Path) -> None:

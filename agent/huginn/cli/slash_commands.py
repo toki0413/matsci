@@ -55,6 +55,7 @@ _BUILTIN_COMMANDS: frozenset[str] = frozenset(
         "subgoal",
         "goal",
         "flow",
+        "graph",
     }
 )
 
@@ -78,7 +79,8 @@ def _print_help(console: Any) -> None:
   [cyan]/research[/cyan] 进入研究模式 (全工具, 数学深度引导, Deli 管线)
   [cyan]/subgoal[/cyan]  追加子目标约束: /subgoal <约束描述> (不中断当前任务)
   [cyan]/goal[/cyan]      持久目标管理: /goal <text>, /goal status|pause|resume|clear
-  [cyan]/flow[/cyan]      查看当前会话信息流: memory/KB/KG/goal/surprise 状态"""
+  [cyan]/flow[/cyan]      查看当前会话信息流: memory/KB/KG/goal/surprise 状态
+  [cyan]/graph[/cyan]     可视化知识图谱: /graph | /graph query <seed> | /graph stats"""
     console.print(help_text)
 
     # 顺便列一下当前 workspace 的自定义命令
@@ -943,6 +945,22 @@ def _handle_flow(command: str, agent: Any, console: Any) -> None:
     except Exception:
         table.add_row("KB", "? check /tools", "")
 
+    # KG layer — 显示真实统计而非硬编码
+    try:
+        from pathlib import Path
+        from huginn.kg.graph import ProjectKnowledgeGraph
+        kg = ProjectKnowledgeGraph(Path("."))
+        kstats = kg.stats()
+        n_nodes = kstats.get("nodes", 0)
+        n_edges = kstats.get("edges", 0)
+        types = kstats.get("node_types", {})
+        # 取 top-3 类型
+        top_types = sorted(types.items(), key=lambda x: x[1], reverse=True)[:3]
+        type_str = ", ".join(f"{t}:{c}" for t, c in top_types) if top_types else "empty"
+        table.add_row("KG", f"{n_nodes} nodes, {n_edges} edges", type_str)
+    except Exception:
+        table.add_row("KG", "? not initialized", "use /graph to build")
+
     # Surprise signal
     surprise = getattr(agent, "_last_surprise", None)
     if surprise is not None:
@@ -956,6 +974,75 @@ def _handle_flow(command: str, agent: Any, console: Any) -> None:
         "[dim]信息流: tool→result→memory/KB/KG→prompt→tool "
         "(有向循环, 非平衡稳态)[/dim]"
     )
+
+
+def _handle_graph(command: str, agent: Any, console: Any) -> None:
+    """/graph — 可视化知识图谱.
+
+    /graph             显示完整 KG 的 Mermaid 图 (默认最多 40 节点)
+    /graph stats       只显示统计, 不画图
+    /graph query <seed> 查询种子实体周围的子图
+    """
+    from pathlib import Path
+
+    try:
+        from huginn.kg.graph import ProjectKnowledgeGraph
+    except Exception as e:
+        console.print(f"[red]KG 模块不可用: {e}[/red]")
+        return
+
+    kg = ProjectKnowledgeGraph(Path("."))
+    parts = command.split(None, 1)
+    sub = parts[1].strip().lower() if len(parts) > 1 else ""
+
+    if sub == "stats":
+        s = kg.stats()
+        console.print(f"[bold]KG Statistics[/bold]")
+        console.print(f"  Nodes: {s.get('nodes', 0)}")
+        console.print(f"  Edges: {s.get('edges', 0)}")
+        types = s.get("node_types", {})
+        if types:
+            console.print("  Node types:")
+            for t, c in sorted(types.items(), key=lambda x: x[1], reverse=True):
+                console.print(f"    {t}: {c}")
+        return
+
+    if sub.startswith("query"):
+        seed = sub[5:].strip() if len(sub) > 5 else ""
+        if not seed:
+            console.print("[yellow]用法: /graph query <seed entity>[/yellow]")
+            return
+        result = kg.query(seed, depth=1, top_k=10)
+        nodes = result.get("nodes", [])
+        edges = result.get("edges", [])
+        console.print(
+            f"[green]Query '{seed}': {len(nodes)} nodes, {len(edges)} edges[/green]"
+        )
+        # 画查询子图的 Mermaid
+        if nodes:
+            # 取节点 id 集合, 用 to_mermaid 画子图
+            node_ids = {n.get("id", "") for n in nodes if n.get("id")}
+            if node_ids:
+                sub_graph = kg._graph.subgraph(node_ids).copy()
+                # 临时替换 _graph 来画子图
+                orig = kg._graph
+                kg._graph = sub_graph
+                mermaid = kg.to_mermaid(max_nodes=20)
+                kg._graph = orig
+                console.print(f"\n```mermaid\n{mermaid}\n```")
+        return
+
+    # 默认: 画完整 KG
+    s = kg.stats()
+    n = s.get("nodes", 0)
+    if n == 0:
+        console.print(
+            "[yellow]KG 为空. 运行 autoloop 或 /research 模式后会自动构建.[/yellow]"
+        )
+        return
+    mermaid = kg.to_mermaid()
+    console.print(f"[bold]Knowledge Graph ({n} nodes, {s.get('edges', 0)} edges)[/bold]")
+    console.print(f"\n```mermaid\n{mermaid}\n```")
 
 
 def handle_slash_command(
@@ -1049,6 +1136,10 @@ def handle_slash_command(
 
     if name == "flow":
         _handle_flow(command, agent, con)
+        return None
+
+    if name == "graph":
+        _handle_graph(command, agent, con)
         return None
 
     # 不在内置命令里, 试自定义命令

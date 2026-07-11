@@ -14,6 +14,7 @@ class EntityType:
     FACT = "Fact"
     SESSION = "Session"
     RESOURCE = "Resource"
+    LITERATURE = "Literature"
 
 
 class Relation:
@@ -25,6 +26,12 @@ class Relation:
     RELATED_TO = "related_to"
     DERIVED_FROM = "derived_from"
     RUNS_ON = "runs_on"
+    CITES = "cites"
+    CITED_BY = "cited_by"
+    REPRODUCES = "reproduces"
+    USES_METHOD_FROM = "uses_method_from"
+    EXTENDS = "extends"
+    CONTRADICTS = "contradicts"
 
 
 # Common keywords used for rule-based extraction.
