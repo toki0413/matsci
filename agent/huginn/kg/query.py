@@ -86,3 +86,74 @@ class GraphQuery:
         if not seeds:
             return {"nodes": [], "edges": []}
         return self.neighborhood(seeds, depth=depth, top_k=top_k)
+
+    def community_aware_query(
+        self, seed: str, depth: int = 1, top_k: int = 10
+    ) -> dict[str, Any]:
+        """GraphRAG-style query: detect communities, return only the relevant one.
+
+        Instead of expanding the full neighborhood (BFS), partition the graph
+        into communities and keep only nodes that share a community with the
+        seed entities. Falls back to BFS when the graph is too small or
+        community detection fails.
+        """
+        from huginn.kg.extractor import extract_entities
+
+        entities = extract_entities(seed)
+        seed_terms = (
+            list(entities["tools"])
+            + list(entities["methods"])
+            + list(entities["materials"])
+        )
+        if not seed_terms:
+            seed_terms = [seed]
+
+        seeds = self.find_nodes_multi(seed_terms, top_k=max(1, top_k // 2))
+        if not seeds:
+            return {"nodes": [], "edges": []}
+
+        try:
+            if self._graph.number_of_nodes() < 5:
+                return self.neighborhood(seeds, depth=depth, top_k=top_k)
+
+            communities = nx.community.greedy_modularity_communities(
+                self._graph
+            )
+            seed_communities: set[int] = set()
+            for node in seeds:
+                for i, comm in enumerate(communities):
+                    if node in comm:
+                        seed_communities.add(i)
+                        break
+
+            relevant_nodes: set[str] = set()
+            for i in seed_communities:
+                relevant_nodes.update(communities[i])
+
+            # Always keep direct neighbors of seed nodes so we don't
+            # miss tightly-linked facts that community detection grouped
+            # into a different partition.
+            for node in seeds:
+                relevant_nodes.update(self._graph.successors(node))
+                relevant_nodes.update(self._graph.predecessors(node))
+
+            if len(relevant_nodes) > top_k:
+                scored = [
+                    (self._graph.nodes[n].get("confidence", 0.0), n)
+                    for n in relevant_nodes
+                ]
+                scored.sort(reverse=True)
+                relevant_nodes = {n for _, n in scored[:top_k]}
+
+            sub = self._graph.subgraph(relevant_nodes)
+            return {
+                "nodes": [
+                    {"id": n, **self._graph.nodes[n]} for n in sub.nodes()
+                ],
+                "edges": [
+                    {"source": u, "target": v, **d}
+                    for u, v, d in sub.edges(data=True)
+                ],
+            }
+        except Exception:
+            return self.neighborhood(seeds, depth=depth, top_k=top_k)

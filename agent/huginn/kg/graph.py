@@ -140,7 +140,7 @@ class ProjectKnowledgeGraph:
         from huginn.kg.query import GraphQuery
 
         q = GraphQuery(self._graph)
-        return q.query(seed, depth=depth, top_k=top_k)
+        return q.community_aware_query(seed, depth=depth, top_k=top_k)
 
     def to_text(self, nodes: set[str]) -> str:
         """Convert a set of node ids into a prompt-friendly text summary."""

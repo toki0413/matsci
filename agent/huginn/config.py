@@ -401,6 +401,16 @@ class HuginnConfig:
     kg_depth: int = 1
     kg_top_k: int = 10
 
+    # Speculative decoding (vLLM only).
+    # Only works with a local vLLM backend; API providers (OpenAI/Anthropic/etc.)
+    # handle caching/speculation internally so these settings are ignored there.
+    # Requires a draft model — a small model from the same family as the target
+    # (e.g. "Qwen/Qwen2.5-1.5B-Instruct" alongside a 7B/14B target).
+    # Expected speedup: 2-3x inference throughput with negligible quality loss.
+    speculative_enabled: bool = False
+    speculative_model: str = ""  # empty = let vLLM auto-select
+    speculative_num_draft_tokens: int = 5  # K tokens proposed per draft step
+
     # Encryption settings
     encryption_enabled: bool = False
     encryption_password: str | None = None
@@ -709,6 +719,14 @@ class HuginnConfig:
             kg_enabled=os.environ.get("HUGINN_KG_ENABLED", "").lower() == "true",
             kg_depth=int(os.environ.get("HUGINN_KG_DEPTH", "1")),
             kg_top_k=int(os.environ.get("HUGINN_KG_TOP_K", "10")),
+            speculative_enabled=os.environ.get(
+                "HUGINN_SPECULATIVE_ENABLED", ""
+            ).lower()
+            == "true",
+            speculative_model=os.environ.get("HUGINN_SPECULATIVE_MODEL", ""),
+            speculative_num_draft_tokens=int(
+                os.environ.get("HUGINN_SPECULATIVE_DRAFT_TOKENS", "5")
+            ),
             local_only_mode=os.environ.get("HUGINN_LOCAL_ONLY", "").lower() == "true",
             allow_local_bash=os.environ.get("HUGINN_ALLOW_LOCAL_BASH", "").lower()
             in ("1", "true", "yes"),

@@ -384,6 +384,10 @@ _LOCAL_PRESETS: dict[str, dict[str, str]] = {
         "base_url": "http://localhost:30000/v1",
         "default_model": "default",
     },
+    "vllm": {
+        "base_url": "http://localhost:8000/v1",
+        "default_model": "default",
+    },
 }
 
 _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
@@ -596,6 +600,20 @@ def create_langchain_model(
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+        # Speculative decoding — vLLM only, passed through OpenAI extra_body.
+        # create_langchain_model has no cfg handle, so we read the same env
+        # vars that HuginnConfig.from_env uses (see config.py).
+        if provider == "vllm" and os.environ.get(
+            "HUGINN_SPECULATIVE_ENABLED", ""
+        ).lower() == "true":
+            extra_body = kwargs.get("extra_body") or {}
+            extra_body["speculative_model"] = (
+                os.environ.get("HUGINN_SPECULATIVE_MODEL", "") or "auto"
+            )
+            extra_body["num_speculative_tokens"] = int(
+                os.environ.get("HUGINN_SPECULATIVE_DRAFT_TOKENS", "5")
+            )
+            kwargs["extra_body"] = extra_body
         kwargs["request_timeout"] = _llm_request_timeout()
         return ChatOpenAI(**kwargs)
 
