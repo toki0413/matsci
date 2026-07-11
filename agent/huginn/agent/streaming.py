@@ -514,6 +514,7 @@ class StreamingMixin:
         _vision_route = VisionRoute.TEXT_ONLY
         _vision_content: list[dict] | None = None
         _cv_hints: str | None = None
+        _vision_delegated: str | None = None  # description from vision member
         if image_path:
             _vr = VisionRouter(
                 visual_encoder=getattr(self, "_visual_encoder", None),
@@ -524,8 +525,46 @@ class StreamingMixin:
             if _vision_route == VisionRoute.BOTH:
                 _vision_content, _cv_hints = _vr.coordinate(message, image_path, model_name)
             elif _vision_route == VisionRoute.CV_TOOLS:
-                cv_ctx = _vr.build_context(image_path)
-                message = f"{cv_ctx}\n\n{message}"
+                # Current model can't see images — check if team has a
+                # VISION member (e.g., local multimodal model like
+                # qwen2.5-vl) that can handle it instead.
+                _team = getattr(self, "_team_ref", None)
+                if _team is not None:
+                    try:
+                        from huginn.agents.team import TeamRole
+                        vision_member = _team.members.get(TeamRole.VISION)
+                        if vision_member and vision_member.caps.vision:
+                            # Delegate image description to vision member
+                            vision_task = (
+                                f"请描述这张图片的内容, 重点关注与材料科学相关的"
+                                f"信息 (如显微结构、晶体形貌、谱图特征等).\n"
+                                f"图片路径: {image_path}"
+                            )
+                            if message:
+                                vision_task += f"\n用户附加说明: {message}"
+                            _vision_traces: list = []
+                            _vision_delegated = await _team._delegate(
+                                TeamRole.VISION, vision_task,
+                                {"original_task": message or ""},
+                                _vision_traces,
+                            )
+                            # Inject vision description as context for the
+                            # text model, replacing the raw image
+                            message = (
+                                f"[视觉描述 (由 {vision_member.model_name} 提供)]\n"
+                                f"{_vision_delegated}\n\n"
+                                f"[用户问题]\n{message or '请根据上述视觉描述进行分析.'}"
+                            )
+                            _vision_route = VisionRoute.TEXT_ONLY
+                    except Exception:
+                        logger.warning(
+                            "Cross-agent vision delegation failed",
+                            exc_info=True,
+                        )
+
+                if _vision_route == VisionRoute.CV_TOOLS:
+                    cv_ctx = _vr.build_context(image_path)
+                    message = f"{cv_ctx}\n\n{message}"
 
         # Privacy scan on the raw user message.
         if self.privacy_block_on_secrets:

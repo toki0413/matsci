@@ -997,7 +997,18 @@ export function ChatPanel(props: ChatPanelProps) {
           );
         }}
         components={{
-          Footer: () => <div ref={messagesEndRef} style={{ height: 1 }} />,
+          Footer: () => (
+            <>
+              {isStreaming && !isPaused && (
+                <div className="flex items-center gap-1.5 px-4 py-3">
+                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot" style={{ animationDelay: '0ms' }} />
+                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot" style={{ animationDelay: '160ms' }} />
+                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot" style={{ animationDelay: '320ms' }} />
+                </div>
+              )}
+              <div ref={messagesEndRef} style={{ height: 1 }} />
+            </>
+          ),
           EmptyPlaceholder: () => (
             <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-accent/10">
@@ -1125,7 +1136,7 @@ export function ChatPanel(props: ChatPanelProps) {
       )}
 
       <div className="border-t border-border bg-bg-secondary p-4">
-        {!isConnected && (
+        {!isConnected && (wsFailed || wsReconnecting) && (
             <div className="mb-3 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
               {wsFailed ? (
                 <div className="flex items-center gap-2">
@@ -1567,10 +1578,11 @@ export function ChatPanel(props: ChatPanelProps) {
                 ? t('chat.placeholderBuild')
                 : isConnected
                 ? t('chat.placeholderConnected')
-                : t('chat.placeholderOffline')
+                : wsFailed
+                ? t('chat.placeholderOffline')
+                : 'Connecting…'
             }
             rows={2}
-            disabled={!isConnected}
             className="input min-h-[56px] max-h-[200px] resize-none flex-1 overflow-y-auto"
             aria-label="Message input"
           />

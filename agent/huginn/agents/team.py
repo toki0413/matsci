@@ -32,6 +32,8 @@ class TeamRole(enum.StrEnum):
     CODER = "coder"
     EXECUTOR = "executor"
     CRITIC = "critic"
+    VISION = "vision"          # 本地多模态: 处理图像/视觉理解
+    SYNTHESIZER = "synthesizer" # 合成器: 跨模型信息融合
 
 
 # 角色 → 需要的能力 (按优先级排序)
@@ -47,6 +49,10 @@ ROLE_REQUIREMENTS: dict[TeamRole, tuple[set[str], set[str]]] = {
     TeamRole.EXECUTOR: ({"tools"}, set()),
     # 审查用不同模型即可, 没有硬性能力要求
     TeamRole.CRITIC: (set(), set()),
+    # 视觉角色必须能看图 (本地多模态小模型)
+    TeamRole.VISION: ({"vision"}, set()),
+    # 合成器无硬性要求, 但推理加分
+    TeamRole.SYNTHESIZER: (set(), {"reasoning"}),
 }
 
 

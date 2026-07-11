@@ -4,6 +4,7 @@
  * When user clicks ⤢ on a ToolResultRenderer, this tab activates with the
  * full content rendered in a larger area.
  */
+import { useTranslation } from 'react-i18next';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 
 interface ResultPanelProps {
@@ -12,10 +13,11 @@ interface ResultPanelProps {
 }
 
 export function ResultPanel({ resultContent, resultToolName }: ResultPanelProps) {
+  const { t } = useTranslation();
   if (!resultContent) {
     return (
       <div className="flex h-full items-center justify-center text-text-muted text-sm">
-        <p>Click ⤢ on any tool result to expand it here.</p>
+        <p>{t('result.hint')}</p>
       </div>
     );
   }

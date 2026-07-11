@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { PanelHeader } from '../settings-shared';
 import type { BackendLogEvent } from '../../types/domain';
 
@@ -12,9 +13,10 @@ interface LogsPanelProps {
 export function LogsPanel({
   backendLogs, logFilter, backendLogEndRef, setLogFilter, setBackendLogs,
 }: LogsPanelProps) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col bg-bg-tertiary text-text-primary">
-      <PanelHeader title="Backend Logs">
+      <PanelHeader title={t('logs.title')}>
         <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5 text-xs">
           {(["all", "stdout", "stderr"] as const).map((f) => (
             <button
@@ -38,13 +40,13 @@ export function LogsPanel({
           }
           className="btn-secondary px-3 py-1.5 text-xs"
         >
-          Copy
+          {t('logs.copy')}
         </button>
         <button
           onClick={() => setBackendLogs([])}
           className="btn-secondary px-3 py-1.5 text-xs"
         >
-          Clear
+          {t('logs.clear')}
         </button>
       </PanelHeader>
       <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
