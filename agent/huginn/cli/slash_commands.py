@@ -53,6 +53,7 @@ _BUILTIN_COMMANDS: frozenset[str] = frozenset(
         "plan",
         "research",
         "subgoal",
+        "goal",
     }
 )
 
@@ -74,7 +75,8 @@ def _print_help(console: Any) -> None:
   [cyan]/map[/cyan]       显示代码库地图: /map | /map <query>
   [cyan]/plan[/cyan]     进入计划模式 (只规划不执行, 写工具需确认)
   [cyan]/research[/cyan] 进入研究模式 (全工具, 数学深度引导, Deli 管线)
-  [cyan]/subgoal[/cyan]  追加子目标约束: /subgoal <约束描述> (不中断当前任务)"""
+  [cyan]/subgoal[/cyan]  追加子目标约束: /subgoal <约束描述> (不中断当前任务)
+  [cyan]/goal[/cyan]      持久目标管理: /goal <text>, /goal status|pause|resume|clear"""
     console.print(help_text)
 
     # 顺便列一下当前 workspace 的自定义命令
@@ -731,29 +733,126 @@ def _try_custom_command(
 def _handle_subgoal(command: str, agent: Any, console: Any) -> None:
     """/subgoal <text> — 追加子目标约束到当前任务.
 
-    存到 agent._sub_goals, context builder 会注入到后续 prompt.
-    不中断当前任务, 不需要重开 goal.
+    优先存到 GoalStore 的 active goal, 其次存到 agent._sub_goals.
     """
     parts = command.split(None, 1)
     if len(parts) < 2 or not parts[1].strip():
         console.print("[yellow]用法: /subgoal <约束描述>[/yellow]")
         console.print("[dim]例: /subgoal 所有修改不改动原有接口[/dim]")
-        existing = getattr(agent, "_sub_goals", [])
-        if existing:
-            console.print(f"[dim]当前子目标 ({len(existing)}):[/dim]")
-            for i, sg in enumerate(existing, 1):
+        # show existing
+        from huginn.autoloop.goal_store import get_goal_store
+        store = get_goal_store()
+        active = store.get_active()
+        if active and active.sub_goals:
+            console.print(f"[dim]当前子目标 ({len(active.sub_goals)}):[/dim]")
+            for i, sg in enumerate(active.sub_goals, 1):
                 console.print(f"  [dim]{i}. {sg}[/dim]")
+        else:
+            existing = getattr(agent, "_sub_goals", [])
+            if existing:
+                console.print(f"[dim]本地子目标 ({len(existing)}):[/dim]")
+                for i, sg in enumerate(existing, 1):
+                    console.print(f"  [dim]{i}. {sg}[/dim]")
         return
 
     text = parts[1].strip()
-    if agent is None:
-        console.print("[yellow]Agent 未初始化[/yellow]")
+    from huginn.autoloop.goal_store import get_goal_store
+    store = get_goal_store()
+    active = store.get_active()
+    if active:
+        store.add_sub_goal(active.id, text)
+        console.print(f"[green]✓[/green] 子目标已追加到 goal {active.id} ({len(active.sub_goals)}): {text}")
+    else:
+        # no active goal, store locally on agent
+        if agent is not None:
+            if not hasattr(agent, "_sub_goals"):
+                agent._sub_goals = []
+            agent._sub_goals.append(text)
+            console.print(f"[green]✓[/green] 子目标已追加 ({len(agent._sub_goals)}): {text}")
+            console.print("[dim]提示: 用 /goal <text> 创建持久目标, 子目标会跨会话保存[/dim]")
+        else:
+            console.print("[yellow]Agent 未初始化[/yellow]")
+
+
+def _handle_goal(command: str, agent: Any, console: Any) -> None:
+    """/goal — 持久目标管理.
+
+    /goal <text>     创建并激活新目标
+    /goal status     查看当前目标状态
+    /goal pause      暂停当前目标 (保留进度)
+    /goal resume     恢复暂停的目标
+    /goal clear      清除当前目标
+    """
+    from huginn.autoloop.goal_store import get_goal_store
+
+    parts = command.split(None, 1)
+    sub = parts[1].strip() if len(parts) > 1 else "status"
+
+    store = get_goal_store()
+
+    if sub == "status":
+        active = store.get_active()
+        if active:
+            console.print(f"[green]● Active Goal: {active.id}[/green]")
+            console.print(f"  [dim]Text: {active.text}[/dim]")
+            console.print(f"  [dim]Iterations: {active.iteration}[/dim]")
+            console.print(f"  [dim]Created: {active.created_at}[/dim]")
+            if active.sub_goals:
+                console.print(f"  [dim]Sub-goals ({len(active.sub_goals)}):[/dim]")
+                for i, sg in enumerate(active.sub_goals, 1):
+                    console.print(f"    [dim]{i}. {sg}[/dim]")
+        else:
+            paused = store.list_goals("paused")
+            if paused:
+                console.print(f"[yellow]○ Paused goals: {len(paused)}[/yellow]")
+                for g in paused:
+                    console.print(f"  [dim]{g.id}: {g.text[:60]} (iter {g.iteration})[/dim]")
+            else:
+                console.print("[yellow]无活跃目标. 用 /goal <text> 创建[/yellow]")
         return
-    if not hasattr(agent, "_sub_goals"):
-        agent._sub_goals = []
-    agent._sub_goals.append(text)
-    console.print(f"[green]✓[/green] 子目标已追加 ({len(agent._sub_goals)}): {text}")
-    console.print("[dim]后续 LLM 调用会自动包含此约束[/dim]")
+
+    if sub == "pause":
+        active = store.get_active()
+        if active:
+            store.pause(active.id)
+            console.print(f"[yellow]○ Goal {active.id} 已暂停 (iter {active.iteration})[/yellow]")
+            console.print("[dim]用 /goal resume 恢复[/dim]")
+        else:
+            console.print("[yellow]无活跃目标可暂停[/yellow]")
+        return
+
+    if sub == "resume":
+        paused = store.list_goals("paused")
+        if not paused:
+            console.print("[yellow]无暂停的目标可恢复[/yellow]")
+            return
+        # resume the most recently paused
+        g = paused[-1]
+        store.resume(g.id)
+        console.print(f"[green]● Goal {g.id} 已恢复 (iter {g.iteration})[/green]")
+        console.print(f"  [dim]{g.text}[/dim]")
+        return
+
+    if sub == "clear":
+        active = store.get_active()
+        if active:
+            store.clear(active.id)
+            console.print("[green]✓ 目标已清除[/green]")
+        else:
+            console.print("[yellow]无活跃目标[/yellow]")
+        return
+
+    # default: create new goal
+    # if there's an active goal, complete it first
+    active = store.get_active()
+    if active:
+        store.complete(active.id)
+        console.print(f"[dim]上一个 goal {active.id} 已标记完成[/dim]")
+
+    goal = store.create_goal(sub)
+    console.print(f"[green]● Goal {goal.id} 已创建并激活[/green]")
+    console.print(f"  [dim]{goal.text}[/dim]")
+    console.print("[dim]用 /subgoal 追加约束, /goal pause 暂停, /goal status 查看[/dim]")
 
 
 def handle_slash_command(
@@ -839,6 +938,10 @@ def handle_slash_command(
 
     if name == "subgoal":
         _handle_subgoal(command, agent, con)
+        return None
+
+    if name == "goal":
+        _handle_goal(command, agent, con)
         return None
 
     # 不在内置命令里, 试自定义命令

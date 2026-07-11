@@ -855,6 +855,17 @@ class AutoloopEngine:
         while self._iteration < max_iterations and not self._should_stop:
             self._iteration += 1
             print(f"\n[Autoloop] Iteration {self._iteration}/{max_iterations}: {objective}")
+
+            # goal persistence: increment iteration count on active goal
+            try:
+                from huginn.autoloop.goal_store import get_goal_store
+                _gs = get_goal_store()
+                _active_goal = _gs.get_active()
+                if _active_goal:
+                    _gs.increment_iteration(_active_goal.id)
+            except Exception:
+                pass
+
             # 发布 campaign.iteration 事件
             self._emit_campaign("campaign.iteration", {
                 "iteration": self._iteration,
