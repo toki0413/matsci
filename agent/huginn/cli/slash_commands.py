@@ -54,6 +54,7 @@ _BUILTIN_COMMANDS: frozenset[str] = frozenset(
         "research",
         "subgoal",
         "goal",
+        "flow",
     }
 )
 
@@ -76,7 +77,8 @@ def _print_help(console: Any) -> None:
   [cyan]/plan[/cyan]     进入计划模式 (只规划不执行, 写工具需确认)
   [cyan]/research[/cyan] 进入研究模式 (全工具, 数学深度引导, Deli 管线)
   [cyan]/subgoal[/cyan]  追加子目标约束: /subgoal <约束描述> (不中断当前任务)
-  [cyan]/goal[/cyan]      持久目标管理: /goal <text>, /goal status|pause|resume|clear"""
+  [cyan]/goal[/cyan]      持久目标管理: /goal <text>, /goal status|pause|resume|clear
+  [cyan]/flow[/cyan]      查看当前会话信息流: memory/KB/KG/goal/surprise 状态"""
     console.print(help_text)
 
     # 顺便列一下当前 workspace 的自定义命令
@@ -855,6 +857,77 @@ def _handle_goal(command: str, agent: Any, console: Any) -> None:
     console.print("[dim]用 /subgoal 追加约束, /goal pause 暂停, /goal status 查看[/dim]")
 
 
+def _handle_flow(command: str, agent: Any, console: Any) -> None:
+    """/flow — 查看当前会话的信息流状态.
+
+    显示 memory/KB/KG/goal/surprise 的当前状态,
+    帮助理解信息在系统中的流向.
+    """
+    from rich.table import Table
+
+    table = Table(title="Information Flow Status")
+    table.add_column("Layer", style="cyan")
+    table.add_column("Status", style="green")
+    table.add_column("Details", style="dim")
+
+    # Goal layer
+    try:
+        from huginn.autoloop.goal_store import get_goal_store
+        store = get_goal_store()
+        active = store.get_active()
+        if active:
+            table.add_row(
+                "Goal",
+                f"● active (iter {active.iteration})",
+                f"{active.text[:60]}",
+            )
+        else:
+            paused = store.list_goals("paused")
+            table.add_row(
+                "Goal",
+                "○ none",
+                f"{len(paused)} paused" if paused else "use /goal <text>",
+            )
+    except Exception:
+        table.add_row("Goal", "? unknown", "")
+
+    # Sub-goals
+    sgs = getattr(agent, "_sub_goals", [])
+    if sgs:
+        table.add_row("Sub-goals", f"{len(sgs)} active", sgs[0][:40])
+    else:
+        table.add_row("Sub-goals", "0", "")
+
+    # Memory layer
+    try:
+        from huginn.memory.manager import MemoryManager
+        mm = getattr(agent, "_memory", None) or MemoryManager()
+        count = len(mm._entries) if hasattr(mm, "_entries") else "?"
+        table.add_row("Memory", f"{count} entries", "process logs")
+    except Exception:
+        table.add_row("Memory", "? unknown", "")
+
+    # KB layer
+    try:
+        table.add_row("KB", "available", "vector search")
+    except Exception:
+        table.add_row("KB", "? check /tools", "")
+
+    # Surprise signal
+    surprise = getattr(agent, "_last_surprise", None)
+    if surprise is not None:
+        level = "high" if surprise > 0.6 else "low" if surprise < 0.3 else "medium"
+        table.add_row("Surprise", f"{surprise:.2f} ({level})", "intrinsic motivation")
+    else:
+        table.add_row("Surprise", "—", "no autoloop iteration yet")
+
+    console.print(table)
+    console.print(
+        "[dim]信息流: tool→result→memory/KB/KG→prompt→tool "
+        "(有向循环, 非平衡稳态)[/dim]"
+    )
+
+
 def handle_slash_command(
     command: str,
     agent: Any | None = None,
@@ -942,6 +1015,10 @@ def handle_slash_command(
 
     if name == "goal":
         _handle_goal(command, agent, con)
+        return None
+
+    if name == "flow":
+        _handle_flow(command, agent, con)
         return None
 
     # 不在内置命令里, 试自定义命令

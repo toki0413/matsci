@@ -1935,11 +1935,15 @@ class AutoloopEngine:
         prediction = getattr(self, "_current_prediction", "")
         if prediction:
             actual_text = self._extract_text(execution_result)[:500]
-            surprise = self._compute_surprise(prediction, actual_text)
+            robust = self._compute_surprise_robust(prediction, actual_text)
+            surprise = robust["worst"]
             results["prediction_error"] = {
                 "predicted": prediction[:200],
                 "actual": actual_text[:200],
                 "surprise": round(surprise, 3),
+                "surprise_mean": round(robust["mean"], 3),
+                "surprise_worst": round(robust["worst"], 3),
+                "surprise_std": round(robust["std"], 3),
             }
             self._last_surprise = surprise
 
@@ -2244,26 +2248,77 @@ class AutoloopEngine:
         energy"这种常见场景已经够用. 升级路径: 用 sentence-transformers
         算 cosine distance, 或训练专门的 JEPA 编码器.
         """
+        s = self._compute_surprise_robust(prediction, actual)
+        return s["worst"]
+
+    def _compute_surprise_robust(
+        self, prediction: str, actual: str
+    ) -> dict[str, float]:
+        """分布鲁棒 surprise 估计.
+
+        对 keyword 提取做多种扰动 (不同 stopword 集 / n-gram / 阈值),
+        取 worst-case 作为决策依据. 这避免单一扰动下 surprise 被低估.
+
+        返回 {mean, worst, std, point}:
+        - point: 原始 Jaccard 距离 (兼容旧逻辑)
+        - worst: 多扰动下的最大值 (决策用)
+        - mean: 多扰动平均值 (趋势分析用)
+        - std: 多扰动标准差 (置信度信号)
+        """
         if not prediction or not actual:
-            return 0.0
-        # 提取关键词: 去标点, 小写, 过滤停用词和短词
-        import re
-        stop = {"the", "a", "an", "is", "are", "was", "were", "be", "to", "of",
-                "in", "on", "at", "for", "and", "or", "not", "this", "that",
-                "it", "with", "from", "by", "as", "will", "can", "may"}
-        def keywords(text: str) -> set[str]:
-            words = re.findall(r'[a-zA-Z_]\w{2,}', text.lower())
-            return {w for w in words if w not in stop}
-        pred_kw = keywords(prediction)
-        actual_kw = keywords(actual)
-        if not pred_kw and not actual_kw:
-            return 0.0
-        # Jaccard distance = 1 - intersection/union
-        union = pred_kw | actual_kw
-        if not union:
-            return 0.0
-        intersection = pred_kw & actual_kw
-        return 1.0 - len(intersection) / len(union)
+            return {"mean": 0.0, "worst": 0.0, "std": 0.0, "point": 0.0}
+
+        import statistics
+
+        # 扰动 1: 标准停用词集
+        stop1 = {"the", "a", "an", "is", "are", "was", "were", "be", "to", "of",
+                 "in", "on", "at", "for", "and", "or", "not", "this", "that",
+                 "it", "with", "from", "by", "as", "will", "can", "may"}
+        # 扰动 2: 更激进的停用词集 (去掉更多常见词)
+        stop2 = stop1 | {"energy", "result", "value", "system", "model",
+                         "data", "using", "shown", "show", "also", "which",
+                         "has", "have", "had", "been", "were", "more", "than"}
+        # 扰动 3: 只保留长关键词 (>=5 chars)
+        # 扰动 4: bigram Jaccard
+
+        def keywords(text: str, stop: set[str], min_len: int = 3) -> set[str]:
+            words = __import__("re").findall(r'[a-zA-Z_]\w{2,}', text.lower())
+            return {w for w in words if w not in stop and len(w) >= min_len}
+
+        def bigrams(text: str) -> set[str]:
+            words = __import__("re").findall(r'[a-zA-Z_]\w{2,}', text.lower())
+            return {f"{words[i]}_{words[i+1]}" for i in range(len(words) - 1)}
+
+        def jaccard(a: set, b: set) -> float:
+            if not a and not b:
+                return 0.0
+            union = a | b
+            if not union:
+                return 0.0
+            return 1.0 - len(a & b) / len(union)
+
+        pred_kw1 = keywords(prediction, stop1)
+        actual_kw1 = keywords(actual, stop1)
+        pred_kw2 = keywords(prediction, stop2)
+        actual_kw2 = keywords(actual, stop2)
+        pred_kw3 = keywords(prediction, stop1, min_len=5)
+        actual_kw3 = keywords(actual, stop1, min_len=5)
+        pred_bg = bigrams(prediction)
+        actual_bg = bigrams(actual)
+
+        estimates = [
+            jaccard(pred_kw1, actual_kw1),
+            jaccard(pred_kw2, actual_kw2),
+            jaccard(pred_kw3, actual_kw3),
+            jaccard(pred_bg, actual_bg) if pred_bg or actual_bg else 0.0,
+        ]
+
+        return {
+            "point": estimates[0],
+            "mean": statistics.mean(estimates),
+            "worst": max(estimates),
+            "std": statistics.stdev(estimates) if len(estimates) > 1 else 0.0,
+        }
 
     async def _generative_verify(
         self, execution_result: Any, results: dict[str, Any]
@@ -2681,7 +2736,7 @@ class AutoloopEngine:
             # Surprise 入 memory, 下次能检索到"这类任务预测准不准"
             pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
             if pred_err:
-                mem_content += f"\nSurprise: {pred_err.get('surprise', 0)} (predicted: {pred_err.get('predicted', '')[:80]})"
+                mem_content += f"\nSurprise: {pred_err.get('surprise', 0)} (worst: {pred_err.get('surprise_worst', pred_err.get('surprise', 0))}, std: {pred_err.get('surprise_std', 0)}) (predicted: {pred_err.get('predicted', '')[:80]})"
             # Persona 入 memory, 下次 _pick_hypothesis_persona 能查到历史效果
             mem_content += f"\nPersona: {persona_name}, r_phys: {r_phys}"
             # 结构化 tags: 供后续按 persona/r_phys/surprise 过滤检索
