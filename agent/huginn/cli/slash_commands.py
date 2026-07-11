@@ -95,18 +95,48 @@ def _print_help(console: Any) -> None:
         pass
 
 
-def _handle_compact(agent: Any, console: Any) -> None:
-    """手动触发上下文压缩, 把 session summary 提升到 mid tier。"""
+def _handle_compact(command: str, agent: Any, console: Any) -> None:
+    """/compact — 手动触发上下文压缩.
+
+    /compact         压缩 session summary (默认)
+    /compact deep    深度压缩: 同时压缩 tool results + memory promote
+    """
     if agent is None:
         console.print("[yellow]Agent 未初始化, 无法压缩[/yellow]")
         return
+    parts = command.split(None, 1)
+    mode = parts[1].strip().lower() if len(parts) > 1 else "default"
+
     memory = getattr(agent, "memory", None)
     if memory is None:
         console.print("[yellow]没有 memory_manager, 无法压缩[/yellow]")
         return
+
     try:
-        memory_id = memory.promote_session_summary(tier="mid")
-        console.print(f"[green]✓[/green] 会话已压缩, memory_id={memory_id}")
+        if mode == "deep":
+            # deep: promote session summary + compact messages
+            memory_id = memory.promote_session_summary(tier="mid")
+            # also trigger message-level compaction if available
+            messages = getattr(agent, "_messages", []) or getattr(agent, "messages", [])
+            if messages and hasattr(memory, "compact_messages"):
+                compacted = memory.compact_messages(messages, keep_recent=4)
+                if hasattr(agent, "_messages"):
+                    agent._messages = compacted
+                elif hasattr(agent, "messages"):
+                    agent.messages = compacted
+                console.print(
+                    f"[green]✓[/green] Deep compact: summary={memory_id}, "
+                    f"messages {len(messages)} → {len(compacted)}"
+                )
+            else:
+                console.print(
+                    f"[green]✓[/green] Deep compact (summary only): "
+                    f"memory_id={memory_id}"
+                )
+                console.print("[dim]Message compaction not available[/dim]")
+        else:
+            memory_id = memory.promote_session_summary(tier="mid")
+            console.print(f"[green]✓[/green] 会话已压缩, memory_id={memory_id}")
     except Exception as e:
         console.print(f"[red]压缩失败: {e}[/red]")
 
@@ -952,7 +982,7 @@ def handle_slash_command(
         return None
 
     if name == "compact":
-        _handle_compact(agent, con)
+        _handle_compact(command, agent, con)
         return None
 
     if name == "clear":
