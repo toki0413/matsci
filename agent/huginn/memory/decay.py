@@ -32,6 +32,10 @@ class MemoryDecayPolicy:
     max_age_days: int = 90
     # Minimum age (days) before a memory can be pruned.
     min_age_days: int = 7
+    # 高频访问的 mid 记忆自动晋升到 long: 超过此 access_count 且 importance
+    # 高于 promote_importance 时触发. 以前衰减只做降级/删除, 不做升级.
+    promote_access_threshold: int = 10
+    promote_importance: float = 0.5
 
     def apply(self, memory: LongTermMemory) -> dict[str, int]:
         """Apply decay, boost, and pruning to ``memory``.
@@ -44,13 +48,15 @@ class MemoryDecayPolicy:
 
         with memory._connect() as conn:
             rows = conn.execute(
-                "SELECT id, importance, access_count, created_at, last_accessed FROM memories"
+                "SELECT id, importance, access_count, created_at, last_accessed, tier FROM memories"
             ).fetchall()
 
+            promoted = 0
             for row in rows:
                 entry_id = row["id"]
                 importance = row["importance"]
                 access_count = row["access_count"]
+                tier = row["tier"] if "tier" in row.keys() else "mid"
                 created_at = self._parse_dt(row["created_at"]) or now
                 last_accessed = self._parse_dt(row["last_accessed"]) or created_at
 
@@ -71,6 +77,19 @@ class MemoryDecayPolicy:
                     )
                     decayed += 1
 
+                # 频繁访问的 mid 记忆自动晋升到 long — 以前衰减只做降级,
+                # 不做升级. 这是 access_count → tier 的反馈环.
+                if (
+                    tier == "mid"
+                    and access_count >= self.promote_access_threshold
+                    and new_importance >= self.promote_importance
+                ):
+                    conn.execute(
+                        "UPDATE memories SET tier = 'long' WHERE id = ?",
+                        (entry_id,),
+                    )
+                    promoted += 1
+
                 # Prune low-importance, non-permanent memories that are old enough.
                 if (
                     new_importance < self.prune_threshold
@@ -88,6 +107,7 @@ class MemoryDecayPolicy:
         return {
             "decayed": decayed,
             "pruned": pruned,
+            "promoted": promoted,
             "expired": expired,
         }
 

@@ -232,6 +232,12 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
             f"trend={trend}, anomalies={anomalies_str}"
         )
 
+        # 导数分析: 拐点 (二阶导符号变化) 和 FWHM 估计.
+        # 材料科学中拐点常对应相变/临界点, FWHM 表征峰展宽程度.
+        if n >= 5:
+            deriv_lines = _extract_derivative_primitives(nums, key)
+            lines.extend(deriv_lines)
+
     # Dict scores: top/bottom items with box coordinates
     scores = result.get("scores")
     if isinstance(scores, dict) and scores:
@@ -276,6 +282,125 @@ def _to_coord(nums: list[float], idx: int) -> tuple[int, str]:
     """返回 (原始索引, 归一化坐标) 用于嵌套列表."""
     xy = _normalize_coord(idx, len(nums), nums[idx], nums)
     return idx, xy
+
+
+def _extract_derivative_primitives(nums: list[float], key: str) -> list[str]:
+    """提取导数相关原语: 拐点 + FWHM 估计.
+
+    拐点 = 二阶差分符号变化点, 常对应相变/临界温度.
+    FWHM = 半峰全宽, 用线性插值估算峰的展宽程度.
+    """
+    lines: list[str] = []
+    n = len(nums)
+    if n < 5:
+        return lines
+
+    # 二阶差分: sign 变化 = 拐点
+    inflections: list[str] = []
+    for i in range(1, n - 1):
+        d2 = (nums[i + 1] - 2 * nums[i] + nums[i - 1])
+        d2_prev = (nums[i] - 2 * nums[i - 1] + nums[i - 2]) if i >= 2 else 0
+        if d2_prev != 0 and (d2 > 0) != (d2_prev > 0):
+            xy = _normalize_coord(i, n, nums[i], nums)
+            inflections.append(f"<point>[{xy}]</point>={nums[i]:.4f}")
+    if inflections:
+        lines.append(
+            f"  [{key}] inflections({len(inflections)}): {', '.join(inflections[:5])}"
+        )
+
+    # FWHM: 以最大峰为基准, 找半峰高位置的左右边界
+    peak_idx = max(range(n), key=lambda i: nums[i])
+    peak_val = nums[peak_idx]
+    baseline = min(nums)
+    half_max = baseline + (peak_val - baseline) * 0.5
+    # 向左找半峰交叉
+    left_i = peak_idx
+    for i in range(peak_idx, -1, -1):
+        if nums[i] < half_max:
+            left_i = i
+            break
+    # 向右找半峰交叉
+    right_i = peak_idx
+    for i in range(peak_idx, n):
+        if nums[i] < half_max:
+            right_i = i
+            break
+    fwhm = right_i - left_i
+    if fwhm > 0:
+        lxy = _normalize_coord(left_i, n, nums[left_i], nums)
+        rxy = _normalize_coord(right_i, n, nums[right_i], nums)
+        lines.append(
+            f"  [{key}] FWHM~{fwhm} points, "
+            f"left=<point>[{lxy}]</point>, right=<point>[{rxy}]</point>"
+        )
+
+    return lines
+
+
+def extract_comparative_primitives(
+    baseline: dict[str, Any], current: dict[str, Any]
+) -> str:
+    """比较两轮工具输出, 生成差分原语.
+
+    用于 validate 阶段: 上轮结果 vs 本轮结果, 突出变化.
+    - 峰值位移: peak position shift
+    - 新特征: 本轮有但上轮没有的峰/异常
+    - 趋势变化: 上轮 increasing → 本轮 decreasing
+    """
+    bl_result = baseline.get("result", {})
+    cr_result = current.get("result", {})
+    if not isinstance(bl_result, dict) or not isinstance(cr_result, dict):
+        return ""
+
+    lines: list[str] = []
+    for key in ("bands", "dos", "frequencies", "energies", "stress", "strain"):
+        bl_data = bl_result.get(key)
+        cr_data = cr_result.get(key)
+        if not isinstance(bl_data, list) or not isinstance(cr_data, list):
+            continue
+        if isinstance(bl_data[0] if bl_data else 0, list):
+            continue  # 跳过嵌套, 只比 1D
+        try:
+            bl_nums = [float(v) for v in bl_data if isinstance(v, (int, float))]
+            cr_nums = [float(v) for v in cr_data if isinstance(v, (int, float))]
+        except (ValueError, TypeError):
+            continue
+        if not bl_nums or not cr_nums:
+            continue
+
+        bl_peak = max(bl_nums)
+        cr_peak = max(cr_nums)
+        shift = cr_peak - bl_peak
+        if abs(shift) > 1e-6:
+            lines.append(
+                f"[{key}] peak_shift: {bl_peak:.4f} → {cr_peak:.4f} (Δ={shift:+.4f})"
+            )
+
+        # 谷值位移: 材料科学中 valley shift 同样重要 (如能带极小值)
+        bl_val = min(bl_nums)
+        cr_val = min(cr_nums)
+        vshift = cr_val - bl_val
+        if abs(vshift) > 1e-6:
+            lines.append(
+                f"[{key}] valley_shift: {bl_val:.4f} → {cr_val:.4f} (Δ={vshift:+.4f})"
+            )
+
+        # 新异常: 本轮有 >2σ 的点但上轮没有
+        cr_mean = sum(cr_nums) / len(cr_nums)
+        cr_std = (sum((x - cr_mean) ** 2 for x in cr_nums) / len(cr_nums)) ** 0.5
+        bl_mean = sum(bl_nums) / len(bl_nums)
+        bl_std = (sum((x - bl_mean) ** 2 for x in bl_nums) / len(bl_nums)) ** 0.5
+        new_anomalies = 0
+        if cr_std > 0 and bl_std > 0:
+            for v in cr_nums:
+                if abs(v - cr_mean) > 2 * cr_std and abs(v - bl_mean) <= 2 * bl_std:
+                    new_anomalies += 1
+        if new_anomalies:
+            lines.append(f"[{key}] new_anomalies: {new_anomalies} points outside baseline 2σ")
+
+    if not lines:
+        return ""
+    return "### Comparative Visual Primitives (vs last run)\n" + "\n".join(lines)
 
 
 def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]:
