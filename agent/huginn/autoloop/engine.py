@@ -1800,6 +1800,25 @@ class AutoloopEngine:
                 results["visual_primitives"] = visual_hint
                 self._last_visual_context = visual_hint
 
+            # 比较性视觉原语: 把本轮结果和上轮做差分, 突出变化.
+            # 峰值位移/新异常/趋势反转 — 这些是 agent 最关心的信号.
+            prev_exec = getattr(self, '_last_execution_result', None)
+            if prev_exec and isinstance(prev_exec.get('result'), dict):
+                try:
+                    from huginn.tools.visual_hook import extract_comparative_primitives
+                    comp = extract_comparative_primitives(
+                        prev_exec.get('result', {}), execution_result
+                    )
+                    if comp:
+                        results["comparative_primitives"] = comp
+                        # 也拼进 visual_context, 下轮 hypothesis 能看到
+                        self._last_visual_context = (
+                            f"{self._last_visual_context}\n{comp}".strip()
+                            if self._last_visual_context else comp
+                        )
+                except Exception:
+                    pass
+
             r_phys = execution_result.get("r_phys")
             if r_phys is None:
                 result_type = execution_result.get("result_type")

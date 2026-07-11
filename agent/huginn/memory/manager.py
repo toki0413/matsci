@@ -77,13 +77,16 @@ class MemoryManager:
         )
         self.session.add_tool_call(record)
 
-        # Auto-promote important tool results to long-term memory
+        # Auto-promote important tool results to long-term memory.
+        # 以前只允许 vasp/lammps/structure 三个工具, 现在用模式匹配:
+        # 任何 *_tool 或 *_runner 的成功结果都走重要性评分, 由 _score_importance
+        # 决定是否真正晋升. 白名单是多余的守门——评分函数本身就是过滤器.
         if (
             self.config.auto_promote_to_longterm
             and result
             and hasattr(result, "success")
             and result.success
-            and tool_name in {"vasp_tool", "lammps_tool", "structure_tool"}
+            and (tool_name.endswith("_tool") or tool_name.endswith("_runner"))
         ):
             self._promote_tool_result(record)
 

@@ -31,6 +31,10 @@ TIER_TTL_HOURS = {
     "long": None,  # permanent
 }
 
+# 检索排序: long 层优先于 mid 优先于 short, 同层内按 importance + access_count.
+# 以前不区分层级, 一条 short 层的高 importance 记忆会排在 long 层前面.
+_TIER_ORDER = "CASE tier WHEN 'long' THEN 0 WHEN 'mid' THEN 1 WHEN 'short' THEN 2 ELSE 3 END"
+
 MATERIAL_CATEGORIES = {
     "structure",
     "property",
@@ -379,7 +383,7 @@ class LongTermMemory:
                             + " AND m.rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?)"
                         )
                         fts_params = params + [fts_query]
-                        fts_sql += " ORDER BY importance DESC, access_count DESC LIMIT ?"
+                        fts_sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
                         fts_params.append(top_k)
                         rows = conn.execute(fts_sql, tuple(fts_params)).fetchall()
                         fts_matched = True
@@ -387,13 +391,13 @@ class LongTermMemory:
                         pass
                 # Fallback to LIKE if FTS5 unavailable or query failed
                 if not fts_matched:
-                    sql += " AND content LIKE ?"
+                    sql += f" AND content LIKE ?"
                     params.append(f"%{query}%")
-                    sql += " ORDER BY importance DESC, access_count DESC LIMIT ?"
+                    sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
                     params.append(top_k)
                     rows = conn.execute(sql, tuple(params)).fetchall()
             else:
-                sql += " ORDER BY importance DESC, access_count DESC LIMIT ?"
+                sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
                 params.append(top_k)
                 rows = conn.execute(sql, tuple(params)).fetchall()
 
