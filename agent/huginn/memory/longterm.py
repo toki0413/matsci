@@ -594,6 +594,31 @@ class LongTermMemory:
             rows = conn.execute(sql, tuple(params)).fetchall()
             return [dict(r) for r in rows]
 
+    def count_alive_by_tier(self) -> dict[str, int]:
+        """Single SQL query for tier counts — replaces list_all + 3x traversal."""
+        alive_where, alive_params = self._where_alive()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT tier, COUNT(*) AS c FROM memories WHERE {alive_where} GROUP BY tier",
+                alive_params,
+            ).fetchall()
+        counts = {"short": 0, "mid": 0, "long": 0}
+        for r in rows:
+            counts[r["tier"]] = r["c"]
+        counts["total"] = sum(counts.values())
+        return counts
+
+    def list_long_tier(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Fetch only long-tier entries, sorted by importance desc."""
+        alive_where, alive_params = self._where_alive()
+        sql = (
+            f"SELECT * FROM memories WHERE {alive_where} AND tier = 'long'"
+            " ORDER BY importance DESC LIMIT ?"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, (*alive_params, limit)).fetchall()
+            return [dict(r) for r in rows]
+
     def prune_expired(self) -> int:
         """Remove all expired memories. Returns count deleted."""
         with self._connect() as conn:

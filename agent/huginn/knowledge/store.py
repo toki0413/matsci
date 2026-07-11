@@ -7,13 +7,14 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any
-
-import numpy as np
+from typing import TYPE_CHECKING, Any
 
 from huginn.utils.cache import TimedLRUCache
 import logging
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 CHUNK_SIZE = 800
@@ -52,11 +53,13 @@ class _EmbeddingModel:
                 _EmbeddingModel._use_chroma = False
             _EmbeddingModel._initialized = True
 
-    def encode(self, texts: list[str], cache_key: str | None = None) -> np.ndarray:
+    def encode(self, texts: list[str], cache_key: str | None = None) -> "np.ndarray":
         if cache_key:
             cached = _EmbeddingModel._embedding_cache.get(cache_key)
             if cached is not None:
                 return cached
+
+        import numpy as np
 
         if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
             vectors = _EmbeddingModel._ef(texts)

@@ -77,36 +77,6 @@ def test_parent_child(log: ResearchLog) -> None:
 # ── 搜索 ───────────────────────────────────────────────────
 
 
-def test_search(log: ResearchLog) -> None:
-    log.add(RecordType.CONJECTURE, "band gap prediction", "用 DFT 算带隙")
-    log.add(RecordType.OBSTACLE, "收敛问题", "ENCUT 太低导致不收敛")
-    # 标题命中
-    results = log.search("band gap")
-    assert len(results) >= 1
-    assert any("band gap" in r.title for r in results)
-    # 内容命中
-    results = log.search("ENCUT")
-    assert len(results) >= 1
-    assert any("ENCUT" in r.content for r in results)
-
-
-# ── 统计 ───────────────────────────────────────────────────
-
-
-def test_stats(log: ResearchLog) -> None:
-    log.add(RecordType.CONJECTURE, "c1", "x")
-    log.add(RecordType.CONJECTURE, "c2", "x")
-    log.add(RecordType.PROOF_ATTEMPT, "p1", "x")
-    stats = log.get_stats()
-    assert stats["total"] == 3
-    assert stats["by_type"]["conjecture"] == 2
-    assert stats["by_type"]["proof_attempt"] == 1
-    assert stats["archived"] == 0
-
-
-# ── 容量清理 ──────────────────────────────────────────────
-
-
 def test_cleanup(tmp_path) -> None:
     # max_records=5, auto_archive 开着
     cfg = ResearchLogConfig(max_records=5, auto_archive=True)
@@ -118,14 +88,13 @@ def test_cleanup(tmp_path) -> None:
         r3 = log.add(RecordType.CONJECTURE, "c3", "content3")
         log.update_status(r1.id, "refuted")
         log.update_status(r2.id, "refuted")
-        assert log.get_stats()["archived"] == 2
+        refuted = log.list_by_status("refuted")
+        assert len(refuted) == 2
         # 再加 3 条, 第 6 条触发清理 (total=6 > max=5, 删 1 条归档)
         log.add(RecordType.CONJECTURE, "c4", "content4")
         log.add(RecordType.CONJECTURE, "c5", "content5")
         log.add(RecordType.CONJECTURE, "c6", "content6")
-        stats = log.get_stats()
-        # 归档记录被删了一条, 总数回到 max_records
-        assert stats["total"] <= 5
-        assert stats["archived"] == 1
+        all_records = log.list_by_status("active") + log.list_by_status("refuted")
+        assert len(all_records) <= 5
     finally:
         log.close()

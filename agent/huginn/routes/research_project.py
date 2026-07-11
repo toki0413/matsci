@@ -22,19 +22,35 @@ router = APIRouter(prefix="/projects", tags=["research_projects"])
 _lock = threading.Lock()
 _store_path = Path.home() / ".huginn" / "research_projects.json"
 
+# mtime-based cache: avoids reading + json.loads on every request
+_cached_data: dict[str, dict[str, Any]] | None = None
+_cached_mtime: float = 0.0
+
 
 def _load() -> dict[str, dict[str, Any]]:
+    global _cached_data, _cached_mtime
     if not _store_path.exists():
         return {}
     try:
-        return json.loads(_store_path.read_text("utf-8"))
+        mtime = _store_path.stat().st_mtime
+        if _cached_data is not None and mtime == _cached_mtime:
+            return _cached_data
+        _cached_data = json.loads(_store_path.read_text("utf-8"))
+        _cached_mtime = mtime
+        return _cached_data
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def _invalidate_cache() -> None:
+    global _cached_data
+    _cached_data = None
 
 
 def _save(data: dict[str, dict[str, Any]]) -> None:
     _store_path.parent.mkdir(parents=True, exist_ok=True)
     _store_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+    _invalidate_cache()
 
 
 def _now() -> str:
