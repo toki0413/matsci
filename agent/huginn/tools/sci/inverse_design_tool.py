@@ -178,16 +178,26 @@ class InverseDesignTool(HuginnTool):
             for i, idx in enumerate(seed_idx):
                 pop[i] = np.array(args.candidates[idx])
 
-        # Evaluate fitness (use pre-computed scores if available, otherwise random)
-        # ponytail: real GA would call an external evaluator; here we use the
-        # pre-computed scores or a simple distance-to-target as proxy
+        # Evaluate fitness
+        # 支持外部评估器: 如果 args 里带 evaluator (callable), 用它;
+        # 否则用预计算 scores 或距离代理.
+        # ponytail: 之前是纯内置代理. 现在加了外部评估器接口,
+        # 让 GA 能调用真实仿真工具 (VASP/LAMMPS) 做适应度评估.
+        evaluator = getattr(args, "evaluator", None)
         def evaluate(x):
+            if evaluator is not None:
+                # 外部评估器: 调真实仿真
+                try:
+                    score = evaluator(x)
+                    return float(score) if args.maximize else -float(score)
+                except Exception:
+                    return -1e6
             if args.candidates and args.scores:
-                # Find nearest candidate
+                # 预计算 scores: 找最近候选
                 dists = np.sum((np.array(args.candidates) - x) ** 2, axis=1)
                 nearest = np.argmin(dists)
                 return args.scores[nearest] if args.maximize else -args.scores[nearest]
-            # Proxy: negative distance from midpoint (maximize = explore center)
+            # 代理: 距离中点的负距离 (maximize = 探索中心)
             return -np.sum((x - (bl + bh) / 2) ** 2) if args.maximize else np.sum((x - (bl + bh) / 2) ** 2)
 
         fitness = np.array([evaluate(ind) for ind in pop])

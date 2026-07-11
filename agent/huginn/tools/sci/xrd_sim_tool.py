@@ -434,19 +434,20 @@ class XrdSimTool(HuginnTool):
             success=True,
         )
 
-    # 立方晶系逆设计用到的前三个允许反射.
-    # ponytail: 只支持立方晶系; 四方/六方 (a, c 两变量) 留作后续扩展,
-    # 届时把 _CUBIC_HKLS 换成按晶系分发的查找表即可.
+    # 逆设计用允许反射查找表, 按晶系分发.
+    # 立方: a 单参数, d = a/√(h²+k²+l²)
+    # 四方: a, c 两参数, d = 1/√(h²+k²)/a² + l²/c²)
+    # 六方: a, c 两参数, d = 1/√(4(h²+hk+k²)/(3a²) + l²/c²)
     _CUBIC_HKLS = [(1, 1, 1), (2, 0, 0), (2, 2, 0)]
+    _TETRAGONAL_HKLS = [(1, 0, 1), (2, 0, 0), (2, 2, 0), (2, 1, 1)]
+    _HEXAGONAL_HKLS = [(1, 0, 0), (1, 0, 1), (2, 0, 0), (2, 1, 1)]
 
     def _inverse_design(
         self, input_data: XrdSimToolInput, context: ToolContext | None = None
     ) -> ToolResult:
         """逆设计: 给定目标 2θ 峰位, 反推晶格常数.
-
-        立方晶系下 d = a/√(h²+k²+l²), 再由 Bragg 定律 2θ = 2·arcsin(λ/2d)
-        得到峰位. 把目标峰按顺序匹配到 (111)/(200)/(220), 用 Nelder-Mead
-        最小化 Σ(2θ_sim - 2θ_target)² 求最优 a.
+        支持立方 (a), 四方 (a, c), 六方 (a, c) 三种晶系.
+        晶系由 lattice_system 参数指定, 默认 cubic.
         """
         targets = input_data.target_peaks
         if not targets:
@@ -466,7 +467,19 @@ class XrdSimTool(HuginnTool):
             )
 
         wl = input_data.wavelength
-        allowed = self._CUBIC_HKLS
+        # 晶系选择: 从 lattice_params_guess 长度推断, 或从 input_data 字段读
+        system = getattr(input_data, "lattice_system", "cubic").lower()
+        if system == "tetragonal":
+            allowed = self._TETRAGONAL_HKLS
+            return self._inverse_design_2param(wl, targets, allowed, system, "tetragonal",
+                                                input_data.lattice_params_guess)
+        elif system in ("hexagonal", "hex"):
+            allowed = self._HEXAGONAL_HKLS
+            return self._inverse_design_2param(wl, targets, allowed, system, "hexagonal",
+                                                input_data.lattice_params_guess)
+        else:
+            # 立方 (默认)
+            allowed = self._CUBIC_HKLS
         n = min(len(targets), len(allowed))
         inv_sq = [math.sqrt(h * h + k * k + l * l) for h, k, l in allowed[:n]]
         tgt = [float(t) for t in targets[:n]]
@@ -515,6 +528,86 @@ class XrdSimTool(HuginnTool):
                 "lattice_system": "cubic",
                 "lattice_a": round(a_opt, 6),
                 "lattice_parameters": [round(a_opt, 6)] * 3 + [90.0, 90.0, 90.0],
+                "match_error": round(rmse, 6),
+                "sse": round(sse, 6),
+                "simulated_peaks": sim_peaks,
+                "target_peaks": tgt,
+                "wavelength": wl,
+                "n_peaks": n,
+                "converged": bool(res.success),
+            },
+            success=True,
+        )
+
+    def _inverse_design_2param(
+        self, wl: float, targets: list, allowed: list, system_name: str,
+        crystal_class: str, lattice_guess: list | None,
+    ) -> ToolResult:
+        """四方/六方晶系逆设计: (a, c) 两参数优化.
+        四方: 1/d² = (h²+k²)/a² + l²/c²
+        六方: 1/d² = 4(h²+hk+k²)/(3a²) + l²/c²
+        """
+        from scipy.optimize import minimize
+        n = min(len(targets), len(allowed))
+        tgt = [float(t) for t in targets[:n]]
+        hkls = allowed[:n]
+
+        a0, c0 = 4.0, 6.0  # 默认初始猜测
+        if lattice_guess and len(lattice_guess) >= 2:
+            if lattice_guess[0] > 0: a0 = float(lattice_guess[0])
+            if lattice_guess[1] > 0: c0 = float(lattice_guess[1])
+
+        def d_spacing(a: float, c: float, hkl: tuple) -> float:
+            h, k, l = hkl
+            if crystal_class == "tetragonal":
+                inv_d2 = (h*h + k*k) / (a*a) + (l*l) / (c*c)
+            else:  # hexagonal
+                inv_d2 = 4.0 * (h*h + h*k + k*k) / (3.0 * a*a) + (l*l) / (c*c)
+            return 1.0 / math.sqrt(inv_d2) if inv_d2 > 0 else 1e6
+
+        def two_theta(a: float, c: float, hkl: tuple) -> float:
+            d = d_spacing(a, c, hkl)
+            arg = wl / (2.0 * d)
+            if arg >= 1.0:
+                return 180.0
+            return math.degrees(2.0 * math.asin(arg))
+
+        def objective(x):
+            a, c = float(x[0]), float(x[1])
+            if a <= 0.0 or c <= 0.0:
+                return 1e6
+            return sum((two_theta(a, c, hkl) - t) ** 2 for hkl, t in zip(hkls, tgt))
+
+        res = minimize(
+            objective, [a0, c0], method="Nelder-Mead",
+            options={"xatol": 1e-5, "fatol": 1e-10, "maxiter": 8000},
+        )
+        a_opt, c_opt = float(res.x[0]), float(res.x[1])
+
+        sim_peaks = []
+        sse = 0.0
+        for hkl, t in zip(hkls, tgt):
+            tt = two_theta(a_opt, c_opt, hkl)
+            sse += (tt - t) ** 2
+            sim_peaks.append({
+                "hkl": list(hkl),
+                "two_theta": round(tt, 4),
+                "target_two_theta": round(t, 4),
+                "delta": round(tt - t, 4),
+            })
+        rmse = math.sqrt(sse / n) if n else 0.0
+
+        if crystal_class == "tetragonal":
+            lattice_params = [round(a_opt, 6)] * 2 + [round(c_opt, 6)] + [90.0, 90.0, 90.0]
+        else:
+            lattice_params = [round(a_opt, 6)] * 2 + [round(c_opt, 6)] + [90.0, 90.0, 120.0]
+
+        return ToolResult(
+            data={
+                "lattice_system": system_name,
+                "lattice_a": round(a_opt, 6),
+                "lattice_c": round(c_opt, 6),
+                "lattice_parameters": lattice_params,
                 "match_error": round(rmse, 6),
                 "sse": round(sse, 6),
                 "simulated_peaks": sim_peaks,

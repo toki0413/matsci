@@ -417,23 +417,77 @@ class AutoloopEngine:
             return ""
 
     # 上下文预算: 防止 prompt block 累积超过 token 上限.
-    # 优先级: context > math > kg > visual > kb > mem > hint > pipeline > composite
-    # 低优先级 block 先被裁剪. ponytail: 字符级近似, 不算 token, 够用.
+    # 优先级: body > math > kg > visual > kb > mem > hint > skill > composite > pipeline
+    # 超预算时不是直接丢弃, 而是分层压缩: 先截断 → 再摘要 → 最后才删.
+    # 视觉语言比文字语言更能压缩信息 — 一行 "[energies] peak=idx3, trend=↑"
+    # 传达的信息等于 200 chars 的 JSON. 用压缩替代丢弃, 保留信息密度.
     _PROMPT_BUDGET = 12000  # chars, 约 3K tokens
 
+    @staticmethod
+    def _compress_block(name: str, text: str, level: int) -> str:
+        """分层压缩: level 0=原样, 1=截断, 2=一行摘要, 3=删除."""
+        if not text or level <= 0:
+            return text if level <= 0 else ""
+        if level == 1:
+            # 截断到 300 字符, 保留开头
+            if len(text) <= 300:
+                return text
+            return text[:300] + "..."
+        if level == 2:
+            # 压缩成一行摘要: 取关键信息
+            lines = text.strip().split("\n")
+            # KB/KG/mem: 只保留前 2 行 + "..."
+            if len(lines) <= 2:
+                return lines[0][:100] if lines else ""
+            return lines[0][:100] + " | " + lines[1][:100] + " | ..."
+        return ""
+
     def _trim_to_budget(self, blocks: list[tuple[str, str]]) -> str:
-        """按优先级拼接 blocks, 超预算时从低优先级开始裁剪."""
-        total = sum(len(v) for _, v in blocks)
+        """按优先级拼接 blocks, 超预算时分层压缩: 截断→摘要→删除."""
+        kept = [(n, v) for n, v in blocks]
+        total = sum(len(v) for _, v in kept)
         if total <= self._PROMPT_BUDGET:
-            return "".join(v for _, v in blocks)
-        # 从尾部 (低优先级) 开始删
-        kept = [v for _, v in blocks]
+            return "".join(v for _, v in kept)
+
+        # Pass 1: 截断低优先级 block 到 300 字符
         for i in range(len(kept) - 1, -1, -1):
-            total -= len(kept[i])
-            kept[i] = ""
             if total <= self._PROMPT_BUDGET:
                 break
-        return "".join(kept)
+            name, text = kept[i]
+            if name == "body":  # body 永远不压缩
+                continue
+            compressed = self._compress_block(name, text, 1)
+            total -= len(text) - len(compressed)
+            kept[i] = (name, compressed)
+
+        if total <= self._PROMPT_BUDGET:
+            return "".join(v for _, v in kept)
+
+        # Pass 2: 压缩成一行摘要
+        for i in range(len(kept) - 1, -1, -1):
+            if total <= self._PROMPT_BUDGET:
+                break
+            name, text = kept[i]
+            if name == "body":
+                continue
+            compressed = self._compress_block(name, text, 2)
+            total -= len(text) - len(compressed)
+            kept[i] = (name, compressed)
+
+        if total <= self._PROMPT_BUDGET:
+            return "".join(v for _, v in kept)
+
+        # Pass 3: 从最低优先级开始删除
+        for i in range(len(kept) - 1, -1, -1):
+            if total <= self._PROMPT_BUDGET:
+                break
+            name, text = kept[i]
+            if name == "body":
+                continue
+            total -= len(text)
+            kept[i] = (name, "")
+
+        return "".join(v for _, v in kept)
 
     def _persona_system_prompt(self, persona_name: str | None) -> str:
         """取 persona 的 system prompt. 找不到就返回空串, 不报错."""
