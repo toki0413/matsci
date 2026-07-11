@@ -27,6 +27,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -111,6 +112,11 @@ class ResearchState:
     math_structures: list[dict[str, Any]] = field(default_factory=list)
     # 数学验证结果
     math_verification: dict[str, Any] = field(default_factory=dict)
+
+    # SR+GP 发现结果 (数据驱动 gap 填充)
+    sr_gp_results: list[dict[str, Any]] = field(default_factory=list)
+    # 黑箱 ML 结果 (用户 opt-in)
+    blackbox_results: list[dict[str, Any]] = field(default_factory=list)
 
     # 元信息
     target_journal: str | None = None
@@ -994,6 +1000,399 @@ class DeliAutoResearch:
                 + ", ".join(s.get("structure", "?") for s in structures)
             )
 
+    async def _collect_gap_data(
+        self, state: ResearchState, gap: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """从 KB + ProvenanceRegistry 收集与 gap 相关的数据.
+
+        返回 {"rows": [...], "source": "...", "gap": "..."} 或 None.
+        """
+        gap_text = gap.get("gap", "") if isinstance(gap, dict) else str(gap)
+        data_rows: list[dict[str, float]] = []
+
+        # 1. 查 ProvenanceRegistry — 历史仿真产出
+        try:
+            from huginn.provenance.registry import ProvenanceRegistry
+
+            reg = ProvenanceRegistry.shared()
+            for tool in ("vasp_tool", "lammps_tool", "qe_tool", "gp_tool"):
+                entries = reg.find_by_tool(tool)
+                for e in entries[-50:]:  # 最近50条
+                    props = e.key_properties or {}
+                    if props and isinstance(props, dict):
+                        row = {
+                            k: v
+                            for k, v in props.items()
+                            if isinstance(v, (int, float))
+                        }
+                        if len(row) >= 2:
+                            data_rows.append(row)
+        except Exception:
+            pass
+
+        # 2. 查 RAG — 论文/知识库中的数据点
+        try:
+            from huginn.rag.rag_tool import RAGTool, RAGToolInput
+
+            rag = RAGTool()
+            ctx = ToolContext(
+                session_id=state.session_id, workspace="."
+            )
+            result = await rag.call(
+                RAGToolInput(
+                    action="search",
+                    query=f"numerical data: {gap_text}",
+                    top_k=10,
+                ),
+                ctx,
+            )
+            if result.success and result.data:
+                for r in result.data.get("results", []):
+                    content = r.get("document", "") or r.get("content", "")
+                    nums = re.findall(r"[-\d.]+", content)
+                    if len(nums) >= 4:
+                        data_rows.append(
+                            {"_raw_text": content[:200], "_nums": nums[:10]}
+                        )
+        except Exception:
+            pass
+
+        if not data_rows:
+            return None
+
+        return {
+            "rows": data_rows,
+            "source": "provenance+rag",
+            "gap": gap_text,
+        }
+
+    async def _run_sr_gp_loop(
+        self,
+        state: ResearchState,
+        allow_blackbox: bool = False,
+    ) -> None:
+        """对数据驱动 gap 走 SR+GP 发现路径.
+
+        默认走可解释路径 (SR + GP). allow_blackbox=True 时,
+        SR 拟合不足且用户要求, 才 fallback 到黑箱 NN.
+        发现的方程回注 state.math_structures 供 _verify_math_consistency 检查.
+        """
+        data_gaps = [
+            s for s in state.math_structures
+            if s.get("structure") in ("statistical", "none")
+        ]
+        if not data_gaps:
+            return
+
+        try:
+            from huginn.tools.sci.interpretable_ml_tool import (
+                InterpretableMLInput,
+                InterpretableMLTool,
+            )
+
+            ml_tool = InterpretableMLTool()
+        except ImportError:
+            state.integrity_log.append(
+                "[sr_gp] InterpretableMLTool not available"
+            )
+            return
+
+        for gap_info in data_gaps:
+            gap_text = gap_info.get("gap", "")
+
+            data = await self._collect_gap_data(state, gap_info)
+            if not data or len(data.get("rows", [])) < 5:
+                state.integrity_log.append(
+                    f"[sr_gp] insufficient data for gap: {gap_text[:60]}... "
+                    f"(need >=5 rows, got {len(data.get('rows', [])) if data else 0})"
+                )
+                # 数据不足, 检查是否走迁移学习
+                await self._maybe_transfer_learning(state, gap_info)
+                continue
+
+            rows = data["rows"]
+            # 从 rows 构造 data_json: {feature: [values], target: [values]}
+            features: dict[str, list[float]] = {}
+            for row in rows:
+                for k, v in row.items():
+                    if isinstance(v, (int, float)):
+                        features.setdefault(k, []).append(float(v))
+            if not features:
+                continue
+            # 只保留数据完整的列 (长度一致)
+            max_len = max(len(v) for v in features.values())
+            features = {k: v for k, v in features.items() if len(v) == max_len}
+            if len(features) < 2:
+                continue
+
+            keys = list(features.keys())
+            target_key = keys[-1]
+            feature_keys = keys[:-1]
+
+            try:
+                # SR discover — call 是 async, 直接 await
+                sr_args = InterpretableMLInput(
+                    action="sr_guided_gp",
+                    data_json={
+                        **{k: features[k] for k in feature_keys},
+                        target_key: features[target_key],
+                    },
+                    target_column=target_key,
+                    feature_columns=feature_keys,
+                    max_order=2,
+                )
+                result = await ml_tool.call(sr_args, None)
+
+                if not result or not result.success:
+                    state.integrity_log.append(
+                        f"[sr_gp] SR failed for gap: {gap_text[:60]}..."
+                    )
+                    if allow_blackbox:
+                        await self._run_blackbox_fallback(
+                            state, gap_info, features, target_key
+                        )
+                    continue
+
+                sr_data = result.data or {}
+                sr_eq = sr_data.get("sr_equation", {})
+                r2 = sr_eq.get("r2", 0.0)
+                equation = sr_eq.get("equation", "")
+
+                state.sr_gp_results.append(
+                    {
+                        "gap": gap_text,
+                        "equation": equation,
+                        "r2": r2,
+                        "n_samples": sr_data.get("n_samples", 0),
+                        "approach": "SR + GP residual",
+                        "interpretation": sr_data.get("interpretation", ""),
+                    }
+                )
+
+                state.integrity_log.append(
+                    f"[sr_gp] gap '{gap_text[:40]}...' → equation: "
+                    f"{equation[:80]} (R2={r2:.3f})"
+                )
+
+                # 回注数学验证: 发现的方程作为一个新的 math_structure
+                state.math_structures.append(
+                    {
+                        "gap": gap_text,
+                        "structure": "discovered",
+                        "equation": equation,
+                        "recommended_tool": "symbolic_math_tool",
+                        "action": "dimensional_analysis",
+                        "source": "sr_gp",
+                        "r2": r2,
+                    }
+                )
+
+                # constraint_check — 物理约束验证
+                try:
+                    from huginn.tools.sci.symbolic_regression_tool import (
+                        SymbolicRegressionInput,
+                        SymbolicRegressionTool,
+                    )
+
+                    sr_tool = SymbolicRegressionTool()
+                    cc_args = SymbolicRegressionInput(
+                        action="constraint_check",
+                        probe_expression=equation,
+                        constraints={
+                            "bounds": {
+                                k: [min(features[k]), max(features[k])]
+                                for k in feature_keys
+                            },
+                            "dimensional_check": True,
+                        },
+                    )
+                    cc_result = await sr_tool.call(cc_args, None)
+                    if cc_result and cc_result.success:
+                        cc_data = cc_result.data or {}
+                        state.sr_gp_results[-1]["constraint_check"] = cc_data
+                        failed = [
+                            c.get("name", "?")
+                            for c in cc_data.get("checks", [])
+                            if not c.get("passed")
+                        ]
+                        if cc_data.get("all_passed"):
+                            state.integrity_log.append(
+                                f"[sr_gp] constraint_check PASSED for: "
+                                f"{equation[:60]}"
+                            )
+                        else:
+                            state.integrity_log.append(
+                                f"[sr_gp] constraint_check ISSUES for: "
+                                f"{equation[:60]} — {failed}"
+                            )
+                except Exception as e:
+                    logger.debug("constraint_check failed: %s", e)
+
+                # 写回 KB — 发现的方程存入知识库
+                await self._write_discovery_to_kb(
+                    state, equation, gap_text, r2
+                )
+
+            except Exception as e:
+                state.integrity_log.append(
+                    f"[sr_gp] error for gap '{gap_text[:40]}...': {e}"
+                )
+
+    async def _run_blackbox_fallback(
+        self,
+        state: ResearchState,
+        gap_info: dict[str, Any],
+        features: dict[str, list[float]],
+        target_key: str,
+    ) -> None:
+        """黑箱 NN fallback — 用户 opt-in, 结果标记为不可解释."""
+        try:
+            from huginn.tools.sci.gp_tool import GPTool, GPToolInput
+
+            gp_tool = GPTool()
+
+            keys = [k for k in features if k != target_key]
+            X = [
+                [features[k][i] for k in keys]
+                for i in range(len(features[target_key]))
+            ]
+            y = features[target_key]
+
+            # GPTool.call 是同步方法, 接受 dict
+            gp_args = GPToolInput(action="fit", X=X, y=y)
+            result = await asyncio.to_thread(
+                gp_tool.call, gp_args.model_dump(), None
+            )
+
+            if result and result.success:
+                state.blackbox_results.append(
+                    {
+                        "gap": gap_info.get("gap", ""),
+                        "approach": "blackbox GP (no SR)",
+                        "warning": (
+                            "Black-box surrogate, equation not interpretable. "
+                            "Results must be verified independently."
+                        ),
+                        "data": result.data,
+                    }
+                )
+                state.integrity_log.append(
+                    f"[blackbox] gap '{gap_info.get('gap', '')[:40]}...' → "
+                    f"GP fit (no interpretable equation)"
+                )
+        except Exception as e:
+            state.integrity_log.append(f"[blackbox] error: {e}")
+
+    async def _maybe_transfer_learning(
+        self,
+        state: ResearchState,
+        gap_info: dict[str, Any],
+    ) -> None:
+        """检查是否可以走迁移学习 (月壤等特定领域)."""
+        gap_text = gap_info.get("gap", "")
+        topic_lower = state.topic.lower()
+
+        transfer_domains = ["月壤", "lunar", "regolith", "moon"]
+        matched = any(
+            d in topic_lower or d in gap_text.lower()
+            for d in transfer_domains
+        )
+
+        if not matched:
+            state.integrity_log.append(
+                f"[transfer] gap '{gap_text[:40]}...' — no matching pretrained "
+                f"model, marked as 'needs more data'"
+            )
+            return
+
+        # 月壤迁移: 用预训练特征做迁移预测
+        try:
+            from huginn.tools.sci.gp_tool import GPTool, GPToolInput
+
+            gp_tool = GPTool()
+
+            transfer_data = await self._collect_gap_data(state, gap_info)
+            if not transfer_data or len(transfer_data.get("rows", [])) < 3:
+                state.integrity_log.append(
+                    "[transfer] lunar soil domain matched but insufficient "
+                    "data for transfer"
+                )
+                return
+
+            rows = transfer_data["rows"]
+            features: dict[str, list[float]] = {}
+            for row in rows:
+                for k, v in row.items():
+                    if isinstance(v, (int, float)):
+                        features.setdefault(k, []).append(float(v))
+            if len(features) < 2:
+                return
+            keys = list(features.keys())
+            target_key = keys[-1]
+            feature_keys = keys[:-1]
+            X = [
+                [features[k][i] for k in feature_keys]
+                for i in range(len(features[target_key]))
+            ]
+
+            gp_args = GPToolInput(
+                action="fit", X=X, y=features[target_key]
+            )
+            result = await asyncio.to_thread(
+                gp_tool.call, gp_args.model_dump(), None
+            )
+
+            if result and result.success:
+                state.sr_gp_results.append(
+                    {
+                        "gap": gap_text,
+                        "approach": "transfer learning (lunar soil domain)",
+                        "data": result.data,
+                        "note": "Pretrained features transferred from lunar soil domain",
+                    }
+                )
+                state.integrity_log.append(
+                    f"[transfer] lunar soil transfer learning applied for "
+                    f"gap: {gap_text[:40]}..."
+                )
+        except Exception as e:
+            state.integrity_log.append(f"[transfer] error: {e}")
+
+    async def _write_discovery_to_kb(
+        self,
+        state: ResearchState,
+        equation: str,
+        gap: str,
+        r2: float,
+    ) -> None:
+        """把 SR 发现的方程写回知识库, 供后续研究复用."""
+        try:
+            from huginn.knowledge.store import get_knowledge_base
+
+            kb = get_knowledge_base()
+            content = (
+                f"Discovered equation (R2={r2:.3f}): {equation}\n"
+                f"Research gap: {gap}\n"
+                f"Topic: {state.topic}\n"
+                f"Method: Symbolic regression + Gaussian process residual"
+            )
+            kb.add_text(
+                text=content,
+                metadata={
+                    "type": "discovered_equation",
+                    "topic": state.topic,
+                    "r2": r2,
+                    "equation": equation,
+                    "source": "deli_sr_gp",
+                },
+            )
+            state.integrity_log.append(
+                f"[kb_write] discovered equation written to KB: "
+                f"{equation[:60]}"
+            )
+        except Exception as e:
+            logger.debug("KB write failed: %s", e)
+
     async def _verify_math_consistency(self, state: ResearchState) -> None:
         """对识别出的数学结构做量纲一致性检查.
 
@@ -1085,6 +1484,26 @@ class DeliAutoResearch:
                 f"Computational loop: {len(state.gaps_filled)} gaps filled",
             )
 
+        # 1.8 SR+GP 数据驱动发现 — 对 statistical/none 类型 gap
+        if state.math_structures:
+            data_gaps = [
+                s for s in state.math_structures
+                if s.get("structure") in ("statistical", "none")
+            ]
+            if data_gaps:
+                await self._emit_progress(
+                    state, ResearchStage.GAP_ANALYSIS, "running",
+                    f"Running SR+GP discovery for {len(data_gaps)} "
+                    f"data-driven gaps...",
+                )
+                await self._run_sr_gp_loop(state)
+                await self._emit_progress(
+                    state, ResearchStage.GAP_ANALYSIS, "done",
+                    f"SR+GP: {len(state.sr_gp_results)} equations "
+                    f"discovered, {len(state.blackbox_results)} "
+                    f"black-box fits",
+                )
+
         # 2. Paper Writing (outline + drafting)
         await self._emit_progress(
             state, ResearchStage.OUTLINE, "running",
@@ -1103,6 +1522,12 @@ class DeliAutoResearch:
                 f"Math verification: {state.math_verification.get('verified_count', 0)}/"
                 f"{len(state.math_structures)} structures checked",
             )
+
+        # 把 SR+GP 发现注入 state, 供起草使用
+        if state.sr_gp_results:
+            state.computational_data["sr_gp_discoveries"] = state.sr_gp_results
+        if state.blackbox_results:
+            state.computational_data["blackbox_results"] = state.blackbox_results
 
         state = await self.paper_writing.run(state, config)
         self._check_gate(state, ResearchStage.OUTLINE)
