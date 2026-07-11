@@ -1390,11 +1390,37 @@ class AutoloopEngine:
         except Exception:
             return None
 
+    def _should_imaginate(self) -> bool:
+        """是否触发想象力模式. 高 surprise 或连续 refine 时返回 True.
+
+        MToM P4 (hybrid ST+TT): 心智模型预测错误时, 从 Theory Theory
+        切到 Simulation Theory 重新建模. 这里就是那个切换信号.
+        """
+        return (
+            getattr(self, "_last_surprise", 0.0) > 0.5
+            or getattr(self, "_refine_count", 0) >= 2
+        )
+
+    def _recent_failed_hypotheses(self, limit: int = 3) -> list[str]:
+        """从 hypothesis_graph 捞最近被 refuted 的假设, 给 forget_then_generate 用."""
+        try:
+            nodes = getattr(self.hypothesis_graph, "_nodes", {})
+            failed = [
+                n.statement for n in nodes.values()
+                if n.status in ("refuted", "superseded")
+            ]
+            return failed[-limit:] if failed else []
+        except Exception:
+            return []
+
     def _conjecture_hint(self, context: dict[str, Any]) -> str:
         """跑 Moonshine 跨域猜想流水线, 返回注入 prompt 的 hint.
 
         从 context 提取源问题和领域, 调 ConjectureGenerator 生成跨域类比
         猜想. 失败返回空串, 不影响 hypothesize 主流程.
+
+        想象力模式: _should_imaginate() 为 True 时改调 forget_then_generate,
+        把已 refuted 的假设当 known_solutions 遗忘掉, 强制从第一性原理重来.
         """
         try:
             from huginn.autoloop.conjecture import get_conjecture_generator
@@ -1403,16 +1429,26 @@ class AutoloopEngine:
             if not source_problem or len(source_problem) < 10:
                 return ""
             source_domain = context.get("domain") or "materials science"
-            # 目标领域: 从 KG 拿当前研究方向, 默认用 "battery cathodes"
             target_domain = context.get("target_domain") or "battery cathodes"
 
             gen = get_conjecture_generator()
-            result = gen.run(
-                source_problem=str(source_problem)[:500],
-                source_domain=str(source_domain),
-                target_domain=str(target_domain),
-                model=None,  # template mode, 不烧 token
-            )
+
+            if self._should_imaginate():
+                known = self._recent_failed_hypotheses()
+                result = gen.forget_then_generate(
+                    source_problem=str(source_problem)[:500],
+                    source_domain=str(source_domain),
+                    target_domain=str(target_domain),
+                    known_solutions=known,
+                    model=None,
+                )
+            else:
+                result = gen.run(
+                    source_problem=str(source_problem)[:500],
+                    source_domain=str(source_domain),
+                    target_domain=str(target_domain),
+                    model=None,  # template mode, 不烧 token
+                )
             conjecture = result.get("conjecture", {})
             statement = conjecture.get("statement", "")
             prediction = conjecture.get("prediction", "")
@@ -3295,6 +3331,22 @@ Please modify the code to address this task."""
         # 节省 ~150 tokens × 2 calls/iter × 20 iters = 6K tokens/run.
         ctx_blob = json.dumps(context, ensure_ascii=False).lower()
         math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in ctx_blob for s in _MATH_SIGNALS) else ""
+        # MatterChat 启发: 把上轮 execution 结果摘要注入 hypothesis prompt,
+        # 让假设建立在"上轮实际发生了什么"之上, 不只看 workspace 变化.
+        # _last_execution_result 在 _execute 里写入, 之前只 _build_plan_prompt 用.
+        exec_block = ""
+        last_exec = getattr(self, '_last_execution_result', None)
+        if last_exec and isinstance(last_exec, dict):
+            _tool = last_exec.get('_tool_name', 'unknown')
+            _res = last_exec.get('result', last_exec)
+            _summary = json.dumps(_res, ensure_ascii=False, default=str)[:500]
+            exec_block = f"\n### Last Execution Result ({_tool})\n{_summary}\n"
+        # 想象力引导: 高 surprise 或连续 refine 时, 要求 LLM 跳出分析思维,
+        # 考虑反事实假设. 基于 MToM P4 (hybrid ST+TT): 心智模型预测错误时
+        # 切到仿真理论重新建模. 结构切换在数学结构族之间, 不是随机猜.
+        imagination_block = ""
+        if self._should_imaginate():
+            imagination_block = self._IMAGINATION_PROMPT_BLOCK
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         return self._trim_to_budget([
             ("body", f"""You are an autonomous material science research agent.
@@ -3310,6 +3362,8 @@ principles, or conservation laws; identify the mathematical structure
 before proposing numerical experiments.
 
 Hypothesis:"""),
+            ("imagination", imagination_block),
+            ("exec", exec_block),
             ("math", math_block),
             ("kg", kg_block),
             ("visual", visual_block),
@@ -3317,6 +3371,15 @@ Hypothesis:"""),
             ("mem", mem_block),
             ("hint", hint_block),
         ])
+
+    _IMAGINATION_PROMPT_BLOCK = """
+Imagination directive (speculative mode activated):
+- Your prediction was significantly off, or your hypotheses keep getting refuted.
+- Consider a counterfactual: what if the governing structure is different from what you assumed?
+- Try shifting between mathematical structure families: PDE ↔ variational, continuum ↔ discrete, deterministic ↔ stochastic, linear ↔ nonlinear.
+- This is NOT random guessing — the shift must be between mathematically valid structure families, grounded in the domain context.
+- The conjecture hint above uses forget-then-generate: known failed approaches have been deliberately suppressed.
+"""
 
     # 数学深度提示块: 在 hypothesis / plan prompt 里持续提醒 agent 用
     # 符号数学工具把"现象"翻译成"PDE / 变分 / 几何 / 灵敏度"语言.

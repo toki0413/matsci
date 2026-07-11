@@ -273,7 +273,11 @@ class StreamingMixin:
         turn_span: Any,
         thread_id: str,
     ) -> dict[str, Any] | None:
-        """Trigger PRE_COMPACT hook + promote session summary when context > 70%.
+        """Trigger PRE_COMPACT hook + promote session summary when context > 60%.
+
+        50% = warning (log only), 60% = trigger compaction.
+        Previous 70% was too late — a single large tool result could
+        push from 60% to 95%+ in one turn, bypassing compaction.
 
         Returns ``{"before_pct": int, "after_pct": int}`` if compaction ran, else None.
         """
@@ -285,7 +289,16 @@ class StreamingMixin:
             return None
 
         before = calculate_context_usage(usage, self._model_context_window)
-        if before["used"] <= 70:
+
+        # 50% warning — log only, no action
+        if before["used"] >= 50 and before["used"] < 60:
+            logger.info(
+                "Context usage %d%%, approaching compaction threshold",
+                before["used"],
+            )
+            return None
+
+        if before["used"] <= 60:
             return None
 
         logger.info(
@@ -952,7 +965,7 @@ class StreamingMixin:
                     # Proactive pipeline suggestions
                     await self._maybe_inject_proactive_suggestion()
 
-                    # Auto-compact when context > 70%
+                    # Auto-compact when context > 60% (50% = warning)
                     compact_info = await self._maybe_auto_compact(
                         final_state, turn_span, thread_id
                     )
