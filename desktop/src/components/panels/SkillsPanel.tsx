@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Sparkles, Search, Package, Download, Check } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { SkillInfo } from '../../types/domain';
@@ -104,6 +105,7 @@ interface SkillsPanelProps {
 }
 
 export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
+  const { t } = useTranslation();
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
   const [skillArgs, setSkillArgs] = useState<Record<string, any>>({});
   const [skillResult, setSkillResult] = useState<string>("");
@@ -155,11 +157,11 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Package size={18} className="text-accent" />
-          Skills Marketplace
+          {t('skills.title')}
         </h2>
         {selectedSkill && (
           <button onClick={() => setSelectedSkill(null)} className="btn-secondary text-xs">
-            ← Back
+            {t('skills.back')}
           </button>
         )}
       </div>
@@ -169,15 +171,15 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
           !isConnected ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <Sparkles size={40} className="text-text-muted opacity-40" />
-              <p className="mt-4 text-sm font-medium text-text-secondary">Backend not connected</p>
+              <p className="mt-4 text-sm font-medium text-text-secondary">{t('skills.notConnected')}</p>
               <p className="mt-1 max-w-xs text-xs text-text-muted">
-                Skills are loaded from the AI backend. Make sure the server is running and reconnect to see available skills.
+                {t('skills.loadHint')}
               </p>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-              <p className="mt-4 text-sm text-text-muted">Loading skills…</p>
+              <p className="mt-4 text-sm text-text-muted">{t('skills.loading')}</p>
             </div>
           )
         ) : (
@@ -191,7 +193,7 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search skills by name, description, or tags..."
+                placeholder={t('skills.searchPh')}
                 className="input w-full pl-9 text-sm"
               />
             </div>
@@ -206,7 +208,7 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
                 activeCategory === 'all' ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-accent/10'
               }`}
             >
-              All ({skills.length})
+              {t('skills.all')} ({skills.length})
             </button>
             {categories.map(cat => {
               const count = skills.filter(s => s.category === cat).length;
@@ -229,10 +231,10 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <Search size={28} className="text-text-muted opacity-30" />
             <p className="mt-3 text-sm text-text-muted">
-              No skills match "{searchQuery}"
+              {t('skills.noMatch')} "{searchQuery}"
             </p>
             <button onClick={() => { setSearchQuery(''); setActiveCategory('all'); }} className="mt-2 text-xs text-accent hover:underline">
-              Clear filters
+              {t('skills.clearFilters')}
             </button>
           </div>
         ) : (
@@ -244,7 +246,7 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
               <div className="flex items-start justify-between gap-2">
                 <div className="text-xs font-semibold uppercase text-accent">{skill.category}</div>
                 {isInstalled ? (
-                  <span className="flex items-center gap-1 text-[10px] text-success"><Check size={10} /> Installed</span>
+                  <span className="flex items-center gap-1 text-[10px] text-success"><Check size={10} /> {t('skills.installed')}</span>
                 ) : (
                   <button
                     onClick={async () => {
@@ -260,9 +262,9 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
                     className="flex items-center gap-1 text-[10px] text-accent hover:underline disabled:opacity-50"
                   >
                     {installingSkill === skill.name ? (
-                      <><div className="h-2.5 w-2.5 animate-spin rounded-full border border-accent border-t-transparent" /> Installing</>
+                      <><div className="h-2.5 w-2.5 animate-spin rounded-full border border-accent border-t-transparent" /> {t('skills.installing')}</>
                     ) : (
-                      <><Download size={10} /> Install</>
+                      <><Download size={10} /> {t('skills.install')}</>
                     )}
                   </button>
                 )}
@@ -290,7 +292,7 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
                 }}
                 className="btn-primary mt-3 w-full text-xs"
               >
-                Execute
+                {t('skills.execute')}
               </button>
             </div>
             );
@@ -302,18 +304,18 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
       ) : (
         <div className="max-w-3xl space-y-4">
           <div className="card">
-            <div className="text-xs uppercase text-accent font-semibold">Skill</div>
+            <div className="text-xs uppercase text-accent font-semibold">{t('skills.skill')}</div>
             <h3 className="mt-1 text-base font-semibold">{selectedSkill.name}</h3>
             <p className="mt-1 text-sm text-text-secondary">
               {selectedSkill.description}
             </p>
             <div className="mt-2 text-xs text-text-muted">
-              Tags: {selectedSkill.tags.join(", ")}
+              {t('skills.tags')} {selectedSkill.tags.join(", ")}
             </div>
           </div>
           <div className="card">
             <div className="mb-3 flex items-center justify-between">
-              <label className="text-xs font-medium text-text-secondary">Arguments</label>
+              <label className="text-xs font-medium text-text-secondary">{t('skills.arguments')}</label>
               <button
                 onClick={() => {
                   const defaults: Record<string, any> = {};
@@ -331,7 +333,7 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
                 }}
                 className="text-xs text-accent hover:underline"
               >
-                Reset defaults
+                {t('skills.resetDefaults')}
               </button>
             </div>
             <SkillForm
@@ -341,11 +343,11 @@ export function SkillsPanel({ skills, isConnected }: SkillsPanelProps) {
             />
           </div>
           <button onClick={runSkill} disabled={skillLoading} className="btn-primary">
-            {skillLoading ? "Running…" : "Run Skill"}
+            {skillLoading ? t('skills.runningBtn') : t('skills.runSkill')}
           </button>
           {skillResult && (
             <div className="card border-accent/20 bg-bg-secondary">
-              <div className="mb-2 text-xs font-semibold text-accent">Result</div>
+              <div className="mb-2 text-xs font-semibold text-accent">{t('skills.result')}</div>
               <pre className="max-h-96 overflow-auto rounded-lg bg-bg-tertiary p-3 text-xs">
                 {skillResult}
               </pre>

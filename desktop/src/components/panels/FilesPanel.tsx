@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FolderTree } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
 import EmptyState from '../EmptyState';
@@ -21,6 +22,7 @@ export function FilesPanel({
   cwd, selectedFile, editorContent, editorDirty, editorMsg,
   setEditorContent, setEditorDirty, loadDir, saveFile, renderTree,
 }: FilesPanelProps) {
+  const { t } = useTranslation();
   const [remoteFiles, setRemoteFiles] = useState<any[] | null>(null);
   const [transferMsg, setTransferMsg] = useState('');
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -30,13 +32,13 @@ export function FilesPanel({
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setTransferMsg(`Uploading ${file.name}…`);
+    setTransferMsg(t('files.uploading', { name: file.name }));
     setUploadPct(0);
     try {
       await api.uploadWithProgress('/transfer/upload', file, (loaded, total) => {
         setUploadPct(Math.round((loaded / total) * 100));
       });
-      setTransferMsg(`Uploaded ${file.name}`);
+      setTransferMsg(t('files.uploaded', { name: file.name }));
       setUploadPct(100);
       setTimeout(() => setUploadPct(0), 2000);
     } catch (err: any) {
@@ -59,10 +61,10 @@ export function FilesPanel({
   };
 
   const syncRemote = async () => {
-    setTransferMsg('Syncing…');
+    setTransferMsg(t('files.syncing'));
     try {
       await api.post('/transfer/sync', { path: '.' });
-      setTransferMsg('Sync complete');
+      setTransferMsg(t('files.syncComplete'));
     } catch (err: any) {
       setTransferMsg(`Sync failed: ${err.message}`);
     }
@@ -72,38 +74,38 @@ export function FilesPanel({
     <div className="flex h-full">
       {/* File tree sidebar */}
       <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
-        <PanelHeader title="Workspace">
+        <PanelHeader title={t('files.workspace')}>
           <button
             onClick={() => cwd && loadDir(cwd)}
             className="text-xs text-text-secondary hover:text-text-primary"
           >
-            Refresh
+            {t('files.refresh')}
           </button>
           <button
             onClick={() => uploadRef.current?.click()}
             className="text-xs text-text-secondary hover:text-text-primary"
           >
-            Upload
+            {t('files.upload')}
           </button>
           <input ref={uploadRef} type="file" className="hidden" onChange={handleUpload} />
           <button
             onClick={browseRemote}
             className={`text-xs ${remoteFiles ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
           >
-            Remote
+            {t('files.remote')}
           </button>
           <button
             onClick={syncRemote}
             className="text-xs text-text-secondary hover:text-text-primary"
           >
-            Sync
+            {t('files.sync')}
           </button>
         </PanelHeader>
         <div className="flex-1 overflow-y-auto p-2">
           {remoteFiles ? (
             <div className="space-y-1">
               {remoteFiles.length === 0 ? (
-                <EmptyState icon={FolderTree} title="No files on remote" subtitle="Connect to a remote host in SSH Jobs to browse files." />
+                <EmptyState icon={FolderTree} title={t('files.noRemote')} subtitle={t('files.connectHint')} />
               ) : remoteFiles.map((f, i) => (
                 <div key={i} className="rounded px-2 py-1 text-xs hover:bg-bg-tertiary">
                   {f.is_dir ? '\u{1F4C1} ' : '\u{1F4C4} '}{f.name || f.path || String(f)}
@@ -113,7 +115,7 @@ export function FilesPanel({
           ) : cwd ? (
             renderTree(cwd)
           ) : (
-            <div className="p-4 text-xs text-text-muted">Loading workspace…</div>
+            <div className="p-4 text-xs text-text-muted">{t('files.loading')}</div>
           )}
         </div>
         <div className="border-t border-border p-3 text-xs text-text-muted truncate">
@@ -133,11 +135,11 @@ export function FilesPanel({
             titleClassName prop to PanelHeader if a second case shows up. */}
         <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
           <span className="text-sm font-medium truncate">
-            {selectedFile || "No file selected"}
+            {selectedFile || t('files.noFileSelected')}
           </span>
           <div className="flex items-center gap-3">
             {editorDirty && (
-              <span className="text-xs text-warning">Unsaved changes</span>
+              <span className="text-xs text-warning">{t('files.unsavedChanges')}</span>
             )}
             {editorMsg && (
               <span className="text-xs text-success">{editorMsg}</span>
@@ -147,7 +149,7 @@ export function FilesPanel({
               disabled={!selectedFile || !editorDirty}
               className="btn-primary px-3 py-1.5 text-xs"
             >
-              Save
+              {t('files.save')}
             </button>
           </div>
         </div>
@@ -163,7 +165,7 @@ export function FilesPanel({
           />
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
-            Select a file from the workspace to edit
+            {t('files.selectHint')}
           </div>
         )}
       </div>

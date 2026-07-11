@@ -638,6 +638,7 @@ class ToolAdapter:
         def _run_pre_checks(
             input_data: Any,
             kwargs: dict[str, Any],
+            context: Any = None,
         ) -> tuple[dict[str, Any] | None, Any]:
             """Run pre-execution gates: permission, cache, router, budget,
             loop detection, circuit breaker.
@@ -773,7 +774,7 @@ class ToolAdapter:
             input_data = tool.input_schema(**kwargs)
 
             # Shared pre-checks (permission, cache, router, budget, loop, breaker)
-            early, router = _run_pre_checks(input_data, kwargs)
+            early, router = _run_pre_checks(input_data, kwargs, context)
             if early is not None:
                 return early
 
@@ -863,7 +864,7 @@ class ToolAdapter:
             input_data = tool.input_schema(**kwargs)
 
             # Shared pre-checks (permission, cache, router, budget, loop, breaker)
-            early, router = _run_pre_checks(input_data, kwargs)
+            early, router = _run_pre_checks(input_data, kwargs, context)
             if early is not None:
                 return early
 
