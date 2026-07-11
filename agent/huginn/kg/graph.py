@@ -192,3 +192,69 @@ class ProjectKnowledgeGraph:
                 rel = edge_data.get("relation", "related_to")
                 lines.append(f"  → {rel} {dst_label}")
         return "\n".join(lines)
+
+    # 按实体类型分配颜色, 和 provenance DAG 风格一致
+    _TYPE_COLORS: dict[str, str] = {
+        "Topic": "#bbdefb",
+        "Material": "#c8e6c9",
+        "Tool": "#fff9c4",
+        "Method": "#e1bee7",
+        "ErrorPattern": "#ffcdd2",
+        "Fact": "#b2dfdb",
+        "Session": "#f5f5f5",
+        "Resource": "#ffe0b2",
+        "Literature": "#d1c4e9",
+        "experiment": "#cfd8dc",
+    }
+
+    def to_mermaid(self, max_nodes: int = 40) -> str:
+        """导出 Mermaid 流程图, 用于 /graph 命令或上下文注入.
+
+        复用 provenance/dag_visualizer 的 Mermaid 模式: 节点按类型着色,
+        边标注关系类型. 节点超 max_nodes 只取连接度最高的.
+        """
+        g = self._graph
+        if g.number_of_nodes() == 0:
+            return 'graph TD\n  empty["(empty knowledge graph)"]'
+
+        # 超限: 按度排序只取 top-N, 避免图太大没法看
+        if g.number_of_nodes() > max_nodes:
+            nodes_by_degree = sorted(
+                g.degree(), key=lambda x: x[1], reverse=True
+            )[:max_nodes]
+            keep = {n for n, _ in nodes_by_degree}
+            g = g.subgraph(keep).copy()
+
+        lines: list[str] = ["graph TD"]
+        type_classes: dict[str, list[str]] = {}
+
+        # 节点
+        for i, (nid, data) in enumerate(g.nodes(data=True)):
+            mid = f"K{i}"
+            label = data.get("label", nid)[:30]
+            etype = data.get("type", "Unknown")
+            conf = data.get("confidence", 0)
+            # Mermaid 节点 label 里引号要转义
+            safe_label = label.replace('"', "'").replace("\n", " ")
+            lines.append(f'  {mid}["{safe_label}<br/><small>{etype} · conf={conf:.2f}</small>"]')
+            type_classes.setdefault(etype, []).append(mid)
+
+        # 边
+        for src, dst, edge_data in g.edges(data=True):
+            # 找回 Mermaid 节点 id — 用 enumerate 顺序做映射
+            # ponytail: O(n) lookup per edge, ok for <100 nodes;
+            # build index if graph grows past 500.
+            src_idx = list(g.nodes()).index(src)
+            dst_idx = list(g.nodes()).index(dst)
+            rel = edge_data.get("relation", "→")
+            lines.append(f"  K{src_idx} -->|{rel}| K{dst_idx}")
+
+        # 按类型上色
+        for etype, ids in type_classes.items():
+            color = self._TYPE_COLORS.get(etype, "#f5f5f5")
+            # Mermaid classDef 名不能有空格
+            cls = etype.replace(" ", "_").lower()
+            lines.append(f"  classDef {cls} fill:{color},stroke:#666")
+            lines.append(f"  class {','.join(ids)} {cls}")
+
+        return "\n".join(lines)
