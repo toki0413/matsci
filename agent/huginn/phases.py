@@ -226,3 +226,23 @@ class PhaseManager:
             ResearchPhase(p) for p in data.get("history", [phase.value])
         ]
         return mgr
+
+
+# ResearchPhase ↔ ResearchStage mapping
+# Deli pipeline 的 9 个阶段映射到 ResearchPhase 的 7 个阶段
+PHASE_STAGE_MAP: dict[ResearchPhase, list[str]] = {
+    ResearchPhase.LITERATURE: ["topic_analysis", "literature_search", "gap_analysis"],
+    ResearchPhase.HYPOTHESIS: [],
+    ResearchPhase.PLANNING: ["outline"],
+    ResearchPhase.EXECUTION: ["drafting"],
+    ResearchPhase.VALIDATION: ["citation_verify"],
+    ResearchPhase.REPORTING: ["peer_review", "revision", "final"],
+}
+
+
+def stage_to_phase(stage_name: str) -> ResearchPhase:
+    """Deli stage name → corresponding ResearchPhase."""
+    for phase, stages in PHASE_STAGE_MAP.items():
+        if stage_name in stages:
+            return phase
+    return ResearchPhase.OPEN

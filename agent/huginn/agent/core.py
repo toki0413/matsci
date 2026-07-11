@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import ExitStack
 from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from huginn.agent_config import AgentConfig, _UNSET_SENTINEL
+from huginn.agent_config import _UNSET_SENTINEL, AgentConfig
 from huginn.benchmark import BenchmarkSuite
 from huginn.checkpointer import create_in_memory_checkpointer
 from huginn.context_manager import (
@@ -24,9 +23,9 @@ from huginn.context_manager import (
     reset_context_cache,
 )
 from huginn.hooks import HookManager
-from huginn.models.registry import create_langchain_model
 from huginn.models.router import ModelRouter
 from huginn.permissions import PermissionConfig
+from huginn.phases import PhaseManager, ResearchPhase
 from huginn.prompts import HUGINN_SYSTEM_PROMPT
 from huginn.telemetry import NullTelemetryCollector, TelemetryCollector
 from huginn.tools.adapter import ToolAdapter
@@ -34,11 +33,11 @@ from huginn.tools.registry import ToolRegistry
 from huginn.utils.conversation_tree import ConversationTree
 from huginn.utils.prompt_cache import PromptCacheBuilder
 
-from .middlewares import FixDanglingToolCallsMiddleware, RateLimitMiddleware
-from .context import ContextMixin
 from .callbacks import CallbackMixin
-from .session import SessionMixin
+from .context import ContextMixin
+from .middlewares import FixDanglingToolCallsMiddleware, RateLimitMiddleware
 from .reflection import ReflectionMixin
+from .session import SessionMixin
 from .streaming import StreamingMixin
 
 logger = logging.getLogger(__name__)
@@ -227,7 +226,7 @@ class HuginnAgent(
         self.system_prompt = m.system_prompt or HUGINN_SYSTEM_PROMPT
         self.begin_dialogs = m.begin_dialogs or []
 
-        from huginn.phases import PhaseManager, ResearchPhase
+        from huginn.phases import ResearchPhase
 
         self._phase_manager = PhaseManager(initial=ResearchPhase.OPEN)
 
@@ -402,11 +401,16 @@ class HuginnAgent(
     # ── Mode management ───────────────────────────────────────────
 
     def set_mode(self, mode: str) -> None:
-        if mode not in ("chat", "research"):
-            raise ValueError(f"unknown mode: {mode}. options: chat, research")
+        if mode not in ("chat", "research", "plan"):
+            raise ValueError(f"unknown mode: {mode}. options: chat, research, plan")
         if mode != self._mode:
+            old = self._mode
             self._mode = mode
             self._agent_graph = None
+            if mode == "research":
+                self._phase_manager.reset(ResearchPhase.LITERATURE)
+            elif old == "research":
+                self._phase_manager.reset(ResearchPhase.OPEN)
             logger.info("agent mode switched to '%s'", mode)
 
     def get_mode(self) -> str:
@@ -414,6 +418,9 @@ class HuginnAgent(
 
     def is_research_mode(self) -> bool:
         return self._mode == "research"
+
+    def is_plan_mode(self) -> bool:
+        return self._mode == "plan"
 
     # ── Specialised model selection ───────────────────────────────
     # ponytail: select_verification_model/select_archival_model/has_dedicated_verification

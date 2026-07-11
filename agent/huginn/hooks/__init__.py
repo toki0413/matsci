@@ -78,6 +78,9 @@ class HookContext:
     blocked: bool = False
     # 自由扩展位, 钩子之间传递数据用
     metadata: dict[str, Any] = field(default_factory=dict)
+    # 反向引用所属 agent, 让 hook 能查 agent 状态 (如 is_research_mode).
+    # 由 HookManager.run_pre/run_post 在创建 ctx 时注入, 测试中可留空.
+    agent: Any = None
     # Cached serialization of result — 20+ hooks call _extract_text()
     # on the same ctx, avoid 20× json.dumps. ponytail: simple memo,
     # reset if result changes (it shouldn't post-creation).
@@ -143,7 +146,7 @@ class HookManager:
         tool_name: str,
         args: Any,
         thread_id: str | None = None,
-    ) -> tuple[bool, Any, "HookContext"]:
+    ) -> tuple[bool, Any, HookContext]:
         """依次跑 pre_tool_use 钩子.
 
         Returns:
@@ -310,7 +313,7 @@ class AnomalyDetectionHook:
     每个 signal 各登记一条. 同一次调用里同 category 的只记第一条, 避免刷屏.
     """
 
-    def __init__(self, store: "AnomalyLogStore") -> None:
+    def __init__(self, store: AnomalyLogStore) -> None:
         # 延后导入, 避免 hooks 模块硬依赖 anomaly_log (循环导入风险)
         self._store = store
 
