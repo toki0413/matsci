@@ -73,7 +73,9 @@ async def agent_websocket(websocket: WebSocket):
     if identity is None:
         return
 
-    await websocket.accept()
+    # ws_auth_and_track may have already accepted (first-message auth)
+    if not websocket.scope.get("_ws_pre_accepted"):
+        await websocket.accept()
 
     # Per-connection state
     _pending_approvals: dict[str, asyncio.Future[bool]] = {}

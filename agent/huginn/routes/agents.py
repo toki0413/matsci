@@ -232,7 +232,8 @@ async def ws_chat_with_agent(websocket: WebSocket, agent_id: str):
     identity = await ws_auth_and_track(websocket)
     if identity is None:
         return  # ws_auth_and_track already closed the connection
-    await websocket.accept()
+    if not websocket.scope.get("_ws_pre_accepted"):
+        await websocket.accept()
     try:
         data = await websocket.receive_json()
         content = data.get("content", "")

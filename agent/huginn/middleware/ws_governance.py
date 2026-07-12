@@ -6,6 +6,8 @@ a connection with messages. Used by all /ws/* endpoints via ws_auth_and_track().
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import threading
 import time
@@ -102,12 +104,61 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
         if identity is None:
             return  # already closed
         try:
-            await websocket.accept()
+            if not websocket.scope.get("_ws_pre_accepted"):
+                await websocket.accept()
             # ... WS logic ...
         finally:
             get_tracker().release(identity)
+
+    Two auth paths:
+    1. URL query param (?token=xxx) — backward compat, validated before accept.
+       Tokens in URLs leak to server/proxy access logs.
+    2. First-message auth — if no URL token, the WS is accepted and the
+       client must send {"type":"auth","token":"xxx"} (or a raw token string)
+       within 10 seconds. In dev mode (HUGINN_DEV_MODE=1) auth is skipped.
     """
     from huginn.security.auth import require_api_key
+
+    url_token = websocket.query_params.get("token")
+    _dev = os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes")
+
+    if url_token:
+        # Backward compat: inject URL token as Authorization header
+        websocket.scope["headers"].append(
+            (b"authorization", f"Bearer {url_token}".encode())
+        )
+    elif not _dev:
+        # First-message auth: accept, wait for auth message
+        await websocket.accept()
+        websocket.scope["_ws_pre_accepted"] = True
+        try:
+            raw = await asyncio.wait_for(
+                websocket.receive_text(), timeout=10.0
+            )
+        except Exception:
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="auth timeout",
+            )
+            return None
+        # Parse: {"type":"auth","token":"xxx"} or raw token string
+        token = None
+        try:
+            msg = json.loads(raw)
+            if isinstance(msg, dict):
+                token = msg.get("token") or msg.get("auth")
+        except (json.JSONDecodeError, TypeError):
+            token = raw.strip() or None
+        if not token:
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="no token in auth message",
+            )
+            return None
+        websocket.scope["headers"].append(
+            (b"authorization", f"Bearer {token}".encode())
+        )
+    # else: dev mode, no token — require_api_key will bypass
 
     # require_api_key is sync — it raises HTTPException on bad credentials
     try:
