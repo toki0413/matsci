@@ -4,12 +4,18 @@ Three-level permission model:
 - AUTO: read-only / safe tools execute without confirmation
 - ASK: potentially expensive / destructive tools require confirmation
 - DENY: explicitly blocked tools cannot be executed
+
+Path-level declarative rules (inspired by Deep Agents) allow overriding
+the tool-level mode based on file path glob patterns, e.g. deny *.env
+or ask before writing to data/.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from huginn.types import PermissionMode, PermissionResult
 
@@ -85,6 +91,9 @@ DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
     "system_shell_tool": PermissionMode.DENY,
     # Coder tools
     "file_read_tool": PermissionMode.AUTO,
+    "glob": PermissionMode.AUTO,
+    "grep": PermissionMode.AUTO,
+    "eval_tool": PermissionMode.AUTO,
     "git_tool": PermissionMode.AUTO,
     # github_tool: 读动作在 tool 内部跳过权限检查直接执行, 写动作在 call() 里过权限
     "github_tool": PermissionMode.ASK,
@@ -104,6 +113,9 @@ class PermissionConfig:
     auto_approve_all: bool = False  # For CI/automation mode
     # plan mode: 把所有写工具降级成 ASK, 只读工具保持 AUTO
     plan_mode: bool = False
+    # path-level overrides: [(glob_pattern, mode), ...]
+    # matched against file_path from tool args, first match wins
+    path_rules: list[tuple[str, PermissionMode]] = field(default_factory=list)
 
     def get_mode(self, tool_name: str) -> PermissionMode:
         # 先按 rules / 通配规则算出"原始"模式
@@ -163,6 +175,24 @@ class PermissionChecker:
 
         return False, None
 
+    def _check_path_rules(self, args: dict | None) -> PermissionMode | None:
+        """Match file path from tool args against path_rules (first match wins).
+
+        Looks for common path field names in args: file_path, path, working_dir.
+        """
+        if not args or not self.config.path_rules:
+            return None
+        # extract path from common field names
+        path_str = args.get("file_path") or args.get("path") or ""
+        if not path_str:
+            return None
+        # match basename + full path so both "*.env" and "secrets/*" work
+        basename = Path(str(path_str)).name
+        for pattern, mode in self.config.path_rules:
+            if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(basename, pattern):
+                return mode
+        return None
+
     async def check(
         self,
         tool_name: str,
@@ -180,6 +210,22 @@ class PermissionChecker:
                 "requires explicit approval even in auto-approve mode"
             )
             return PermissionResult(mode=PermissionMode.ASK, reason=reason)
+
+        # path-level rules override tool-level mode (first match wins)
+        path_mode = self._check_path_rules(args)
+        if path_mode is not None:
+            if path_mode == PermissionMode.DENY:
+                return PermissionResult(
+                    mode=PermissionMode.DENY,
+                    reason=f"Path blocked by path-level rule",
+                )
+            if path_mode == PermissionMode.ASK:
+                return PermissionResult(
+                    mode=PermissionMode.ASK,
+                    reason=f"Path requires approval by path-level rule",
+                )
+            # AUTO — fall through to normal flow (no reason needed)
+            return PermissionResult(mode=PermissionMode.AUTO)
 
         mode = self.config.get_mode(tool_name)
 

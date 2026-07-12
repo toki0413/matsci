@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Huginn 全流程测试报告</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --green: #238636;
+  --red: #da3633;
+  --yellow: #d29922;
+  --blue: #58a6ff;
+  --purple: #bc8cff;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+.container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+h1 { font-size: 28px; margin-bottom: 8px; }
+h2 { font-size: 22px; margin: 32px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-size: 16px; margin: 20px 0 12px; color: var(--blue); }
+.meta { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; text-align: center; }
+.stat .num { font-size: 28px; font-weight: 700; }
+.stat .label { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.green { color: #3fb950; }
+.red { color: #f85149; }
+.yellow { color: #d29922; }
+.blue { color: var(--blue); }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.badge-pass { background: rgba(35,134,54,0.2); color: #3fb950; border: 1px solid rgba(35,134,54,0.3); }
+.badge-fail { background: rgba(218,54,51,0.2); color: #f85149; border: 1px solid rgba(218,54,51,0.3); }
+.badge-warn { background: rgba(210,153,34,0.2); color: #d29922; border: 1px solid rgba(210,153,34,0.3); }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+td code { background: rgba(110,118,129,0.2); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 13px; margin: 12px 0; }
+code { font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace; }
+.bar { height: 24px; border-radius: 4px; background: var(--border); overflow: hidden; position: relative; margin: 4px 0; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+.summary-box { display: flex; gap: 16px; flex-wrap: wrap; }
+.summary-item { flex: 1; min-width: 200px; }
+ul { padding-left: 20px; margin: 8px 0; }
+li { margin: 4px 0; }
+.commit-list { font-family: monospace; font-size: 13px; }
+.commit-list li { padding: 4px 0; }
+.tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; margin-left: 6px; }
+.tag-feat { background: rgba(88,166,255,0.15); color: var(--blue); }
+.tag-fix { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.tag-sec { background: rgba(188,140,255,0.15); color: var(--purple); }
+.tag-ci { background: rgba(35,134,54,0.15); color: #3fb950; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Huginn 全流程测试报告</h1>
+<p class="meta">生成时间: 2026-07-13 | 项目: matsci-agent (Huginn) | 测试周期: ~90 min</p>
+
+<!-- ── Executive Summary ── -->
+<h2>总览</h2>
+<div class="grid">
+  <div class="stat">
+    <div class="num green">14/14</div>
+    <div class="label">安全模块测试</div>
+  </div>
+  <div class="stat">
+    <div class="num green">9/12</div>
+    <div class="label">流水线阶段完成</div>
+  </div>
+  <div class="stat">
+    <div class="num blue">33.71</div>
+    <div class="label">ClawBench FinalScore</div>
+  </div>
+  <div class="stat">
+    <div class="num blue">2.19x</div>
+    <div class="label">并行加速比</div>
+  </div>
+  <div class="stat">
+    <div class="num green">104</div>
+    <div class="label">工具调用总数</div>
+  </div>
+  <div class="stat">
+    <div class="num green">53K</div>
+    <div class="label">生成文本字符</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>测试维度覆盖</h3>
+  <table>
+    <tr><th>维度</th><th>状态</th><th>关键指标</th></tr>
+    <tr><td>安全模块</td><td><span class="badge badge-pass">PASS</span></td><td>CommandFilter / RestrictedPython / PolicyEngine / Sandbox / safe_eval / CircuitBreaker / CredentialStore 全部通过</td></tr>
+    <tr><td>前端交互</td><td><span class="badge badge-pass">PASS</span></td><td>Settings / Knowledge Base / Chat / Pet 四大视图端到端验证</td></tr>
+    <tr><td>通信验证</td><td><span class="badge badge-pass">PASS</span></td><td>WS 连接正常, REST API 响应, 155+ 工具可用</td></tr>
+    <tr><td>并发测试</td><td><span class="badge badge-pass">PASS</span></td><td>3 轨道并行 + ClawBench 同时运行, 2.19x 加速比</td></tr>
+    <tr><td>压力测试</td><td><span class="badge badge-warn">DEGRADED</span></td><td>4 并发 LLM 调用导致后端事件循环阻塞, 负载降低后恢复</td></tr>
+    <tr><td>科研流水线</td><td><span class="badge badge-warn">PARTIAL</span></td><td>9/12 阶段完成, battery 轨道全完成, 跨轨道综合成功</td></tr>
+    <tr><td>ClawBench</td><td><span class="badge badge-warn">33.71</span></td><td>11 案例, 2 个满分 (Fe-C 相图, Cu 体弹模量)</td></tr>
+  </table>
+</div>
+
+<!-- ── Git Commits ── -->
+<h2>Git 提交记录</h2>
+<div class="card">
+  <ul class="commit-list">
+    <li><code>ee0acbc</code> <span class="tag tag-feat">feat</span> expand benchmarks: MatSciBench 8->32 cases (6 domains), CSMBench 5->24 cases (5 scales)</li>
+    <li><code>d2b9d48</code> <span class="tag tag-feat">feat</span> add CSMBench + MatSciBench test suites</li>
+    <li><code>7c64688</code> <span class="tag tag-fix">fix</span> frontend-backend comm P0/P1 bugs + smart port discovery</li>
+    <li><code>c0475ed</code> <span class="tag tag-ci">ci</span> add frontend build and security check jobs</li>
+    <li><code>7f23ded</code> <span class="tag tag-sec">security</span> add first-message WS auth protocol</li>
+    <li><code>1f86a74</code> <span class="tag tag-sec">security</span> document localStorage credential exposure risk</li>
+    <li><code>20a9b45</code> <span class="tag tag-feat">feat</span> benchmark: integrate ClawBench-style multi-trial metrics</li>
+    <li><code>4f52299</code> <span class="tag tag-sec">security</span> remove unused pickle import, document legacy fallback risk</li>
+  </ul>
+</div>
+
+<!-- ── CI Workflow ── -->
+<h2>CI Workflow</h2>
+<div class="card">
+  <table>
+    <tr><th>Job</th><th>Runner</th><th>内容</th><th>状态</th></tr>
+    <tr><td>python-tests</td><td>ubuntu-latest</td><td>Py 3.11/3.12/3.13 矩阵, pytest --timeout=120, 排除 integration</td><td><span class="badge badge-pass">配置就绪</span></td></tr>
+    <tr><td>integration-tests</td><td>ubuntu-latest</td><td>API 契约 + 安全渗透 + 混沌工程, --timeout=300</td><td><span class="badge badge-pass">配置就绪</span></td></tr>
+    <tr><td>frontend-build</td><td>ubuntu-latest</td><td>Node 20, npm ci + npm run build</td><td><span class="badge badge-pass">配置就绪</span></td></tr>
+    <tr><td>security-check</td><td>ubuntu-latest</td><td>PolicyEngine 自检 + pip-audit 漏洞扫描 (informational)</td><td><span class="badge badge-pass">配置就绪</span></td></tr>
+  </table>
+</div>
+
+<!-- ── Security Tests ── -->
+<h2>安全模块测试</h2>
+<div class="card">
+  <h3>14/14 全部通过</h3>
+  <table>
+    <tr><th>模块</th><th>测试项</th><th>结果</th></tr>
+    <tr><td>CommandFilter</td><td>危险命令拦截 (rm -rf /, del /f /q, format c:)</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>CommandFilter</td><td>安全命令放行 (python, ls, git)</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>RestrictedPython</td><td>AST 阻断 <code>import os; os.system(...)</code></td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>RestrictedPython</td><td>AST 放行 <code>x = 1 + 2</code></td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>PolicyEngine</td><td>策略引擎加载 + 规则数 > 0</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>SandboxExecutor</td><td>沙箱执行器实例化</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>safe_eval</td><td>安全表达式 <code>2 + 3</code> = 5</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>safe_eval</td><td>阻断 <code>__import__('os')</code></td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>CircuitBreaker</td><td>熔断器实例化</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>CredentialStore</td><td>凭据存储实例化</td><td><span class="badge badge-pass">PASS</span></td></tr>
+  </table>
+  <p style="color: var(--muted); font-size: 13px; margin-top: 8px;">
+    注: 初次运行时 CommandFilter 测试 3/6 失败, 原因是测试脚本使用了 <code>result.blocked</code> 属性, 
+    但实际 API 返回的是 <code>CommandFilterResult.is_safe</code>。修正为 <code>not result.is_safe</code> 后全部通过。
+  </p>
+</div>
+
+<!-- ── Frontend Tests ── -->
+<h2>前端交互测试 (Tauri 桌面端)</h2>
+<div class="card">
+  <h3>MSI 本地安装 + 浏览器真实交互验证</h3>
+  <table>
+    <tr><th>视图</th><th>测试项</th><th>结果</th></tr>
+    <tr><td>Settings</td><td>Provider 下拉框 (DeepSeek), Persona 选择, API Key 输入</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>Settings</td><td>后端连接状态显示 "Connected"</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>Knowledge Base</td><td>460 篇文档加载, 上传功能, Deep PDF Parse</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>Knowledge Base</td><td>Provenance DAG 可视化</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>Chat</td><td>消息发送 → 流式响应接收 (硅晶体结构: Fd-3m No.227, a=5.4307 Å)</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>Pet (Muninn)</td><td>点击 Pet 按钮 → 触发原生浮动窗口 (Tauri 窗口系统, 非 webview DOM)</td><td><span class="badge badge-pass">PASS</span></td></tr>
+  </table>
+</div>
+
+<!-- ── Pipeline Results ── -->
+<h2>异步多轨道科研流水线</h2>
+<div class="card">
+  <h3>设计: 3 轨道 × 4 阶段 + 跨轨道综合</h3>
+  <p style="color: var(--muted); font-size: 14px; margin-bottom: 12px;">
+    超时策略: 30 min/阶段 (硬上限) + 3 min/消息 (检查间隔) + 10 min 进度自动延长<br>
+    并行方式: <code>asyncio.gather()</code> 3 轨道同时运行, 每轨道 4 阶段顺序执行, 轨道间交错
+  </p>
+  <div class="grid">
+    <div class="stat"><div class="num green">60.1</div><div class="label">总用时 (min)</div></div>
+    <div class="stat"><div class="num green">9/12</div><div class="label">阶段完成</div></div>
+    <div class="stat"><div class="num green">104</div><div class="label">工具调用</div></div>
+    <div class="stat"><div class="num blue">2.19x</div><div class="label">并行加速比</div></div>
+  </div>
+  <table>
+    <tr><th>轨道</th><th>主题</th><th>阶段</th><th>用时</th><th>工具</th><th>文本</th><th>状态</th></tr>
+    <tr><td rowspan="4">perovskite</td><td rowspan="4">钙钛矿太阳能电池稳定性</td><td>调研</td><td>1804s</td><td>5</td><td>154</td><td><span class="badge badge-fail">FAIL</span> 限流</td></tr>
+    <tr><td>选题</td><td>60s</td><td>0</td><td>34</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>研究</td><td>1021s</td><td>22</td><td>1468</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>论文</td><td>292s</td><td>11</td><td>5540</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td rowspan="4">electrolyte</td><td rowspan="4">固态电解质高通量筛选</td><td>调研</td><td>371s</td><td>4</td><td>133</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>选题</td><td>481s</td><td>8</td><td>7677</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>研究</td><td>1837s</td><td>17</td><td>4248</td><td><span class="badge badge-fail">FAIL</span> 限流×14</td></tr>
+    <tr><td>论文</td><td>2s</td><td>0</td><td>0</td><td><span class="badge badge-fail">FAIL</span> 连接拒绝</td></tr>
+    <tr><td rowspan="4">battery</td><td rowspan="4">锂离子电池正极材料降解</td><td>调研</td><td>448s</td><td>5</td><td>11912</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>选题</td><td>338s</td><td>3</td><td>4776</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>研究</td><td>581s</td><td>13</td><td>5997</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>论文</td><td>638s</td><td>16</td><td>11408</td><td><span class="badge badge-pass">PASS</span></td></tr>
+    <tr><td>synthesis</td><td colspan="2">跨轨道交叉综合</td><td>417s</td><td>-</td><td>4582</td><td><span class="badge badge-pass">PASS</span></td></tr>
+  </table>
+  <p style="color: var(--muted); font-size: 13px; margin-top: 8px;">
+    串行总时间: 131.7 min → 并行实际: 60.1 min → 加速比: 2.19x<br>
+    battery 轨道完整走完 调研→选题→研究→论文 全流程, 产出 11K 字符论文框架
+  </p>
+</div>
+
+<!-- ── ClawBench ── -->
+<h2>ClawBench 基准评测</h2>
+<div class="card">
+  <div class="grid">
+    <div class="stat"><div class="num yellow">33.71</div><div class="label">FinalScore</div></div>
+    <div class="stat"><div class="num">0.349</div><div class="label">平均得分 S</div></div>
+    <div class="stat"><div class="num">2/11</div><div class="label">满分案例</div></div>
+    <div class="stat"><div class="num">159s</div><div class="label">平均延迟</div></div>
+  </div>
+  <table>
+    <tr><th>案例</th><th>类别</th><th>得分</th><th>通过</th></tr>
+    <tr><td>硅在室温下的晶体结构</td><td>structure</td><td>0.67</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>计算硅的带隙 (eV)</td><td>electronic</td><td>0.00</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>从MP查询BaTiO3基本信息</td><td>database</td><td>0.67</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>用SymPy计算定积分</td><td>symbolic</td><td>0.00</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>综述钙钛矿太阳能电池效率进展</td><td>literature</td><td>0.50</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>设计Li离子电池多尺度建模方案</td><td>multiscale</td><td>0.00</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>分析Fe-C二元相图共析反应</td><td>phase_diagram</td><td><strong class="green">1.00</strong></td><td><span class="badge badge-pass">YES</span></td></tr>
+    <tr><td>计算水的标准生成焓</td><td>thermodynamics</td><td>0.00</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>分析PVDF聚合物降解机制</td><td>degradation</td><td>0.00</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>设计固态电解质高通量筛选流程</td><td>research_design</td><td>0.00</td><td><span class="badge badge-fail">NO</span></td></tr>
+    <tr><td>计算铜的体弹模量</td><td>mechanical</td><td><strong class="green">1.00</strong></td><td><span class="badge badge-pass">YES</span></td></tr>
+  </table>
+  <h3>得分分析</h3>
+  <ul>
+    <li><strong>擅长领域</strong>: 相图分析 (1.0)、力学性质 (1.0)、结构查询 (0.67)、数据库查询 (0.67) — 定性/描述性问题表现好</li>
+    <li><strong>薄弱领域</strong>: 符号计算 (0.0)、热力学计算 (0.0)、多尺度设计 (0.0)、降解分析 (0.0) — 需要精确数值或工具链的问题表现差</li>
+    <li><strong>根因</strong>: 工具调用预算耗尽后无法完成数值计算; SymPy/MP数据库工具在并发压力下调用成功率低</li>
+  </ul>
+</div>
+
+<!-- ── Known Issues ── -->
+<h2>已知问题与分析</h2>
+<div class="card">
+  <h3>1. 后端事件循环阻塞 (严重)</h3>
+  <p>当 4+ 个并发 LLM 请求同时到达后端时, 同步的 DeepSeek API 调用会阻塞 FastAPI 事件循环, 导致:</p>
+  <ul>
+    <li>REST 端点超时 (curl exit code 28)</li>
+    <li>新 WS 连接被拒绝 (ConnectionRefusedError)</li>
+    <li>后端进程存活但 TCP 服务器不接受新连接</li>
+  </ul>
+  <p><strong>修复建议</strong>: 将 LLM 调用包装到 <code>asyncio.to_thread()</code> 或使用 <code>run_in_executor()</code>, 避免阻塞事件循环。这是架构级问题, 影响所有并发场景。</p>
+</div>
+
+<div class="card">
+  <h3>2. DeepSeek API 速率限制 (中等)</h3>
+  <p>"Too many messages, slow down." 错误在 3 轨道 + ClawBench 同时运行时频繁出现。perovskite 轨道调研阶段因此超时, electrolyte 研究阶段连续触发 14 次。</p>
+  <p><strong>缓解措施</strong>: 流水线已实现 graceful degradation (超时后继续下一阶段), 但需要客户端层面的请求队列化或 API 多 key 轮转。</p>
+</div>
+
+<div class="card">
+  <h3>3. ClawBench 得分偏低 (改进方向)</h3>
+  <p>FinalScore 33.71, 9/11 案例未通过。主要问题:</p>
+  <ul>
+    <li>定量计算类 (带隙、生成焓、SymPy积分) 得分 0.0 — 工具调用未成功执行或结果未正确提取</li>
+    <li>多尺度/研究设计类得分 0.0 — Agent 回复偏描述性, 缺少具体的可验证方案</li>
+    <li>已有基准已扩展: MatSciBench (32 cases, 6 domains) + CSMBench (24 cases, 5 scales) — 更全面的评测覆盖</li>
+  </ul>
+</div>
+
+<!-- ── Test Scripts ── -->
+<h2>新增测试脚本</h2>
+<div class="card">
+  <table>
+    <tr><th>文件</th><th>类型</th><th>内容</th></tr>
+    <tr><td><code>tests/test_security_modules.py</code></td><td>单元测试</td><td>7 个安全模块: CommandFilter, RestrictedPython, PolicyEngine, Sandbox, safe_eval, CircuitBreaker, CredentialStore</td></tr>
+    <tr><td><code>tests/test_async_pipeline.py</code></td><td>集成测试</td><td>3 轨道并行科研流水线: 调研→选题→研究→论文 + 跨轨道综合, 放宽超时 + 进度延长</td></tr>
+    <tr><td><code>tests/test_clawbench_runner.py</code></td><td>基准评测</td><td>ClawBench 式多试次评测: pass^3 / pass@3 / FinalScore 指标计算</td></tr>
+  </table>
+</div>
+
+<!-- ── CI Workflow ── -->
+<h2>CI Workflow 配置</h2>
+<div class="card">
+  <pre><code>jobs:
+  python-tests:       # Py 3.11/3.12/3.13 矩阵, pytest, 排除 integration
+  integration-tests:  # API 契约 + 安全渗透 + 混沌工程, 30 min 超时
+  frontend-build:     # Node 20, npm ci + npm run build
+  security-check:     # PolicyEngine 自检 + pip-audit 漏洞扫描</code></pre>
+  <p style="color: var(--muted); font-size: 13px; margin-top: 8px;">
+    CI 配置文件: <code>.github/workflows/ci.yml</code><br>
+    触发条件: push/PR to master/main<br>
+    所有 job 配置就绪, 可在 GitHub Actions 上直接运行
+  </p>
+</div>
+
+<!-- ── Benchmark Expansion ── -->
+<h2>基准评测体系扩展</h2>
+<div class="card">
+  <table>
+    <tr><th>基准</th><th>案例数</th><th>覆盖范围</th><th>指标</th></tr>
+    <tr><td>ClawBench</td><td>11</td><td>结构/电子/数据库/符号/文献/多尺度/相图/热力学/降解/设计/力学</td><td>FinalScore = 100 × S^0.40 × r_all^0.45 × r_any^0.15</td></tr>
+    <tr><td>MatSciBench</td><td>32</td><td>6 领域: 结构/电子/热力学/力学/光学/磁性</td><td>同上, 更细粒度覆盖</td></tr>
+    <tr><td>CSMBench</td><td>24</td><td>5 尺度: 原子/分子/介观/连续/工程</td><td>同上, 跨尺度能力评测</td></tr>
+  </table>
+</div>
+
+<!-- ── Recommendations ── -->
+<h2>改进建议</h2>
+<div class="card">
+  <table>
+    <tr><th>优先级</th><th>问题</th><th>建议</th></tr>
+    <tr><td><span class="badge badge-fail">P0</span></td><td>后端事件循环阻塞</td><td>LLM 调用用 <code>asyncio.to_thread()</code> 包装, 或切换到 async SDK</td></tr>
+    <tr><td><span class="badge badge-warn">P1</span></td><td>DeepSeek API 限流</td><td>客户端请求队列 + 指数退避; 考虑多 API key 轮转</td></tr>
+    <tr><td><span class="badge badge-warn">P1</span></td><td>ClawBench 定量类得分 0</td><td>排查 SymPy/MP 工具调用失败原因; 检查工具结果提取逻辑</td></tr>
+    <tr><td><span class="badge badge-pass">P2</span></td><td>WS open_timeout 默认 10s</td><td>已在前端 ws-client.ts 中设为 60s; 建议在文档中标注此配置</td></tr>
+    <tr><td><span class="badge badge-pass">P2</span></td><td>多试次 ClawBench</td><td>当前仅 1 trial; 建议运行 3 trials 以获取 pass@3 指标</td></tr>
+  </table>
+</div>
+
+</div>
+</body>
+</html>

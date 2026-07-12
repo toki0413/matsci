@@ -144,10 +144,13 @@ class SubagentDispatch:
         spec_name: str,
         task: str,
         context: dict | None = None,
+        on_state: Any = None,
     ) -> SubagentResult:
         """Dispatch a subagent to handle a task in isolated context.
 
         context 里需要带 agent_factory (AgentFactory 实例), 没有就报错.
+        on_state: optional async callback(state_dict) called for each
+        intermediate agent state — lets callers stream subagent progress.
         """
         spec = self._specs.get(spec_name)
         if spec is None:
@@ -203,6 +206,11 @@ class SubagentDispatch:
             async for state in agent.chat(task, thread_id):
                 if isinstance(state, dict):
                     final_state = state
+                    if on_state is not None:
+                        try:
+                            await on_state(state)
+                        except Exception:
+                            logger.debug("on_state callback failed", exc_info=True)
 
             output = self._extract_output(final_state)
             tool_calls = self._extract_tool_calls(final_state)
