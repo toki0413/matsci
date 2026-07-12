@@ -41,6 +41,8 @@ function authHeaders(): Record<string, string> {
     headers["Authorization"] = `Bearer ${token}`;
   } else {
     // fall back to the raw API key for endpoints that accept it
+    // ponytail: same localStorage exposure risk as auth_token —
+    // see api-client.ts. Migrate together when stronghold lands.
     const apiKey = localStorage.getItem("huginn:api_key");
     if (apiKey) headers["X-HUGINN-API-KEY"] = apiKey;
   }

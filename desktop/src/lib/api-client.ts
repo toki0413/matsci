@@ -20,6 +20,9 @@ export function getApiBase(): string {
 
 export function getAuthToken(): string | null {
   if (!authToken) {
+    // ponytail: JWT stored in localStorage — readable by any script on the
+    // page (XSS). Acceptable for local single-user desktop app; upgrade to
+    // tauri-plugin-stronghold (OS keychain) when multi-user / remote mode lands.
     authToken = localStorage.getItem('huginn:auth_token');
   }
   return authToken;
