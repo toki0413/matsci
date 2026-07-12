@@ -62,6 +62,10 @@ export async function syncBackendUrl(): Promise<void> {
 }
 
 // ── LocalStorage config persistence ──────────────────────────
+// ponytail: config blob includes api_key and encryption_password —
+// stored in localStorage for simplicity. Any XSS can exfiltrate them.
+// Acceptable for local single-user desktop app; upgrade to
+// tauri-plugin-stronghold (OS keychain) for sensitive fields.
 
 const CONFIG_KEY = "huginn:config";
 
