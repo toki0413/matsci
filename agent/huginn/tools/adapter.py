@@ -713,13 +713,27 @@ class ToolAdapter:
                     _publish_blocked(tool.name, input_data, loop_reason, context)
                     return output, router
 
-            # 6. Circuit breaker
+            # 6. Circuit breaker → Degradation coordinator
             blocked = _breaker_blocked(tool.name)
             if blocked is not None:
-                _audit(input_data, blocked, approved=False, reason="circuit_open")
-                _publish(PetMood.ERROR, f"{tool.name} circuit open", {"retry_after": blocked.get("retry_after", 0)})
+                # 主动降级：查 degradation_chain 自动尝试替代工具
+                from huginn.agents.degradation_coordinator import try_with_degradation
+
+                degraded = try_with_degradation(tool.name, input_data, context)
+                if not degraded.get("_degradation_exhausted") and not degraded.get("_no_degradation_chain"):
+                    # 降级成功 — 标记并返回替代结果
+                    _audit(input_data, degraded, approved=True,
+                           reason=f"degraded:{degraded.get('_degraded_to','?')}")
+                    _publish(PetMood.NEUTRAL,
+                             f"{tool.name} degraded → {degraded.get('_degraded_to','?')}",
+                             {"quality_tier": degraded.get("_quality_tier","")})
+                    return degraded, router
+                # 降级链耗尽或无降级链 — 返回结构化错误
+                _audit(input_data, degraded, approved=False, reason="circuit_open")
+                _publish(PetMood.ERROR, f"{tool.name} circuit open, all fallbacks exhausted",
+                         {"tried": degraded.get("tried", [])})
                 _publish_blocked(tool.name, input_data, "circuit_open", context)
-                return blocked, router
+                return degraded, router
 
             return None, router
 

@@ -44,3 +44,10 @@ class ToolProfile:
     constraint_scope: str | None = None
     light_alternatives: tuple[str, ...] = ()
     heavy_actions: frozenset[str] | None = None
+    degradation_chain: tuple[str, ...] = ()
+    # Ordered fallback tools to try when THIS tool's circuit is open.
+    # Follows the MGE quality hierarchy: HSE06 → PBE → ML surrogate → database.
+    # The coordinator tries each automatically — no LLM improvisation needed.
+    quality_tier: str = ""
+    # Human-readable quality level for result tagging:
+    # "dft_hse" > "dft_pbe" > "ml_surrogate" > "database" > "empirical"

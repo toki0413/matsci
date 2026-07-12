@@ -91,6 +91,11 @@ class GaussianTool(HuginnTool):
             "symbolic_math_tool",
             "numerical_tool",
         ),
+        degradation_chain=(
+            "materials_database_tool",  # MGE: DFT → database lookup
+            "symbolic_math_tool",       # → analytical estimate
+        ),
+        quality_tier="dft_hse",  # Gaussian = high-accuracy QC
     )
     description = (
         "Run Gaussian quantum chemistry calculations (single point, optimization, frequency). "

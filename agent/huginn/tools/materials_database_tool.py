@@ -116,6 +116,7 @@ class MaterialsDatabaseTool(HuginnTool):
     profile = ToolProfile(
         cost_tier="light",
         phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.HYPOTHESIS}),
+        quality_tier="database",  # database lookup = medium-high confidence
     )
     description = (
         "Query Materials Project, OQMD, AFLOW, or NOMAD for structures, energies, "

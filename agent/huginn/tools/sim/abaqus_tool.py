@@ -208,6 +208,11 @@ class AbaqusTool(HuginnTool):
         phases=frozenset({ResearchPhase.EXECUTION}),
         constraint_scope="fea",
         light_alternatives=("symbolic_math_tool", "numerical_tool"),
+        degradation_chain=(
+            "numerical_tool",           # FEM without Abaqus
+            "symbolic_math_tool",        # → analytical solution
+        ),
+        quality_tier="dft_pbe",  # FEA = medium accuracy
     )
     description = (
         "Generate Abaqus Python scripts, e.g. to import packed particles as "
