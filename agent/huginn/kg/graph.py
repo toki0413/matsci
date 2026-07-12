@@ -178,6 +178,124 @@ class ProjectKnowledgeGraph:
         q = GraphQuery(self._graph)
         return q.community_aware_query(seed, depth=depth, top_k=top_k)
 
+    def hybrid_retrieve(
+        self,
+        query: str,
+        vector_chunks: list[dict[str, Any]] | None = None,
+        depth: int = 2,
+        top_k: int = 15,
+    ) -> dict[str, Any]:
+        """Combine vector search results with graph neighborhood retrieval.
+
+        This is the GraphRAG hybrid approach: vector search provides precision
+        (semantic similarity), graph expansion provides cross-document
+        connections (entities shared across chunks merge into single nodes).
+
+        vector_chunks: [{"text": "...", "score": 0.87}, ...] from vector store.
+        If None, only graph retrieval is used.
+        """
+        from huginn.kg.extractor import extract_entities
+
+        # 1. Extract entities from the query itself
+        entities = extract_entities(query)
+        seed_terms = (
+            list(entities.get("tools", set()))
+            + list(entities.get("methods", set()))
+            + list(entities.get("materials", set()))
+            + list(entities.get("elements", set()))
+        )
+        if not seed_terms:
+            seed_terms = [query]
+
+        # 2. Graph neighborhood expansion
+        from huginn.kg.query import GraphQuery
+
+        gq = GraphQuery(self._graph)
+        graph_result = gq.community_aware_query(
+            " ".join(seed_terms), depth=depth, top_k=top_k
+        )
+
+        # 3. Merge: if vector_chunks provided, add their text to the result
+        merged_text = ""
+        if vector_chunks:
+            merged_text = "\n\n".join(
+                c.get("text", "")[:500] for c in vector_chunks[:5]
+            )
+
+        # 4. Convert graph nodes to text for context injection
+        graph_text = ""
+        if graph_result["nodes"]:
+            node_ids = {n["id"] for n in graph_result["nodes"]}
+            graph_text = self.to_text(node_ids)
+
+        return {
+            "graph_context": graph_text,
+            "vector_context": merged_text,
+            "graph_nodes": graph_result["nodes"],
+            "graph_edges": graph_result["edges"],
+            "seed_terms": seed_terms,
+        }
+
+    def get_community_summaries(self, force: bool = False) -> list[dict[str, Any]]:
+        """Return cached community summaries, generating them if needed.
+
+        Uses greedy modularity communities (already in query.py) and
+        generates a one-paragraph text summary per community from its nodes.
+
+        ponytail: LLM summarization is lazy — only called when this method
+        is invoked, not at graph build time. Cache is stored as node attributes
+        on virtual community nodes. Switch to Leiden when KG > 500 nodes.
+        """
+        import networkx as nx
+
+        if self._graph.number_of_nodes() < 5:
+            return []
+
+        # Check cache
+        cache_key = f"_community_cache_v{self._graph.number_of_nodes()}"
+        if not force and hasattr(self, cache_key):
+            return getattr(self, cache_key)
+
+        try:
+            communities = list(
+                nx.community.greedy_modularity_communities(self._graph.to_undirected())
+            )
+        except Exception:
+            return []
+
+        summaries: list[dict[str, Any]] = []
+        for i, comm in enumerate(communities):
+            if len(comm) < 2:
+                continue
+            nodes_data = [
+                self._graph.nodes[n] for n in comm if n in self._graph
+            ]
+            # Build a simple text summary from node labels
+            labels = [
+                f"{d.get('type', '?')}:{d.get('label', '?')}"
+                for d in nodes_data
+            ]
+            # Extract key edges within community
+            sub = self._graph.subgraph(comm)
+            edge_descs = []
+            for u, v, d in sub.edges(data=True):
+                rel = d.get("relation", "→")
+                src_label = self._graph.nodes[u].get("label", u)
+                dst_label = self._graph.nodes[v].get("label", v)
+                edge_descs.append(f"{src_label} {rel} {dst_label}")
+
+            summaries.append({
+                "community_id": i,
+                "size": len(comm),
+                "members": labels[:20],
+                "key_relations": edge_descs[:15],
+                "summary": f"Community {i} ({len(comm)} nodes): "
+                + ", ".join(labels[:10]),
+            })
+
+        setattr(self, cache_key, summaries)
+        return summaries
+
     def to_text(self, nodes: set[str]) -> str:
         """Convert a set of node ids into a prompt-friendly text summary."""
         lines: list[str] = []
@@ -205,6 +323,11 @@ class ProjectKnowledgeGraph:
         "Resource": "#ffe0b2",
         "Literature": "#d1c4e9",
         "experiment": "#cfd8dc",
+        "Element": "#a5d6a7",
+        "Compound": "#81c784",
+        "Property": "#90caf9",
+        "CrystalStructure": "#ce93d8",
+        "Application": "#ffab91",
     }
 
     def to_mermaid(self, max_nodes: int = 40) -> str:

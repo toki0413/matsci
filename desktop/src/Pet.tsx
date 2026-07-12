@@ -333,7 +333,7 @@ function RavenAvatar({ mood, accessory, imgRef }: { mood: PetMood; accessory: Ac
 
   return (
     <div ref={imgRef} className="raven-svg-wrapper">
-      <svg className="raven-svg" viewBox="0 0 100 105" xmlns="http://www.w3.org/2000/svg" aria-label="Huginn raven">
+      <svg className="raven-svg" viewBox="0 0 100 105" xmlns="http://www.w3.org/2000/svg" aria-label="Muninn raven">
         <defs>
           <radialGradient id="ravenBodyGrad" cx="0.45" cy="0.3" r="0.65">
             <stop offset="0%" stopColor="#4a4a52" />

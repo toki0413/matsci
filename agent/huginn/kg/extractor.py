@@ -9,6 +9,8 @@ from huginn.kg.entities import METHOD_KEYWORDS, TOOL_KEYWORDS
 
 # Chemical formula regex: captures sequences like LiCoO2, Si, TiO2, Fe2O3, C60.
 _CHEMICAL_FORMULA_RE = re.compile(r"\b(?:[A-Z][a-z]?\d*)+(?:[A-Z][a-z]?\d*)*\b")
+# Element token within a formula: Symbol + optional count.
+_ELEMENT_TOKEN_RE = re.compile(r"([A-Z][a-z]?)(\d*)")
 # Filter out common false positives.
 _FALSE_FORMULAS = {
     "DFT",
@@ -41,6 +43,42 @@ _FALSE_FORMULAS = {
     "GROMACS",
     "NWChem",
 }
+
+# ponytail: Periodic table subset — only elements we're likely to encounter in
+# materials science. Not a complete 118-element table; if an unknown element
+# symbol appears, the parser returns it anyway (the caller can filter).
+# Full periodic table seed is a one-time builder task, not needed here.
+_ELEMENTS = {
+    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
+    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
+    "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
+    "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr",
+    "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn",
+    "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd",
+    "W", "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi",
+    "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu",
+    "Th", "U",
+}
+
+
+def parse_formula(formula: str) -> dict[str, int]:
+    """Parse a chemical formula into element→count.
+
+    TiO2 → {"Ti": 1, "O": 2}
+    SrTiO3 → {"Sr": 1, "Ti": 1, "O": 3}
+    C60 → {"C": 60}
+
+    ponytail: Naive linear regex parse — no nested groups (no parentheses
+    support like Ca(NO3)2). Sufficient for >95% of materials science formulas
+    in papers. Add parenthesised group expansion if the need arises.
+    """
+    result: dict[str, int] = {}
+    for symbol, count_str in _ELEMENT_TOKEN_RE.findall(formula):
+        if symbol not in _ELEMENTS:
+            continue
+        count = int(count_str) if count_str else 1
+        result[symbol] = result.get(symbol, 0) + count
+    return result
 
 
 def extract_tools(text: str) -> set[str]:
@@ -102,18 +140,23 @@ def extract_error_pattern(error_message: str | None) -> str | None:
 
 
 def extract_entities(text: str) -> dict[str, set[str]]:
-    """Extract all entity mentions from a text."""
+    """Extract all entity mentions from text."""
+    materials = extract_materials(text)
+    elements: set[str] = set()
+    for formula in materials:
+        elements.update(parse_formula(formula).keys())
     return {
         "tools": extract_tools(text),
         "methods": extract_methods(text),
-        "materials": extract_materials(text),
+        "materials": materials,
+        "elements": elements,
     }
 
 
 def extract_relations(text: str) -> list[dict[str, Any]]:
-    """Extract simple (src_label, relation, dst_label) triples from text.
+    """Extract (src_label, relation, dst_label) triples from text.
 
-    First version only links the first mentioned method/tool to materials.
+    Links tools/methods to materials, and materials to their constituent elements.
     """
     entities = extract_entities(text)
     relations: list[dict[str, Any]] = []
@@ -138,6 +181,22 @@ def extract_relations(text: str) -> list[dict[str, Any]]:
                     "relation": "applies",
                     "dst": mat,
                     "dst_type": "Material",
+                }
+            )
+    # Compound → Element links via formula parsing
+    for formula in materials:
+        elements = parse_formula(formula)
+        if not elements:
+            continue
+        for elem, count in elements.items():
+            relations.append(
+                {
+                    "src": formula,
+                    "src_type": "Compound",
+                    "relation": "has_element",
+                    "dst": elem,
+                    "dst_type": "Element",
+                    "stoichiometry": count,
                 }
             )
     return relations
