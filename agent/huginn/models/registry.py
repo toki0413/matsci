@@ -185,6 +185,10 @@ class ModelCaps:
     tools: bool = False
     reasoning: bool = False
     streaming: bool = False
+    # structured_output: response_format json_object / with_structured_output
+    structured_output: bool = False
+    # parallel_tool_calls: model can return multiple tool_calls in one response
+    parallel_tool_calls: bool = False
 
 
 # 已知模型能力表. 维护时按 provider 分组, 新增模型记得补一条.
@@ -218,11 +222,11 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "gpt-3.5-turbo": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
-    # o 系列推理模型目前不支持原生 function calling
-    "o1": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
-    "o3": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
+    # o 系列推理模型 — 2025 起支持 function calling
+    "o1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
+    "o3": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
     "o1-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
-    "o3-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
+    "o3-mini": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
     # ── DeepSeek ───────────────────────────────────────────────
     "deepseek-chat": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
@@ -273,6 +277,7 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
         vision=False, tools=True, reasoning=False, streaming=True
     ),
     "kimi-k2.6": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "kimi-k2.7": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "kimi-k2-thinking": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "kimi-k2-turbo-preview": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     # ── GLM (智谱) ────────────────────────────────────────────
@@ -325,12 +330,23 @@ def get_model_capabilities(model_name: str) -> ModelCaps:
         return ModelCaps()
     name = model_name.strip()
     if name in MODEL_CAPABILITIES:
-        return MODEL_CAPABILITIES[name]
-    lower = name.lower()
-    for key, caps in MODEL_CAPABILITIES.items():
-        if lower.startswith(key.lower()):
-            return caps
-    return ModelCaps()
+        caps = MODEL_CAPABILITIES[name]
+    else:
+        lower = name.lower()
+        for key, caps in MODEL_CAPABILITIES.items():
+            if lower.startswith(key.lower()):
+                break
+        else:
+            return ModelCaps()
+    # Derive: models that support tools almost always support structured output
+    # and parallel tool calls too. Avoids updating 50+ entries manually.
+    # ponytail: derive in one place rather than per-entry; override explicitly
+    # in MODEL_CAPABILITIES when a model deviates.
+    if caps.tools and not caps.structured_output:
+        caps.structured_output = True
+    if caps.tools and not caps.parallel_tool_calls:
+        caps.parallel_tool_calls = True
+    return caps
 
 
 #: OpenAI-compatible domestic providers with default base URLs and env keys.

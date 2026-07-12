@@ -67,15 +67,15 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
 
     # Also patch at before_agent — _get_model_input_state runs before
     # wrap_model_call, so we need to fix orphan tool calls earlier.
-    def before_agent(self, request, handler):
+    def before_agent(self, request, handler=None):
         if hasattr(request, 'messages') and request.messages:
             request.messages = self._patch_messages(request.messages)
-        return handler(request)
+        return handler(request) if handler else None
 
-    async def abefore_agent(self, request, handler):
+    async def abefore_agent(self, request, handler=None):
         if hasattr(request, 'messages') and request.messages:
             request.messages = self._patch_messages(request.messages)
-        return await handler(request)
+        return await handler(request) if handler else None
 
     # deepagents middleware protocol requires all four methods.
     # Tool-call layer doesn't need orphan patching — passthrough.
