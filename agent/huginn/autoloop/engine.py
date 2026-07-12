@@ -1490,19 +1490,39 @@ class AutoloopEngine:
         persona_name = self._pick_hypothesis_persona(context)
         self._last_persona = persona_name  # 供 _learn 写入 memory/KG
         try:
-            response = await self._llm_chat(prompt, persona_name=persona_name, task="reasoning")
-            raw = response.strip()
-            # Multi-hypothesis selection (X-Master diverge-then-select):
-            # prompt 要求生成 3 候选后写 "SELECTED: <best>", 从中提取最优假设.
-            # 没找到 SELECTED 就退回原文, 向后兼容.
-            if "SELECTED:" in raw:
-                _after = raw.split("SELECTED:", 1)[1].strip()
-                # 取第一行或到末尾, 避免拖入后续解释
-                _sel = _after.split("\n")[0].strip() if _after else ""
-                self._last_hypothesis = _sel or raw
-            else:
-                self._last_hypothesis = raw
-            return self._last_hypothesis
+            # True parallel sampling: main call + high-temp diversity call.
+            # Both run concurrently via asyncio.gather — same wall-clock latency
+            # as a single call, 2x tokens for genuine diversity insurance.
+            # Main call's SELECTED: wins; diversity call is fallback.
+            # ponytail: 2 calls not 3 — main provides quality, diversity provides
+            # novelty; a third call adds cost without marginal diversity gain.
+            hot_model = None
+            try:
+                hot_model = self.model.bind(temperature=1.0)
+            except Exception:
+                pass  # not all model wrappers support bind
+            coros = [self._llm_chat(prompt, persona_name=persona_name, task="reasoning")]
+            if hot_model is not None:
+                coros.append(
+                    self._llm_chat(prompt, persona_name=persona_name, model=hot_model, task="reasoning")
+                )
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            # Extract SELECTED: from results — main call first (priority)
+            for raw in results:
+                if isinstance(raw, Exception) or not raw:
+                    continue
+                raw = raw.strip()
+                if "SELECTED:" in raw:
+                    _after = raw.split("SELECTED:", 1)[1].strip()
+                    _sel = _after.split("\n")[0].strip() if _after else ""
+                    self._last_hypothesis = _sel or raw
+                    return self._last_hypothesis
+            # No SELECTED: found — fall back to first non-exception result
+            for raw in results:
+                if not isinstance(raw, Exception) and raw:
+                    self._last_hypothesis = raw.strip()
+                    return self._last_hypothesis
+            return None
         except Exception:
             return None
 

@@ -1808,6 +1808,452 @@ class BenchmarkSuite:
 
         return self
 
+    def tool_calling_cases(self) -> BenchmarkSuite:
+        """Tool-calling benchmarks: pick the right method/code for a matsci problem.
+
+        10 cases covering DFT, MD, XRD, CALPHAD, phonons, NEB, elastic constants,
+        surface energy, GW correction, and ELF analysis. Each case checks whether
+        the agent names the appropriate computational method or software.
+        """
+        # DFT band structure
+        self.add(BenchmarkCase(
+            case_id="tc_001",
+            category="tool_calling",
+            task="我想计算硅的能带结构，应该用什么计算方法和软件？",
+            rubric_items=[
+                {"criterion": "recommends DFT", "weight": 3, "keywords": ["dft"]},
+                {"criterion": "mentions VASP", "weight": 1, "keywords": ["vasp"]},
+                {"criterion": "mentions Quantum ESPRESSO", "weight": 1, "keywords": ["quantum espresso"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["dft", "band-structure", "silicon"],
+        ))
+        # MD diffusion coefficient
+        self.add(BenchmarkCase(
+            case_id="tc_002",
+            category="tool_calling",
+            task="如何计算锂离子在固态电解质中的扩散系数？",
+            rubric_items=[
+                {"criterion": "recommends molecular dynamics", "weight": 3, "keywords": ["molecular dynamics"]},
+                {"criterion": "mentions LAMMPS", "weight": 1, "keywords": ["lammps"]},
+                {"criterion": "mentions diffusion coefficient / MSD", "weight": 1, "keywords": ["diffusion coefficient"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["md", "diffusion", "lammps"],
+        ))
+        # XRD pattern analysis
+        self.add(BenchmarkCase(
+            case_id="tc_003",
+            category="tool_calling",
+            task="我有一组粉末衍射数据，如何进行物相鉴定和结构精修？",
+            rubric_items=[
+                {"criterion": "mentions XRD", "weight": 2, "keywords": ["xrd"]},
+                {"criterion": "mentions Bragg law", "weight": 1, "keywords": ["bragg"]},
+                {"criterion": "mentions Rietveld refinement", "weight": 2, "keywords": ["rietveld"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["xrd", "rietveld", "phase-id"],
+        ))
+        # CALPHAD phase diagram
+        self.add(BenchmarkCase(
+            case_id="tc_004",
+            category="tool_calling",
+            task="如何计算Cu-Ag二元合金的相图？",
+            rubric_items=[
+                {"criterion": "recommends CALPHAD", "weight": 3, "keywords": ["calphad"]},
+                {"criterion": "mentions phase diagram", "weight": 2, "keywords": ["phase diagram"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["calphad", "phase-diagram", "alloy"],
+        ))
+        # phonon dispersion
+        self.add(BenchmarkCase(
+            case_id="tc_005",
+            category="tool_calling",
+            task="如何计算金刚石的声子色散关系？",
+            rubric_items=[
+                {"criterion": "mentions phonon", "weight": 2, "keywords": ["phonon"]},
+                {"criterion": "mentions DFPT", "weight": 2, "keywords": ["dfpt"]},
+                {"criterion": "mentions finite displacement", "weight": 1, "keywords": ["finite displacement"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["phonon", "dfpt", "diamond"],
+        ))
+        # NEB migration barrier
+        self.add(BenchmarkCase(
+            case_id="tc_006",
+            category="tool_calling",
+            task="如何计算锂离子在FePO4中的迁移势垒？",
+            rubric_items=[
+                {"criterion": "mentions NEB", "weight": 3, "keywords": ["neb"]},
+                {"criterion": "mentions nudged elastic band", "weight": 1, "keywords": ["nudged elastic band"]},
+                {"criterion": "mentions migration barrier", "weight": 1, "keywords": ["migration barrier"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["neb", "migration-barrier", "lithium"],
+        ))
+        # elastic constants
+        self.add(BenchmarkCase(
+            case_id="tc_007",
+            category="tool_calling",
+            task="如何计算Mg合金的弹性常数？",
+            rubric_items=[
+                {"criterion": "mentions elastic constants", "weight": 2, "keywords": ["elastic constants"]},
+                {"criterion": "mentions stress-strain method", "weight": 2, "keywords": ["stress-strain"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["elastic", "stress-strain", "magnesium"],
+        ))
+        # surface energy
+        self.add(BenchmarkCase(
+            case_id="tc_008",
+            category="tool_calling",
+            task="如何计算Pt(111)表面的表面能？",
+            rubric_items=[
+                {"criterion": "mentions surface energy", "weight": 2, "keywords": ["surface energy"]},
+                {"criterion": "mentions slab model", "weight": 2, "keywords": ["slab"]},
+                {"criterion": "mentions vacuum spacing", "weight": 1, "keywords": ["vacuum"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["surface-energy", "slab", "platinum"],
+        ))
+        # GW correction
+        self.add(BenchmarkCase(
+            case_id="tc_009",
+            category="tool_calling",
+            task="DFT-PBE低估了ZnO的带隙，如何获得更准确的带隙？",
+            rubric_items=[
+                {"criterion": "mentions GW", "weight": 3, "keywords": ["gw"]},
+                {"criterion": "mentions quasiparticle", "weight": 1, "keywords": ["quasiparticle"]},
+                {"criterion": "mentions many-body perturbation", "weight": 1, "keywords": ["many-body perturbation"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["gw", "quasiparticle", "zno"],
+        ))
+        # ELF analysis
+        self.add(BenchmarkCase(
+            case_id="tc_010",
+            category="tool_calling",
+            task="如何分析MgB2中B-B键的共价性？",
+            rubric_items=[
+                {"criterion": "mentions ELF", "weight": 3, "keywords": ["elf"]},
+                {"criterion": "mentions electron localization function", "weight": 2, "keywords": ["electron localization function"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["elf", "bonding", "mgb2"],
+        ))
+        return self
+
+    def multi_step_reasoning_cases(self) -> BenchmarkSuite:
+        """Multi-step reasoning benchmarks: 3+ step quantitative problems.
+
+        10 cases that require chaining calculation steps (density, packing factor,
+        Bragg angle, Hall-Petch, conductivity, Gibbs free energy, etc.). Each
+        rubric item maps to one reasoning step; expected_value records the target
+        numeric answer as metadata.
+        """
+        # Si diamond cubic density (~2.33 g/cm3)
+        self.add(BenchmarkCase(
+            case_id="msr_001",
+            category="multi_step",
+            task="硅采用金刚石立方结构，晶格常数a=5.43 Å，原子量28.09，计算其理论密度（g/cm³）。要求写出计算步骤。",
+            expected_value=2.33,
+            tolerance=0.05,
+            rubric_items=[
+                {"criterion": "确定晶胞原子数(8)", "weight": 1, "keywords": ["8", "atoms"]},
+                {"criterion": "计算晶胞质量", "weight": 1, "keywords": ["mass"]},
+                {"criterion": "除以体积得到密度", "weight": 1, "keywords": ["density"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["density", "silicon", "diamond-cubic"],
+        ))
+        # Cu FCC density (~8.96 g/cm3)
+        self.add(BenchmarkCase(
+            case_id="msr_002",
+            category="multi_step",
+            task="铜为FCC结构，晶格常数a=3.61 Å，原子量63.55，计算理论密度（g/cm³）。要求写出计算步骤。",
+            expected_value=8.96,
+            tolerance=0.1,
+            rubric_items=[
+                {"criterion": "确定FCC晶胞原子数(4)", "weight": 1, "keywords": ["4", "atoms"]},
+                {"criterion": "计算晶胞质量", "weight": 1, "keywords": ["mass"]},
+                {"criterion": "除以体积得到密度", "weight": 1, "keywords": ["density"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["density", "copper", "fcc"],
+        ))
+        # atomic packing factor
+        self.add(BenchmarkCase(
+            case_id="msr_003",
+            category="multi_step",
+            task="FCC金属原子半径r=1.28 Å，晶格常数a=3.61 Å，计算原子堆积因子。要求写出计算步骤。",
+            expected_value=0.74,
+            tolerance=0.02,
+            rubric_items=[
+                {"criterion": "计算单个原子体积", "weight": 1, "keywords": ["volume", "atom"]},
+                {"criterion": "计算晶胞体积", "weight": 1, "keywords": ["volume", "cell"]},
+                {"criterion": "计算堆积因子", "weight": 1, "keywords": ["packing"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["packing-factor", "fcc"],
+        ))
+        # Bragg diffraction angle
+        self.add(BenchmarkCase(
+            case_id="msr_004",
+            category="multi_step",
+            task="Cu Kα辐射(λ=1.54 Å)照射FCC铝(a=4.05 Å)，计算(111)面的Bragg衍射角2θ（度）。要求写出计算步骤。",
+            expected_value=38.5,
+            tolerance=1.0,
+            rubric_items=[
+                {"criterion": "计算d间距", "weight": 1, "keywords": ["d-spacing", "d spacing", "interplanar"]},
+                {"criterion": "应用Bragg方程", "weight": 1, "keywords": ["bragg"]},
+                {"criterion": "得到衍射角2θ", "weight": 1, "keywords": ["2θ", "2theta", "diffraction angle"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["bragg", "xrd", "aluminum"],
+        ))
+        # Hall-Petch yield strength
+        self.add(BenchmarkCase(
+            case_id="msr_005",
+            category="multi_step",
+            task="某低碳钢屈服强度σ₀=150 MPa，Hall-Petch系数k=0.5 MPa·√m，晶粒尺寸d=10 μm，计算屈服强度（MPa）。要求写出计算步骤。",
+            expected_value=308,
+            tolerance=15,
+            rubric_items=[
+                {"criterion": "识别Hall-Petch关系", "weight": 1, "keywords": ["hall-petch", "hall petch"]},
+                {"criterion": "代入晶粒尺寸计算", "weight": 1, "keywords": ["grain size"]},
+                {"criterion": "得到屈服强度", "weight": 1, "keywords": ["yield"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["hall-petch", "yield-strength", "steel"],
+        ))
+        # conductivity from carrier concentration
+        self.add(BenchmarkCase(
+            case_id="msr_006",
+            category="multi_step",
+            task="某半导体载流子浓度n=1e16 cm⁻³，迁移率μ=1000 cm²/V·s，基本电荷e=1.6e-19 C，计算电导率σ=neμ（S/cm）。要求写出计算步骤。",
+            expected_value=1.6,
+            tolerance=0.1,
+            rubric_items=[
+                {"criterion": "识别载流子浓度", "weight": 1, "keywords": ["concentration"]},
+                {"criterion": "使用迁移率", "weight": 1, "keywords": ["mobility"]},
+                {"criterion": "计算电导率", "weight": 1, "keywords": ["conductivity"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["conductivity", "semiconductor"],
+        ))
+        # Gibbs free energy and phase stability
+        self.add(BenchmarkCase(
+            case_id="msr_007",
+            category="multi_step",
+            task="某相变反应ΔH=5 kJ/mol，ΔS=10 J/(mol·K)，计算临界温度Tc=ΔH/ΔS（K），并判断300K时哪相更稳定。要求写出推理步骤。",
+            expected_value=500,
+            tolerance=20,
+            rubric_items=[
+                {"criterion": "计算临界温度Tc", "weight": 1, "keywords": ["critical temperature", "tc"]},
+                {"criterion": "计算ΔG判断方向", "weight": 1, "keywords": ["gibbs", "free energy"]},
+                {"criterion": "判断相稳定性", "weight": 1, "keywords": ["stable", "stability"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["gibbs", "phase-stability", "thermodynamics"],
+        ))
+        # carrier concentration from doping
+        self.add(BenchmarkCase(
+            case_id="msr_008",
+            category="multi_step",
+            task="硅中掺磷，掺杂浓度Nd=1e17 cm⁻³，本征载流子浓度ni=1.5e10 cm⁻³，计算室温下多数载流子浓度（cm⁻³）。要求写出推理步骤。",
+            expected_value=1e17,
+            tolerance=1e16,
+            rubric_items=[
+                {"criterion": "识别多数载流子类型", "weight": 1, "keywords": ["electron", "majority"]},
+                {"criterion": "使用掺杂浓度", "weight": 1, "keywords": ["doping", "donor"]},
+                {"criterion": "计算载流子浓度", "weight": 1, "keywords": ["carrier concentration"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["doping", "carrier-concentration", "silicon"],
+        ))
+        # thermal expansion lattice parameter
+        self.add(BenchmarkCase(
+            case_id="msr_009",
+            category="multi_step",
+            task="铝的晶格常数a₀=4.05 Å，线膨胀系数α=2.3e-5 K⁻¹，计算500K时的晶格常数（Å）。要求写出计算步骤。",
+            expected_value=4.069,
+            tolerance=0.01,
+            rubric_items=[
+                {"criterion": "使用热膨胀系数", "weight": 1, "keywords": ["expansion", "thermal"]},
+                {"criterion": "计算温度变化ΔT", "weight": 1, "keywords": ["temperature"]},
+                {"criterion": "计算新晶格常数", "weight": 1, "keywords": ["lattice"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["thermal-expansion", "lattice-parameter", "aluminum"],
+        ))
+        # Curie temperature from Curie-Weiss law
+        self.add(BenchmarkCase(
+            case_id="msr_010",
+            category="multi_step",
+            task="某铁磁材料遵循Curie-Weiss定律χ=C/(T-Tc)，测得T=400K时χ=0.01，T=600K时χ=0.005，计算Curie温度Tc（K）。要求写出推导步骤。",
+            expected_value=200,
+            tolerance=10,
+            rubric_items=[
+                {"criterion": "识别Curie-Weiss定律", "weight": 1, "keywords": ["curie-weiss", "curie weiss"]},
+                {"criterion": "建立方程组求解", "weight": 1, "keywords": ["equation", "solve"]},
+                {"criterion": "计算Curie温度", "weight": 1, "keywords": ["curie temperature"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["curie", "curie-weiss", "magnetism"],
+        ))
+        return self
+
+    def experiment_design_cases(self) -> BenchmarkSuite:
+        """Experiment design benchmarks: plan a real characterization experiment.
+
+        10 cases covering band gap measurement, thin film characterization,
+        corrosion testing, fatigue life, thermal conductivity, electrochemistry,
+        catalysis, polymer degradation, nanoindentation, and phase identification.
+        Each rubric checks method selection, sample prep, parameters, and analysis.
+        """
+        # semiconductor band gap measurement
+        self.add(BenchmarkCase(
+            case_id="ed_001",
+            category="experiment_design",
+            task="设计一个测量ZnO薄膜光学带隙的实验方案，需包含方法选择、样品制备、测试参数和数据分析方法。",
+            rubric_items=[
+                {"criterion": "选择UV-Vis吸收光谱法", "weight": 2, "keywords": ["uv-vis", "uv vis", "absorption"]},
+                {"criterion": "使用Tauc plot分析", "weight": 2, "keywords": ["tauc"]},
+                {"criterion": "样品制备要求", "weight": 1, "keywords": ["substrate", "sample"]},
+                {"criterion": "数据分析方法", "weight": 1, "keywords": ["extrapolat", "linear"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["band-gap", "uv-vis", "tauc-plot"],
+        ))
+        # thin film characterization
+        self.add(BenchmarkCase(
+            case_id="ed_002",
+            category="experiment_design",
+            task="设计一个表征ITO透明导电薄膜的实验方案，需测定厚度、光学和电学性能。",
+            rubric_items=[
+                {"criterion": "厚度测量方法", "weight": 1, "keywords": ["profilometer", "ellipsometry", "step height"]},
+                {"criterion": "光学透过率测量", "weight": 1, "keywords": ["transmittance", "optical"]},
+                {"criterion": "电学性能测量", "weight": 1, "keywords": ["hall effect", "sheet resistance", "four-point"]},
+                {"criterion": "结构表征", "weight": 1, "keywords": ["xrd", "sem", "afm"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["thin-film", "ito", "characterization"],
+        ))
+        # corrosion rate testing
+        self.add(BenchmarkCase(
+            case_id="ed_003",
+            category="experiment_design",
+            task="设计一个碳钢在3.5% NaCl溶液中腐蚀速率的测试实验方案。",
+            rubric_items=[
+                {"criterion": "选择测试方法", "weight": 2, "keywords": ["potentiodynamic", "polarization", "weight loss"]},
+                {"criterion": "电解池配置", "weight": 1, "keywords": ["electrolyte", "reference electrode", "counter electrode"]},
+                {"criterion": "温度/时间控制", "weight": 1, "keywords": ["temperature", "immersion"]},
+                {"criterion": "腐蚀速率计算", "weight": 1, "keywords": ["corrosion rate", "mm/year", "mpy"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["corrosion", "nacl", "polarization"],
+        ))
+        # fatigue life testing
+        self.add(BenchmarkCase(
+            case_id="ed_004",
+            category="experiment_design",
+            task="设计一个铝合金疲劳寿命(S-N曲线)测试实验方案。",
+            rubric_items=[
+                {"criterion": "选择疲劳试验机类型", "weight": 2, "keywords": ["rotating bending", "servohydraulic", "fatigue test"]},
+                {"criterion": "应力水平设置", "weight": 1, "keywords": ["stress amplitude", "stress level"]},
+                {"criterion": "样品制备标准", "weight": 1, "keywords": ["surface finish", "gauge", "standard"]},
+                {"criterion": "S-N曲线分析", "weight": 1, "keywords": ["s-n", "wohler", "fatigue limit"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["fatigue", "s-n-curve", "aluminum"],
+        ))
+        # thermal conductivity measurement
+        self.add(BenchmarkCase(
+            case_id="ed_005",
+            category="experiment_design",
+            task="设计一个测量陶瓷材料热导率的实验方案。",
+            rubric_items=[
+                {"criterion": "选择测量方法", "weight": 2, "keywords": ["laser flash", "hot disk", "guarded hot plate"]},
+                {"criterion": "样品尺寸要求", "weight": 1, "keywords": ["thickness", "diameter", "sample size"]},
+                {"criterion": "温度控制", "weight": 1, "keywords": ["temperature", "furnace"]},
+                {"criterion": "数据处理", "weight": 1, "keywords": ["thermal diffusivity", "specific heat", "density"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["thermal-conductivity", "laser-flash", "ceramic"],
+        ))
+        # battery electrochemical characterization
+        self.add(BenchmarkCase(
+            case_id="ed_006",
+            category="experiment_design",
+            task="设计一个LiCoO2正极材料的电化学表征实验方案。",
+            rubric_items=[
+                {"criterion": "组装半电池", "weight": 2, "keywords": ["coin cell", "half cell", "half-cell"]},
+                {"criterion": "CV测试", "weight": 1, "keywords": ["cyclic voltammetry"]},
+                {"criterion": "恒流充放电", "weight": 1, "keywords": ["galvanostatic", "charge-discharge", "gitt"]},
+                {"criterion": "EIS测试", "weight": 1, "keywords": ["eis", "impedance"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["battery", "electrochemistry", "licoo2"],
+        ))
+        # catalyst activity screening
+        self.add(BenchmarkCase(
+            case_id="ed_007",
+            category="experiment_design",
+            task="设计一个Pt/C催化剂氧还原反应(ORR)活性筛选实验方案。",
+            rubric_items=[
+                {"criterion": "选择测试方法(RDE/RRDE)", "weight": 2, "keywords": ["rde", "rrde", "rotating disk"]},
+                {"criterion": "电解液配置", "weight": 1, "keywords": ["electrolyte", "koh", "0.1 m"]},
+                {"criterion": "参比电极校准", "weight": 1, "keywords": ["reference electrode", "rhe", "calibration"]},
+                {"criterion": "活性指标分析", "weight": 1, "keywords": ["onset potential", "half-wave", "mass activity"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["catalysis", "orr", "rde"],
+        ))
+        # polymer degradation
+        self.add(BenchmarkCase(
+            case_id="ed_008",
+            category="experiment_design",
+            task="设计一个评估PLA聚合物在土壤中降解速率的实验方案。",
+            rubric_items=[
+                {"criterion": "降解环境设置", "weight": 2, "keywords": ["soil", "compost", "burial"]},
+                {"criterion": "时间梯度设计", "weight": 1, "keywords": ["time point", "sampling", "interval"]},
+                {"criterion": "质量损失监测", "weight": 1, "keywords": ["weight loss", "mass loss"]},
+                {"criterion": "降解表征方法", "weight": 1, "keywords": ["gpc", "sem", "ftir"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["polymer", "degradation", "pla"],
+        ))
+        # nanoindentation
+        self.add(BenchmarkCase(
+            case_id="ed_009",
+            category="experiment_design",
+            task="设计一个用纳米压痕测量薄膜硬度和弹性模量的实验方案。",
+            rubric_items=[
+                {"criterion": "选择压头类型", "weight": 2, "keywords": ["berkovich", "indentor", "tip"]},
+                {"criterion": "载荷-位移曲线", "weight": 1, "keywords": ["load-displacement", "p-h"]},
+                {"criterion": "Oliver-Pharr方法", "weight": 2, "keywords": ["oliver-pharr", "oliver pharr"]},
+                {"criterion": "校准与基线", "weight": 1, "keywords": ["calibration", "fused silica"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["nanoindentation", "hardness", "oliver-pharr"],
+        ))
+        # phase identification
+        self.add(BenchmarkCase(
+            case_id="ed_010",
+            category="experiment_design",
+            task="设计一个用XRD鉴定未知粉末样品物相的实验方案。",
+            rubric_items=[
+                {"criterion": "XRD测试参数设置", "weight": 1, "keywords": ["scan rate", "step size", "2θ"]},
+                {"criterion": "使用PDF数据库", "weight": 2, "keywords": ["pdf", "icdd", "database"]},
+                {"criterion": "衍射峰匹配", "weight": 1, "keywords": ["peak", "match", "indexing"]},
+                {"criterion": "定量分析", "weight": 1, "keywords": ["rietveld", "quantitative"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["xrd", "phase-id", "pdf-database"],
+        ))
+        return self
+
     async def run(
         self,
         agent: Any,
