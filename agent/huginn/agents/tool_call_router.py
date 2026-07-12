@@ -97,6 +97,7 @@ class ToolCallRouter:
         self._logger = logger or globals()["logger"]
         # 本轮已尝试过的轻量工具名, 用来判断 LLM 有没有走过轻量路径
         self._attempted_light: set[str] = set()
+        self._lock = __import__("threading").RLock()
 
     # ------------------------------------------------------------------ API
 
@@ -141,12 +142,12 @@ class ToolCallRouter:
 
         # ---- 以下都是重型工具 ----
 
-        # LLM 显式确认: 跳过检查直接放行
-        if self._is_confirmed_heavy(tool_input):
-            return True, "confirmed heavy"
+        # ponytail: removed __confirm_heavy bypass — LLM should not be able to
+        # self-authorise heavy tool calls. Light-path attempt is the only gate.
 
         # 判断轻量路径是否已尝试: 内部记录 + context 里给的
-        attempted = set(self._attempted_light)
+        with self._lock:
+            attempted = set(self._attempted_light)
         ext = context.get("attempted_light") if context else None
         if isinstance(ext, (list, tuple, set)):
             attempted.update(ext)
@@ -174,7 +175,8 @@ class ToolCallRouter:
     def record_light_attempt(self, tool_name: str) -> None:
         """记录一次轻量工具调用, 后续重型工具可凭此放行."""
         if tool_name in LIGHT_TOOLS:
-            self._attempted_light.add(tool_name)
+            with self._lock:
+                self._attempted_light.add(tool_name)
 
     def get_alternatives(self, tool_name: str) -> list[str]:
         """返回该重型工具推荐的轻量替代, 没有就给空列表."""
@@ -202,7 +204,8 @@ class ToolCallRouter:
 
     def reset(self) -> None:
         """清空本轮轻量路径记录 (下一轮 agent chat 开始时用)."""
-        self._attempted_light.clear()
+        with self._lock:
+            self._attempted_light.clear()
 
     def status(self) -> dict[str, Any]:
         """返回当前路由状态, 方便 debug / telemetry."""

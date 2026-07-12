@@ -13,25 +13,19 @@ from dataclasses import dataclass, field
 
 from huginn.types import PermissionMode, PermissionResult
 
-# 危险命令模式 — 命中任意一条就强制 ASK, 即使 auto_approve_all=True 也要人工确认.
-# 主要为了防止 yolo 模式下误删仓库或者把系统搞坏.
-DANGEROUS_PATTERNS: list[str] = [
-    r"rm\s+-rf?\s+/",           # rm -rf /
-    r"rm\s+-rf?\s+\*",          # rm -rf *
-    r"rm\s+-rf?\s+~",           # rm -rf ~
+# 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
+# permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
+# ponytail: 以前两处各维护一份重复且不一致的列表, 现在合并.
+try:
+    from huginn.security.command_filter import _BLOCKED_PATTERNS as _CF_PATTERNS
+except ImportError:
+    _CF_PATTERNS = []
+
+DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
     r"git\s+push\s+.*--force",  # git push --force
     r"git\s+push\s+.*-f\b",     # git push -f
     r"git\s+reset\s+--hard",    # git reset --hard
     r"git\s+clean\s+-fd",       # git clean -fd
-    r"chmod\s+-R\s+777",        # chmod -R 777
-    r"dd\s+if=.*of=/dev/",      # dd 写设备
-    r"mkfs\.",                  # 格式化
-    r":\(\)\{.*\|.*&\};",       # fork bomb
-    r">\s*/dev/sda",            # 直接写设备
-    r"curl\s+.*\|\s*sh",        # curl | sh
-    r"wget\s+.*\|\s*sh",        # wget | sh
-    r"shutdown\s",              # 关机
-    r"reboot\s",                # 重启
 ]
 
 # Default permission rules for material science tools

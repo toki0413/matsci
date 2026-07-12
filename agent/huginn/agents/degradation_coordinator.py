@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -32,7 +33,8 @@ def _try_fallback(
 ) -> dict[str, Any] | None:
     """尝试调用一个替代工具，成功返回结果 dict，失败返回 None。
 
-    ponytail: 直接复用 ToolRegistry 的 call 机制，不新建执行器。
+    ponytail: 复用 ToolRegistry + tool.call()，不新建执行器。
+    tool.call() 是 async 的，这里用 asyncio.run 桥接同步调用方。
     """
     try:
         from huginn.tools.registry import ToolRegistry
@@ -40,6 +42,7 @@ def _try_fallback(
         tool = ToolRegistry.get(tool_name)
         if tool is None:
             return None
+
         # 熔断器检查 — 替代工具也可能熔断
         from huginn.tools.adapter import _breaker_blocked
 
@@ -47,12 +50,72 @@ def _try_fallback(
         if blocked is not None:
             logger.debug("degradation: fallback %s also blocked", tool_name)
             return None
-        # 调用替代工具
-        result = tool.run(tool_input, context)
-        return result if isinstance(result, dict) else {"result": result}
+
+        # 构造 ToolContext — 复用主调用的 context，没有就建一个最小的
+        from huginn.types import ToolContext
+
+        if isinstance(context, ToolContext):
+            ctx = context
+        elif isinstance(context, dict):
+            ctx = ToolContext(
+                session_id=context.get("session_id", "degradation"),
+                workspace=context.get("workspace", "."),
+            )
+        else:
+            ctx = ToolContext(session_id="degradation", workspace=".")
+
+        # tool.call() 是 async，用 _run_sync 桥接
+        result = _run_sync(tool.call, tool_input, ctx)
+
+        # ToolResult → dict
+        if hasattr(result, "to_dict"):
+            d = result.to_dict()
+            if result.success:
+                return d.get("data", d) if isinstance(d.get("data"), dict) else d
+            else:
+                return None  # 工具执行失败
+        if isinstance(result, dict):
+            return result
+        return {"result": result}
     except Exception as e:
         logger.debug("degradation: fallback %s failed: %s", tool_name, e)
         return None
+
+
+def _run_sync(coro_func, *args, **kwargs):
+    """同步调用 async 函数 — 复用 event loop 或新建一个."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        # 已在 event loop 中 — 用 to_thread 避免阻塞
+        import concurrent.futures
+        import threading
+
+        # ponytail: 新建独立 event loop 在子线程中跑，不阻塞主 loop
+        result_holder: dict[str, Any] = {}
+
+        def _run_in_new_loop():
+            new_loop = asyncio.new_event_loop()
+            try:
+                result_holder["value"] = new_loop.run_until_complete(
+                    coro_func(*args, **kwargs)
+                )
+            except Exception as e:
+                result_holder["error"] = e
+            finally:
+                new_loop.close()
+
+        t = threading.Thread(target=_run_in_new_loop)
+        t.start()
+        t.join()
+        if "error" in result_holder:
+            raise result_holder["error"]
+        return result_holder.get("value")
+    else:
+        return asyncio.run(coro_func(*args, **kwargs))
 
 
 def try_with_degradation(

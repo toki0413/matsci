@@ -22,22 +22,31 @@ class ProjectKnowledgeGraph:
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / self.FILENAME
         self._graph = nx.DiGraph()
+        self._lock = __import__("threading").RLock()
         if self.path.exists():
             self.load()
 
     def load(self) -> None:
         """Load graph from JSON node-link data."""
-        data = json.loads(self.path.read_text(encoding="utf-8"))
-        # 显式指定 edges key, 兼容旧数据并消除 NetworkX 3.6 FutureWarning
-        edges_key = "links" if "links" in data else "edges"
-        self._graph = nx.node_link_graph(data, directed=True, multigraph=False, edges=edges_key)
+        with self._lock:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            edges_key = "links" if "links" in data else "edges"
+            self._graph = nx.node_link_graph(data, directed=True, multigraph=False, edges=edges_key)
 
     def save(self) -> None:
-        """Persist graph as JSON node-link data."""
-        data = nx.node_link_data(self._graph, edges="links")
-        self.path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        """Persist graph as JSON node-link data. Thread-safe via RLock."""
+        with self._lock:
+            data = nx.node_link_data(self._graph, edges="links")
+            # atomic write: tmp + rename
+            import os, tempfile
+            fd, tmp = tempfile.mkstemp(dir=str(self.root), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(data, indent=2, ensure_ascii=False))
+                os.replace(tmp, str(self.path))
+            except OSError:
+                os.unlink(tmp) if os.path.exists(tmp) else None
+                raise
 
     def add_entity(
         self,
