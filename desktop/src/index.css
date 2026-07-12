@@ -531,6 +531,11 @@
     @apply text-text-primary;
   }
 
+  .pet-menu-item-danger:hover {
+    background: color-mix(in srgb, #ef4444 14%, transparent);
+    color: #f87171;
+  }
+
   .pet-menu-item-icon {
     width: 16px;
     text-align: center;

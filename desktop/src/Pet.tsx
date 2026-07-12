@@ -173,6 +173,37 @@ const MOOD_DECAY_AMOUNT = 1;
 const HUNGER_LOW_THRESHOLD = 25;
 const MOOD_LOW_THRESHOLD = 25;
 
+// localStorage key for persistent pet state
+const PET_STORAGE_KEY = "huginn:pet_state";
+
+interface PersistedPetState {
+  experience: number;
+  level: number;
+  hunger: number;
+  happiness: number;
+  accessory: AccessoryId;
+  personality: PetPersonality;
+  muted: boolean;
+}
+
+function loadPersistedState(): Partial<PersistedPetState> {
+  try {
+    const raw = localStorage.getItem(PET_STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function savePersistedState(state: PersistedPetState) {
+  try {
+    localStorage.setItem(PET_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // localStorage might be full or unavailable
+  }
+}
+
 function xpForLevel(level: number): number {
   return Math.floor(XP_PER_LEVEL_BASE * Math.pow(1.15, level - 1));
 }
@@ -537,6 +568,7 @@ function ProgressRing({ progress, visible }: { progress: number; visible: boolea
 
 /* ── Main Pet Component ── */
 export default function Pet() {
+  const _saved = useMemo(() => loadPersistedState(), []);
   const [mood, setMood] = useState<PetMood>("idle");
   const [message, setMessage] = useState("");
   const [showBubble, setShowBubble] = useState(true);
@@ -547,7 +579,7 @@ export default function Pet() {
   const [, setRecentEvents] = useState<PetState["recent_events"]>([]);
   const [tipIndex, setTipIndex] = useState(0);
   const [persistent, setPersistent] = useState(false);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(_saved.muted ?? false);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [focusedMode, setFocusedMode] = useState(false);
   const activityCountRef = useRef(0);
@@ -574,13 +606,13 @@ export default function Pet() {
     }
     return "Muninn";
   });
-  const [personality, setPersonality] = useState<PetPersonality>("cheerful");
+  const [personality, setPersonality] = useState<PetPersonality>(_saved.personality ?? "cheerful");
   const [clickIndex, setClickIndex] = useState(0);
-  const [experience, setExperience] = useState(0);
-  const [level, setLevel] = useState(1);
-  const [hunger, setHunger] = useState(80);
-  const [happiness, setHappiness] = useState(80);
-  const [accessory, setAccessory] = useState<AccessoryId>("none");
+  const [experience, setExperience] = useState(_saved.experience ?? 0);
+  const [level, setLevel] = useState(_saved.level ?? 1);
+  const [hunger, setHunger] = useState(_saved.hunger ?? 80);
+  const [happiness, setHappiness] = useState(_saved.happiness ?? 80);
+  const [accessory, setAccessory] = useState<AccessoryId>(_saved.accessory ?? "none");
   const [particles, setParticles] = useState<Particle[]>([]);
   const [xpGainPopups, setXpGainPopups] = useState<Array<{ id: number; amount: number }>>([]);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -627,6 +659,19 @@ export default function Pet() {
   useEffect(() => {
     setSoundMuted(muted);
   }, [muted]);
+
+  // Persist pet state to localStorage so it survives refresh/restart
+  useEffect(() => {
+    savePersistedState({
+      experience,
+      level,
+      hunger,
+      happiness,
+      accessory,
+      personality,
+      muted,
+    });
+  }, [experience, level, hunger, happiness, accessory, personality, muted]);
 
   // Play level-up sound when level increases
   const prevLevelRef = useRef(level);
@@ -814,8 +859,9 @@ export default function Pet() {
       };
       es.onerror = () => {
         setBackendOnline(false);
-        speak(formatMsg(pack.offline, petName), "sleeping", true);
-        // Auto-reconnect with delay (previously no reconnect at all)
+        // Don't force sleeping on disconnect — pet stays alive locally
+        speak(formatMsg(pack.offline, petName), "idle", true);
+        // Auto-reconnect with delay
         es?.close();
         if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(connectSSE, 5_000);
@@ -912,9 +958,8 @@ export default function Pet() {
 
     idleTimer.current = setInterval(() => {
       const idleMs = Date.now() - lastActivityRef.current;
-      // In focused mode, suppress non-urgent tips but allow hunger alerts
       const inFocus = focusedModeRef.current;
-      if (backendOnline && !persistent && !muted) {
+      if (!persistent && !muted) {
         if (idleMs > 45000 && !inFocus) {
           // Memory-aware tips: use recent context when available
           let tip = pack.tips[tipIndex % pack.tips.length];
@@ -939,6 +984,11 @@ export default function Pet() {
               tip = memTips[tipIndex % memTips.length];
             }
           }
+          // Offline mode: pet stays active with personality quips, not sleeping
+          if (!backendOnline) {
+            const offlineQuips = pack.click;
+            tip = offlineQuips[tipIndex % offlineQuips.length];
+          }
           setMood("idle");
           setMessage(tip);
           setShowBubble(true);
@@ -949,7 +999,9 @@ export default function Pet() {
           setMood("hungry");
           setMessage(formatMsg(pack.hungry, petName, { hunger }));
           setShowBubble(true);
-        } else if (idleMs > 20000 && mood !== "sleeping") {
+        } else if (idleMs > 120000 && mood !== "sleeping" && backendOnline) {
+          // Only auto-sleep after 2 min idle AND backend online.
+          // Offline pet stays awake — it's watching over things.
           setMood("sleeping");
           setMessage(formatMsg(pack.sleep, petName));
           setShowBubble(true);
@@ -1376,9 +1428,23 @@ export default function Pet() {
           <button className="pet-menu-item" onClick={(e) => {
             e.stopPropagation();
             setMenuOpen(false);
+            appWindow.current?.minimize();
+          }}>
+            <span className="pet-menu-item-icon">{"\u2014"}</span> Minimize
+          </button>
+          <button className="pet-menu-item" onClick={(e) => {
+            e.stopPropagation();
+            appWindow.current?.hide();
+            setMenuOpen(false);
+          }}>
+            <span className="pet-menu-item-icon">{"\uD83D\uDD12"}</span> Hide to tray
+          </button>
+          <button className="pet-menu-item pet-menu-item-danger" onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen(false);
             appWindow.current?.close();
           }}>
-            <span className="pet-menu-item-icon">{"\u274C"}</span> Close
+            <span className="pet-menu-item-icon">{"\u274C"}</span> Quit
           </button>
         </div>
       )}
