@@ -71,13 +71,14 @@ def test_normal_chat_stream_emits_expected_sequence():
     ]
     assert ws.sent[0] == {
         "type": "tool_call", "id": "tc1", "name": "search", "args": {"q": "x"},
+        "thread_id": "t1",
     }
     assert ws.sent[1]["type"] == "tool_result"
     assert ws.sent[1]["id"] == "tc1"
     # HPC-job detection inside the tool result path.
     assert ws.sent[2]["type"] == "task_progress"
     assert ws.sent[2]["job_id"] == "12345"
-    assert ws.sent[3] == {"type": "text_delta", "text": "Hello world"}
+    assert ws.sent[3] == {"type": "text_delta", "text": "Hello world", "thread_id": "t1"}
 
 
 def test_plan_stream_emits_plan_result_before_done():
@@ -121,7 +122,7 @@ def test_clarification_break_still_fires_trailing_done():
 
     assert _types(ws.sent) == ["clarification_request", "text_delta", "done", "done"]
     assert ws.sent[0]["questions"] == ["which?"]
-    assert ws.sent[1] == {"type": "text_delta", "text": "which one?"}
+    assert ws.sent[1] == {"type": "text_delta", "text": "which one?", "thread_id": "t1"}
 
 
 if __name__ == "__main__":
