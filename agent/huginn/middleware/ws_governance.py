@@ -121,13 +121,17 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
 
     url_token = websocket.query_params.get("token")
     _dev = os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes")
+    # Check if API key is already in headers — skip first-message auth if so
+    _has_header_key = any(
+        k.lower() == b"x-huginn-api-key" for k, _ in websocket.scope.get("headers", [])
+    )
 
     if url_token:
         # Backward compat: inject URL token as Authorization header
         websocket.scope["headers"].append(
             (b"authorization", f"Bearer {url_token}".encode())
         )
-    elif not _dev:
+    elif not _dev and not _has_header_key:
         # First-message auth: accept, wait for auth message
         await websocket.accept()
         websocket.scope["_ws_pre_accepted"] = True

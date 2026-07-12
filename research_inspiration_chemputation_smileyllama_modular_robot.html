@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>三篇论文对材料科学Agent的启发分析</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --accent2: #f78166;
+  --accent3: #7ee787;
+  --accent4: #d2a8ff;
+  --warn: #f0883e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  padding: 0;
+}
+.header {
+  background: linear-gradient(135deg, #1a1f2e 0%, #0d1117 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 48px 40px 40px;
+}
+.header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.header .subtitle {
+  color: var(--text-dim);
+  font-size: 15px;
+}
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px;
+}
+.paper-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  margin-bottom: 24px;
+}
+.paper-card h2 {
+  font-size: 20px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.paper-card .meta {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.paper-card .meta span {
+  display: inline-block;
+  background: #21262d;
+  padding: 2px 10px;
+  border-radius: 4px;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+}
+.tag {
+  display: inline-block;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.tag-journal { background: #1f3a5f; color: var(--accent); }
+.tag-year { background: #2d1f1f; color: var(--accent2); }
+.section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent3);
+  margin: 20px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.insight-block {
+  background: #0d1117;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 16px 20px;
+  margin: 12px 0;
+}
+.insight-block .label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.insight-block .agent-link {
+  font-size: 13px;
+  color: var(--accent4);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.insight-block .agent-link strong {
+  color: var(--accent4);
+}
+p { margin-bottom: 10px; }
+ul { padding-left: 20px; margin-bottom: 10px; }
+li { margin-bottom: 4px; }
+code {
+  background: #21262d;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+.summary-card {
+  background: linear-gradient(135deg, #1a2332 0%, var(--card) 100%);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 32px;
+  margin-top: 32px;
+}
+.summary-card h2 {
+  font-size: 22px;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+.priority-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+.priority-table th, .priority-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.priority-table th {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+.priority-table .p1 { color: var(--accent2); font-weight: 700; }
+.priority-table .p2 { color: var(--warn); font-weight: 600; }
+.priority-table .p3 { color: var(--accent3); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>三篇论文对材料科学Agent的启发分析</h1>
+  <div class="subtitle">Chemputation | SmileyLlama | Programmable Modular Robot — 调研日期: 2026-07-13</div>
+</div>
+
+<div class="container">
+
+<!-- Paper 1 -->
+<div class="paper-card">
+  <h2>论文一：Chemputer and chemputation—A universal chemical compound synthesis machine</h2>
+  <div class="meta">
+    <span class="tag tag-journal">PNAS</span>
+    <span class="tag tag-year">2026</span>
+    <span>Leroy Cronin 课题组 · University of Glasgow</span>
+    <span>课题组 Publication #530</span>
+  </div>
+
+  <div class="section-title">核心内容</div>
+  <p>提出"chemputation"概念：将化学合成的每一步编码为可执行、可版本化、可移植的数字指令（χDL/XDL语言），由模块化硬件平台（Chemputer）自动执行。类比计算中的"computation"——化学反应像程序一样可以被共享、复现和优化。该论文进一步论证了Chemputer的操作通用性（Operational Universality），即图灵完备性：任何可在传统实验室完成的化学反应都可以被编码为XDL并在Chemputer上执行。</p>
+  <ul>
+    <li><strong>χDL（Chemical Description Language）</strong>：机器可读的化学描述语言，将反应步骤（加料、搅拌、加热、萃取、色谱等）抽象为标准化的"化学操作码"</li>
+    <li><strong>模块化硬件</strong>：泵-阀组以菊花链方式无限扩展，端口从3个扩展到5个</li>
+    <li><strong>在线反馈</strong>：1H NMR + Jaccard相似性指数自主判断反应终点，自动计算产率并动态调整后续步骤化学计量</li>
+    <li><strong>生态扩展</strong>：ElectroChemputer（电化学）、微波模块、多肽固相合成、纳米材料合成等</li>
+    <li><strong>商业化</strong>：衍生公司Chemify开设了全球首个chemputation设施</li>
+  </ul>
+
+  <div class="section-title">对Agent的启发</div>
+
+  <div class="insight-block">
+    <div class="label">启发 1：计算材料科学的"χDL"——可执行工作流描述语言</div>
+    <p>χDL将化学合成的"怎么做"从隐含知识变成显式代码。Agent当前的工具系统（LAMMPS、VASP、Abaqus等）本质上也是操作序列，但目前散落在各tool的参数中。可以设计一个<strong>材料科学描述语言（MSDL）</strong>，将"结构优化→收敛测试→性质计算"这类标准工作流编码为可版本化、可共享、可复现的数字协议。研究者可以像分享代码一样分享计算协议，通过version hash追溯历史最优解。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>ProvenanceRegistry + 实验记忆 + 研究场景工作流模板（4场景）→ 可统一为MSDL协议层</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 2：在线反馈驱动的自适应工作流调整</div>
+    <p>Chemputer的关键突破不是"自动化"，而是<strong>闭环反馈</strong>：根据前一步的实际产率动态调整后续试剂用量。Agent的autoloop虽然有validate阶段，但当前是"执行→验证→学习"的线性链。可以引入<strong>中间结果自适应调整</strong>：例如结构优化未收敛时自动调整ENCUT/KPOINTS，而不是等到validate阶段才发现问题。Jaccard相似性指数在Chemputer中用于判断"NMR谱图何时停止变化=反应完成"，这和Agent已有的surprise estimation（词级Jaccard）异曲同工，可考虑将相同数学工具用于<strong>计算收敛性判断</strong>。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Autoloop validate阶段 + _log_deviation() + surprise estimation → 可增强为中间反馈闭环</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 3：LLM + Chemputation验证科学文献（Publication #529）</div>
+    <p>Cronin课题组另一篇论文（#529）直接将LLM与chemputation结合：用LLM阅读化学文献，提取合成步骤，转化为XDL代码，然后在Chemputer上自动执行验证。这和Agent的定位高度吻合——<strong>LLM读取文献→生成计算方案→提交远程计算→验证结果</strong>。关键启示：文献验证不应只是"信息提取"，而应形成"读取→编码→执行→对比→反馈"的完整闭环。Agent的KB检索+知识图谱已经具备信息提取能力，缺少的是"将提取的信息编码为可执行协议→执行→与文献结果对比"这一环。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>KB检索 + KG文献管理 + 远程计算提交 → 可增加"文献复现验证"工作流</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 4：图灵完备性作为工具系统的设计目标</div>
+    <p>论文论证了Chemputer的图灵完备性——任何化学反应都可以被编码执行。这启发了一个设计原则：Agent的工具系统是否也应该追求<strong>计算材料科学的"操作完备性"</strong>？即：任何材料科学计算任务都可以被分解为有限的原子操作组合。当前的DegradationCoordinator（工具降级链）已经在朝这个方向走（gaussian_tool → materials_database_tool → symbolic_math_tool），但可以更系统地定义<strong>原子操作集</strong>和<strong>组合规则</strong>，使得工具降级不是被动应对，而是主动的等价变换。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>DegradationCoordinator + Composite Skills + 工具搜索 → 可增强为操作完备性框架</div>
+  </div>
+</div>
+
+<!-- Paper 2 -->
+<div class="paper-card">
+  <h2>论文二：SmileyLlama: modifying large language models for directed chemical space exploration</h2>
+  <div class="meta">
+    <span class="tag tag-journal">Nature Computational Science</span>
+    <span class="tag tag-year">2026</span>
+    <span>UC Berkeley · Promontory Labs · UF Scripps</span>
+    <span>DOI: 10.1038/s43588-026-00986-y</span>
+  </div>
+
+  <div class="section-title">核心内容</div>
+  <p>将Meta-Llama-3.1-8B-Instruct通过SFT（监督微调）+ DPO（直接偏好优化）改造为化学语言模型SmileyLlama，用约200万ChEMBL分子的SMILES字符串和RDKit计算的性质进行训练。用户可用自然语言指定分子量、logP、氢键供体/受体等性质范围，模型直接生成满足条件的候选分子SMILES。关键创新不在于模型架构，而在于<strong>工程化提示设计</strong>和<strong>SFT/DPO双阶段策略</strong>。</p>
+  <ul>
+    <li><strong>50%属性概率包含</strong>：训练时每个属性有50%概率出现在提示中，使模型无论用户是否指定属性都能工作</li>
+    <li><strong>范围而非精确值</strong>：用"≤500 MW"代替"MW=487.3"，匹配实际药物化学实践，规避LLM数值精度弱点</li>
+    <li><strong>SFT=广域探索，DPO=约束优化</strong>：SFT模型分布更宽，DPO后提示遵循度更高但分布变窄</li>
+    <li><strong>提示组合实现多目标优化</strong>：单目标训练后，组合提示即可实现多目标，无需重新训练</li>
+    <li><strong>保留自然语言能力</strong>：微调后模型仍可用英语对话，化学空间探索和自然语言推理能力共存</li>
+    <li><strong>iMiner集成</strong>：仅用25%迭代轮数即达到原始iMiner的对接改善效果，且保持更高分子多样性</li>
+  </ul>
+
+  <div class="section-title">对Agent的启发</div>
+
+  <div class="insight-block">
+    <div class="label">启发 5：提示工程的关键作用——不能依赖基础模型的领域知识</div>
+    <p>论文最重要的发现之一：消融实验显示，去掉提示中的属性信息后，模型在属性指定任务上表现急剧下降。结论是<strong>"不能仅依赖基础模型的化学知识"</strong>。对Agent而言，这意味着当前的system prompt和context builder中的结构化信息（工具输出的结构化结果、KB检索的领域知识）不是可有可无的辅助，而是模型性能的关键支撑。Agent已通过context builder将工具输出桥接到LLM（借鉴MatterChat的bridge module思路），SmileyLlama验证了这一路线的正确性。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Context builder + 提示块冲突扫描 + _build_hypothesis_prompt → 强化结构化提示的必要性</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 6：SFT/DPO双阶段 → Agent的探索/利用双模式</div>
+    <p>SmileyLlama明确区分了两种用途：SFT适合<strong>早期探索</strong>广阔化学空间（分布宽，多样性高），DPO适合<strong>约束优化</strong>（提示遵循度高，但分布窄）。这与Agent的autoloop阶段对应：hypothesize阶段应像SFT模式——广泛发散，提出N个"meaningfully different"的候选假设（Agent已有的并行多假设发散机制）；validate阶段应像DPO模式——收敛到物理约束和实验数据可验证的结论。可考虑在提示层面显式切换这两种模式，而非仅通过阶段切换。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Autoloop hypothesize（并行多假设发散）→ SFT模式；validate → DPO模式；_IMAGINATION_PROMPT_BLOCK可作为模式切换开关</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 7：提示组合实现零成本多目标迁移</div>
+    <p>SmileyLlama发现：分别用单目标提示训练后，<strong>组合提示即可实现多目标优化</strong>，无需联合训练。这对Agent的想象机制有直接启发：当前想象机制通过注入_IMAGINATION_PROMPT_BLOCK在数学结构族之间切换，但如果将不同的物理约束（如对称性要求、收敛性要求、特定性质目标）设计为可组合的"提示模块"，Agent就可以通过<strong>提示组合</strong>而非重新规划来实现多约束探索。这与Agent已有的"提示块冲突扫描"机制形成互补——组合时检测冲突，而非组合时验证可行性。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Imagination mechanism + 提示块冲突扫描 + _build_hypothesis_prompt → 可设计可组合的约束提示模块</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 8：开权重模型的隐私优势——本地推理保护敏感数据</div>
+    <p>论文明确指出开权重模型的优势：<strong>"推理时无需把潜在高价值数据上传远程服务器"</strong>。Agent已有隐私控制（本地数据标记、审计日志、敏感数据自动路由到本地模型），SmileyLlama提供了这一路线的学术验证。进一步启示：Agent的ModelRouter在路由敏感任务到本地模型时，可以参考SmileyLlama的SFT+DPO策略——对本地模型做轻量微调（LoRA），用材料科学数据构建prompt-following训练集，而不需要从头预训练。这正是Agent保留月壤迁移学习组件的理由。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Privacy controls + ModelRouter + 月壤迁移学习 → SFT+DPO轻量微调路线获学术验证</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 9：数据稀缺场景的局限性 → Agent的探索性状态设计</div>
+    <p>SmileyLlama在数据稀缺场景（如大环分子生成）表现有限。论文承认这一局限但未提出系统解决方案。Agent已设计了"exploratory"分类来标记结构尚不确定的数学gap，这实际上是对"数据/知识稀缺"状态的显式建模。SmileyLlama的局限提示Agent：<strong>在探索性状态下不应强求模型直接给出答案</strong>，而应切换到"提出可能方向+标注不确定性"的模式。Agent的Blind-spot pass和Feynman learning process已经在朝这个方向走。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>_blind_spot_pass() + _identify_math_structures（exploratory分类）+ Feynman learning → 数据稀缺场景的系统性应对</div>
+  </div>
+</div>
+
+<!-- Paper 3 -->
+<div class="paper-card">
+  <h2>论文三：A Programmable Modular Robot for the Synthesis of Molecular Machines</h2>
+  <div class="meta">
+    <span class="tag tag-journal">Chem (Cell Press)</span>
+    <span class="tag tag-year">2025</span>
+    <span>Leroy Cronin 课题组 · University of Glasgow</span>
+    <span>DOI: 10.1016/j.chempr.2025.102504</span>
+  </div>
+
+  <div class="section-title">核心内容</div>
+  <p>首次实现了基于轮烷（rotaxane）的人工分子机器的自动化和自主合成。使用Chemputer平台，通过XDL编码四步合成协议（站点引入→硝基还原→组装→封端），结合在线1H NMR反馈、自动色谱纯化和动态化学计量调整，从商业化构建块出发发散式合成了四种轮烷基分子机器。</p>
+  <ul>
+    <li><strong>菊花链阀配置</strong>：辅助阀连接到主体阀上，端口从3个扩展到5个，需要路径规划算法适配</li>
+    <li><strong>Jaccard相似性指数判断反应终点</strong>：比较反应进程中NMR谱图信号积分系综与初始谱图，"Jaccard稳定"=反应完成</li>
+    <li><strong>内标法自动产率测定</strong>：TMSB作内标，通过内参信号与诊断信号对比自动计算产率，据此调整后续试剂用量</li>
+    <li><strong>多柱色谱自动纯化</strong>：硅胶柱+尺寸排除色谱串联，UV监测馏分收集</li>
+    <li><strong>发散式合成</strong>：从公共中间体出发，通过更换封端分子获得不同产物</li>
+  </ul>
+
+  <div class="section-title">对Agent的启发</div>
+
+  <div class="insight-block">
+    <div class="label">启发 10：菊花链扩展架构 → Agent工具的动态扩展</div>
+    <p>Chemputer的菊花链配置让端口从3个扩展到5个，实现了<strong>无需重新设计核心架构的增量扩展</strong>。Agent的工具系统面临类似挑战：60+工具的schema不能一次性加载到上下文中（progressive tool discovery已解决发现问题）。菊花链思路启示：<strong>工具之间可以通过"辅助连接"共享资源</strong>，而非每个工具独立维护全部接口。例如多个计算工具可以共享一个统一的"结果解析器"辅助模块，减少冗余。Composite Skills已经是朝这个方向的一步，但可以更系统地设计"主工具+辅助模块"的拓扑结构。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Progressive tool discovery + Composite Skills → 可设计菊花链式工具拓扑</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 11：Jaccard相似性的跨域验证</div>
+    <p>论文使用Jaccard相似性指数比较NMR谱图来判断反应终点——"谱图不再变化=反应完成"。Agent已经在surprise estimation中使用词级Jaccard来衡量"知识状态是否发生变化"。这两者的数学结构完全同构：<strong>比较两个状态的集合表示，相似度稳定=系统达到稳态</strong>。这为Agent提供了一个跨域验证：Jaccard相似性不仅适用于文本（surprise），也适用于谱图（反应监控）、甚至可以扩展到<strong>计算结果的收敛性判断</strong>（如能量/力的变化是否趋于稳定）。统一这一数学工具可以简化Agent的多种监测逻辑。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Surprise estimation（4种扰动Jaccard）→ 可扩展为统一的"稳态检测器"，用于计算收敛性、反应终点、知识稳定性判断</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 12：动态化学计量 → Agent的自适应计算资源分配</div>
+    <p>Chemputer根据前一步实际产率自动调整后续试剂用量——不是按固定配方执行，而是<strong>根据中间结果动态调整后续步骤参数</strong>。Agent的计算工作流目前多为预设参数（ENCUT、KPOINTS等），缺乏"前一步结果指导后一步参数"的机制。可以引入<strong>自适应计算资源分配</strong>：例如结构优化后根据残余力的大小决定是否需要提高精度重新优化；声子谱计算后根据虚频大小决定是否需要扩大超胞。这与Agent的affordance设计理念一致（阻止捷径、强制必要工作流），但更进一步——不仅约束工作流，还根据结果<strong>动态优化工作流参数</strong>。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>Physical precheck hooks + Affordance设计 + _log_deviation() → 可增强为自适应参数调整</div>
+  </div>
+
+  <div class="insight-block">
+    <div class="label">启发 13：发散式合成 → Agent的并行多假设执行</div>
+    <p>论文从公共中间体出发，通过更换封端分子获得四种不同产物——这是一种<strong>低成本发散式探索</strong>。Agent已有"并行多假设发散"机制（提出N个候选，分配到独立session并行执行），但Chemputer的发散式合成提供了一个更经济的模式：<strong>共享前置计算</strong>。例如，对同一结构做不同性质计算（能带、声子、力学性质）时，结构优化只做一次，结果共享给后续计算。Agent的provenance系统和event sourcing API已经支持断点恢复和状态回滚，可以在此基础上实现"共享前置步骤"的并行执行拓扑。</p>
+    <div class="agent-link"><strong>对应Agent模块：</strong>并行多假设发散 + ProvenanceRegistry + Event sourcing API → 可优化为共享前置计算的DAG执行拓扑</div>
+  </div>
+</div>
+
+<!-- Summary -->
+<div class="summary-card">
+  <h2>启发总结与优先级排序</h2>
+  <p>三篇论文从不同角度指向同一个核心洞察：<strong>将科学实践从"手艺"转变为"可编程的数字协议"</strong>。Chemputer证明了化学合成可以图灵完备化，SmileyLlama证明了LLM可以通过工程化提示成为化学空间探索器，Modular Robot证明了闭环反馈可以实现自主合成。对Agent而言，这些工作验证了"LLM→编码→执行→验证→反馈"闭环的可行性。</p>
+
+  <table class="priority-table">
+    <thead>
+      <tr>
+        <th>优先级</th>
+        <th>启发方向</th>
+        <th>核心价值</th>
+        <th>与Agent现有模块的耦合度</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="p1">P0</td>
+        <td>材料科学描述语言（MSDL）</td>
+        <td>将计算工作流从隐含知识变成可版本化、可共享的显式协议</td>
+        <td>高：Provenance + 实验记忆 + 工作流模板</td>
+      </tr>
+      <tr>
+        <td class="p1">P0</td>
+        <td>文献复现验证闭环</td>
+        <td>LLM读文献→编码为可执行协议→执行→与文献对比→反馈</td>
+        <td>高：KB + KG + 远程计算提交</td>
+      </tr>
+      <tr>
+        <td class="p2">P1</td>
+        <td>自适应计算参数调整</td>
+        <td>根据中间结果动态调整后续步骤参数（如精度、网格密度）</td>
+        <td>中：Physical precheck + Deviation log</td>
+      </tr>
+      <tr>
+        <td class="p2">P1</td>
+        <td>探索/利用双模式提示切换</td>
+        <td>hypothesize=广域探索(SFT-like)，validate=约束优化(DPO-like)</td>
+        <td>中：Imagination prompt block + Hypothesis prompt</td>
+      </tr>
+      <tr>
+        <td class="p2">P1</td>
+        <td>可组合约束提示模块</td>
+        <td>将物理约束设计为可组合的提示模块，零成本多目标迁移</td>
+        <td>中：提示块冲突扫描 + Imagination</td>
+      </tr>
+      <tr>
+        <td class="p3">P2</td>
+        <td>统一Jaccard稳态检测器</td>
+        <td>用同一数学工具判断计算收敛、知识稳定、反应终点</td>
+        <td>低：Surprise estimation可泛化</td>
+      </tr>
+      <tr>
+        <td class="p3">P2</td>
+        <td>共享前置计算的并行DAG拓扑</td>
+        <td>多假设发散时共享结构优化等公共前置步骤</td>
+        <td>低：Provenance + Event sourcing</td>
+      </tr>
+      <tr>
+        <td class="p3">P2</td>
+        <td>操作完备性框架</td>
+        <td>定义原子操作集+组合规则，工具降级变为主动等价变换</td>
+        <td>低：DegradationCoordinator可增强</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="margin-top: 24px; padding: 16px; background: #0d1117; border-radius: 8px; border: 1px solid var(--border);">
+    <p style="color: var(--accent3); font-weight: 600; margin-bottom: 8px;">关键结论</p>
+    <p>三篇论文共同验证了Agent核心架构的正确性：<strong>闭环反馈</strong>（Chemputer的NMR→参数调整 ↔ Agent的autoloop）、<strong>结构化提示工程</strong>（SmileyLlama的属性提示 ↔ Agent的context builder）、<strong>模块化可扩展架构</strong>（Modular Robot的菊花链 ↔ Agent的composite skills）。最具突破性的启发是<strong>MSDL（材料科学描述语言）</strong>——如果Agent能将计算工作流编码为类似χDL的可执行协议，就能实现Cronin所描述的"化学从手艺变成数字科学"在材料科学领域的等价跃迁。</p>
+  </div>
+</div>
+
+</div>
+
+</body>
+</html>
