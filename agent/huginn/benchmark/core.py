@@ -2254,6 +2254,156 @@ class BenchmarkSuite:
         ))
         return self
 
+    def reverse_reasoning_cases(self) -> BenchmarkSuite:
+        """Reverse-reasoning benchmarks: given an effect, infer the cause.
+
+        10 cases covering XRD structure ID, density-based material ID,
+        phonon scattering mechanism, deformation mode, semiconductor ID,
+        Curie temperature material ID, heat-treatment strengthening,
+        corrosion type, eutectoid composition, and fracture mode.
+        Each rubric checks identification + physical reasoning.
+        """
+        # XRD d-spacing ratio → FCC vs BCC
+        self.add(BenchmarkCase(
+            case_id="rr_001",
+            category="reverse_reasoning",
+            task="某立方晶系晶体XRD前三条衍射峰的d-spacing比值为1:0.577:0.516。"
+                 "请根据该比值序列判断是FCC还是BCC结构，并说明判断依据。",
+            rubric_items=[
+                {"criterion": "识别立方晶系", "weight": 1, "keywords": ["cubic"]},
+                {"criterion": "判断为FCC", "weight": 2, "keywords": ["fcc", "face-centered"]},
+                {"criterion": "说明d-spacing比值依据", "weight": 2, "keywords": ["1/sqrt(3)", "ratio", "sequence"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["xrd", "crystal-structure", "fcc"],
+        ))
+        # density + magnetism → material ID
+        self.add(BenchmarkCase(
+            case_id="rr_002",
+            category="reverse_reasoning",
+            task="某金属材料室温密度为7.87 g/cm³，具有铁磁性。请判断该材料是什么，"
+                 "并说明其晶体结构和磁性来源。",
+            rubric_items=[
+                {"criterion": "识别为铁", "weight": 3, "keywords": ["iron", "fe"]},
+                {"criterion": "提到BCC结构", "weight": 2, "keywords": ["bcc", "body-centered"]},
+                {"criterion": "提到铁磁性", "weight": 1, "keywords": ["ferromagnetic"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["density", "material-id", "iron"],
+        ))
+        # thermal conductivity trend → scattering mechanism
+        self.add(BenchmarkCase(
+            case_id="rr_003",
+            category="reverse_reasoning",
+            task="某绝缘晶体在高温区(>Debye温度)热导率随温度升高按1/T趋势下降。"
+                 "请判断主导的声子散射机制，并解释其物理起源。",
+            rubric_items=[
+                {"criterion": "识别Umklapp散射", "weight": 3, "keywords": ["umklapp"]},
+                {"criterion": "解释高温1/T依赖", "weight": 2, "keywords": ["1/t", "phonon", "scattering"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["thermal-conductivity", "phonon", "umklapp"],
+        ))
+        # stress-strain curve → deformation mechanism
+        self.add(BenchmarkCase(
+            case_id="rr_004",
+            category="reverse_reasoning",
+            task="某金属拉伸试验中无明显屈服点，均匀塑性变形量超过40%，加工硬化率较高。"
+                 "请判断该金属可能的晶体结构类型及变形机制。",
+            rubric_items=[
+                {"criterion": "判断为FCC金属(如Cu/Al)", "weight": 2, "keywords": ["fcc", "copper", "aluminum"]},
+                {"criterion": "提到应变硬化", "weight": 2, "keywords": ["strain", "hardening", "work"]},
+                {"criterion": "解释多滑移系", "weight": 1, "keywords": ["slip", "system"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["stress-strain", "deformation", "fcc"],
+        ))
+        # band gap → semiconductor ID
+        self.add(BenchmarkCase(
+            case_id="rr_005",
+            category="reverse_reasoning",
+            task="某半导体材料室温带隙为1.12 eV，为间接带隙，外观为深灰色晶体。"
+                 "请判断该材料是什么，并说明其晶体结构特征。",
+            rubric_items=[
+                {"criterion": "识别为硅", "weight": 3, "keywords": ["silicon", "si"]},
+                {"criterion": "提到间接带隙", "weight": 2, "keywords": ["indirect"]},
+                {"criterion": "提到金刚石立方结构", "weight": 1, "keywords": ["diamond", "cubic"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["band-gap", "semiconductor", "silicon"],
+        ))
+        # Curie temperature → magnetic material ID
+        self.add(BenchmarkCase(
+            case_id="rr_006",
+            category="reverse_reasoning",
+            task="某铁磁材料Curie温度为770°C，室温饱和磁化强度约1.7×10⁶ A/m。"
+                 "请判断该材料是什么，并描述其磁性转变过程。",
+            rubric_items=[
+                {"criterion": "识别为铁", "weight": 3, "keywords": ["iron", "fe"]},
+                {"criterion": "提到铁磁-顺磁转变", "weight": 2, "keywords": ["ferromagnetic", "paramagnetic"]},
+                {"criterion": "提到BCC结构", "weight": 1, "keywords": ["bcc"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["curie-temperature", "magnetism", "iron"],
+        ))
+        # hardness change → strengthening mechanism
+        self.add(BenchmarkCase(
+            case_id="rr_007",
+            category="reverse_reasoning",
+            task="某低碳钢淬火后硬度从120HV升至650HV，随后200°C回火降至550HV。"
+                 "请分析各阶段硬度变化的强化机制。",
+            rubric_items=[
+                {"criterion": "识别马氏体强化", "weight": 3, "keywords": ["martensite"]},
+                {"criterion": "解释淬火产生马氏体", "weight": 2, "keywords": ["quench", "rapid cooling"]},
+                {"criterion": "解释回火析出碳化物", "weight": 2, "keywords": ["temper", "carbide"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["heat-treatment", "martensite", "strengthening"],
+        ))
+        # corrosion morphology → corrosion type
+        self.add(BenchmarkCase(
+            case_id="rr_008",
+            category="reverse_reasoning",
+            task="某不锈钢在含Cl⁻环境中服役后，表面出现孤立深坑，其余区域基本完好。"
+                 "请判断腐蚀类型，并分析Cl⁻在其中的作用。",
+            rubric_items=[
+                {"criterion": "识别为点蚀", "weight": 3, "keywords": ["pitting", "pit"]},
+                {"criterion": "解释Cl⁻的作用", "weight": 2, "keywords": ["chloride", "cl"]},
+                {"criterion": "提到钝化膜破坏", "weight": 2, "keywords": ["passive", "film", "breakdown"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["corrosion", "pitting", "chloride"],
+        ))
+        # phase diagram microstructure → composition
+        self.add(BenchmarkCase(
+            case_id="rr_009",
+            category="reverse_reasoning",
+            task="某Fe-C合金在727°C发生共析转变，室温显微组织为珠光体(铁素体+渗碳体层片)。"
+                 "请判断该合金的碳含量，并说明共析转变过程。",
+            rubric_items=[
+                {"criterion": "识别共析成分0.77wt%C", "weight": 3, "keywords": ["0.77", "eutectoid"]},
+                {"criterion": "提到珠光体", "weight": 2, "keywords": ["pearlite"]},
+                {"criterion": "提到铁素体+渗碳体", "weight": 2, "keywords": ["ferrite", "cementite"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["phase-diagram", "eutectoid", "fe-c"],
+        ))
+        # fracture surface → failure mode
+        self.add(BenchmarkCase(
+            case_id="rr_010",
+            category="reverse_reasoning",
+            task="某金属构件断口呈杯锥状，中心区域有大量韧窝，边缘呈45°剪切唇。"
+                 "请判断失效模式，并解释断口形貌的形成过程。",
+            rubric_items=[
+                {"criterion": "识别为延性断裂", "weight": 3, "keywords": ["ductile", "延性"]},
+                {"criterion": "提到韧窝", "weight": 2, "keywords": ["dimple", "韧窝"]},
+                {"criterion": "解释杯锥状断口", "weight": 2, "keywords": ["cup", "cone", "shear"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["fracture", "ductile", "cup-cone"],
+        ))
+        return self
+
     async def run(
         self,
         agent: Any,

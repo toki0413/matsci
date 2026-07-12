@@ -196,6 +196,13 @@ class ModelCaps:
 # 就返回全 False.
 MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # ── Anthropic ──────────────────────────────────────────────
+    # Sonnet 5: "最强 agentic Sonnet", 200K, agent 编程 63.2%
+    "claude-sonnet-5": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "claude-opus-4-8": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
     "claude-sonnet-4-20250514": ModelCaps(
         vision=True, tools=True, reasoning=True, streaming=True
     ),
@@ -215,6 +222,10 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
         vision=True, tools=True, reasoning=False, streaming=True
     ),
     # ── OpenAI ─────────────────────────────────────────────────
+    # GPT-5.6 (Sol/Terra/Luna, 2026-07): 1.5M context, native agent
+    "gpt-5.6": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "gpt-5.2": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "gpt-5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "gpt-4o": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
     "gpt-4o-mini": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
     "gpt-4-turbo": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
@@ -228,6 +239,13 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "o1-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
     "o3-mini": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
     # ── DeepSeek ───────────────────────────────────────────────
+    # V4-Pro: MoE 1.6T/49B active, 1M context, multimodal
+    "deepseek-v4-pro": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "deepseek-v4-flash": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True
+    ),
     "deepseek-chat": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
@@ -237,13 +255,14 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "deepseek-reasoner": ModelCaps(
         vision=False, tools=False, reasoning=True, streaming=True
     ),
-    "deepseek-v4-pro": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True
-    ),
-    "deepseek-v4-flash": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True
-    ),
     # ── Google Gemini ──────────────────────────────────────────
+    # Gemini 3.0 Pro (2025-11): 2M context, 强多模态
+    "gemini-3.0-pro": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "gemini-3.0-flash": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
     "gemini-2.5-pro": ModelCaps(
         vision=True, tools=True, reasoning=True, streaming=True
     ),
@@ -276,6 +295,7 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "moonshot-v1-128k": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
+    "kimi-k2.5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "kimi-k2.6": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "kimi-k2.7": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "kimi-k2-thinking": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
