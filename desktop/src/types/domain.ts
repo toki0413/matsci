@@ -86,6 +86,10 @@ export interface ModelConfig {
   temperature: number;
   enabled: boolean;
   credential_id?: string | null;
+  // reasoning intensity: null = off, "low"/"medium"/"high" = on
+  thinking?: string | null;
+  // max output tokens; null = provider default
+  max_tokens?: number | null;
 }
 
 export interface AgentProfile {

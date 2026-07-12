@@ -590,6 +590,30 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       <span>{m.temperature.toFixed(2)}</span>
                     </div>
 
+                    {/* Reasoning intensity + max tokens */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <select
+                        className="input-field text-xs w-28"
+                        value={m.thinking || ""}
+                        onChange={(e) => updateModel(i, { thinking: e.target.value || null })}
+                      >
+                        <option value="">Reasoning: off</option>
+                        <option value="low">Reasoning: low</option>
+                        <option value="medium">Reasoning: medium</option>
+                        <option value="high">Reasoning: high</option>
+                      </select>
+                      <input
+                        className="input-field text-xs w-24"
+                        type="number"
+                        min={256}
+                        max={32768}
+                        step={256}
+                        value={m.max_tokens ?? ""}
+                        onChange={(e) => updateModel(i, { max_tokens: e.target.value ? parseInt(e.target.value) : null })}
+                        placeholder="max tokens"
+                      />
+                    </div>
+
                     {/* Link to a stored credential, or probe a local server for model names */}
                     <div className="md:col-span-2 space-y-1.5 border-t border-border pt-3">
                       <label className="block text-xs font-medium text-text-secondary">Stored credential (optional)</label>
@@ -621,19 +645,23 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         {(() => {
                           const mn = (m.model || '').toLowerCase();
                           const badges: { label: string; color: string }[] = [];
-                          // Context window estimation by model family
-                          if (/gpt-4o/.test(mn)) badges.push({ label: '128K ctx', color: 'bg-blue-500/10 text-blue-600' });
-                          else if (/claude-3.*sonnet|claude-3\.5/.test(mn)) badges.push({ label: '200K ctx', color: 'bg-purple-500/10 text-purple-600' });
-                          else if (/claude-3.*opus/.test(mn)) badges.push({ label: '200K ctx', color: 'bg-purple-500/10 text-purple-600' });
+                          // Context window by model family
+                          if (/gpt-4o|o[13]-|o3-/.test(mn)) badges.push({ label: '128K ctx', color: 'bg-blue-500/10 text-blue-600' });
+                          else if (/claude-3.*sonnet|claude-3\.5|claude-4/.test(mn)) badges.push({ label: '200K ctx', color: 'bg-purple-500/10 text-purple-600' });
+                          else if (/claude-3.*opus|claude-3.*haiku/.test(mn)) badges.push({ label: '200K ctx', color: 'bg-purple-500/10 text-purple-600' });
                           else if (/gpt-4/.test(mn)) badges.push({ label: '8K ctx', color: 'bg-blue-500/10 text-blue-600' });
                           else if (/gpt-3.5/.test(mn)) badges.push({ label: '16K ctx', color: 'bg-blue-500/10 text-blue-600' });
-                          else if (/deepseek/.test(mn)) badges.push({ label: '64K ctx', color: 'bg-green-500/10 text-green-600' });
+                          else if (/deepseek/.test(mn)) badges.push({ label: '128K ctx', color: 'bg-green-500/10 text-green-600' });
                           else if (/gemini.*1\.5|gemini-2/.test(mn)) badges.push({ label: '1M ctx', color: 'bg-orange-500/10 text-orange-600' });
-                          else if (/llama.*70b|llama-3/.test(mn)) badges.push({ label: '8K ctx', color: 'bg-teal-500/10 text-teal-600' });
+                          else if (/llama.*70b|llama-3/.test(mn)) badges.push({ label: '128K ctx', color: 'bg-teal-500/10 text-teal-600' });
+                          else if (/qwen/.test(mn)) badges.push({ label: '32K ctx', color: 'bg-cyan-500/10 text-cyan-600' });
+                          else if (/glm/.test(mn)) badges.push({ label: '128K ctx', color: 'bg-indigo-500/10 text-indigo-600' });
                           // Vision capability
-                          if (/gpt-4o|gpt-4-vision|claude-3|gemini|llava|qwen-vl/.test(mn)) badges.push({ label: 'Vision', color: 'bg-pink-500/10 text-pink-600' });
+                          if (/gpt-4o|gpt-4-vision|claude-3|claude-4|gemini|llava|qwen-vl|glm-4v/.test(mn)) badges.push({ label: 'Vision', color: 'bg-pink-500/10 text-pink-600' });
+                          // Reasoning capability
+                          if (/o[13]|o3-|deepseek-r|reason/.test(mn)) badges.push({ label: 'Reasoning', color: 'bg-violet-500/10 text-violet-600' });
                           // Function calling
-                          if (/gpt-4|gpt-3.5-turbo|claude-3|gemini|deepseek/.test(mn)) badges.push({ label: 'Tools', color: 'bg-amber-500/10 text-amber-600' });
+                          if (/gpt-4|gpt-3.5-turbo|claude-3|claude-4|gemini|deepseek|qwen|glm/.test(mn)) badges.push({ label: 'Tools', color: 'bg-amber-500/10 text-amber-600' });
                           return badges.length > 0 ? badges.map((b, bi) => (
                             <span key={bi} className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${b.color}`}>{b.label}</span>
                           )) : <span className="text-[10px] text-text-muted">No metadata — type a model name</span>;
