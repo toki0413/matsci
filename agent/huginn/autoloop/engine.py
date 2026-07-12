@@ -495,8 +495,52 @@ class AutoloopEngine:
             return lines[0][:100] + " | " + lines[1][:100] + " | ..."
         return ""
 
+    def _scan_block_conflicts(self, blocks: list[tuple[str, str]]) -> str:
+        """Lightweight cross-source conflict detection: same property, different values.
+
+        Scans block text for 'property = value unit' patterns. When the same
+        property appears in multiple blocks with different numeric values,
+        returns a warning string. Uses regex only, no LLM calls.
+        """
+        import re as _re
+        # ponytail: 属性名前缀不一致 (如 "band gap" vs "the band gap") 会导致漏检,
+        # 但对 <10 blocks 的 prompt 场景足够; 如需精确匹配可改用 NER 提取属性名
+        _PROP_RE = _re.compile(
+            r'([\w\s]{3,25}?)\s*[:=]\s*(-?\d+\.?\d*)\s*(eV(?:/\w+)?|GPa|THz|nm)',
+            _re.IGNORECASE,
+        )
+        prop_values: dict[str, dict[str, str]] = {}
+        for name, text in blocks:
+            if not text:
+                continue
+            for m in _PROP_RE.finditer(text):
+                prop = m.group(1).strip().lower()
+                val = m.group(2)
+                unit = m.group(3).strip()
+                key = f"{prop} ({unit})"
+                prop_values.setdefault(key, {})
+                if val not in prop_values[key]:
+                    prop_values[key][val] = name
+        conflicts = []
+        for key, vals in prop_values.items():
+            if len(vals) > 1:
+                sources = ", ".join(f"{v} in [{s}]" for v, s in vals.items())
+                conflicts.append(f"{key}: {sources}")
+        if not conflicts:
+            return ""
+        return (
+            "Cross-source conflicts detected (same property, different values):\n"
+            + "\n".join(f"  - {c}" for c in conflicts[:5])
+            + "\nVerify which value is correct before proceeding.\n"
+        )
+
     def _trim_to_budget(self, blocks: list[tuple[str, str]]) -> str:
         """按优先级拼接 blocks, 超预算时分层压缩: 截断→摘要→删除."""
+        # 跨源冲突检测: 扫描各 block 中的 property=value 对, 标注矛盾
+        conflict_warn = self._scan_block_conflicts(blocks)
+        if conflict_warn:
+            blocks = [("conflict", conflict_warn)] + blocks
+
         kept = [(n, v) for n, v in blocks]
         total = sum(len(v) for _, v in kept)
         if total <= self._PROMPT_BUDGET:
@@ -991,6 +1035,25 @@ class AutoloopEngine:
                 continue
             print(f"  → Execution complete: {execution_result}")
 
+            # Git commit after execute — EurekAgent artifact engineering:
+            # 每轮 execute 后提交, 让下轮 perceive 能 git diff 看到本轮变更,
+            # 而不是看到从 run 开始累积的全部 diff.
+            try:
+                import subprocess as _sp
+                _sp.run(["git", "add", "-A"], cwd=self.workspace,
+                        capture_output=True, timeout=10)
+                _msg = f"[iter {self._iteration}] {plan.get('mode','?')}: {plan.get('description','')[:80]}"
+                for _attempt in range(3):
+                    _r = _sp.run(["git", "commit", "-m", _msg], cwd=self.workspace,
+                                 capture_output=True, timeout=10)
+                    if _r.returncode == 0:
+                        break
+                    # index.lock 冲突等瞬时错误, 退避后重试
+                    if _attempt < 2:
+                        import time; time.sleep(1 * (_attempt + 1))
+            except Exception:
+                pass  # no git repo or git unavailable — not our problem
+
             # Deviation log: 执行结果与 plan 预期不符时记录
             # 借鉴 "Finding Your Unknowns" 的 implementation-notes 技术
             self._log_deviation(plan, execution_result, context)
@@ -1428,7 +1491,18 @@ class AutoloopEngine:
         self._last_persona = persona_name  # 供 _learn 写入 memory/KG
         try:
             response = await self._llm_chat(prompt, persona_name=persona_name, task="reasoning")
-            return response.strip()
+            raw = response.strip()
+            # Multi-hypothesis selection (X-Master diverge-then-select):
+            # prompt 要求生成 3 候选后写 "SELECTED: <best>", 从中提取最优假设.
+            # 没找到 SELECTED 就退回原文, 向后兼容.
+            if "SELECTED:" in raw:
+                _after = raw.split("SELECTED:", 1)[1].strip()
+                # 取第一行或到末尾, 避免拖入后续解释
+                _sel = _after.split("\n")[0].strip() if _after else ""
+                self._last_hypothesis = _sel or raw
+            else:
+                self._last_hypothesis = raw
+            return self._last_hypothesis
         except Exception:
             return None
 
@@ -1496,11 +1570,18 @@ class AutoloopEngine:
             prediction = conjecture.get("prediction", "")
             if not statement:
                 return ""
+            # Prerequisite Inversion: 跨域类比不是直接用, 而是问"什么条件必须暗中获得满足"
+            # 4 维反转防止结构错配 (Dream Layer v1.1 核心贡献)
             return (
                 f"[Cross-domain analogy hint]\n"
                 f"Conjecture: {statement}\n"
                 f"Prediction: {prediction}\n"
-                f"(This is a template-based analogy for inspiration only.)"
+                f"Before using this analogy, perform Prerequisite Inversion:\n"
+                f"- Necessary: What condition MUST hold for this analogy to be valid?\n"
+                f"- Boundary: In what parameter range does it break down?\n"
+                f"- Hidden: What implicit assumption from the source domain may NOT hold here?\n"
+                f"- Failure: If this analogy is wrong, what would the system look like instead?\n"
+                f"(Template-based analogy — verify conditions before adopting.)"
             )
         except Exception:
             return ""
@@ -2044,6 +2125,11 @@ class AutoloopEngine:
             }
             self._last_surprise = surprise
 
+        self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[:1000]
+        # Store failure_mode for next hypothesis loop (Dream Layer: crash = discovery)
+        _gv = results.get("generative_verify", {})
+        if isinstance(_gv, dict):
+            self._last_failure_mode = _gv.get("failure_mode", "")
         return results
 
     async def _run_pytest(self) -> dict[str, Any]:
@@ -2441,48 +2527,78 @@ class AutoloopEngine:
                 f"\nNote: automated checks detected: {json.dumps(collapse, default=str)[:300]}"
             )
 
+        # 注入历史记忆, 检查本次结果是否与历史迭代结果矛盾
+        memory_hint = ""
+        try:
+            _mem_text = self._build_memory_text(query=snippet[:200])
+            if _mem_text:
+                memory_hint = (
+                    f"\nPast iterations memory:\n{_mem_text}\n"
+                    "Cross-check: does the current result contradict any historical finding above?\n"
+                    "If yes, note the contradiction in 'reason'.\n"
+                )
+        except Exception:
+            pass
+
         prompt = (
             "You are a verification model. Score the quality of this agent output "
             "from 0.0 to 1.0.\n"
             "1.0 = well-reasoned, complete, correct.\n"
             "0.5 = acceptable but has issues.\n"
             "0.0 = poor, incorrect, or incomplete.\n"
-            f"{collapse_hint}\n\n"
+            "Also check evidence chain (RCBench failure mode: evidence mismatch):\n"
+            "- Does the conclusion have specific data/numbers supporting it?\n"
+            "- Are claims grounded in the execution results, not assumed?\n"
+            "- Is there a clear data→inference→conclusion link?\n"
+            "Also describe failure mode (Dream Layer insight: how it crashes = new discovery):\n"
+            "- If this hypothesis is WRONG, in what specific way would it fail?\n"
+            "- What would the system look like if the opposite were true?\n"
+            f"{collapse_hint}{memory_hint}\n\n"
             f"Agent output:\n{snippet}\n\n"
             "Respond with ONLY a JSON object: "
-            '{"score": <float>, "reason": "<brief>"}'
+            '{"score": <float>, "evidence_score": <float 0-1>, '
+            '"reason": "<brief>", "evidence_gap": "<what data is missing>", '
+            '"failure_mode": "<how it would crash if wrong>"}'
         )
 
         resp = await self._llm_chat(prompt, model=self.verification_model)
-        score, reason = self._parse_verify_score(resp)
+        score, reason, evidence_score, evidence_gap, failure_mode = self._parse_verify_score(resp)
 
         return {
             "score": score,
             "reason": reason,
             "needs_retry": score < 0.5,
+            "evidence_score": evidence_score,
+            "evidence_gap": evidence_gap,
+            "failure_mode": failure_mode,
         }
 
     @staticmethod
-    def _parse_verify_score(resp: str) -> tuple[float, str]:
-        """从 LLM 响应里抠出 score 和 reason, 容错解析."""
+    def _parse_verify_score(resp: str) -> tuple[float, str, float, str, str]:
+        """Parse score, reason, evidence_score, evidence_gap, failure_mode from LLM response."""
         import re
 
         if not resp:
-            return 0.5, "empty response"
+            return 0.5, "empty response", 0.5, "", ""
 
-        # 先试 JSON 解析
+        # try JSON first
         try:
             data = json.loads(resp.strip())
-            return float(data.get("score", 0.5)), str(data.get("reason", ""))
+            score = float(data.get("score", 0.5))
+            reason = str(data.get("reason", ""))
+            ev_score = float(data.get("evidence_score", 0.5))
+            ev_gap = str(data.get("evidence_gap", ""))
+            fail_mode = str(data.get("failure_mode", ""))
+            return score, reason, ev_score, ev_gap, fail_mode
         except (json.JSONDecodeError, ValueError):
             logger.warning("error in _parse_verify_score: JSON parse failed, falling back to regex", exc_info=True)
 
-        # fallback: 正则抠数字
+        # fallback: regex for first float
         m = re.search(r"([01]\.\d+|[01])\b", resp)
         if m:
-            return float(m.group(1)), resp[:200]
+            return float(m.group(1)), resp[:200], 0.5, "", ""
 
-        return 0.5, resp[:200]
+        return 0.5, resp[:200], 0.5, "", ""
 
     async def _run_math_validation(self, execution_result: Any) -> dict[str, Any]:
         """把执行结果里的数学结构抽出来, 用数学工具做形式化校验.
@@ -3033,7 +3149,12 @@ class AutoloopEngine:
                 logger.warning("error in _learn: store_plan_progress writeback failed", exc_info=True)
 
     async def _report(self, objective: str, phases: list[LoopPhase], total_time: float) -> str | None:
-        """Generate a final report summarizing the loop."""
+        """Generate a structured scientific research report.
+
+        RCBench expects y=(π, o, r) where r is a research report with
+        Introduction/Methods/Results/Discussion. We assemble execution data
+        from self and let the LLM write a proper report instead of a loop summary.
+        """
         report_data = {
             "objective": objective,
             "run_id": f"loop_{uuid.uuid4().hex[:8]}",
@@ -3049,29 +3170,42 @@ class AutoloopEngine:
             ],
         }
 
-        # Report 阶段接入 tutor persona: 让 LLM 用教学口吻写一段总结,
-        # 帮助用户理解这轮 loop 做了什么、为什么这么做. 失败就退化为纯表格报告.
-        # A4: 同时查 KB 拿 first-principles 文献块, 拼进 tutor prompt 让总结
-        # 引用已知理论, 报告里会带 "Domain Knowledge References" 段落.
-        kb_text = self._build_kb_text(query=objective)
-        tutor_narrative = ""
-        try:
-            tutor_narrative = await self._llm_chat(
-                self._build_tutor_report_prompt(report_data, kb_text),
-                persona_name="tutor",
-                task="summarize",  # ponytail: report 用便宜模型, 不需要强推理
-            )
-            tutor_narrative = (tutor_narrative or "").strip()
-        except Exception:
-            tutor_narrative = ""
+        # Collect scientific evidence from the engine instance for the report.
+        # This is the (π, o) data RCBench expects: what ran, what came out.
+        last_exec = getattr(self, "_last_execution_result", None)
+        exec_summary = ""
+        if last_exec and isinstance(last_exec, dict):
+            _tool = last_exec.get("_tool_name", "unknown")
+            _res = last_exec.get("result", last_exec)
+            exec_summary = json.dumps(_res, ensure_ascii=False, default=str)[:1500]
+            exec_summary = f"Tool: {_tool}\nResult: {exec_summary}"
 
-        # Save markdown report to workspace
+        visual_ctx = getattr(self, "_last_visual_context", "")
+        last_validation = getattr(self, "_last_validation", "")
+        last_surprise = getattr(self, "_last_surprise", 0.0)
+        last_hypothesis = getattr(self, "_last_hypothesis", "")
+
+        kb_text = self._build_kb_text(query=objective)
+        report_narrative = ""
+        try:
+            report_narrative = await self._llm_chat(
+                self._build_science_report_prompt(
+                    report_data, kb_text, exec_summary, visual_ctx,
+                    last_validation, last_hypothesis, last_surprise,
+                ),
+                persona_name="tutor",
+                task="summarize",
+            )
+            report_narrative = (report_narrative or "").strip()
+        except Exception:
+            report_narrative = ""
+
         report_path = self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
         report_content = self._render_report(report_data)
         if kb_text:
             report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
-        if tutor_narrative:
-            report_content += "\n\n## Tutor's Summary\n\n" + tutor_narrative + "\n"
+        if report_narrative:
+            report_content += "\n\n## Research Report\n\n" + report_narrative + "\n"
         report_path.write_text(report_content, encoding="utf-8")
 
         return str(report_path)
@@ -3190,6 +3324,7 @@ Output format (Markdown, no code blocks):
         explanation = explanation_part
 
         # 存入蒸馏知识库
+        _feynman_conf = min(0.9, 0.5 + (r_phys or 0) * 0.3)
         try:
             from huginn.evolution.knowledge_distiller import KnowledgeDistiller
             distiller = KnowledgeDistiller()
@@ -3204,7 +3339,7 @@ Output format (Markdown, no code blocks):
                 iteration=self._iteration,
                 hypothesis=hypothesis,
                 tags=tags,
-                confidence=min(0.9, 0.5 + (r_phys or 0) * 0.3),
+                confidence=_feynman_conf,
             )
         except Exception:
             logger.warning("feynman note storage failed", exc_info=True)
@@ -3232,9 +3367,10 @@ Output format (Markdown, no code blocks):
                 note_text = f"# Feynman Note (iter {self._iteration})\n\n{explanation}\n\n## Gaps\n"
                 for g_text, g_type in gaps:
                     note_text += f"- [{g_type}] {g_text}\n"
-                kb.add_document(
+                kb.add_text(
+                    text=note_text,
                     filename=f"feynman_iter_{self._iteration}.txt",
-                    content=note_text.encode("utf-8"),
+                    metadata={"confidence": str(_feynman_conf)},
                 )
         except Exception:
             pass
@@ -3384,29 +3520,53 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
             })
 
     @staticmethod
-    def _build_tutor_report_prompt(
-        report_data: dict[str, Any], kb_text: str = ""
+    def _build_science_report_prompt(
+        self,
+        report_data: dict[str, Any],
+        kb_text: str = "",
+        exec_summary: str = "",
+        visual_ctx: str = "",
+        validation_summary: str = "",
+        hypothesis: str = "",
+        surprise: float = 0.0,
     ) -> str:
-        """构造让 tutor persona 写教学口吻总结的 prompt."""
+        """Build a prompt for generating a structured scientific research report.
+
+        RCBench evaluates y=(π, o, r) where r must contain scientific findings,
+        not just a loop status table. This prompt produces Introduction /
+        Methods / Results / Discussion structure from the actual execution data.
+        """
         try:
-            phases_blob = json.dumps(report_data["phases"], ensure_ascii=False)[:1200]
+            phases_blob = json.dumps(report_data["phases"], ensure_ascii=False)[:800]
         except Exception:
-            phases_blob = str(report_data.get("phases", ""))[:1200]
-        kb_section = f"\n{kb_text}\n" if kb_text else ""
+            phases_blob = str(report_data.get("phases", ""))[:800]
+        kb_section = f"\n## Domain Knowledge\n{kb_text}\n" if kb_text else ""
+        exec_section = f"\n## Execution Data\n{exec_summary}\n" if exec_summary else ""
+        visual_section = f"\n## Visual Primitives\n{visual_ctx}\n" if visual_ctx else ""
+        val_section = f"\n## Validation\n{validation_summary}\n" if validation_summary else ""
+        hyp_section = f"\n## Hypothesis Tested\n{hypothesis}\n" if hypothesis else ""
+
         return (
-            "You just supervised an autonomous research loop. Summarize for a "
-            "graduate student what happened, in a patient, pedagogical tone.\n\n"
+            "You are writing a structured scientific research report based on an "
+            "autonomous research loop's execution data. This is NOT a loop summary — "
+            "it must read like a research paper section.\n\n"
             f"Objective: {report_data['objective']}\n"
-            f"Total time: {report_data['total_time_seconds']:.1f}s\n"
             f"Phases:\n{phases_blob}\n"
-            f"{kb_section}"
-            "Cover:\n"
-            "- What the loop tried to achieve and why each phase matters.\n"
-            "- Any phase that failed, and what a student should learn from it.\n"
-            "- How the result relates to the domain knowledge context above "
-            "(if any), citing source numbers when relevant.\n"
-            "- One concrete suggestion for the next iteration.\n"
-            "Keep it under 200 words."
+            f"Surprise score: {surprise:.2f} (0=predicted, 1=unexpected)"
+            f"{hyp_section}{exec_section}{visual_section}{val_section}{kb_section}"
+            "\nWrite the report with these sections (Markdown):\n"
+            "## Introduction\n"
+            "State the scientific question and why it matters. Reference domain knowledge above.\n\n"
+            "## Methods\n"
+            "Describe the computational approach: what tools were used, what parameters, "
+            "what workflow. Be specific enough for reproducibility.\n\n"
+            "## Results\n"
+            "Report the key findings with specific numbers. If visual primitives are "
+            "available, describe the trends/peaks/anomalies they indicate.\n\n"
+            "## Discussion\n"
+            "Interpret the results: Do they support the hypothesis? What was surprising "
+            "(reference surprise score)? What are the limitations? "
+            "What should the next experiment be?\n"
         )
 
     # ──────────────────────────────────────────────────────────────
@@ -3735,6 +3895,27 @@ Please modify the code to address this task."""
         imagination_block = ""
         if self._should_imaginate():
             imagination_block = self._IMAGINATION_PROMPT_BLOCK
+        # Failure mode feedback (Dream Layer): 上轮 validate 描述的"如何崩溃"
+        # 注入 hypothesis prompt, 让 agent 从崩溃模式中找新发现.
+        # _last_failure_mode 在 _validate 里写入, 空字符串表示无上轮或未解析出.
+        fail_block = ""
+        _last_fail = getattr(self, "_last_failure_mode", "")
+        if _last_fail:
+            fail_block = f"\n### Previous Failure Mode\nIf the previous hypothesis is wrong, it would fail in this way:\n{_last_fail}\nConsider whether this failure mode points to a new hypothesis.\n"
+        # Git log: EurekAgent artifact engineering — 让 agent 看到前几轮
+        # 做了什么, 避免重复尝试已失败的方案. 只取 oneline 前 10 条.
+        git_log_block = ""
+        try:
+            import subprocess as _sp
+            _r = _sp.run(
+                ["git", "log", "--oneline", "-10"],
+                cwd=self.workspace, capture_output=True, text=True, timeout=10,
+            )
+            if _r.returncode == 0 and _r.stdout.strip():
+                git_log_block = f"\n### Recent Experiments (git log)\n{_r.stdout.strip()}\n"
+        except Exception:
+            pass
+
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         return self._trim_to_budget([
             ("body", f"""You are an autonomous material science research agent.
@@ -3742,14 +3923,17 @@ Please modify the code to address this task."""
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
-Generate a single, testable hypothesis about what should be done next.
-The hypothesis should be a single sentence, concrete and actionable.
+Generate 3 divergent candidate hypotheses (different approaches, not variations).
+For each, note one pro and one con in a single line.
+Then select the best one — most testable and most novel — and state it after "SELECTED:".
 Ground it in the domain knowledge context above when relevant.
 Prefer hypotheses that can be expressed as governing PDEs, variational
 principles, or conservation laws; identify the mathematical structure
 before proposing numerical experiments.
 
 Hypothesis:"""),
+            ("git_log", git_log_block),
+            ("fail", fail_block),
             ("imagination", imagination_block),
             ("exec", exec_block),
             ("math", math_block),
@@ -3767,6 +3951,13 @@ Imagination directive (speculative mode activated):
 - Try shifting between mathematical structure families: PDE ↔ variational, continuum ↔ discrete, deterministic ↔ stochastic, linear ↔ nonlinear.
 - This is NOT random guessing — the shift must be between mathematically valid structure families, grounded in the domain context.
 - The conjecture hint above uses forget-then-generate: known failed approaches have been deliberately suppressed.
+
+LUCID review (mandatory after generating hypothesis):
+- You are allowed an absurd premise, but the reasoning must be rigorous.
+- State ONE necessary condition: without it, your hypothesis definitely fails.
+- State ONE hidden assumption from the source domain that may not hold here.
+- State ONE falsifiable test: if result is X, hypothesis is refuted.
+- If you cannot state these, the hypothesis is dream-only and must be discarded.
 """
 
     # 数学深度提示块: 在 hypothesis / plan prompt 里持续提醒 agent 用
@@ -3893,6 +4084,15 @@ Choose ONE mode and describe the plan:
 - explore: search a design space for optimal parameters
 - skill: use a pre-built composite skill pipeline (band structure, mechanical properties, MD, etc.)
 - visual_inspect: interactively inspect visual data (zoom into chart region, measure data points, annotate structure). Use this when you need to examine previous results more carefully before deciding next steps. Available actions: zoom, measure, annotate, compare.
+
+Protocol completeness check (RCBench failure mode: experimental protocol mismatch):
+Before finalizing, verify your plan covers all necessary steps:
+- For DFT: structure optimization BEFORE property calculation? Convergence test (encut/kpoints)?
+- For MD: equilibration BEFORE production run? Timestep appropriate for the system?
+- For analysis: raw data processing BEFORE interpretation? Reference comparison?
+- Are computational parameters appropriate for the target property (e.g. HSE06 for band gap, not PBE)?
+- Cross-check against domain knowledge above: any known methodological requirements?
+If a step is missing, add it to DESCRIPTION.
 
 When the hypothesis involves a PDE / variational principle / curved
 geometry, consider the symbolic_math_tool actions listed in the math
