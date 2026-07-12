@@ -78,6 +78,7 @@ class GraphQuery:
             list(entities["tools"])
             + list(entities["methods"])
             + list(entities["materials"])
+            + list(entities.get("elements", set()))
         )
         # Fallback to the raw seed if no entities were extracted.
         if not seed_terms:
@@ -104,6 +105,7 @@ class GraphQuery:
             list(entities["tools"])
             + list(entities["methods"])
             + list(entities["materials"])
+            + list(entities.get("elements", set()))
         )
         if not seed_terms:
             seed_terms = [seed]

@@ -15,6 +15,12 @@ class EntityType:
     SESSION = "Session"
     RESOURCE = "Resource"
     LITERATURE = "Literature"
+    # ── Materials science GraphRAG extensions ──
+    ELEMENT = "Element"
+    COMPOUND = "Compound"
+    PROPERTY = "Property"
+    CRYSTAL_STRUCTURE = "CrystalStructure"
+    APPLICATION = "Application"
 
 
 class Relation:
@@ -32,6 +38,13 @@ class Relation:
     USES_METHOD_FROM = "uses_method_from"
     EXTENDS = "extends"
     CONTRADICTS = "contradicts"
+    # ── Materials science relations ──
+    HAS_ELEMENT = "has_element"          # Compound → Element (with stoichiometry attr)
+    HAS_PROPERTY = "has_property"        # Compound → Property (with value+unit attrs)
+    HAS_STRUCTURE = "has_structure"      # Compound → CrystalStructure
+    USED_FOR = "used_for"                # Compound → Application
+    COMPUTED_WITH = "computed_with"      # Property → Tool
+    VALIDATES = "validates"              # Paper → Property
 
 
 # Common keywords used for rule-based extraction.

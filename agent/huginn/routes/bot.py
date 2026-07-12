@@ -336,3 +336,9 @@ async def wechat_event(
         asyncio.create_task(bridge.handle_message(event))
 
     return PlainTextResponse("success")
+
+
+# ponytail: Telegram/Discord/Slack/DingTalk/Feishu channels skipped —
+# no users on those platforms yet. When needed, add a ChannelBase
+# abstraction + per-platform adapter (like WeChatBridge extends BotBridge).
+# The existing BotBridge + OneBot v11 forwarding pattern is the template.
