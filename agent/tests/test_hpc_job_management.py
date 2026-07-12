@@ -392,10 +392,12 @@ class TestJobMonitor:
         with patch(
             "huginn.routes.hpc._resolve_hpc_config",
             return_value=(fake_cfg, None),
-        ), patch("huginn.hpc.monitor.HPCClient") as mock_cls:
+        ), patch("huginn.hpc.connection_pool.get_pool") as mock_get_pool:
             mock_client = MagicMock()
             mock_client.poll_status.return_value = fake_status
-            mock_cls.return_value.__enter__.return_value = mock_client
+            mock_pool = MagicMock()
+            mock_pool.borrow.return_value.__enter__.return_value = mock_client
+            mock_get_pool.return_value = mock_pool
 
             monitor._poll_cycle()
 
@@ -422,11 +424,11 @@ class TestJobMonitor:
 
         monitor = JobMonitor(workspace=tmp_path)
 
-        with patch("huginn.hpc.monitor.HPCClient") as mock_cls:
+        with patch("huginn.hpc.connection_pool.get_pool") as mock_get_pool:
             monitor._poll_cycle()
 
-            # HPCClient should never have been instantiated
-            mock_cls.assert_not_called()
+            # get_pool should never have been called
+            mock_get_pool.assert_not_called()
 
     def test_monitor_start_stop(self, tmp_path):
         """The daemon thread starts and stops cleanly."""

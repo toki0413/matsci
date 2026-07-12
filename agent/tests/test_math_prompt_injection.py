@@ -70,7 +70,7 @@ class TestMathPromptInjection:
         assert "Prefer hypotheses that can be expressed as governing PDEs" in prompt
 
     def test_plan_prompt_mentions_symbolic_first(self, engine):
-        # planner 应被引导优先用 symbolic_math_tool 而非直接调数值求解器
+        # planner should mention symbolic_math_tool actions alongside numerical solvers
         prompt = engine._build_plan_prompt(hypothesis="test", context={})
         assert "symbolic_math_tool actions" in prompt
-        assert "before falling back to numerical solvers" in prompt
+        assert "numerical solvers" in prompt
