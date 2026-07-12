@@ -187,7 +187,7 @@ class ContextMixin:
                     avg_conf = sum(b.confidence for b in beliefs) / len(beliefs)
                     score += avg_conf * 0.5
             except Exception:
-                pass
+                logger.debug("skill evolution beliefs unavailable", exc_info=True)
 
             scored.append((score, t))
 

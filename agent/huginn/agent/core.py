@@ -794,7 +794,9 @@ class HuginnAgent(
             async for state in self.chat(message, thread_id):
                 if isinstance(state, dict) and state.get("tool_break"):
                     final_state = state.get("state", final_state)
-                else:
+                elif isinstance(state, dict) and "messages" in state:
+                    final_state = state
+                elif final_state is None:
                     final_state = state
             return final_state
 

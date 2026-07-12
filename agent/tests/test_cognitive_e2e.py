@@ -137,8 +137,7 @@ def test_context_builder_injects_cognitive_prompt():
     from huginn.context_builder import ContextBuilder
 
     source = inspect.getsource(ContextBuilder)
-    assert "ctx_cognitive" in source
-    assert "ctx_evolution" in source
+    assert "ctx_block" in source
 
 
 def test_context_builder_l1_coords_without_plan():

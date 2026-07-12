@@ -85,10 +85,11 @@ def _build_agent(
 async def _consume(
     agent: HuginnAgent, message: str, thread_id: str = "e2e"
 ) -> dict[str, Any]:
-    """Consume the async chat stream and return the last state."""
+    """Consume the async chat stream and return the last state with messages."""
     final_state = None
     async for state in agent.chat(message, thread_id=thread_id):
-        final_state = state
+        if isinstance(state, dict) and "messages" in state:
+            final_state = state
     return final_state
 
 

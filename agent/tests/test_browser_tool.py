@@ -56,7 +56,7 @@ class TestBrowserToolCreation:
 class TestBrowserActionEnum:
     def test_all_actions_present(self):
         expected = {"navigate", "click", "type", "fill_form", "scroll",
-                    "screenshot", "extract", "login", "wait", "close"}
+                    "screenshot", "extract", "state", "login", "wait", "close"}
         actual = {a.value for a in BrowserAction}
         assert actual == expected
 

@@ -56,8 +56,8 @@ def _make_stage_llm():
     def respond(prompt: str) -> str:
         low = prompt.lower()
 
-        # _hypothesize → "Generate a single, testable hypothesis"
-        if "testable hypothesis" in low:
+        # _hypothesize → "Generate 3 divergent candidate hypotheses"
+        if "candidate hypotheses" in low:
             return (
                 "If the Ca/Si ratio in C-S-H increases, then the "
                 "interlayer spacing decreases, accelerating water "

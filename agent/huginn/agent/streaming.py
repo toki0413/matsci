@@ -218,7 +218,7 @@ class StreamingMixin:
                     cache_stats,
                 )
             except Exception:
-                pass
+                logger.debug("metrics track_llm_usage failed", exc_info=True)
             pet.publish(
                 PetMood.SUCCESS,
                 "Turn complete",
@@ -621,7 +621,7 @@ class StreamingMixin:
             from huginn.routes.metrics import track_agent_turn
             track_agent_turn(thread_id)
         except Exception:
-            pass
+            logger.debug("Prometheus turn counter unavailable", exc_info=True)
 
         with self._telemetry_collector.span(
             "agent_turn", thread_id=thread_id
