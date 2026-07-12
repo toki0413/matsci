@@ -1099,6 +1099,16 @@ export default function Pet() {
     }
   };
 
+  // Cross-window navigation: pet emits event, main App listens + switches tab
+  const navigateMain = useCallback(async (tab: string, cmd?: string) => {
+    setMenuOpen(false);
+    try {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit("pet-navigate", { tab, cmd });
+    } catch { /* not in Tauri */ }
+    speak(cmd ? `Sent ${cmd}` : `Opening ${tab}...`, "thinking");
+  }, [speak]);
+
   const handleApproval = useCallback((requestId: string, approved: boolean) => {
     petWsRef.current?.send({
       type: "approval_response",
@@ -1396,6 +1406,31 @@ export default function Pet() {
             {mood === "sleeping" ? "Wake" : "Sleep"}
           </button>
           <div className="pet-menu-divider" />
+          <div className="pet-menu-label">Quick Actions</div>
+          <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); navigateMain("chat", "/new"); }}>
+            <span className="pet-menu-item-icon">{"\u2728"}</span> New Chat
+          </button>
+          <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); navigateMain("chat", "/research"); }}>
+            <span className="pet-menu-item-icon">{"\uD83D\uDD2C"}</span> Research Mode
+          </button>
+          <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); navigateMain("chat", "/plan"); }}>
+            <span className="pet-menu-item-icon">{"\uD83D\uDCCB"}</span> Plan Mode
+          </button>
+          <div className="pet-menu-divider" />
+          <div className="pet-menu-label">Navigate</div>
+          <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); navigateMain("chat"); }}>
+            <span className="pet-menu-item-icon">{"\uD83D\uDCAC"}</span> Chat
+          </button>
+          <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); navigateMain("tools"); }}>
+            <span className="pet-menu-item-icon">{"\uD83D\uDD27"}</span> Tools
+          </button>
+          <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); navigateMain("memory"); }}>
+            <span className="pet-menu-item-icon">{"\uD83E\uDDE0"}</span> Memory
+          </button>
+          <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); navigateMain("settings"); }}>
+            <span className="pet-menu-item-icon">{"\u2699\uFE0F"}</span> Settings
+          </button>
+          <div className="pet-menu-divider" />
           <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); cycleAccessory(); }}>
             <span className="pet-menu-item-icon">{"\uD83C\uDFA9"}</span> Accessories
           </button>
@@ -1403,6 +1438,24 @@ export default function Pet() {
             <span className="pet-menu-item-icon">{"\uD83D\uDCCA"}</span> Status
           </button>
           <div className="pet-menu-divider" />
+          <button className="pet-menu-item" onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen(false);
+            // Cycle onboarding tips — helps new users discover features
+            const tips = [
+              "Type /research in chat to start an autonomous research loop",
+              "Type /plan to generate a plan before executing — great for complex tasks",
+              "Ctrl+K opens the tool palette — search and run any tool directly",
+              "Drag files into the chat to analyze structures, CIF files, or data",
+              "The Memory panel stores your research findings across sessions",
+              "The Tools panel shows all 60+ materials science tools available",
+            ];
+            const tip = tips[tipIndex % tips.length];
+            setTipIndex((i) => i + 1);
+            speak(tip, "thinking", true);
+          }}>
+            <span className="pet-menu-item-icon">{"\u2753"}</span> Help
+          </button>
           <button className="pet-menu-item" onClick={(e) => { e.stopPropagation(); setShowBubble(s => !s); setMenuOpen(false); }}>
             <span className="pet-menu-item-icon">{showBubble ? "\uD83E\uDD10" : "\uD83D\uDCAC"}</span>
             {showBubble ? "Hide bubble" : "Show bubble"}
