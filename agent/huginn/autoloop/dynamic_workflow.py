@@ -409,6 +409,11 @@ class WorkflowRegistry:
         else:
             # task 是 None (submit 时没 loop) 或者 task 已死 (loop 关了, 任务被
             # 取消但 result 还停在 pending) — 同步跑一遍补上结果
+            # recheck status under lock to prevent double-execution
+            with self._lock:
+                result = self._results.get(workflow_id)
+                if result is not None and result.status in ("completed", "failed", "cancelled"):
+                    return result
             await self._run_and_update(workflow_id)
         return self._results.get(workflow_id)
 

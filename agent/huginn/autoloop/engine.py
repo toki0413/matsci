@@ -1364,7 +1364,12 @@ class AutoloopEngine:
         killed the watcher threads before they could collect anything.
         """
         perception = self._get_perception()
-        snapshot = perception.get_snapshot()
+        if perception is None:
+            return self._perceive_legacy()
+        try:
+            snapshot = perception.get_snapshot()
+        except Exception:
+            return self._perceive_legacy()
         context = snapshot.to_context()
         if not snapshot.has_activity():
             return None

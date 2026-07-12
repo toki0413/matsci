@@ -83,11 +83,14 @@ def _build_cfg(body: dict[str, Any]):
 
 
 def _validate_path_safety(path: str) -> None:
-    """挡掉带 shell 注入字符的路径, 浏览/传输场景下尤其重要。"""
-    # 路径里不该出现命令分隔符, 即使用户想写 ;; 也拦掉
+    """挡掉带 shell 注入字符和路径穿越的输入。"""
     for ch in (";", "`", "$(", "${"):
         if ch in path:
             raise ValueError(f"路径包含非法字符: {ch}")
+    # block path traversal — .. can escape workspace root
+    parts = path.replace("\\", "/").split("/")
+    if ".." in parts:
+        raise ValueError("路径包含 .. 路径穿越")
 
 
 # ── 路由 ─────────────────────────────────────────────────────────

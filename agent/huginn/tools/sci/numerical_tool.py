@@ -735,6 +735,10 @@ class NumericalTool(HuginnTool):
         A_eq = np.asarray(args.A_eq, dtype=float) if args.A_eq else None
         b_eq = np.asarray(args.b_eq, dtype=float) if args.b_eq else None
 
+        # ponytail: eval with __builtins__={} blocks common escapes but
+        # numpy/cvxpy attribute chains can still reach os/subprocess.
+        # Acceptable for local single-user tool; switch to Docker sandbox
+        # (security/docker_sandbox.py) if untrusted users share the instance.
         eval_globals = {
             "__builtins__": {},  # sandbox: no __import__, no open, no exec
             "cp": cp, "np": np, "x": x,

@@ -227,6 +227,11 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
 @router.websocket("/agents/{agent_id}/ws/chat")
 async def ws_chat_with_agent(websocket: WebSocket, agent_id: str):
     """WS 版 chat_with_agent, 流式推送 agent_status 给前端 Team/Fusion 模式."""
+    # auth check — every other WS endpoint does this, this one was missing
+    from huginn.middleware.ws_governance import ws_auth_and_track
+    identity = await ws_auth_and_track(websocket)
+    if identity is None:
+        return  # ws_auth_and_track already closed the connection
     await websocket.accept()
     try:
         data = await websocket.receive_json()
@@ -246,7 +251,8 @@ async def ws_chat_with_agent(websocket: WebSocket, agent_id: str):
 
         factory = get_agent_factory()
         agent = factory.create(agent_id, thread_id=thread_id)
-        agent._permission_config.auto_approve_all = True
+        # ponytail: auto_approve was True — now uses agent's own permission config
+        # so tool calls still go through the normal approval flow
 
         timeout = float(data.get("timeout", 180))
         state = await asyncio.wait_for(
