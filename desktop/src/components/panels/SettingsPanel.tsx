@@ -187,7 +187,9 @@ function BotPanel({ t }: { t: (k: string) => string }) {
 
   const startBot = async () => {
     try {
-      const data = await api.post<{ running?: boolean }>("/bot/start");
+      const platform = (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq";
+      const path = platform === "wechat" ? "/bot/wechat/start" : "/bot/start";
+      const data = await api.post<{ running?: boolean }>(path);
       setBotStatus(data.running ? t('settings.bot.running') : t('settings.bot.startFailed'));
     } catch (e: any) {
       console.error("bot start error:", e);
@@ -196,7 +198,9 @@ function BotPanel({ t }: { t: (k: string) => string }) {
 
   const stopBot = async () => {
     try {
-      await api.post("/bot/stop");
+      const platform = (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq";
+      const path = platform === "wechat" ? "/bot/wechat/stop" : "/bot/stop";
+      await api.post(path);
       setBotStatus(t('settings.bot.stopped'));
     } catch (e: any) {
       console.error("bot stop error:", e);
@@ -205,8 +209,10 @@ function BotPanel({ t }: { t: (k: string) => string }) {
 
   const refreshStatus = async () => {
     try {
-      const data = await api.get<{ running?: boolean; platform?: string }>("/bot/status");
-      setBotStatus(data.running ? `${t('settings.bot.running')} (${data.platform})` : t('settings.bot.notRunning'));
+      const platform = (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq";
+      const path = platform === "wechat" ? "/bot/wechat/status" : "/bot/status";
+      const data = await api.get<{ running?: boolean; platform?: string }>(path);
+      setBotStatus(data.running ? `${t('settings.bot.running')} (${data.platform || platform})` : t('settings.bot.notRunning'));
     } catch (e: any) {
       console.error("bot status error:", e);
     }

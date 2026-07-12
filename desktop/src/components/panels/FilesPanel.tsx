@@ -70,6 +70,22 @@ export function FilesPanel({
     }
   };
 
+  const downloadRemote = async (path: string) => {
+    setTransferMsg(`Downloading ${path}…`);
+    try {
+      const blob = await api.getBlob(`/transfer/download?path=${encodeURIComponent(path)}`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = path.split('/').pop() || 'download';
+      a.click();
+      URL.revokeObjectURL(url);
+      setTransferMsg(`Downloaded ${path}`);
+    } catch (err: any) {
+      setTransferMsg(`Download failed: ${err.message}`);
+    }
+  };
+
   return (
     <div className="flex h-full">
       {/* File tree sidebar */}
@@ -107,8 +123,16 @@ export function FilesPanel({
               {remoteFiles.length === 0 ? (
                 <EmptyState icon={FolderTree} title={t('files.noRemote')} subtitle={t('files.connectHint')} />
               ) : remoteFiles.map((f, i) => (
-                <div key={i} className="rounded px-2 py-1 text-xs hover:bg-bg-tertiary">
-                  {f.is_dir ? '\u{1F4C1} ' : '\u{1F4C4} '}{f.name || f.path || String(f)}
+                <div key={i} className="flex items-center justify-between rounded px-2 py-1 text-xs hover:bg-bg-tertiary">
+                  <span>{f.is_dir ? '\u{1F4C1} ' : '\u{1F4C4} '}{f.name || f.path || String(f)}</span>
+                  {!f.is_dir && (
+                    <button
+                      onClick={() => downloadRemote(f.path || f.name)}
+                      className="text-text-muted hover:text-accent"
+                    >
+                      ↓
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
