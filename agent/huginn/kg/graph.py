@@ -60,26 +60,26 @@ class ProjectKnowledgeGraph:
         """Add or update a node and return its stable id."""
         eid = node_id(label, entity_type)
         now = datetime.now().isoformat()
-        if eid in self._graph:
-            self._graph.nodes[eid]["mentions"] = (
-                self._graph.nodes[eid].get("mentions", 0) + 1
-            )
-            self._graph.nodes[eid]["last_seen"] = now
-            # Update confidence upward slightly on re-encounter.
-            old_conf = self._graph.nodes[eid].get("confidence", confidence)
-            self._graph.nodes[eid]["confidence"] = min(0.99, old_conf + 0.05)
-        else:
-            self._graph.add_node(
-                eid,
-                label=label,
-                type=entity_type,
-                source=source,
-                confidence=confidence,
-                created_at=now,
-                last_seen=now,
-                mentions=1,
-                **normalize_props(attrs),
-            )
+        with self._lock:
+            if eid in self._graph:
+                self._graph.nodes[eid]["mentions"] = (
+                    self._graph.nodes[eid].get("mentions", 0) + 1
+                )
+                self._graph.nodes[eid]["last_seen"] = now
+                old_conf = self._graph.nodes[eid].get("confidence", confidence)
+                self._graph.nodes[eid]["confidence"] = min(0.99, old_conf + 0.05)
+            else:
+                self._graph.add_node(
+                    eid,
+                    label=label,
+                    type=entity_type,
+                    source=source,
+                    confidence=confidence,
+                    created_at=now,
+                    last_seen=now,
+                    mentions=1,
+                    **normalize_props(attrs),
+                )
         return eid
 
     def add_relation(
@@ -93,27 +93,28 @@ class ProjectKnowledgeGraph:
         **attrs: Any,
     ) -> None:
         """Add or update a directed edge between two existing nodes."""
-        if src_id not in self._graph or dst_id not in self._graph:
-            return
-        now = datetime.now().isoformat()
-        if self._graph.has_edge(src_id, dst_id):
-            data = self._graph.edges[src_id, dst_id]
-            data["mentions"] = data.get("mentions", 0) + 1
-            data["last_seen"] = now
-            old_conf = data.get("confidence", confidence)
-            data["confidence"] = min(0.99, old_conf + 0.05)
-        else:
-            self._graph.add_edge(
-                src_id,
-                dst_id,
-                relation=relation,
-                source=source,
-                confidence=confidence,
-                created_at=now,
-                last_seen=now,
-                mentions=1,
-                **normalize_props(attrs),
-            )
+        with self._lock:
+            if src_id not in self._graph or dst_id not in self._graph:
+                return
+            now = datetime.now().isoformat()
+            if self._graph.has_edge(src_id, dst_id):
+                data = self._graph.edges[src_id, dst_id]
+                data["mentions"] = data.get("mentions", 0) + 1
+                data["last_seen"] = now
+                old_conf = data.get("confidence", confidence)
+                data["confidence"] = min(0.99, old_conf + 0.05)
+            else:
+                self._graph.add_edge(
+                    src_id,
+                    dst_id,
+                    relation=relation,
+                    source=source,
+                    confidence=confidence,
+                    created_at=now,
+                    last_seen=now,
+                    mentions=1,
+                    **normalize_props(attrs),
+                )
 
     def add_hyperedge(
         self,
@@ -138,17 +139,16 @@ class ProjectKnowledgeGraph:
         now = datetime.now().isoformat()
         he_id = f"he_{relation}_{hash(tuple(sorted(node_ids))) & 0xFFFFFFFF:x}"
 
-        # Create metadata node for the hyperedge
-        self._graph.add_node(he_id, type="hyperedge", relation=relation,
-                             created_at=now, last_seen=now, mentions=1,
-                             members=node_ids, **normalize_props(attrs))
+        with self._lock:
+            self._graph.add_node(he_id, type="hyperedge", relation=relation,
+                                 created_at=now, last_seen=now, mentions=1,
+                                 members=node_ids, **normalize_props(attrs))
 
-        # Connect all members to the hyperedge node (star topology)
-        for nid in node_ids:
-            if nid in self._graph:
-                self._graph.add_edge(nid, he_id, relation="member_of",
-                                     source=source, confidence=confidence,
-                                     created_at=now, last_seen=now, mentions=1)
+            for nid in node_ids:
+                if nid in self._graph:
+                    self._graph.add_edge(nid, he_id, relation="member_of",
+                                         source=source, confidence=confidence,
+                                         created_at=now, last_seen=now, mentions=1)
         return he_id
 
     def has_entity(self, label: str, entity_type: str) -> bool:

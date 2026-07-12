@@ -350,12 +350,15 @@ class PhaseGateState:
 
 
 _shared_state: PhaseGateState | None = None
+_shared_lock = __import__("threading").Lock()
 
 
 def get_shared_phase_gate_state() -> PhaseGateState:
     global _shared_state
     if _shared_state is None:
-        _shared_state = PhaseGateState()
+        with _shared_lock:
+            if _shared_state is None:
+                _shared_state = PhaseGateState()
     return _shared_state
 
 

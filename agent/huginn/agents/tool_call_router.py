@@ -9,8 +9,8 @@ ToolCallBudget 解决的是 "调太多次" 的问题, 这个 router 解决的是
   - 轻量工具调用一律放行, 只记录已尝试过的工具名
   - 重型工具调用先看是否已试过轻量替代, 没试过就拦下并把替代方案
     塞进 error 信息返回给 LLM
-  - LLM 拿到拦下信息后可以: 1) 先调轻量工具 2) 在 tool_input 里加
-    `__confirm_heavy=true` 显式跳过检查 (不硬拦, 避免误伤)
+  - LLM 拿到拦下信息后可以: 1) 先调轻量工具 2) 确认无轻量替代后
+    再次请求同一重型工具 (此时已满足 "尝试过轻量路径" 条件)
   - 路由状态按单轮 agent chat 生命周期管理, 跟 ToolCallBudget 一样
     由 agent 在 chat() 开头 set 进 ToolAdapter, 结束后清掉
 """
@@ -162,8 +162,8 @@ class ToolCallRouter:
         reason = (
             f"Heavy tool {tool_name} requested but no light path attempted. "
             f"Consider: {alt_text}. "
-            f"If you confirm heavy simulation is necessary, set "
-            f"__confirm_heavy=true in tool_input."
+            f"Try a lighter alternative first — if none exists, re-run "
+            f"with the same tool after attempting at least one light path."
         )
         self._logger.info(
             "router blocked %s: no light path attempted, alternatives=%s",
@@ -184,24 +184,6 @@ class ToolCallRouter:
 
     # ------------------------------------------------------------------ helpers
 
-    @staticmethod
-    def _is_confirmed_heavy(tool_input: dict[str, Any]) -> bool:
-        """LLM 在 tool_input 里塞 __confirm_heavy=true 跳过检查.
-
-        容忍各种 truthy 写法 (True / "true" / "True" / 1), 别因为类型
-        差异把 LLM 的确认请求误判成没确认.
-        """
-        if not isinstance(tool_input, dict):
-            return False
-        val = tool_input.get("__confirm_heavy", False)
-        if isinstance(val, bool):
-            return val
-        if isinstance(val, (int, float)):
-            return val != 0
-        if isinstance(val, str):
-            return val.strip().lower() in ("true", "yes", "1")
-        return False
-
     def reset(self) -> None:
         """清空本轮轻量路径记录 (下一轮 agent chat 开始时用)."""
         with self._lock:
@@ -209,8 +191,10 @@ class ToolCallRouter:
 
     def status(self) -> dict[str, Any]:
         """返回当前路由状态, 方便 debug / telemetry."""
+        with self._lock:
+            attempted = sorted(self._attempted_light)
         return {
-            "attempted_light": sorted(self._attempted_light),
+            "attempted_light": attempted,
             "heavy_tools": sorted(HEAVY_TOOLS),
             "light_tools": sorted(LIGHT_TOOLS),
         }
