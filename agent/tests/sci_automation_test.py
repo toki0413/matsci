@@ -233,24 +233,26 @@ async def test_bourbaki_discovery() -> None:
         task="discover_equation",
         equations="x**2 - 4 = 0",
     ), ctx)
-    report("discover x^2-4=0", r1.verified is not None and r1.verified,
-           f"equation={r1.equation}")
+    report("discover x^2-4=0", r1.data.get("verified") is not None and r1.data["verified"],
+           f"equation={r1.data.get('equation')}")
 
     # PDE classification: heat equation → parabolic
     r2 = await tool.call(BourbakiInput(
         task="discover_equation",
         equations="∂u/∂t = ∇²u",
     ), ctx)
-    report("classify heat equation", "parabolic" in (r2.message or ""),
-           (r2.message or "")[:80])
+    _msg2 = r2.data.get("message", "")
+    report("classify heat equation", "parabolic" in _msg2,
+           _msg2[:80])
 
     # Conservation check: E_kin + E_pot = E_total
     r3 = await tool.call(BourbakiInput(
         task="check_conservation",
         equations="E_kin + E_pot = E_total",
     ), ctx)
+    _msg3 = r3.data.get("message", "")
     report("conservation check", r3.success,
-           (r3.message or "")[:80])
+           _msg3[:80])
 
 
 # ── Main ────────────────────────────────────────────────────────────

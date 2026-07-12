@@ -126,7 +126,7 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
         "huginn.autoloop.engine.CoderRunner", lambda: MagicMock()
     )
     monkeypatch.setattr(
-        "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda: MagicMock()
+        "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock()
     )
     monkeypatch.setattr(
         "huginn.agents.speculator.on_turn_start",
