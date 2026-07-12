@@ -571,7 +571,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         });
         setIsStreaming(false);
         if (soundEnabled) playTaskComplete();
-        if (document.hidden) notify("Muninn", pendingResponseRef.current.slice(0, 120) || "Agent finished");
+        if (document.hidden) notify("Huginn", pendingResponseRef.current.slice(0, 120) || "Agent finished");
         break;
       case "error":
         if (streamingTimeoutRef.current) {
@@ -584,7 +584,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           { role: "assistant", content: `❌ ${data.error}`, timestamp: formatTime() },
         ]);
         setIsStreaming(false);
-        if (document.hidden) notify("Muninn", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
+        if (document.hidden) notify("Huginn", `Error: ${data.error?.slice(0, 120) || "unknown"}`);
         break;
       case "tool_call":
         setMessages((prev) => [
@@ -1012,7 +1012,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     const onVis = () => {
       if (!document.hidden) {
         lastSeenMsgCountRef.current = messages.length;
-        document.title = "Muninn";
+        document.title = "Huginn";
       }
     };
     document.addEventListener("visibilitychange", onVis);
