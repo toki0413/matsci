@@ -177,7 +177,10 @@ def _schedule_sync(coro) -> None:
         # No running loop in this thread — schedule on the main loop
         if _main_loop and _main_loop.is_running():
             asyncio.run_coroutine_threadsafe(coro, _main_loop)
-        # else: no loop available, drop the event
+        else:
+            # no loop available, close the coroutine to avoid
+            # "coroutine was never awaited" warnings
+            coro.close()
     except Exception:
         logger.debug("sync event schedule failed", exc_info=True)
 

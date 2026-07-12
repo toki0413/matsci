@@ -112,5 +112,5 @@ class TestNewAgentEndpoints:
     def test_get_thread_endpoint(self):
         from huginn.server import get_thread
 
-        result = asyncio.run(get_thread("unknown"))
+        result = asyncio.run(get_thread("unknown", None))
         assert result["exists"] is False

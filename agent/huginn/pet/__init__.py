@@ -15,7 +15,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-RAVEN_NAME = "Muninn"
+RAVEN_NAME = "渡鸦"
 RAVEN_IMAGE_PATH = Path(__file__).parent.parent / "assets" / "raven.png"
 
 RAVEN_ASCII_FALLBACK = r"""

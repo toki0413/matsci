@@ -56,6 +56,18 @@ def _make_stage_llm():
     def respond(prompt: str) -> str:
         low = prompt.lower()
 
+        # _report → "structured scientific research report"
+        # Checked before _hypothesize because the report prompt embeds
+        # the hypothesis text (which contains "candidate hypotheses").
+        if "structured scientific research report" in low or "research paper" in low:
+            return (
+                "This loop tested whether the Ca/Si ratio affects C-S-H "
+                "water diffusion.  The coder stage updated the analysis "
+                "script to parameterize Ca/Si.  Validation confirmed the "
+                "approach but flagged a missing convergence check.  Next "
+                "iteration should add a system-size convergence study."
+            )
+
         # _hypothesize → "Generate 3 divergent candidate hypotheses"
         if "candidate hypotheses" in low:
             return (
@@ -79,16 +91,6 @@ def _make_stage_llm():
                 "size.  The result is not benchmarked against literature "
                 "values.  Next step: add a convergence study before "
                 "trusting the diffusion coefficient."
-            )
-
-        # _report tutor narrative → "Summarize for a graduate student"
-        if "graduate student" in low or "pedagogical" in low:
-            return (
-                "This loop tested whether the Ca/Si ratio affects C-S-H "
-                "water diffusion.  The coder stage updated the analysis "
-                "script to parameterize Ca/Si.  Validation confirmed the "
-                "approach but flagged a missing convergence check.  Next "
-                "iteration should add a system-size convergence study."
             )
 
         # refine_failed → "修正假设" in the HumanMessage

@@ -220,6 +220,10 @@ class AutoloopEngine:
         # 执行前预测, 执行后对比, 误差驱动探索. 升级路径: 训练真正的编码器+预测器.
         self._current_prediction: str = ""
         self._last_surprise: float = 0.0
+        # surprise 历史: 连续低 surprise = 心智模型已收敛, 可提前终止.
+        # Chemputer 启发: Jaccard 稳定 = 反应完成; 这里 = 理解完成.
+        # 每条存 (worst, cross_perturbation_std): std 高 = 测量噪声大, 需更严阈值.
+        self._surprise_history: list[tuple[float, float]] = []
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
@@ -1240,6 +1244,22 @@ class AutoloopEngine:
             elif surprise > 0 and self._iteration > 1:
                 print(f"  → Surprise: {surprise:.2f} (low — model matches reality)")
 
+            # Surprise-based early termination: 连续 3 轮低 surprise
+            # 说明 agent 预测持续命中实际结果, 心智模型已收敛.
+            # Chemputer 用 Jaccard 稳定判反应终点, 同理判理解终点.
+            # 自适应阈值: cross-perturbation std 高 = 测量噪声大,
+            # 需更低的 surprise 才能确信真正收敛 (避免噪声导致的假阳性).
+            if len(self._surprise_history) >= 3:
+                recent = self._surprise_history[-3:]
+                recent_worsts = [w for w, _ in recent]
+                avg_noise = sum(s for _, s in recent) / len(recent)
+                # ponytail: 线性插值. noise=0 → threshold=0.20 (测量可信, 宽松);
+                # noise≥0.3 → threshold=0.08 (测量噪声大, 严格). 下限 0.08 防永不终止.
+                threshold = max(0.08, 0.20 - 0.4 * avg_noise)
+                if all(w < threshold for w in recent_worsts):
+                    print(f"  → Converged: surprise < {threshold:.2f} (noise={avg_noise:.2f}) for 3 consecutive iterations")
+                    self._should_stop = True
+
         # 7. Report + finalize
         return await self._finalize_run(
             objective, phases, run_id, provenance_record,
@@ -2144,6 +2164,7 @@ class AutoloopEngine:
                 "surprise_std": round(robust["std"], 3),
             }
             self._last_surprise = surprise
+            self._surprise_history.append((surprise, robust["std"]))
 
         self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[:1000]
         # Store failure_mode for next hypothesis loop (Dream Layer: crash = discovery)
@@ -3541,7 +3562,6 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
 
     @staticmethod
     def _build_science_report_prompt(
-        self,
         report_data: dict[str, Any],
         kb_text: str = "",
         exec_summary: str = "",

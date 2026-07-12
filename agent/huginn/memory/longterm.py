@@ -603,7 +603,7 @@ class LongTermMemory:
         alive_where, alive_params = self._where_alive()
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT tier, COUNT(*) AS c FROM memories WHERE {alive_where} GROUP BY tier",
+                f"SELECT tier, COUNT(*) AS c FROM memories AS m WHERE {alive_where} GROUP BY tier",
                 alive_params,
             ).fetchall()
         counts = {"short": 0, "mid": 0, "long": 0}
@@ -616,7 +616,7 @@ class LongTermMemory:
         """Fetch only long-tier entries, sorted by importance desc."""
         alive_where, alive_params = self._where_alive()
         sql = (
-            f"SELECT * FROM memories WHERE {alive_where} AND tier = 'long'"
+            f"SELECT * FROM memories AS m WHERE {alive_where} AND tier = 'long'"
             " ORDER BY importance DESC LIMIT ?"
         )
         with self._connect() as conn:
