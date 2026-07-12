@@ -38,15 +38,16 @@ _conditional_skills: dict[str, dict[str, Any]] = {}
 _dynamic_skills: dict[str, dict[str, Any]] = {}
 
 
-def parse_skill_file(path: Path) -> dict[str, Any]:
-    """解析单个 SKILL.md，提取 frontmatter 字段和正文。
+def parse_skill_header(path: Path) -> dict[str, Any]:
+    """Parse frontmatter only — skip body for lazy loading.
 
-    缺失的字段会给合理的默认值，调用方不用做空值判断。
+    Returns the same dict shape as parse_skill_file, but with content=""
+    and skill_path set so the body can be loaded on demand via
+    parse_skill_body().
     """
     text = path.read_text(encoding="utf-8")
     match = _FRONTMATTER_RE.match(text)
     if not match:
-        # 没有 frontmatter 也别丢，按纯文本处理
         return {
             "name": path.stem,
             "description": "",
@@ -55,28 +56,45 @@ def parse_skill_file(path: Path) -> dict[str, Any]:
             "paths": [],
             "model": None,
             "effort": None,
-            "content": text,
+            "content": "",
             "skill_dir": str(path.parent),
+            "skill_path": str(path),
         }
 
     frontmatter = yaml.safe_load(match.group(1)) or {}
-    content = match.group(2)
-
-    # frontmatter 里 name 可能没写，退回用目录名
     name = frontmatter.get("name") or path.stem
 
     return {
         "name": name,
         "description": frontmatter.get("description", ""),
-        # YAML 里写作 allowed-tools，统一转成下划线风格
         "allowed_tools": frontmatter.get("allowed-tools", []),
         "when_to_use": frontmatter.get("when_to_use", ""),
         "paths": frontmatter.get("paths", []) or [],
         "model": frontmatter.get("model"),
         "effort": frontmatter.get("effort"),
-        "content": content,
+        "content": "",  # body not loaded — call parse_skill_body() to get it
         "skill_dir": str(path.parent),
+        "skill_path": str(path),
     }
+
+
+def parse_skill_body(path: Path) -> str:
+    """Read only the body content, skipping frontmatter."""
+    text = path.read_text(encoding="utf-8")
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return text
+    return match.group(2)
+
+
+def parse_skill_file(path: Path) -> dict[str, Any]:
+    """解析单个 SKILL.md，提取 frontmatter 字段和正文。
+
+    缺失的字段会给合理的默认值，调用方不用做空值判断。
+    """
+    skill = parse_skill_header(path)
+    skill["content"] = parse_skill_body(path)
+    return skill
 
 
 def load_skills_from_dir(skill_dir: Path) -> list[dict[str, Any]]:
@@ -94,7 +112,7 @@ def load_skills_from_dir(skill_dir: Path) -> list[dict[str, Any]]:
         seen.add(identity)
 
         try:
-            skill = parse_skill_file(f)
+            skill = parse_skill_header(f)
         except Exception as exc:  # noqa: BLE001 - 单个文件挂了不影响其他
             logger.warning("解析技能文件失败 %s: %s", f, exc)
             continue
@@ -196,13 +214,22 @@ def clear_conditional_skills() -> None:
 def render_skill_content(
     skill: dict[str, Any], session_id: str = ""
 ) -> str:
-    """把技能正文里的占位符替换成实际值。
+    """把技能正文里的占位符替换成实际值.
 
     支持两套变量名：
     - ${HUGINN_SKILL_DIR} / ${HUGINN_SESSION_ID}  本项目风格
     - ${CLAUDE_SKILL_DIR} / ${CLAUDE_SESSION_ID}  兼容 Claude Code
+
+    如果 content 为空 (header-only loading), 自动 lazy-load body.
     """
-    content = skill["content"]
+    content = skill.get("content", "")
+    # lazy-load body if not yet loaded
+    if not content and skill.get("skill_path"):
+        try:
+            content = parse_skill_body(Path(skill["skill_path"]))
+        except Exception:
+            logger.warning("lazy-load skill body failed: %s", skill.get("skill_path"))
+            content = ""
     skill_dir = skill.get("skill_dir", ".")
 
     content = content.replace("${HUGINN_SKILL_DIR}", skill_dir)

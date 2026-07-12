@@ -115,8 +115,41 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         dispatch_ctx.setdefault("session_id", context.session_id)
         dispatch_ctx.setdefault("workspace", context.workspace)
 
+        # forward subagent intermediate states to the WS via progress_cb
+        from huginn.types import progress_cb
+
+        async def _on_state(state: dict) -> None:
+            cb = progress_cb.get()
+            if cb is None:
+                return
+            msgs = state.get("messages", [])
+            if not msgs:
+                return
+            last = msgs[-1]
+            # tool calls
+            if hasattr(last, "tool_calls") and last.tool_calls:
+                for tc in last.tool_calls:
+                    await cb({
+                        "type": "subagent_event",
+                        "event": "tool_call",
+                        "spec": args.spec_name,
+                        "tool": tc.get("name", "unknown"),
+                    })
+            # assistant text (truncated)
+            elif hasattr(last, "content") and last.content:
+                text = last.content if isinstance(last.content, str) else str(last.content)
+                if len(text) > 200:
+                    text = text[:200] + "..."
+                await cb({
+                    "type": "subagent_event",
+                    "event": "text",
+                    "spec": args.spec_name,
+                    "text": text,
+                })
+
         result = await self._dispatch.dispatch(
-            args.spec_name, args.task, dispatch_ctx
+            args.spec_name, args.task, dispatch_ctx,
+            on_state=_on_state,
         )
 
         out = SubagentToolOutput(
