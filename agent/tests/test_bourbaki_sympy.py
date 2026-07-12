@@ -22,10 +22,8 @@ def _check(equations: str):
             context=None,  # fallback 路径不碰 context
         )
     )
-    # call 返回 BourbakiResult (pydantic); 统一成 dict 方便断言
-    if hasattr(res, "model_dump"):
-        return res.model_dump()
-    return res
+    # call returns ToolResult; .data is BourbakiResult.model_dump()
+    return res.data
 
 
 class TestSymPyConservationCheck:
