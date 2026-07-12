@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -459,7 +460,7 @@ class KnowledgeBase:
 
         metadatas = []
         for i, (chunk, section_meta) in enumerate(sectioned):
-            meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename, "chunk": i}
+            meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename, "chunk": i, "created_at": datetime.now().isoformat()}
             meta.update(section_meta)
             meta["domain"] = primary_domain
             if domain_str:
@@ -525,7 +526,7 @@ class KnowledgeBase:
 
         metadatas = []
         for i, (chunk, section_meta) in enumerate(sectioned):
-            meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename}
+            meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename, "created_at": datetime.now().isoformat()}
             meta.update(section_meta)
             meta["domain"] = primary_domain
             if domain_str:
@@ -791,10 +792,13 @@ class KnowledgeBase:
 
         # Feynman note 优先 + importance 加权 reranking
         # Generative Agents: relevance(=1-distance) × importance(hit_count)
+        # ponytail: feynman 优先从无条件改为条件 — confidence > 0.5 才优先,
+        # 避免低置信度的 feynman note 压过高置信度的 KB 结果
         _hits = getattr(self, "_hit_counts", {})
         chunks.sort(
             key=lambda c: (
-                0 if c.get("metadata", {}).get("filename", "").startswith("feynman_") else 1,
+                0 if (c.get("metadata", {}).get("filename", "").startswith("feynman_")
+                      and float(c.get("metadata", {}).get("confidence", "0") or 0) > 0.5) else 1,
                 # distance 越小越好 (更相似), hit_count 越大越好 (更常用)
                 # 合并为: distance - 0.1 * log(1 + hit_count)
                 c.get("distance", 1.0) - 0.1 * __import__("math").log1p(

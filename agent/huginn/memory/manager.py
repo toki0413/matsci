@@ -157,8 +157,24 @@ class MemoryManager:
         lines = ["## Relevant past knowledge:"]
         for r in results:
             provenance = f" ({r.get('source', '')})" if r.get("source") else ""
+            # 消费 lint() 写入的 contradicts: tag, 标注矛盾条目
+            conflict_warn = ""
+            raw_tags = r.get("tags", "[]")
+            if isinstance(raw_tags, str):
+                try:
+                    tag_list = json.loads(raw_tags)
+                except (ValueError, TypeError):
+                    tag_list = []
+            elif isinstance(raw_tags, list):
+                tag_list = raw_tags
+            else:
+                tag_list = []
+            contradicts = [t for t in tag_list if isinstance(t, str) and t.startswith("contradicts:")]
+            if contradicts:
+                ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
+                conflict_warn = f" [WARNING: conflicts with {ids}]"
             lines.append(
-                f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}"
+                f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}{conflict_warn}"
             )
         return "\n".join(lines)
 

@@ -86,6 +86,37 @@ def llm_judge_evaluator(
     return evaluate
 
 
+def rubric_evaluator(response: str, case: BenchmarkCase) -> tuple[bool, float]:
+    """Score against weighted rubric items (RCBench-style).
+
+    Each rubric item has: criterion (str), weight (float), keywords (list[str]).
+    An item is "met" if all its keywords appear in the response (case-insensitive).
+    Score = sum(met weights) / sum(total weights) * 100.
+    Falls back to keyword_evaluator if rubric_items is empty.
+    """
+    if not case.rubric_items:
+        return keyword_evaluator(response, case)
+
+    text = response.lower()
+    total_weight = 0.0
+    met_weight = 0.0
+    for item in case.rubric_items:
+        weight = float(item.get("weight", 1.0))
+        keywords = item.get("keywords", [])
+        total_weight += weight
+        if not keywords:
+            # no keywords = criterion met by default (e.g. code execution succeeded)
+            met_weight += weight
+        elif all(kw.lower() in text for kw in keywords):
+            met_weight += weight
+
+    if total_weight == 0:
+        return True, 100.0
+    score = round(met_weight / total_weight * 100, 1)
+    # ponytail: pass threshold at 50 (RCBench's "matches paper" anchor)
+    return score >= 50, score
+
+
 @dataclass
 class BenchmarkCase:
     """A single benchmark task."""
@@ -99,6 +130,11 @@ class BenchmarkCase:
     category: str = "general"
     tags: list[str] = field(default_factory=list)
     case_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    # RCBench-style weighted rubric items. Each item:
+    # {"criterion": str, "weight": float, "keywords": [str], "type": "text"|"image"}
+    # When populated, rubric_evaluator scores each criterion by keyword presence
+    # and computes a weighted sum scaled to 0-100.
+    rubric_items: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
