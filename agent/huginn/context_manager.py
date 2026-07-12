@@ -36,7 +36,7 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-4.1-mini": 1_000_000,
     # DeepSeek V4 — 1M context (MoE 1.6T, 49B active)
     "deepseek-v4-pro": 1_000_000,
-    "deepseek-v4-flash": 128_000,
+    "deepseek-v4-flash": 1_000_000,
     "deepseek-chat": 128_000,
     "deepseek-coder": 128_000,
     "deepseek-reasoner": 128_000,
