@@ -41,7 +41,12 @@ jobs:
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
         run: |
           cd agent
-          pytest -q --cov-fail-under=0 -m "not integration" --timeout=120
+          # Fall back to explicit path if pytest config is missing
+          if [ -f pyproject.toml ] || [ -f pytest.ini ] || [ -f setup.cfg ]; then
+            pytest -q --cov-fail-under=0 -m "not integration" --timeout=120
+          else
+            python -m pytest tests/ -v
+          fi
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -73,3 +78,48 @@ jobs:
         run: |
           cd agent
           pytest tests/test_api_contract.py tests/test_security_penetration.py tests/test_chaos_engineering.py -v --no-cov -m "integration" --tb=short --timeout=300
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install and build
+        run: |
+          cd desktop
+          npm ci
+          npm run build
+
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./agent[dev]"
+
+      - name: Policy engine self-check
+        run: |
+          cd agent
+          python -m huginn.security.policy_engine
+
+      - name: Dependency vulnerability scan
+        run: |
+          pip install pip-audit
+          # Informational — doesn't fail the build
+          pip-audit || true
