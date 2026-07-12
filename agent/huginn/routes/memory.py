@@ -37,6 +37,17 @@ async def list_memories(
         return {"error": str(e)}
 
 
+@router.get("/memory/retrieve")
+async def retrieve_memories(q: str = "", limit: int = 10) -> dict[str, Any]:
+    """GET alias for memory search — convenience for simple lookups."""
+    try:
+        mgr = get_memory_manager()
+        results = mgr.recall(query=q, top_k=limit)
+        return {"results": results}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.post("/memory/search")
 async def search_memories(params: dict[str, Any]) -> dict[str, Any]:
     """Search long-term memory by query."""

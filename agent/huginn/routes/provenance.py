@@ -18,6 +18,13 @@ def _registry() -> ProvenanceRegistry:
     return ProvenanceRegistry.shared()
 
 
+@router.get("")
+@router.get("/")
+async def root(n: int = 20):
+    """Root alias for /provenance/recent — convenience for UI."""
+    return await recent(n)
+
+
 @router.get("/recent")
 async def recent(n: int = 20):
     try:
