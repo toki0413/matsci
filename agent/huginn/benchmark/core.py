@@ -329,6 +329,206 @@ class BenchmarkSuite:
         ))
         return self
 
+    def matscibench_cases(self) -> BenchmarkSuite:
+        """MatSciBench-style cases — open-ended reasoning questions.
+
+        Source: arXiv:2510.12171, KDD 2026.
+        6 domains, 3 difficulty levels, NUM/FORMULA answer types.
+        Rule-based numeric judging with tolerance + LLM judge for formulas.
+        """
+        # ── Materials domain ──
+        self.add(BenchmarkCase(
+            task="What are the three primary classes of engineering materials? "
+             "Give one example of each.",
+            expected_keywords=["metals", "ceramics", "polymers"],
+            category="materials",
+            tags=["classification", "easy"],
+            case_id="matscibench_001",
+        ))
+        # ── Properties domain (numeric) ──
+        self.add(BenchmarkCase(
+            task="Calculate the theoretical density of copper (FCC, atomic weight "
+             "63.55 g/mol, lattice parameter 0.3615 nm, 4 atoms per unit cell). "
+             "Answer in g/cm³.",
+            expected_value=8.96,
+            tolerance=0.1,
+            evaluator=numeric_evaluator,
+            category="properties",
+            tags=["density", "fcc", "medium"],
+            case_id="matscibench_002",
+        ))
+        # ── Structures domain ──
+        self.add(BenchmarkCase(
+            task="The Miller indices of a plane in a cubic crystal are (1,1,1). "
+             "What is the angle between this plane and the (1,0,0) plane? "
+             "Answer in degrees.",
+            expected_value=54.7,
+            tolerance=1.0,
+            evaluator=numeric_evaluator,
+            category="structures",
+            tags=["miller", "cubic", "medium"],
+            case_id="matscibench_003",
+        ))
+        # ── Fundamental mechanisms (thermodynamics, numeric) ──
+        self.add(BenchmarkCase(
+            task="Calculate the change in Gibbs free energy (J/mol) for a process "
+             "where ΔH = -100 kJ/mol and ΔS = -50 J/(mol·K) at T = 500 K. "
+             "Use ΔG = ΔH - TΔS.",
+            expected_value=-75000,
+            tolerance=1000,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms",
+            tags=["thermodynamics", "gibbs", "easy"],
+            case_id="matscibench_004",
+        ))
+        # ── Processes domain ──
+        self.add(BenchmarkCase(
+            task="In heat treatment of steel, what is the critical cooling rate "
+             "and why is it important? Explain the relationship between cooling "
+             "rate and microstructure formation.",
+            expected_keywords=["critical cooling rate", "martensite", "austenite",
+                            "transformation", "microstructure"],
+            category="processes",
+            tags=["heat_treatment", "steel", "hard"],
+            case_id="matscibench_005",
+        ))
+        # ── Failure mechanisms domain ──
+        self.add(BenchmarkCase(
+            task="A steel component fails by fatigue after 10⁶ cycles at a stress "
+             "amplitude of 250 MPa. If the S-N curve follows σ_a = σ_f' * (2N_f)^b "
+             "with σ_f' = 1200 MPa and b = -0.10, verify whether the predicted "
+             "life matches. Calculate the predicted number of reversals to failure.",
+            expected_value=1.0e6,
+            tolerance=2.0e5,
+            evaluator=numeric_evaluator,
+            category="failure_mechanisms",
+            tags=["fatigue", "s-n", "hard"],
+            case_id="matscibench_006",
+        ))
+        # ── Properties (formula) ──
+        self.add(BenchmarkCase(
+            task="Write the expression for the stress-strain relationship in the "
+             "linear elastic regime according to Hooke's law for a 3D isotropic "
+             "material. Express it in terms of Young's modulus and Poisson's ratio.",
+            rubric="Should include σ = Eε for uniaxial, or the full 3D tensor "
+                   "form with Lamé constants or E, ν. Must mention Young's modulus "
+                   "and Poisson's ratio.",
+            evaluator=keyword_evaluator,
+            expected_keywords=["young", "poisson", "stress", "strain"],
+            category="properties",
+            tags=["elasticity", "formula", "medium"],
+            case_id="matscibench_007",
+        ))
+        # ── Structures (numeric, hard) ──
+        self.add(BenchmarkCase(
+            task="For a BCC crystal with lattice parameter a = 0.2866 nm, "
+             "calculate the atomic packing factor (APF). Compare with the "
+             "theoretical APF for BCC.",
+            expected_value=0.68,
+            tolerance=0.01,
+            evaluator=numeric_evaluator,
+            category="structures",
+            tags=["bcc", "packing", "hard"],
+            case_id="matscibench_008",
+        ))
+        return self
+
+    def csmbench_cases(self) -> BenchmarkSuite:
+        """CSMBench-style cases — cross-scale material science perception.
+
+        Source: arXiv:2603.19327. 4 physical scales: atomic→micro→meso→macro.
+        Adapted to text-based format since BenchmarkCase has no image field.
+        Focus: can the agent reason about structure-property across scales?
+        """
+        # ── Atomic scale ──
+        self.add(BenchmarkCase(
+            task="A material shows an XRD pattern with peaks at 2θ = 35°, 38°, 40° "
+             "(Cu Kα, λ=1.5406 Å). The structure is hexagonal (wurtzite). "
+             "Identify the material and calculate the lattice parameter a.",
+            expected_value=3.25,
+            tolerance=0.05,
+            evaluator=numeric_evaluator,
+            category="atomic",
+            tags=["xrd", "wurtzite", "gan", "diffraction"],
+            case_id="csmbench_001",
+        ))
+        # ── Micro scale ──
+        self.add(BenchmarkCase(
+            task="A TEM image shows lattice fringes with spacing 0.334 nm. "
+             "What crystallographic plane and material is this likely to be? "
+             "Explain the relationship between fringe spacing and d-spacing.",
+            expected_keywords=["graphite", "0.334", "d-spacing", "002",
+                            "lattice fringe"],
+            category="micro",
+            tags=["tem", "lattice_fringe", "carbon"],
+            case_id="csmbench_002",
+        ))
+        # ── Meso scale ──
+        self.add(BenchmarkCase(
+            task="An SEM image of a sintered ceramic shows grain sizes ranging "
+             "from 2 to 10 μm with some porosity (~5%). Predict how increasing "
+             "the sintering temperature would affect: (a) grain size, "
+             "(b) density, (c) mechanical strength. Explain the Hall-Petch "
+             "relationship in this context.",
+            rubric_items=[
+                {"criterion": "grain growth with temperature", "weight": 2,
+                 "keywords": ["grain growth", "larger"]},
+                {"criterion": "density increase", "weight": 2,
+                 "keywords": ["density", "densification"]},
+                {"criterion": "Hall-Petch relationship", "weight": 2,
+                 "keywords": ["hall-petch", "strength"]},
+                {"criterion": "trade-off between strength and toughness", "weight": 1,
+                 "keywords": ["trade-off", "brittle"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="meso",
+            tags=["sem", "grain", "sintering", "hall-petch"],
+            case_id="csmbench_003",
+        ))
+        # ── Macro scale ──
+        self.add(BenchmarkCase(
+            task="A tensile test on a metal specimen (gauge length 50 mm, "
+             "cross-section 12.5 mm²) yields the following: at 2 mm extension "
+             "the load is 15 kN, at fracture the load is 12 kN and total "
+             "extension is 8 mm. Calculate: (a) Young's modulus, "
+             "(b) ultimate tensile strength, (c) elongation at fracture.",
+            rubric_items=[
+                {"criterion": "Young's modulus calculation", "weight": 3,
+                 "keywords": ["young", "modulus", "120", "gpa"]},
+                {"criterion": "UTS calculation", "weight": 3,
+                 "keywords": ["uts", "tensile strength", "1200", "mpa"]},
+                {"criterion": "elongation at fracture", "weight": 2,
+                 "keywords": ["elongation", "16%", "0.16"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="macro",
+            tags=["tensile", "mechanical", "stress-strain"],
+            case_id="csmbench_004",
+        ))
+        # ── Cross-scale reasoning ──
+        self.add(BenchmarkCase(
+            task="Explain how the atomic-scale bonding (covalent vs metallic) "
+             "influences the macro-scale mechanical properties (brittleness vs "
+             "ductility) of ceramics vs metals. Trace the causal chain through "
+             "micro-scale dislocation mobility and meso-scale grain boundary "
+             "behavior.",
+            rubric_items=[
+                {"criterion": "atomic bonding difference", "weight": 2,
+                 "keywords": ["covalent", "metallic", "bonding", "directional"]},
+                {"criterion": "dislocation mobility link", "weight": 3,
+                 "keywords": ["dislocation", "mobility", "slip", "movement"]},
+                {"criterion": "grain boundary role", "weight": 2,
+                 "keywords": ["grain boundary", "barrier", "block"]},
+                {"criterion": "macro property connection", "weight": 2,
+                 "keywords": ["brittle", "ductile", "ceramic", "metal"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="cross_scale",
+            tags=["bonding", "dislocation", "cross-scale", "hard"],
+            case_id="csmbench_005",
+        ))
+        return self
+
     async def run(
         self,
         agent: Any,
