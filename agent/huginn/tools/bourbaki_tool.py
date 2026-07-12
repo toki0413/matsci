@@ -76,7 +76,7 @@ class BourbakiTool(HuginnTool):
         self._lean_available = self._lean.ensure()
         return self._lean_available
 
-    async def call(self, args: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         if isinstance(args, BourbakiInput):
             input_data = args
         else:
@@ -86,22 +86,31 @@ class BourbakiTool(HuginnTool):
         equations = input_data.equations
 
         # Try Lean 4 formal verification first
+        result: BourbakiResult
         if self._check_lean() and self._lean is not None:
             if task == "check_conservation":
-                result = self._lean_check_conservation(input_data)
-                # Lean build/setup failures aren't real verification results —
-                # fall through to the symbolic fallback so the user still gets
-                # a meaningful answer instead of an opaque "build failed" error.
-                lean_err = (result.lean_output or "").lower()
-                if result.success or "build failed" not in lean_err:
-                    return result
+                lean_result = self._lean_check_conservation(input_data)
+                lean_err = (lean_result.lean_output or "").lower()
+                if lean_result.success or "build failed" not in lean_err:
+                    result = lean_result
+                else:
+                    result = self._fallback_check(task, domain, equations, input_data.variables)
             elif task == "suggest_invariant":
-                return self._lean_suggest_invariant(input_data)
+                result = self._lean_suggest_invariant(input_data)
+            else:
+                result = self._fallback_check(task, domain, equations, input_data.variables)
+        else:
+            result = self._fallback_check(task, domain, equations, input_data.variables)
 
-        # Fallback: Python-based symbolic checks
-        return self._fallback_check(task, domain, equations, input_data.variables)
+        # Convert BourbakiResult → ToolResult so the adapter can handle it
+        from huginn.types import ToolResult
+        return ToolResult(
+            data=result.model_dump(),
+            success=result.success,
+            metadata={"task": result.task, "domain": result.domain, "fallback": result.fallback},
+        )
 
-    def _lean_check_conservation(self, input_data: BourbakiInput) -> dict[str, Any]:
+    def _lean_check_conservation(self, input_data: BourbakiInput) -> BourbakiResult:
         """Run Lean 4 verification for conservation law."""
         assert self._lean is not None
         lean_code = f'''
