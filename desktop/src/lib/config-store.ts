@@ -118,7 +118,7 @@ function defaultConfig(): AppConfig {
     local_only_mode: false,
     max_tool_output_tokens: 12000,
     context_budget_tokens: 100000,
-    pet_name: "Huginn",
+    pet_name: "Muninn",
     pet_personality: "cheerful",
     pet_accessories: [],
     encrypt_config: false,
