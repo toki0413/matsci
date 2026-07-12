@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from huginn.pet import (
+    configure_pet,
     feed_pet,
     get_pet_bus,
     pet_stroke,
@@ -48,6 +49,17 @@ async def pet_reset() -> dict[str, Any]:
     reset_pet_progress()
     bus = get_pet_bus()
     return {"ok": True, "level": bus.state.level, "experience": bus.state.experience}
+
+
+@router.post("/pet/configure")
+async def pet_configure(params: dict[str, Any]) -> dict[str, Any]:
+    """Configure pet name, personality, and avatar."""
+    name = params.get("name")
+    personality = params.get("personality")
+    avatar = params.get("avatar")
+    configure_pet(name=name, personality=personality, avatar=avatar)
+    bus = get_pet_bus()
+    return {"ok": True, "name": bus.state.name, "personality": bus.state.personality}
 
 
 @router.get("/pet/status")
