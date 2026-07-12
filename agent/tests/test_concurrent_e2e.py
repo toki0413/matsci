@@ -84,11 +84,12 @@ def _build_agent(tmp_path: Any, llm: Any | None = None, **kwargs: Any) -> Huginn
 async def _consume(
     agent: HuginnAgent, message: str, thread_id: str = "default"
 ) -> dict[str, Any]:
-    """Drain the async chat stream and return the last yielded state."""
+    """Drain the async chat stream and return the last state with messages."""
     final_state: dict[str, Any] | None = None
     async for state in agent.chat(message, thread_id=thread_id):
-        final_state = state
-    assert final_state is not None, f"chat() yielded no state for thread {thread_id}"
+        if isinstance(state, dict) and "messages" in state:
+            final_state = state
+    assert final_state is not None, f"chat() yielded no state with messages for thread {thread_id}"
     return final_state
 
 
