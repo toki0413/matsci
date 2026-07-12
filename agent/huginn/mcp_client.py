@@ -67,6 +67,20 @@ class MCPServerConfig:
     # "stdio" (default) or "sse". SSE ignores command/args and uses url instead.
     transport: str = "stdio"
     url: str | None = None  # SSE endpoint, required when transport == "sse"
+    # Auth headers for SSE/HTTP transport (e.g. {"Authorization": "Bearer xxx"}).
+    # stdio servers typically auth via env vars, so this is SSE-only.
+    headers: dict[str, str] | None = None
+    # Convenience: set api_key and we'll build {"Authorization": "Bearer <key>"}
+    # automatically. Overridden by explicit headers if both are set.
+    api_key: str | None = None
+
+    def effective_headers(self) -> dict[str, str] | None:
+        """Merge api_key convenience shortcut into headers dict."""
+        if self.headers:
+            return self.headers
+        if self.api_key:
+            return {"Authorization": f"Bearer {self.api_key}"}
+        return None
 
 
 @dataclass
@@ -144,6 +158,8 @@ class MCPClientManager:
             env=cfg.get("env"),
             transport=cfg.get("transport", "stdio"),
             url=cfg.get("url"),
+            headers=cfg.get("headers"),
+            api_key=cfg.get("api_key"),
         )
 
         try:
@@ -221,7 +237,7 @@ class MCPClientManager:
                         raise ValueError(
                             f"SSE server '{config.name}' requires a url"
                         )
-                    client = _sse_client(config.url)
+                    client = _sse_client(config.url, headers=config.effective_headers())
                 else:
                     params = StdioServerParameters(
                         command=config.command,
