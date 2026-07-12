@@ -146,7 +146,7 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(ws_mod, "get_agent", _get_agent)
     monkeypatch.setattr(ws_mod, "get_agent_factory", lambda: h.factory)
     monkeypatch.setattr(ws_mod, "get_context", lambda: h.ctx)
-    monkeypatch.setattr(ws_mod, "get_memory_manager", lambda: MagicMock())
+    monkeypatch.setattr(ws_mod, "get_memory_manager", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
         ws_mod, "get_or_create_thread", lambda *a, **k: {"id": "t"}
     )
