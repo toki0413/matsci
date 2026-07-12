@@ -7,6 +7,7 @@ from huginn.autoloop.goal_scheduler import Goal, GoalScheduler
 def _make_goal(criteria: list[str]) -> Goal:
     return Goal(
         id="test-1",
+        text="test objective",
         objective="test objective",
         success_criteria=criteria,
     )
