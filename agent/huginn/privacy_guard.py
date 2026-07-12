@@ -53,6 +53,10 @@ class PrivacyGuard:
         self._type_counts: Counter[str] = Counter()
         # 临时数据注册表: 记录哪些数据需要在会话结束后清除
         self._ephemeral_keys: set[str] = set()
+        # 审计日志: (timestamp, content_type, tier, action) — 不存原文
+        self._audit_log: list[dict[str, Any]] = []
+        # 用户标记的 "始终本地" 数据路径/关键词
+        self._local_only_tags: set[str] = set()
 
     @classmethod
     def shared(cls) -> "PrivacyGuard":
@@ -163,12 +167,69 @@ class PrivacyGuard:
         with self._lock:
             self._ephemeral_keys.add(key)
 
+    # ── 数据标记: 用户指定的 "始终本地" 数据 ────────────────
+
+    def tag_local_only(self, key: str) -> None:
+        """标记某个数据路径/关键词为 "始终本地", 不受全局级别控制."""
+        with self._lock:
+            self._local_only_tags.add(key)
+
+    def untag_local_only(self, key: str) -> None:
+        with self._lock:
+            self._local_only_tags.discard(key)
+
+    def is_tagged_local(self, content: str) -> bool:
+        """检查内容是否匹配任何 "始终本地" 标记."""
+        if not self._local_only_tags:
+            return False
+        return any(tag in content for tag in self._local_only_tags)
+
+    def get_local_only_tags(self) -> list[str]:
+        with self._lock:
+            return list(self._local_only_tags)
+
+    def should_force_local(self, content: str) -> bool:
+        """检测内容是否应强制走本地模型, 即使全局级别是 redact.
+
+        触发条件:
+        1. 内容匹配用户标记的 local_only 路径/关键词
+        2. 内容包含高敏感模式 (私钥/凭证/内部路径) 且级别 >= redact
+        """
+        if self.is_tagged_local(content):
+            return True
+        # ephemeral 级数据在 redact 模式下也建议走本地
+        tier = self.classify_data(content)
+        if tier == "ephemeral" and self.get_level() != "off":
+            return True
+        return False
+
+    # ── 审计日志 ────────────────────────────────────────────
+
+    def _record_audit(self, content_type: str, tier: str, action: str) -> None:
+        """记录一条审计日志 (不含原文)."""
+        import time as _time
+        with self._lock:
+            self._audit_log.append({
+                "ts": _time.time(),
+                "content_type": content_type,
+                "tier": tier,
+                "action": action,  # redacted / blocked / forced_local / sent_as_is
+            })
+            # 上限 500 条, FIFO
+            if len(self._audit_log) > 500:
+                self._audit_log = self._audit_log[-500:]
+
+    def audit_log(self, last_n: int = 50) -> list[dict[str, Any]]:
+        """返回审计日志 (最近 N 条)."""
+        with self._lock:
+            return list(self._audit_log[-last_n:])
+
     def purge_session(self) -> list[str]:
         """会话结束时清除所有临时数据, 返回被清除的 key 列表."""
         with self._lock:
             purged = list(self._ephemeral_keys)
             self._ephemeral_keys.clear()
-            # 重置脱敏计数
+            # 重置脱敏计数 (审计日志保留, 供会话后查看)
             self._redact_count = 0
             self._type_counts.clear()
         if purged:
@@ -195,15 +256,25 @@ class PrivacyGuard:
         if ctype == "auto":
             ctype = self._detect_type(content)
 
+        tier = self.classify_data(content, ctype)
+
         with self._lock:
             self._redact_count += 1
             self._type_counts[ctype] += 1
 
+        # 如果被标记为 local_only, 记审计并原样返回 (不应到达云端)
+        if self.is_tagged_local(content):
+            self._record_audit(ctype, tier, "forced_local")
+            return content
+
         if ctype == "structure":
+            self._record_audit(ctype, tier, "redacted")
             return self._redact_structure(content)
         if ctype == "trajectory":
+            self._record_audit(ctype, tier, "redacted")
             return self._redact_trajectory(content)
         if ctype == "calculation_result":
+            self._record_audit(ctype, tier, "redacted")
             return self._redact_calculation(content)
         if ctype == "conversation":
             return self._redact_conversation(content)
@@ -546,15 +617,24 @@ class PrivacyGuard:
     # ── 状态汇总 ─────────────────────────────────────────────
 
     def summary(self) -> dict[str, Any]:
-        """返回当前级别 + 已脱敏次数 + 各类型脱敏统计."""
+        """返回当前级别 + 已脱敏次数 + 各类型脱敏统计 + 审计摘要."""
         with self._lock:
             counts = dict(self._type_counts)
             total = self._redact_count
+            audit_count = len(self._audit_log)
+            tagged = list(self._local_only_tags)
         level = self.get_level()
+        # 审计 action 分布
+        action_counts: Counter[str] = Counter()
+        for entry in self._audit_log:
+            action_counts[entry["action"]] += 1
         return {
             "level": level,
             "level_description": self.LEVELS[level],
             "redact_count": total,
             "type_counts": counts,
             "send_to_cloud": self.should_send_to_cloud(),
+            "audit_entries": audit_count,
+            "audit_actions": dict(action_counts),
+            "local_only_tags": tagged,
         }

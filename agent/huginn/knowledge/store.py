@@ -644,31 +644,42 @@ class KnowledgeBase:
             return 0
 
     def _score_document_value(self, doc: dict[str, Any]) -> float:
-        """计算文档的信息价值评分: 频率 × 密度 × 时效性.
-        0.0 = 无价值 (可删除), 1.0 = 高价值 (必须保留)."""
-        score = 0.5  # 基线
+        """计算文档的信息价值评分 — Generative Agents 加权模型.
 
-        # 维度 1: 检索频率 (命中次数)
-        hit_count = getattr(self, "_hit_counts", {}).get(doc.get("doc_id", ""), 0)
-        freq_score = min(hit_count / 5.0, 1.0)  # 5 次命中 = 满分
-        score = freq_score
+        score = α·recency + β·importance + γ·relevance
+        α=0.2, β=0.3, γ=0.5 (relevance 权重最高: 被用过的知识最有价值)
 
-        # 维度 2: 信息密度 (structure_aware/visual 分数更高)
-        filename = doc.get("filename", "")
-        if filename.startswith("autoloop_iter_"):
-            score *= 0.6  # 迭代文档信息密度低 (是摘要, 不是原始参考)
-        elif any(ext in filename.lower() for ext in (".cif", ".poscar", ".contcar")):
-            score *= 1.0  # 结构文件信息密度高
-        elif filename.endswith(".pdf"):
-            score *= 0.9  # PDF 文档有视觉提取, 密度较高
+        0.0 = 无价值 (可删除), 1.0 = 高价值 (必须保留).
+        """
+        import time as _time
+
+        # α: recency — 指数衰减, 半衰期 7 天 (研究周期)
+        ts = doc.get("timestamp") or doc.get("created_at") or 0
+        if ts:
+            age_s = _time.time() - float(ts)
+            half_life_s = 7 * 86400  # 7 days
+            recency = 0.5 ** (age_s / half_life_s)
         else:
-            score *= 0.7  # 普通文本
+            recency = 0.5  # 没时间戳的给中间分
 
-        # 维度 3: 时效性 (用户上传文档时效性弱, 保留更久)
-        if not filename.startswith("autoloop_iter_"):
-            score = max(score, 0.3)  # 用户上传文档至少 0.3 分, 不轻易删
+        # β: importance — 信息密度 (结构文件 > PDF > 普通文本 > 迭代摘要)
+        filename = doc.get("filename", "")
+        if any(ext in filename.lower() for ext in (".cif", ".poscar", ".contcar")):
+            importance = 0.9
+        elif filename.endswith(".pdf"):
+            importance = 0.7
+        elif filename.startswith("autoloop_iter_"):
+            importance = 0.3
+        else:
+            importance = 0.5
 
-        # 永不删除: 用户手动上传的非 autoloop 文档, 如果被检索过
+        # γ: relevance — 检索频率 (命中次数)
+        hit_count = getattr(self, "_hit_counts", {}).get(doc.get("doc_id", ""), 0)
+        relevance = min(hit_count / 5.0, 1.0)
+
+        score = 0.2 * recency + 0.3 * importance + 0.5 * relevance
+
+        # 永不删除: 用户手动上传且被检索过
         if hit_count > 0 and not filename.startswith("autoloop_iter_"):
             score = max(score, 0.8)
 
@@ -778,12 +789,17 @@ class KnowledgeBase:
             except Exception:
                 pass  # reranking is best-effort
 
-        # Feynman note 优先: 基础概念解释 > 细节技巧, 检索时排前面
-        # ponytail: filename 前缀匹配, 不需要额外 metadata 字段
+        # Feynman note 优先 + importance 加权 reranking
+        # Generative Agents: relevance(=1-distance) × importance(hit_count)
+        _hits = getattr(self, "_hit_counts", {})
         chunks.sort(
             key=lambda c: (
                 0 if c.get("metadata", {}).get("filename", "").startswith("feynman_") else 1,
-                c.get("distance", 1.0),
+                # distance 越小越好 (更相似), hit_count 越大越好 (更常用)
+                # 合并为: distance - 0.1 * log(1 + hit_count)
+                c.get("distance", 1.0) - 0.1 * __import__("math").log1p(
+                    _hits.get(c.get("metadata", {}).get("doc_id", ""), 0)
+                ),
             )
         )
 

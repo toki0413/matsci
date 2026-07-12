@@ -709,6 +709,7 @@ class StreamingMixin:
                 from huginn.privacy_guard import PrivacyGuard
 
                 _pg = PrivacyGuard.shared()
+                _force_local = False
                 if not _pg.should_send_to_cloud():
                     _prov = self._detect_provider()
                     if _pg.should_use_local(_prov):
@@ -727,7 +728,27 @@ class StreamingMixin:
                             type(_local).__name__,
                         )
                 else:
-                    messages = _pg.redact_messages_for_cloud(messages)
+                    # proactive: if any message contains tagged-local or ephemeral data,
+                    # switch to local model instead of just redacting
+                    for _m in messages:
+                        _c = getattr(_m, "content", "")
+                        if isinstance(_c, str) and _pg.should_force_local(_c):
+                            _force_local = True
+                            break
+                    if _force_local:
+                        _local = self._find_local_model()
+                        if _local is not None:
+                            self.model = _local
+                            self._agent_graph = None
+                            graph = self.build_graph()
+                            logger.info(
+                                "privacy: proactive local routing (sensitive data detected)"
+                            )
+                        else:
+                            # no local model, fall back to redact
+                            messages = _pg.redact_messages_for_cloud(messages)
+                    else:
+                        messages = _pg.redact_messages_for_cloud(messages)
             except RuntimeError:
                 raise
             except Exception:

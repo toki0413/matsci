@@ -1346,34 +1346,46 @@ class DeliAutoResearch:
         state: ResearchState,
         gap_info: dict[str, Any],
     ) -> None:
-        """检查是否可以走迁移学习 (月壤等特定领域)."""
+        """检查是否可以走迁移学习 — 基于数学域相似度而非硬编码关键词。"""
         gap_text = gap_info.get("gap", "")
-        topic_lower = state.topic.lower()
 
-        transfer_domains = ["月壤", "lunar", "regolith", "moon"]
-        matched = any(
-            d in topic_lower or d in gap_text.lower()
-            for d in transfer_domains
-        )
+        try:
+            from huginn.ml.transfer_registry import find_transfer_domain
+            from huginn.kg.extractor import extract_entities
+        except ImportError:
+            state.integrity_log.append("[transfer] transfer registry unavailable")
+            return
 
-        if not matched:
+        # 从研究主题和 gap 信息中提取元素/组成
+        entities = extract_entities(f"{state.topic} {gap_text}")
+        composition = entities.get("materials", set()) | entities.get("elements", set())
+        if not composition:
             state.integrity_log.append(
-                f"[transfer] gap '{gap_text[:40]}...' — no matching pretrained "
-                f"model, marked as 'needs more data'"
+                f"[transfer] gap '{gap_text[:40]}...' — no composition extracted"
             )
             return
 
-        # 月壤迁移: 用预训练特征做迁移预测
+        # 查找最佳迁移域
+        domain, sim, recommendation = find_transfer_domain(
+            target_composition=composition,
+            target_structure="",
+            target_property="",
+            n_samples=len(state.sr_gp_results),
+        )
+
+        if domain is None:
+            state.integrity_log.append(f"[transfer] {recommendation}")
+            return
+
+        # 迁移学习执行 — GP fine-tune
         try:
             from huginn.tools.sci.gp_tool import GPTool, GPToolInput
-
-            gp_tool = GPTool()
 
             transfer_data = await self._collect_gap_data(state, gap_info)
             if not transfer_data or len(transfer_data.get("rows", [])) < 3:
                 state.integrity_log.append(
-                    "[transfer] lunar soil domain matched but insufficient "
-                    "data for transfer"
+                    f"[transfer] {domain.name} matched (sim={sim:.2f}) "
+                    f"but insufficient data for transfer"
                 )
                 return
 
@@ -1393,9 +1405,7 @@ class DeliAutoResearch:
                 for i in range(len(features[target_key]))
             ]
 
-            gp_args = GPToolInput(
-                action="fit", X=X, y=features[target_key]
-            )
+            gp_args = GPToolInput(action="fit", X=X, y=features[target_key])
             result = await asyncio.to_thread(
                 gp_tool.call, gp_args.model_dump(), None
             )
@@ -1404,14 +1414,15 @@ class DeliAutoResearch:
                 state.sr_gp_results.append(
                     {
                         "gap": gap_text,
-                        "approach": "transfer learning (lunar soil domain)",
+                        "approach": f"transfer learning ({domain.name} domain, sim={sim:.2f})",
                         "data": result.data,
-                        "note": "Pretrained features transferred from lunar soil domain",
+                        "note": recommendation,
+                        "source_domain": domain.name,
+                        "similarity": sim,
                     }
                 )
                 state.integrity_log.append(
-                    f"[transfer] lunar soil transfer learning applied for "
-                    f"gap: {gap_text[:40]}..."
+                    f"[transfer] {domain.name} → target (sim={sim:.2f}): {recommendation[:80]}"
                 )
         except Exception as e:
             state.integrity_log.append(f"[transfer] error: {e}")
