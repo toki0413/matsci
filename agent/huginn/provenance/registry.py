@@ -50,6 +50,7 @@ class ProvenanceEntry:
     # agent 压缩后仍可查询, 不需要重新解析文件.
     snapshot_step_id: str | None = None  # 关联的文件快照 step_id (VC-1)
     reverted: bool = False  # 是否已被 rollback 标记 (VC-2)
+    random_seed: int | None = None  # 随机种子, 保证可复现
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +63,7 @@ class ProvenanceEntry:
             "key_properties": self.key_properties,
             "snapshot_step_id": self.snapshot_step_id,
             "reverted": self.reverted,
+            "random_seed": self.random_seed,
         }
 
     @classmethod
@@ -78,6 +80,7 @@ class ProvenanceEntry:
             key_properties=json.loads(row["key_properties"] or "{}"),
             snapshot_step_id=row["snapshot_step_id"] if "snapshot_step_id" in keys else None,
             reverted=bool(row["reverted"]) if "reverted" in keys else False,
+            random_seed=row["random_seed"] if "random_seed" in keys and row["random_seed"] is not None else None,
         )
 
 
@@ -113,7 +116,8 @@ class _ProvenanceStore:
                     file_format TEXT,
                     key_properties TEXT,
                     snapshot_step_id TEXT,
-                    reverted INTEGER DEFAULT 0
+                    reverted INTEGER DEFAULT 0,
+                    random_seed INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS idx_path ON entries(file_path);
                 CREATE INDEX IF NOT EXISTS idx_tool ON entries(produced_by);
@@ -131,6 +135,8 @@ class _ProvenanceStore:
             self._conn.execute("ALTER TABLE entries ADD COLUMN snapshot_step_id TEXT")
         if "reverted" not in existing:
             self._conn.execute("ALTER TABLE entries ADD COLUMN reverted INTEGER DEFAULT 0")
+        if "random_seed" not in existing:
+            self._conn.execute("ALTER TABLE entries ADD COLUMN random_seed INTEGER")
 
     def save(self, entry: ProvenanceEntry) -> int:
         with self._lock:
@@ -138,8 +144,8 @@ class _ProvenanceStore:
                 """INSERT INTO entries
                    (file_path, produced_by, produced_at, input_files,
                     parameters, file_format, key_properties,
-                    snapshot_step_id, reverted)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    snapshot_step_id, reverted, random_seed)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.file_path,
                     entry.produced_by,
@@ -150,6 +156,7 @@ class _ProvenanceStore:
                     json.dumps(entry.key_properties),
                     entry.snapshot_step_id,
                     int(entry.reverted),
+                    entry.random_seed,
                 ),
             )
             self._conn.commit()
@@ -400,6 +407,16 @@ class ProvenanceRegistry:
                     f"Expected version {expected_version}, got {current}"
                 )
 
+        # auto-extract seed from parameters if not explicitly provided
+        # many tools pass seed in parameters dict (gp_tool, packing_tool, etc.)
+        _seed = None
+        if parameters:
+            for k in ("seed", "random_seed", "rng_seed"):
+                v = parameters.get(k)
+                if v is not None and isinstance(v, (int, float)):
+                    _seed = int(v)
+                    break
+
         entry = ProvenanceEntry(
             file_path=file_path,
             produced_by=produced_by,
@@ -409,6 +426,7 @@ class ProvenanceRegistry:
             file_format=file_format,
             key_properties=key_properties or {},
             snapshot_step_id=snapshot_step_id,
+            random_seed=_seed,
         )
 
         # 写内存 (热路径)
@@ -480,6 +498,22 @@ class ProvenanceRegistry:
         # 回退 SQLite
         if self._store is not None:
             return self._store.find_by_property(key, value)
+        return []
+
+    def find_by_seed(self, seed: int) -> list[ProvenanceEntry]:
+        """按随机种子查溯源 — 复现性验证用."""
+        # 内存扫描
+        results = [e for e in self._entries if e.random_seed == seed]
+        if results:
+            return results
+        # SQLite
+        if self._store is not None:
+            with self._store._lock:
+                cur = self._store._conn.execute(
+                    "SELECT * FROM entries WHERE random_seed = ? ORDER BY produced_at DESC",
+                    (seed,),
+                )
+                return [ProvenanceEntry.from_row(r) for r in cur.fetchall()]
         return []
 
     def get_lineage(self, file_path: str, depth: int = 5) -> list[ProvenanceEntry]:

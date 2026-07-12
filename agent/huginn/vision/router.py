@@ -213,6 +213,17 @@ def build_cv_context(
     if cv_hints:
         parts.append(cv_hints)
 
+    # ── Visual→Symbols: structured data extraction (new) ──
+    try:
+        from huginn.vision.symbol_encoder import visual_to_symbols
+        symbol_text = visual_to_symbols(image_path)
+        # 只添加 _cv_pre_analyze 没有的部分（避免重复）
+        new_lines = [l for l in symbol_text.split("\n") if l and not l.startswith("[CV pre-analysis]")]
+        if new_lines:
+            parts.append("\n".join(new_lines))
+    except Exception:
+        pass  # ponytail: graceful degradation, symbol extraction is enhancement not critical
+
     # ── visual memory: similar-image search ──
     if visual_encoder is not None and image_index is not None:
         try:

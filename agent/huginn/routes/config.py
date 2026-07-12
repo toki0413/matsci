@@ -772,3 +772,63 @@ async def reset_circuit_endpoint(tool: str) -> dict[str, Any]:
         "after": after["state"],
         "note": "已重置" if before["state"] != "closed" or before["consecutive_failures"] > 0 else "本就为 closed, 无需重置",
     }
+
+
+# ── /config/privacy ──────────────────────────────────────────────
+
+
+@router.get("/config/privacy", dependencies=[Depends(require_api_key)])
+async def privacy_summary() -> dict[str, Any]:
+    """隐私控制状态摘要: 级别/脱敏统计/审计日志/本地标记."""
+    from huginn.privacy_guard import PrivacyGuard
+
+    pg = PrivacyGuard.shared()
+    return pg.summary()
+
+
+@router.get("/config/privacy/audit", dependencies=[Depends(require_api_key)])
+async def privacy_audit_log(last_n: int = 50) -> dict[str, Any]:
+    """隐私审计日志 — 记录了什么类型的数据被脱敏/拦截/强制本地.
+    不含原文, 只有类型/tier/action/timestamp."""
+    from huginn.privacy_guard import PrivacyGuard
+
+    pg = PrivacyGuard.shared()
+    entries = pg.audit_log(last_n=min(last_n, 500))
+    return {"entries": entries, "count": len(entries)}
+
+
+@router.post("/config/privacy/tags", dependencies=[Depends(require_admin_key)])
+async def add_local_only_tag(params: dict[str, Any]) -> dict[str, Any]:
+    """标记某个数据路径/关键词为 "始终本地", 不发云端.
+    body: {"tag": "C:\\\\secret_project"} or {"tag": "/data/confidential"}"""
+    from huginn.privacy_guard import PrivacyGuard
+
+    tag = params.get("tag", "").strip()
+    if not tag:
+        return {"success": False, "error": "tag 不能为空"}
+    pg = PrivacyGuard.shared()
+    pg.tag_local_only(tag)
+    return {"success": True, "tag": tag, "tags": pg.get_local_only_tags()}
+
+
+@router.delete("/config/privacy/tags/{tag}", dependencies=[Depends(require_admin_key)])
+async def remove_local_only_tag(tag: str) -> dict[str, Any]:
+    """移除一个 local_only 标记."""
+    from huginn.privacy_guard import PrivacyGuard
+
+    pg = PrivacyGuard.shared()
+    pg.untag_local_only(tag)
+    return {"success": True, "removed": tag, "tags": pg.get_local_only_tags()}
+
+
+@router.post("/config/privacy/level", dependencies=[Depends(require_admin_key)])
+async def set_privacy_level(params: dict[str, Any]) -> dict[str, Any]:
+    """设置隐私级别. body: {"level": "off|redact|local_only"}"""
+    from huginn.privacy_guard import PrivacyGuard
+
+    level = params.get("level", "").strip()
+    pg = PrivacyGuard.shared()
+    if level not in pg.LEVELS:
+        return {"success": False, "error": f"未知级别: {level}. 可选: {list(pg.LEVELS)}"}
+    pg.set_level(level)
+    return {"success": True, "level": level, "description": pg.LEVELS[level]}
