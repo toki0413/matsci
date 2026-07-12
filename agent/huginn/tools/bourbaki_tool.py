@@ -200,7 +200,7 @@ end
             message=f"Fallback symbolic check for {task} in {domain}",
         )
 
-    def _fallback_dimensional_analysis(self, domain: str, variables: dict[str, str]) -> BourbakiResult:
+    def _fallback_dimensional_analysis(self, domain: str, variables: Any) -> BourbakiResult:
         """Check dimensional consistency using sympy."""
         import sympy
         from sympy.physics.units import mass, length, time, current, temperature
@@ -210,15 +210,28 @@ end
             "mass": mass, "length": length, "time": time,
             "current": current, "temperature": temperature,
         }
-        # Check that all variables have recognized units
-        recognized = all(v in units or v in {"dimensionless", "1"} for v in variables.values())
+        # variables can be a list of [name, unit, desc] tuples (from LLM)
+        # or a dict of {name: unit} (from legacy parameters)
+        if isinstance(variables, list):
+            var_units = {}
+            for v in variables:
+                if isinstance(v, (list, tuple)) and len(v) >= 2:
+                    var_units[str(v[0])] = str(v[1])
+                elif isinstance(v, dict) and "name" in v:
+                    var_units[str(v["name"])] = str(v.get("unit", v.get("dimension", "")))
+        elif isinstance(variables, dict):
+            var_units = {str(k): str(v) for k, v in variables.items()}
+        else:
+            var_units = {}
+
+        recognized = all(v in units or v in {"dimensionless", "1"} for v in var_units.values())
         return BourbakiResult(
             success=True,
             task="dimensional_analysis",
             domain=domain,
             dimensional_match=recognized,
             fallback=True,
-            message=f"Dimensional analysis: {len(variables)} variables, all recognized: {recognized}",
+            message=f"Dimensional analysis: {len(var_units)} variables, all recognized: {recognized}",
         )
 
     def _classify_pde_type(self, eq_str: str) -> str:
