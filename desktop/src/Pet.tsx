@@ -8,6 +8,19 @@ import {
 import { getApiBase, setApiBase, getAuthToken } from "./lib/api-client";
 import { ReconnectingWebSocket } from "./lib/ws-client";
 
+// Minimal API helper — avoids importing the full api module into the pet overlay.
+const api = {
+  post: async (path: string) => {
+    const base = getApiBase();
+    const token = getAuthToken();
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    return res.ok ? res.json() : Promise.reject(new Error(`${res.status}`));
+  },
+};
+
 // API_BASE is now managed by the shared api-client module, but we
 // keep a local reference for SSE URL construction. The syncBackendUrl()
 // call below keeps them in sync.
@@ -1136,6 +1149,7 @@ export default function Pet() {
     spawnParticles("star", 4, 1500);
     setMenuOpen(false);
     setTimeout(() => { setMood("happy"); }, 1200);
+    api.post("/pet/feed").catch(() => {});
   };
 
   const doPet = () => {
@@ -1146,6 +1160,7 @@ export default function Pet() {
     speak(formatMsg(pack.pet, petName), "happy");
     setHappiness(prev => Math.min(100, prev + 15));
     setMenuOpen(false);
+    api.post("/pet/pet").catch(() => {});
   };
 
   const doSleepToggle = () => {

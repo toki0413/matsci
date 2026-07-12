@@ -72,9 +72,41 @@ export function usePlugins() {
     }
   };
 
+  const reconnectMcp = async (name: string) => {
+    setMcpMsg(`Reconnecting ${name}…`);
+    try {
+      const data = await api.post<{ success?: boolean; error?: string }>(
+        `/mcp/servers/${name}/reconnect`
+      );
+      setMcpMsg(data.success ? `Reconnected ${name}` : `Reconnect failed: ${data.error}`);
+      if (data.success) loadMcp();
+    } catch (e: any) {
+      setMcpMsg(`Reconnect error: ${e.message}`);
+    }
+  };
+
+  const callMcpTool = async (serverName: string, toolName: string, args: Record<string, any>) => {
+    setMcpMsg(`Calling ${toolName}…`);
+    try {
+      const data = await api.post<{ result?: any; error?: string }>(
+        `/mcp/tools/${serverName}/call`,
+        { tool_name: toolName, arguments: args }
+      );
+      if (data.error) {
+        setMcpMsg(`Tool error: ${data.error}`);
+      } else {
+        setMcpMsg(`Tool ${toolName} completed`);
+      }
+      return data;
+    } catch (e: any) {
+      setMcpMsg(`Tool call error: ${e.message}`);
+      return null;
+    }
+  };
+
   return {
     mcpServers, discoveredServers, mcpMsg, newMcp,
     setMcpMsg, setNewMcp,
-    loadMcp, discoverMcp, connectMcp, disconnectMcp,
+    loadMcp, discoverMcp, connectMcp, disconnectMcp, reconnectMcp, callMcpTool,
   };
 }
