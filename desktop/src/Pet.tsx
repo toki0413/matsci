@@ -826,7 +826,7 @@ export default function Pet() {
       try {
         const port: number = await invoke("get_backend_port");
         if (port && port > 0) {
-          setApiBase(`http://localhost:${port}`);
+          setApiBase(`http://127.0.0.1:${port}`);
         }
       } catch {
         // Tauri IPC not available — keep default

@@ -53,10 +53,27 @@ export async function syncBackendUrl(): Promise<void> {
       const port = await invoke<number>("get_backend_port").catch(() => null);
       if (port) {
         setApiBase(`http://127.0.0.1:${port}`);
+        recomputeWsUrl();
+        return;
       }
     } catch {
-      // Tauri invoke failed — fall through with existing apiBase
+      // Tauri invoke failed — fall through to probe
     }
+  }
+  // Probe 8000-8010 — catches externally-started backends in browser mode
+  // or when Tauri invoke returns 0. Stops at first /health that responds.
+  // ponytail: linear scan is fine for 11 ports; switch to port file read
+  // if range grows beyond 50.
+  for (let p = 8000; p <= 8010; p++) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${p}/health`, {
+        signal: AbortSignal.timeout(500),
+      });
+      if (r.ok) {
+        setApiBase(`http://127.0.0.1:${p}`);
+        break;
+      }
+    } catch { /* not this port */ }
   }
   recomputeWsUrl();
 }

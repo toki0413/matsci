@@ -176,7 +176,8 @@ export class ReconnectingWebSocket {
     this.ws = null;
     if (this.manuallyClosed) return;
     // 4001 = auth failure from backend, don't retry
-    if (ev?.code === 4001) {
+    // 1008 = policy violation (WS auth timeout in non-dev mode), don't retry
+    if (ev?.code === 4001 || ev?.code === 1008) {
       this.setStatus('failed');
       return;
     }

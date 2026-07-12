@@ -194,7 +194,26 @@ fn get_agent_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
 
 #[tauri::command]
 fn get_backend_port(state: tauri::State<'_, AppState>) -> u16 {
-    state.backend_port.load(std::sync::atomic::Ordering::Relaxed)
+    let port = state.backend_port.load(std::sync::atomic::Ordering::Relaxed);
+    if port > 0 {
+        return port;
+    }
+    // Fallback: read port file written by externally-started backend
+    if let Some(home) = std::env::var_os("HUGINN_CACHE_DIR")
+        .or_else(|| std::env::var_os("USERPROFILE").map(|h| {
+            let mut p = std::path::PathBuf::from(h);
+            p.push(".huginn");
+            p.into_os_string()
+        }))
+    {
+        let port_file = std::path::Path::new(&home).join("backend_port");
+        if let Ok(text) = std::fs::read_to_string(&port_file) {
+            if let Ok(p) = text.trim().parse::<u16>() {
+                return p;
+            }
+        }
+    }
+    8000
 }
 
 #[tauri::command]

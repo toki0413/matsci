@@ -1134,7 +1134,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       renameThread(activeThread, raw.length > 40 ? raw.slice(0, 40) + "..." : raw);
     }
 
-    // watchdog: if no tokens arrive in 30s the WS likely dropped silently
+    // watchdog: if no tokens arrive in 120s the WS likely dropped silently.
+    // Was 30s but DeepSeek Reasoner can take 60s+ to first token.
     if (streamingTimeoutRef.current) clearTimeout(streamingTimeoutRef.current);
     streamingTimeoutRef.current = setTimeout(() => {
       setMessages((prev) => {
@@ -1152,7 +1153,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       });
       setIsStreaming(false);
       streamingTimeoutRef.current = null;
-    }, 30_000);
+    }, 120_000);
   };
 
   // Undo last send — removes the last user message + bot placeholder, restores input
