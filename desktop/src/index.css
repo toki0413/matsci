@@ -466,7 +466,9 @@
     position: absolute;
     bottom: 8px;
     right: 8px;
-    min-width: 140px;
+    min-width: 160px;
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
     background: color-mix(in srgb, var(--seed-bg) 95%, transparent);
     border: 1px solid color-mix(in srgb, var(--seed-fg) 8%, transparent);
     border-radius: 10px;
@@ -546,6 +548,16 @@
     height: 1px;
     background: color-mix(in srgb, var(--seed-fg) 6%, transparent);
     margin: 2px 0;
+  }
+
+  .pet-menu-label {
+    padding: 4px 14px 2px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.4;
+    @apply text-text-secondary;
   }
 
   .pet-status {

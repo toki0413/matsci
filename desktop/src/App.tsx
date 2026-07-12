@@ -768,15 +768,42 @@ export default function App() {
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let unlisten: (() => void) | null = null;
+    let unlistenNav: (() => void) | null = null;
     (async () => {
       unlisten = await listen("tray-restart-backend", async () => {
         const { invoke } = await import("@tauri-apps/api/core");
         try { await invoke("stop_backend"); } catch { /* not running */ }
         await startBackend();
       });
+      // Pet → main window navigation
+      unlistenNav = await listen<{ tab?: string; cmd?: string }>("pet-navigate", async (ev) => {
+        const payload = ev.payload;
+        if (payload?.tab) {
+          setActiveTab(payload.tab as typeof activeTab);
+        }
+        if (payload?.cmd) {
+          // Route inline commands through the chat panel
+          if (payload.cmd === "/new") {
+            setMessages([]);
+            setActiveTab("chat");
+          } else if (payload.cmd === "/research") {
+            setResearchMode((prev: boolean) => !prev);
+            setActiveTab("chat");
+          } else if (payload.cmd === "/plan") {
+            setMode("plan");
+            setActiveTab("chat");
+          }
+        }
+        // Focus and show the main window
+        try {
+          const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+          const main = await WebviewWindow.getByLabel("main");
+          if (main) { await main.show(); await main.setFocus(); }
+        } catch { /* window might not exist yet */ }
+      });
     })();
-    return () => { unlisten?.(); };
-  }, [startBackend]);
+    return () => { unlisten?.(); unlistenNav?.(); };
+  }, [startBackend, activeTab]);
 
   // ── Keyboard shortcuts: Ctrl+K palette, Ctrl+F search, Ctrl+N new thread ──
   useEffect(() => {
