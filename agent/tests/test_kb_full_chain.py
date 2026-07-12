@@ -166,7 +166,7 @@ class TestA4ReportKbCitation:
         fake = _FakeKb([{"text": "C-S-H gel density ~2.6 g/cm3."}])
         monkeypatch.setattr("huginn.knowledge.store.get_knowledge_base", lambda ws: fake)
         kb_text = engine._build_kb_text("C-S-H density")
-        prompt = engine._build_tutor_report_prompt(
+        prompt = engine._build_science_report_prompt(
             report_data={
                 "objective": "study C-S-H",
                 "total_time_seconds": 10.0,
@@ -183,7 +183,7 @@ class TestA4ReportKbCitation:
         monkeypatch.setattr(
             "huginn.knowledge.store.get_knowledge_base", lambda ws: _FakeKb([])
         )
-        prompt = engine._build_tutor_report_prompt(
+        prompt = engine._build_science_report_prompt(
             report_data={
                 "objective": "x",
                 "total_time_seconds": 1.0,
