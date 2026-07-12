@@ -4,6 +4,10 @@ This is the provenance trail: append-only, one JSON object per line.
 Inspired by Codex's rollout.jsonl — if something went wrong, you can
 replay the audit log to reconstruct the full session timeline.
 
+Tamper-evident: each record carries a SHA-256 hash of its content chained
+to the previous record's hash. Any modification breaks the chain.
+Design borrowed from OpenParallax's audit module.
+
 Usage:
     from huginn.events.audit_log import install_audit_subscriber
     install_audit_subscriber()  # call once at startup
@@ -13,6 +17,7 @@ After that, every published event lands in audit.jsonl automatically.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -51,28 +56,69 @@ def _resolve_audit_path() -> Path:
     return events_dir / "audit.jsonl"
 
 
+def _compute_hash(payload: dict[str, Any], prev_hash: str) -> str:
+    """SHA-256 over canonical JSON of (payload_without_hash_fields, prev_hash).
+
+    We strip _hash and _prev_hash from the payload before hashing so the
+    hash only covers the event content, not the chain metadata itself.
+    """
+    content = {k: v for k, v in payload.items() if k not in ("_hash", "_prev_hash")}
+    blob = json.dumps(content, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(f"{blob}{prev_hash}".encode("utf-8")).hexdigest()
+
+
 class _BufferedAuditWriter:
     """缓冲写入器: 攒一批再 flush, 减少 open/close 次数.
 
     线程安全. flush 在后台 daemon 线程跑, 主线程只往 deque 里塞.
     进程退出时 daemon 线程自动终止, 最多丢 _FLUSH_BATCH 条未落盘事件.
+
+    Hash chain: 每个 record 的 _hash = SHA-256(content + _prev_hash).
+    链头 _prev_hash = "0" * 64 (genesis). 任何篡改都会断链.
     """
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
-        self._buffer: deque[str] = deque()
+        self._buffer: deque[dict[str, Any]] = deque()
         self._last_flush = time.monotonic()
         self._stop = threading.Event()
+        self._prev_hash = self._load_last_hash()
         self._thread = threading.Thread(
             target=self._flush_loop, name="audit-writer", daemon=True,
         )
         self._thread.start()
 
+    def _load_last_hash(self) -> str:
+        """Read the last _hash from an existing audit file to resume the chain.
+
+        Returns "0"*64 if the file is missing, empty, or corrupted —
+        a fresh chain is always valid.
+        """
+        genesis = "0" * 64
+        try:
+            if not self._path.exists():
+                return genesis
+            last_hash = genesis
+            with open(self._path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        h = rec.get("_hash")
+                        if h:
+                            last_hash = h
+                    except json.JSONDecodeError:
+                        continue
+            return last_hash
+        except Exception:
+            return genesis
+
     def append(self, event: AgentEvent) -> None:
-        line = json.dumps(event.to_dict(), ensure_ascii=False, default=str)
         with self._lock:
-            self._buffer.append(line)
+            self._buffer.append(event.to_dict())
             should_flush = len(self._buffer) >= _FLUSH_BATCH
         if should_flush:
             self.flush()
@@ -81,9 +127,23 @@ class _BufferedAuditWriter:
         with self._lock:
             if not self._buffer:
                 return
-            lines = list(self._buffer)
+            events = list(self._buffer)
             self._buffer.clear()
             self._last_flush = time.monotonic()
+
+        # Build hash-chained records outside the lock — hashing is CPU-only
+        lines: list[str] = []
+        prev = self._prev_hash
+        for ev in events:
+            record = dict(ev)
+            record["_prev_hash"] = prev
+            record["_hash"] = _compute_hash(record, prev)
+            prev = record["_hash"]
+            lines.append(json.dumps(record, ensure_ascii=False, default=str))
+
+        # Persist the last hash so the next flush continues the chain
+        self._prev_hash = prev
+
         try:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.writelines(line + "\n" for line in lines)
@@ -149,3 +209,49 @@ def uninstall_audit_subscriber() -> None:
     if _writer is not None:
         _writer.stop()
         _writer = None
+
+
+def verify_audit_chain(path: Path | None = None) -> bool:
+    """Verify the integrity of the audit log hash chain.
+
+    Returns True if every record's _hash matches the recomputed value
+    and the chain is unbroken. Returns True for an empty/missing file.
+    Logs the first broken record if verification fails.
+    """
+    audit_path = path or _resolve_audit_path()
+    if not audit_path.exists():
+        return True
+    prev_hash = "0" * 64
+    try:
+        with open(audit_path, "r", encoding="utf-8") as f:
+            for lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("audit chain broken at line %d: invalid JSON", lineno)
+                    return False
+                stored_hash = rec.get("_hash", "")
+                stored_prev = rec.get("_prev_hash", "")
+                if stored_prev != prev_hash:
+                    logger.warning(
+                        "audit chain broken at line %d: prev_hash mismatch "
+                        "(expected %s, got %s)",
+                        lineno, prev_hash[:16], stored_prev[:16],
+                    )
+                    return False
+                recomputed = _compute_hash(rec, prev_hash)
+                if recomputed != stored_hash:
+                    logger.warning(
+                        "audit chain broken at line %d: hash mismatch "
+                        "(expected %s, got %s)",
+                        lineno, recomputed[:16], stored_hash[:16],
+                    )
+                    return False
+                prev_hash = stored_hash
+        return True
+    except Exception:
+        logger.debug("verify_audit_chain failed", exc_info=True)
+        return False
