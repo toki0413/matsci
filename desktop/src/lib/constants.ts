@@ -20,7 +20,11 @@ export const PROVIDERS = [
   { id: "qianfan", label: "Qianfan (Baidu)", keyVar: "QIANFAN_API_KEY" },
   { id: "doubao", label: "Doubao (ByteDance)", keyVar: "DOUBAO_API_KEY" },
   { id: "hunyuan", label: "Hunyuan (Tencent)", keyVar: "HUNYUAN_API_KEY" },
-  { id: "openai-compatible", label: "OpenAI-compatible", keyVar: "" },
+  { id: "minimax", label: "MiniMax", keyVar: "MINIMAX_API_KEY" },
+  { id: "lm-studio", label: "LM Studio (local)", keyVar: "" },
+  { id: "llama-cpp", label: "llama.cpp (local)", keyVar: "" },
+  { id: "sglang", label: "SGLang (local)", keyVar: "" },
+  { id: "openai-compatible", label: "OpenAI-compatible (custom)", keyVar: "" },
   { id: "default", label: "Default", keyVar: "" },
 ];
 

@@ -330,628 +330,1482 @@ class BenchmarkSuite:
         return self
 
     def matscibench_cases(self) -> BenchmarkSuite:
-        """MatSciBench-style cases — open-ended reasoning questions.
-
+        """MatSciBench: 31 subfields × 3 difficulty levels = 93 cases.
         Source: arXiv:2510.12171, KDD 2026.
-        6 primary domains, 31 subfields, 3 difficulty levels.
-        Covers: materials classification, properties (mechanical/thermal/
-        electrical/magnetic/optical), structures (crystal/amorphous/defects),
-        fundamental mechanisms (thermo/kinetics/diffusion/electronic/bonding),
-        processes (casting/forming/heat treatment/sintering/deposition),
-        failure mechanisms (fracture/fatigue/creep/corrosion/wear).
+        6 domains, 31 subfields, 3 difficulty levels.
         """
-        # ═══ Materials domain (5 cases) ═══
+        # ═══ Materials domain ═══
         self.add(BenchmarkCase(
-            task="What are the three primary classes of engineering materials? "
-             "Give one example of each.",
+            task="What are the three primary classes of engineering materials? Give one "
+             "example of each.",
             expected_keywords=["metals", "ceramics", "polymers"],
-            category="materials", tags=["classification", "easy"],
+            category="materials", tags=["metals", "classification", "easy"],
             case_id="matscibench_001",
         ))
         self.add(BenchmarkCase(
-            task="Compare the bonding characteristics of metals, ceramics, and "
-             "polymers. How does bonding explain the difference in ductility?",
+            task="Compare the bonding characteristics of metals, ceramics, and polymers. "
+             "How does bonding explain the difference in ductility?",
             expected_keywords=["metallic", "covalent", "ionic", "ductile", "brittle"],
-            category="materials", tags=["bonding", "medium"],
+            category="materials", tags=["metals", "bonding", "medium"],
             case_id="matscibench_002",
         ))
         self.add(BenchmarkCase(
-            task="What is a composite material? Give two examples and explain "
-             "how the matrix and reinforcement interact.",
-            expected_keywords=["matrix", "reinforcement", "fiber", "particle"],
-            category="materials", tags=["composites", "easy"],
+            task="Design a high-strength low-alloy (HSLA) steel for a structural beam. "
+             "What alloying elements would you add and why? Discuss the role of "
+             "microalloying elements (Nb, V, Ti) in grain refinement and precipitation "
+             "strengthening.",
+            rubric_items=[
+                {"criterion": "mentions microalloying elements", "weight": 2, "keywords": ["nb", "v", "ti"]},
+                {"criterion": "grain refinement mechanism", "weight": 2, "keywords": ["grain", "refinement"]},
+                {"criterion": "precipitation strengthening", "weight": 2, "keywords": ["precipitation", "strengthening"]},
+                {"criterion": "carbon content control", "weight": 1, "keywords": ["carbon", "low"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="materials", tags=["metals", "alloy_design", "hard"],
             case_id="matscibench_003",
         ))
         self.add(BenchmarkCase(
-            task="Explain why semiconductor materials are doped. What is the "
-             "difference between n-type and p-type doping? Give examples.",
-            expected_keywords=["n-type", "p-type", "dopant", "phosphorus", "boron"],
-            category="materials", tags=["semiconductors", "medium"],
+            task="What is a ceramic material? Describe the type of bonding (ionic vs "
+             "covalent) and give two examples.",
+            expected_keywords=["ionic", "covalent", "ceramic"],
+            category="materials", tags=["ceramics", "bonding", "easy"],
             case_id="matscibench_004",
         ))
         self.add(BenchmarkCase(
-            task="What makes a material biocompatible? List three requirements "
-             "for a biomaterial used in bone implants.",
-            expected_keywords=["biocompatible", "toxicity", "corrosion", "mechanical"],
-            category="materials", tags=["biomaterials", "hard"],
+            task="Describe three toughening mechanisms used in structural ceramics. How "
+             "does each increase fracture toughness?",
+            rubric_items=[
+                {"criterion": "transformation toughening", "weight": 2, "keywords": ["transformation", "zirconia"]},
+                {"criterion": "crack deflection", "weight": 2, "keywords": ["crack", "deflection"]},
+                {"criterion": "fiber/whisker reinforcement", "weight": 2, "keywords": ["fiber", "reinforcement"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="materials", tags=["ceramics", "toughening", "medium"],
             case_id="matscibench_005",
         ))
-
-        # ═══ Properties domain (6 cases) ═══
         self.add(BenchmarkCase(
-            task="Calculate the theoretical density of copper (FCC, atomic weight "
-             "63.55 g/mol, lattice parameter 0.3615 nm, 4 atoms per unit cell). "
-             "Answer in g/cm³.",
-            expected_value=8.96, tolerance=0.1,
-            evaluator=numeric_evaluator,
-            category="properties", tags=["density", "fcc", "medium"],
+            task="Explain the mechanism of transformation toughening in ZrO2. Describe the "
+             "tetragonal-to-monoclinic phase transformation, the volume change "
+             "involved (~3-5%), and the stress field around a crack tip. Calculate the "
+             "critical grain size below which the tetragonal phase is retained at room "
+             "temperature.",
+            rubric_items=[
+                {"criterion": "t→m transformation described", "weight": 2, "keywords": ["tetragonal", "monoclinic"]},
+                {"criterion": "volume change mentioned", "weight": 2, "keywords": ["volume", "expansion"]},
+                {"criterion": "crack tip stress field", "weight": 2, "keywords": ["crack", "stress"]},
+                {"criterion": "critical grain size", "weight": 1, "keywords": ["grain", "critical"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="materials", tags=["ceramics", "zro2", "transformation", "hard"],
             case_id="matscibench_006",
         ))
         self.add(BenchmarkCase(
-            task="A metal rod (length 1 m, cross-section 1 cm²) is heated from "
-             "20°C to 120°C. If α = 23×10⁻⁶ /°C and E = 70 GPa, calculate the "
-             "thermal stress if the rod is fully constrained. Answer in MPa.",
-            expected_value=161.0, tolerance=5.0,
-            evaluator=numeric_evaluator,
-            category="properties", tags=["thermal", "stress", "medium"],
+            task="What is the difference between a thermoplastic and a thermoset polymer? "
+             "Give one example of each.",
+            expected_keywords=["thermoplastic", "thermoset", "crosslink"],
+            category="materials", tags=["polymers", "classification", "easy"],
             case_id="matscibench_007",
         ))
         self.add(BenchmarkCase(
-            task="Calculate the electrical conductivity of a material with "
-             "resistivity 1.7×10⁻⁸ Ω·m. Answer in S/m.",
-            expected_value=5.88e7, tolerance=0.5e7,
-            evaluator=numeric_evaluator,
-            category="properties", tags=["electrical", "conductivity", "easy"],
+            task="Explain the glass transition temperature (Tg). How does it differ from "
+             "the melting temperature (Tm)? What happens to the polymer chains at Tg?",
+            expected_keywords=["glass transition", "tg", "amorphous", "chain"],
+            category="materials", tags=["polymers", "tg", "medium"],
             case_id="matscibench_008",
         ))
         self.add(BenchmarkCase(
-            task="A ferromagnetic material has a saturation magnetization of "
-             "1.7×10⁶ A/m. Calculate the magnetic flux density B_s in Tesla "
-             "in vacuum (μ₀ = 4π×10⁻⁷ T·m/A).",
-            expected_value=2.14, tolerance=0.05,
+            task="How does molecular weight affect the glass transition temperature and "
+             "mechanical strength of polymers? Using the Flory-Fox equation Tg = Tg(∞) "
+             "- K/Mn, calculate Tg for polystyrene with Mn = 50000 g/mol. Given Tg(∞) "
+             "= 373 K and K = 1.0×10⁵ K·g/mol. Answer in K.",
+            expected_value=371.0, tolerance=1.0,
             evaluator=numeric_evaluator,
-            category="properties", tags=["magnetic", "hard"],
+            category="materials", tags=["polymers", "molecular_weight", "flory_fox", "hard"],
             case_id="matscibench_009",
         ))
         self.add(BenchmarkCase(
-            task="A material has a refractive index n = 1.5. Calculate the "
-             "reflectance at normal incidence from air (n_air = 1.0). "
-             "Use R = ((n-1)/(n+1))². Answer as a percentage.",
-            expected_value=4.0, tolerance=0.5,
+            task="A composite contains 60% glass fiber (E = 72 GPa) and 40% epoxy matrix "
+             "(E = 3.5 GPa) by volume. Calculate the longitudinal modulus using the "
+             "rule of mixtures: E_c = V_f·E_f + V_m·E_m. Answer in GPa.",
+            expected_value=44.6, tolerance=1.0,
             evaluator=numeric_evaluator,
-            category="properties", tags=["optical", "reflectance", "easy"],
+            category="materials", tags=["composites", "rule_of_mixtures", "easy"],
             case_id="matscibench_010",
         ))
         self.add(BenchmarkCase(
-            task="Write the expression for the stress-strain relationship in the "
-             "linear elastic regime according to Hooke's law for a 3D isotropic "
-             "material. Express it in terms of Young's modulus and Poisson's ratio.",
-            rubric="Should include σ = Eε for uniaxial, or the full 3D tensor "
-                   "form with Lamé constants or E, ν. Must mention Young's modulus "
-                   "and Poisson's ratio.",
-            evaluator=keyword_evaluator,
-            expected_keywords=["young", "poisson", "stress", "strain"],
-            category="properties", tags=["elasticity", "formula", "medium"],
+            task="Explain how fiber length, orientation, and volume fraction affect the "
+             "mechanical properties of a fiber-reinforced composite. What is the "
+             "critical fiber length and why does it matter?",
+            rubric_items=[
+                {"criterion": "fiber length effect", "weight": 2, "keywords": ["length", "critical"]},
+                {"criterion": "orientation effect", "weight": 2, "keywords": ["orientation", "aligned"]},
+                {"criterion": "volume fraction", "weight": 2, "keywords": ["volume", "fraction"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="materials", tags=["composites", "fiber_reinforced", "medium"],
             case_id="matscibench_011",
         ))
-
-        # ═══ Structures domain (5 cases) ═══
         self.add(BenchmarkCase(
-            task="The Miller indices of a plane in a cubic crystal are (1,1,1). "
-             "What is the angle between this plane and the (1,0,0) plane? "
-             "Answer in degrees.",
-            expected_value=54.7, tolerance=1.0,
-            evaluator=numeric_evaluator,
-            category="structures", tags=["miller", "cubic", "medium"],
+            task="Design the fiber-matrix interface for a carbon fiber/epoxy composite. "
+             "Discuss sizing chemistry, interfacial shear strength testing (single "
+             "fiber fragmentation), and the trade-off between strong and weak "
+             "interfaces for toughness. How would you optimize the interphase for both "
+             "strength and toughness?",
+            rubric_items=[
+                {"criterion": "sizing chemistry", "weight": 2, "keywords": ["sizing", "coupling"]},
+                {"criterion": "interfacial shear strength", "weight": 2, "keywords": ["interfacial", "shear"]},
+                {"criterion": "strength vs toughness trade-off", "weight": 2, "keywords": ["toughness", "strength"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="materials", tags=["composites", "carbon_fiber", "interface", "hard"],
             case_id="matscibench_012",
         ))
         self.add(BenchmarkCase(
-            task="For a BCC crystal with lattice parameter a = 0.2866 nm, "
-             "calculate the atomic packing factor (APF).",
-            expected_value=0.68, tolerance=0.01,
-            evaluator=numeric_evaluator,
-            category="structures", tags=["bcc", "packing", "hard"],
+            task="Explain the difference between n-type and p-type doping in "
+             "semiconductors. Give one dopant example for each type in silicon.",
+            expected_keywords=["n-type", "p-type", "dopant", "phosphorus", "boron"],
+            category="materials", tags=["semiconductors", "doping", "easy"],
             case_id="matscibench_013",
         ))
         self.add(BenchmarkCase(
-            task="Describe the difference between a Schottky defect and a Frenkel "
-             "defect. Which is more likely in a ceramic with large anions?",
-            expected_keywords=["schottky", "frenkel", "vacancy", "interstitial"],
-            category="structures", tags=["defects", "point", "medium"],
+            task="Calculate the built-in potential V_bi of a silicon p-n junction at 300 "
+             "K. Given N_A = 1×10¹⁷ cm⁻³, N_D = 1×10¹⁶ cm⁻³, and n_i = 1.5×10¹⁰ cm⁻³. "
+             "Use V_bi = (kT/q)·ln(N_A·N_D/n_i²). kT/q = 0.0259 V. Answer in V.",
+            expected_value=0.75, tolerance=0.03,
+            evaluator=numeric_evaluator,
+            category="materials", tags=["semiconductors", "pn_junction", "built_in_potential", "medium"],
             case_id="matscibench_014",
         ))
         self.add(BenchmarkCase(
-            task="What is the difference between a grain boundary and a phase "
-             "boundary? How do low-angle and high-angle grain boundaries differ?",
-            expected_keywords=["grain boundary", "phase boundary", "low-angle",
-                            "high-angle", "misorientation"],
-            category="structures", tags=["grain_boundary", "interface", "medium"],
+            task="Explain band gap engineering in semiconductor heterostructures. How does "
+             "quantum confinement in a Type-I quantum well affect the effective band "
+             "gap? Calculate the ground state confinement energy for an electron in a "
+             "GaAs quantum well of width 5 nm. Use m* = 0.067m_e, ℏ = 1.055×10⁻³⁴ J·s. "
+             "Answer in eV.",
+            expected_value=0.045, tolerance=0.01,
+            evaluator=numeric_evaluator,
+            category="materials", tags=["semiconductors", "band_gap_engineering", "quantum_well", "hard"],
             case_id="matscibench_015",
         ))
+        # ═══ Properties domain ═══
         self.add(BenchmarkCase(
-            task="Describe the structure of a screw dislocation. How does it "
-             "differ from an edge dislocation in terms of Burgers vector "
-             "direction relative to the dislocation line?",
-            expected_keywords=["screw", "edge", "burgers", "parallel", "perpendicular"],
-            category="structures", tags=["dislocation", "defect", "hard"],
+            task="A steel wire of length 2 m and cross-sectional area 1 mm² is subjected "
+             "to a tensile force of 200 N. If Young's modulus is 200 GPa, calculate "
+             "the elongation. Answer in mm.",
+            expected_value=2.0, tolerance=0.1,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["mechanical", "hooke_law", "easy"],
             case_id="matscibench_016",
         ))
-
-        # ═══ Fundamental mechanisms domain (6 cases) ═══
         self.add(BenchmarkCase(
-            task="Calculate the change in Gibbs free energy (J/mol) for a process "
-             "where ΔH = -100 kJ/mol and ΔS = -50 J/(mol·K) at T = 500 K. "
-             "Use ΔG = ΔH - TΔS.",
-            expected_value=-75000, tolerance=1000,
+            task="From a tensile test, the stress-strain curve shows proportional limit at "
+             "250 MPa, yield point at 280 MPa, and UTS at 450 MPa. The strain at UTS "
+             "is 0.15. Calculate the Young's modulus from the elastic region if the "
+             "strain at proportional limit is 0.00125. Answer in GPa.",
+            expected_value=200.0, tolerance=10.0,
             evaluator=numeric_evaluator,
-            category="fundamental_mechanisms", tags=["thermodynamics", "gibbs", "easy"],
+            category="properties", tags=["mechanical", "yield_strength", "stress_strain", "medium"],
             case_id="matscibench_017",
         ))
         self.add(BenchmarkCase(
-            task="Using Fick's first law, calculate the diffusion flux (atoms/m²·s) "
-             "through a membrane. D = 2×10⁻¹⁴ m²/s, concentration gradient "
-             "dC/dx = -5×10²⁸ atoms/m⁴. J = -D(dC/dx).",
-            expected_value=1.0e15, tolerance=0.2e15,
+            task="From tensile test data: true stress σ = K·ε^n. Given K = 1500 MPa and "
+             "data points (ε=0.1, σ=1190 MPa) and (ε=0.3, σ=1490 MPa), calculate the "
+             "strain hardening exponent n.",
+            expected_value=0.3, tolerance=0.03,
             evaluator=numeric_evaluator,
-            category="fundamental_mechanisms", tags=["diffusion", "fick", "medium"],
+            category="properties", tags=["mechanical", "strain_hardening", "hard"],
             case_id="matscibench_018",
         ))
         self.add(BenchmarkCase(
-            task="Calculate the activation energy (kJ/mol) for a reaction with "
-             "rate constant k₁ = 1.0×10⁻³ at T₁ = 300 K and k₂ = 5.0×10⁻³ "
-             "at T₂ = 350 K. Use Arrhenius: ln(k₂/k₁) = Ea/R × (1/T₁ - 1/T₂). "
-             "R = 8.314 J/(mol·K).",
-            expected_value=21.6, tolerance=2.0,
+            task="An aluminum rod (α = 23×10⁻⁶ /°C) is 1 m long at 20°C. Calculate its "
+             "length at 120°C. Answer in m.",
+            expected_value=1.0023, tolerance=0.0001,
             evaluator=numeric_evaluator,
-            category="fundamental_mechanisms", tags=["kinetics", "arrhenius", "hard"],
+            category="properties", tags=["thermal", "expansion", "easy"],
             case_id="matscibench_019",
         ))
         self.add(BenchmarkCase(
-            task="Explain the difference between intrinsic and extrinsic "
-             "semiconductors. How does temperature affect carrier concentration "
-             "in each case?",
-            expected_keywords=["intrinsic", "extrinsic", "carrier", "temperature",
-                            "dopant"],
-            category="fundamental_mechanisms", tags=["electronic", "semiconductor", "medium"],
+            task="A composite wall consists of 10 mm steel (k=50 W/m·K) and 20 mm "
+             "insulation (k=0.04 W/m·K). Calculate the heat flux through the wall with "
+             "ΔT = 100 K. Answer in W/m².",
+            expected_value=196.0, tolerance=5.0,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["thermal", "conductivity", "composite", "medium"],
             case_id="matscibench_020",
         ))
         self.add(BenchmarkCase(
-            task="What is the relationship between band gap energy and the "
-             "wavelength of light absorbed by a semiconductor? Calculate the "
-             "maximum wavelength (nm) absorbed by Si (Eg = 1.12 eV). "
-             "Use λ = hc/Eg, h = 6.626×10⁻³⁴ J·s, c = 3×10⁸ m/s.",
-            expected_value=1107, tolerance=20,
+            task="Calculate the thermal shock resistance parameter R = σ_f(1-ν)/E·α for "
+             "alumina. Given σ_f = 300 MPa, ν = 0.22, E = 380 GPa, α = 8×10⁻⁶ /°C. "
+             "Answer in °C.",
+            expected_value=770.0, tolerance=20.0,
             evaluator=numeric_evaluator,
-            category="fundamental_mechanisms", tags=["electronic", "band_gap", "hard"],
+            category="properties", tags=["thermal", "shock_resistance", "hard"],
             case_id="matscibench_021",
         ))
         self.add(BenchmarkCase(
-            task="Describe the three primary types of atomic bonding (ionic, "
-             "covalent, metallic). For each, state: directionality, electron "
-             "sharing vs transfer, and typical material examples.",
-            rubric_items=[
-                {"criterion": "ionic bonding described", "weight": 2,
-                 "keywords": ["ionic", "transfer"]},
-                {"criterion": "covalent bonding described", "weight": 2,
-                 "keywords": ["covalent", "share", "directional"]},
-                {"criterion": "metallic bonding described", "weight": 2,
-                 "keywords": ["metallic", "sea", "delocalized"]},
-                {"criterion": "examples given", "weight": 1,
-                 "keywords": ["nacl", "diamond", "copper", "iron"]},
-            ],
-            evaluator=rubric_evaluator,
-            category="fundamental_mechanisms", tags=["bonding", "easy"],
+            task="Calculate the electrical conductivity of copper with resistivity "
+             "1.7×10⁻⁸ Ω·m. Answer in S/m.",
+            expected_value=58800000.0, tolerance=5000000.0,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["electrical", "conductivity", "easy"],
             case_id="matscibench_022",
         ))
-
-        # ═══ Processes domain (5 cases) ═══
         self.add(BenchmarkCase(
-            task="In heat treatment of steel, what is the critical cooling rate "
-             "and why is it important? Explain the relationship between cooling "
-             "rate and microstructure formation.",
-            expected_keywords=["critical cooling rate", "martensite", "austenite",
-                            "transformation"],
-            category="processes", tags=["heat_treatment", "steel", "hard"],
+            task="The resistance of a copper wire is 10 Ω at 20°C. If the temperature "
+             "coefficient of resistivity α = 0.00393/°C, calculate the resistance at "
+             "100°C. Answer in Ω.",
+            expected_value=13.14, tolerance=0.2,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["electrical", "resistivity", "temperature", "medium"],
             case_id="matscibench_023",
         ))
         self.add(BenchmarkCase(
-            task="Describe the difference between annealing, normalizing, and "
-             "quenching. What microstructure does each produce in steel?",
-            expected_keywords=["annealing", "normalizing", "quenching",
-                            "pearlite", "martensite", "ferrite"],
-            category="processes", tags=["heat_treatment", "medium"],
+            task="In a Hall effect experiment on a semiconductor, a current of 10 mA flows "
+             "through a sample of thickness 0.5 mm. A magnetic field of 0.5 T produces "
+             "a Hall voltage of 5 mV. Calculate the Hall coefficient R_H = V_H·t/(I·B) "
+             "in m³/C.",
+            expected_value=0.0005, tolerance=0.0001,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["electrical", "hall_effect", "hard"],
             case_id="matscibench_024",
         ))
         self.add(BenchmarkCase(
-            task="What is sintering? Describe the three stages of sintering "
-             "and the driving force for each.",
-            expected_keywords=["sintering", "driving force", "surface area",
-                            "neck", "densification"],
-            category="processes", tags=["sintering", "ceramic", "medium"],
+            task="What is ferromagnetism? Name three ferromagnetic elements at room "
+             "temperature and describe what happens above the Curie temperature.",
+            expected_keywords=["ferromagnetic", "curie", "iron", "nickel", "cobalt"],
+            category="properties", tags=["magnetic", "ferromagnetism", "easy"],
             case_id="matscibench_025",
         ))
         self.add(BenchmarkCase(
-            task="Compare casting and forming as manufacturing processes. "
-             "When would you choose each? Give one advantage and one "
-             "disadvantage of each.",
-            expected_keywords=["casting", "forming", "advantage", "disadvantage",
-                            "liquid", "plastic"],
-            category="processes", tags=["casting", "forming", "easy"],
+            task="A magnetic core has a B-H loop with B_max = 1.5 T and H_c = 200 A/m. "
+             "Estimate the hysteresis loss per cycle using the approximation W_h ≈ "
+             "4·B_max·H_c. Answer in J/m³.",
+            expected_value=1200.0, tolerance=50.0,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["magnetic", "hysteresis", "loss", "medium"],
             case_id="matscibench_026",
         ))
         self.add(BenchmarkCase(
-            task="Describe physical vapor deposition (PVD) and chemical vapor "
-             "deposition (CVD). How do they differ in mechanism and typical "
-             "applications?",
-            expected_keywords=["pvd", "cvd", "physical", "chemical", "vapor",
-                            "deposition"],
-            category="processes", tags=["deposition", "thin_film", "hard"],
+            task="Explain the exchange interaction responsible for ferromagnetism. How "
+             "does the Curie temperature relate to the exchange energy? Calculate the "
+             "Curie temperature for a material with exchange integral J = 5 meV and S "
+             "= 1/2. Use T_C = 2JS(S+1)/(3k_B). Answer in K.",
+            expected_value=43.0, tolerance=5.0,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["magnetic", "curie", "exchange", "hard"],
             case_id="matscibench_027",
         ))
-
-        # ═══ Failure mechanisms domain (5 cases) ═══
         self.add(BenchmarkCase(
-            task="A steel component fails by fatigue after 10⁶ cycles at a stress "
-             "amplitude of 250 MPa. If the S-N curve follows σ_a = σ_f' * (2N_f)^b "
-             "with σ_f' = 1200 MPa and b = -0.10, verify the predicted life. "
-             "Calculate the predicted number of reversals to failure.",
-            expected_value=1.0e6, tolerance=2.0e5,
+            task="A material has refractive index n = 1.5. Calculate the reflectance at "
+             "normal incidence from air (n=1) using R = ((n-1)/(n+1))². Express as "
+             "percentage.",
+            expected_value=4.0, tolerance=0.5,
             evaluator=numeric_evaluator,
-            category="failure_mechanisms", tags=["fatigue", "s-n", "hard"],
+            category="properties", tags=["optical", "reflectance", "easy"],
             case_id="matscibench_028",
         ))
         self.add(BenchmarkCase(
-            task="Explain the difference between ductile and brittle fracture. "
-             "What microstructural features distinguish the fracture surfaces?",
-            expected_keywords=["ductile", "brittle", "dimples", "cleavage",
-                            "microvoid"],
-            category="failure_mechanisms", tags=["fracture", "medium"],
+            task="A semiconductor wafer of thickness 0.5 mm transmits 60% of incident "
+             "light at a specific wavelength. Calculate the absorption coefficient α "
+             "using I/I₀ = exp(-αt). Answer in cm⁻¹.",
+            expected_value=10.2, tolerance=0.5,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["optical", "absorption", "coefficient", "medium"],
             case_id="matscibench_029",
         ))
         self.add(BenchmarkCase(
-            task="Describe the three stages of creep. What happens in each stage? "
-             "Sketch (describe) a typical creep strain vs time curve.",
-            rubric_items=[
-                {"criterion": "primary creep described", "weight": 2,
-                 "keywords": ["primary", "decreasing", "strain hardening"]},
-                {"criterion": "secondary creep described", "weight": 2,
-                 "keywords": ["secondary", "steady", "constant"]},
-                {"criterion": "tertiary creep described", "weight": 2,
-                 "keywords": ["tertiary", "accelerating", "necking", "rupture"]},
-            ],
-            evaluator=rubric_evaluator,
-            category="failure_mechanisms", tags=["creep", "hard"],
+            task="A phosphor absorbs 80% of excitation photons and emits 70% of absorbed "
+             "energy as fluorescence. Calculate the photoluminescence quantum yield "
+             "(PLQY) as a percentage.",
+            expected_value=56.0, tolerance=2.0,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["optical", "plqy", "quantum_yield", "hard"],
             case_id="matscibench_030",
         ))
         self.add(BenchmarkCase(
-            task="Explain the mechanism of galvanic corrosion. Given two metals "
-             "(Zn, E = -0.76 V and Cu, E = +0.34 V), which will corrode when "
-             "coupled? Calculate the cell potential.",
-            expected_value=1.10, tolerance=0.05,
-            evaluator=numeric_evaluator,
-            category="failure_mechanisms", tags=["corrosion", "galvanic", "medium"],
+            task="Name the four types of polarization in dielectric materials. Which type "
+             "is dominant at optical frequencies?",
+            expected_keywords=["electronic", "ionic", "orientational", "space"],
+            category="properties", tags=["dielectric", "polarization", "easy"],
             case_id="matscibench_031",
         ))
         self.add(BenchmarkCase(
-            task="Describe abrasive wear and adhesive wear. How do they differ "
-             "in mechanism? Give one engineering strategy to reduce each.",
-            expected_keywords=["abrasive", "adhesive", "wear", "hardness",
-                            "lubrication"],
-            category="failure_mechanisms", tags=["wear", "medium"],
+            task="A parallel plate capacitor with plate area 1 cm² and separation 0.1 mm "
+             "is filled with a dielectric (ε_r = 10). Calculate the capacitance. ε₀ = "
+             "8.854×10⁻¹² F/m. Answer in pF.",
+            expected_value=88.5, tolerance=1.0,
+            evaluator=numeric_evaluator,
+            category="properties", tags=["dielectric", "capacitance", "medium"],
             case_id="matscibench_032",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the ferroelectric phase transition in BaTiO3. What happens to "
+             "the crystal structure and spontaneous polarization at the Curie "
+             "temperature (~120°C)? Why is the tetragonal phase ferroelectric while "
+             "the cubic phase is not?",
+            rubric_items=[
+                {"criterion": "cubic to tetragonal transition", "weight": 2, "keywords": ["cubic", "tetragonal"]},
+                {"criterion": "spontaneous polarization", "weight": 2, "keywords": ["spontaneous", "polarization"]},
+                {"criterion": "centrosymmetric vs non-centrosymmetric", "weight": 2, "keywords": ["centrosymmetric", "non-centrosymmetric"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="properties", tags=["dielectric", "ferroelectric", "batio3", "hard"],
+            case_id="matscibench_033",
+        ))
+        # ═══ Structures domain ═══
+        self.add(BenchmarkCase(
+            task="Using Bragg's law (nλ = 2d·sinθ), calculate the d-spacing for a first- "
+             "order peak at 2θ = 28.4° using Cu Kα radiation (λ = 1.5406 Å). Answer in "
+             "nm.",
+            expected_value=0.314, tolerance=0.005,
+            evaluator=numeric_evaluator,
+            category="structures", tags=["crystal", "bragg", "xrd", "easy"],
+            case_id="matscibench_034",
+        ))
+        self.add(BenchmarkCase(
+            task="In a cubic crystal, the Miller indices of a plane are (1,1,1). Calculate "
+             "the angle between the (111) and (100) planes using cos θ = "
+             "(h₁h₂+k₁k₂+l₁l₂)/√(h₁²+k₁²+l₁²)·√(h₂²+k₂²+l₂²). Answer in degrees.",
+            expected_value=54.7, tolerance=1.0,
+            evaluator=numeric_evaluator,
+            category="structures", tags=["crystal", "miller", "angle", "medium"],
+            case_id="matscibench_035",
+        ))
+        self.add(BenchmarkCase(
+            task="A crystal has a 4-fold rotation axis along [001], mirror planes "
+             "perpendicular to [100] and [010], and a body-centering translation. "
+             "Determine the space group and explain why the presence of these symmetry "
+             "elements constrains the lattice type.",
+            rubric_items=[
+                {"criterion": "identifies tetragonal system", "weight": 2, "keywords": ["tetragonal", "4-fold"]},
+                {"criterion": "identifies body-centering", "weight": 2, "keywords": ["body-centered", "i"]},
+                {"criterion": "space group notation", "weight": 2, "keywords": ["space group", "i4"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="structures", tags=["crystal", "space_group", "symmetry", "hard"],
+            case_id="matscibench_036",
+        ))
+        self.add(BenchmarkCase(
+            task="What is the difference between a crystalline and an amorphous material "
+             "in terms of atomic arrangement? Give one example of each.",
+            expected_keywords=["crystalline", "amorphous", "order", "random"],
+            category="structures", tags=["amorphous", "vs_crystalline", "easy"],
+            case_id="matscibench_037",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain the criteria for glass formation. What is the reduced glass "
+             "transition temperature T_rg = Tg/Tm, and why does a high T_rg favor "
+             "glass formation?",
+            rubric_items=[
+                {"criterion": "reduced Tg concept", "weight": 2, "keywords": ["reduced", "tg"]},
+                {"criterion": "nucleation avoidance", "weight": 2, "keywords": ["nucleation", "avoid"]},
+                {"criterion": "critical cooling rate", "weight": 2, "keywords": ["cooling", "rate"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="structures", tags=["amorphous", "glass_formation", "medium"],
+            case_id="matscibench_038",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the short-range order (SRO) in metallic glasses. How does the "
+             "solute-center cluster model explain the topological packing in Cu-Zr "
+             "amorphous alloys? What is the relationship between icosahedral SRO and "
+             "glass-forming ability?",
+            rubric_items=[
+                {"criterion": "short-range order concept", "weight": 2, "keywords": ["short-range", "cluster"]},
+                {"criterion": "icosahedral packing", "weight": 2, "keywords": ["icosahedral", "packing"]},
+                {"criterion": "glass-forming ability link", "weight": 2, "keywords": ["glass-forming", "ability"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="structures", tags=["amorphous", "metallic_glass", "sro", "hard"],
+            case_id="matscibench_039",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the difference between a Schottky defect and a Frenkel defect. "
+             "Which is more likely in a ceramic with large anions?",
+            expected_keywords=["schottky", "frenkel", "vacancy", "interstitial"],
+            category="structures", tags=["defects", "point_defects", "easy"],
+            case_id="matscibench_040",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the structure of edge and screw dislocations. How does the "
+             "Burgers vector relate to the dislocation line for each type?",
+            expected_keywords=["edge", "screw", "burgers", "perpendicular", "parallel"],
+            category="structures", tags=["defects", "dislocation", "medium"],
+            case_id="matscibench_041",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain how stacking fault energy (SFE) affects the dissociation of "
+             "perfect dislocations into partials in FCC metals. For an FCC metal with "
+             "SFE = 45 mJ/m², G = 48 GPa, and b = 0.25 nm, estimate the equilibrium "
+             "separation distance d between partials using d = Gb²/(2π·SFE). Answer in "
+             "nm.",
+            expected_value=5.0, tolerance=1.0,
+            evaluator=numeric_evaluator,
+            category="structures", tags=["defects", "stacking_fault", "partials", "hard"],
+            case_id="matscibench_042",
+        ))
+        self.add(BenchmarkCase(
+            task="What is surface energy? Why do liquids tend to minimize their surface "
+             "area?",
+            expected_keywords=["surface energy", "surface tension", "minimize"],
+            category="structures", tags=["surfaces", "surface_energy", "easy"],
+            case_id="matscibench_043",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain the concept of grain boundary energy. How does it vary with "
+             "misorientation angle in low-angle grain boundaries? Use the Read- "
+             "Shockley equation.",
+            rubric_items=[
+                {"criterion": "Read-Shockley equation", "weight": 2, "keywords": ["read-shockley", "misorientation"]},
+                {"criterion": "low vs high angle", "weight": 2, "keywords": ["low-angle", "high-angle"]},
+                {"criterion": "energy vs angle relationship", "weight": 2, "keywords": ["energy", "angle"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="structures", tags=["surfaces", "grain_boundary_energy", "medium"],
+            case_id="matscibench_044",
+        ))
+        self.add(BenchmarkCase(
+            task="Compare coherent, semi-coherent, and incoherent interfaces. How does "
+             "lattice misfit determine the type of interface? Calculate the critical "
+             "misfit below which a coherent interface is stable if the critical misfit "
+             "strain is ε_c = b/(2·d), where b = 0.25 nm and d = 10 nm. Express as "
+             "percentage.",
+            expected_value=1.25, tolerance=0.2,
+            evaluator=numeric_evaluator,
+            category="structures", tags=["surfaces", "interface", "coherent", "hard"],
+            case_id="matscibench_045",
+        ))
+        self.add(BenchmarkCase(
+            task="What is the difference between a low-angle and a high-angle grain "
+             "boundary? At what misorientation angle does the transition typically "
+             "occur?",
+            expected_keywords=["low-angle", "high-angle", "15", "misorientation"],
+            category="structures", tags=["grain_boundaries", "low_high_angle", "easy"],
+            case_id="matscibench_046",
+        ))
+        self.add(BenchmarkCase(
+            task="Using the Hall-Petch equation σ_y = σ₀ + k·d^(-1/2), calculate the yield "
+             "strength for σ₀ = 150 MPa, k = 0.45 MPa·m^(1/2), and grain size d = 10 "
+             "μm. Answer in MPa.",
+            expected_value=292.3, tolerance=5.0,
+            evaluator=numeric_evaluator,
+            category="structures", tags=["grain_boundaries", "hall_petch", "medium"],
+            case_id="matscibench_047",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain grain boundary sliding in superplasticity. What is the strain "
+             "rate sensitivity exponent m, and why must it be >0.3 for superplastic "
+             "behavior? How do grain boundary diffusion and grain rotation contribute?",
+            rubric_items=[
+                {"criterion": "strain rate sensitivity m", "weight": 2, "keywords": ["strain rate", "sensitivity"]},
+                {"criterion": "grain boundary sliding", "weight": 2, "keywords": ["sliding", "boundary"]},
+                {"criterion": "diffusion/rotation mechanism", "weight": 2, "keywords": ["diffusion", "rotation"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="structures", tags=["grain_boundaries", "superplasticity", "sliding", "hard"],
+            case_id="matscibench_048",
+        ))
+        # ═══ Fundamental mechanisms domain ═══
+        self.add(BenchmarkCase(
+            task="Calculate ΔG for a process with ΔH = -100 kJ/mol and ΔS = -50 J/(mol·K) "
+             "at T = 500 K. Use ΔG = ΔH - TΔS. Answer in J/mol.",
+            expected_value=-75000, tolerance=1000,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["thermodynamics", "gibbs", "easy"],
+            case_id="matscibench_049",
+        ))
+        self.add(BenchmarkCase(
+            task="Apply the Gibbs phase rule F = C - P + 2 to a binary eutectic system "
+             "(C=2) at the eutectic point where three phases coexist (L, α, β). How "
+             "many degrees of freedom exist?",
+            expected_value=1.0, tolerance=0.1,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["thermodynamics", "phase_rule", "medium"],
+            case_id="matscibench_050",
+        ))
+        self.add(BenchmarkCase(
+            task="Interpret an Ellingham diagram: at what temperature does the line for "
+             "2Al + 3/2 O₂ → Al₂O₃ cross the line for 2Mg + O₂ → 2MgO? Below this "
+             "temperature, which metal is the stronger reducing agent? Explain the "
+             "significance for metal extraction.",
+            rubric_items=[
+                {"criterion": "Ellingham diagram interpretation", "weight": 2, "keywords": ["ellingham", "crossing"]},
+                {"criterion": "reducing agent comparison", "weight": 2, "keywords": ["reducing", "agent"]},
+                {"criterion": "extraction significance", "weight": 2, "keywords": ["extraction", "reduction"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="fundamental_mechanisms", tags=["thermodynamics", "ellingham", "reduction", "hard"],
+            case_id="matscibench_051",
+        ))
+        self.add(BenchmarkCase(
+            task="Calculate the activation energy for a reaction with k₁ = 1.0×10⁻³ at T₁ "
+             "= 300 K and k₂ = 5.0×10⁻³ at T₂ = 350 K. Use ln(k₂/k₁) = Ea/R × (1/T₁ - "
+             "1/T₂), R = 8.314 J/(mol·K). Answer in kJ/mol.",
+            expected_value=21.6, tolerance=2.0,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["kinetics", "arrhenius", "activation_energy", "easy"],
+            case_id="matscibench_052",
+        ))
+        self.add(BenchmarkCase(
+            task="A reaction has rate constants k = 0.01 M/s at [A] = 0.1 M and k = 0.04 "
+             "M/s at [A] = 0.2 M. Determine the rate law order n using rate = k[A]^n.",
+            expected_value=2.0, tolerance=0.1,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["kinetics", "rate_law", "order", "medium"],
+            case_id="matscibench_053",
+        ))
+        self.add(BenchmarkCase(
+            task="Write the steady-state nucleation rate equation I = "
+             "N_s·β*·exp(-ΔG*/kT)·exp(-τ/t). Explain each term. For homogeneous "
+             "nucleation in a metal melt, estimate the critical radius r* = 2γ/(ΔGv) "
+             "with γ = 0.2 J/m² and ΔGv = -1×10⁹ J/m³. Answer in nm.",
+            expected_value=0.4, tolerance=0.05,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["kinetics", "nucleation", "rate", "hard"],
+            case_id="matscibench_054",
+        ))
+        self.add(BenchmarkCase(
+            task="Using Fick's first law, calculate the diffusion flux through a membrane. "
+             "D = 2×10⁻¹⁴ m²/s, dC/dx = -5×10²⁸ atoms/m⁴. J = -D(dC/dx). Answer in "
+             "atoms/m²·s.",
+            expected_value=1000000000000000.0, tolerance=200000000000000.0,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["diffusion", "fick_first_law", "easy"],
+            case_id="matscibench_055",
+        ))
+        self.add(BenchmarkCase(
+            task="A carburization process uses Fick's second law: C(x,t) = Cs - "
+             "(Cs-C0)·erf(x/(2√Dt)). Given Cs = 1.2%, C0 = 0.2%, D = 1.28×10⁻¹¹ m²/s "
+             "at 927°C, find the depth x (in mm) where C = 0.8% after t = 5 hours. "
+             "erf⁻¹(0.4) ≈ 0.37. Answer in mm.",
+            expected_value=0.57, tolerance=0.05,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["diffusion", "fick_second_law", "carburization", "medium"],
+            case_id="matscibench_056",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain the Kirkendall effect. In a Cu/Zn diffusion couple, markers "
+             "placed at the original interface move toward the Zn side. What does this "
+             "reveal about the relative diffusivities of Cu and Zn? How does this lead "
+             "to pore formation?",
+            rubric_items=[
+                {"criterion": "marker movement explanation", "weight": 2, "keywords": ["marker", "movement"]},
+                {"criterion": "relative diffusivity", "weight": 2, "keywords": ["diffusivity", "unequal"]},
+                {"criterion": "pore formation mechanism", "weight": 2, "keywords": ["pore", "vacancy"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="fundamental_mechanisms", tags=["diffusion", "kirkendall", "hard"],
+            case_id="matscibench_057",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain the difference between homogeneous and heterogeneous nucleation. "
+             "Why is heterogeneous nucleation more common in practice?",
+            expected_keywords=["homogeneous", "heterogeneous", "surface", "catalyst"],
+            category="fundamental_mechanisms", tags=["phase_transformations", "nucleation", "easy"],
+            case_id="matscibench_058",
+        ))
+        self.add(BenchmarkCase(
+            task="For diffusion-controlled growth of a precipitate, the growth rate v = "
+             "D·(ΔC)/(C_p·δ). Explain each term and how temperature affects the growth "
+             "rate through both D and ΔC (supersaturation).",
+            rubric_items=[
+                {"criterion": "growth rate equation", "weight": 2, "keywords": ["growth", "rate"]},
+                {"criterion": "diffusion coefficient D", "weight": 2, "keywords": ["diffusion", "coefficient"]},
+                {"criterion": "supersaturation ΔC", "weight": 2, "keywords": ["supersaturation", "concentration"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="fundamental_mechanisms", tags=["phase_transformations", "diffusion_growth", "medium"],
+            case_id="matscibench_059",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain the martensitic transformation in steel. Why is it "
+             "diffusionless? How does the Bain correspondence model describe the "
+             "FCC→BCT lattice distortion? Calculate the shear strain for the "
+             "martensitic transformation given the lattice correspondence. What is the "
+             "maximum shear strain (~0.22 for Fe-C)?",
+            rubric_items=[
+                {"criterion": "diffusionless nature", "weight": 2, "keywords": ["diffusionless", "military"]},
+                {"criterion": "Bain distortion", "weight": 2, "keywords": ["bain", "distortion"]},
+                {"criterion": "shear strain value", "weight": 2, "keywords": ["shear", "strain"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="fundamental_mechanisms", tags=["phase_transformations", "martensitic", "bain", "hard"],
+            case_id="matscibench_060",
+        ))
+        self.add(BenchmarkCase(
+            task="Calculate the maximum wavelength absorbed by Si (Eg = 1.12 eV). Use λ = "
+             "hc/Eg, h = 6.626×10⁻³⁴ J·s, c = 3×10⁸ m/s. Answer in nm.",
+            expected_value=1107, tolerance=20,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["electronic_structure", "band_gap", "wavelength", "easy"],
+            case_id="matscibench_061",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain the concept of density of states (DOS) in a solid. How does the "
+             "3D free-electron DOS scale with energy? Sketch the DOS near a band edge "
+             "for a semiconductor.",
+            rubric_items=[
+                {"criterion": "DOS definition", "weight": 2, "keywords": ["density", "states"]},
+                {"criterion": "E^(1/2) scaling", "weight": 2, "keywords": ["energy", "square"]},
+                {"criterion": "band edge behavior", "weight": 2, "keywords": ["band", "edge"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="fundamental_mechanisms", tags=["electronic_structure", "dos", "medium"],
+            case_id="matscibench_062",
+        ))
+        self.add(BenchmarkCase(
+            task="A silicon sample is doped with phosphorus at N_D = 1×10¹⁶ cm⁻³. "
+             "Calculate the Fermi level position relative to the conduction band at "
+             "300 K. Use E_C - E_F = kT·ln(N_C/N_D) with N_C = 2.8×10¹⁹ cm⁻³ and kT = "
+             "0.0259 eV. Answer in eV.",
+            expected_value=0.207, tolerance=0.01,
+            evaluator=numeric_evaluator,
+            category="fundamental_mechanisms", tags=["electronic_structure", "fermi_level", "doped", "hard"],
+            case_id="matscibench_063",
+        ))
+        # ═══ Processes domain ═══
+        self.add(BenchmarkCase(
+            task="Describe the basic solidification process in metal casting. What are the "
+             "three zones of a typical ingot structure?",
+            expected_keywords=["chill", "columnar", "equiaxed"],
+            category="processes", tags=["casting", "solidification", "easy"],
+            case_id="matscibench_064",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain dendritic growth during solidification. How does the "
+             "constitutional undercooling criterion determine whether a planar or "
+             "dendritic interface forms? What role does the temperature gradient G and "
+             "growth rate R play?",
+            rubric_items=[
+                {"criterion": "constitutional undercooling", "weight": 2, "keywords": ["undercooling", "constitutional"]},
+                {"criterion": "G/R ratio", "weight": 2, "keywords": ["gradient", "ratio"]},
+                {"criterion": "planar vs dendritic", "weight": 2, "keywords": ["planar", "dendritic"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["casting", "dendritic", "medium"],
+            case_id="matscibench_065",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain microsegregation (coring) in as-cast alloys. How does the "
+             "partition coefficient k < 1 lead to solute enrichment at the dendrite "
+             "boundaries? Describe the Scheil equation and how homogenization "
+             "annealing is used to reduce segregation.",
+            rubric_items=[
+                {"criterion": "partition coefficient k", "weight": 2, "keywords": ["partition", "coefficient"]},
+                {"criterion": "Scheil equation", "weight": 2, "keywords": ["scheil", "segregation"]},
+                {"criterion": "homogenization anneal", "weight": 2, "keywords": ["homogenization", "anneal"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["casting", "microsegregation", "coring", "hard"],
+            case_id="matscibench_066",
+        ))
+        self.add(BenchmarkCase(
+            task="Compare rolling and forging as metal forming processes. What are the "
+             "main differences in deformation mode and typical products?",
+            expected_keywords=["rolling", "forging", "compressive", "deformation"],
+            category="processes", tags=["forming", "rolling_forging", "easy"],
+            case_id="matscibench_067",
+        ))
+        self.add(BenchmarkCase(
+            task="In cold working, a metal sheet is reduced from 2.0 mm to 1.6 mm "
+             "thickness. Calculate the cold work percentage and explain how this "
+             "affects the hardness and ductility.",
+            expected_value=20.0, tolerance=1.0,
+            evaluator=numeric_evaluator,
+            category="processes", tags=["forming", "cold_work", "strain_hardening", "medium"],
+            case_id="matscibench_068",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the forming limit diagram (FLD) for sheet metal forming. How do "
+             "major and minor strains define the safe and failure zones? What is the "
+             "FLD0 criterion and how does the strain hardening exponent n affect the "
+             "forming limit?",
+            rubric_items=[
+                {"criterion": "major/minor strain concept", "weight": 2, "keywords": ["major", "minor", "strain"]},
+                {"criterion": "safe vs failure zone", "weight": 2, "keywords": ["safe", "failure"]},
+                {"criterion": "n-value effect on FLD0", "weight": 2, "keywords": ["forming limit", "n-value"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["forming", "fld", "deep_drawing", "hard"],
+            case_id="matscibench_069",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the difference between annealing, normalizing, and quenching of "
+             "steel. What microstructure does each produce?",
+            expected_keywords=["annealing", "normalizing", "quenching", "pearlite", "martensite"],
+            category="processes", tags=["heat_treatment", "anneal_normalize", "easy"],
+            case_id="matscibench_070",
+        ))
+        self.add(BenchmarkCase(
+            task="Interpret a TTT (time-temperature-transformation) diagram for eutectoid "
+             "steel. Explain the difference between the nose of the curve and the "
+             "Ms/Mf lines. How does the cooling path determine the final "
+             "microstructure (pearlite vs bainite vs martensite)?",
+            rubric_items=[
+                {"criterion": "TTT diagram structure", "weight": 2, "keywords": ["ttt", "time"]},
+                {"criterion": "pearlite/bainite/martensite", "weight": 2, "keywords": ["pearlite", "bainite", "martensite"]},
+                {"criterion": "Ms and Mf lines", "weight": 2, "keywords": ["ms", "mf"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["heat_treatment", "ttt", "medium"],
+            case_id="matscibench_071",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain tempered martensite embrittlement (TME, 350°C embrittlement) in "
+             "steels. What happens to the microstructure during tempering in the "
+             "250-400°C range? How does cementite film formation at prior austenite "
+             "grain boundaries contribute to intergranular fracture?",
+            rubric_items=[
+                {"criterion": "TME temperature range", "weight": 2, "keywords": ["350", "tempered"]},
+                {"criterion": "cementite film formation", "weight": 2, "keywords": ["cementite", "film"]},
+                {"criterion": "intergranular fracture", "weight": 2, "keywords": ["intergranular", "fracture"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["heat_treatment", "tempering", "embrittlement", "hard"],
+            case_id="matscibench_072",
+        ))
+        self.add(BenchmarkCase(
+            task="What is sintering? Describe the three stages and the driving force for "
+             "each.",
+            expected_keywords=["sintering", "neck", "densification", "surface"],
+            category="processes", tags=["sintering", "stages", "easy"],
+            case_id="matscibench_073",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the mechanisms of sintering (diffusion, evaporation- "
+             "condensation, plastic flow). Which mechanism dominates in the initial "
+             "stage vs the intermediate stage? How does the activation energy for "
+             "grain boundary diffusion compare to that for volume diffusion?",
+            rubric_items=[
+                {"criterion": "sintering mechanisms listed", "weight": 2, "keywords": ["diffusion", "mechanism"]},
+                {"criterion": "stage dominance", "weight": 2, "keywords": ["initial", "intermediate"]},
+                {"criterion": "activation energy comparison", "weight": 2, "keywords": ["activation", "energy"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["sintering", "mechanisms", "medium"],
+            case_id="matscibench_074",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain liquid phase sintering (LPS). What are the three stages "
+             "(rearrangement, solution-precipitation, solid state sintering)? How does "
+             "the solubility ratio between solid and liquid determine densification? "
+             "Give an example system (e.g., WC-Co).",
+            rubric_items=[
+                {"criterion": "three LPS stages", "weight": 2, "keywords": ["rearrangement", "solution"]},
+                {"criterion": "solubility requirement", "weight": 2, "keywords": ["solubility", "liquid"]},
+                {"criterion": "WC-Co example", "weight": 2, "keywords": ["wc", "cobalt"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["sintering", "liquid_phase", "lps", "hard"],
+            case_id="matscibench_075",
+        ))
+        self.add(BenchmarkCase(
+            task="Compare PVD (physical vapor deposition) and CVD (chemical vapor "
+             "deposition). How do they differ in mechanism and typical applications?",
+            expected_keywords=["pvd", "cvd", "physical", "chemical", "vapor"],
+            category="processes", tags=["deposition", "pvd_cvd", "easy"],
+            case_id="matscibench_076",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain sputter deposition. How does the sputter yield depend on ion "
+             "energy, target material, and incident angle? What is the difference "
+             "between DC sputtering and RF sputtering for insulating targets?",
+            rubric_items=[
+                {"criterion": "sputter yield factors", "weight": 2, "keywords": ["sputter", "yield"]},
+                {"criterion": "DC vs RF sputtering", "weight": 2, "keywords": ["dc", "rf"]},
+                {"criterion": "insulating target handling", "weight": 2, "keywords": ["insulating", "dielectric"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["deposition", "sputter", "medium"],
+            case_id="matscibench_077",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain atomic layer deposition (ALD). How does self-limiting surface "
+             "chemistry enable sub-nm thickness control? Describe the ALD cycle for "
+             "Al₂O₃ from TMA and H₂O. What is the growth per cycle (GPC) and how does "
+             "it differ from CVD growth rate?",
+            rubric_items=[
+                {"criterion": "self-limiting chemistry", "weight": 2, "keywords": ["self-limiting", "surface"]},
+                {"criterion": "TMA/H₂O cycle", "weight": 2, "keywords": ["tma", "h₂o"]},
+                {"criterion": "GPC vs CVD rate", "weight": 2, "keywords": ["growth", "cycle"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="processes", tags=["deposition", "ald", "thin_film", "hard"],
+            case_id="matscibench_078",
+        ))
+        # ═══ Failure mechanisms domain ═══
+        self.add(BenchmarkCase(
+            task="Explain the difference between ductile and brittle fracture. What "
+             "microstructural features distinguish the fracture surfaces?",
+            expected_keywords=["ductile", "brittle", "dimples", "cleavage"],
+            category="failure_mechanisms", tags=["fracture", "ductile_brittle", "easy"],
+            case_id="matscibench_079",
+        ))
+        self.add(BenchmarkCase(
+            task="Using the Griffith criterion σ_f = √(2Eγ/πa), calculate the fracture "
+             "stress for a glass with E = 70 GPa, γ = 1 J/m², and an internal crack of "
+             "length 2a = 10 μm. Answer in MPa.",
+            expected_value=66.8, tolerance=5.0,
+            evaluator=numeric_evaluator,
+            category="failure_mechanisms", tags=["fracture", "griffith", "medium"],
+            case_id="matscibench_080",
+        ))
+        self.add(BenchmarkCase(
+            task="A compact tension specimen of a steel alloy has K_IC = 60 MPa·m^(1/2). "
+             "If the applied stress is 400 MPa and the largest flaw is a = 2 mm, "
+             "determine if the component will fail. Use K = Y·σ·√(πa) with Y = 1.12. "
+             "Calculate K and compare to K_IC.",
+            expected_value=35.5, tolerance=2.0,
+            evaluator=numeric_evaluator,
+            category="failure_mechanisms", tags=["fracture", "kic", "fracture_toughness", "hard"],
+            case_id="matscibench_081",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the S-N curve for a metal. What is the difference between the "
+             "fatigue behavior of ferrous and non-ferrous metals regarding the "
+             "endurance limit?",
+            expected_keywords=["s-n", "fatigue", "endurance", "ferrous"],
+            category="failure_mechanisms", tags=["fatigue", "s-n_curve", "easy"],
+            case_id="matscibench_082",
+        ))
+        self.add(BenchmarkCase(
+            task="Using the Paris law da/dN = C(ΔK)^m, with C = 1×10⁻¹² m/cycle and m = 3, "
+             "calculate the crack growth rate da/dN when ΔK = 20 MPa·m^(1/2). Answer "
+             "in m/cycle.",
+            expected_value=8e-09, tolerance=1e-09,
+            evaluator=numeric_evaluator,
+            category="failure_mechanisms", tags=["fatigue", "paris_law", "crack_growth", "medium"],
+            case_id="matscibench_083",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain notch fatigue and the role of the stress concentration factor "
+             "Kt. A plate with a circular hole has Kt = 3. If the nominal stress "
+             "amplitude is 100 MPa, what is the local stress at the notch root? How "
+             "does Neuber's rule relate Kt to the fatigue notch factor Kf?",
+            rubric_items=[
+                {"criterion": "stress concentration Kt", "weight": 2, "keywords": ["stress", "concentration"]},
+                {"criterion": "local stress calculation", "weight": 2, "keywords": ["local", "notch"]},
+                {"criterion": "Neuber's rule / Kf", "weight": 2, "keywords": ["neuber", "kf"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="failure_mechanisms", tags=["fatigue", "notch", "kt", "hard"],
+            case_id="matscibench_084",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe the three stages of creep. What happens to the strain rate in "
+             "each stage?",
+            rubric_items=[
+                {"criterion": "primary creep", "weight": 2, "keywords": ["primary", "decreasing"]},
+                {"criterion": "secondary creep", "weight": 2, "keywords": ["secondary", "steady"]},
+                {"criterion": "tertiary creep", "weight": 2, "keywords": ["tertiary", "accelerating"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="failure_mechanisms", tags=["creep", "stages", "easy"],
+            case_id="matscibench_085",
+        ))
+        self.add(BenchmarkCase(
+            task="Using Norton's creep law ε̇ = A·σ^n·exp(-Q/RT), with n = 5, calculate "
+             "the steady-state creep rate at a stress of 50 MPa if ε̇ = 1×10⁻⁸ /s at "
+             "100 MPa (same temperature). Answer in /s.",
+            expected_value=3.125e-10, tolerance=5e-11,
+            evaluator=numeric_evaluator,
+            category="failure_mechanisms", tags=["creep", "norton", "steady_state", "medium"],
+            case_id="matscibench_086",
+        ))
+        self.add(BenchmarkCase(
+            task="Compare Coble creep and Nabarro-Herring creep. How do they differ in "
+             "diffusion path (grain boundary vs lattice) and in the grain size "
+             "dependence of the strain rate? Write the strain rate equations and "
+             "identify the d⁻² vs d⁻³ dependence.",
+            rubric_items=[
+                {"criterion": "Cobble: grain boundary diffusion", "weight": 2, "keywords": ["coble", "boundary"]},
+                {"criterion": "N-H: lattice diffusion", "weight": 2, "keywords": ["nabarro", "lattice"]},
+                {"criterion": "grain size exponent d⁻² vs d⁻³", "weight": 2, "keywords": ["grain", "exponent"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="failure_mechanisms", tags=["creep", "coble", "nabarro_herring", "hard"],
+            case_id="matscibench_087",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain galvanic corrosion. Given Zn (E = -0.76 V) and Cu (E = +0.34 V) "
+             "coupled together, which metal corrodes? Calculate the cell potential. "
+             "Answer in V.",
+            expected_value=1.1, tolerance=0.05,
+            evaluator=numeric_evaluator,
+            category="failure_mechanisms", tags=["corrosion", "galvanic", "easy"],
+            case_id="matscibench_088",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe pitting corrosion. How does the breakdown of passivity initiate "
+             "a pit? Explain the autocatalytic mechanism inside the pit involving Cl⁻, "
+             "H⁺, and metal dissolution.",
+            rubric_items=[
+                {"criterion": "passivity breakdown", "weight": 2, "keywords": ["passivity", "breakdown"]},
+                {"criterion": "autocatalytic mechanism", "weight": 2, "keywords": ["autocatalytic", "pit"]},
+                {"criterion": "Cl⁻ role", "weight": 2, "keywords": ["chloride", "cl"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="failure_mechanisms", tags=["corrosion", "pitting", "medium"],
+            case_id="matscibench_089",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain stress corrosion cracking (SCC). How does the synergistic effect "
+             "of tensile stress and corrosive environment lead to crack propagation? "
+             "Compare anodic dissolution and hydrogen embrittlement mechanisms. What "
+             "is the role of the film rupture rate at the crack tip?",
+            rubric_items=[
+                {"criterion": "synergistic stress + environment", "weight": 2, "keywords": ["synergistic", "stress"]},
+                {"criterion": "anodic dissolution mechanism", "weight": 2, "keywords": ["anodic", "dissolution"]},
+                {"criterion": "hydrogen embrittlement", "weight": 2, "keywords": ["hydrogen", "embrittlement"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="failure_mechanisms", tags=["corrosion", "scc", "stress_corrosion", "hard"],
+            case_id="matscibench_090",
+        ))
+        self.add(BenchmarkCase(
+            task="Describe abrasive wear and adhesive wear. How do they differ in "
+             "mechanism? Give one strategy to reduce each.",
+            expected_keywords=["abrasive", "adhesive", "hardness", "lubrication"],
+            category="failure_mechanisms", tags=["wear", "abrasive_adhesive", "easy"],
+            case_id="matscibench_091",
+        ))
+        self.add(BenchmarkCase(
+            task="Using Archard's wear equation V = K·F·s/H, where V is wear volume, F is "
+             "normal load (50 N), s is sliding distance (1000 m), H is hardness (300 "
+             "HV), and K = 1×10⁻⁴. Calculate the wear volume in mm³. Note: convert H "
+             "to MPa (1 HV ≈ 9.81 MPa).",
+            expected_value=1.7, tolerance=0.2,
+            evaluator=numeric_evaluator,
+            category="failure_mechanisms", tags=["wear", "archard", "medium"],
+            case_id="matscibench_092",
+        ))
+        self.add(BenchmarkCase(
+            task="Explain fretting wear. How does small-amplitude oscillatory motion (μm "
+             "range) between two surfaces cause damage? Describe the role of oxide "
+             "debris generation, debris ejection vs retention, and the transition from "
+             "fretting wear to fretting fatigue. What surface treatments can mitigate "
+             "fretting?",
+            rubric_items=[
+                {"criterion": "oscillatory motion mechanism", "weight": 2, "keywords": ["oscillatory", "amplitude"]},
+                {"criterion": "oxide debris role", "weight": 2, "keywords": ["oxide", "debris"]},
+                {"criterion": "fretting fatigue transition", "weight": 2, "keywords": ["fretting", "fatigue"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="failure_mechanisms", tags=["wear", "fretting", "hard"],
+            case_id="matscibench_093",
         ))
         return self
 
     def csmbench_cases(self) -> BenchmarkSuite:
         """CSMBench-style cases — cross-scale material science perception.
-
-        Source: arXiv:2603.19327. 4 physical scales: atomic→micro→meso→macro.
-        Adapted to text-based format since BenchmarkCase has no image field.
-        Focus: can the agent reason about structure-property across scales?
-
-        Atomic (Å): crystal structure, XRD, point defects, bonding
-        Micro (nm): TEM, dislocations, precipitates, nanoscale interfaces
-        Meso (μm): SEM, grain structure, porosity, cracks, phase distribution
-        Macro (cm-m): tensile test, hardness, fracture surface, thermal
-        Cross-scale: causal chain from atomic bonding to macro properties
+        Source: arXiv:2603.19327. 4 physical scales + cross-scale = 5 categories.
+        8 cases per category = 40 total.
         """
-        # ═══ Atomic scale (5 cases) ═══
+        # atomic scale: crystal structure, diffraction, point defects
         self.add(BenchmarkCase(
-            task="A material shows an XRD pattern with peaks at 2θ = 35°, 38°, 40° "
-             "(Cu Kα, λ=1.5406 Å). The structure is hexagonal (wurtzite). "
-             "Identify the material and calculate the lattice parameter a.",
-            expected_value=3.25, tolerance=0.05,
-            evaluator=numeric_evaluator,
-            category="atomic", tags=["xrd", "wurtzite", "gan", "diffraction"],
             case_id="csmbench_001",
+            category="atomic",
+            task="GaN crystallizes in the wurtzite structure. From XRD data the (100) "
+                 "peak is identified. Calculate the lattice parameter a in Å and "
+                 "compare with the accepted literature value.",
+            expected_value=3.25,
+            tolerance=0.05,
+            evaluator=numeric_evaluator,
+            tags=["xrd", "gan", "wurtzite", "lattice-parameter"],
         ))
         self.add(BenchmarkCase(
-            task="Calculate the interplanar spacing d_hkl for the (111) planes "
-             "of an FCC crystal with lattice parameter a = 0.405 nm. "
-             "Use d = a/√(h²+k²+l²). Answer in nm.",
-            expected_value=0.234, tolerance=0.005,
-            evaluator=numeric_evaluator,
-            category="atomic", tags=["fcc", "interplanar", "easy"],
             case_id="csmbench_002",
+            category="atomic",
+            task="For FCC aluminum with lattice parameter a = 4.05 Å, calculate the "
+                 "interplanar spacing d_{111} in nm using d = a / sqrt(h² + k² + l²).",
+            expected_value=0.234,
+            tolerance=0.005,
+            evaluator=numeric_evaluator,
+            tags=["fcc", "interplanar-spacing", "aluminum"],
         ))
         self.add(BenchmarkCase(
-            task="The energy of a vacancy in copper is 0.9 eV. Calculate the "
-             "equilibrium vacancy fraction at 1000 K. "
-             "Use n_v/N = exp(-Q_v/kT), k = 8.617×10⁻⁵ eV/K.",
-            expected_value=2.9e-5, tolerance=1.0e-5,
-            evaluator=numeric_evaluator,
-            category="atomic", tags=["vacancy", "defect", "boltzmann", "hard"],
             case_id="csmbench_003",
+            category="atomic",
+            task="Calculate the equilibrium vacancy fraction n_v/n in copper at 1000 K "
+                 "using n_v/n = exp(−Q_v / kT). Given Q_v = 0.9 eV and "
+                 "k = 8.617×10⁻⁵ eV/K.",
+            expected_value=2.9e-5,
+            tolerance=1e-5,
+            evaluator=numeric_evaluator,
+            tags=["vacancy", "thermodynamics", "copper", "point-defect"],
         ))
         self.add(BenchmarkCase(
-            task="Describe the crystal structure of diamond cubic silicon. "
-             "How many atoms per unit cell? What is the coordination number?",
-            expected_keywords=["diamond", "cubic", "8", "4", "tetrahedral",
-                            "covalent"],
-            category="atomic", tags=["crystal", "silicon", "structure", "easy"],
             case_id="csmbench_004",
+            category="atomic",
+            task="Describe the crystal structure of silicon. Identify the Bravais "
+                 "lattice type, the number of atoms per conventional unit cell, and "
+                 "the local coordination geometry around each atom.",
+            expected_keywords=["diamond", "cubic", "8", "tetrahedral"],
+            evaluator=keyword_evaluator,
+            tags=["silicon", "diamond-cubic", "crystal-structure"],
         ))
         self.add(BenchmarkCase(
-            task="NaCl has a rock salt structure with lattice parameter a = 0.564 nm. "
-             "Calculate the distance between nearest Na⁺ and Cl⁻ neighbors. "
-             "Answer in nm.",
-            expected_value=0.282, tolerance=0.005,
-            evaluator=numeric_evaluator,
-            category="atomic", tags=["nacl", "rocksalt", "ionic", "medium"],
             case_id="csmbench_005",
+            category="atomic",
+            task="NaCl has the rocksalt structure with lattice parameter a = 5.64 Å. "
+                 "What is the nearest-neighbor Na–Cl distance in nm?",
+            expected_value=0.282,
+            tolerance=0.005,
+            evaluator=numeric_evaluator,
+            tags=["nacl", "rocksalt", "nearest-neighbor"],
         ))
-
-        # ═══ Micro scale (5 cases) ═══
         self.add(BenchmarkCase(
-            task="A TEM image shows lattice fringes with spacing 0.334 nm. "
-             "What crystallographic plane and material is this likely to be? "
-             "Explain the relationship between fringe spacing and d-spacing.",
-            expected_keywords=["graphite", "0.334", "d-spacing", "002",
-                            "lattice"],
-            category="micro", tags=["tem", "lattice_fringe", "carbon"],
             case_id="csmbench_006",
+            category="atomic",
+            task="Calculate the atomic packing factor (APF) of a BCC crystal. Show "
+                 "the derivation from the ratio of atom volume to unit cell volume.",
+            expected_value=0.68,
+            tolerance=0.01,
+            evaluator=numeric_evaluator,
+            tags=["bcc", "apf", "packing-factor"],
         ))
         self.add(BenchmarkCase(
-            task="The Burgers vector of an edge dislocation in an FCC crystal "
-             "is b = a/√2. If a = 0.405 nm, calculate the magnitude of b. "
-             "Answer in nm.",
-            expected_value=0.286, tolerance=0.005,
-            evaluator=numeric_evaluator,
-            category="micro", tags=["dislocation", "burgers", "fcc", "medium"],
             case_id="csmbench_007",
+            category="atomic",
+            task="A diffraction peak is observed at 2θ = 28.4° using Cu Kα radiation "
+                 "(λ = 1.5406 Å). Calculate the d-spacing in nm using Bragg's law "
+                 "nλ = 2d sinθ (assume n = 1).",
+            expected_value=0.314,
+            tolerance=0.005,
+            evaluator=numeric_evaluator,
+            tags=["bragg-law", "xrd", "d-spacing", "copper-radiation"],
         ))
         self.add(BenchmarkCase(
-            task="Describe how TEM differs from SEM in terms of imaging "
-             "principle, resolution, and sample preparation. When would you "
-             "choose TEM over SEM?",
-            rubric_items=[
-                {"criterion": "TEM imaging principle", "weight": 2,
-                 "keywords": ["transmission", "electron", "thin"]},
-                {"criterion": "SEM imaging principle", "weight": 2,
-                 "keywords": ["scanning", "secondary", "backscatter"]},
-                {"criterion": "resolution comparison", "weight": 2,
-                 "keywords": ["resolution", "TEM", "higher", "sub-nm"]},
-                {"criterion": "sample preparation difference", "weight": 1,
-                 "keywords": ["thin", "bulk", "preparation"]},
-            ],
-            evaluator=rubric_evaluator,
-            category="micro", tags=["tem", "sem", "characterization", "medium"],
             case_id="csmbench_008",
+            category="atomic",
+            task="Compare the atomic packing factors of FCC, BCC, and HCP crystal "
+                 "structures. Provide the numerical APF value for each and explain "
+                 "why FCC and HCP have the same packing efficiency.",
+            rubric="Evaluate APF values for FCC, BCC, and HCP with explanation.",
+            rubric_items=[
+                {"criterion": "FCC APF value", "weight": 0.33, "keywords": ["fcc", "0.74"]},
+                {"criterion": "BCC APF value", "weight": 0.34, "keywords": ["bcc", "0.68"]},
+                {"criterion": "HCP APF value", "weight": 0.33, "keywords": ["hcp", "0.74"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["apf", "fcc", "bcc", "hcp", "comparison"],
         ))
+
+        # micro scale: dislocations, TEM, precipitates, interfaces
         self.add(BenchmarkCase(
-            task="A precipitate has a critical radius r* = 2 nm and the "
-             "interface energy γ = 0.5 J/m². Calculate the volume free energy "
-             "ΔGv (J/m³) using r* = -2γ/ΔGv.",
-            expected_value=-5.0e8, tolerance=1.0e8,
-            evaluator=numeric_evaluator,
-            category="micro", tags=["precipitate", "nucleation", "hard"],
             case_id="csmbench_009",
+            category="micro",
+            task="An HRTEM image shows lattice fringes with a measured spacing of "
+                 "0.334 nm. Identify the material and the specific crystallographic "
+                 "plane that produces this spacing.",
+            expected_keywords=["graphite", "0.334", "d-spacing", "002"],
+            evaluator=keyword_evaluator,
+            tags=["tem", "graphite", "lattice-fringes", "hrtem"],
         ))
         self.add(BenchmarkCase(
-            task="Explain how HRTEM can be used to identify crystal defects at "
-             "the atomic scale. What information does the FFT of an HRTEM "
-             "image provide?",
-            expected_keywords=["hrtem", "fft", "defect", "fourier",
-                            "atomic", "lattice"],
-            category="micro", tags=["hrtem", "fft", "defect", "hard"],
             case_id="csmbench_010",
+            category="micro",
+            task="For an FCC crystal (Al, a = 4.05 Å), calculate the magnitude of "
+                 "the perfect dislocation Burgers vector |b| = a/√2 in nm.",
+            expected_value=0.286,
+            tolerance=0.005,
+            evaluator=numeric_evaluator,
+            tags=["burgers-vector", "fcc", "dislocation", "aluminum"],
         ))
-
-        # ═══ Meso scale (5 cases) ═══
         self.add(BenchmarkCase(
-            task="An SEM image of a sintered ceramic shows grain sizes ranging "
-             "from 2 to 10 μm with some porosity (~5%). Predict how increasing "
-             "the sintering temperature would affect: (a) grain size, "
-             "(b) density, (c) mechanical strength. Explain the Hall-Petch "
-             "relationship.",
-            rubric_items=[
-                {"criterion": "grain growth with temperature", "weight": 2,
-                 "keywords": ["grain growth", "larger"]},
-                {"criterion": "density increase", "weight": 2,
-                 "keywords": ["density", "densification"]},
-                {"criterion": "Hall-Petch relationship", "weight": 2,
-                 "keywords": ["hall-petch", "strength"]},
-                {"criterion": "trade-off strength vs toughness", "weight": 1,
-                 "keywords": ["trade-off", "brittle"]},
-            ],
-            evaluator=rubric_evaluator,
-            category="meso", tags=["sem", "grain", "sintering", "hall-petch"],
             case_id="csmbench_011",
+            category="micro",
+            task="Compare TEM and SEM in terms of working principle, achievable "
+                 "resolution, and sample preparation requirements.",
+            rubric="Evaluate TEM vs SEM comparison across principle, resolution, and sample prep.",
+            rubric_items=[
+                {"criterion": "TEM working principle", "weight": 0.3, "keywords": ["transmission", "thin"]},
+                {"criterion": "SEM working principle", "weight": 0.3, "keywords": ["scanning", "secondary"]},
+                {"criterion": "Resolution comparison", "weight": 0.2, "keywords": ["resolution", "tem"]},
+                {"criterion": "Sample preparation", "weight": 0.2, "keywords": ["sample", "preparation"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["tem", "sem", "comparison", "characterization"],
         ))
         self.add(BenchmarkCase(
-            task="Using the Hall-Petch equation σ_y = σ₀ + k·d^(-1/2), "
-             "calculate the yield strength for a material with σ₀ = 150 MPa, "
-             "k = 0.45 MPa·m^1/2, and grain size d = 10 μm. Answer in MPa.",
-            expected_value=292.3, tolerance=5.0,
-            evaluator=numeric_evaluator,
-            category="meso", tags=["hall-petch", "grain", "medium"],
             case_id="csmbench_012",
+            category="micro",
+            task="Calculate the volume free energy change ΔGv (the driving force for "
+                 "precipitate nucleation) using ΔGv = −ΔHf·ΔT/Tm. Given "
+                 "ΔHf = 2.5×10⁹ J/m³, ΔT = 300 K, Tm = 1500 K. Express the "
+                 "result in J/m³.",
+            expected_value=-5.0e8,
+            tolerance=1e8,
+            evaluator=numeric_evaluator,
+            tags=["nucleation", "precipitate", "thermodynamics", "driving-force"],
         ))
         self.add(BenchmarkCase(
-            task="An EBSD map shows a bimodal grain size distribution (5 μm and "
-             "50 μm) in a titanium alloy. Explain how this affects mechanical "
-             "properties compared to a uniform grain structure.",
-            expected_keywords=["bimodal", "grain", "titanium", "strength",
-                            "ductility", "trade-off"],
-            category="meso", tags=["ebsd", "titanium", "bimodal", "hard"],
             case_id="csmbench_013",
+            category="micro",
+            task="Explain how HRTEM imaging combined with FFT analysis is used to "
+                 "identify crystal defects at the atomic scale.",
+            expected_keywords=["hrtem", "fft", "fourier", "lattice"],
+            evaluator=keyword_evaluator,
+            tags=["hrtem", "fft", "defect", "characterization"],
         ))
         self.add(BenchmarkCase(
-            task="Describe how porosity affects the elastic modulus of a "
-             "ceramic. If Young's modulus of fully dense Al₂O₃ is 380 GPa "
-             "and the material has 15% porosity, estimate the modulus using "
-             "E = E₀(1-1.9P+0.9P²). Answer in GPa.",
-            expected_value=284.8, tolerance=5.0,
-            evaluator=numeric_evaluator,
-            category="meso", tags=["porosity", "modulus", "ceramic", "medium"],
             case_id="csmbench_014",
+            category="micro",
+            task="Estimate the dislocation line energy per unit length for copper "
+                 "(G ≈ 48 GPa, b ≈ 0.256 nm) using E ≈ Gb²/2. Give the result "
+                 "in J/m.",
+            expected_value=2.0e-9,
+            tolerance=1e-9,
+            evaluator=numeric_evaluator,
+            tags=["dislocation", "line-energy", "copper", "elastic"],
         ))
         self.add(BenchmarkCase(
-            task="A meso-scale crack propagates along grain boundaries in a "
-             "polycrystalline alloy. What is this type of fracture called? "
-             "What microstructural features promote this failure mode?",
-            expected_keywords=["intergranular", "grain boundary", "segregation",
-                            "embrittlement"],
-            category="meso", tags=["fracture", "intergranular", "medium"],
             case_id="csmbench_015",
+            category="micro",
+            task="Discuss how stacking fault energy varies among FCC metals and its "
+                 "influence on the deformation behavior of austenitic stainless steels.",
+            expected_keywords=["stacking fault", "energy", "fcc", "austenitic"],
+            evaluator=keyword_evaluator,
+            tags=["stacking-fault", "energy", "fcc", "austenitic"],
         ))
-
-        # ═══ Macro scale (5 cases) ═══
         self.add(BenchmarkCase(
-            task="A tensile test on a metal specimen (gauge length 50 mm, "
-             "cross-section 12.5 mm²) yields: at 2 mm extension the load is "
-             "15 kN, at fracture the load is 12 kN and total extension is 8 mm. "
-             "Calculate: (a) Young's modulus, (b) UTS, (c) elongation at fracture.",
-            rubric_items=[
-                {"criterion": "Young's modulus", "weight": 3,
-                 "keywords": ["young", "modulus", "120", "gpa"]},
-                {"criterion": "UTS calculation", "weight": 3,
-                 "keywords": ["uts", "tensile", "1200", "mpa"]},
-                {"criterion": "elongation at fracture", "weight": 2,
-                 "keywords": ["elongation", "16%", "0.16"]},
-            ],
-            evaluator=rubric_evaluator,
-            category="macro", tags=["tensile", "mechanical", "stress-strain"],
             case_id="csmbench_016",
-        ))
-        self.add(BenchmarkCase(
-            task="A Vickers hardness test uses a load of 10 kgf and produces "
-             "a diagonal of 0.3 mm. Calculate HV using "
-             "HV = 1.8544 × P/d² where P is in kgf and d in mm.",
-            expected_value=206, tolerance=5,
-            evaluator=numeric_evaluator,
-            category="macro", tags=["hardness", "vickers", "easy"],
-            case_id="csmbench_017",
-        ))
-        self.add(BenchmarkCase(
-            task="A macro-scale fracture surface shows chevron patterns pointing "
-             "toward the origin. What does this indicate about the crack "
-             "propagation direction and loading mode?",
-            expected_keywords=["chevron", "crack", "origin", "propagation",
-                            "brittle", "direction"],
-            category="macro", tags=["fracture", "chevron", "medium"],
-            case_id="csmbench_018",
-        ))
-        self.add(BenchmarkCase(
-            task="A steel beam (length 2 m, rectangular cross-section 50×25 mm) "
-             "is loaded in 3-point bending with a central load of 5000 N. "
-             "Calculate the maximum stress. Use σ = 3FL/(2bd²) with b=50mm, "
-             "d=25mm. Answer in MPa.",
-            expected_value=480.0, tolerance=10.0,
-            evaluator=numeric_evaluator,
-            category="macro", tags=["bending", "stress", "beam", "hard"],
-            case_id="csmbench_019",
-        ))
-        self.add(BenchmarkCase(
-            task="A metal rod of length 2 m is heated from 25°C to 425°C. "
-             "If α = 12×10⁻⁶ /°C, calculate the thermal expansion in mm.",
-            expected_value=9.6, tolerance=0.2,
-            evaluator=numeric_evaluator,
-            category="macro", tags=["thermal", "expansion", "easy"],
-            case_id="csmbench_020",
+            category="micro",
+            task="Explain the difference between coherent, semi-coherent, and "
+                 "incoherent precipitate–matrix interfaces. Discuss lattice strain "
+                 "and misfit dislocations for each case.",
+            rubric="Evaluate coherent vs incoherent interface understanding.",
+            rubric_items=[
+                {"criterion": "Coherent interface + strain", "weight": 0.4, "keywords": ["coherent", "strain"]},
+                {"criterion": "Incoherent interface", "weight": 0.3, "keywords": ["incoherent", "strain"]},
+                {"criterion": "Misfit / semi-coherent", "weight": 0.3, "keywords": ["misfit", "semi-coherent"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["precipitate", "interface", "coherent", "incoherent", "misfit"],
         ))
 
-        # ═══ Cross-scale reasoning (4 cases) ═══
+        # meso scale: grains, porosity, fracture, phase distribution
         self.add(BenchmarkCase(
-            task="Explain how the atomic-scale bonding (covalent vs metallic) "
-             "influences the macro-scale mechanical properties (brittleness vs "
-             "ductility) of ceramics vs metals. Trace the causal chain through "
-             "micro-scale dislocation mobility and meso-scale grain boundary "
-             "behavior.",
+            case_id="csmbench_017",
+            category="meso",
+            task="Analyze the relationship between sintering parameters, grain growth, "
+                 "density, and mechanical properties via the Hall-Petch relation. "
+                 "Discuss the trade-off between densification and grain coarsening.",
+            rubric="Evaluate sintering–grain growth–Hall-Petch chain reasoning.",
             rubric_items=[
-                {"criterion": "atomic bonding difference", "weight": 2,
-                 "keywords": ["covalent", "metallic", "directional"]},
-                {"criterion": "dislocation mobility link", "weight": 3,
-                 "keywords": ["dislocation", "mobility", "slip"]},
-                {"criterion": "grain boundary role", "weight": 2,
-                 "keywords": ["grain boundary", "barrier", "block"]},
-                {"criterion": "macro property connection", "weight": 2,
-                 "keywords": ["brittle", "ductile"]},
+                {"criterion": "Grain growth during sintering", "weight": 0.25, "keywords": ["grain", "growth"]},
+                {"criterion": "Density and densification", "weight": 0.25, "keywords": ["density", "sintering"]},
+                {"criterion": "Hall-Petch strengthening", "weight": 0.25, "keywords": ["hall-petch", "strength"]},
+                {"criterion": "Trade-off discussion", "weight": 0.25, "keywords": ["trade-off", "balance"]},
             ],
             evaluator=rubric_evaluator,
-            category="cross_scale",
-            tags=["bonding", "dislocation", "cross-scale", "hard"],
+            tags=["sintering", "hall-petch", "grain-growth", "density"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_018",
+            category="meso",
+            task="Calculate the yield strength using the Hall-Petch relation "
+                 "σ_y = σ₀ + k/√d. Given σ₀ = 150 MPa, k = 0.45 MPa·m^0.5, "
+                 "and grain size d = 10 μm. Give the result in MPa.",
+            expected_value=292.3,
+            tolerance=5.0,
+            evaluator=numeric_evaluator,
+            tags=["hall-petch", "yield-strength", "grain-size"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_019",
+            category="meso",
+            task="Describe how a bimodal grain size distribution, as revealed by EBSD, "
+                 "affects the strength-ductility balance in titanium alloys.",
+            expected_keywords=["bimodal", "grain", "titanium", "strength", "ductility"],
+            evaluator=keyword_evaluator,
+            tags=["ebsd", "bimodal", "titanium", "grain-size"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_020",
+            category="meso",
+            task="Al₂O₃ has a theoretical (fully dense) elastic modulus E₀ = 400 GPa. "
+                 "Using the Spriggs equation E = E₀(1 − 1.9P + 0.9P²), calculate the "
+                 "modulus at 16% porosity. Give the result in GPa.",
+            expected_value=284.8,
+            tolerance=5.0,
+            evaluator=numeric_evaluator,
+            tags=["porosity", "elastic-modulus", "alumina", "spriggs"],
+        ))
+        self.add(BenchmarkCase(
             case_id="csmbench_021",
+            category="meso",
+            task="Explain the mechanisms of intergranular fracture, including the role "
+                 "of grain boundary segregation and impurity embrittlement.",
+            expected_keywords=["intergranular", "grain boundary", "segregation", "embrittlement"],
+            evaluator=keyword_evaluator,
+            tags=["intergranular", "fracture", "grain-boundary", "embrittlement"],
         ))
         self.add(BenchmarkCase(
-            task="Trace the causal chain from atomic-scale dopant addition "
-             "(e.g., P in Si) to macro-scale electrical conductivity. "
-             "What happens at each scale: atomic, micro, meso, macro?",
-            rubric_items=[
-                {"criterion": "atomic: dopant substitution", "weight": 2,
-                 "keywords": ["substitution", "dopant", "phosphorus"]},
-                {"criterion": "micro: carrier generation", "weight": 2,
-                 "keywords": ["carrier", "electron", "donor"]},
-                {"criterion": "meso: grain boundary scattering", "weight": 2,
-                 "keywords": ["scattering", "mobility", "grain"]},
-                {"criterion": "macro: conductivity measurement", "weight": 2,
-                 "keywords": ["conductivity", "resistivity", "macro"]},
-            ],
-            evaluator=rubric_evaluator,
-            category="cross_scale",
-            tags=["doping", "semiconductor", "conductivity", "cross-scale", "hard"],
             case_id="csmbench_022",
+            category="meso",
+            task="In the grain growth kinetics relation d^n = Kt, what is the grain "
+                 "growth exponent n for normal grain growth in pure single-phase "
+                 "materials?",
+            expected_value=2.0,
+            tolerance=0.5,
+            evaluator=numeric_evaluator,
+            tags=["grain-growth", "kinetics", "exponent"],
         ))
         self.add(BenchmarkCase(
-            task="A polycrystalline ceramic has 5% porosity and average grain "
-             "size 2 μm. Explain how BOTH atomic-scale (vacancy concentration) "
-             "and meso-scale (porosity + grain size) features independently "
-             "affect the macro-scale thermal conductivity. Which scale "
-             "dominates at room temperature vs high temperature?",
-            rubric_items=[
-                {"criterion": "vacancy scattering at atomic scale", "weight": 2,
-                 "keywords": ["vacancy", "phonon", "scattering"]},
-                {"criterion": "porosity effect at meso scale", "weight": 2,
-                 "keywords": ["porosity", "pore", "thermal resistance"]},
-                {"criterion": "grain boundary scattering", "weight": 2,
-                 "keywords": ["grain boundary", "phonon", "scattering"]},
-                {"criterion": "temperature dependence", "weight": 2,
-                 "keywords": ["temperature", "room", "high", "dominates"]},
-            ],
-            evaluator=rubric_evaluator,
-            category="cross_scale",
-            tags=["thermal", "conductivity", "porosity", "vacancy", "cross-scale", "hard"],
             case_id="csmbench_023",
-        ))
-        self.add(BenchmarkCase(
-            task="Explain how processing (sintering temperature) affects atomic "
-             "diffusion → grain growth → meso grain size → macro mechanical "
-             "strength. Give the governing equation at each scale.",
+            category="meso",
+            task="Describe the experimental methods for determining phase fractions "
+                 "in a multiphase alloy. Cover microscopy-based and diffraction-based "
+                 "techniques.",
+            rubric="Evaluate phase fraction characterization methods.",
             rubric_items=[
-                {"criterion": "atomic: diffusion equation", "weight": 2,
-                 "keywords": ["diffusion", "fick", "d = d0"]},
-                {"criterion": "grain growth kinetics", "weight": 2,
-                 "keywords": ["grain growth", "d^n", "time"]},
-                {"criterion": "meso: Hall-Petch", "weight": 2,
-                 "keywords": ["hall-petch", "grain size", "strength"]},
-                {"criterion": "macro: strength measurement", "weight": 2,
-                 "keywords": ["yield", "strength", "modulus"]},
+                {"criterion": "Image analysis / microscopy", "weight": 0.25, "keywords": ["image", "microscopy"]},
+                {"criterion": "EBSD phase mapping", "weight": 0.25, "keywords": ["ebsd", "phase"]},
+                {"criterion": "XRD Rietveld refinement", "weight": 0.25, "keywords": ["xrd", "rietveld"]},
+                {"criterion": "Phase fraction quantification", "weight": 0.25, "keywords": ["fraction", "quantification"]},
             ],
             evaluator=rubric_evaluator,
-            category="cross_scale",
-            tags=["sintering", "diffusion", "hall-petch", "cross-scale", "hard"],
-            case_id="csmbench_024",
+            tags=["phase-distribution", "multiphase", "ebsd", "xrd"],
         ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_024",
+            category="meso",
+            task="Describe how weak grain boundaries influence crack propagation "
+                 "paths and crack deflection in polycrystalline ceramics.",
+            expected_keywords=["crack", "grain boundary", "path", "deflection"],
+            evaluator=keyword_evaluator,
+            tags=["crack", "grain-boundary", "propagation", "deflection"],
+        ))
+
+        # macro scale: mechanical testing, thermal, fatigue, creep
+        self.add(BenchmarkCase(
+            case_id="csmbench_025",
+            category="macro",
+            task="A tensile test is performed on a high-strength steel sample. From "
+                 "the stress-strain curve, determine the Young's modulus (~120 GPa), "
+                 "the ultimate tensile strength (~1200 MPa), and the elongation at "
+                 "failure (~16%). Report all three values.",
+            rubric="Evaluate extraction of Young's modulus, UTS, and elongation from tensile data.",
+            rubric_items=[
+                {"criterion": "Young's modulus", "weight": 0.33, "keywords": ["120", "gpa"]},
+                {"criterion": "Ultimate tensile strength", "weight": 0.34, "keywords": ["1200", "mpa"]},
+                {"criterion": "Elongation at failure", "weight": 0.33, "keywords": ["16", "elongation"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["tensile-test", "youngs-modulus", "uts", "elongation"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_026",
+            category="macro",
+            task="A Vickers hardness test uses a load of 98.1 N (10 kgf). The average "
+                 "diagonal of the indentation measures 0.300 mm. Calculate the "
+                 "Vickers hardness number HV using HV = 1.8544·F/d² (F in kgf, "
+                 "d in mm).",
+            expected_value=206.0,
+            tolerance=5.0,
+            evaluator=numeric_evaluator,
+            tags=["vickers", "hardness", "indentation"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_027",
+            category="macro",
+            task="Describe the chevron fracture pattern. What does it reveal about "
+                 "crack origin and propagation direction in brittle materials?",
+            expected_keywords=["chevron", "crack", "origin", "propagation", "brittle"],
+            evaluator=keyword_evaluator,
+            tags=["chevron", "fracture", "crack", "brittle"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_028",
+            category="macro",
+            task="A 3-point bending test is performed with load F = 800 N, support "
+                 "span L = 100 mm, and a rectangular cross-section b = 10 mm, "
+                 "h = 5 mm. Calculate the maximum bending stress σ = 3FL/(2bh²) "
+                 "in MPa.",
+            expected_value=480.0,
+            tolerance=10.0,
+            evaluator=numeric_evaluator,
+            tags=["bending", "stress", "three-point", "flexural"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_029",
+            category="macro",
+            task="A steel rod is heated from 25°C to 225°C (ΔT = 200 K). Its length "
+                 "changes from 100.000 mm to 100.192 mm. Calculate the coefficient "
+                 "of thermal expansion in units of 10⁻⁶ /°C.",
+            expected_value=9.6,
+            tolerance=0.2,
+            evaluator=numeric_evaluator,
+            tags=["thermal-expansion", "cte", "steel"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_030",
+            category="macro",
+            task="Describe the Charpy V-notch impact test and explain the "
+                 "ductile-to-brittle transition temperature phenomenon.",
+            expected_keywords=["charpy", "impact", "toughness", "ductile", "brittle"],
+            evaluator=keyword_evaluator,
+            tags=["charpy", "impact", "toughness", "ductile-brittle"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_031",
+            category="macro",
+            task="Using the Basquin relation σa = σ′f · (Nf)^b with σa = 300 MPa, "
+                 "σ′f = 1200 MPa, b = −0.10, calculate the fatigue life Nf "
+                 "(cycles to failure).",
+            expected_value=1e6,
+            tolerance=2e5,
+            evaluator=numeric_evaluator,
+            tags=["fatigue", "basquin", "s-n", "life-prediction"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_032",
+            category="macro",
+            task="Describe the three stages of a typical creep curve (strain vs time "
+                 "at constant stress and temperature). Explain the strain-rate "
+                 "behavior in each stage.",
+            rubric="Evaluate identification of three creep stages and their strain-rate behavior.",
+            rubric_items=[
+                {"criterion": "Primary creep", "weight": 0.33, "keywords": ["primary", "decreasing"]},
+                {"criterion": "Secondary creep", "weight": 0.34, "keywords": ["secondary", "steady"]},
+                {"criterion": "Tertiary creep", "weight": 0.33, "keywords": ["tertiary", "accelerating"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["creep", "deformation", "stages", "high-temperature"],
+        ))
+
+        # cross-scale reasoning: multi-scale causal chains
+        self.add(BenchmarkCase(
+            case_id="csmbench_033",
+            category="cross_scale",
+            task="Trace the chain from atomic bonding type to dislocation behavior to "
+                 "macroscopic ductility. How does the bonding character (covalent vs "
+                 "metallic) determine whether a material is brittle or ductile?",
+            rubric="Evaluate cross-scale bonding → dislocation → ductility reasoning.",
+            rubric_items=[
+                {"criterion": "Bonding character", "weight": 0.25, "keywords": ["covalent", "metallic"]},
+                {"criterion": "Dislocation mobility", "weight": 0.25, "keywords": ["dislocation", "mobility"]},
+                {"criterion": "Grain boundary barriers", "weight": 0.25, "keywords": ["grain", "boundary"]},
+                {"criterion": "Macroscopic ductility", "weight": 0.25, "keywords": ["brittle", "ductile"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["bonding", "dislocation", "ductility", "cross-scale"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_034",
+            category="cross_scale",
+            task="Trace the causal chain from dopant substitution to electrical "
+                 "conductivity: dopant incorporation → carrier concentration → "
+                 "carrier scattering → macroscopic conductivity.",
+            rubric="Evaluate dopant → carrier → scattering → conductivity chain.",
+            rubric_items=[
+                {"criterion": "Dopant substitution", "weight": 0.25, "keywords": ["substitution", "dopant"]},
+                {"criterion": "Carrier concentration", "weight": 0.25, "keywords": ["carrier", "electron"]},
+                {"criterion": "Scattering and mobility", "weight": 0.25, "keywords": ["scattering", "mobility"]},
+                {"criterion": "Conductivity outcome", "weight": 0.25, "keywords": ["conductivity", "resistivity"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["dopant", "carrier", "scattering", "conductivity"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_035",
+            category="cross_scale",
+            task="Explain how atomic vacancies, porosity, and grain boundaries "
+                 "collectively affect thermal conductivity across length scales. "
+                 "Discuss phonon scattering at each scale.",
+            rubric="Evaluate vacancy + porosity → thermal conductivity cross-scale reasoning.",
+            rubric_items=[
+                {"criterion": "Vacancy phonon scattering", "weight": 0.25, "keywords": ["vacancy", "phonon"]},
+                {"criterion": "Porosity effect", "weight": 0.25, "keywords": ["porosity", "pore"]},
+                {"criterion": "Grain boundary scattering", "weight": 0.25, "keywords": ["grain", "boundary"]},
+                {"criterion": "Temperature dependence", "weight": 0.25, "keywords": ["temperature", "thermal"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["vacancy", "porosity", "thermal-conductivity", "phonon"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_036",
+            category="cross_scale",
+            task="Connect sintering to mechanical strength through the chain: "
+                 "diffusion → grain growth → Hall-Petch strengthening → yield "
+                 "strength. Explain each link.",
+            rubric="Evaluate sintering → diffusion → grain → strength chain.",
+            rubric_items=[
+                {"criterion": "Diffusion mechanism", "weight": 0.25, "keywords": ["diffusion", "fick"]},
+                {"criterion": "Grain growth", "weight": 0.25, "keywords": ["grain", "growth"]},
+                {"criterion": "Hall-Petch strengthening", "weight": 0.25, "keywords": ["hall-petch", "strength"]},
+                {"criterion": "Yield strength outcome", "weight": 0.25, "keywords": ["yield", "strength"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["sintering", "diffusion", "grain-growth", "hall-petch"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_037",
+            category="cross_scale",
+            task="Describe how processing parameters (e.g., cooling rate) determine "
+                 "microstructure, which in turn controls material properties. Give "
+                 "a concrete example of the processing–structure–property chain.",
+            rubric="Evaluate processing → microstructure → property chain reasoning.",
+            rubric_items=[
+                {"criterion": "Cooling rate effect", "weight": 0.25, "keywords": ["cooling", "rate"]},
+                {"criterion": "Microstructure formation", "weight": 0.25, "keywords": ["microstructure", "phase"]},
+                {"criterion": "Grain and phase control", "weight": 0.25, "keywords": ["grain", "phase"]},
+                {"criterion": "Property prediction", "weight": 0.25, "keywords": ["property", "strength"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["processing", "microstructure", "property", "chain"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_038",
+            category="cross_scale",
+            task="Trace how atomic-level crystal structure determines the electronic "
+                 "band structure, which in turn governs optical absorption and "
+                 "emission properties. Cover band gap, DOS, and optical transitions.",
+            rubric="Evaluate atomic structure → electronic → optical chain.",
+            rubric_items=[
+                {"criterion": "Band structure / band gap", "weight": 0.25, "keywords": ["band", "structure"]},
+                {"criterion": "Density of states", "weight": 0.25, "keywords": ["density", "states"]},
+                {"criterion": "Optical absorption", "weight": 0.25, "keywords": ["absorption", "optical"]},
+                {"criterion": "Emission / luminescence", "weight": 0.25, "keywords": ["emission", "luminescence"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["band-structure", "density-of-states", "optical", "absorption"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_039",
+            category="cross_scale",
+            task="Describe the cross-scale progression from dislocation pile-up at "
+                 "grain boundaries to crack initiation, crack propagation, and "
+                 "final macroscopic fracture.",
+            rubric="Evaluate defect → meso crack → macro fracture chain.",
+            rubric_items=[
+                {"criterion": "Dislocation pile-up", "weight": 0.25, "keywords": ["dislocation", "pile-up"]},
+                {"criterion": "Crack initiation", "weight": 0.25, "keywords": ["crack", "initiation"]},
+                {"criterion": "Crack propagation", "weight": 0.25, "keywords": ["crack", "propagation"]},
+                {"criterion": "Final fracture", "weight": 0.25, "keywords": ["fracture", "failure"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["dislocation", "crack", "fracture", "cross-scale"],
+        ))
+        self.add(BenchmarkCase(
+            case_id="csmbench_040",
+            category="cross_scale",
+            task="Explain how composition and phase diagram analysis are used to "
+                 "predict equilibrium phases and resulting material properties. "
+                 "Give an example of composition → phase diagram → property "
+                 "prediction.",
+            rubric="Evaluate composition → phase diagram → property chain.",
+            rubric_items=[
+                {"criterion": "Composition analysis", "weight": 0.25, "keywords": ["composition", "alloy"]},
+                {"criterion": "Phase diagram usage", "weight": 0.25, "keywords": ["phase", "diagram"]},
+                {"criterion": "Equilibrium phases", "weight": 0.25, "keywords": ["equilibrium", "phase"]},
+                {"criterion": "Property prediction", "weight": 0.25, "keywords": ["property", "prediction"]},
+            ],
+            evaluator=rubric_evaluator,
+            tags=["composition", "phase-diagram", "equilibrium", "property"],
+        ))
+
         return self
 
     async def run(
