@@ -74,6 +74,9 @@ include = ["huginn*"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "--cov=huginn --cov-report=term-missing"
+markers = [
+    "integration: heavy tests that need full stack (skip on fast CI)",
+]
 
 [tool.black]
 line-length = 88

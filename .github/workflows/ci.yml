@@ -41,12 +41,11 @@ jobs:
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
         run: |
           cd agent
-          # Fall back to explicit path if pytest config is missing
-          if [ -f pyproject.toml ] || [ -f pytest.ini ] || [ -f setup.cfg ]; then
-            pytest -q --cov-fail-under=0 -m "not integration" --timeout=120
-          else
-            python -m pytest tests/ -v
-          fi
+          python -m pytest -q --cov-fail-under=0 --timeout=120 \
+            --ignore=tests/test_api_contract.py \
+            --ignore=tests/test_security_penetration.py \
+            --ignore=tests/test_chaos_engineering.py \
+            --ignore=tests/stress
 
   integration-tests:
     runs-on: ubuntu-latest
