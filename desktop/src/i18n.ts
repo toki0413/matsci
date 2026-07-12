@@ -78,7 +78,7 @@ const resources = {
       'app.default': 'default',
 
       /* ── Guide modal ── */
-      'guide.title': 'Welcome to Muninn',
+      'guide.title': 'Welcome to Huginn',
       'guide.subtitle': 'Magic springs from the wellspring of imagination.',
       'guide.intro': 'A few quick tips to get you started:',
       'guide.step1': 'Open <strong>Settings</strong> and enter your LLM provider / API key. The app saves it locally and pushes it to the backend automatically.',
@@ -94,7 +94,7 @@ const resources = {
       'chat.welcome': 'Materials Science Assistant',
       'chat.welcomeSub':
         'Ask about DFT calculations, molecular dynamics, crystal structures, or any materials science question.',
-      'chat.placeholder': 'Ask Muninn anything...',
+      'chat.placeholder': 'Ask Huginn anything...',
       'chat.placeholderPlan': 'Describe what you want to do. I\'ll generate a plan first.',
       'chat.placeholderBuild': 'Run the plan with tool execution enabled…',
       'chat.placeholderConnected': 'Ask about materials science, DFT, MD, packing, UQ/GP…',
@@ -870,7 +870,7 @@ const resources = {
       'app.default': '默认',
 
       /* ── Guide modal ── */
-      'guide.title': '欢迎使用 Muninn',
+      'guide.title': '欢迎使用 Huginn',
       'guide.subtitle': '灵感之泉，涌动不息。',
       'guide.intro': '几个快速上手提示：',
       'guide.step1': '打开<strong>设置</strong>，输入你的 LLM 服务商和 API 密钥。应用会本地保存并自动推送到后端。',
@@ -885,7 +885,7 @@ const resources = {
       /* ── Chat panel ── */
       'chat.welcome': '材料科学助手',
       'chat.welcomeSub': '可以询问 DFT 计算、分子动力学、晶体结构，或任何材料科学问题。',
-      'chat.placeholder': '向 Muninn 提问...',
+      'chat.placeholder': '向 Huginn 提问...',
       'chat.placeholderPlan': '描述你想做什么。我会先生成一个计划。',
       'chat.placeholderBuild': '以工具执行模式运行计划…',
       'chat.placeholderConnected': '询问材料科学、DFT、MD、堆积、UQ/GP…',

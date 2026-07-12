@@ -883,9 +883,9 @@ export default function App() {
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
-          <img src="/raven-logo-64.png" srcSet="/raven-logo-64.png 1x, /raven-logo-128.png 2x" alt="Muninn" className="h-8 w-8 rounded-md object-contain" />
+          <img src="/raven-logo-64.png" srcSet="/raven-logo-64.png 1x, /raven-logo-128.png 2x" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
           <div className="flex flex-1 flex-col">
-            <div className="text-[15px] font-bold tracking-tight">Muninn</div>
+            <div className="text-[15px] font-bold tracking-tight">Huginn</div>
             <div className="text-[12px] text-text-muted leading-none font-medium">{t('app.subtitle')}</div>
           </div>
           <button
