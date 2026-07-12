@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 import json
-import pickle
 import subprocess
 import sys
 import tempfile
@@ -194,6 +193,12 @@ class KernelSession:
             "try:\n"
             "    with open(_sf, 'r') as _f:\n"
             "        _g = json.load(_f)\n"
+            # ponytail: pickle fallback only runs for legacy state files
+            # written by older versions that used pickle instead of JSON.
+            # Risk: pickle.load on a tampered temp file = arbitrary code exec.
+            # Acceptable because the temp file is created by this module and
+            # lives in the OS temp dir (single-user local tool).
+            # Upgrade: delete this fallback once all sessions use JSON state.
             "except (json.JSONDecodeError, UnicodeDecodeError):\n"
             "    import pickle, logging\n"
             "    logging.warning('loading legacy pickle state: %s', _sf)\n"
