@@ -107,6 +107,11 @@ class TransolverTool(HuginnTool):
         phases=frozenset({ResearchPhase.EXECUTION}),
         constraint_scope="pde",
         light_alternatives=("numerical_tool", "symbolic_math_tool"),
+        degradation_chain=(
+            "numerical_tool",           # FEM fallback
+            "materials_database_tool",  # → database lookup
+        ),
+        quality_tier="ml_surrogate",  # Transolver = ML surrogate
         # train is the only action that burns serious GPU; predict/list are cheap
         heavy_actions=frozenset({"train"}),
     )
