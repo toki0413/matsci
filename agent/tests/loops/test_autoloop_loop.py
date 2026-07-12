@@ -90,7 +90,7 @@ def _make_stage_llm(plan_fn=None):
 def _stub_heavy_calls(monkeypatch, fake_llm):
     monkeypatch.setattr("huginn.autoloop.engine.get_model", lambda settings: fake_llm)
     monkeypatch.setattr("huginn.autoloop.engine.BenchmarkRunner", lambda: _StubBenchRunner())
-    monkeypatch.setattr("huginn.autoloop.engine.CoderRunner", lambda: MagicMock())
+    monkeypatch.setattr("huginn.autoloop.engine.CoderRunner", lambda *a, **kw: MagicMock())
     monkeypatch.setattr("huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
         "huginn.agents.speculator.on_turn_start",

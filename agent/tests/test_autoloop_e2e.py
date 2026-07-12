@@ -125,7 +125,7 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
         "huginn.autoloop.engine.BenchmarkRunner", lambda: _StubBenchRunner()
     )
     monkeypatch.setattr(
-        "huginn.autoloop.engine.CoderRunner", lambda: MagicMock()
+        "huginn.autoloop.engine.CoderRunner", lambda *a, **kw: MagicMock()
     )
     monkeypatch.setattr(
         "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock()

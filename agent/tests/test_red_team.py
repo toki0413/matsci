@@ -284,12 +284,12 @@ def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from huginn.autoloop.engine import AutoloopEngine
 
     monkeypatch.setattr("huginn.autoloop.engine.get_model", lambda s: MagicMock())
-    monkeypatch.setattr("huginn.autoloop.engine.MemoryManager", lambda: MagicMock())
+    monkeypatch.setattr("huginn.autoloop.engine.MemoryManager", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
-        "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda: MagicMock()
+        "huginn.autoloop.engine.ProjectKnowledgeGraph", lambda *a, **kw: MagicMock()
     )
-    monkeypatch.setattr("huginn.autoloop.engine.BenchmarkRunner", lambda: MagicMock())
-    monkeypatch.setattr("huginn.autoloop.engine.CoderRunner", lambda: MagicMock())
+    monkeypatch.setattr("huginn.autoloop.engine.BenchmarkRunner", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("huginn.autoloop.engine.CoderRunner", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
         "huginn.agents.speculator.on_turn_start",
         lambda *a, **kw: {"hint": "", "predictions": []},
