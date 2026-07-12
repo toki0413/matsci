@@ -108,12 +108,14 @@ class Orchestrator:
         max_concurrent: int = 3,
         plan_store: PlanStore | None = None,
         auto_confirm: bool = False,
+        approval_callback: Any | None = None,
     ):
         self.factory = factory
         self.memory_manager = memory_manager
         self.max_concurrent = max_concurrent
         self.plan_store = plan_store
         self.auto_confirm = auto_confirm
+        self._approval_callback = approval_callback
 
     async def plan(
         self, objective: str, auto_confirm: bool | None = None
@@ -310,6 +312,7 @@ class Orchestrator:
                     agent = self.factory.create(
                         task.agent_id,
                         memory_manager=sub_memory,
+                        approval_callback=self._approval_callback,
                     )
                     state = await asyncio.to_thread(agent.invoke, full_prompt)
                     output = self._extract_output(state)

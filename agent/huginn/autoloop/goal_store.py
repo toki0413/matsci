@@ -28,29 +28,41 @@ class Goal:
 
     lifecycle: active → paused → active → completed
     sub_goals can be appended at any time without restarting.
+
+    Unified goal: supports both GoalStore (iteration tracking, unknowns)
+    and GoalScheduler (success_criteria, completion check) use cases.
     """
 
     id: str
     text: str
     sub_goals: list[str] = field(default_factory=list)
     iteration: int = 0
-    status: str = "active"  # active | paused | completed
+    status: str = "active"  # active | paused | completed | pending | failed
     created_at: str = ""
     updated_at: str = ""
     session_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     # Unknown tracking — 诊断指标, 不是奖励信号.
-    # 避免 self-reference paradox: 不追踪 discovery rate (会发现越多分越高 → 刷分),
-    # 追踪 resolution ratio 和 half-life (解决才加分, 发现不解决 = ratio 下降).
-    unknowns: list[dict[str, Any]] = field(default_factory=list)  # [{id, text, type, discovered_at, resolved_at}]
-    unknowns_discovered: int = 0  # cumulative counter
-    unknowns_resolved: int = 0    # cumulative counter
+    unknowns: list[dict[str, Any]] = field(default_factory=list)
+    unknowns_discovered: int = 0
+    unknowns_resolved: int = 0
+    # Scheduler fields (optional — used by GoalScheduler)
+    objective: str = ""  # alias for text when used via scheduler
+    success_criteria: list[str] = field(default_factory=list)
+    max_iterations: int = 20
+    completed_at: str | None = None
+    completion_condition: str | None = None
 
     def __post_init__(self) -> None:
         if not self.created_at:
             self.created_at = _now_iso()
         if not self.updated_at:
             self.updated_at = self.created_at
+        # text ↔ objective sync: whichever was set, mirror to the other
+        if not self.text and self.objective:
+            self.text = self.objective
+        elif not self.objective and self.text:
+            self.objective = self.text
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -70,6 +82,11 @@ class Goal:
             unknowns=data.get("unknowns", []),
             unknowns_discovered=data.get("unknowns_discovered", 0),
             unknowns_resolved=data.get("unknowns_resolved", 0),
+            objective=data.get("objective", ""),
+            success_criteria=data.get("success_criteria", []),
+            max_iterations=data.get("max_iterations", 20),
+            completed_at=data.get("completed_at"),
+            completion_condition=data.get("completion_condition"),
         )
 
 
@@ -101,8 +118,12 @@ class GoalStore:
             for row in data.get("goals", []):
                 g = Goal.from_dict(row)
                 self._goals[g.id] = g
-        except (json.JSONDecodeError, TypeError, KeyError, OSError):
-            pass
+        except (json.JSONDecodeError, TypeError, KeyError, OSError) as e:
+            # don't silently swallow — log so user knows their goals file is corrupted
+            import logging
+            logging.getLogger(__name__).warning(
+                "goals.json load failed (%s), starting fresh", e
+            )
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

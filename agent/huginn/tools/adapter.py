@@ -923,8 +923,10 @@ class ToolAdapter:
                                 _ask_confirmation(context, confirm_q)
                             )
                     except Exception:
-                        # ClarificationManager unavailable — safe passthrough
-                        confirmed = True
+                        # ClarificationManager unavailable — fail closed for safety
+                        # ponytail: 与 async path (L399) 保持一致, fail-closed
+                        logger.warning("ClarificationManager unavailable (sync), failing closed")
+                        confirmed = False
                     if not confirmed:
                         output = {"error": f"用户取消了 {tool.name} 调用", "_user_cancelled": True}
                         _audit(input_data, output, approved=False, reason="user_cancelled")

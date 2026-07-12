@@ -970,16 +970,15 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
 
 
 _knowledge_base: KnowledgeBase | None = None
+_kb_lock = __import__("threading").Lock()
 
 
 def get_knowledge_base(workspace: str = ".") -> KnowledgeBase:
-    """Get or create the singleton knowledge base for a workspace.
-
-    Built-in seed documents are automatically ingested the first time the
-    knowledge base is created.
-    """
+    """Thread-safe singleton accessor for the knowledge base."""
     global _knowledge_base
     if _knowledge_base is None:
-        _knowledge_base = KnowledgeBase(Path(workspace) / ".huginn_kb")
-        seed_knowledge_base(_knowledge_base, force=False)
+        with _kb_lock:
+            if _knowledge_base is None:  # double-checked locking
+                _knowledge_base = KnowledgeBase(Path(workspace) / ".huginn_kb")
+                seed_knowledge_base(_knowledge_base, force=False)
     return _knowledge_base

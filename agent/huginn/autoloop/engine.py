@@ -883,6 +883,11 @@ class AutoloopEngine:
                 "objective": objective[:200],
             })
 
+            # truncate speculator hint to prevent unbounded growth across iterations
+            # ponytail: keep last 2000 chars, earlier feedback is stale anyway
+            if len(self._speculator_hint) > 2000:
+                self._speculator_hint = self._speculator_hint[-2000:]
+
             # 1. Perceive
             phase = self._run_phase("perceive", self._perceive)
             phases.append(phase)
@@ -918,7 +923,10 @@ class AutoloopEngine:
                            current_label=f"iter {self._iteration}: hypothesize ({phase.status})")
             hypothesis = phase.result
             if not hypothesis:
-                print("  → No hypothesis generated, skipping iteration")
+                # propagate error to speculator hint so next iteration knows why
+                if phase.error:
+                    self._speculator_hint += f"\n[failed: hypothesize] {phase.error}\n"
+                print(f"  → No hypothesis generated ({phase.error or 'unknown'}), skipping")
                 continue
             print(f"  → Hypothesis: {hypothesis}")
             # 发布 campaign.hypothesis 事件
@@ -944,7 +952,9 @@ class AutoloopEngine:
                            current_label=f"iter {self._iteration}: plan ({phase.status})")
             plan = phase.result
             if not plan:
-                print("  → No plan generated, skipping iteration")
+                if phase.error:
+                    self._speculator_hint += f"\n[failed: plan] {phase.error}\n"
+                print(f"  → No plan generated ({phase.error or 'unknown'}), skipping")
                 continue
             print(f"  → Plan: {plan['mode']} | {plan['description']}")
 
@@ -976,6 +986,7 @@ class AutoloopEngine:
                            current_label=f"iter {self._iteration}: execute ({phase.status})")
             execution_result = phase.result
             if phase.error:
+                self._speculator_hint += f"\n[failed: execute] {phase.error}\n"
                 print(f"  → Execution failed: {phase.error}")
                 continue
             print(f"  → Execution complete: {execution_result}")
