@@ -105,7 +105,18 @@ class ErrorNormalizeMiddleware(BaseHTTPMiddleware):
             return response  # not JSON or parse error, leave as-is
 
         if not isinstance(body, dict) or not _is_legacy_error(body):
-            return response
+            # body_iterator was consumed above — must rebuild so the
+            # downstream middleware gets the actual bytes, not an empty stream
+            return Response(
+                content=body_bytes,
+                status_code=response.status_code,
+                headers={
+                    k: v
+                    for k, v in response.headers.items()
+                    if k.lower() != "content-length"
+                },
+                media_type=response.media_type,
+            )
 
         # For 200 responses, only normalize if success=false
         if status_code == 200 and body.get("success") is not False:
@@ -136,5 +147,6 @@ def should_enable_normalize() -> bool:
         return False
     if val.lower() in ("1", "true", "yes"):
         return True
-    # Default: enabled unless dev mode
-    return os.environ.get("HUGINN_DEV_MODE", "") != "1"
+    # Default: disabled in dev mode
+    dev = os.environ.get("HUGINN_DEV_MODE", "").lower()
+    return dev not in ("1", "true", "yes")
