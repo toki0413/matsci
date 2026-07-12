@@ -62,7 +62,7 @@ import {
   MessageCircle, Bird, Briefcase, HelpCircle,
   ChevronDown, Sparkles,
   Search, Grid, Sun, Moon, Plus, Trash2,
-  Maximize2, GitBranch,
+  Maximize2, GitBranch, Brain, Cpu,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -883,9 +883,9 @@ export default function App() {
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
-          <img src="/raven-logo-64.png" srcSet="/raven-logo-64.png 1x, /raven-logo-128.png 2x" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
+          <img src="/raven-logo-64.png" srcSet="/raven-logo-64.png 1x, /raven-logo-128.png 2x" alt="Muninn" className="h-8 w-8 rounded-md object-contain" />
           <div className="flex flex-1 flex-col">
-            <div className="text-[15px] font-bold tracking-tight">Huginn</div>
+            <div className="text-[15px] font-bold tracking-tight">Muninn</div>
             <div className="text-[12px] text-text-muted leading-none font-medium">{t('app.subtitle')}</div>
           </div>
           <button
@@ -899,14 +899,17 @@ export default function App() {
         </div>
 
         {/* Compact icon tabs — horizontal bar */}
-        <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+        <div className="flex items-center gap-0.5 border-b border-border px-1.5 py-1.5">
           {([
-            { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={16} /> },
-            { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={16} /> },
-            { id: "projects", label: "Projects", icon: <Briefcase size={16} /> },
-            { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={16} /> },
-            { id: "result", label: "Result", icon: <Maximize2 size={16} /> },
-            { id: "settings", label: t('tab.settings'), icon: <Settings size={16} /> },
+            { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={15} /> },
+            { id: "tools", label: t('tab.tools') || 'Tools', icon: <Wrench size={15} /> },
+            { id: "memory", label: t('tab.memory') || 'Memory', icon: <Brain size={15} /> },
+            { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={15} /> },
+            { id: "hpc", label: "HPC", icon: <Cpu size={15} /> },
+            { id: "projects", label: "Projects", icon: <Briefcase size={15} /> },
+            { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={15} /> },
+            { id: "result", label: "Result", icon: <Maximize2 size={15} /> },
+            { id: "settings", label: t('tab.settings'), icon: <Settings size={15} /> },
           ] as const).map((item) => (
             <button
               key={item.id}
@@ -1993,30 +1996,14 @@ export default function App() {
               {t('guide.intro')}
             </p>
             <ol className="mb-6 space-y-3 text-sm text-text-primary">
-              <li className="flex gap-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
-                  1
-                </span>
-                <span dangerouslySetInnerHTML={{ __html: t('guide.step1') }} />
-              </li>
-              <li className="flex gap-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
-                  2
-                </span>
-                <span dangerouslySetInnerHTML={{ __html: t('guide.step2') }} />
-              </li>
-              <li className="flex gap-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
-                  3
-                </span>
-                <span dangerouslySetInnerHTML={{ __html: t('guide.step3') }} />
-              </li>
-              <li className="flex gap-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
-                  4
-                </span>
-                <span dangerouslySetInnerHTML={{ __html: t('guide.step4') }} />
-              </li>
+              {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+                <li key={n} className="flex gap-3">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
+                    {n}
+                  </span>
+                  <span dangerouslySetInnerHTML={{ __html: t(`guide.step${n}`) }} />
+                </li>
+              ))}
             </ol>
             <div className="flex justify-end">
               <button onClick={closeGuide} className="btn-primary px-5 py-2">

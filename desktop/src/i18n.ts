@@ -78,20 +78,23 @@ const resources = {
       'app.default': 'default',
 
       /* ── Guide modal ── */
-      'guide.title': 'Welcome to Huginn',
+      'guide.title': 'Welcome to Muninn',
       'guide.subtitle': 'Magic springs from the wellspring of imagination.',
       'guide.intro': 'A few quick tips to get you started:',
       'guide.step1': 'Open <strong>Settings</strong> and enter your LLM provider / API key. The app saves it locally and pushes it to the backend automatically.',
       'guide.step2': 'The Python backend starts automatically. If it doesn\'t, use the <strong>▶ Start backend</strong> button in the header or Settings.',
-      'guide.step3': 'Click <b>More Tools</b> or press <kbd>Ctrl+K</kbd> to access Files, Tools, Skills, and other panels.',
-      'guide.step4': 'In chat, tool calls appear as expandable cards so you can see exactly what the agent is doing.',
+      'guide.step3': 'Type <code>/research</code> in chat to start an autonomous research loop, or <code>/plan</code> to generate a plan before executing.',
+      'guide.step4': 'Click <b>More Tools</b> or press <kbd>Ctrl+K</kbd> to access Files, Tools, Skills, and other panels.',
+      'guide.step5': 'The <strong>Memory</strong> panel stores research findings across sessions — Muninn remembers what you discovered.',
+      'guide.step6': 'Drag files (CIF, POSCAR, CSV) into the chat to analyze structures or data directly.',
+      'guide.step7': 'Summon <strong>Muninn</strong> from the sidebar footer — your desktop companion watches agent activity and keeps you company.',
       'guide.gotIt': 'Got it',
 
       /* ── Chat panel ── */
       'chat.welcome': 'Materials Science Assistant',
       'chat.welcomeSub':
         'Ask about DFT calculations, molecular dynamics, crystal structures, or any materials science question.',
-      'chat.placeholder': 'Ask Huginn anything...',
+      'chat.placeholder': 'Ask Muninn anything...',
       'chat.placeholderPlan': 'Describe what you want to do. I\'ll generate a plan first.',
       'chat.placeholderBuild': 'Run the plan with tool execution enabled…',
       'chat.placeholderConnected': 'Ask about materials science, DFT, MD, packing, UQ/GP…',
@@ -867,19 +870,22 @@ const resources = {
       'app.default': '默认',
 
       /* ── Guide modal ── */
-      'guide.title': '欢迎使用 Huginn',
+      'guide.title': '欢迎使用 Muninn',
       'guide.subtitle': '灵感之泉，涌动不息。',
       'guide.intro': '几个快速上手提示：',
       'guide.step1': '打开<strong>设置</strong>，输入你的 LLM 服务商和 API 密钥。应用会本地保存并自动推送到后端。',
       'guide.step2': 'Python 后端会自动启动。如果没有，使用标题栏或设置中的<strong>▶ 启动后端</strong>按钮。',
-      'guide.step3': '点击<b>更多工具</b>或按 <kbd>Ctrl+K</kbd> 访问文件、工具、技能等面板。',
-      'guide.step4': '在对话中，工具调用以可展开卡片显示，让你清楚看到智能体的每一步操作。',
+      'guide.step3': '在对话中输入 <code>/research</code> 启动自主研究循环，或 <code>/plan</code> 先生成计划再执行。',
+      'guide.step4': '点击<b>更多工具</b>或按 <kbd>Ctrl+K</kbd> 访问文件、工具、技能等面板。',
+      'guide.step5': '<strong>记忆</strong>面板跨会话保存研究发现 — Muninn 记得你探索过的一切。',
+      'guide.step6': '将文件（CIF、POSCAR、CSV）拖入对话窗口，直接分析结构或数据。',
+      'guide.step7': '从侧边栏底部召唤 <strong>Muninn</strong> — 你的桌宠伙伴会监控智能体活动并陪伴你。',
       'guide.gotIt': '知道了',
 
       /* ── Chat panel ── */
       'chat.welcome': '材料科学助手',
       'chat.welcomeSub': '可以询问 DFT 计算、分子动力学、晶体结构，或任何材料科学问题。',
-      'chat.placeholder': '向 Huginn 提问...',
+      'chat.placeholder': '向 Muninn 提问...',
       'chat.placeholderPlan': '描述你想做什么。我会先生成一个计划。',
       'chat.placeholderBuild': '以工具执行模式运行计划…',
       'chat.placeholderConnected': '询问材料科学、DFT、MD、堆积、UQ/GP…',
