@@ -249,6 +249,20 @@ LLM_COST_USD = Gauge(
     "Accumulated LLM cost in USD.",
     labelnames=("model",),
 )
+# TPS / TTFT 实时监控: 评估流式生成速率 + 首 token 延迟.
+# ponytail: Histogram buckets 覆盖 1 tok/s (极慢) 到 5000 tok/s (极快).
+LLM_TPS = Histogram(
+    "huginn_llm_tps",
+    "LLM tokens-per-second during streaming (chunk_chars/4 / elapsed).",
+    labelnames=("model",),
+    buckets=(1, 5, 10, 20, 30, 50, 80, 120, 200, 500, 1000, 5000),
+)
+LLM_TTFT_SECONDS = Histogram(
+    "huginn_llm_ttft_seconds",
+    "LLM time-to-first-token in seconds.",
+    labelnames=("model",),
+    buckets=(0.05, 0.1, 0.2, 0.5, 1, 2, 3, 5, 10, 30, 60),
+)
 
 # Operational gauges.
 DB_CONNECTIONS_ACTIVE = Gauge(
@@ -354,6 +368,16 @@ def track_tool_call(tool_name: str) -> None:
     """Increment the tool call counter."""
     try:
         TOOL_CALLS_TOTAL.labels(tool_name=tool_name).inc()
+    except Exception:
+        pass
+
+
+def track_llm_tps(model: str, ttft_ms: int, tps: float) -> None:
+    """Wire streaming TPS / TTFT to Prometheus. Best-effort, never raises."""
+    try:
+        LLM_TPS.labels(model=model).observe(tps)
+        if ttft_ms > 0:
+            LLM_TTFT_SECONDS.labels(model=model).observe(ttft_ms / 1000.0)
     except Exception:
         pass
 

@@ -117,8 +117,13 @@ class RedTeamReviewer:
         model: Any | None = None,
         enabled_transitions: set[tuple[str, str]] | None = None,
         failure_mode_registry: Any | None = None,
+        critic_model: Any | None = None,
     ) -> None:
         self._model = model
+        # 跨模型审查: 优先用 critic_model 做对抗, 避免同模型自审 (confirmation bias).
+        # None 时 fallback 到 self._model, 保持向后兼容.
+        # ponytail: 单 critic, 升级路径: 并行多 critic 投票 + Dempster 合成.
+        self._critic_model = critic_model
         self._enabled = enabled_transitions or _REVIEW_TRANSITIONS
         self._last_report: RedTeamReport | None = None
         # 领域失败模式注册表 (材料科学具体陷阱). None 时用默认单例.
@@ -153,8 +158,12 @@ class RedTeamReviewer:
         else:
             findings = []
 
-        # LLM 增强 (可选, 失败不阻塞)
-        if self._model is not None and self._is_real_model():
+        # LLM 增强 (可选, 失败不阻塞).
+        # 跨模型审查: 优先用 critic_model, fallback 到 self._model.
+        # 同模型自审有 confirmation bias, 但比无 LLM 增强好.
+        # ponytail: 单 critic 同步调用. 升级: 异步并行多 critic 投票.
+        model_for_review = self._critic_model or self._model
+        if model_for_review is not None and not hasattr(model_for_review, "_mock_name"):
             try:
                 findings.extend(self._llm_findings(from_phase, to_phase, evidence))
             except Exception:
@@ -290,8 +299,10 @@ class RedTeamReviewer:
             )),
             HumanMessage(content=prompt),
         ]
-        # 用同步 invoke 避免在 async 引擎上下文里 run_until_complete 报错
-        resp = self._model.invoke(messages)
+        # 用同步 invoke 避免在 async 引擎上下文里 run_until_complete 报错.
+        # 跨模型审查: 优先 critic_model, fallback 主 model (与 review() 同源选择).
+        critic = self._critic_model or self._model
+        resp = critic.invoke(messages)
         text = str(resp.content).strip()
         findings = self._parse_llm_findings(text)
         # ARGUS: LLM 没标 source_class 的 finding, 从 evidence 自动派生 dominant.

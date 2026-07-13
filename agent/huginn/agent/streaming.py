@@ -638,6 +638,13 @@ class StreamingMixin:
         except Exception:
             logger.debug("Prometheus turn counter unavailable", exc_info=True)
 
+        # TPS / TTFT 实时监控: t0=turn 起点, t_first_token=首个 chunk 时间.
+        # 在 turn_span 作用域外初始化, finally 块里算 tps.
+        # ponytail: chunk_chars/4 ≈ tokens (latin). 升级: 用 response_metadata.usage.output_tokens 校准.
+        _tps_t0 = time.monotonic()
+        _tps_t_first: float | None = None
+        _tps_chunk_chars = 0
+
         with self._telemetry_collector.span(
             "agent_turn", thread_id=thread_id
         ) as turn_span:
@@ -774,7 +781,29 @@ class StreamingMixin:
             inputs = {"messages": messages}
 
             # Compact initial messages if a context budget is configured.
-            if self.context_budget_tokens > 0:
+            # mode 切换 flag: CSM 进入 S3_SWITCH/S6_FEEDBACK 时标记需要 compaction.
+            # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
+            if getattr(self, "_needs_compaction", False) and self.context_budget_tokens > 0:
+                summarizer = self._make_summarizer()
+                if summarizer is not None:
+                    self._needs_compaction = False  # 清 flag, 避免重复触发
+                    logger.info("mode-switch triggered compaction (CSM S3/S6)")
+                    inputs["messages"], self._conversation_summary = (
+                        await summarize_compact_messages(
+                            inputs["messages"],
+                            self.context_budget_tokens,
+                            keep_last_n=4,
+                            summarizer=summarizer,
+                            existing_summary=self._build_compact_summary(),
+                        )
+                    )
+                else:
+                    inputs["messages"] = compact_messages(
+                        inputs["messages"],
+                        self.context_budget_tokens,
+                        keep_last_n=1,
+                    )
+            elif self.context_budget_tokens > 0:
                 summarizer = self._make_summarizer()
                 if summarizer is not None:
                     # BeliefEntropy 闭环: 从上次 measure 结果读 adaptive 参数.
@@ -933,6 +962,13 @@ class StreamingMixin:
                                     if hasattr(chunk, "additional_kwargs"):
                                         reasoning = chunk.additional_kwargs.get("reasoning_content", "")
                                     if text:
+                                        # TPS: 首次 chunk 记 TTFT, 每个 chunk 累加字符数.
+                                        if _tps_t_first is None:
+                                            _tps_t_first = time.monotonic()
+                                            turn_span.metadata["llm_ttft_ms"] = int(
+                                                (_tps_t_first - _tps_t0) * 1000
+                                            )
+                                        _tps_chunk_chars += len(text)
                                         yield {"_token": text}
                                     if reasoning:
                                         yield {"_reasoning": reasoning}
@@ -1053,6 +1089,22 @@ class StreamingMixin:
                 pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
                 raise
             finally:
+                # TPS 收尾: chunk_chars/4 ≈ tokens (latin). 写 turn_span + Prometheus.
+                if _tps_t_first is not None and _tps_chunk_chars > 0:
+                    elapsed = time.monotonic() - _tps_t_first
+                    if elapsed > 0:
+                        tps = (_tps_chunk_chars / 4.0) / elapsed
+                        turn_span.metadata["llm_tps"] = round(tps, 1)
+                        turn_span.metadata["llm_output_chars"] = _tps_chunk_chars
+                        try:
+                            from huginn.routes.metrics import track_llm_tps
+                            track_llm_tps(
+                                model=getattr(self.model, "model", "unknown"),
+                                ttft_ms=turn_span.metadata.get("llm_ttft_ms", 0),
+                                tps=tps,
+                            )
+                        except Exception:
+                            logger.debug("TPS prometheus publish failed", exc_info=True)
                 self._tool_adapter.set_budget(None)
                 self._tool_adapter.set_router(None)
                 self._tool_adapter.set_loop_detector(None)
