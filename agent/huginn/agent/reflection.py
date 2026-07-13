@@ -283,4 +283,13 @@ class ReflectionMixin:
                         exc_info=True,
                     )
 
+        # 节流保存 session snapshot: 每 3 turn 一次, 让下次会话能恢复 _mode/_csm/_phase.
+        # 之前 session resume 只恢复消息历史, mode/csm/phase 全丢. 放这里集中, 不污染 mutation 点.
+        # ponytail: 节流 + try/except 静默. 升级: dirty flag + 增量 diff.
+        if getattr(self, "_turn_count", 0) % 3 == 0:
+            try:
+                self._save_session_snapshot()
+            except Exception:
+                logger.debug("session snapshot save failed", exc_info=True)
+
         self._session_state.clear_turn_results()

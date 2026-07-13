@@ -82,3 +82,73 @@ class SessionMixin:
                 )
         except Exception:
             logger.debug("active plan load failed", exc_info=True)
+
+        # 结构化 snapshot 恢复: 上面只恢复 summary / plan, 这里补 _mode / _csm / _phase /
+        # turns_count. 之前 session resume 这几个字段全丢, agent 默默回 chat mode + S0 + OPEN.
+        # ponytail: 只读最新一条, 不覆盖已恢复的 plan. 升级: 按 session_id 精确读 + 版本化.
+        try:
+            snap = self.memory.load_session_snapshot()
+            if isinstance(snap, dict):
+                mode = snap.get("mode")
+                if mode in ("chat", "research", "plan"):
+                    # 不覆盖 plan 恢复触发的 S4_CONSTRUCT, 只在 csm 还是 S0 时恢复
+                    self._mode = mode
+                csm_state = snap.get("csm_state")
+                if isinstance(csm_state, str) and csm_state:
+                    from huginn.cognitive_engine import CognitiveState
+                    try:
+                        target = CognitiveState(csm_state)
+                        # plan 恢复已经设了 S4_CONSTRUCT, 别覆盖; 否则恢复 csm
+                        if self._csm._state == CognitiveState.S0_BLANK:
+                            self._csm._state = target
+                    except ValueError:
+                        pass
+                l1 = snap.get("l1_coordinates", "")
+                if l1 and not self._csm.l1_coordinates:
+                    self._csm.l1_coordinates = l1
+                phase = snap.get("research_phase")
+                if phase:
+                    try:
+                        from huginn.phases import ResearchPhase
+                        # plan 恢复路径没动 _phase_manager, 这里恢复
+                        self._phase_manager.reset(ResearchPhase(phase))
+                    except (ValueError, KeyError):
+                        pass
+                turns = snap.get("turns_count")
+                if isinstance(turns, int) and turns > 0:
+                    self._turn_count = turns
+                logger.info(
+                    "restored session snapshot: mode=%s csm=%s phase=%s turns=%d",
+                    self._mode, csm_state, phase, self._turn_count,
+                )
+        except Exception:
+            logger.debug("session snapshot restore failed", exc_info=True)
+
+    def _save_session_snapshot(self) -> None:
+        """保存当前 session 状态快照. reflection 末尾节流调用.
+
+        之前 session resume 只恢复消息历史, _mode/_csm/_phase_manager/_session_state 丢.
+        ponytail: 走 memory.save_session_snapshot + JSON. 升级: 增量 diff + 独立 store.
+        """
+        try:
+            from huginn.cognitive_engine import CognitiveState
+            csm_state = ""
+            if hasattr(self, "_csm") and hasattr(self._csm, "_state"):
+                csm_state = self._csm._state.value if isinstance(
+                    self._csm._state, CognitiveState
+                ) else str(self._csm._state)
+            snap = {
+                "session_id": self._session_state.session_id,
+                "mode": self._mode,
+                "turns_count": self._turn_count,
+                "csm_state": csm_state,
+                "l1_coordinates": self._csm.l1_coordinates if hasattr(self, "_csm") else "",
+                "research_phase": (
+                    self._phase_manager.phase.value
+                    if hasattr(self, "_phase_manager") else ""
+                ),
+                "session_state": self._session_state.to_snapshot(),
+            }
+            self.memory.save_session_snapshot(snap)
+        except Exception:
+            logger.debug("save_session_snapshot failed", exc_info=True)
