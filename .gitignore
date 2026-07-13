@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# Huginn runtime cache (env override for sandbox)
+agent/.huginn_cache/
 .Python
 build/
 develop-eggs/
