@@ -10,13 +10,49 @@ import contextlib
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
 _EASYOCR_READER: Any | None = None
 _NOUGAT_MODEL: Any | None = None
+
+# LLM-as-OCR callback — DeepSeek-OCR 启发: 解码器就是 LLM, 不跑独立 OCR 模型.
+# server_core 启动时注入一个能跑多模态的 callback, 签名 (image_bytes, hint) -> str.
+# 没注入就跳过 LLM fallback, 走原来的 EasyOCR/Tesseract 链.
+# ponytail: 模块级全局 + setter, 不让 ocr_loader 依赖 ModelRegistry. 升级: 注入完整 vision service.
+_LLM_VISION_CALLBACK: Callable[[bytes, str], str] | None = None
+
+
+def set_llm_vision_callback(fn: Callable[[bytes, str], str] | None) -> None:
+    """注入多模态 LLM 解码 callback. 传 None 清除."""
+    global _LLM_VISION_CALLBACK
+    _LLM_VISION_CALLBACK = fn
+
+
+def _llm_ocr_image(image: Any, hint: str = "") -> str:
+    """把 PIL Image 喂给多模态 LLM 解读, 返回结构化 markdown.
+
+    DeepSeek-OCR 的核心反直觉: 不识别字符, 而是把整页当视觉信息压缩.
+    解码器是 LLM 意味着我们 agent 本身就能当解码器, 不需要单独跑 OCR 模型.
+    对公式/表格/中文混排场景比 EasyOCR 强, 因为 LLM 能理解版式结构.
+    ponytail: 走 callback, 拿不到 callback 就返回空. 升级: batch + structured output.
+    """
+    if _LLM_VISION_CALLBACK is None:
+        return ""
+    try:
+        from PIL import Image
+        if not isinstance(image, Image.Image):
+            image = Image.open(io.BytesIO(image) if isinstance(image, bytes) else image)
+        if image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        return _LLM_VISION_CALLBACK(buf.getvalue(), hint).strip()
+    except Exception as exc:
+        logger.debug("LLM OCR failed: %s", exc)
+        return ""
 
 
 def _get_easyocr_reader() -> Any | None:
@@ -116,9 +152,19 @@ def _ocr_image(image: Any, engine: str | None = None) -> str:
         try:
             import pytesseract
 
-            return pytesseract.image_to_string(image).strip()
+            text = pytesseract.image_to_string(image).strip()
+            if text:
+                return text
         except Exception as exc:
             logger.debug("Tesseract OCR failed: %s", exc)
+
+    # LLM-as-OCR fallback (DeepSeek-OCR 启发): EasyOCR/Tesseract 都失败或 engine=llm 时,
+    # 把整页当视觉信息喂给多模态 LLM. 对扫描件公式/表格/中文混排比传统 OCR 强.
+    # engine=llm 时跳过上面两条直接走这里; auto 时作为最后兜底.
+    if chosen_engine in ("auto", "llm"):
+        llm_text = _llm_ocr_image(image, hint="ocr_page")
+        if llm_text:
+            return llm_text
 
     return ""
 

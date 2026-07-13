@@ -164,7 +164,74 @@ async def get_agent() -> HuginnAgent:
     except Exception:
         logger.debug("把 agent LLM 接到 memory manager 失败", exc_info=True)
 
+    # 注入 LLM-as-OCR callback (DeepSeek-OCR 启发): 让 ocr_loader / smart_ingest
+    # 在 EasyOCR/Nougat 失败时能把整页当视觉信息喂给多模态 LLM 解读.
+    # agent 模型不支持 vision 就跳过, 不影响原 OCR 链.
+    try:
+        _install_llm_vision_callback(get_context().agent)
+    except Exception:
+        logger.debug("LLM vision callback install failed", exc_info=True)
+
     return get_context().agent
+
+
+def _install_llm_vision_callback(agent: Any) -> None:
+    """把 agent 的多模态能力注入 ocr_loader 作为 LLM-as-OCR fallback.
+
+    DeepSeek-OCR 核心洞察: 解码器就是 LLM. 我们 agent 本身就能当解码器,
+    不需要单独跑 OCR 模型. 对扫描件公式/表格/中文混排比 EasyOCR 强.
+    ponytail: 走 LangChain HumanMessage + image_url, 同步调用. 升级: batch + structured output.
+    """
+    model = getattr(agent, "model", None)
+    if model is None:
+        return
+    # 检测模型是否支持 vision
+    try:
+        from huginn.models.registry import get_model_capabilities
+        model_name = getattr(model, "model_name", None) or getattr(model, "model", "")
+        caps = get_model_capabilities(str(model_name))
+        if not caps.vision:
+            logger.debug("model %s 不支持 vision, 跳过 LLM-as-OCR 注入", model_name)
+            return
+    except Exception:
+        return  # 拿不到 caps 就不注入, 不影响原 OCR 链
+
+    from huginn.knowledge.ocr_loader import set_llm_vision_callback
+
+    def _vision_decode(image_bytes: bytes, hint: str = "") -> str:
+        """把图像喂给多模态 LLM, 返回结构化 markdown.
+
+        hint='compress_page' 时 prompt 侧重公式/表格/图注提取;
+        hint='ocr_page' 时 prompt 侧重纯文字识别.
+        """
+        import base64
+        from langchain_core.messages import HumanMessage
+
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        if hint == "compress_page":
+            prompt = (
+                "这是科研文档的一页. 请提取结构化信息:\n"
+                "1. 所有数学公式 (LaTeX)\n"
+                "2. 表格 (markdown 格式)\n"
+                "3. 图注 / 表注\n"
+                "4. 一句话总结这页内容\n"
+                "用 markdown 输出, 不要解释."
+            )
+        else:
+            prompt = "请识别这页文档的所有文字内容, 保留版式结构, 用 markdown 输出."
+
+        try:
+            msg = HumanMessage(content=[
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+            ])
+            resp = model.invoke([msg])
+            return getattr(resp, "content", str(resp)) or ""
+        except Exception as exc:
+            logger.debug("LLM vision decode failed (hint=%s): %s", hint, exc)
+            return ""
+
+    set_llm_vision_callback(_vision_decode)
 
 
 def get_memory_manager() -> MemoryManager:

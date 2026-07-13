@@ -173,6 +173,14 @@ class ContextBuilder:
                     text = text[:800] + "…"
                 lines.append(f"[{i}] {text}")
 
+                # 视觉压缩页引用 (DeepSeek-OCR 启发): metadata 带 image_ref 的 chunk
+                # 是整页视觉压缩, 多模态 agent 可以直接读图. 这里只在文本里加引用路径,
+                # 不加载图像 — agent 端按需读.
+                meta = c.get("metadata") or {}
+                img_ref = meta.get("image_ref") if isinstance(meta, dict) else None
+                if img_ref:
+                    lines.append(f"    ↳ [视觉压缩页 图像]: {img_ref}")
+
                 # ── Cross-reference: KB chunk → memory recall ──────
                 # When a KB chunk is found, use its text as a query to
                 # recall related long-term memories. This creates a
