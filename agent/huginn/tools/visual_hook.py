@@ -280,7 +280,7 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
     out: list[str] = []
     measurements = result.get("measurements") or result
 
-    # EDS mapping: elements 字段 — 元素质心坐标 + 覆盖率
+    # EDS mapping: elements 字段 — 元素质心坐标 + 覆盖率 + hotspots
     elements = measurements.get("elements") if isinstance(measurements, dict) else None
     if isinstance(elements, dict) and elements:
         img_shape = measurements.get("image_shape") or [1, 1]
@@ -300,6 +300,19 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
                     f"  {elem}: centroid=<point>[{nx},{ny}]</point>, "
                     f"coverage=<point>[{cov_y}]</point>={cov * 100:.1f}%"
                 )
+                # hotspots: top-N 聚集域质心, 比 overall centroid 更精确
+                hotspots = stats.get("hotspots") or []
+                for hi, hs in enumerate(hotspots[:3]):
+                    if not isinstance(hs, dict):
+                        continue
+                    hcx, hcy = hs.get("centroid_px", [0, 0])
+                    area = int(hs.get("area_px2", 0))
+                    hnx = int(float(hcx) / w * 999) if w > 0 else 0
+                    hny = int(float(hcy) / h * 999) if h > 0 else 0
+                    parts.append(
+                        f"    hotspot{hi+1}=<point>[{hnx},{hny}]</point> "
+                        f"(area={area}px²)"
+                    )
             except (ValueError, TypeError, IndexError):
                 continue
         if parts:
@@ -318,6 +331,8 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
     # phase_field: volume_fractions + morphology + interface
     vol_fracs = measurements.get("volume_fractions") if isinstance(measurements, dict) else None
     if isinstance(vol_fracs, dict) and vol_fracs:
+        pf_shape = measurements.get("image_shape") or [1, 1]
+        pf_h, pf_w = float(pf_shape[0]), float(pf_shape[1])
         parts = []
         for phase, frac in vol_fracs.items():
             try:
@@ -343,6 +358,18 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
                 if n_dom > 0:
                     mean_area = float(morph.get("mean_domain_area_px2", 0))
                     morph_parts.append(f"{phase}: domains={n_dom}, mean_area={mean_area:.0f}px²")
+                    # top domain 质心坐标化, 让 LLM 指向最大 domain 位置
+                    top_cents = morph.get("top_domain_centroids_px") or []
+                    for ci, c in enumerate(top_cents[:3]):
+                        try:
+                            cx, cy = c
+                            nx = int(float(cx) / pf_w * 999) if pf_w > 0 else 0
+                            ny = int(float(cy) / pf_h * 999) if pf_h > 0 else 0
+                            morph_parts.append(
+                                f"    {phase} top{ci+1}=<point>[{nx},{ny}]</point>"
+                            )
+                        except (ValueError, TypeError, IndexError):
+                            continue
             if morph_parts:
                 out.append("  morphology: " + "; ".join(morph_parts))
 
