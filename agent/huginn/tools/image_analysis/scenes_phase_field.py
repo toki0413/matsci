@@ -73,7 +73,7 @@ def phase_field(args: "ImageAnalysisInput") -> ToolResult:
     # 每个相的 domain 形态学
     phase_morph: dict[str, Any] = {}
     try:
-        from scipy.ndimage import label as nd_label
+        from scipy.ndimage import label as nd_label, center_of_mass
 
         for i in range(n_phases):
             mask = phase_map == i
@@ -83,11 +83,19 @@ def phase_field(args: "ImageAnalysisInput") -> ToolResult:
             domain_areas = counts[counts > 0]
             if len(domain_areas) > 0:
                 ecd = np.sqrt(4.0 * domain_areas / np.pi)
+                # top-3 domain 质心 — 让 visual primitives 能指向最大 domain 位置
+                valid_labels = np.where(counts > 0)[0]
+                sorted_labels = valid_labels[np.argsort(-counts[valid_labels])]
+                top_centroids: list[list[float]] = []
+                for lbl in sorted_labels[:3]:
+                    com = center_of_mass(mask, labeled, lbl)
+                    top_centroids.append([float(com[1]), float(com[0])])  # [x, y]
                 phase_morph[f"phase_{i + 1}"] = {
                     "n_domains": int(n_dom),
                     "mean_domain_area_px2": float(domain_areas.mean()),
                     "max_domain_area_px2": float(domain_areas.max()),
                     "mean_domain_ecd_px": float(ecd.mean()),
+                    "top_domain_centroids_px": top_centroids,
                 }
             else:
                 phase_morph[f"phase_{i + 1}"] = {
@@ -95,6 +103,7 @@ def phase_field(args: "ImageAnalysisInput") -> ToolResult:
                     "mean_domain_area_px2": 0.0,
                     "max_domain_area_px2": 0.0,
                     "mean_domain_ecd_px": 0.0,
+                    "top_domain_centroids_px": [],
                 }
     except ImportError:
         phase_morph = {
