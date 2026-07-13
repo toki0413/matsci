@@ -272,6 +272,18 @@ async def _stream_agent_response(
         _pending_auto = False
 
         async for state in agent.chat(content, thread_id):
+            # Record task step for long-horizon tracking
+            try:
+                from huginn.memory.task_state import get_tracker
+                _ts = get_tracker()
+                _ts_state = _ts.get(thread_id)
+                if not _ts_state.goal:
+                    _ts_state.goal = content[:200]
+                    _ts_state.mode = getattr(agent, "mode", "chat")
+                    _ts.save(thread_id)
+            except Exception:
+                pass
+
             if "_token" in state:
                 _token_streamed = True
                 text = state["_token"]
@@ -405,6 +417,38 @@ async def _stream_agent_response(
                             }
                         )
 
+                        # Emit governance event for this tool call
+                        try:
+                            from huginn.ontology.actions import get_action_type, ActionCategory
+                            from huginn.governance import get_governance
+                            gov = get_governance()
+                            ctx = {"tool_name": name, "args": tc.get("args", {})}
+                            decision = gov.can_execute(name, ctx)
+                            # Map tool name to action category heuristically
+                            _cat = "query"
+                            if any(k in name for k in ("vasp", "qe", "cp2k", "lammps", "abaqus", "comsol", "openfoam")):
+                                _cat = "simulate"
+                            elif any(k in name for k in ("file_edit", "file_write", "file_delete")):
+                                _cat = "file_ops"
+                            elif "code" in name or "bash" in name:
+                                _cat = "code"
+                            elif any(k in name for k in ("rag", "literature", "web_search", "database")):
+                                _cat = "network"
+                            elif "remember" in name or "recall" in name:
+                                _cat = "learn"
+                            await _ws_send({
+                                "type": "governance",
+                                "action_name": name,
+                                "category": _cat,
+                                "risk_level": decision.risk_level,
+                                "allowed": decision.allowed,
+                                "reasons": decision.reasons,
+                                "requires_approval": decision.requires_approval,
+                                "predictability": decision.predictability,
+                            })
+                        except Exception:
+                            pass
+
             if isinstance(last_msg, ToolMessage):
                 tid = getattr(last_msg, "tool_call_id", None)
                 if tid and tid not in seen_tool_results:
@@ -428,6 +472,46 @@ async def _stream_agent_response(
                             "warnings": _warnings,
                         })
                     await _ws_send(tool_result_msg)
+
+                    # Record step in task state tracker
+                    try:
+                        from huginn.memory.task_state import get_tracker
+                        get_tracker().record_step(
+                            thread_id,
+                            action=f"Tool: {_tool_name}",
+                            tool=_tool_name,
+                            result=tool_content[:200],
+                            findings="",
+                        )
+                    except Exception:
+                        pass
+
+                    # Emit governance verification result
+                    try:
+                        from huginn.governance import get_governance
+                        gov = get_governance()
+                        v_ok, v_msg = gov.verify(
+                            _tool_name,
+                            {"tool_name": _tool_name},
+                            {"result": tool_content[:500]},
+                        )
+                        await _ws_send({
+                            "type": "governance",
+                            "action_name": _tool_name,
+                            "category": "",
+                            "risk_level": "",
+                            "allowed": True,
+                            "reasons": [],
+                            "requires_approval": False,
+                            "predictability": 1.0 if v_ok else 0.5,
+                            "audit_id": "",
+                            "status": "verified" if v_ok else "failed",
+                            "verification_passed": v_ok,
+                            "verification_message": v_msg,
+                            "rollback_available": False,
+                        })
+                    except Exception:
+                        pass
 
                     _progress = _extract_task_progress(
                         tool_content
@@ -693,16 +777,37 @@ async def _handle_user_input(
     # Fusion mode trigger — parallel multi-model + synthesis
     use_fusion = "/fusion" in content.lower()
 
-    # Plan mode trigger
+    # Plan mode trigger — explicit command or auto-detect planning intent
     plan_mode = False
     plan_data: dict = {}
-    if any(kw in content.lower() for kw in ("/plan", "plan mode")):
+    _content_lower = content.lower()
+    if any(kw in _content_lower for kw in ("/plan", "plan mode")):
         plan_mode = True
         if hasattr(agent, "set_mode"):
             agent.set_mode("plan")
+    elif not any(kw in _content_lower for kw in ("/research", "research mode", "/chat")):
+        # Auto-detect: planning keywords without explicit /plan
+        _plan_signals = (
+            "design a", "design an", "propose a", "propose an",
+            "plan how", "step by step", "workflow for",
+            "strategy for", "roadmap", "outline a",
+        )
+        if any(s in _content_lower for s in _plan_signals) and len(content) > 30:
+            plan_mode = True
+            if hasattr(agent, "set_mode"):
+                agent.set_mode("plan")
 
-    # Research mode trigger — guard for agents without mode tracking
-    if any(kw in content.lower() for kw in ("/research", "research mode")):
+    # Research mode trigger — explicit command or auto-detect research intent
+    _research_signals = (
+        "/research", "research mode",
+        "literature review", "survey the", "systematically review",
+        "state of the art", "recent advances in",
+        "compare.*methods", "benchmark.*approaches",
+    )
+    if any(kw in _content_lower for kw in ("/research", "research mode")):
+        if hasattr(agent, "set_mode"):
+            agent.set_mode("research")
+    elif any(s in _content_lower for s in _research_signals[:6]) and len(content) > 40:
         if hasattr(agent, "set_mode"):
             agent.set_mode("research")
 

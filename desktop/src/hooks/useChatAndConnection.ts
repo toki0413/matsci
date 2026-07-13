@@ -152,6 +152,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [autoloopPhase, setAutoloopPhase] = useState<string>("");
   const [autoloopProgress, setAutoloopProgress] = useState<number>(0);
 
+  // ── Decision trace: governance events + state transitions ──
+  const [governanceEvents, setGovernanceEvents] = useState<any[]>([]);
+  const [stateTransitions, setStateTransitions] = useState<any[]>([]);
+
   // ── Context window usage (from context_compacted WS) ─────────
   const [contextPct, setContextPct] = useState<number>(0);
 
@@ -926,6 +930,13 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           happiness: data.happiness,
         });
         break;
+      case "governance":
+        setGovernanceEvents((prev) => [...prev, data].slice(-50));
+        break;
+      case "state_transition":
+        setStateTransitions((prev) => [...prev, data].slice(-30));
+        if (data.to_phase) setAutoloopPhase(data.to_phase);
+        break;
     }
   };
 
@@ -1357,5 +1368,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     soundEnabled, setSoundEnabled,
     // Pet state
     petState,
+    // Decision trace
+    governanceEvents, stateTransitions,
   };
 }
