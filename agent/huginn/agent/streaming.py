@@ -544,9 +544,20 @@ class StreamingMixin:
         _cv_hints: str | None = None
         _vision_delegated: str | None = None  # description from vision member
         if image_path:
+            # 从 server_core 取共享单例, 避免每个 agent 实例各自加载一遍 ML 模型
+            _ve = getattr(self, "_visual_encoder", None)
+            _ii = getattr(self, "_image_index", None)
+            if _ve is None or _ii is None:
+                try:
+                    from huginn.server_core import get_visual_encoder, get_image_index
+
+                    _ve = _ve or get_visual_encoder()
+                    _ii = _ii or get_image_index()
+                except Exception:
+                    logger.debug("visual_encoder/image_index 注入失败", exc_info=True)
             _vr = VisionRouter(
-                visual_encoder=getattr(self, "_visual_encoder", None),
-                image_index=getattr(self, "_image_index", None),
+                visual_encoder=_ve,
+                image_index=_ii,
             )
             model_name = getattr(self.model, "model", None) or getattr(self.model, "model_name", "")
             _vision_route = _vr.route(model_name, message or image_path)

@@ -1009,6 +1009,8 @@ class AutoloopEngine:
         )
         completed_steps = 0
         phases: list[LoopPhase] = []
+        # 记下 progress_task_id 供 _emit_campaign 关联 SSE 流
+        self._progress_task_id = progress_task_id
 
         while self._iteration < max_iterations and not self._should_stop:
             self._iteration += 1
@@ -1515,14 +1517,27 @@ class AutoloopEngine:
         )
 
     def _emit_campaign(self, event_type: str, data: dict) -> None:
-        """发布 campaign.* 事件到 EventBus, fire-and-forget."""
+        """发布 campaign.* 事件到 EventBus + SSE 流, fire-and-forget.
+
+        双通道: EventBus 给 audit/telemetry, SSE 给前端 IterationTimeline.
+        之前只发 EventBus, 前端只能正则刮消息文本, retry/suspect/refine
+        根本到不了前端.
+        """
         try:
             from huginn.events.integration import _publish
             from huginn.utils.concurrency import track_task
             asyncio.get_running_loop()  # 检测在 event loop 里
             track_task(_publish(event_type, data, source="autoloop"), name="campaign-emit")
         except Exception:
-            logger.debug("campaign emit failed", exc_info=True)
+            logger.debug("campaign EventBus emit failed", exc_info=True)
+        # SSE 推送到 /tasks/stream 的 'campaign' event, 前端结构化消费
+        try:
+            from huginn.interaction.progress import get_progress_tracker
+            get_progress_tracker().emit_campaign_event(
+                getattr(self, "_progress_task_id", ""), event_type, data
+            )
+        except Exception:
+            logger.debug("campaign SSE emit failed", exc_info=True)
 
     def _prepare_run(
         self, objective: str, progressive_budget: bool, goal: Goal | None
