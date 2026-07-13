@@ -22,6 +22,67 @@ logger = logging.getLogger(__name__)
 GateStatus = Literal["pending", "approved", "blocked", "rejected"]
 
 
+def _has_external_source(obj: Any, _depth: int = 0) -> bool:
+    """递归扫 dict/list 找 source_class=external_content. ponytail: 写死 depth=50 (实际 evidence 嵌套 < 10)."""
+    if _depth > 50 or not isinstance(obj, (dict, list, tuple)):
+        return False
+    if isinstance(obj, dict) and obj.get("source_class") == "external_content":
+        return True
+    if isinstance(obj, dict):
+        return any(_has_external_source(v, _depth + 1) for v in obj.values())
+    return any(_has_external_source(v, _depth + 1) for v in obj)
+
+
+def _collect_source_classes(obj: Any, _depth: int = 0) -> list[str]:
+    """递归收集所有 source_class 值. ponytail: depth=50 防异常深度."""
+    if _depth > 50 or not isinstance(obj, (dict, list, tuple)):
+        return []
+    found: list[str] = []
+    if isinstance(obj, dict):
+        sc = obj.get("source_class")
+        if isinstance(sc, str) and sc:
+            found.append(sc)
+        for v in obj.values():
+            found.extend(_collect_source_classes(v, _depth + 1))
+    else:
+        for v in obj:
+            found.extend(_collect_source_classes(v, _depth + 1))
+    return found
+
+
+# 每个 source_class 的 (m_pass, m_fail, m_uncertainty) 先验.
+# ponytail: 取值基于经验, 未做大规模数据校准. 升级: 从历史任务拟合.
+_SOURCE_CLASS_MASSES: dict[str, tuple[float, float, float]] = {
+    "user_input":         (0.70, 0.05, 0.25),   # 用户指令高可信
+    "tool_output":        (0.60, 0.20, 0.20),   # 工具输出中等可信
+    "external_content":   (0.30, 0.40, 0.30),   # 外部内容可信度低 (可能被注入)
+    "agent_generated":    (0.50, 0.30, 0.20),   # agent 生成默认
+}
+
+
+def _argus_confidence(evidence: dict[str, Any]) -> tuple[float, str]:
+    """DS 合成 evidence 里所有 source_class 的 (m_pass, m_fail, m_unc).
+
+    返回 (confidence, dominant_source_class):
+    - confidence: DS 合成后的 m_pass, 作为 evidence 整体可信度
+    - dominant_source_class: 占比最高的来源类 (feedback 文本用)
+    ponytail: 无 source_class 时返回 (1.0, "") 不降级.
+    """
+    classes = _collect_source_classes(evidence)
+    if not classes:
+        return (1.0, "")
+    masses = [
+        _SOURCE_CLASS_MASSES.get(c, _SOURCE_CLASS_MASSES["agent_generated"])
+        for c in classes
+    ]
+    combined = DempsterShaferCombiner.combine(masses)
+    # 统计 dominant
+    from collections import Counter
+    counter = Counter(classes)
+    dominant = counter.most_common(1)[0][0]
+    return (combined[0], dominant)
+
+
 @dataclass
 class PhaseGate:
     """一次阶段转移门评估的结果."""
@@ -349,7 +410,30 @@ class PhaseGateHook:
             to_phase=to_phase,
             status="approved",
             required_evidence=required,
+            feedback=_argus_feedback(evidence),
+            reviewer="argus_provenance" if _has_external_source(evidence) else None,
         )
+
+
+def _argus_feedback(evidence: dict[str, Any]) -> str:
+    """ARGUS 降级提示: evidence dominant=external_content 或 confidence<0.5 时附加.
+
+    不阻断 (status 仍 approved), 只提示下游 agent 注意来源可信度.
+    ponytail: 用 Dempster-Shafer 合成各 source_class 的先验 mass, 输出 m_pass 作 confidence.
+    升级: 从历史任务拟合 _SOURCE_CLASS_MASSES 的先验值 (当前为经验值).
+    """
+    confidence, dominant = _argus_confidence(evidence)
+    if not dominant:
+        return ""
+    # 只在 dominant=external_content 或 confidence < 0.5 时返回 feedback
+    # (user_input / tool_output dominant 时不加噪声)
+    if dominant != "external_content" and confidence >= 0.5:
+        return ""
+    return (
+        f"ARGUS provenance: dominant source_class={dominant}, "
+        f"DS confidence={confidence:.3f}. "
+        f"建议补充 user_input 或 tool_output 来源的独立验证."
+    )
 
 
 # ── 共享状态: 连接 engine 与 PhaseTool ──────────────────────────

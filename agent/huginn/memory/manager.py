@@ -57,7 +57,12 @@ class MemoryManager:
     # --- Session memory operations ---
 
     def add_message(self, role: str, content: str | dict[str, Any]) -> None:
-        msg = AgentMessage(role=role, content=content)
+        # ARGUS: 用户输入标 source_class=user_input, 下游 PhaseGate 可降级.
+        # 不动 assistant/system/tool, 那些由 tool/RAG hook 自己标.
+        metadata: dict[str, Any] = {}
+        if role == "user":
+            metadata["source_class"] = "user_input"
+        msg = AgentMessage(role=role, content=content, metadata=metadata)
         self.session.add_message(msg)
 
     def add_tool_call(

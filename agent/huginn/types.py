@@ -123,6 +123,10 @@ class AgentMessage:
     role: Literal["system", "user", "assistant", "tool"]
     content: str | dict[str, Any]
     timestamp: datetime = field(default_factory=datetime.now)
+    # ARGUS influence provenance: metadata["source_class"] 标记消息出身,
+    # 取值复用 Anomaly.source: user_input / tool_output / external_content.
+    # 不给默认值 (system/assistant 不需要), 由入口处 add_message 显式打标.
+    # ponytail: 软约定, 调用方诚实标记. 升级: 从工具调用栈自动派生 (不可伪造).
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

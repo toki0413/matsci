@@ -39,6 +39,10 @@ class ResearchWorkflowConfig:
     max_concurrent_branches: int = 3
     enable_hypothesis_generation: bool = True
     target_journal: str | None = None
+    # 研究者跨领域直觉, 透传给 Deli 管线的 gap 分析; None=不注入
+    research_intuition: str | None = None
+    # SR 失败时是否走 GP/迁移学习; False=只允许符号回归
+    allow_empirical: bool = False
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -114,6 +118,8 @@ class ResearchWorkflow:
                     topic=topic,
                     target_journal=self.config.target_journal,
                     rag_search_fn=self._rag_search,
+                    research_intuition=self.config.research_intuition,
+                    allow_empirical=self.config.allow_empirical,
                 )
             except Exception as exc:
                 await queue.put({"type": "error", "message": str(exc)})
@@ -204,6 +210,9 @@ if __name__ == "__main__":
     assert cfg.max_concurrent_branches == 3
     assert cfg.enable_hypothesis_generation is True
     assert cfg.target_journal is None
+    # 新增透传字段默认值, 保证不传时行为不变
+    assert cfg.research_intuition is None
+    assert cfg.allow_empirical is False
 
     assert RESEARCH_PERSONA.name == "research"
     assert "Deli" in RESEARCH_PERSONA.system_prompt
