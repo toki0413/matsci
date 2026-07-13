@@ -219,6 +219,43 @@ class MemoryManager:
             logger.debug("load_last_session_context 失败", exc_info=True)
         return {"summary": "", "session_id": "", "l1_coordinates": ""}
 
+    # --- Session snapshot (mode / csm / phase / plan 状态恢复) ---
+
+    def save_session_snapshot(self, snapshot: dict[str, Any]) -> str:
+        """保存 session 状态快照到 longterm, 下次会话可恢复 _mode / _csm / _phase.
+
+        之前 session resume 只恢复消息历史, _mode / _csm / _phase_manager / _session_state
+        全部丢, 用户感觉 agent "失忆" (mode 回 chat, plan 状态丢失).
+        ponytail: 复用 longterm.store, category='session_snapshot', JSON 序列化.
+        升级: 独立 sqlite store + 增量 diff, 避免每 N turn 全量存.
+        """
+        sid = snapshot.get("session_id", "") or "default"
+        return self.longterm.store(
+            content=json.dumps(snapshot, ensure_ascii=False, default=str),
+            category="session_snapshot",
+            tags=["session_snapshot", sid],
+            source=f"session:{sid}",
+            importance=0.8,
+            tier="mid",
+        )
+
+    def load_session_snapshot(self, session_id: str = "") -> dict[str, Any] | None:
+        """读最近一条 session_snapshot. session_id 为空则读任意最新一条."""
+        try:
+            entries = self.longterm.retrieve(
+                query="session snapshot",
+                category="session_snapshot",
+                top_k=1,
+            )
+            if not entries:
+                return None
+            entry = entries[0] if isinstance(entries, list) else entries
+            content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
+            return json.loads(content)
+        except Exception:
+            logger.debug("load_session_snapshot failed", exc_info=True)
+            return None
+
     def store_plan_progress(
         self,
         plan_id: str,

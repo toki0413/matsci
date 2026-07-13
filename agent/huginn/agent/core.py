@@ -633,6 +633,18 @@ class HuginnAgent(
         self.langchain_tools = tools
         self._invalidate_tool_description_cache()
 
+    def refresh_tools_from_registry(self) -> None:
+        """重连 MCP / 改了 tool_filter / mock fallback 后调一次.
+
+        重新从 ToolRegistry 拉工具, 并失效已编译的 graph, 让下次 build_graph 用新工具集.
+        之前 MCP reconnect 路由只刷 ToolRegistry, agent.langchain_tools / _agent_graph 保持旧的,
+        LLM 看到 stale schema 还在调已经不存在的工具.
+        ponytail: 调 register_tools_from_registry + 置 _agent_graph=None. 升级: 增量 diff.
+        """
+        self.register_tools_from_registry()
+        self._agent_graph = None  # 下次 build_graph 重建
+        logger.info("tools refreshed from registry (graph invalidated)")
+
     # ── Model selection ──────────────────────────────────────────
 
     def select_model(self, task: str = "agent") -> Any:

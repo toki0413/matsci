@@ -172,6 +172,14 @@ async def reconnect_mcp_server(name: str) -> dict[str, Any]:
             registered = register_mcp_tools(mgr, server_name=name)
             with contextlib.suppress(Exception):
                 await register_mcp_prompts(mgr, server_name=name)
+            # 刷新已实例化的 agent: 之前只刷 ToolRegistry, agent.langchain_tools
+            # 和 _agent_graph 还持旧 schema, LLM 看到的是 stale 工具列表.
+            agent = getattr(get_context(), "agent", None)
+            if agent is not None:
+                try:
+                    agent.refresh_tools_from_registry()
+                except Exception:
+                    logger.debug("agent tool refresh failed", exc_info=True)
             return {
                 "success": True,
                 "server": name,
