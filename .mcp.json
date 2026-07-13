@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "flint-chart": {
+      "command": "npx",
+      "args": ["-y", "flint-chart-mcp"],
+      "env": {}
+    }
+  }
+}

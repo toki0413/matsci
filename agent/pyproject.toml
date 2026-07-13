@@ -53,7 +53,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-benchmark>=4.0", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "hypothesis>=6.0", "black>=23.0", "memory-profiler>=0.60", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7"]
-all = ["pymatgen>=2024.0", "ase>=3.22", "dscribe>=2.0", "paramiko>=3.0", "chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3", "mace-torch>=0.3", "fairchem-core>=1.0", "py4vasp>=0.5", "chgnet>=0.3", "pynep>=0.1", "matplotlib>=3.7"]
+all = ["pymatgen>=2024.0", "ase>=3.22", "dscribe>=2.0", "paramiko>=3.0", "chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3", "mace-torch>=0.3", "fairchem-core>=1.0", "py4vasp>=0.5", "chgnet>=0.3", "pynep>=0.1", "matplotlib>=3.7", "SciencePlots>=2.2", "ultraplot>=0.1"]
+# 科研图表 skill: AI 绘图 prompt 编译器 (论文/图注 -> Nano Banana/Qwen Image/GPT Image prompt).
+# 克隆到 huginn/plugins/science-skills/skills/happy_figure/ 即生效, 无 Python 依赖.
+# Flint MCP server (交互式 web 图表副通道): npx -y flint-chart-mcp, 配置见项目根 .mcp.json.
 rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "PyPDF2>=3.0", "easyocr>=1.7", "pytesseract>=0.3"]
 tooluniverse = ["tooluniverse"]
 
