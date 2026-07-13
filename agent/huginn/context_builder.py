@@ -89,7 +89,15 @@ class ContextBuilder:
         Returns a formatted string suitable for the prompt tail.
         """
         if not query:
-            query = "materials science computation"
+            # 没传 query 时, 优先用当前请求的 user message (contextvars 隔离,
+            # 并发安全). 取不到才回退到领域默认串 — 保留旧行为, 测试和无 ctx 场景
+            # 不会挂. ponytail: 不在 ContextBuilder 上塞 _current_query 属性,
+            # 那会和 core.py 的 _current_user_message 一样被并发覆盖.
+            try:
+                from huginn.utils.session_context import get_user_message
+                query = get_user_message() or "materials science computation"
+            except Exception:
+                query = "materials science computation"
         parts: list[str] = []
         try:
             mem = self.memory.recall_for_prompt(query, max_entries=3)

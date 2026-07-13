@@ -321,6 +321,11 @@ def evaluate_command_hook(
     return engine.evaluate(executable, command_str, workspace=workspace, env=env)
 
 
+def get_policy_engine() -> PolicyEngine:
+    """工厂函数, 给 governance.py 用."""
+    return PolicyEngine.shared()
+
+
 # -- self-check -----------------------------------------------------------
 
 

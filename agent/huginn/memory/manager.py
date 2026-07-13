@@ -157,30 +157,70 @@ class MemoryManager:
     ) -> str:
         """Format recalled memories for injection into LLM prompt."""
         results = self.recall(query, top_k=max_entries, material_filter=material_filter)
-        if not results:
-            return ""
-        lines = ["## Relevant past knowledge:"]
-        for r in results:
-            provenance = f" ({r.get('source', '')})" if r.get("source") else ""
-            # 消费 lint() 写入的 contradicts: tag, 标注矛盾条目
-            conflict_warn = ""
-            raw_tags = r.get("tags", "[]")
-            if isinstance(raw_tags, str):
-                try:
-                    tag_list = json.loads(raw_tags)
-                except (ValueError, TypeError):
+
+        blocks: list[str] = []
+        if results:
+            lines = ["## Relevant past knowledge:"]
+            for r in results:
+                provenance = f" ({r.get('source', '')})" if r.get("source") else ""
+                # 消费 lint() 写入的 contradicts: tag, 标注矛盾条目
+                conflict_warn = ""
+                raw_tags = r.get("tags", "[]")
+                if isinstance(raw_tags, str):
+                    try:
+                        tag_list = json.loads(raw_tags)
+                    except (ValueError, TypeError):
+                        tag_list = []
+                elif isinstance(raw_tags, list):
+                    tag_list = raw_tags
+                else:
                     tag_list = []
-            elif isinstance(raw_tags, list):
-                tag_list = raw_tags
-            else:
-                tag_list = []
-            contradicts = [t for t in tag_list if isinstance(t, str) and t.startswith("contradicts:")]
-            if contradicts:
-                ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
-                conflict_warn = f" [WARNING: conflicts with {ids}]"
-            lines.append(
-                f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}{conflict_warn}"
-            )
+                contradicts = [t for t in tag_list if isinstance(t, str) and t.startswith("contradicts:")]
+                if contradicts:
+                    ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
+                    conflict_warn = f" [WARNING: conflicts with {ids}]"
+                lines.append(
+                    f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}{conflict_warn}"
+                )
+            blocks.append("\n".join(lines))
+
+        # 同 session 内最近几条成功 tool call — 不带上 LLM 看不到上轮工具结果,
+        # 多轮 tool 调用时会重复算/丢上下文. ponytail: 直接读 session.tool_calls,
+        # 不另开存储; 失败的不召回 (对上下文是噪声).
+        tool_block = self._recent_tool_results_block()
+        if tool_block:
+            blocks.append(tool_block)
+
+        return "\n\n".join(blocks) if blocks else ""
+
+    def _recent_tool_results_block(
+        self, limit: int = 3, max_chars: int = 200
+    ) -> str:
+        """格式化 session 内最近成功的 tool_calls 成 prompt 块.
+
+        只取最近 ``limit`` 条 tool_call, 再过滤 success=True; result 序列化后
+        截断到 ``max_chars`` 避免撑爆 prompt. 没有符合条件的就返回空串.
+        """
+        recent = self.session.get_recent_tool_calls(limit)
+        succ = [tc for tc in recent if tc.result and tc.result.success]
+        if not succ:
+            return ""
+        # 反转让最新的排前面
+        succ = list(reversed(succ))
+        lines = ["## Recent tool results:"]
+        for tc in succ:
+            summary = ""
+            if tc.result is not None and tc.result.data is not None:
+                try:
+                    summary = json.dumps(
+                        tc.result.data, default=str, ensure_ascii=False
+                    )
+                except Exception:
+                    summary = str(tc.result.data)
+            if len(summary) > max_chars:
+                summary = summary[:max_chars] + "…"
+            lines.append(f"- [{tc.tool_name}] {summary}")
+        lines.append("## End Recent tool results")
         return "\n".join(lines)
 
     # --- Cross-session continuity ---
