@@ -142,6 +142,7 @@ input_tmp.in
 _stress_test_*
 _e2e_*.py
 _smoke_*.py
+_smoke_*.txt
 _integration_*.py
 r3_test_*.json
 _long_task_results.json

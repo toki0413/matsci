@@ -270,8 +270,12 @@ fn build_result_dict<'py>(
     }
 
     if compute_msd_flag && !frames.is_empty() {
-        let (positions, ts, _) = frame_positions_to_vec(&frames);
-        let msd = msd_from_slice(&positions, n_frames, n_atoms);
+        let (positions, ts, box_dims) = frame_positions_to_vec(&frames);
+        // LAMMPS dump 默认输出 wrapped 坐标, 必须传 box_dims 给 MSD 算法
+        // 应用最小镜像约定, 否则原子跨边界时 dx 突变成 ±L 导致 MSD 完全错.
+        // 用第一帧的 box_dims (NVT/NPT 都接受这个近似; 完全变体积场景少见).
+        let first_box = box_dims.into_iter().next();
+        let msd = msd_from_slice(&positions, n_frames, n_atoms, first_box);
         let msd_dict = build_msd_dict(py, &msd, Some(&ts))?;
         if let Ok(py_msd) = msd_dict.get_item("msd") {
             result.set_item("msd", py_msd)?;

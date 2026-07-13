@@ -39,14 +39,17 @@ fn read_last_lines(path: &Path, n: usize) -> Result<Vec<String>, std::io::Error>
     let mut newline_count = 0;
 
     // Read backwards in chunks until we have enough newlines or reach the start.
+    // chunk 位置越靠前，必须 prepend 到 buf（之前用 resize+read_exact 把
+    // 前一次循环的数据覆盖了，导致只能拿到最后一个 chunk）。
     const CHUNK_SIZE: usize = 8192;
+    let mut chunk = vec![0u8; CHUNK_SIZE];
     while pos > 0 && newline_count <= n {
         let chunk_start = (pos - CHUNK_SIZE as i64).max(0) as u64;
         let chunk_len = (pos - chunk_start as i64) as usize;
         file.seek(SeekFrom::Start(chunk_start))?;
-        buf.resize(chunk_len, 0);
-        file.read_exact(&mut buf)?;
-        newline_count += buf.iter().filter(|&&b| b == b'\n').count();
+        file.read_exact(&mut chunk[..chunk_len])?;
+        newline_count += chunk[..chunk_len].iter().filter(|&&b| b == b'\n').count();
+        buf.splice(0..0, chunk[..chunk_len].iter().copied());
         pos = chunk_start as i64;
     }
 

@@ -141,7 +141,9 @@ class TaskStateTracker:
         path = self.state_dir / f"{thread_id}.json"
         try:
             data = asdict(state)
-            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            # 原子写: task_state 在 autoloop 每步都写, 半截 JSON 会让重启后状态丢失.
+            from huginn.utils.concurrency import atomic_write_text
+            atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False))
         except Exception as e:
             logger.warning(f"Failed to save task state {thread_id}: {e}")
 

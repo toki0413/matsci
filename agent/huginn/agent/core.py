@@ -32,6 +32,7 @@ from huginn.tools.adapter import ToolAdapter
 from huginn.tools.registry import ToolRegistry
 from huginn.utils.conversation_tree import ConversationTree
 from huginn.utils.prompt_cache import PromptCacheBuilder
+from huginn.utils.session_context import get_user_message
 
 from .callbacks import CallbackMixin
 from .context import ContextMixin
@@ -641,7 +642,7 @@ class HuginnAgent(
             self._agent_graph = create_deep_agent(
                 name="HuginnAgent",
                 model=self.select_model("agent"),
-                tools=self._effective_tools(query=self._current_user_message),
+                tools=self._effective_tools(query=get_user_message()),
                 system_prompt=system_message,
                 checkpointer=self.checkpointer,
                 middleware=[
@@ -666,14 +667,14 @@ class HuginnAgent(
             try:
                 agent = create_react_agent(
                     model=self.select_model("agent"),
-                    tools=self._effective_tools(query=self._current_user_message),
+                    tools=self._effective_tools(query=get_user_message()),
                     prompt=SystemMessage(content=system_prompt),
                     checkpointer=self.checkpointer,
                 )
             except TypeError:
                 agent = create_react_agent(
                     model=self.select_model("agent"),
-                    tools=self._effective_tools(query=self._current_user_message),
+                    tools=self._effective_tools(query=get_user_message()),
                     state_modifier=[SystemMessage(content=system_prompt)],
                     checkpointer=self.checkpointer,
                 )
@@ -800,11 +801,11 @@ class HuginnAgent(
                     final_state = state
             return final_state
 
-        try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(_run())
-        except RuntimeError:
-            return asyncio.run(_run())
+        # 用统一 helper: 已在 running loop 时跑独立线程, 否则直接 asyncio.run.
+        # 之前 try/except 顺序写反 — run_until_complete 抛 RuntimeError 后
+        # asyncio.run 仍会因 running loop 抛错, 错误透传给 caller.
+        from huginn.utils.async_bridge import run_async
+        return run_async(_run())
 
     # ── Memory shortcuts ──────────────────────────────────────────
 

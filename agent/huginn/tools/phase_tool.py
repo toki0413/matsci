@@ -13,6 +13,7 @@ agent 通过这个工具:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -109,7 +110,10 @@ class PhaseTool(HuginnTool):
                 ),
                 "last_gate": last.to_dict() if last else None,
                 "submitted_evidence_keys": list(state.submitted_evidence.keys()),
-                "overrides": [list(t) for t in state.overrides] if state.overrides else [],
+                "overrides": [
+                    {"transition": list(t), **state.override_meta.get(t, {})}
+                    for t in state.overrides
+                ] if state.overrides else [],
             },
             success=True,
         )
@@ -182,6 +186,11 @@ class PhaseTool(HuginnTool):
         state = get_shared_phase_gate_state()
         key = (input_data.from_phase, input_data.to_phase)
         state.overrides.add(key)
+        state.override_meta[key] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "actor": "user",
+            "reason": "manual_override",
+        }
         return ToolResult(
             data={
                 "overridden": True,

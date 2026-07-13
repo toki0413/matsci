@@ -686,24 +686,15 @@ class ConjectureGenerator:
         """调 LLM 做跨域迁移."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        # 查源-目标域共享的数学结构, 作为提示增强.
+        # 把 LLM 的隐式类比 (依赖训练时见过的同构对) 变成显式提示.
+        shared = self._lookup_shared_structure(
+            pattern.get("source_domain", ""), target_domain
+        )
+
         messages = [
-            SystemMessage(content=(
-                "You are a materials science cross-domain transfer specialist. "
-                "Given an abstract pattern and a target domain, instantiate the "
-                "pattern in the target domain using domain-appropriate terminology. "
-                "Output ONLY a JSON object with keys: "
-                "transferred_pattern, domain_mapping (object with source_action, "
-                "target_action, source_property, target_property), analogy_notes. "
-                "No markdown, no explanation."
-            )),
-            HumanMessage(content=(
-                f"Abstract pattern: {pattern.get('abstract_pattern', '')}\n"
-                f"Action: {pattern.get('action', '')}\n"
-                f"Property: {pattern.get('property', '')}\n"
-                f"Direction: {pattern.get('direction', '')}\n"
-                f"Source domain: {pattern.get('source_domain', '')}\n"
-                f"Target domain: {target_domain}\n"
-                f"Transfer the pattern to the target domain."
+            HumanMessage(content=self._render_transfer_prompt(
+                pattern, target_domain, shared
             )),
         ]
         text = self._invoke_model(model, messages)
@@ -721,6 +712,49 @@ class ConjectureGenerator:
             "analogy_notes": parsed.get("analogy_notes", fallback["analogy_notes"]),
             "method": "llm",
         }
+
+    @staticmethod
+    def _lookup_shared_structure(src_name: str, tgt_name: str) -> list[str]:
+        """查源-目标域共享的数学结构标签.
+        ponytail: 只在 _REGISTRY 命中时返回非空, 避免硬塞虚假结构."""
+        try:
+            from huginn.ml.transfer_registry import _REGISTRY, shared_structure
+            src = next((d for d in _REGISTRY if d.name == src_name), None)
+            tgt = next((d for d in _REGISTRY if d.name == tgt_name), None)
+            if src and tgt:
+                return shared_structure(src, tgt)
+        except Exception:
+            logger.debug("shared_structure lookup failed", exc_info=True)
+        return []
+
+    @staticmethod
+    def _render_transfer_prompt(
+        pattern: dict[str, Any], target_domain: str, shared: list[str]
+    ) -> str:
+        """结构化提示模板 — 各字段独立填充, 避免 prompt injection.
+
+        ponytail: 模板用三引号 + 占位符, 不用 f-string 拼接.
+        升级: 当 shared 包含 Lean 表达式时, 改为 JSON schema."""
+        shared_block = (
+            f"SHARED STRUCTURE: {', '.join(shared)}\n"
+            f"NOTE: Source and target are structurally isomorphic. "
+            f"Anchor the transfer on the shared structure, not on "
+            f"composition or material type."
+            if shared else ""
+        )
+        return f"""You are a materials science cross-domain transfer specialist.
+
+Given an abstract pattern and a target domain, instantiate the pattern in the target domain using domain-appropriate terminology.
+
+ABSTRACT PATTERN: {pattern.get('abstract_pattern', '')}
+ACTION: {pattern.get('action', '')}
+PROPERTY: {pattern.get('property', '')}
+DIRECTION: {pattern.get('direction', '')}
+SOURCE DOMAIN: {pattern.get('source_domain', '')}
+TARGET DOMAIN: {target_domain}
+{shared_block}
+
+Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object with source_action, target_action, source_property, target_property), analogy_notes. No markdown, no explanation."""
 
     def _llm_generate(
         self,

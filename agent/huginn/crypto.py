@@ -20,75 +20,98 @@ from typing import BinaryIO
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import logging
 logger = logging.getLogger(__name__)
 
 
+# 流式加密格式 magic + version, 用来和 encrypt() 的 base64 密文区分.
+# 旧 encrypt_stream 一把读 src 进内存 (假流式), 对几 GB 轨迹文件会 OOM.
+# 新格式走 chunked AES-GCM, 每块独立 nonce + 16 字节 tag, 真流式 + 完整性.
+_STREAM_MAGIC = b"HGS1"
+# Vault 主路径密文 magic (新格式). 没有 magic 前缀的视为旧 base64(salt+ct) 格式,
+# decrypt 时走 _decrypt_legacy. 这样已有数据不丢, 新数据走快路径.
+_VAULT_MAGIC = b"HGV2"
+
+
+def _write_chunk(dst: BinaryIO, aesgcm: AESGCM, nonce: bytes, plaintext: bytes) -> None:
+    """写一个 AES-GCM chunk: nonce(12) + ct_len(4 BE) + ciphertext."""
+    ct = aesgcm.encrypt(nonce, plaintext, None)
+    dst.write(nonce)
+    dst.write(len(ct).to_bytes(4, "big"))
+    dst.write(ct)
+
+
 
 class CryptoVault:
-    """Encrypted vault for sensitive data with per-item salt derivation."""
+    """Encrypted vault for sensitive data.
+
+    Key derivation: PBKDF2-SHA256 (480k iterations) runs ONCE at unlock()
+    with a vault-scope salt; encrypt/decrypt reuse the cached Fernet key.
+    Fernet's per-message random IV already gives distinct ciphertexts for
+    identical plaintexts, so the old per-item salt design was just burning
+    ~200ms of KDF on every call — brutal for RAG indexing (thousands of
+    chunks). Old base64(salt+ct) ciphertexts still decrypt via the legacy
+    path, so existing data keeps working.
+    """
 
     SALT_LENGTH = 32
     ITERATIONS = 480_000  # OWASP recommended minimum for PBKDF2-SHA256
+    # Vault-scope salt for the one-time master KDF. Randomness comes from
+    # the password itself; this just needs to be a fixed, distinct value.
+    _MASTER_SALT = b"huginn-vault-master-v1"
 
     def __init__(self, master_password: str | None = None):
         self._password: str | None = None
+        self._master_key: bytes | None = None  # base64-encoded Fernet key
         if master_password:
             self.unlock(master_password)
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
-        """Derive a Fernet key from password + salt using PBKDF2."""
+        """Derive a Fernet key (base64-encoded 32 bytes) from password + salt."""
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
             iterations=self.ITERATIONS,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(password.encode("utf-8")))
-        return key
+        return base64.urlsafe_b64encode(kdf.derive(password.encode("utf-8")))
 
     def unlock(self, password: str) -> None:
-        """Unlock the vault with a master password."""
+        """Unlock the vault with a master password (runs PBKDF2 once)."""
         self._password = password
+        self._master_key = self._derive_key(password, self._MASTER_SALT)
 
     def is_unlocked(self) -> bool:
-        return self._password is not None
+        return self._master_key is not None
 
     def lock(self) -> None:
-        """Clear password from memory."""
+        """Clear key material from memory."""
         self._password = None
+        self._master_key = None
 
-    def _require_unlocked(self) -> str:
-        if not self.is_unlocked():
+    def _require_unlocked(self) -> bytes:
+        if self._master_key is None:
             raise RuntimeError("Vault is locked. Call unlock() first.")
-        return self._password
+        return self._master_key
 
     def encrypt(self, plaintext: str | bytes) -> bytes:
-        """Encrypt plaintext. Returns base64-encoded ciphertext with embedded salt."""
-        password = self._require_unlocked()
-
-        salt = os.urandom(self.SALT_LENGTH)
-        key = self._derive_key(password, salt)
+        """Encrypt plaintext. Returns ``HGV2``-prefixed Fernet ciphertext."""
+        key = self._require_unlocked()
         fernet = Fernet(key)
-
         data = plaintext.encode("utf-8") if isinstance(plaintext, str) else plaintext
-        ciphertext = fernet.encrypt(data)
-
-        # Format: base64(salt + ciphertext)
-        return base64.b64encode(salt + ciphertext)
+        # 新格式: magic + fernet_ct (raw). Fernet 自带 per-message IV + HMAC,
+        # 相同明文不会得到相同密文, 不需要 per-item salt.
+        return _VAULT_MAGIC + fernet.encrypt(data)
 
     def decrypt(self, ciphertext: bytes) -> str:
-        """Decrypt ciphertext. Returns plaintext string."""
-        password = self._require_unlocked()
-
-        raw = base64.b64decode(ciphertext)
-        salt = raw[: self.SALT_LENGTH]
-        encrypted_data = raw[self.SALT_LENGTH :]
-
-        key = self._derive_key(password, salt)
-        fernet = Fernet(key)
-        plaintext = fernet.decrypt(encrypted_data)
-        return plaintext.decode("utf-8")
+        """Decrypt ciphertext (new ``HGV2`` format or legacy base64 format)."""
+        key = self._require_unlocked()
+        if ciphertext.startswith(_VAULT_MAGIC):
+            fernet = Fernet(key)
+            return fernet.decrypt(ciphertext[len(_VAULT_MAGIC) :]).decode("utf-8")
+        # 旧格式: base64(salt + fernet_ct), 用 embedded salt 重新 KDF.
+        return self._decrypt_legacy(ciphertext).decode("utf-8")
 
     def encrypt_bytes(self, plaintext: str | bytes) -> bytes:
         """Encrypt and return raw bytes (same as encrypt but explicit)."""
@@ -96,15 +119,21 @@ class CryptoVault:
 
     def decrypt_bytes(self, ciphertext: bytes) -> bytes:
         """Decrypt to raw bytes."""
-        password = self._require_unlocked()
+        key = self._require_unlocked()
+        if ciphertext.startswith(_VAULT_MAGIC):
+            fernet = Fernet(key)
+            return fernet.decrypt(ciphertext[len(_VAULT_MAGIC) :])
+        return self._decrypt_legacy(ciphertext)
 
+    def _decrypt_legacy(self, ciphertext: bytes) -> bytes:
+        """解旧格式密文 base64(salt + fernet_ct). 需要 _password 重新 KDF."""
+        if self._password is None:
+            raise RuntimeError("Vault is locked. Call unlock() first.")
         raw = base64.b64decode(ciphertext)
         salt = raw[: self.SALT_LENGTH]
         encrypted_data = raw[self.SALT_LENGTH :]
-
-        key = self._derive_key(password, salt)
-        fernet = Fernet(key)
-        return fernet.decrypt(encrypted_data)
+        legacy_key = self._derive_key(self._password, salt)
+        return Fernet(legacy_key).decrypt(encrypted_data)
 
     def encrypt_file(self, src_path: str | Path, dst_path: str | Path) -> None:
         """Encrypt a file."""
@@ -125,32 +154,89 @@ class CryptoVault:
     def encrypt_stream(
         self, src: BinaryIO, dst: BinaryIO, chunk_size: int = 64 * 1024
     ) -> None:
-        """Encrypt a stream (memory-efficient for large files).
+        """Encrypt a stream chunk-by-chunk (memory-bounded for large files).
 
-        Writes base64-encoded encrypted chunks to dst.
+        Format: ``HGS1`` magic + 32-byte salt + 4-byte chunk_size (BE),
+        then per chunk: 12-byte nonce + 4-byte ct_len (BE, includes 16-byte
+        GCM tag) + ciphertext. A final empty plaintext chunk marks EOF so
+        truncation is detectable on decrypt.
+
+        Per-stream salt + PBKDF2 here is intentional: streams may outlive a
+        single vault session (e.g. archived trajectory dumps), so deriving
+        a stream-scoped key from the master password + fresh salt keeps
+        each stream self-contained. The KDF runs once per stream, not per
+        chunk.
         """
-        password = self._require_unlocked()
+        password = self._password
+        if password is None:
+            raise RuntimeError("Vault is locked. Call unlock() first.")
         salt = os.urandom(self.SALT_LENGTH)
-        key = self._derive_key(password, salt)
-        fernet = Fernet(key)
+        # PBKDF2 raw 32 bytes 喂 AESGCM (Fernet 要 base64 包装, AESGCM 要 raw).
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=self.ITERATIONS,
+        )
+        aesgcm = AESGCM(kdf.derive(password.encode("utf-8")))
 
-        # Read all, encrypt, write (Fernet requires full message)
-        # For true streaming we'd need chunked Fernet or AES-GCM directly
-        data = src.read()
-        ciphertext = fernet.encrypt(data)
-        dst.write(base64.b64encode(salt + ciphertext))
+        dst.write(_STREAM_MAGIC)
+        dst.write(salt)
+        dst.write(chunk_size.to_bytes(4, "big"))
+
+        while True:
+            chunk = src.read(chunk_size)
+            if not chunk:
+                # 空明文 chunk 当 EOF marker, 即便源文件恰好是 chunk_size 整数倍
+                # 也能让 decrypt 干净退出.
+                _write_chunk(dst, aesgcm, os.urandom(12), b"")
+                break
+            _write_chunk(dst, aesgcm, os.urandom(12), chunk)
 
     def decrypt_stream(self, src: BinaryIO, dst: BinaryIO) -> None:
-        """Decrypt a stream."""
-        password = self._require_unlocked()
-        data = base64.b64decode(src.read())
-        salt = data[: self.SALT_LENGTH]
-        encrypted_data = data[self.SALT_LENGTH :]
+        """Decrypt a chunked AES-GCM stream produced by ``encrypt_stream``."""
+        password = self._password
+        if password is None:
+            raise RuntimeError("Vault is locked. Call unlock() first.")
+        magic = src.read(4)
+        if magic != _STREAM_MAGIC:
+            raise ValueError(
+                f"invalid stream magic: expected {_STREAM_MAGIC!r}, got {magic!r}"
+            )
+        salt = src.read(self.SALT_LENGTH)
+        if len(salt) != self.SALT_LENGTH:
+            raise ValueError("truncated stream header (salt)")
+        # chunk_size 在 header 里只是回放, 解密侧按 ct_len 字段读, 不依赖它.
+        _len_bytes = src.read(4)
+        if len(_len_bytes) != 4:
+            raise ValueError("truncated stream header (chunk_size)")
 
-        key = self._derive_key(password, salt)
-        fernet = Fernet(key)
-        plaintext = fernet.decrypt(encrypted_data)
-        dst.write(plaintext)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=self.ITERATIONS,
+        )
+        aesgcm = AESGCM(kdf.derive(password.encode("utf-8")))
+
+        while True:
+            nonce = src.read(12)
+            if not nonce:
+                break  # 干净 EOF
+            if len(nonce) < 12:
+                raise ValueError("truncated stream (partial nonce)")
+            len_bytes = src.read(4)
+            if len(len_bytes) < 4:
+                raise ValueError("truncated stream (partial ct_len)")
+            ct_len = int.from_bytes(len_bytes, "big")
+            ct = src.read(ct_len)
+            if len(ct) < ct_len:
+                raise ValueError("truncated stream (partial ciphertext)")
+            # GCM tag 校验失败会抛 InvalidTag, 调用方拿到异常就知道数据被篡改.
+            pt = aesgcm.decrypt(nonce, ct, None)
+            if not pt:
+                break  # EOF marker chunk
+            dst.write(pt)
 
     def encrypt_directory(
         self,
@@ -275,9 +361,11 @@ class KeyManager:
                 "No master key loaded. Provide password or call load_key_file()."
             )
 
-        # Use master key directly as vault password (it's already high-entropy)
+        # Use master key directly as vault password (it's already high-entropy).
+        # 走 unlock() 而不是直接塞 _password, 这样 CryptoVault 内部的 master_key
+        # 缓存被正确填上 (新版 encrypt/decrypt 复用这个缓存, 不再每次 KDF).
         vault = CryptoVault()
-        vault._password = self._master_key.decode("utf-8")
+        vault.unlock(self._master_key.decode("utf-8"))
         return vault
 
 

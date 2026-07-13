@@ -422,8 +422,11 @@ async def lifespan(app: FastAPI):
         from huginn.tools import register_core_tools
         register_core_tools()
         logger.info("[startup] core tools registered")
-        # Background-register the remaining ~55 optional tools (heavy imports)
-        asyncio.create_task(_bg_register_optional_tools())
+        # Background-register the remaining ~55 optional tools (heavy imports).
+        # 用 track_task 保留引用: 服务器刚启动就 shutdown 时, 裸 create_task
+        # 可能被 GC 中途取消, 工具注册静默失败.
+        from huginn.utils.concurrency import track_task
+        track_task(_bg_register_optional_tools(), name="bg-register-optional-tools")
     except Exception as e:
         logger.warning(f"[startup] tool registration failed: {e}")
     await _init_mcp_tools()
@@ -433,6 +436,28 @@ async def lifespan(app: FastAPI):
             get_context().kb = get_knowledge_base(cfg.workspace)
         except Exception as e:
             logger.info(f"[KB] Warning: could not initialize knowledge base: {e}")
+    # 加密 RAG: encryption_enabled=True 时初始化 EncryptedRAGManager.
+    # ponytail: 失败不崩, 退化到普通 KB. 密码/密钥从 cfg 读, 没配就跳过.
+    if get_context().encrypted_rag is None:
+        try:
+            cfg = get_config()
+            if cfg.encryption_enabled and (cfg.encryption_password or cfg.encryption_key_file):
+                from pathlib import Path
+
+                from huginn.rag.encrypted_rag import EncryptedRAGManager
+
+                persist_dir = str(Path(cfg.workspace) / ".huginn_encrypted_rag")
+                mgr = EncryptedRAGManager(
+                    password=cfg.encryption_password,
+                    key_file=cfg.encryption_key_file,
+                    persist_dir=persist_dir,
+                    doc_encryption=cfg.encrypt_rag_documents,
+                    meta_encryption=cfg.encrypt_rag_metadata,
+                )
+                get_context().encrypted_rag = mgr
+                logger.info("[EncryptedRAG] initialized (persist_dir=%s)", persist_dir)
+        except Exception as e:
+            logger.warning(f"[EncryptedRAG] could not initialize: {e}")
     if _CODEBASE_AVAILABLE and get_context().codebase is None:
         try:
             cfg = get_config()
@@ -571,6 +596,16 @@ async def lifespan(app: FastAPI):
             pass
         logger.info("[MCP] Health monitor stopped")
     await _shutdown_mcp()
+
+    # Lock encrypted RAG vault: clear decrypted data from memory before
+    # SQLite teardown so nothing leaks into closed-handle errors.
+    try:
+        _rag = getattr(get_context(), "encrypted_rag", None)
+        if _rag is not None:
+            _rag.lock()
+            logger.info("[shutdown] encrypted RAG vault locked")
+    except Exception as e:
+        logger.warning(f"[shutdown] failed to lock encrypted RAG: {e}")
 
     # Close persistent SQLite connections so WAL checkpoints flush and the
     # file handles drop cleanly. Done after MCP teardown so nothing new will

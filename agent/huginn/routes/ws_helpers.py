@@ -136,7 +136,10 @@ async def send_plan_and_wait(
         result = await asyncio.wait_for(future, timeout=timeout)
         return result
     except TimeoutError:
-        return {"confirmed": True, "edited_plan": None}
+        # Fail-closed: a silent timeout must not rubber-stamp a plan
+        # that the user never actually saw. Return denied so the agent
+        # treats it as "not approved" and re-asks or aborts.
+        return {"confirmed": False, "edited_plan": None, "reason": "timeout"}
     finally:
         _pending_plans.pop(plan_id, None)
 
@@ -686,6 +689,7 @@ async def _handle_user_input(
     session_auto_approve: dict,
     last_user_context: dict,
     pending_plan_contexts: dict,
+    user_id: str | None = None,
 ) -> None:
     """Handle a user_input message: create agent, route, stream response.
 
@@ -749,7 +753,7 @@ async def _handle_user_input(
     content = msg.content
     thread_id = msg.thread_id
 
-    get_or_create_thread(thread_id, user_id=None)
+    get_or_create_thread(thread_id, user_id=user_id)
 
     # @agent routing
     if content.startswith("@"):

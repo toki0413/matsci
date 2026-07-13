@@ -521,8 +521,9 @@ fn cmd_tools() -> Result<()> {
     println!();
 
     for (name, description, read_only) in tools {
-        let desc = if description.len() > 60 {
-            format!("{}...", &description[..60])
+        // 按字符截断而非字节，避免中文描述 panic
+        let desc = if description.chars().count() > 60 {
+            format!("{}...", description.chars().take(60).collect::<String>())
         } else {
             description
         };

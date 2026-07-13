@@ -147,11 +147,30 @@ class TestPhaseGateState:
         s.pending_transition = ("a", "b")
         s.submitted_evidence["mode"] = "coder"
         s.overrides.add(("a", "b"))
+        s.override_meta[("a", "b")] = {"ts": "now", "actor": "user"}
         s.reset()
         assert s.history == []
         assert s.pending_transition is None
         assert s.submitted_evidence == {}
         assert s.overrides == set()
+        # override_meta 也要被 reset 清空
+        assert s.override_meta == {}
+
+    def test_fresh_state_has_empty_override_meta(self):
+        s = PhaseGateState()
+        assert s.override_meta == {}
+
+    def test_override_meta_parallel_to_overrides_set(self):
+        """override_meta 是 overrides 的并行结构, 不靠 set.add 同步."""
+        s = PhaseGateState()
+        key = ("plan", "execute")
+        # set.add 不会自动写 meta — 这是有意为之, 调用方要显式写
+        s.overrides.add(key)
+        assert key in s.overrides
+        assert key not in s.override_meta  # set→dict 合并是 ponytail 升级路径
+        # 显式写 meta 后能查到
+        s.override_meta[key] = {"actor": "auto_router", "ts": "t1"}
+        assert s.override_meta[key]["actor"] == "auto_router"
 
     def test_shared_singleton_roundtrip(self):
         """get_shared 返回同一实例; set_shared 注入后 get 拿到新的."""
@@ -215,7 +234,9 @@ class TestPhaseToolGet:
         r = _call(tool, {"action": "get_current_gate"}, ctx)
         assert r.data["pending_transition"] == ["plan", "execute"]
         assert r.data["submitted_evidence_keys"] == ["mode"]
-        assert ["execute", "validate"] in r.data["overrides"]
+        # override 返回结构: [{"transition": [...], **meta}]
+        transitions = [o["transition"] for o in r.data["overrides"]]
+        assert ["execute", "validate"] in transitions
 
 
 class TestPhaseToolSubmitEvidence:
@@ -363,6 +384,61 @@ class TestPhaseToolOverride:
         )
         assert r.success is False
         assert "from_phase" in r.error
+
+    def test_override_auto_mode_writes_meta(self, tool, ctx):
+        """auto 模式 override 时同步写 override_meta: ts/actor/reason."""
+        r = _call(
+            tool,
+            {
+                "action": "override",
+                "from_phase": "plan",
+                "to_phase": "execute",
+            },
+            ctx,
+        )
+        assert r.success is True
+        state = get_shared_phase_gate_state()
+        key = ("plan", "execute")
+        meta = state.override_meta.get(key)
+        assert meta is not None
+        assert meta["actor"] == "user"
+        assert meta["reason"] == "manual_override"
+        # ts 是 ISO8601 with tz
+        assert "T" in meta["ts"]
+
+    def test_get_current_gate_returns_override_meta(self, tool, ctx):
+        """get_current_gate 返回的 overrides 条目带 meta 字段."""
+        _call(
+            tool,
+            {
+                "action": "override",
+                "from_phase": "plan",
+                "to_phase": "execute",
+            },
+            ctx,
+        )
+        r = _call(tool, {"action": "get_current_gate"}, ctx)
+        assert r.success is True
+        ov = r.data["overrides"]
+        assert len(ov) == 1
+        entry = ov[0]
+        assert entry["transition"] == ["plan", "execute"]
+        assert entry["actor"] == "user"
+        assert entry["reason"] == "manual_override"
+        assert "ts" in entry
+
+    def test_get_current_gate_meta_missing_for_set_only_override(self, tool, ctx):
+        """直接 set.add 加进去 (不写 meta) 时, get_current_gate 不崩, meta 缺."""
+        state = get_shared_phase_gate_state()
+        state.overrides.add(("execute", "validate"))
+        # 没写 override_meta — get_current_gate 应该不崩, 返回 dict 只含 transition
+        r = _call(tool, {"action": "get_current_gate"}, ctx)
+        assert r.success is True
+        ov = r.data["overrides"]
+        assert len(ov) == 1
+        assert ov[0]["transition"] == ["execute", "validate"]
+        # 没有 actor / reason (meta 缺, 用 .get 不报错)
+        assert "actor" not in ov[0]
 
 
 class TestPhaseToolSchema:

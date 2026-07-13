@@ -411,8 +411,11 @@ async def get_api_key_with_swr(
         key, expires = cached
         if now < expires:
             return key  # 新鲜，直接返回
-        # 已过期 — 先返回旧值，后台刷新
-        asyncio.create_task(_refresh_api_key(source, helper, ttl))
+        # 已过期 — 先返回旧值，后台刷新. 用 track_task 保留引用, 否则裸
+        # create_task 可能在 _refresh_api_key 完成前被 GC 静默取消,
+        # 后续请求拿到的还是旧 key 直到 TTL 再次触发刷新.
+        from huginn.utils.concurrency import track_task
+        track_task(_refresh_api_key(source, helper, ttl), name=f"refresh-api-key-{source}")
         return key
     # 无缓存 — 同步刷新
     async with _api_key_lock:

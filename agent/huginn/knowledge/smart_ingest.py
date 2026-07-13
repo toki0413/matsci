@@ -184,7 +184,11 @@ class SmartIngester:
         try:
             from huginn.knowledge.chunker import StructureChunker
             text = content.decode("utf-8", errors="ignore")
-            chunks = StructureChunker.chunk(text, filename=filename)
+            # 之前是 `StructureChunker.chunk(text, filename=filename)` — 类上未绑定的
+            # async 方法, 没实例化也没 await, 返回 coroutine. coroutine 是 truthy,
+            # `if not chunks` 永远 False, 进 for 循环拿 chunk.text 抛 AttributeError
+            # 被 except 兜底退回 ingest_text, CIF/POSCAR 结构化分块静默失效.
+            chunks = await StructureChunker().chunk(text, filename=filename)
             if not chunks:
                 # StructureChunker 无法解析, 退回普通文本摄入
                 return await self.ingest_text(filename, content)

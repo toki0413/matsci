@@ -190,6 +190,7 @@ async def agent_websocket(websocket: WebSocket):
                         session_auto_approve=session_auto_approve,
                         last_user_context=_last_user_context,
                         pending_plan_contexts=_pending_plan_contexts,
+                        user_id=identity,
                     )
 
                 elif msg_type == "explore_start":

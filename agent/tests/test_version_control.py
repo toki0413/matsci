@@ -394,3 +394,102 @@ class TestMarkReverted:
     def test_mark_empty_list_noop(self, isolated_registry):
         result = isolated_registry._store.mark_reverted([])
         assert result == 0
+
+
+# ── get_unreverted_ids_since (机制1 优化: 封装方法替代直接访问 store._lock/_conn) ─
+
+
+class TestGetUnrevertedIdsSince:
+    def test_returns_ids_after_target(self, isolated_registry):
+        isolated_registry.register(file_path="/a", produced_by="t1")
+        isolated_registry.register(file_path="/b", produced_by="t2")
+        isolated_registry.register(file_path="/c", produced_by="t3")
+        # target_id=1 → 返回 id > 1 的所有未回滚 id, 倒序
+        ids = isolated_registry._store.get_unreverted_ids_since(1)
+        assert ids == [3, 2]
+
+    def test_excludes_reverted(self, isolated_registry):
+        isolated_registry.register(file_path="/a", produced_by="t1")
+        isolated_registry.register(file_path="/b", produced_by="t2")
+        isolated_registry.register(file_path="/c", produced_by="t3")
+        # 标记 id=2 为 reverted
+        isolated_registry._store.mark_reverted([2], reverted=True)
+        ids = isolated_registry._store.get_unreverted_ids_since(1)
+        # 只剩 id=3 (id=2 已 reverted, 被排除)
+        assert ids == [3]
+
+    def test_empty_when_no_events_after_target(self, isolated_registry):
+        isolated_registry.register(file_path="/a", produced_by="t1")
+        # target_id=10, 没有事件 id > 10
+        ids = isolated_registry._store.get_unreverted_ids_since(10)
+        assert ids == []
+
+    def test_returns_descending_order(self, isolated_registry):
+        """倒序: 供 mark_reverted 用, 不要求顺序但倒序更符合 rollback 语义."""
+        for i in range(5):
+            isolated_registry.register(
+                file_path=f"/f{i}", produced_by=f"t{i}"
+            )
+        ids = isolated_registry._store.get_unreverted_ids_since(0)
+        # 倒序: [5, 4, 3, 2, 1]
+        assert ids == sorted(ids, reverse=True)
+        assert ids[0] > ids[-1]
+
+
+# ── rollback_to 失败路径移除 (机制1: revert 失败的 path 不该在返回列表里) ─
+
+
+class TestRollbackFailurePath:
+    def test_failed_revert_path_removed_from_returned_list(
+        self, isolated_registry, isolated_snapshot_mgr, monkeypatch
+    ):
+        """revert 抛异常 → 对应 path 从 reverted_paths 移除, 让调用方区分.
+
+        注意: SnapshotManager.revert 是 workspace 级别的, 一次 revert 会影响
+        workspace 下所有文件. 所以这里只测一个 sid_bad 失败, 隔离其他 revert
+        的副作用.
+        """
+        ws = Path(isolated_snapshot_mgr._root) / "ws"
+        ws.mkdir(parents=True, exist_ok=True)
+        (ws / "bad.dat").write_text("v1\n", encoding="utf-8")
+
+        sid_bad = isolated_snapshot_mgr.track("t_bad", ws)
+        isolated_snapshot_mgr.patch(sid_bad, ws)
+        (ws / "bad.dat").write_text("v2\n", encoding="utf-8")
+        isolated_registry.register(
+            file_path=str(ws / "bad.dat"),
+            produced_by="t_bad",
+            snapshot_step_id=sid_bad,
+        )
+
+        # 让 SnapshotManager.revert 对 sid_bad 抛异常
+        def flaky_revert(sid, workspace):
+            raise RuntimeError("simulated revert failure")
+
+        monkeypatch.setattr(isolated_snapshot_mgr, "revert", flaky_revert)
+
+        # rollback_to(0): 回滚所有
+        paths = isolated_registry.rollback_to(0)
+
+        # revert 失败 → bad.dat path 被移除
+        assert str(ws / "bad.dat") not in paths
+        # bad.dat 没被回滚 (仍是 v2)
+        assert (ws / "bad.dat").read_text() == "v2\n"
+
+        # 即便文件 revert 失败, provenance 事件依然被标记 reverted
+        # (provenance 标记和文件回滚是独立的两步, 失败不该污染记账)
+        events = isolated_registry.get_events()
+        assert all(e.reverted for e in events), "事件该被标记 reverted"
+
+    def test_rollback_no_snapshot_step_id_skips_file_revert(
+        self, isolated_registry
+    ):
+        """没有 snapshot_step_id 的事件: 文件不回滚, 但 path 仍在返回列表 (供记账)."""
+        isolated_registry.register(
+            file_path="/no_snapshot.dat",
+            produced_by="t",
+            # 不传 snapshot_step_id
+        )
+        paths = isolated_registry.rollback_to(0)
+        # 没文件 revert, 但 path 仍出现在返回里 (表示该事件被纳入回滚范围)
+        assert "/no_snapshot.dat" in paths

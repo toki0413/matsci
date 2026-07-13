@@ -66,6 +66,13 @@ def _migrate_memories_v1(conn: sqlite3.Connection) -> None:
     # filter is supplied (backward compat).
     if not column_exists(conn, "memories", "user_id"):
         conn.execute("ALTER TABLE memories ADD COLUMN user_id TEXT")
+    # 上次 decay 时的 access_count 快照, decay 用 (access_count - 上次值)
+    # 算增量访问, 否则每次 decay 都把累计 access_count 反复 boost 累加.
+    # 默认 0, 首次 decay 会把历史访问一次性补偿进去 (一次性, 不重复).
+    if not column_exists(conn, "memories", "last_decay_access_count"):
+        conn.execute(
+            "ALTER TABLE memories ADD COLUMN last_decay_access_count INTEGER DEFAULT 0"
+        )
 
 
 def _run_memory_migrations(db_path: str) -> None:
@@ -511,6 +518,14 @@ class LongTermMemory:
         ttl_hours: float | None = None,
     ) -> bool:
         with self._connect() as conn:
+            # FTS5 外部内容表删索引需要原值, 先取一份快照
+            old = conn.execute(
+                "SELECT rowid, content, tags, source FROM memories WHERE id = ?",
+                (entry_id,),
+            ).fetchone()
+            if old is None:
+                return False
+
             if content is not None:
                 conn.execute(
                     "UPDATE memories SET content = ? WHERE id = ?", (content, entry_id)
@@ -542,6 +557,27 @@ class LongTermMemory:
                     "UPDATE memories SET tier = ?, expires_at = ? WHERE id = ?",
                     (tier, expires, entry_id),
                 )
+            # content/tags 变了就要重建 FTS5 索引行, 否则 retrieve 走 FTS5
+            # 时拿到的是旧 token (importance/tier 不影响 FTS5, 跳过)
+            if content is not None or tags is not None:
+                new_row = conn.execute(
+                    "SELECT content, tags, source, formula FROM memories WHERE id = ?",
+                    (entry_id,),
+                ).fetchone()
+                if new_row is not None:
+                    conn.execute(
+                        "INSERT INTO memory_fts(memory_fts, rowid, content, tags, source) "
+                        "VALUES('delete', ?, ?, ?, ?)",
+                        (old["rowid"], old["content"], old["tags"], old["source"]),
+                    )
+                    new_tags_list = json.loads(new_row["tags"] or "[]")
+                    fts_tags = " ".join(
+                        new_tags_list + ([new_row["formula"]] if new_row["formula"] else [])
+                    )
+                    conn.execute(
+                        "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
+                        (old["rowid"], new_row["content"], fts_tags, new_row["source"]),
+                    )
             conn.commit()
             return conn.total_changes > 0
 
@@ -551,11 +587,23 @@ class LongTermMemory:
 
     def delete(self, entry_id: str) -> bool:
         with self._connect() as conn:
+            # FTS5 外部内容表删索引必须先取原值, 用 'delete' 命令
+            old = conn.execute(
+                "SELECT rowid, content, tags, source FROM memories WHERE id = ?",
+                (entry_id,),
+            ).fetchone()
+            if old is None:
+                return False
+            conn.execute(
+                "INSERT INTO memory_fts(memory_fts, rowid, content, tags, source) "
+                "VALUES('delete', ?, ?, ?, ?)",
+                (old["rowid"], old["content"], old["tags"], old["source"]),
+            )
             conn.execute("DELETE FROM memories WHERE id = ?", (entry_id,))
             conn.commit()
             if self._enable_semantic:
                 self._vector_store.delete([entry_id])
-            return conn.total_changes > 0
+            return True
 
     def list_by_category(
         self,
@@ -655,8 +703,9 @@ class LongTermMemory:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM memories").fetchall()
             data = [dict(r) for r in rows]
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        # 原子写: 大量记忆导出时崩溃会留半截 JSON, 下次 import_ 直接 JSONDecodeError.
+        from huginn.utils.concurrency import atomic_write_text
+        atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False))
 
     def import_(self, path: str | Path) -> int:
         """Import memories from JSON. Returns count imported."""

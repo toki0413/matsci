@@ -619,7 +619,9 @@ class MemoryManager:
         truncated, line_cut, byte_cut = truncate_entrypoint(raw)
         if line_cut or byte_cut:
             truncated = truncated.rstrip() + "\n\n<!-- truncated to fit entrypoint limits -->\n"
-        path.write_text(truncated, encoding="utf-8")
+        # 原子写: MEMORY.md 是 entrypoint, 半截写会让 agent 启动读到残缺上下文.
+        from huginn.utils.concurrency import atomic_write_text
+        atomic_write_text(path, truncated)
         return path
 
     def load_memory_md(self) -> list[dict[str, Any]]:
@@ -704,15 +706,18 @@ class MemoryManager:
         memory_dir = self._get_memory_dir()
         topic_file = get_topic_file_path(memory_type, topic, memory_dir)
         header = f"# [{memory_type.value}] {topic}\n\n"
+        # 原子写: 主题文件被半截写会让 recall_typed 读到残缺内容.
+        # ponytail: read-modify-write 本身的并发一致性需要文件锁, 不在这次修复范围.
+        from huginn.utils.concurrency import atomic_write_text
         if not topic_file.exists():
-            topic_file.write_text(header + content + "\n", encoding="utf-8")
+            atomic_write_text(topic_file, header + content + "\n")
             return topic_file
         existing = topic_file.read_text(encoding="utf-8")
         # 跳过重复内容，避免主题文件无限膨胀
         if content in existing:
             return topic_file
-        topic_file.write_text(
-            existing.rstrip() + "\n\n" + content + "\n", encoding="utf-8"
+        atomic_write_text(
+            topic_file, existing.rstrip() + "\n\n" + content + "\n"
         )
         return topic_file
 

@@ -514,8 +514,9 @@ class StreamingMixin:
         """
         set_thread_id(thread_id)
         set_user_message(message)
-        self.thread_id = thread_id
-        self._current_user_message = message
+        # ponytail: 不写 self.thread_id / self._current_user_message 实例属性,
+        # 并发 chat() 调用会互相覆盖. contextvars 已隔离每协程副本, core.py
+        # 的 _build_graph 用 get_user_message() 读, 无竞争.
 
         if self._turn_count == 0:
             self._init_session_continuity()

@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 
 HypothesisStatus = Literal["untested", "supported", "refuted", "superseded"]
-EdgeType = Literal["support", "refute", "derive"]
+EdgeType = Literal["support", "refute", "derive", "pivot"]
 
 
 # ── data structures ──────────────────────────────────────────────────────────
@@ -111,6 +111,20 @@ class HypothesisGraph:
     def __init__(self) -> None:
         self._nodes: dict[str, HypothesisNode] = {}
         self._edges: list[HypothesisEdge] = []
+        self._events: list[dict[str, Any]] = []
+        # ponytail: in-memory event log, 不持久化. 升级: 写入 session event log
+        # (Anthropic Managed Agents: Session as event log, 可 resume/replay/debug)
+
+    def _record_event(self, event_type: str, node_id: str | None = None,
+                      **payload: Any) -> None:
+        """记录结构化事件到 event log (append-only, 不删除).
+        用于回放/调试/状态恢复. 失败学第12节: 把失败变成可回放材料."""
+        self._events.append({
+            "event": event_type,
+            "node_id": node_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            **payload,
+        })
 
     def _log_research(self, record_type: str, title: str, content: str,
                       parent_id: str | None = None, status: str = "proposed",
@@ -159,7 +173,10 @@ class HypothesisGraph:
         if parent_id is not None:
             self._edges.append(HypothesisEdge(
                 from_id=parent_id, to_id=node_id, edge_type="derive",
+                evidence={"rationale": rationale},
             ))
+        self._record_event("add", node_id, statement=statement,
+                           parent_id=parent_id)
         self._log_research(
             "conjecture", node.statement[:80],
             f"{node.statement}\n\nRationale: {node.rationale}\n"
@@ -186,6 +203,11 @@ class HypothesisGraph:
     def refuted(self) -> list[HypothesisNode]:
         return [n for n in self._nodes.values() if n.status == "refuted"]
 
+    def events(self) -> list[dict[str, Any]]:
+        """返回事件日志副本 (append-only, 调用方不应修改).
+        用于回放/调试: 重放事件可重建图状态."""
+        return list(self._events)
+
     # ── 状态转移 ─────────────────────────────────────────────────────
 
     def support(self, node_id: str, evidence: dict[str, Any]) -> None:
@@ -201,6 +223,9 @@ class HypothesisGraph:
         self._edges.append(HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="support", evidence=evidence,
         ))
+        self._record_event("support", node_id,
+                           modality=evidence.get("modality"),
+                           data_source=evidence.get("data_source"))
         self._log_research(
             "verification", f"验证通过: {node.statement[:60]}",
             f"假设 {node_id} 被实验支持.\n\n"
@@ -222,6 +247,8 @@ class HypothesisGraph:
         self._edges.append(HypothesisEdge(
             from_id=node_id, to_id=node_id, edge_type="refute", evidence=evidence,
         ))
+        self._record_event("refute", node_id,
+                           reason=str(evidence.get("errors", ""))[:200])
         self._log_research(
             "counterexample", f"反驳: {node.statement[:60]}",
             f"假设 {node_id} 被实验反驳.\n\n"
@@ -233,7 +260,22 @@ class HypothesisGraph:
     def supersede(self, node_id: str) -> None:
         """标记假设被衍生假设取代 (refine_failed 后旧假设变 superseded)."""
         self._check_node(node_id)
-        self._nodes[node_id].status = "superseded"
+        node = self._nodes[node_id]
+        # 源状态校验: untested 节点不该被 supersede (没测过就取代无意义)
+        if node.status == "untested":
+            raise HypothesisGraphError(
+                f"节点 {node_id} 未测试, 不能直接 supersede (应先 refute/support)"
+            )
+        node.status = "superseded"
+        self._record_event("supersede", node_id)
+        # 对称: add/support/refute/refine/pivot 都写 research_log, supersede 补上
+        self._log_research(
+            "counterexample", f"取代: {node.statement[:60]}",
+            f"假设 {node_id} 被 refine 后的衍生假设取代.\n\n"
+            f"Statement: {node.statement}\nStatus: superseded",
+            parent_id=node_id, status="superseded",
+            tags=["autoloop", "superseded"],
+        )
 
     # ── 失败驱动的假设修正 ───────────────────────────────────────────
 
@@ -279,11 +321,16 @@ class HypothesisGraph:
             statement=new_statement,
             rationale=f"战略转向: refine 次数耗尽, 放弃 {failed_node_id} 方向",
         )
-        # 把 pivot 关系记到边里
+        # 把 pivot 关系记到边里 — 用 "pivot" 类型, 不污染 children() 的 derive 过滤
         self._edges.append(HypothesisEdge(
-            from_id=failed_node_id, to_id=new_id, edge_type="derive",
-            evidence={"pivot": True, "reason": "max_refines_reached"},
+            from_id=failed_node_id, to_id=new_id, edge_type="pivot",
+            evidence={"reason": "max_refines_reached"},
         ))
+        self._record_event(
+            "pivot", new_id,
+            from_node=failed_node_id,
+            failed_count=len(failed_statements),
+        )
         self._log_research(
             "conjecture", f"PIVOT: {new_statement[:60]}",
             f"战略转向 — refine 次数耗尽后放弃原方向.\n\n"
@@ -397,6 +444,11 @@ class HypothesisGraph:
             parent_id=node_id,
         )
         self._nodes[new_id].refinement_basis = findings
+        self._record_event(
+            "refine", new_id,
+            from_node=node_id,
+            findings_count=len(findings),
+        )
         self.supersede(node_id)
         self._log_research(
             "proof_attempt", f"修正假设: {new_statement[:60]}",
@@ -412,33 +464,80 @@ class HypothesisGraph:
     # ── 双覆盖查询 ───────────────────────────────────────────────────
 
     def needs_dual_coverage(self, node_id: str) -> bool:
-        """节点是否需要双模态覆盖.
-        启发式: 是路径分叉点 (有 derive 子节点) 或处于 derivation_chain 深处.
-        ponytail: 启发式判定, 复杂图下可能漏检割边. 升级:
-        networkx.articulation_points, 当节点 >50 时换."""
+        """节点是否需要双模态覆盖 (割边判定).
+
+        升级自启发式 → networkx.articulation_points 精确判定.
+        割边 (articulation point): 删除后图分量数增加的节点.
+        在假设图上, 割点是关键路径枢纽 — 若它被幻觉/压缩, 下游全断.
+        """
         self._check_node(node_id)
-        has_derive_children = any(
-            e.from_id == node_id and e.edge_type == "derive"
-            for e in self._edges
-        )
-        chain = self.derivation_chain(node_id)
-        return has_derive_children or len(chain) >= 2
+        articulation = self._articulation_points()
+        return node_id in articulation
+
+    def _articulation_points(self) -> set[str]:
+        """计算当前图的所有割点 (articulation points).
+
+        ponytail: O(V+E) Tarjan 算法 (networkx 实现). 节点 <3 时
+        直接返回空集 (无割点可能). derive/support/refute 边都计入无向图.
+        """
+        if len(self._nodes) < 3:
+            return set()
+        try:
+            import networkx as nx
+
+            g = nx.Graph()
+            g.add_nodes_from(self._nodes.keys())
+            for e in self._edges:
+                # 自环 (support/refute 边 from==to) 不影响割点判定, 跳过
+                if e.from_id != e.to_id:
+                    g.add_edge(e.from_id, e.to_id)
+            return set(nx.articulation_points(g))
+        except Exception:
+            # networkx 不可用时降级到启发式
+            return {
+                e.from_id for e in self._edges
+                if e.edge_type == "derive"
+                and any(e2.from_id == e.to_id for e2 in self._edges
+                        if e2.edge_type == "derive")
+            }
 
     def dual_covered(self, node_id: str) -> bool:
         """节点是否被 ≥2 种独立模态支撑 (via support 边的 modality 字段).
+
+        独立性判定:
+        - modality 必须不同 (deductive ≠ numeric)
+        - 若 support 边带 data_source 字段, 则 data_source 也必须不同
+          (防 IPI: 两条边若来自同一被污染数据源, 是假双覆盖)
+
         ponytail: 'deductive' 与 'numeric' 是软独立 — GP 数值验证与符号
         推导基底不同, 但仍是同模型权重. 真独立需跨模型/跨模态, 等幻觉
-        断裂数据再升级."""
+        断裂数据再升级. data_source 检查是 IPI 防御的硬约束."""
         self._check_node(node_id)
-        modalities = {
-            e.evidence.get("modality")
-            for e in self._edges
+        support_edges = [
+            e for e in self._edges
             if e.from_id == node_id
             and e.to_id == node_id
             and e.edge_type == "support"
             and e.evidence.get("modality")
+        ]
+        if len(support_edges) < 2:
+            return False
+
+        modalities = {e.evidence.get("modality") for e in support_edges}
+        if len(modalities) < 2:
+            return False
+
+        # 若任一 support 边带 data_source, 检查来源独立性
+        sources = {
+            e.evidence.get("data_source")
+            for e in support_edges
+            if e.evidence.get("data_source")
         }
-        return len(modalities) >= 2
+        # 有 data_source 标签时, 必须有 ≥2 个不同来源
+        # 没有 data_source 标签时, 退回到只检查 modality (向后兼容)
+        if sources and len(sources) < 2:
+            return False
+        return True
 
     # ── 边查询 ───────────────────────────────────────────────────────
 

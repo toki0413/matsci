@@ -165,8 +165,10 @@ class MCPClientManager:
         try:
             try:
                 loop = asyncio.get_running_loop()
-                # Schedule in running loop
-                asyncio.create_task(self.connect(config))
+                # Schedule in running loop. 用 track_task 保留引用, 否则裸
+                # create_task 在 connect 完成前可能被 GC 静默取消.
+                from huginn.utils.concurrency import track_task
+                track_task(self.connect(config), name=f"mcp-connect-{getattr(config, 'name', '?')}")
             except RuntimeError:
                 # No running loop — create one
                 loop = asyncio.new_event_loop()

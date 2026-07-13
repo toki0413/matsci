@@ -148,6 +148,8 @@ export function ChatPanel(props: ChatPanelProps) {
   const [showStats, setShowStats] = useState(false);
   const [notifSound, setNotifSound] = useState(() => localStorage.getItem('chat-notif-sound') !== 'off');
   const [streamingWasActive, setStreamingWasActive] = useState(false);
+  // reasoning 折叠状态: 用户手动 toggle 后记住, 否则跟随 streaming 自动开/关
+  const [reasoningOpen, setReasoningOpen] = useState<Record<number, boolean>>({});
 
   // Play notification sound when streaming completes
   useEffect(() => {
@@ -768,13 +770,22 @@ export function ChatPanel(props: ChatPanelProps) {
                 </div>
                 {msg.reasoning && (
                   <details
-                    className={`mb-2 rounded-lg ${msg.reasoning && !msg.content ? "" : ""}`}
-                    open={msg.timestamp === "streaming"}
+                    className="mb-2 rounded-lg"
+                    open={reasoningOpen[index] ?? (msg.timestamp === "streaming")}
+                    onToggle={(e) => setReasoningOpen(prev => ({ ...prev, [index]: (e.target as HTMLDetailsElement).open }))}
                   >
-                    <summary className="cursor-pointer select-none text-xs font-medium text-text-muted hover:text-text-secondary">
-                      {msg.timestamp === "streaming" && !msg.content
-                        ? t('chat.thinking')
-                        : t('chat.thoughtProcess')}
+                    <summary className="cursor-pointer select-none text-xs font-medium text-text-muted hover:text-text-secondary flex items-center gap-1.5">
+                      {msg.timestamp === "streaming" && !msg.content && (
+                        <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+                      )}
+                      <span>
+                        {msg.timestamp === "streaming" && !msg.content
+                          ? t('chat.thinking')
+                          : t('chat.thoughtProcess')}
+                      </span>
+                      <span className="opacity-60">
+                        · {msg.reasoning.length > 999 ? `${(msg.reasoning.length / 1000).toFixed(1)}k` : msg.reasoning.length}
+                      </span>
                     </summary>
                     <div className="mt-1.5 max-h-60 overflow-y-auto whitespace-pre-wrap border-l-2 border-border pl-3 text-xs italic leading-relaxed text-text-muted opacity-80">
                       {msg.reasoning}

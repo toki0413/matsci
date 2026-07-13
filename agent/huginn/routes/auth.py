@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
@@ -76,6 +77,7 @@ def _issue_token(username: str, role: Role, expires_in: int = _TOKEN_TTL) -> str
         "sub": username,
         "username": username,
         "role": role.value,
+        "jti": uuid4().hex,
     }
     return jwt_encode(payload, secret, expires_in=expires_in)
 
@@ -216,9 +218,20 @@ async def refresh_token(request: Request) -> dict[str, Any]:
 
     The caller passes their current (non-expired) token in the
     Authorization header and receives a fresh token with a reset
-    expiry window.
+    expiry window. The old token's ``jti`` is revoked so it can no
+    longer be used even before its original ``exp`` passes.
     """
+    from huginn.security.rbac import TokenRevocationList
+
     claims = _decode_request_token(request)
+
+    # Revoke the old token immediately — sliding window refresh must
+    # invalidate the credential it replaced, otherwise a leaked token
+    # stays usable until its original expiry.
+    old_jti = claims.get("jti")
+    old_exp = claims.get("exp")
+    if old_jti:
+        TokenRevocationList.shared().revoke(old_jti, exp=old_exp)
 
     role_str = claims.get("role", "operator")
     try:

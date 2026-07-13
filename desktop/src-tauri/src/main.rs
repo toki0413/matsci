@@ -174,20 +174,34 @@ fn main() {
 }
 
 #[tauri::command]
-fn get_agent_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
+async fn get_agent_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
     let port = state.backend_port.load(std::sync::atomic::Ordering::Relaxed);
     let url = format!("http://127.0.0.1:{}/health", port);
-    match reqwest::blocking::get(&url) {
-        Ok(resp) if resp.status().is_success() => resp
-            .json()
-            .unwrap_or_else(|_| serde_json::json!({"status": "ok"})),
-        Ok(resp) => serde_json::json!({
-            "status": "error",
-            "error": format!("HTTP {}", resp.status()),
+    // 用 spawn_blocking 把 blocking reqwest 丢到线程池，
+    // 否则同步 #[tauri::command] 会卡住 Tauri 主线程导致 UI 冻结。
+    // 2s 超时防止 backend 离线时一直挂起。
+    let join = tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let resp = client.get(&url).send().map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}", resp.status()));
+        }
+        Ok(resp
+            .json::<serde_json::Value>()
+            .unwrap_or_else(|_| serde_json::json!({"status": "ok"})))
+    });
+    match join.await {
+        Ok(Ok(value)) => value,
+        Ok(Err(e)) => serde_json::json!({
+            "status": "offline",
+            "error": e,
         }),
         Err(e) => serde_json::json!({
             "status": "offline",
-            "error": e.to_string(),
+            "error": format!("probe task failed: {}", e),
         }),
     }
 }
@@ -428,12 +442,68 @@ fn read_dir(path: &str) -> Result<Vec<FileEntry>, String> {
 
 #[tauri::command]
 fn read_file(path: &str) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| e.to_string())
+    let canonical = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    if !is_path_safe(&canonical) {
+        return Err("Access denied: path is outside allowed directories".to_string());
+    }
+    std::fs::read_to_string(&canonical).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn write_file(path: &str, content: &str) -> Result<(), String> {
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    let canonical = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    if !is_path_safe(&canonical) {
+        return Err("Access denied: path is outside allowed directories".to_string());
+    }
+    std::fs::write(&canonical, content).map_err(|e| e.to_string())
+}
+
+/// Reject access to sensitive system locations. Desktop app is single-user,
+/// so we allow user-writable areas (home, temp) but block system dirs,
+/// credentials, and other users' profiles.
+fn is_path_safe(path: &std::path::Path) -> bool {
+    use std::path::PathBuf;
+
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from);
+    let Some(home) = home else {
+        // Can't determine home — allow nothing sensitive
+        return !is_in_system_sensitive(path);
+    };
+
+    // Block other users' profiles
+    let profiles_root = home.parent().map(|p| p.to_path_buf());
+    if let Some(profiles) = &profiles_root {
+        if path.starts_with(profiles) && !path.starts_with(&home) {
+            return false;
+        }
+    }
+
+    !is_in_system_sensitive(path)
+}
+
+fn is_in_system_sensitive(path: &std::path::Path) -> bool {
+    const BLOCKED: &[&str] = &[
+        "Windows\\System32",
+        "Windows\\SysWOW64",
+        "ProgramData",
+        "$Recycle.Bin",
+        "Boot",
+        "etc\\ssh",
+        ".ssh",
+        ".gnupg",
+        "AppData\\Roaming\\Microsoft\\Credentials",
+        "AppData\\Roaming\\Microsoft\\Crypto",
+        "AppData\\Local\\Microsoft\\Credential Manager",
+    ];
+    let lossy = path.to_string_lossy().to_lowercase();
+    for b in BLOCKED {
+        if lossy.contains(&b.to_lowercase()) {
+            return true;
+        }
+    }
+    false
 }
 
 fn spawn_terminal(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {

@@ -420,15 +420,44 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const streamBufferRef = useRef<{ text: string; reasoning: string }>({ text: "", reasoning: "" });
   const rafScheduledRef = useRef(false);
 
+  // watchdog: 流式过程中如果 token 间隔超时, 判定 WS 静默断开.
+  // 首次 arm 用 180s (DeepSeek Reasoner 首 token 60s+ + 弱网容忍),
+  // 后续 token 间用 60s (后续 token 应秒级到达).
+  // 触发时: 无 content 显示 "Connection lost", 有 content 保留部分结果标记完成.
+  // 必须在 flushStreamBuffer 之前定义 — const 不 hoist, 闭包要拿到引用.
+  const armWatchdog = useCallback((timeoutMs: number) => {
+    if (streamingTimeoutRef.current) clearTimeout(streamingTimeoutRef.current);
+    streamingTimeoutRef.current = setTimeout(() => {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === "assistant" && last.timestamp === "streaming") {
+          const updated = [...prev];
+          if (!last.content) {
+            updated[updated.length - 1] = {
+              ...last,
+              content: "Connection lost. Please try again.",
+              timestamp: formatTime(),
+            };
+          } else {
+            // 部分内容: 保留, 标记完成 (不丢弃已收到的 token)
+            updated[updated.length - 1] = { ...last, timestamp: formatTime() };
+          }
+          return updated;
+        }
+        return prev;
+      });
+      setIsStreaming(false);
+      streamingTimeoutRef.current = null;
+    }, timeoutMs);
+  }, []);
+
   const flushStreamBuffer = useCallback(() => {
     rafScheduledRef.current = false;
     const buf = streamBufferRef.current;
     if (!buf.text && !buf.reasoning) return;
-    // content arrived — cancel the connection-loss watchdog
-    if (streamingTimeoutRef.current) {
-      clearTimeout(streamingTimeoutRef.current);
-      streamingTimeoutRef.current = null;
-    }
+    // token 到了 — 清掉首 token 期 watchdog, 重设为后续 token 间隔 (60s).
+    // 之前是直接 clear 不重设, 后续 token 中断时 watchdog 已失效, 静默 hang.
+    armWatchdog(60_000);
     setMessages((prev) => {
       const updated = [...prev];
       const last = updated[updated.length - 1];
@@ -449,7 +478,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       return updated;
     });
     streamBufferRef.current = { text: "", reasoning: "" };
-  }, []);
+  }, [armWatchdog]);
 
   const scheduleFlush = useCallback(() => {
     if (!rafScheduledRef.current) {
@@ -1145,26 +1174,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       renameThread(activeThread, raw.length > 40 ? raw.slice(0, 40) + "..." : raw);
     }
 
-    // watchdog: if no tokens arrive in 120s the WS likely dropped silently.
-    // Was 30s but DeepSeek Reasoner can take 60s+ to first token.
-    if (streamingTimeoutRef.current) clearTimeout(streamingTimeoutRef.current);
-    streamingTimeoutRef.current = setTimeout(() => {
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.role === "assistant" && last.timestamp === "streaming" && !last.content) {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...last,
-            content: "Connection lost. Please try again.",
-            timestamp: formatTime(),
-          };
-          return updated;
-        }
-        return prev;
-      });
-      setIsStreaming(false);
-      streamingTimeoutRef.current = null;
-    }, 120_000);
+    // watchdog: 首 token 期 180s 宽限 (DeepSeek Reasoner 首 token 60s+ + 弱网).
+    // 后续 token 期 60s (在 flushStreamBuffer 里重设).
+    // 之前固定 120s 在弱网下误杀, 60s 首 token 又太短.
+    armWatchdog(180_000);
   };
 
   // Undo last send — removes the last user message + bot placeholder, restores input
