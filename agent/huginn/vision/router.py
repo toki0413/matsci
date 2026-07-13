@@ -224,6 +224,21 @@ def build_cv_context(
     except Exception:
         pass  # ponytail: graceful degradation, symbol extraction is enhancement not critical
 
+    # ── Visual→Symbols 结构化版: 让 agent 能精确引用字段做推理 ──
+    # 之前 visual_to_symbols 返回文本, 结构化字段 (estimated_band_gap_eV 等) 埋在文本里.
+    # 加结构化 JSON, agent 能精确引用字段 + 读 self_check 判断可信度 (Nullmax 启发).
+    try:
+        from huginn.vision.symbol_encoder import visual_to_symbols_structured
+        structured = visual_to_symbols_structured(image_path)
+        if structured and "error" not in structured:
+            import json as _json
+            parts.append(
+                "[VISUAL→SYMBOLS structured]\n"
+                + _json.dumps(structured, ensure_ascii=False, default=str)
+            )
+    except Exception:
+        pass  # non-fatal
+
     # ── visual memory: similar-image search ──
     if visual_encoder is not None and image_index is not None:
         try:

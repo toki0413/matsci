@@ -201,6 +201,9 @@ class ToolAdapter:
         # 工具调用循环检测器, 跟 budget / router 同生命周期. None 时不检测.
         # 抓 LLM 反复调同工具同参数的死循环, 跟 budget 互补.
         self._current_loop_detector: Any = None
+        # agent 反向引用 — _serialize 把 _visual_base64 存到 agent 实例上,
+        # chat 模式不污染上下文, visual_inspect 路径能拿到.
+        self._agent_ref: Any = None
 
     def set_budget(self, budget: Any) -> None:
         """设置当前轮次的工具调用预算，传 None 清除。"""
@@ -491,6 +494,17 @@ class ToolAdapter:
             try:
                 from huginn.tools.visual_hook import enrich_with_visual
                 data = enrich_with_visual(tool.name, data)
+                # _visual_base64 是给多模态 LLM 看的, 但 chat 模式下 ToolMessage
+                # 会把它序列化成字符串污染上下文 (base64 很长). 这里 pop 出来
+                # 存到 agent 实例, visual_inspect 路径能拿到, chat 模式走 primitives.
+                # DeepSeek-OCR 启发: 解码器就是 LLM, 但 base64 不该进 text context.
+                # ponytail: pop + setattr. 升级: ToolMessage content 改成 multimodal list.
+                b64 = data.pop("_visual_base64", None)
+                if b64 and hasattr(self, "_agent_ref") and self._agent_ref is not None:
+                    try:
+                        setattr(self._agent_ref, "_last_visual_base64", b64)
+                    except Exception:
+                        pass
             except Exception:
                 pass  # non-fatal
 

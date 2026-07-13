@@ -430,7 +430,12 @@ def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]
             "Coordinates are normalized 0-999: x=data position, y=value.\n"
             "<point>[x,y]</point> tags are deictic pointers — reason about\n"
             "data shape by referencing these coordinates. Where are peaks?\n"
-            "What does the trend imply? Do anomalies suggest physics or noise?"
+            "What does the trend imply? Do anomalies suggest physics or noise?\n"
+            "\n"
+            "Mirage activation: these primitives are the data's shape in coordinate form.\n"
+            "Use them to 'see' the curve without an image — peaks at <point>[x,y]</point>\n"
+            "are real features, trends describe the overall slope, anomalies flag\n"
+            "outliers worth investigating. Point at coordinates while reasoning."
         )
 
     return output
