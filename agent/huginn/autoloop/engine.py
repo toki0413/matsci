@@ -235,7 +235,7 @@ class AutoloopEngine:
 
         self.phase_gate_hook = PhaseGateHook(
             reviewer_fn=RedTeamReviewer(model=self.model),
-            math_checker=MathEvidenceChecker(),
+            math_checker=MathEvidenceChecker(graph=self.hypothesis_graph),
         )
         # Goal scheduler: 持久化目标到 $HUGINN_CACHE_DIR/goals.json.
         # engine.run(goal=...) 时每轮 learn 后查 completion, 满足则提前停.
@@ -1093,7 +1093,30 @@ class AutoloopEngine:
                 tests_passed = validation.get("tests_passed", False)
                 if _current_hyp_id is not None:
                     if tests_passed:
-                        self.hypothesis_graph.support(_current_hyp_id, evidence=validation)
+                        # 循环A: 演绎路径 — tests_passed 即演绎证据, 标记 modality
+                        self.hypothesis_graph.support(
+                            _current_hyp_id,
+                            evidence={**validation, "modality": "deductive"},
+                        )
+                        # 循环B: 割边节点触发 GP 数值验证 (跨模态独立路径)
+                        # ponytail: GP 与符号演绎基底正交, 但同模型权重
+                        # 是软独立. 跨模型/跨模态是升级路径.
+                        if self.hypothesis_graph.needs_dual_coverage(_current_hyp_id):
+                            try:
+                                gp_verdict = self._verify_via_gp(_current_hyp_id, validation)
+                                if gp_verdict.get("agrees"):
+                                    self.hypothesis_graph.support(
+                                        _current_hyp_id,
+                                        evidence={
+                                            "modality": "numeric",
+                                            "gp_fit": gp_verdict,
+                                        },
+                                    )
+                            except Exception:
+                                logger.debug(
+                                    "GP verification failed for %s",
+                                    _current_hyp_id, exc_info=True,
+                                )
                     else:
                         self.hypothesis_graph.refute(
                             _current_hyp_id,
@@ -2749,6 +2772,43 @@ class AutoloopEngine:
                 out["autodiff_error"] = str(e)
 
         return out
+
+    def _verify_via_gp(self, hyp_id: str, validation: dict) -> dict:
+        """循环B: 用 GP 数值验证做独立路径. 与符号演绎 (循环A) 基底正交.
+
+        best-effort: 从 validation / _last_execution_result 挖 (X, y),
+        挖不到就返回 agrees=False (不阻断主流程, 只是不加 numeric 边).
+
+        ponytail: 当前用「GP fit 成功」作为 agrees 信号 — 弱判定, 但已
+        与符号路径正交 (一个走结构推导, 一个走数据拟合). 升级路径:
+        解析节点的 testable_prediction 为数值区间, 用 GP predict 在
+        预测点查后验, 检查均值是否落在假设区间 ±2σ 内.
+        """
+        exec_res = getattr(self, "_last_execution_result", None)
+        X = y = None
+        for cand in (validation, exec_res if isinstance(exec_res, dict) else {}):
+            X = cand.get("X") or cand.get("x_data") or cand.get("samples")
+            y = cand.get("y") or cand.get("y_data") or cand.get("targets")
+            if X is not None and y is not None:
+                break
+            X = y = None
+        if X is None or y is None:
+            return {"agrees": False, "reason": "no numeric data for GP fit"}
+
+        try:
+            from huginn.tools.sci.gp_tool import GPTool
+
+            tool = GPTool()
+            fit_res = tool.call({"action": "fit", "X": X, "y": y})
+            if not getattr(fit_res, "success", False):
+                return {
+                    "agrees": False,
+                    "reason": "GP fit failed",
+                    "error": getattr(fit_res, "error", ""),
+                }
+            return {"agrees": True, "gp_fit": getattr(fit_res, "data", None)}
+        except Exception as e:
+            return {"agrees": False, "reason": f"GP verify error: {e}"}
 
     async def _collect_math_evidence(
         self, execution_result: Any, math_validation: dict

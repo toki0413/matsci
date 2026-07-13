@@ -409,6 +409,37 @@ class HypothesisGraph:
         )
         return new_id
 
+    # ── 双覆盖查询 ───────────────────────────────────────────────────
+
+    def needs_dual_coverage(self, node_id: str) -> bool:
+        """节点是否需要双模态覆盖.
+        启发式: 是路径分叉点 (有 derive 子节点) 或处于 derivation_chain 深处.
+        ponytail: 启发式判定, 复杂图下可能漏检割边. 升级:
+        networkx.articulation_points, 当节点 >50 时换."""
+        self._check_node(node_id)
+        has_derive_children = any(
+            e.from_id == node_id and e.edge_type == "derive"
+            for e in self._edges
+        )
+        chain = self.derivation_chain(node_id)
+        return has_derive_children or len(chain) >= 2
+
+    def dual_covered(self, node_id: str) -> bool:
+        """节点是否被 ≥2 种独立模态支撑 (via support 边的 modality 字段).
+        ponytail: 'deductive' 与 'numeric' 是软独立 — GP 数值验证与符号
+        推导基底不同, 但仍是同模型权重. 真独立需跨模型/跨模态, 等幻觉
+        断裂数据再升级."""
+        self._check_node(node_id)
+        modalities = {
+            e.evidence.get("modality")
+            for e in self._edges
+            if e.from_id == node_id
+            and e.to_id == node_id
+            and e.edge_type == "support"
+            and e.evidence.get("modality")
+        }
+        return len(modalities) >= 2
+
     # ── 边查询 ───────────────────────────────────────────────────────
 
     def edges(self) -> list[HypothesisEdge]:

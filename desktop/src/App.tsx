@@ -669,29 +669,29 @@ export default function App() {
       key: "core",
       label: t('nav.core'),
       tabs: [
-        { id: "chat" as const, label: t('tab.chat'), icon: <MessageSquare size={16} /> },
-        { id: "team" as const, label: t('tab.team'), icon: <Users size={16} /> },
-        { id: "coder" as const, label: t('tab.coder'), icon: <Code2 size={16} /> },
+        { id: "chat" as const, label: t('tab.chat'), icon: <MessageSquare size={16} aria-hidden="true" /> },
+        { id: "team" as const, label: t('tab.team'), icon: <Users size={16} aria-hidden="true" /> },
+        { id: "coder" as const, label: t('tab.coder'), icon: <Code2 size={16} aria-hidden="true" /> },
       ],
     },
     {
       key: "workspace",
       label: t('nav.workspace'),
       tabs: [
-        { id: "files" as const, label: t('tab.files'), icon: <FolderTree size={16} /> },
-        { id: "code" as const, label: t('tab.code'), icon: <Search size={16} /> },
-        { id: "git" as const, label: t('tab.git'), icon: <GitBranch size={16} /> },
-        { id: "terminal" as const, label: t('tab.terminal'), icon: <Terminal size={16} /> },
-        { id: "tools" as const, label: t('tab.tools'), icon: <Wrench size={16} /> },
-        { id: "skills" as const, label: t('tab.skills'), icon: <Sparkles size={16} /> },
+        { id: "files" as const, label: t('tab.files'), icon: <FolderTree size={16} aria-hidden="true" /> },
+        { id: "code" as const, label: t('tab.code'), icon: <Search size={16} aria-hidden="true" /> },
+        { id: "git" as const, label: t('tab.git'), icon: <GitBranch size={16} aria-hidden="true" /> },
+        { id: "terminal" as const, label: t('tab.terminal'), icon: <Terminal size={16} aria-hidden="true" /> },
+        { id: "tools" as const, label: t('tab.tools'), icon: <Wrench size={16} aria-hidden="true" /> },
+        { id: "skills" as const, label: t('tab.skills'), icon: <Sparkles size={16} aria-hidden="true" /> },
       ],
     },
     {
       key: "system",
       label: t('nav.system'),
       tabs: [
-        { id: "threads" as const, label: t('tab.threads'), icon: <MessageCircle size={16} /> },
-        { id: "settings" as const, label: t('tab.settings'), icon: <Settings size={16} /> },
+        { id: "threads" as const, label: t('tab.threads'), icon: <MessageCircle size={16} aria-hidden="true" /> },
+        { id: "settings" as const, label: t('tab.settings'), icon: <Settings size={16} aria-hidden="true" /> },
       ],
     },
   ];
@@ -876,7 +876,7 @@ export default function App() {
           title="Show sidebar"
           aria-label="Show sidebar"
         >
-          <ChevronDown size={16} className="-rotate-90" />
+          <ChevronDown size={16} className="-rotate-90" aria-hidden="true" />
         </button>
       ) : (
         <>
@@ -885,9 +885,9 @@ export default function App() {
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
-          <img src="/raven-logo-64.png" srcSet="/raven-logo-64.png 1x, /raven-logo-128.png 2x" alt="Huginn" className="h-8 w-8 rounded-md object-contain" />
+          <img src="/raven-logo-64.png" srcSet="/raven-logo-64.png 1x, /raven-logo-128.png 2x" alt="Huginn" className="h-8 w-8 rounded-md object-contain" width={32} height={32} />
           <div className="flex flex-1 flex-col">
-            <div className="text-[15px] font-bold tracking-tight">Huginn</div>
+            <h1 className="text-[15px] font-bold tracking-tight">Huginn</h1>
             <div className="text-[12px] text-text-muted leading-none font-medium">{t('app.subtitle')}</div>
           </div>
           <button
@@ -903,15 +903,15 @@ export default function App() {
         {/* Compact icon tabs — horizontal bar */}
         <div className="flex items-center gap-0.5 border-b border-border px-1.5 py-1.5">
           {([
-            { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={15} /> },
-            { id: "tools", label: t('tab.tools') || 'Tools', icon: <Wrench size={15} /> },
-            { id: "memory", label: t('tab.memory') || 'Memory', icon: <Brain size={15} /> },
-            { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={15} /> },
-            { id: "hpc", label: "HPC", icon: <Cpu size={15} /> },
-            { id: "projects", label: "Projects", icon: <Briefcase size={15} /> },
-            { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={15} /> },
-            { id: "result", label: "Result", icon: <Maximize2 size={15} /> },
-            { id: "settings", label: t('tab.settings'), icon: <Settings size={15} /> },
+            { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={15} aria-hidden="true" /> },
+            { id: "tools", label: t('tab.tools') || 'Tools', icon: <Wrench size={15} aria-hidden="true" /> },
+            { id: "memory", label: t('tab.memory') || 'Memory', icon: <Brain size={15} aria-hidden="true" /> },
+            { id: "knowledge", label: t('tab.knowledge'), icon: <BookOpen size={15} aria-hidden="true" /> },
+            { id: "hpc", label: "HPC", icon: <Cpu size={15} aria-hidden="true" /> },
+            { id: "projects", label: "Projects", icon: <Briefcase size={15} aria-hidden="true" /> },
+            { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={15} aria-hidden="true" /> },
+            { id: "result", label: "Result", icon: <Maximize2 size={15} aria-hidden="true" /> },
+            { id: "settings", label: t('tab.settings'), icon: <Settings size={15} aria-hidden="true" /> },
           ] as const).map((item) => (
             <button
               key={item.id}
@@ -1037,10 +1037,21 @@ export default function App() {
       {/* Sidebar resize handle */}
       <div
         onMouseDown={handleSidebarResizeStart}
-        className="group relative w-1 shrink-0 cursor-col-resize transition-colors hover:bg-accent/30 active:bg-accent/50"
+        onKeyDown={(e) => {
+          // ponytail: Arrow keys adjust width by 8px, matching the drag step
+          if (e.key === 'ArrowLeft') { setSidebarWidth(w => Math.max(180, (w ?? 224) - 8)); }
+          else if (e.key === 'ArrowRight') { setSidebarWidth(w => Math.min(400, (w ?? 224) + 8)); }
+          else return;
+          e.preventDefault();
+        }}
+        tabIndex={0}
+        className="group relative w-1 shrink-0 cursor-col-resize transition-colors hover:bg-accent/30 active:bg-accent/50 focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize sidebar"
+        aria-valuenow={sidebarWidth}
+        aria-valuemin={180}
+        aria-valuemax={400}
         title="Drag to resize"
       >
         <div className="absolute inset-y-0 left-0 w-full" />
@@ -1097,7 +1108,7 @@ export default function App() {
               className="flex items-center gap-2 rounded-lg border border-border bg-bg-tertiary px-2.5 py-1 text-xs text-text-muted hover:text-text-primary transition-colors"
               title="Open tool palette (Ctrl+K)"
             >
-              <Grid size={14} />
+              <Grid size={14} aria-hidden="true" />
               <kbd className="text-[10px] font-bold">⌘K</kbd>
             </button>
             <LanguageSwitcher />
@@ -1527,13 +1538,15 @@ export default function App() {
                   <textarea
                     value={executeStages}
                     onChange={(e) => setExecuteStages(e.target.value)}
-                    placeholder={`[{"id":"stage1","tool":"diagnose_tool","action":"...","params":{}}]`}
+                    placeholder={`[{"id":"stage1","tool":"diagnose_tool","action":"…","params":{}}]`}
+                    aria-label="Workflow stages JSON"
+                    spellCheck={false}
                     rows={8}
                     className="input font-mono text-xs resize-none"
                   />
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" value={executeWorkingDir} onChange={(e) => setExecuteWorkingDir(e.target.value)} placeholder="Working dir" className="input text-xs" />
-                    <input type="text" value={executeName} onChange={(e) => setExecuteName(e.target.value)} placeholder="Workflow name" className="input text-xs" />
+                    <input type="text" value={executeWorkingDir} onChange={(e) => setExecuteWorkingDir(e.target.value)} placeholder="Working dir" aria-label="Working directory" className="input text-xs" />
+                    <input type="text" value={executeName} onChange={(e) => setExecuteName(e.target.value)} placeholder="Workflow name" aria-label="Workflow name" className="input text-xs" />
                   </div>
                   <button onClick={handleExecuteRun} disabled={execute.running || !isConnected} className="btn-primary text-xs">
                     {execute.running ? "Executing…" : "▶ Execute stages"}
@@ -1558,7 +1571,7 @@ export default function App() {
                   <p className="text-sm text-text-secondary">Run a workflow template with KEY=VALUE arguments.</p>
                 </div>
                 <div className="card space-y-3">
-                  <select value={workflowTemplate} onChange={(e) => setWorkflowTemplate(e.target.value)} className="input text-sm">
+                  <select value={workflowTemplate} onChange={(e) => setWorkflowTemplate(e.target.value)} aria-label="Workflow template" className="input text-sm">
                     <option value="">Select a template</option>
                     {workflowTemplates.map((t) => (
                       <option key={t} value={t}>{t}</option>
@@ -1568,7 +1581,8 @@ export default function App() {
                     type="text"
                     value={workflowArgs}
                     onChange={(e) => setWorkflowArgs(e.target.value)}
-                    placeholder="key1=value1 key2=value2 ..."
+                    placeholder="key1=value1 key2=value2…"
+                    aria-label="Workflow arguments"
                     className="input text-sm"
                   />
                   <button onClick={handleWorkflowRun} disabled={workflow.running || !isConnected || !workflowTemplate} className="btn-primary text-xs">
@@ -1594,10 +1608,10 @@ export default function App() {
                   <p className="text-sm text-text-secondary">Systematically search a design space.</p>
                 </div>
                 <div className="card space-y-3">
-                  <input type="text" value={exploreObjective} onChange={(e) => setExploreObjective(e.target.value)} placeholder="Objective, e.g. find highest energy density cathode" className="input text-sm" />
+                  <input type="text" value={exploreObjective} onChange={(e) => setExploreObjective(e.target.value)} placeholder="Objective, e.g. find highest energy density cathode" aria-label="Exploration objective" className="input text-sm" />
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="number" min={1} value={exploreMaxIters} onChange={(e) => setExploreMaxIters(parseInt(e.target.value || "1", 10))} placeholder="Max iterations" className="input text-xs" />
-                    <input type="number" min={1} value={exploreMaxBranches} onChange={(e) => setExploreMaxBranches(parseInt(e.target.value || "1", 10))} placeholder="Max branches" className="input text-xs" />
+                    <input type="number" min={1} value={exploreMaxIters} onChange={(e) => setExploreMaxIters(parseInt(e.target.value || "1", 10))} placeholder="Max iterations" aria-label="Max iterations" inputMode="numeric" className="input text-xs" />
+                    <input type="number" min={1} value={exploreMaxBranches} onChange={(e) => setExploreMaxBranches(parseInt(e.target.value || "1", 10))} placeholder="Max branches" aria-label="Max branches" inputMode="numeric" className="input text-xs" />
                   </div>
                   <button onClick={explore.run} disabled={explore.running || !isConnected || !exploreObjective.trim()} className="btn-primary text-xs">
                     {explore.running ? "Exploring…" : "▶ Explore"}
@@ -1623,11 +1637,11 @@ export default function App() {
                   <p className="text-sm text-text-secondary">Diagnose computational chemistry / MD errors.</p>
                 </div>
                 <div className="card space-y-3">
-                  <textarea value={diagnoseError} onChange={(e) => setDiagnoseError(e.target.value)} placeholder="Paste error message…" rows={4} className="input resize-none text-sm" />
+                  <textarea value={diagnoseError} onChange={(e) => setDiagnoseError(e.target.value)} placeholder="Paste error message…" aria-label="Error message" spellCheck={false} rows={4} className="input resize-none text-sm" />
                   <div className="grid grid-cols-3 gap-3">
-                    <input type="text" value={diagnoseSoftware} onChange={(e) => setDiagnoseSoftware(e.target.value)} placeholder="Software" className="input text-xs" />
-                    <input type="text" value={diagnoseCalcType} onChange={(e) => setDiagnoseCalcType(e.target.value)} placeholder="Calc type" className="input text-xs" />
-                    <input type="text" value={diagnoseContext} onChange={(e) => setDiagnoseContext(e.target.value)} placeholder="Context" className="input text-xs" />
+                    <input type="text" value={diagnoseSoftware} onChange={(e) => setDiagnoseSoftware(e.target.value)} placeholder="Software" aria-label="Software name" className="input text-xs" />
+                    <input type="text" value={diagnoseCalcType} onChange={(e) => setDiagnoseCalcType(e.target.value)} placeholder="Calc type" aria-label="Calculation type" className="input text-xs" />
+                    <input type="text" value={diagnoseContext} onChange={(e) => setDiagnoseContext(e.target.value)} placeholder="Context" aria-label="Context" className="input text-xs" />
                   </div>
                   <button onClick={handleDiagnoseRun} disabled={diagnose.running || !isConnected || !diagnoseError.trim()} className="btn-primary text-xs">
                     {diagnose.running ? "Diagnosing…" : "▶ Diagnose"}
@@ -1807,6 +1821,7 @@ export default function App() {
                       value={sideInput}
                       onChange={(e) => setSideInput(e.target.value)}
                       placeholder={t('side.placeholder')}
+                      aria-label="Side question input"
                       rows={3}
                       className="input resize-none text-sm"
                     />
@@ -1829,6 +1844,7 @@ export default function App() {
                               value={sideAnswer}
                               onChange={(e) => setSideAnswer(e.target.value)}
                               placeholder="Type answer…"
+                              aria-label="Side answer"
                               className="input flex-1 text-xs"
                               onKeyDown={(e) => { if (e.key === "Enter") answerSideQuestion(q.id || q.local_id); }}
                             />
@@ -1855,7 +1871,7 @@ export default function App() {
                 </div>
                 <div className="card space-y-3">
                   <div className="flex gap-3">
-                    <select value={solverModel} onChange={(e) => setSolverModel(e.target.value)} className="input flex-1 text-sm">
+                    <select value={solverModel} onChange={(e) => setSolverModel(e.target.value)} aria-label="Solver model" className="input flex-1 text-sm">
                       <option value="">Select model</option>
                       {solverModels.map((m) => <option key={m} value={m}>{m}</option>)}
                     </select>
@@ -1865,6 +1881,8 @@ export default function App() {
                     value={solverInput}
                     onChange={(e) => setSolverInput(e.target.value)}
                     placeholder="Model input / parameters (JSON or free text)…"
+                    aria-label="Model input parameters"
+                    spellCheck={false}
                     rows={4}
                     className="input resize-none font-mono text-xs"
                   />
@@ -1924,12 +1942,13 @@ export default function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-              <Search size={18} className="text-text-muted" />
+              <Search size={18} className="text-text-muted" aria-hidden="true" />
               <input
                 type="text"
                 value={toolSearch}
                 onChange={(e) => setToolSearch(e.target.value)}
                 placeholder="Search tools…"
+                aria-label="Search tools"
                 className="flex-1 bg-transparent text-sm font-medium text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
                 autoFocus
               />
@@ -1938,7 +1957,7 @@ export default function App() {
                 onClick={() => { setToolPaletteOpen(false); setToolSearch(""); }}
                 className="text-text-muted hover:text-text-primary"
               >
-                <ChevronDown size={16} />
+                <ChevronDown size={16} aria-hidden="true" />
               </button>
             </div>
             <div className="max-h-[55vh] overflow-y-auto p-3">
