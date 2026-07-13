@@ -38,6 +38,7 @@ export class ReconnectingWebSocket {
   private buffer: string[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private manuallyClosed = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -166,8 +167,11 @@ export class ReconnectingWebSocket {
         // 非 JSON 文本原样透传
       }
     }
-    // 心跳响应不需要业务层关心
-    if (this.isPong(data)) return;
+    if (this.isPong(data)) {
+      // got heartbeat reply — connection is alive
+      if (this.pongTimer) { clearTimeout(this.pongTimer); this.pongTimer = null; }
+      return;
+    }
     this.opts.onMessage?.(data);
   }
 
@@ -222,6 +226,12 @@ export class ReconnectingWebSocket {
     this.stopPing();
     this.pingTimer = setInterval(() => {
       this.send({ type: 'ping' });
+      // if no pong within 10s, connection is dead — force reconnect
+      if (this.pongTimer) clearTimeout(this.pongTimer);
+      this.pongTimer = setTimeout(() => {
+        // ponytail: silent death is worse than a reconnect cycle
+        try { this.ws?.close(); } catch { /* will trigger handleClose */ }
+      }, 10_000);
     }, this.opts.pingInterval);
   }
 
@@ -229,6 +239,10 @@ export class ReconnectingWebSocket {
     if (this.pingTimer) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;
+    }
+    if (this.pongTimer) {
+      clearTimeout(this.pongTimer);
+      this.pongTimer = null;
     }
   }
 
