@@ -7,12 +7,77 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from huginn.config import HuginnConfig, ModelConfig, ThinkingIntensity
 import logging
 logger = logging.getLogger(__name__)
+
+
+# ── API key rotation ────────────────────────────────────────────────
+# Supports multiple keys per provider via env vars like DEEPSEEK_API_KEY_2,
+# DEEPSEEK_API_KEY_3, or comma-separated DEEPSEEK_API_KEYS="k1,k2,k3".
+# Round-robin per process; on rate-limit errors the caller can call
+# next_key() to skip to the next one.
+
+_KEY_LOCK = threading.Lock()
+_KEY_INDEX: dict[str, int] = {}
+
+
+def _collect_provider_keys(provider: str, explicit: str | None = None) -> list[str]:
+    """Gather all API keys for a provider from env vars.
+
+    Priority: explicit > comma-separated env > individual env vars.
+    """
+    keys: list[str] = []
+    if explicit:
+        keys.append(explicit)
+
+    env_base = _PROVIDER_KEY_ENV.get(provider, "")
+    if not env_base:
+        return keys
+
+    # comma-separated form: PROVIDER_KEYS="k1,k2,k3"
+    plural = env_base + "S"  # e.g. DEEPSEEK_API_KEYS
+    multi = os.environ.get(plural, "")
+    if multi:
+        for k in multi.split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+
+    # numbered form: PROVIDER_KEY_2, PROVIDER_KEY_3, ...
+    for i in range(2, 6):
+        k = os.environ.get(f"{env_base}_{i}", "")
+        if k and k not in keys:
+            keys.append(k)
+
+    # always include the base key last if not already present
+    base = os.environ.get(env_base, "")
+    if base and base not in keys:
+        keys.append(base)
+
+    return keys
+
+
+def pick_api_key(provider: str, explicit: str | None = None) -> str | None:
+    """Return the next API key for the provider (round-robin)."""
+    keys = _collect_provider_keys(provider, explicit)
+    if not keys:
+        return None
+    if len(keys) == 1:
+        return keys[0]
+    with _KEY_LOCK:
+        idx = _KEY_INDEX.get(provider, 0)
+        _KEY_INDEX[provider] = (idx + 1) % len(keys)
+        return keys[idx]
+
+
+def list_provider_keys(provider: str, explicit: str | None = None) -> list[str]:
+    """Return all available keys for the provider (for diagnostics)."""
+    return _collect_provider_keys(provider, explicit)
 
 
 def _patch_langchain_reasoning_content():
@@ -691,7 +756,7 @@ def create_langchain_model(
             from langchain_openai import ChatOpenAI
         except ImportError as err:
             raise ImportError("pip install langchain-openai") from err
-        key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        key = pick_api_key("deepseek", api_key)
         if not key:
             raise ValueError("DEEPSEEK_API_KEY not set")
         kwargs = {
@@ -785,11 +850,14 @@ def create_langchain_model(
 
 
 def resolve_provider_key(provider: ProviderT, api_key: str | None) -> str | None:
-    """Resolve API key using env fallback if not provided explicitly."""
+    """Resolve API key using env fallback if not provided explicitly.
+
+    When multiple keys are available (via _KEY_2, _KEY_3, or _KEYS env vars),
+    rotates between them round-robin to distribute rate-limit load.
+    """
     if api_key:
         return api_key
-    env_var = _PROVIDER_KEY_ENV.get(provider)
-    return os.environ.get(env_var) if env_var else None
+    return pick_api_key(provider, None)
 
 
 def list_providers() -> list[dict[str, Any]]:

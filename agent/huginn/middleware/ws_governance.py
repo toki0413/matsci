@@ -132,12 +132,15 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
             (b"authorization", f"Bearer {url_token}".encode())
         )
     elif not _dev and not _has_header_key:
-        # First-message auth: accept, wait for auth message
+        # First-message auth: accept, wait for auth message.
+        # 30s timeout — was 10s but under heavy load (concurrent LLM calls
+        # blocking the event loop) the client's auth message can take
+        # longer to arrive. 30s is still short enough to reject idle probes.
         await websocket.accept()
         websocket.scope["_ws_pre_accepted"] = True
         try:
             raw = await asyncio.wait_for(
-                websocket.receive_text(), timeout=10.0
+                websocket.receive_text(), timeout=30.0
             )
         except Exception:
             await websocket.close(

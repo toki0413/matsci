@@ -382,6 +382,23 @@ async def lifespan(app: FastAPI):
     # Switch the root logger to structured JSON output early so every startup
     # log line below is already correlated. Opt out with HUGINN_JSON_LOGS=0.
     setup_json_logging()
+
+    # Expand the default ThreadPoolExecutor so concurrent LLM calls
+    # (each wrapped in asyncio.to_thread) don't exhaust the pool.
+    # Default is min(32, cpu+4); with 4+ simultaneous WS connections
+    # each holding a thread for 60-120s, the pool starves and new
+    # connections get refused. Bump to 64 or HUGINN_THREAD_POOL_SIZE.
+    try:
+        import concurrent.futures
+        pool_size = int(os.environ.get("HUGINN_THREAD_POOL_SIZE", "64"))
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(max_workers=pool_size)
+        )
+        logger.info(f"[startup] ThreadPoolExecutor set to {pool_size} workers")
+    except Exception as e:
+        logger.warning(f"[startup] could not set thread pool size: {e}")
+
     # Run pending schema migrations for every SQLite store up front, so
     # backups + integrity checks happen in one place rather than lazily
     # when each store is first touched. Failures are contained — a bad
