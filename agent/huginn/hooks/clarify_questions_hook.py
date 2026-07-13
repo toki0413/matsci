@@ -59,7 +59,15 @@ _EXPENSIVE_TOOLS = (
 
 # 多路径选择词. 命中说明用户在多个方案间犹豫, 值得追问倾向
 _MULTI_PATH_CN = ("还是", "或者", "另外一种", "两种方法", "哪种", "哪个更好", "更好")
-_MULTI_PATH_EN = (r"\bor\b", r"\beither\b", r"\bwhich\b.*\bbetter\b", r"\bvs\.?\b")
+# ponytail: \bor\b matches "direct or indirect" which is a factual question, not
+# a path choice. Require "or" to be between two distinct nouns/phrases to count
+# as a real fork. The patterns below avoid false positives on common sci queries.
+_MULTI_PATH_EN = (
+    r"\beither\s+\w+\s+or\b",
+    r"\bwhich\b.*\bbetter\b",
+    r"\bvs\.?\b",
+    r"\boption\s+[A-C]\b",
+)
 
 # 工具引用标记: prompt 里出现这些说明用户已明确指定工具, 意图清晰不追问
 _TOOL_REFERENCES = (

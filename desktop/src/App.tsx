@@ -28,6 +28,7 @@ import { useConfig } from "./hooks/useConfig";
 import { useChatAndConnection } from "./hooks/useChatAndConnection";
 import { PetStatusWidget } from "./components/PetStatusWidget";
 import AutoloopProgress from "./components/AutoloopProgress";
+import DecisionTracePanel from "./components/DecisionTracePanel";
 import { ContextBar } from "./components/ContextBar";
 import { ChatPanel } from "./components/panels/ChatPanel";
 import { MetricsBar } from "./components/MetricsBar";
@@ -563,6 +564,7 @@ export default function App() {
     pauseGeneration, resumeGeneration, isPaused,
     researchMode, setResearchMode,
     petState,
+    governanceEvents, stateTransitions,
   } = useChatAndConnection({
     config,
     activeTab,
@@ -1127,6 +1129,15 @@ export default function App() {
         {/* Autoloop progress bar */}
         {autoloopPhase && (
           <AutoloopProgress currentPhase={autoloopPhase} progress={autoloopProgress} />
+        )}
+
+        {/* Decision trace: governance + state machine */}
+        {(governanceEvents.length > 0 || stateTransitions.length > 0) && (
+          <DecisionTracePanel
+            governanceEvents={governanceEvents}
+            stateTransitions={stateTransitions}
+            currentPhase={autoloopPhase}
+          />
         )}
 
         {/* Context window usage indicator */}

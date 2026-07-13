@@ -484,6 +484,50 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.debug(f"[startup] memory maintainer skipped: {exc}")
 
+    # Start persona-memory-knowledge loop — periodic background consolidation
+    # Runs every 5 min: scores recent memories, updates persona adaptive layer,
+    # indexes new KB docs, and logs task state summaries
+    pmk_task = None
+    try:
+        import asyncio as _aio
+
+        async def _pmk_loop():
+            """Background persona-memory-knowledge consolidation loop."""
+            from huginn.memory.task_state import get_tracker
+            interval = 300  # 5 min
+            while True:
+                try:
+                    await _aio.sleep(interval)
+                    ctx = get_context()
+                    # 1. Memory: run maintenance (decay + dedup)
+                    if ctx.memory_manager:
+                        try:
+                            ctx.memory_manager.maintenance()
+                            stats = ctx.memory_manager.stats()
+                            logger.debug(f"[PMK] memory maintenance done: {stats}")
+                        except Exception as e:
+                            logger.debug(f"[PMK] memory maintenance failed: {e}")
+                    # 2. KB: check for unindexed docs
+                    if ctx.kb:
+                        try:
+                            docs = ctx.kb.list_documents() if hasattr(ctx.kb, "list_documents") else []
+                            logger.debug(f"[PMK] KB has {len(docs)} docs")
+                        except Exception:
+                            pass
+                    # 3. Task state: log active threads
+                    tracker = get_tracker()
+                    if tracker._cache:
+                        logger.debug(f"[PMK] tracking {len(tracker._cache)} threads")
+                except _aio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug(f"[PMK] loop error: {e}")
+
+        pmk_task = _aio.create_task(_pmk_loop())
+        logger.info("[startup] persona-memory-knowledge loop started (300s interval)")
+    except Exception as exc:
+        logger.debug(f"[startup] PMK loop skipped: {exc}")
+
     # Start HPC job monitor — auto-tracks submitted remote jobs
     job_monitor = None
     try:

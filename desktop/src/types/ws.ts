@@ -114,6 +114,28 @@ export type WSMessage =
   | { type: "ping" }
   | { type: "pong" }
   | { type: "context_compacted"; before_pct: number; after_pct: number }
+  | {
+      type: "governance";
+      action_name: string;
+      category: string;
+      risk_level: string;
+      allowed: boolean;
+      reasons: string[];
+      requires_approval: boolean;
+      predictability: number;
+      audit_id?: string;
+      status?: string;
+      verification_passed?: boolean;
+      verification_message?: string;
+      rollback_available?: boolean;
+    }
+  | {
+      type: "state_transition";
+      from_phase: string;
+      to_phase: string;
+      reason: string;
+      iteration: number;
+    }
   | { type: "done" }
   | { type: "error"; error: string }
   | {
