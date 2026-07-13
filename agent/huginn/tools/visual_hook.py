@@ -259,10 +259,94 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
         except (ValueError, TypeError):
             pass
 
+    # 2D 数据 primitives: EDS mapping / phase_field / 2D 矩阵
+    # 之前只处理 1D (bands/dos/energies), 2D 数据(相场/元素分布)没有坐标化 primitives,
+    # text-only LLM 对 2D 形态"失明". 加 2D 分支让 LLM 通过质心/覆盖率坐标推理空间分布.
+    lines.extend(_extract_2d_primitives(result))
+
     if not lines:
         return ""
 
     return "\n".join(lines)
+
+
+def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
+    """从 2D 工具结果提取坐标化 primitives.
+
+    覆盖 EDS mapping (元素质心 + 覆盖率) 和 phase_field (相分布 + domain 形态).
+    坐标归一化到 0-999, 跟 1D primitives 同格式, LLM 可以跨维度引用.
+    ponytail: 只处理结构化字段, 不重建 2D 矩阵. 升级: 等高线 + 热点检测.
+    """
+    out: list[str] = []
+    measurements = result.get("measurements") or result
+
+    # EDS mapping: elements 字段 — 元素质心坐标 + 覆盖率
+    elements = measurements.get("elements") if isinstance(measurements, dict) else None
+    if isinstance(elements, dict) and elements:
+        img_shape = measurements.get("image_shape") or [1, 1]
+        h, w = float(img_shape[0]), float(img_shape[1])
+        parts: list[str] = []
+        for elem, stats in elements.items():
+            if not isinstance(stats, dict):
+                continue
+            try:
+                cx, cy = stats.get("centroid_px", [0, 0])
+                cov = float(stats.get("coverage_fraction", 0))
+                # 质心归一化到 0-999
+                nx = int(float(cx) / w * 999) if w > 0 else 0
+                ny = int(float(cy) / h * 999) if h > 0 else 0
+                cov_y = int(cov * 999)
+                parts.append(
+                    f"  {elem}: centroid=<point>[{nx},{ny}]</point>, "
+                    f"coverage=<point>[{cov_y}]</point>={cov * 100:.1f}%"
+                )
+            except (ValueError, TypeError, IndexError):
+                continue
+        if parts:
+            out.append(f"[EDS_mapping] {len(elements)} elements:\n" + "\n".join(parts))
+            overlaps = measurements.get("overlaps")
+            if isinstance(overlaps, dict) and overlaps:
+                ov_parts = []
+                for pair, ov in overlaps.items():
+                    if isinstance(ov, dict):
+                        iou = float(ov.get("iou", 0))
+                        iou_y = int(iou * 999)
+                        ov_parts.append(f"{pair}: IoU=<point>[{iou_y}]</point>={iou:.2f}")
+                if ov_parts:
+                    out.append("  overlaps: " + ", ".join(ov_parts))
+
+    # phase_field: volume_fractions + morphology + interface
+    vol_fracs = measurements.get("volume_fractions") if isinstance(measurements, dict) else None
+    if isinstance(vol_fracs, dict) and vol_fracs:
+        parts = []
+        for phase, frac in vol_fracs.items():
+            try:
+                y = int(float(frac) * 999)
+                parts.append(f"{phase}=<point>[{y}]</point>={float(frac) * 100:.1f}%")
+            except (ValueError, TypeError):
+                continue
+        if parts:
+            out.append(f"[phase_field] volume_fractions: {', '.join(parts)}")
+
+        interface = measurements.get("interface_pixel_fraction")
+        if isinstance(interface, (int, float)):
+            iy = int(float(interface) * 999)
+            out.append(f"  interface_fraction=<point>[{iy}]</point>={float(interface) * 100:.2f}%")
+
+        morphology = measurements.get("morphology")
+        if isinstance(morphology, dict) and morphology:
+            morph_parts = []
+            for phase, morph in morphology.items():
+                if not isinstance(morph, dict):
+                    continue
+                n_dom = int(morph.get("n_domains", 0))
+                if n_dom > 0:
+                    mean_area = float(morph.get("mean_domain_area_px2", 0))
+                    morph_parts.append(f"{phase}: domains={n_dom}, mean_area={mean_area:.0f}px²")
+            if morph_parts:
+                out.append("  morphology: " + "; ".join(morph_parts))
+
+    return out
 
 
 def _normalize_coord(idx: int, n: int, val: float, all_vals: list[float]) -> str:
