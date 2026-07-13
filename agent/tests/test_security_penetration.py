@@ -375,7 +375,7 @@ class TestAuthBypass:
         assert resp.status_code == 401
 
     def test_admin_endpoint_requires_admin_key(self, enforced_auth, monkeypatch):
-        """admin 端点需要 admin key, 普通 API key 不够。"""
+        """admin 端点需要 admin key, 普通 API key 不够 (返回 403 而非 401)。"""
         monkeypatch.setenv("HUGINN_API_KEY", "user-key")
         monkeypatch.setenv("HUGINN_ADMIN_API_KEY", "admin-secret")
         # /config/providers 需要 admin key
@@ -383,7 +383,9 @@ class TestAuthBypass:
             "/config/providers",
             headers={"X-HUGINN-API-KEY": "user-key"},
         )
-        assert resp.status_code == 401
+        # ponytail: user key 通过了认证, 但无 admin 权限
+        # 403 (Forbidden) 是正确语义, 不是 401 (Unauthorized)
+        assert resp.status_code == 403
 
     def test_case_insensitive_header(self, enforced_auth, monkeypatch):
         """HTTP header 大小写不敏感: huginn-api-key 也能通过。

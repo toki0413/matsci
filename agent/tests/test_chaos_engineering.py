@@ -251,12 +251,18 @@ class TestWebSocketResilience:
             assert msg["type"] == "error"
 
     def test_ws_high_frequency_ping_no_crash(self, ws_harness):
-        """高频 ping (100 次), 服务端不应 crash。"""
+        """高频 ping (100 次), 服务端不应 crash (限流返回 error 是预期行为)。"""
         with client.websocket_connect(WS_PATH, headers=_HEADERS) as ws:
+            # ponytail: WS 有 per-connection 限流 (5 msg/s, window 1s)
+            # 100 次高频 ping 必然触发限流, 测试目的是验证不 crash
+            # 不是验证无限制吞吐
+            types_seen = set()
             for i in range(100):
                 ws.send_json({"type": "ping"})
                 msg = ws.receive_json()
-                assert msg["type"] == "pong", f"第 {i} 次 ping 没有收到 pong"
+                types_seen.add(msg["type"])
+            # 至少收到过 pong (前几次成功), 且服务没 crash
+            assert "pong" in types_seen
 
     def test_ws_idle_connection_cleanup(self, ws_harness):
         """连接建立后不发消息直接关闭, 服务端应正常清理。"""
