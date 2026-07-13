@@ -66,19 +66,21 @@ def test_normal_chat_stream_emits_expected_sequence():
 
     # full_response is the last assistant content seen.
     assert full == "Hello world"
-    assert _types(ws.sent) == [
+    # governance 事件是 advisory, 过滤后断言核心序列
+    core = [m for m in ws.sent if m.get("type") != "governance"]
+    assert _types(core) == [
         "tool_call", "tool_result", "task_progress", "text_delta", "done",
     ]
-    assert ws.sent[0] == {
+    assert core[0] == {
         "type": "tool_call", "id": "tc1", "name": "search", "args": {"q": "x"},
         "thread_id": "t1",
     }
-    assert ws.sent[1]["type"] == "tool_result"
-    assert ws.sent[1]["id"] == "tc1"
+    assert core[1]["type"] == "tool_result"
+    assert core[1]["id"] == "tc1"
     # HPC-job detection inside the tool result path.
-    assert ws.sent[2]["type"] == "task_progress"
-    assert ws.sent[2]["job_id"] == "12345"
-    assert ws.sent[3] == {"type": "text_delta", "text": "Hello world", "thread_id": "t1"}
+    assert core[2]["type"] == "task_progress"
+    assert core[2]["job_id"] == "12345"
+    assert core[3] == {"type": "text_delta", "text": "Hello world", "thread_id": "t1"}
 
 
 def test_plan_stream_emits_plan_result_before_done():

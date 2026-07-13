@@ -94,16 +94,17 @@ class TestPivotDecision:
     def test_pivot_creates_edge(self, graph):
         h1 = graph.add_hypothesis("假设 A")
         h2 = graph.pivot(h1, evidence={"error": "failed"})
-        # 应该有一条 derive 边
+        # pivot 现在用独立的 pivot edge_type, 不再混入 derive
         edges = [e for e in graph._edges if e.from_id == h1 and e.to_id == h2]
         assert len(edges) >= 1
-        assert edges[0].edge_type == "derive"
+        assert edges[0].edge_type == "pivot"
 
     def test_pivot_edge_has_pivot_flag(self, graph):
         h1 = graph.add_hypothesis("假设 A")
         h2 = graph.pivot(h1, evidence={"error": "failed"})
         edge = [e for e in graph._edges if e.from_id == h1 and e.to_id == h2][0]
-        assert edge.evidence.get("pivot") is True
+        # pivot 标记在 edge_type 上, 不在 evidence 里
+        assert edge.edge_type == "pivot"
 
     def test_pivot_without_model_uses_template(self, graph):
         h1 = graph.add_hypothesis("ENCUT=400")
