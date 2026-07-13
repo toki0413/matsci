@@ -247,7 +247,7 @@ class RedTeamReviewer:
         return findings
 
     def _review_validation(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
-        """审查验证: 测试通过 / 替代解释 / 收敛性."""
+        """审查验证: 测试通过 / 替代解释 / 收敛性 / 物理 oracle 警告."""
         findings: list[RedTeamFinding] = []
 
         tests_passed = evidence.get("tests_passed")
@@ -258,6 +258,21 @@ class RedTeamReviewer:
                 severity="high",
                 mitigation="修复失败项, 或降低结论强度并标注局限性",
             ))
+
+        # 物理 oracle findings: PhaseGate 已在 has_errors=True 时硬阻断, 这里只看 warnings.
+        # 把 warning 级 finding 提升为 medium, 让红队报告对物理警告不再失明.
+        # ponytail: 只看 severity=warning, error 已被 PhaseGate 拦截. 升级: DS 合成置信度.
+        pa = evidence.get("physics_audit")
+        if isinstance(pa, dict):
+            for f in (pa.get("findings") or []):
+                sev = str(f.get("severity", "")).lower()
+                if sev in ("warning", "warn"):
+                    findings.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=f"Physics audit warning: {f.get('category', '?')} — {f.get('message', '')}",
+                        severity="medium",
+                        mitigation="确认物理合理性后再采信结果, 或修复后重跑",
+                    ))
 
         mode = str(evidence.get("mode", ""))
         # 单一方法验证: 没有交叉验证

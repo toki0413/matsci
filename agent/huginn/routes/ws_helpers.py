@@ -1370,10 +1370,10 @@ async def _handle_plan_confirm(
         "cfg_chat": cfg_chat, "agent": agent,
     })
 
-    # 执行阶段开启 plan_mode — 写工具强制 ASK，只读工具放行
-    _prev_plan_mode = getattr(agent._permission_config, 'plan_mode', False) if hasattr(agent, '_permission_config') else False
-    if hasattr(agent, '_permission_config'):
-        agent._permission_config.plan_mode = True
+    # 执行阶段开启 plan_mode — 写工具强制 ASK, 只读工具放行.
+    # 走 enter/exit_plan_execution 配对方法, 集中状态管理 (之前直接改 _permission_config
+    # 会让 is_plan_mode() 与 _mode 不一致, 误导 research_safety_hook).
+    agent.enter_plan_execution()
     try:
         await _stream_agent_response(
             websocket,
@@ -1388,5 +1388,4 @@ async def _handle_plan_confirm(
             error_label="Plan execution failed",
         )
     finally:
-        if hasattr(agent, '_permission_config'):
-            agent._permission_config.plan_mode = _prev_plan_mode
+        agent.exit_plan_execution()

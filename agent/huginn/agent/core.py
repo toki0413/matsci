@@ -426,7 +426,29 @@ class HuginnAgent(
         return self._mode == "research"
 
     def is_plan_mode(self) -> bool:
-        return self._mode == "plan"
+        # 兜底: plan execution 期间 permission_config.plan_mode 临时翻转但 _mode 不变,
+        # 读 is_plan_mode() 的代码 (research_safety_hook / research_budget) 需要感知.
+        # ponytail: or 短路, 不改 _mode 语义. 升级: 抽 enter/exit plan execution 显式状态.
+        return self._mode == "plan" or bool(
+            getattr(self._permission_config, "plan_mode", False)
+        )
+
+    def enter_plan_execution(self) -> None:
+        """执行阶段临时开启 plan_mode (写工具强制 ASK), 不改 _mode 字段.
+
+        与 set_mode("plan") 区别: set_mode 是用户级 mode 切换 (会重置 phase_manager /
+        失效 graph); enter_plan_execution 是 plan 执行窗口内的权限加严, 保持 _mode
+        不变, 避免把 chat/research mode 误覆盖成 plan mode.
+        ponytail: 配对 exit_plan_execution restore. 升级: 用 contextmanager.
+        """
+        self._plan_exec_prev = getattr(self._permission_config, "plan_mode", False)
+        if self._permission_config is not None:
+            self._permission_config.plan_mode = True
+
+    def exit_plan_execution(self) -> None:
+        """配对 exit: 恢复 enter_plan_execution 之前的 plan_mode 状态."""
+        if self._permission_config is not None:
+            self._permission_config.plan_mode = getattr(self, "_plan_exec_prev", False)
 
     # ── Specialised model selection ───────────────────────────────
     # ponytail: select_verification_model/select_archival_model/has_dedicated_verification
@@ -605,7 +627,10 @@ class HuginnAgent(
             else:
                 lc_tool = tool
             tools.append(self._wrap_tool_with_hooks(lc_tool))
-        self.langchain_tools.extend(tools)
+        # replace 语义而非 extend: 避免 MCP 重连 / mock fallback 重复调用导致工具重复注册.
+        # 之前 extend 会让 LLM 在工具 schema 里看到 N 份同名 tool, 浪费 context tokens.
+        # ponytail: 直接覆盖, 假设所有工具都来自 registry. 升级: 保留非 registry 来源工具.
+        self.langchain_tools = tools
         self._invalidate_tool_description_cache()
 
     # ── Model selection ──────────────────────────────────────────
