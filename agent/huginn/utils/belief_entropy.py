@@ -157,7 +157,23 @@ class BeliefEntropy:
                 self._compute_fact_coverage(original_context, summary, model)
             )
         else:
-            result.c_fact = 1.0  # 没检查就当全覆盖
+            # 长任务自动开启: 最近 3 次 h_belief 都 > threshold_high → 触发一次 fact check.
+            # ponytail: 只在持续高熵时触发, 避免每次都调 LLM. 升级: 按任务类型差异化触发.
+            with self._lock:
+                recent_high = (
+                    len(self._history) >= 3
+                    and all(h > cfg.threshold_high for h in self._history[-3:])
+                )
+            if recent_high and original_context and model is not None:
+                logger.info(
+                    "belief_entropy: h_belief 持续高 (%.3f, %.3f, %.3f), 自动触发 fact_check",
+                    *self._history[-3:]
+                )
+                result.c_fact, result.facts_checked, result.facts_retained = (
+                    self._compute_fact_coverage(original_context, summary, model)
+                )
+            else:
+                result.c_fact = 1.0  # 没检查就当全覆盖
 
         # 加权组合
         alpha, beta, gamma = cfg.weight_logprob, cfg.weight_fact, cfg.weight_ratio

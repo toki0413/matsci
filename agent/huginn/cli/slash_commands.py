@@ -51,6 +51,7 @@ _BUILTIN_COMMANDS: frozenset[str] = frozenset(
         "step",
         "map",
         "plan",
+        "chat",
         "research",
         "subgoal",
         "goal",
@@ -1114,6 +1115,15 @@ def handle_slash_command(
         if agent is not None and hasattr(agent, "set_mode"):
             agent.set_mode("plan")
             con.print("[green]✓[/green] Plan mode: write tools require confirmation")
+        else:
+            con.print("[yellow]Agent 未初始化[/yellow]")
+        return None
+
+    if name == "chat":
+        # 切回 chat mode: plan/research 切回默认, 释放权限限制.
+        if agent is not None and hasattr(agent, "set_mode"):
+            agent.set_mode("chat")
+            con.print("[green]✓[/green] Chat mode: default tools, no confirmation required")
         else:
             con.print("[yellow]Agent 未初始化[/yellow]")
         return None

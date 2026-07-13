@@ -285,7 +285,8 @@ class RedTeamReviewer:
                 "category ∈ hidden_assumption|confounder|alternative_explanation|methodology_gap. "
                 "severity ∈ high|medium|low. "
                 "source_class ∈ user_input|tool_output|external_content, "
-                "标这条 finding 基于哪类来源得出 (ARGUS 影响溯源用). 没问题就输出 []."
+                "标这条 finding 基于哪类来源得出 (ARGUS 影响溯源用). 没问题就输出 []. "
+                "反向激励: 假设证据有错, 找最可能失败的点, 不要验证正确性."
             )),
             HumanMessage(content=prompt),
         ]

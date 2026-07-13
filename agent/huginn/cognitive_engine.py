@@ -222,6 +222,11 @@ FEEDBACK_PROMPT = (
     "A gap or error has been found in the current approach. Step back and "
     "identify what went wrong. The structural coordinates below show where we were — "
     "use them to re-enter discovery mode without losing context.\n"
+    "\n"
+    "Adversarial stance: assume the previous step is WRONG. Find the most "
+    "likely failure point (hidden assumption, confounder, methodology gap). "
+    "Do NOT verify correctness — hunt for failure. Report only what could be wrong, "
+    "not what is right.\n"
     "### End Cognitive Mode"
 )
 

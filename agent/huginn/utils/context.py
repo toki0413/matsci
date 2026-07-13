@@ -59,14 +59,33 @@ def compact_messages(
     messages: list[Any],
     budget_tokens: int,
     keep_last_n: int = 2,
+    tool_result_ttl: int = 6,
 ) -> list[Any]:
     """Drop oldest messages until the remaining list fits the token budget.
 
     Always preserves the last `keep_last_n` messages. This is the fast
     fallback when no summarizer is available.
+
+    tool_result_ttl: 历史工具消息超过 N 步后, content 替换为摘要标记.
+    Anthropic Context Management (2026) 最佳实践: tool result clearing 是最轻触的 compaction.
+    ponytail: 只清 content 不删消息, 保持消息顺序完整. 升级: 按工具类型差异化 TTL.
     """
     if budget_tokens <= 0:
         return messages
+
+    # Tool result clearing: 超 TTL 的工具消息 content 替换为摘要标记
+    # 保留消息存在性 (顺序/引用不断), 只清大块输出
+    if tool_result_ttl > 0 and len(messages) > tool_result_ttl + keep_last_n:
+        cleared = []
+        cutoff = len(messages) - tool_result_ttl
+        for i, m in enumerate(messages):
+            role = _msg_role(m)
+            if i < cutoff and role == "tool":
+                # 历史 tool 消息: 替换 content 为摘要标记, 不动 metadata
+                cleared.append(_replace_tool_content(m, "[cleared: tool result over TTL]"))
+            else:
+                cleared.append(m)
+        messages = cleared
 
     # Token counts per message — computed once so we don't rescan the
     # whole list on every iteration (the old pop-and-recount loop was O(n^2)).
@@ -86,6 +105,19 @@ def compact_messages(
         drop_count += 1
 
     return list(messages[drop_count:])
+
+
+def _replace_tool_content(msg: Any, new_content: str) -> Any:
+    """替换工具消息的 content, 保留其他字段 (metadata / tool_call_id 等)."""
+    # LangChain ToolMessage / AIMessage with tool_calls 都支持 content setter
+    try:
+        msg.content = new_content
+        return msg
+    except (AttributeError, TypeError):
+        # dict-based message
+        if isinstance(msg, dict):
+            return {**msg, "content": new_content}
+        return msg
 
 
 def _format_messages_for_summary(messages: list[Any]) -> str:

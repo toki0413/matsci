@@ -412,6 +412,11 @@ class HuginnAgent(
                 self._phase_manager.reset(ResearchPhase.LITERATURE)
             elif old == "research":
                 self._phase_manager.reset(ResearchPhase.OPEN)
+            # plan mode 联动 permission_config: 写工具强制 ASK
+            # 之前 /plan slash 只改 _mode 不改 permission_config, 导致 UI 提示与实际行为不一致.
+            perm_cfg = getattr(self, "_permission_config", None)
+            if perm_cfg is not None:
+                perm_cfg.plan_mode = (mode == "plan")
             logger.info("agent mode switched to '%s'", mode)
 
     def get_mode(self) -> str:
