@@ -163,6 +163,73 @@ def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
     return result
 
 
+def _estimate_confidence(chart_data: dict[str, Any]) -> float:
+    """估算提取结果的置信度 (0-1).
+
+    基于峰清晰度 / 峰数量 / 轴检测 / 拟合质量.
+    ponytail: 启发式加权, 不调 LLM. 升级: 让 LLM 判断图像质量.
+    """
+    score = 0.0
+    n_peaks = chart_data.get("n_peaks", 0)
+    if n_peaks > 0:
+        score += min(n_peaks / 5.0, 1.0) * 0.3  # 峰多 → 置信度高 (上限 0.3)
+    if chart_data.get("axis_detected"):
+        score += 0.2  # 检测到轴 → 图表可信
+    fit = chart_data.get("linear_fit")
+    if fit and "R2" in fit:
+        score += max(fit["R2"], 0.0) * 0.3  # 拟合好 → 数据质量高
+    if chart_data.get("peak_positions_px"):
+        score += 0.2  # 有精确峰位置
+    return round(min(score, 1.0), 2)
+
+
+def visual_to_symbols_structured(image_path: str | Path) -> dict[str, Any]:
+    """结构化版本: 返回 dict 而非格式化字符串.
+
+    agent 能精确引用 estimated_band_gap_eV / peak_positions_px 等字段做推理,
+    不用从文本里解析. 同时带 confidence + self_check (Nullmax 启发).
+    ponytail: 复用 extract_chart_data + 加 confidence. 升级: 完整 schema + 版本化.
+    """
+    chart_data = extract_chart_data(image_path)
+    if "error" in chart_data:
+        return {"error": chart_data["error"], "confidence": 0.0}
+
+    confidence = _estimate_confidence(chart_data)
+    result: dict[str, Any] = {
+        "image_type": chart_data.get("image_type", "unknown"),
+        "analysis_type": chart_data.get("analysis_type", ""),
+        "confidence": confidence,
+        "n_peaks": chart_data.get("n_peaks", 0),
+        "axis_detected": chart_data.get("axis_detected", False),
+    }
+
+    # 结构化字段直接透传, agent 能精确引用
+    if "peak_positions_px" in chart_data:
+        result["peak_positions_px"] = chart_data["peak_positions_px"]
+    if "estimated_2theta_deg" in chart_data:
+        result["estimated_2theta_deg"] = chart_data["estimated_2theta_deg"]
+    if "estimated_d_spacing_A" in chart_data:
+        result["estimated_d_spacing_A"] = chart_data["estimated_d_spacing_A"]
+    if "estimated_band_gap_eV" in chart_data:
+        result["estimated_band_gap_eV"] = chart_data["estimated_band_gap_eV"]
+    if "linear_fit" in chart_data:
+        result["linear_fit"] = chart_data["linear_fit"]
+
+    # self_check: Nullmax 启发 — 让红队/PhaseGate 能判断视觉估算可信度
+    result["self_check"] = {
+        "extraction_confidence": confidence,
+        "caveats": [],
+    }
+    if confidence < 0.3:
+        result["self_check"]["caveats"].append("low_confidence: 图像质量差或峰不清晰, 估算不可靠")
+    if not result.get("axis_detected"):
+        result["self_check"]["caveats"].append("no_axis: 未检测到坐标轴, 可能不是标准图表")
+    if result.get("n_peaks", 0) == 0:
+        result["self_check"]["caveats"].append("no_peaks: 未检测到峰, 数据提取可能失败")
+
+    return result
+
+
 def _guess_chart_type(p: Path, arr: Any) -> str:
     """根据文件名和图像特征猜测图表类型。"""
     name = p.stem.lower()

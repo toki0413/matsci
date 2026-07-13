@@ -357,6 +357,8 @@ class HuginnAgent(
         self.skills = skill_executor
 
         self._tool_adapter = ToolAdapter()
+        # 反向引用: 让 ToolAdapter._serialize 能把 _visual_base64 存到 agent 实例
+        self._tool_adapter._agent_ref = self
         tool_summarizer = self._make_summarizer()
         if tool_summarizer is not None:
             self._tool_adapter.set_summarizer(tool_summarizer)
