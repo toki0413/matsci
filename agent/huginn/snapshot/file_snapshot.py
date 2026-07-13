@@ -466,13 +466,14 @@ class SnapshotManager:
         # 发布 snapshot.revert 事件
         try:
             from huginn.events.integration import _publish
+            from huginn.utils.concurrency import track_task
             import asyncio
-            loop = asyncio.get_running_loop()
-            asyncio.ensure_future(_publish(
+            asyncio.get_running_loop()
+            track_task(_publish(
                 "snapshot.revert",
                 {"step_id": step_id, "paths": restored},
                 source="snapshot_manager",
-            ))
+            ), name="snapshot-revert-emit")
         except Exception:
             pass
         return restored

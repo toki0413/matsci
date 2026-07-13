@@ -474,3 +474,105 @@ def test_track_llm_tps_never_raises_on_bad_input():
 
     track_llm_tps(model=None, ttft_ms=-1, tps=float("inf"))  # 不应抛
     track_llm_tps(model="x", ttft_ms=0, tps=0.0)
+
+
+# ── Critical 闭环修复: should_switch_mode 驱动 set_mode ────────────
+
+
+def test_reflection_drives_set_mode_on_switch_signal():
+    """reflection.should_switch_mode=True 时应调用 set_mode (之前是死端)."""
+    from huginn.agent.reflection import ReflectionMixin
+
+    mixin = ReflectionMixin()
+    mixin._session_state = MagicMock()
+    mixin._session_state.session_id = "test"
+    mixin._session_state.tool_results_this_turn = [{"tool_name": "x", "content": "ok"}]
+    mixin._reflector = MagicMock()
+    mixin._csm = MagicMock()
+    mixin._evolution_engine = None
+    mixin.memory = MagicMock()
+
+    # 模拟反思算出 should_switch_mode + suggested_mode
+    reflection = MagicMock()
+    reflection.should_evolve = False
+    reflection.to_transition_signal.return_value = None
+    reflection.plan_step_completed = False
+    reflection.needs_user_input = False
+    reflection.should_switch_mode = True
+    reflection.suggested_mode = "research"
+    mixin._reflector.reflect.return_value = reflection
+
+    called_with = []
+    mixin.set_mode = lambda m: called_with.append(m)
+
+    mixin._run_post_turn_reflection()
+    assert called_with == ["research"], f"set_mode should be called with 'research', got {called_with}"
+
+
+def test_reflection_invalid_suggested_mode_does_not_crash():
+    """suggested_mode 非法时 set_mode 抛 ValueError, 反思应静默降级不崩溃."""
+    from huginn.agent.reflection import ReflectionMixin
+
+    mixin = ReflectionMixin()
+    mixin._session_state = MagicMock()
+    mixin._session_state.session_id = "test"
+    mixin._session_state.tool_results_this_turn = [{"tool_name": "x", "content": "ok"}]
+    mixin._reflector = MagicMock()
+    mixin._csm = MagicMock()
+    mixin._evolution_engine = None
+    mixin.memory = MagicMock()
+
+    reflection = MagicMock()
+    reflection.should_evolve = False
+    reflection.to_transition_signal.return_value = None
+    reflection.plan_step_completed = False
+    reflection.needs_user_input = False
+    reflection.should_switch_mode = True
+    reflection.suggested_mode = "bogus_mode"
+    mixin._reflector.reflect.return_value = reflection
+
+    def _raise(m):
+        raise ValueError(f"invalid mode: {m}")
+    mixin.set_mode = _raise
+
+    # 不应抛
+    mixin._run_post_turn_reflection()
+
+
+# ── P1a: reflection sidecar reader ────────────────────────────────
+
+
+def test_load_reflection_sidecar_returns_empty_when_no_file(tmp_path, monkeypatch):
+    """无 sidecar 文件时 load_reflection_sidecar 返回空列表."""
+    from huginn.agent.reflection import ReflectionMixin
+
+    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))
+    mixin = ReflectionMixin()
+    mixin._session_state = MagicMock()
+    mixin._session_state.session_id = "no-such-session"
+    assert mixin.load_reflection_sidecar() == []
+
+
+def test_load_reflection_sidecar_reads_back_entries(tmp_path, monkeypatch):
+    """写 sidecar 后 load_reflection_sidecar 应读回 entries."""
+    from huginn.agent.reflection import ReflectionMixin
+
+    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))
+    mixin = ReflectionMixin()
+    mixin._session_state = MagicMock()
+    mixin._session_state.session_id = "read-back-test"
+    mixin._sidecar_path_announced = True  # 跳过 announce 噪音
+
+    reflection = MagicMock()
+    reflection.tool_succeeded = True
+    reflection.has_physics_errors = False
+    reflection.has_physics_warnings = True
+    reflection.message = "test read back"
+    reflection.should_switch_mode = False
+    reflection.suggested_mode = None
+    mixin._append_reflection_sidecar({"tool_name": "vasp_tool"}, reflection)
+
+    entries = mixin.load_reflection_sidecar()
+    assert len(entries) == 1
+    assert entries[0]["tool_name"] == "vasp_tool"
+    assert entries[0]["message"] == "test read back"

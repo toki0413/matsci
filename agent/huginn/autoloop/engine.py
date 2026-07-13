@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -146,6 +147,77 @@ class AutoloopResult:
     goal_judgment: dict[str, Any] | None = None
     # 落盘的 provenance JSONL, run 结束后可回放整条 tool chain
     provenance_path: str | None = None
+
+
+def objective_hash(objective: str) -> str:
+    """Stable 8-char hash for an autoloop objective — used to dedup result snapshots.
+
+    Same objective string → same hash → same snapshot file. If two objectives
+    only differ by whitespace/casing they hash differently; that's fine, we'd
+    rather over-store than silently reuse the wrong run.
+    """
+    return hashlib.md5(objective.encode("utf-8")).hexdigest()[:8]
+
+
+def _snapshot_dir(workspace: str | Path) -> Path:
+    return Path(workspace) / ".huginn" / "autoloop_results"
+
+
+def save_autoloop_snapshot(
+    result: AutoloopResult, workspace: str | Path
+) -> Path | None:
+    """Persist a compact JSON snapshot of an AutoloopResult under
+    ``<workspace>/.huginn/autoloop_results/<objective_hash>.json``.
+
+    Lets other components (DeliAutoResearch, future CLI subcommands) reuse a
+    finished run without re-instantiating AutoloopEngine. Returns the snapshot
+    path, or None on failure — callers treat None as "no snapshot, run normally".
+    """
+    try:
+        snap_dir = _snapshot_dir(workspace)
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "objective": result.objective,
+            "success": result.success,
+            "goal_achieved": result.goal_achieved,
+            "goal_judgment": result.goal_judgment,
+            "report_path": result.report_path,
+            "provenance_path": result.provenance_path,
+            "trajectory_path": result.trajectory_path,
+            "total_time_seconds": result.total_time_seconds,
+            "phases_count": len(result.phases),
+            "phases_summary": [
+                {"name": p.name, "status": p.status} for p in result.phases
+            ],
+            "saved_at": time.time(),
+        }
+        path = snap_dir / f"{objective_hash(result.objective)}.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return path
+    except Exception:
+        logger.debug("failed to save autoloop snapshot", exc_info=True)
+        return None
+
+
+def load_autoloop_snapshot(
+    workspace: str | Path, objective: str
+) -> dict[str, Any] | None:
+    """Read a previously saved snapshot for this objective.
+
+    Returns None if the snapshot is missing or unreadable — callers fall back
+    to a fresh engine.run() in that case.
+    """
+    path = _snapshot_dir(workspace) / f"{objective_hash(objective)}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.debug("failed to load autoloop snapshot: %s", path, exc_info=True)
+        return None
 
 
 class AutoloopEngine:
@@ -959,7 +1031,7 @@ class AutoloopEngine:
                 if _active_goal:
                     _gs.increment_iteration(_active_goal.id)
             except Exception:
-                pass
+                logger.debug("goal_store.increment_iteration failed", exc_info=True)
 
             # 发布 campaign.iteration 事件
             self._emit_campaign("campaign.iteration", {
@@ -1446,11 +1518,11 @@ class AutoloopEngine:
         """发布 campaign.* 事件到 EventBus, fire-and-forget."""
         try:
             from huginn.events.integration import _publish
-            import asyncio
-            loop = asyncio.get_running_loop()
-            asyncio.ensure_future(_publish(event_type, data, source="autoloop"))
+            from huginn.utils.concurrency import track_task
+            asyncio.get_running_loop()  # 检测在 event loop 里
+            track_task(_publish(event_type, data, source="autoloop"), name="campaign-emit")
         except Exception:
-            pass
+            logger.debug("campaign emit failed", exc_info=True)
 
     def _prepare_run(
         self, objective: str, progressive_budget: bool, goal: Goal | None
@@ -1888,7 +1960,6 @@ class AutoloopEngine:
             ("gaussian-process", ["gp ", "gaussian process", "gpr", "核函数"]),
             ("calphad-thermo", ["calphad", "相图", "phase diagram", "thermodynamic"]),
             ("phase-field", ["phase field", "相场"]),
-            ("transfer-lunar", ["lunar", "月壤", "moon", "迁移学习"]),
             ("bourbaki-structure", ["bourbaki", "格论", "lattice theory", "拓扑"]),
             ("extreme-argument", ["反例", "counterexample", "extreme", "极值"]),
             ("computational-check", ["benchmark", "计算验证", "computational check"]),
@@ -2654,14 +2725,15 @@ class AutoloopEngine:
                 results["grader_reward"] = round(avg_score, 4)
                 try:
                     from huginn.events.integration import _publish
-                    loop = asyncio.get_running_loop()
-                    asyncio.ensure_future(_publish("quality.check", {
+                    from huginn.utils.concurrency import track_task
+                    asyncio.get_running_loop()
+                    track_task(_publish("quality.check", {
                         "iteration": self._iteration,
                         "graders": results["grader_scores"],
                         "reward": results.get("grader_reward", 0),
-                    }, source="autoloop"))
+                    }, source="autoloop"), name="quality-check-emit")
                 except Exception:
-                    pass
+                    logger.debug("quality.check emit failed", exc_info=True)
         except Exception as e:
             results["grader_error"] = str(e)
 
@@ -3125,7 +3197,7 @@ class AutoloopEngine:
                     "If yes, note the contradiction in 'reason'.\n"
                 )
         except Exception:
-            pass
+            logger.debug("_build_memory_text failed — validate prompt missing cross-check", exc_info=True)
 
         prompt = (
             "You are a verification model. Score the quality of this agent output "
@@ -3787,7 +3859,7 @@ class AutoloopEngine:
             if _surprise_val > 0.5 or (r_phys is not None and r_phys > 0.7):
                 _should_feynman = True
         except Exception:
-            pass
+            logger.debug("surprise detection failed — _feynman_learn trigger may silently skip", exc_info=True)
 
         if _should_feynman:
             try:
@@ -4040,7 +4112,7 @@ Output format (Markdown, no code blocks):
                     metadata={"confidence": str(_feynman_conf)},
                 )
         except Exception:
-            pass
+            logger.debug("feynman note save failed", exc_info=True)
 
     # ── Blind spot pass ───────────────────────────────────────────
 
@@ -4396,7 +4468,7 @@ Please modify the code to address this task."""
                             except Exception as e:
                                 action_result["note"] += f" (crop failed: {e})"
                     except Exception:
-                        pass
+                        logger.debug("image crop action failed", exc_info=True)
                 result["actions"].append(action_result)
 
         # 动作 2: measure — 测量某点或区域的数据值
@@ -4493,7 +4565,7 @@ Please modify the code to address this task."""
                     if routed is not None:
                         model = routed
                 except Exception:
-                    pass
+                    logger.debug("model router select failed — using fallback model", exc_info=True)
 
         llm = model or self.model
         messages: list[Any] = []

@@ -567,15 +567,16 @@ class ToolAdapter:
             """发布 tool.blocked 事件到事件总线."""
             with contextlib.suppress(Exception):
                 from huginn.events.integration import _publish as _evt_publish
+                from huginn.utils.concurrency import track_task
                 import asyncio
                 try:
-                    loop = asyncio.get_running_loop()
-                    asyncio.ensure_future(_evt_publish(
+                    asyncio.get_running_loop()
+                    track_task(_evt_publish(
                         "tool.blocked",
                         {"tool": tool_name, "reason": reason},
                         thread_id=getattr(context, "thread_id", ""),
                         source="tool_adapter",
-                    ))
+                    ), name="tool-blocked-emit")
                 except RuntimeError:
                     pass
 

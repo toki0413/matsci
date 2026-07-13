@@ -112,6 +112,34 @@ class ReflectionMixin:
         }
         with sidecar_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        # 首次写时暴露路径, 让用户/audit 知道 sidecar 在哪 (之前 write-only 无读者).
+        # ponytail: 启动期一次 logger.info. 升级: /diagnostics 路由暴露 reader API.
+        if not getattr(self, "_sidecar_path_announced", False):
+            logger.info("reflection sidecar: %s", sidecar_path)
+            self._sidecar_path_announced = True
+
+    def load_reflection_sidecar(
+        self, session_id: str | None = None, last_n: int = 50
+    ) -> list[dict]:
+        """读取 sidecar JSONL, 返回最近 last_n 条反思结论.
+
+        给 audit / diagnostics / 用户查询用. 默认读当前 session, 最近 50 条.
+        ponytail: 一次性 read + slice. 升级: 流式 read + 按 tool_name 过滤.
+        """
+        import json
+        from pathlib import Path
+        sid = session_id or self._session_state.session_id or "default"
+        sidecar_path = Path.home() / ".huginn" / "reflections" / f"{sid}.jsonl"
+        if not sidecar_path.exists():
+            return []
+        lines = sidecar_path.read_text(encoding="utf-8").strip().split("\n")
+        out: list[dict] = []
+        for line in lines:
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return out[-last_n:] if last_n > 0 else out
 
     def _sync_plan_from_store(self) -> None:
         """Sync an executing plan from PlanStore to session_state.
@@ -236,5 +264,23 @@ class ReflectionMixin:
                     f"Continue or adjust approach?"
                 )
                 self._csm.request_confirmation(reflection.confirm_type or "continue")
+
+            # 反思驱动的 mode 切换: should_switch_mode + suggested_mode 时切到目标 mode.
+            # 之前算出该切但不切 → agent 永远停在当前 mode, 自适应闭环断裂.
+            # ponytail: 1 行调用 set_mode, ValueError 静默 (suggested_mode 非法时降级).
+            if reflection.should_switch_mode and reflection.suggested_mode:
+                try:
+                    self.set_mode(reflection.suggested_mode)
+                    logger.info(
+                        "reflection switched mode -> %s (tool=%s)",
+                        reflection.suggested_mode,
+                        tr.get("tool_name", "unknown"),
+                    )
+                except (ValueError, AttributeError):
+                    logger.debug(
+                        "set_mode(%s) failed — invalid suggested_mode",
+                        reflection.suggested_mode,
+                        exc_info=True,
+                    )
 
         self._session_state.clear_turn_results()

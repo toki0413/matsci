@@ -177,7 +177,8 @@ class PluginLoader:
                         "on_load of %s returned coro but we're in a running loop; "
                         "schedule without await", meta.name
                     )
-                    asyncio.ensure_future(coro)
+                    from huginn.utils.concurrency import track_task
+                    track_task(coro, name=f"plugin-onload-{meta.name}")
                 except RuntimeError:
                     asyncio.run(coro)
         except Exception as e:
