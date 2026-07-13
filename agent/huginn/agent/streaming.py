@@ -416,7 +416,19 @@ class StreamingMixin:
             except Exception:
                 logger.debug("provenance context block skipped", exc_info=True)
 
-            if not pipeline_block and not ended_at_tool:
+            # Long-horizon task state — gives the agent a view of what it
+            # has already done across the full conversation, not just the
+            # current context window.
+            task_block = ""
+            try:
+                from huginn.memory.task_state import get_tracker
+                _tid = getattr(self, "thread_id", "") or ""
+                if _tid:
+                    task_block = get_tracker().context_block(_tid)
+            except Exception:
+                logger.debug("task state context block skipped", exc_info=True)
+
+            if not pipeline_block and not task_block and not ended_at_tool:
                 return
 
             parts = ["[System] Continue if you have next steps."]
@@ -424,6 +436,8 @@ class StreamingMixin:
                 parts.append(pipeline_block)
             if prov_block:
                 parts.append(prov_block)
+            if task_block:
+                parts.append(task_block)
             parts.append(
                 "If the pipeline suggests a next step, proceed with it. "
                 "If you've completed the task, summarize the results."

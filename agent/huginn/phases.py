@@ -247,3 +247,32 @@ def stage_to_phase(stage_name: str) -> ResearchPhase:
         if stage_name in stages:
             return phase
     return ResearchPhase.OPEN
+
+
+# ── Autoloop phase adapter ────────────────────────────────────
+# Maps autoloop's 7 string phases to ResearchPhase enum so both
+# systems share the same transition graph and prompt table.
+# ponytail: adapter, not refactor — one dict + two functions.
+
+AUTOLOOP_TO_PHASE: dict[str, ResearchPhase] = {
+    "perceive": ResearchPhase.LITERATURE,
+    "hypothesize": ResearchPhase.HYPOTHESIS,
+    "plan": ResearchPhase.PLANNING,
+    "execute": ResearchPhase.EXECUTION,
+    "validate": ResearchPhase.VALIDATION,
+    "learn": ResearchPhase.VALIDATION,   # learn is post-validation reflection
+    "report": ResearchPhase.REPORTING,
+}
+
+PHASE_TO_AUTOLOOP: dict[ResearchPhase, str] = {
+    v: k for k, v in AUTOLOOP_TO_PHASE.items() if k != "learn"
+}
+PHASE_TO_AUTOLOOP[ResearchPhase.VALIDATION] = "validate"
+
+
+def autoloop_to_phase(aloop_name: str) -> ResearchPhase:
+    return AUTOLOOP_TO_PHASE.get(aloop_name, ResearchPhase.OPEN)
+
+
+def phase_to_autoloop(phase: ResearchPhase) -> str:
+    return PHASE_TO_AUTOLOOP.get(phase, "perceive")

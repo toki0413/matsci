@@ -263,6 +263,12 @@ async def _stream_agent_response(
             except Exception:
                 _ws_closed[0] = True
                 logger.debug("WS closed mid-stream, stopping sends")
+                # actively close so the client gets a close event
+                # instead of waiting for TCP timeout
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
 
         # let tools push progress events back through the same WS
         progress_cb.set(_ws_send)
@@ -476,12 +482,21 @@ async def _stream_agent_response(
                     # Record step in task state tracker
                     try:
                         from huginn.memory.task_state import get_tracker
+                        # ponytail: naive finding extraction — first non-empty
+                        # line of tool output. Good enough for short results;
+                        # upgrade to LLM summarization when long outputs pile up.
+                        _finding = ""
+                        for _line in tool_content.split("\n"):
+                            _line = _line.strip()
+                            if len(_line) > 10 and not _line.startswith("{") and not _line.startswith("["):
+                                _finding = _line[:120]
+                                break
                         get_tracker().record_step(
                             thread_id,
                             action=f"Tool: {_tool_name}",
                             tool=_tool_name,
                             result=tool_content[:200],
-                            findings="",
+                            findings=_finding,
                         )
                     except Exception:
                         pass
