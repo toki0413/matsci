@@ -49,17 +49,25 @@ jobs:
 
   # ponytail: 3 个集成测试文件原本串行跑, 单 job 30 分钟必超时
   # (最近 30+ 次 CI run 全部 fail/cancel). 拆成 matrix 并行,
-  # 每个文件独立计时, 单测 timeout 从 300s 降到 120s (5 分钟对单测太长)
+  # test_api_contract 有 620+ parametrize 用例 (每个路由 hit 1-2 次),
+  # 需要 30 分钟; security/chaos 几分钟就够.
+  # 单测 timeout 60s 防止个别端点卡住拖整个 job.
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.job-timeout }}
     strategy:
       fail-fast: false
       matrix:
-        test-file:
-          - tests/test_api_contract.py
-          - tests/test_security_penetration.py
-          - tests/test_chaos_engineering.py
+        include:
+          - test-file: tests/test_api_contract.py
+            job-timeout: 30
+            test-timeout: 60
+          - test-file: tests/test_security_penetration.py
+            job-timeout: 20
+            test-timeout: 120
+          - test-file: tests/test_chaos_engineering.py
+            job-timeout: 20
+            test-timeout: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -86,7 +94,7 @@ jobs:
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
         run: |
           cd agent
-          pytest ${{ matrix.test-file }} -v --no-cov -m "integration" --tb=short --timeout=120
+          pytest ${{ matrix.test-file }} -v --no-cov -m "integration" --tb=short --timeout=${{ matrix.test-timeout }}
 
   frontend-build:
     runs-on: ubuntu-latest
