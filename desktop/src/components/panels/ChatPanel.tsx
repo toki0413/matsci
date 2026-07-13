@@ -460,14 +460,15 @@ export function ChatPanel(props: ChatPanelProps) {
     <div className="flex h-full flex-col">
       {chatSearchOpen && (
         <div className="flex items-center gap-2 border-b border-border bg-bg-secondary/50 px-6 py-2">
-          <Search size={14} className="shrink-0 text-text-muted" />
+          <Search size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
           <input
             type="text"
             autoFocus
             value={chatSearchQuery}
             onChange={(e) => setChatSearchQuery(e.target.value)}
             placeholder={t('chat.searchPlaceholder')}
-            className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+            aria-label="Search messages"
+            className="flex-1 bg-transparent text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded placeholder:text-text-muted"
           />
           {chatSearchQuery && (
             <div className="flex shrink-0 items-center gap-1">
@@ -791,9 +792,9 @@ export function ChatPanel(props: ChatPanelProps) {
                   {/* Typing dots — shown when streaming hasn't produced content yet */}
                   {msg.timestamp === "streaming" && !msg.content && !msg.reasoning && (
                     <div className="flex items-center gap-1 py-2" aria-label="Assistant is typing">
-                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce motion-reduce:animate-none" style={{ animationDelay: '0ms' }} aria-hidden="true" />
+                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce motion-reduce:animate-none" style={{ animationDelay: '150ms' }} aria-hidden="true" />
+                      <span className="h-2 w-2 rounded-full bg-text-muted animate-bounce motion-reduce:animate-none" style={{ animationDelay: '300ms' }} aria-hidden="true" />
                     </div>
                   )}
                 </div>
@@ -1001,9 +1002,9 @@ export function ChatPanel(props: ChatPanelProps) {
             <>
               {isStreaming && !isPaused && (
                 <div className="flex items-center gap-1.5 px-4 py-3">
-                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot" style={{ animationDelay: '0ms' }} />
-                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot" style={{ animationDelay: '160ms' }} />
-                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot" style={{ animationDelay: '320ms' }} />
+                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot motion-reduce:animate-none" style={{ animationDelay: '0ms' }} aria-hidden="true" />
+                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot motion-reduce:animate-none" style={{ animationDelay: '160ms' }} aria-hidden="true" />
+                  <span className="block h-1.5 w-1.5 rounded-full bg-accent animate-bounce-dot motion-reduce:animate-none" style={{ animationDelay: '320ms' }} aria-hidden="true" />
                 </div>
               )}
               <div ref={messagesEndRef} style={{ height: 1 }} />

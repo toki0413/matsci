@@ -151,11 +151,28 @@ async def visual_search(
 
 @router.get("/visual/index/stats")
 async def visual_index_stats() -> dict[str, Any]:
-    """Return summary statistics for the shared image index."""
-    index = get_image_index()
-    encoder = get_visual_encoder()
-    stats = index.stats()
-    # Surface encoder diagnostics too, so the client can tell *why*
-    # embedding_dim might be 0.
-    stats["encoder_error"] = encoder.init_error if encoder else None
-    return stats
+    """Return summary statistics for the shared image index.
+
+    Both get_image_index() and get_visual_encoder() can trigger heavy
+    initialization (ML imports, model downloads) on first call. Running
+    them in a thread with a 5s timeout keeps this diagnostic endpoint
+    from stalling the event loop for minutes.
+    """
+    import asyncio
+
+    def _gather() -> dict[str, Any]:
+        index = get_image_index()
+        stats = index.stats()
+        encoder = get_visual_encoder()
+        stats["encoder_error"] = encoder.init_error if encoder else "encoder not initialized"
+        stats["encoder_backend"] = encoder.backend_name if encoder else None
+        return stats
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_gather), timeout=5.0)
+    except (TimeoutError, Exception) as exc:
+        return {
+            "encoder_error": f"init timed out or failed: {exc}",
+            "encoder_backend": None,
+            "count": 0,
+        }
