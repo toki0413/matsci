@@ -13,10 +13,24 @@ ReviewerFn 接口: __call__(from, to, evidence) -> (approved: bool, reason: str)
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 import logging
 logger = logging.getLogger(__name__)
+
+
+def _dominant_source_class(evidence: dict[str, Any]) -> str:
+    """从 evidence 递归收集 source_class, 返回占比最高的.
+
+    用于 LLM 没标 source_class 的 finding 自动派生. 没找到返回 "".
+    ponytail: depth=20 防异常深度 (evidence 实际嵌套 < 10).
+    """
+    from huginn.autoloop.phase_gate import _collect_source_classes
+    classes = _collect_source_classes(evidence)
+    if not classes:
+        return ""
+    return Counter(classes).most_common(1)[0][0]
 
 
 # Phase-gate 用的阶段名是字符串字面量, 不是 ResearchPhase enum
@@ -38,6 +52,15 @@ class RedTeamFinding:
     description: str
     severity: str  # high | medium | low
     mitigation: str = ""
+    # ARGUS: 这条 finding 基于哪类来源得出的判断.
+    # user_input / tool_output / external_content / agent_generated 四选一.
+    # ponytail: LLM 自报 + evidence 自动派生兜底. 空串时通过 effective_source_class 兜底.
+    source_class: str = ""
+
+    @property
+    def effective_source_class(self) -> str:
+        """空串时兜底为 agent_generated (LLM 没声明就是 agent 自己的判断)."""
+        return self.source_class or "agent_generated"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +68,7 @@ class RedTeamFinding:
             "description": self.description,
             "severity": self.severity,
             "mitigation": self.mitigation,
+            "source_class": self.effective_source_class,
         }
 
 
@@ -92,10 +116,18 @@ class RedTeamReviewer:
         self,
         model: Any | None = None,
         enabled_transitions: set[tuple[str, str]] | None = None,
+        failure_mode_registry: Any | None = None,
     ) -> None:
         self._model = model
         self._enabled = enabled_transitions or _REVIEW_TRANSITIONS
         self._last_report: RedTeamReport | None = None
+        # 领域失败模式注册表 (材料科学具体陷阱). None 时用默认单例.
+        # ponytail: 懒导入避免循环依赖, 测试可注入自定义 registry
+        if failure_mode_registry is None:
+            from huginn.metacog.failure_modes import DEFAULT_REGISTRY
+            self._failure_registry = DEFAULT_REGISTRY
+        else:
+            self._failure_registry = failure_mode_registry
 
     def __call__(
         self, from_phase: str, to_phase: str, evidence: dict[str, Any]
@@ -128,8 +160,35 @@ class RedTeamReviewer:
             except Exception:
                 logger.debug("extend failed", exc_info=True)  # LLM 挂了用规则结果
 
+        # 领域失败模式扫描 (材料科学具体陷阱: 数据泄漏 / 单位混乱 / 对称性 / ...)
+        # 把通用规则检查无法覆盖的领域具体失败模式补上.
+        findings.extend(self._domain_failure_scan(evidence))
+
         summary = self._build_summary(findings, transition)
         return RedTeamReport(transition=transition, findings=findings, summary=summary)
+
+    def _domain_failure_scan(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
+        """扫描材料科学领域失败模式清单, 把命中的转成 RedTeamFinding.
+
+        severity 映射: block→high (会阻断), warn→medium, info→low.
+        这样 first-principles-violation (warn) 不会硬阻断, 对齐用户
+        '先警告再 force proceed' 偏好.
+        """
+        if self._failure_registry is None:
+            return []
+        # evidence 里可能带 method_family 标记, 没有就当通用
+        family_id = evidence.get("method_family")
+        hit_modes = self._failure_registry.scan(evidence, family_id=family_id)
+        sev_map = {"block": "high", "warn": "medium", "info": "low"}
+        out: list[RedTeamFinding] = []
+        for mode in hit_modes:
+            out.append(RedTeamFinding(
+                category="methodology_gap",  # 复用现有 category, 不改 enum
+                description=f"[{mode.id}] {mode.description}",
+                severity=sev_map.get(mode.severity, "medium"),
+                mitigation=mode.mitigation,
+            ))
+        return out
 
     # ── 规则审查 ────────────────────────────────────────────────────
 
@@ -222,16 +281,26 @@ class RedTeamReviewer:
             SystemMessage(content=(
                 "你是红队审查员 (red-team reviewer). 任务: 对下面的研究证据做对抗性审查, "
                 "找出隐含前提、混淆变量、替代解释、方法论缺陷. "
-                "输出 JSON 数组, 每条: {category, description, severity, mitigation}. "
+                "输出 JSON 数组, 每条: {category, description, severity, mitigation, source_class}. "
                 "category ∈ hidden_assumption|confounder|alternative_explanation|methodology_gap. "
-                "severity ∈ high|medium|low. 没问题就输出 []."
+                "severity ∈ high|medium|low. "
+                "source_class ∈ user_input|tool_output|external_content, "
+                "标这条 finding 基于哪类来源得出 (ARGUS 影响溯源用). 没问题就输出 []."
             )),
             HumanMessage(content=prompt),
         ]
         # 用同步 invoke 避免在 async 引擎上下文里 run_until_complete 报错
         resp = self._model.invoke(messages)
         text = str(resp.content).strip()
-        return self._parse_llm_findings(text)
+        findings = self._parse_llm_findings(text)
+        # ARGUS: LLM 没标 source_class 的 finding, 从 evidence 自动派生 dominant.
+        # ponytail: 调用方诚实标记 + 自动兜底. 升级: 按参数值路径精确溯源.
+        dominant = _dominant_source_class(evidence)
+        if dominant:
+            for f in findings:
+                if not f.source_class:
+                    f.source_class = dominant
+        return findings
 
     def _build_llm_prompt(
         self, from_phase: str, to_phase: str, evidence: dict[str, Any]
@@ -263,6 +332,7 @@ class RedTeamReviewer:
                     description=item.get("description", ""),
                     severity=item.get("severity", "medium"),
                     mitigation=item.get("mitigation", ""),
+                    source_class=item.get("source_class", ""),
                 ))
             return findings
         except (json.JSONDecodeError, TypeError):

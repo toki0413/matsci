@@ -30,6 +30,7 @@ from huginn.autoloop.goal_scheduler import Goal, GoalScheduler
 from huginn.autoloop.phase_gate import (
     PhaseGate,
     PhaseGateHook,
+    _has_external_source as _validation_has_external_source,
     get_shared_phase_gate_state,
 )
 from huginn.bench.runner import BenchmarkRunner
@@ -244,6 +245,13 @@ class AutoloopEngine:
             reviewer_fn=RedTeamReviewer(model=self.model),
             math_checker=MathEvidenceChecker(graph=self.hypothesis_graph),
         )
+        # 元认知层: 信息隔离 / 方法族注册 / 等价性审计 / 阻塞-重启协议.
+        # 全部懒加载, 测试或不需要时不会拉起. _hypothesize / refine_failed 按需读.
+        # ponytail: 不在 __init__ 实例化, 避免循环 import 和测试 mock 复杂度
+        self._metacog_auditor = None
+        self._metacog_block_registry = None
+        self._metacog_method_registry = None
+        self._metacog_last_audit = None  # 最近一次等价性审计结果, 给 learn 用
         # Goal scheduler: 持久化目标到 $HUGINN_CACHE_DIR/goals.json.
         # engine.run(goal=...) 时每轮 learn 后查 completion, 满足则提前停.
         # None → 懒加载, 避免实例化时就碰磁盘 (测试隔离用).
@@ -1168,6 +1176,19 @@ class AutoloopEngine:
                                 "reason": "tool_error",
                             })
                         else:
+                            if failure_type == "prompt_injection_suspect":
+                                # ARGUS: 失败 + external_content 来源, 证据可能被注入.
+                                # 走 refute 但标记 source_class, refine 时换路避开污染源.
+                                logger.warning(
+                                    "prompt_injection_suspect for %s: failure + "
+                                    "external_content source, evidence may be tainted",
+                                    _current_hyp_id,
+                                )
+                                self._emit_campaign("campaign.suspect", {
+                                    "iteration": self._iteration,
+                                    "hypothesis": str(_current_hyp_id),
+                                    "reason": "prompt_injection_suspect",
+                                })
                             self.hypothesis_graph.refute(
                                 _current_hyp_id,
                                 evidence={"errors": validation.get("errors", "tests failed"),
@@ -1176,11 +1197,21 @@ class AutoloopEngine:
                             # refine 闭环: refute 后生成修正假设, 下轮迭代处理
                             if self._refine_count < self._max_refines:
                                 try:
+                                    # 元认知: 把 block_registry + method_family 传入,
+                                    # 让 refine 走阻塞-重启协议, 防止换名重启死路线.
+                                    # method_family 从最近一次假设归类拿, 没有就 None (不阻塞).
+                                    _metacog_family = None
+                                    if self._last_hypothesis:
+                                        _metacog_family = self._metacog_classify_family(
+                                            self._last_hypothesis
+                                        )
                                     new_hyp = self.hypothesis_graph.refine_failed(
                                         _current_hyp_id,
                                         evidence={"errors": validation.get("errors", "tests failed"),
                                                   "failure_type": failure_type},
                                         model=self._get_refine_model(),
+                                        block_registry=self._get_metacog_block_registry(),
+                                        method_family=_metacog_family,
                                     )
                                     self._refine_count += 1
                                     logger.info(
@@ -1633,6 +1664,7 @@ class AutoloopEngine:
                     _sel = _after.split("\n")[0].strip() if _after else ""
                     self._last_hypothesis = _sel or raw
                     self._last_raw_hypothesis = raw  # 保留 LUCID review 文本
+                    self._metacog_audit_hypothesis(self._last_hypothesis, context)
                     return self._last_hypothesis
             # No SELECTED: found — fall back to first non-exception result
             for raw in results:
@@ -1640,10 +1672,107 @@ class AutoloopEngine:
                     raw = raw.strip()
                     self._last_hypothesis = raw
                     self._last_raw_hypothesis = raw
+                    self._metacog_audit_hypothesis(self._last_hypothesis, context)
                     return self._last_hypothesis
             return None
         except Exception:
             return None
+
+    # ── 元认知层辅助 ────────────────────────────────────────────────
+    # 懒加载 metacog 组件, 避免循环 import 和测试 mock 复杂度.
+    # _hypothesize 拿到假设后调 _metacog_audit_hypothesis 做等价性审计 +
+    # 方法族归类. 审计是 advisory (不阻断), 对齐用户 "math 结构 advisory" 偏好.
+
+    def _get_metacog_auditor(self):
+        if self._metacog_auditor is None:
+            from huginn.metacog.equivalence_auditor import EquivalenceAuditor
+            self._metacog_auditor = EquivalenceAuditor(model=self.model)
+        return self._metacog_auditor
+
+    def _get_metacog_block_registry(self):
+        if self._metacog_block_registry is None:
+            from huginn.metacog.block_registry import BlockRegistry
+            self._metacog_block_registry = BlockRegistry(
+                auditor=self._get_metacog_auditor()
+            )
+        return self._metacog_block_registry
+
+    def _get_metacog_method_registry(self):
+        if self._metacog_method_registry is None:
+            from huginn.metacog.method_registry import MethodRegistry
+            self._metacog_method_registry = MethodRegistry()
+        return self._metacog_method_registry
+
+    def _metacog_classify_family(self, hypothesis: str) -> str:
+        """廉价关键词分类: 把假设归到方法族.
+
+        用于 method_registry 收敛度监控 + block_registry 查阻塞路线.
+        分类不准不致命 — 只影响监控, 不影响假设本身.
+        """
+        text = (hypothesis or "").lower()
+        # ponytail: 关键词表, 不上 embedding. 升级路径: LLM 分类.
+        rules = [
+            ("ml-potential", ["mlp", "ml potential", "machine learning potential", "neural potential"]),
+            ("symbolic-regression", ["symbolic", "symreg", "siprend", "解析式"]),
+            ("gaussian-process", ["gp ", "gaussian process", "gpr", "核函数"]),
+            ("calphad-thermo", ["calphad", "相图", "phase diagram", "thermodynamic"]),
+            ("phase-field", ["phase field", "相场"]),
+            ("transfer-lunar", ["lunar", "月壤", "moon", "迁移学习"]),
+            ("bourbaki-structure", ["bourbaki", "格论", "lattice theory", "拓扑"]),
+            ("extreme-argument", ["反例", "counterexample", "extreme", "极值"]),
+            ("computational-check", ["benchmark", "计算验证", "computational check"]),
+            ("dft-direct", ["dft", "第一性原理", "ab initio", "vasp", "qe", "cp2k"]),
+        ]
+        for family, keywords in rules:
+            if any(kw in text for kw in keywords):
+                return family
+        return "dft-direct"  # 默认族
+
+    def _metacog_audit_hypothesis(
+        self, hypothesis: str, context: dict[str, Any]
+    ) -> None:
+        """假设生成后的等价性审计 + 方法族归类.
+
+        advisory 不阻断: 即使判为 equivalent_renaming 也让假设通过,
+        但记录到 _metacog_last_audit 给 learn 阶段参考. 这对齐用户
+        'math 结构 advisory' 和 '先警告再 force proceed' 偏好.
+        """
+        if not hypothesis:
+            return
+        try:
+            auditor = self._get_metacog_auditor()
+            original_problem = str(context.get("summary", "")) or str(self._objective or "")
+            verdict = auditor.audit(
+                candidate_finding=hypothesis,
+                original_problem=original_problem,
+                reduction_chain="",  # _hypothesize 阶段还没有归约链
+            )
+            self._metacog_last_audit = verdict
+
+            # 方法族归类 + 注册表更新
+            family = self._metacog_classify_family(hypothesis)
+            registry = self._get_metacog_method_registry()
+            # 用 iteration + hypothesis 短哈希做 agent_id, 避免重复登记
+            agent_id = f"hyp-{self._iteration}-{abs(hash(hypothesis)) % 10000}"
+            registry.register_agent(family, agent_id)
+
+            # 等价性审计发现换名归约 → 记日志, 不阻断
+            if verdict.is_equivalent_renaming:
+                logger.warning(
+                    "metacog: 假设可能为换名归约 (trap=%s, target=%s): %s",
+                    verdict.trap_category, verdict.reduction_target,
+                    hypothesis[:100],
+                )
+
+            # 收敛度监控: 某族过热时记日志
+            redirect = registry.suggest_redirect()
+            if redirect is not None:
+                logger.info(
+                    "metacog: 方法族收敛度告警 — %s (建议下轮重定向到 %s)",
+                    redirect.reason, redirect.target_family,
+                )
+        except Exception:
+            logger.debug("metacog audit failed", exc_info=True)
 
     @staticmethod
     def _extract_lucid_prereqs(raw: str) -> dict[str, str]:
@@ -1683,11 +1812,13 @@ class AutoloopEngine:
 
         返回值:
         - "tool_error": 工具崩溃/超时/连接失败 → 不 refute, 下轮重试同一假设
+        - "prompt_injection_suspect": 失败 + 证据来源 external_content → 可能被注入, 单独标记
         - "param_error": 输入参数错 → refine (改参数)
         - "data_noise": 结果不确定/噪声大 → refine (重做或换方法)
         - "hypothesis_error": 结果与假设相反 → refine 或 pivot (假设本身错)
 
-        优先级: tool_error (工具问题与假设无关) > RedTeam high severity findings
+        优先级: tool_error (工具问题与假设无关) > prompt_injection_suspect
+        (external_content + 失败) > RedTeam high severity findings
         > 关键词匹配 param/noise > 默认 hypothesis_error.
 
         ponytail: RedTeam findings 通过 redteam_cats 注入, 保持 staticmethod
@@ -1706,6 +1837,11 @@ class AutoloopEngine:
         )
         if any(m in text for m in tool_markers):
             return "tool_error"
+        # ARGUS: 失败 + 证据来自 external_content → 可能 prompt injection.
+        # 优先级低于 tool_error (技术故障与来源无关), 高于 RedTeam/关键词.
+        # ponytail: 递归扫 validation 找 source_class=external_content.
+        if _validation_has_external_source(validation):
+            return "prompt_injection_suspect"
         # RedTeam high severity findings: 对抗性发现优先于关键词匹配
         # methodology_gap (方法论缺陷) / hidden_assumption (隐含前提缺失) → 改参数
         # confounder (混淆变量) → 数据噪声, 需重做排除混淆

@@ -109,9 +109,12 @@ def enhance_rag_results(
             provenance_context["recent_outputs"] = recent_outputs
 
     # 给每个 result 附加 provenance_context, 不动原始 dict
+    # ARGUS: RAG 检索结果来自外部知识库, 标 source_class=external_content.
+    # 下游 PhaseGate / RedTeam 可据此降级或加强审查.
     enhanced: list[dict] = []
     for r in results:
         item = dict(r)
+        item["source_class"] = "external_content"
         if provenance_context:
             item["provenance_context"] = provenance_context
         enhanced.append(item)

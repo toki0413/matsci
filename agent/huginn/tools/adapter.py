@@ -459,6 +459,9 @@ class ToolAdapter:
                 data = {"result": result.data}
             else:
                 data = {"error": result.error or "Unknown error"}
+            # ARGUS: tool 输出统一标 source_class, 下游 PhaseGate 可识别.
+            # 顶层 _source_class 不进 LLM-visible content, 只作元数据.
+            data["_source_class"] = "tool_output"
 
             # Pass through resolution requests so the agent loop can ask the user.
             if result.metadata.get("needs_resolution"):

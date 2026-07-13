@@ -933,16 +933,25 @@ class DeliAutoResearch:
                     objective=objective,
                     max_iterations=5,
                 )
-                # 提取关键结果: report + provenance
+                # 结构化结果: 让下游 _draft_section 注入 methods/results 时拿到
+                # 不止是自然语言截断, 还有 goal 判定/轨迹/provenance
                 comp_entry = {
                     "gap": gap.get("gap", ""),
                     "objective": objective,
                     "success": result.success,
+                    "goal_achieved": result.goal_achieved,
+                    "goal_judgment": result.goal_judgment,
                     "report_path": result.report_path,
                     "provenance_path": result.provenance_path,
+                    "trajectory_path": result.trajectory_path,
+                    "total_time_seconds": result.total_time_seconds,
                     "phases_count": len(result.phases),
+                    "phases_summary": [
+                        {"name": p.name, "status": p.status}
+                        for p in result.phases
+                    ],
                 }
-                # 读取 report 内容 (如果存在)
+                # report 内容截断保留向后兼容; 下游优先用上面的结构化字段
                 if result.report_path:
                     try:
                         report_path = Path(result.report_path)

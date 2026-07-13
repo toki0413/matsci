@@ -387,6 +387,9 @@ class HypothesisGraph:
         node_id: str,
         evidence: dict[str, Any],
         model: Any | None = None,
+        block_registry: Any | None = None,
+        method_family: str | None = None,
+        proposed_mechanism_type: str | None = None,
     ) -> str:
         """对失败的假设生成修正假设, 返回新 node id.
 
@@ -395,8 +398,12 @@ class HypothesisGraph:
         2. 基于 findings 生成修正假设陈述
            - model 可用时调 LLM 生成
            - 不可用时用 findings 的 mitigation 做模板拼接
-        3. 新假设 parent_id = 失败节点, 旧节点标 superseded
-        4. 返回新 node id, 调用方 (CampaignManager) 把它进队列
+        3. (可选) 阻塞-重启协议: 若 block_registry + method_family 给定,
+           且该族有阻塞路线, 把新假设作为重启提议过 try_reopen.
+           拒绝 (still_blocked / equivalent_to_previous) 时不加新节点,
+           返回原 node_id, 调用方据此知道 refine 被阻塞.
+        4. 新假设 parent_id = 失败节点, 旧节点标 superseded
+        5. 返回新 node id, 调用方 (CampaignManager) 把它进队列
         """
         self._check_node(node_id)
         node = self._nodes[node_id]
@@ -436,7 +443,36 @@ class HypothesisGraph:
         else:
             new_statement = self._template_refine(node.statement, findings)
 
-        # 3. 加节点 + 标旧节点 superseded
+        # 3. 阻塞-重启协议: 检查该族是否有阻塞路线
+        # 新假设作为 "proposed mechanism" 过 try_reopen, 防止换名重启死路线.
+        # 拒绝时返回原 node_id, 不加新节点, 不 supersede 旧节点.
+        if block_registry is not None and method_family is not None:
+            blocked_routes = block_registry.list_blocked(family_id=method_family)
+            if blocked_routes:
+                # 取最近一条阻塞路线尝试重启
+                route = blocked_routes[0]
+                mech_type = proposed_mechanism_type or "new_construction"  # type: ignore[arg-type]
+                attempt = block_registry.try_reopen(
+                    route_id=route.route_id,
+                    proposed_mechanism=new_statement,
+                    proposer_agent=f"refine:{node_id}",
+                    mechanism_type=mech_type,  # type: ignore[arg-type]
+                )
+                if attempt.verdict != "reopen":
+                    # 重启被拒: 换名归约或机制类型不匹配, 不加新节点
+                    self._log_research(
+                        "obstacle", f"阻塞路线拒绝重启: {route.route_id}",
+                        f"假设 {node_id} 的修正被阻塞路线 {route.route_id} 拒绝.\n\n"
+                        f"提议机制: {new_statement}\n"
+                        f"拒绝原因: {attempt.verdict}\n"
+                        f"阻塞原因: {route.block_reason}\n"
+                        f"需要: {route.required_mechanism_description}",
+                        parent_id=node_id, status="blocked",
+                        tags=["autoloop", "refine", "block_registry"],
+                    )
+                    return node_id  # 调用方据此知道 refine 被阻塞
+
+        # 4. 加节点 + 标旧节点 superseded
         new_id = self.add_hypothesis(
             statement=new_statement,
             rationale=f"修正自 {node_id}: {node.statement}",
@@ -538,6 +574,102 @@ class HypothesisGraph:
         if sources and len(sources) < 2:
             return False
         return True
+
+    # ── 连通分量监控 ───────────────────────────────────────────────────
+
+    def connected_components(self) -> list[set[str]]:
+        """弱连通分量列表, 按 size 降序.
+
+        support/refute/derive/pivot 都算连接. 自环边 (support/refute 的
+        from==to) 不影响连通性, 跳过.
+        """
+        import networkx as nx
+
+        g = nx.Graph()
+        g.add_nodes_from(self._nodes.keys())
+        for e in self._edges:
+            if e.from_id != e.to_id:
+                g.add_edge(e.from_id, e.to_id)
+        return sorted(nx.connected_components(g), key=len, reverse=True)
+
+    def component_count(self) -> int:
+        """连通分量数."""
+        return len(self.connected_components())
+
+    def component_maturity(self, component_node_ids: set[str]) -> dict[str, Any]:
+        """分量的成熟度指标.
+
+        size:           节点数
+        depth:          最长派生链长度 (沿 parent_id 链的最长路径)
+        has_refuted:    是否含 refuted 节点 (暴露缺口)
+        has_blocked_route: 是否关联 block_registry 阻塞路线 (无入参时 False)
+        audited:        是否所有节点都过等价性审计 (evidence 里有 equivalence_verdict)
+        maturity_score: 0.0-1.0, has_refuted +0.3, audited +0.3, depth>=2 +0.4
+        """
+        nodes = [
+            self._nodes[nid] for nid in component_node_ids
+            if nid in self._nodes
+        ]
+        # 最长派生链: 在分量内沿 parent_id 走的最长路径
+        depth = 0
+        for n in nodes:
+            chain_len = 0
+            cur: HypothesisNode | None = n
+            seen: set[str] = set()
+            while cur is not None and cur.id not in seen:
+                seen.add(cur.id)
+                chain_len += 1
+                if cur.parent_id and cur.parent_id in component_node_ids:
+                    cur = self._nodes.get(cur.parent_id)
+                else:
+                    cur = None
+            if chain_len > depth:
+                depth = chain_len
+
+        has_refuted = any(n.status == "refuted" for n in nodes)
+        # 无 block_registry 入参, 默认 False
+        has_blocked_route = False
+        audited = bool(nodes) and all(
+            "equivalence_verdict" in n.evidence for n in nodes
+        )
+        score = 0.0
+        if has_refuted:
+            score += 0.3
+        if audited:
+            score += 0.3
+        if depth >= 2:
+            score += 0.4
+        return {
+            "size": len(nodes),
+            "depth": depth,
+            "has_refuted": has_refuted,
+            "has_blocked_route": has_blocked_route,
+            "audited": audited,
+            "maturity_score": score,
+        }
+
+    def component_representative(self, component_node_ids: set[str]) -> str | None:
+        """选分量代表节点, 防单分量靠节点数主导.
+
+        优先级: supported > untested > 其他, 同级取 created_at 最新的.
+        """
+        nodes = [
+            self._nodes[nid] for nid in component_node_ids
+            if nid in self._nodes
+        ]
+        if not nodes:
+            return None
+        supported = [n for n in nodes if n.status == "supported"]
+        if supported:
+            return max(supported, key=lambda n: n.created_at).id
+        untested = [n for n in nodes if n.status == "untested"]
+        if untested:
+            return max(untested, key=lambda n: n.created_at).id
+        return max(nodes, key=lambda n: n.created_at).id
+
+    def is_collapsed(self, min_components: int = 2) -> bool:
+        """拓扑坍缩: 连通分量数 < min_components."""
+        return self.component_count() < min_components
 
     # ── 边查询 ───────────────────────────────────────────────────────
 
@@ -654,3 +786,68 @@ class HypothesisGraph:
             return str(resp.content).strip()
         except Exception:
             return self._template_refine(original, findings)
+
+
+def _selfcheck_connected_components() -> None:
+    """连通分量监控自检 — 构造 2 个不相交分量验证基本逻辑."""
+    g = HypothesisGraph()
+    # 分量 1: 3 节点 derive 链
+    h1 = g.add_hypothesis("h1 statement")
+    h2 = g.add_hypothesis("h2 statement", parent_id=h1)
+    h3 = g.add_hypothesis("h3 statement", parent_id=h2)
+    # 分量 2: 2 节点 derive 链
+    h4 = g.add_hypothesis("h4 statement")
+    h5 = g.add_hypothesis("h5 statement", parent_id=h4)
+
+    # 给不同的 created_at, 让 "最新" 优先级可判定
+    g.get(h1).created_at = "2024-01-01T00:00:01Z"
+    g.get(h2).created_at = "2024-01-01T00:00:02Z"
+    g.get(h3).created_at = "2024-01-01T00:00:03Z"
+    g.get(h4).created_at = "2024-01-01T00:00:04Z"
+    g.get(h5).created_at = "2024-01-01T00:00:05Z"
+
+    # 分量数
+    assert g.component_count() == 2, f"expected 2, got {g.component_count()}"
+
+    comps = g.connected_components()
+    assert len(comps) == 2
+    assert len(comps[0]) >= len(comps[1])  # 降序
+    assert len(comps[0]) == 3, f"largest should have 3 nodes, got {len(comps[0])}"
+
+    # 成熟度指标字段
+    m = g.component_maturity(comps[0])
+    expected_keys = {
+        "size", "depth", "has_refuted", "has_blocked_route",
+        "audited", "maturity_score",
+    }
+    assert set(m.keys()) == expected_keys, f"keys mismatch: {set(m.keys())}"
+    assert m["size"] == 3
+    assert m["depth"] == 3, f"expected depth 3 (h1->h2->h3), got {m['depth']}"
+    assert m["has_refuted"] is False
+    assert m["has_blocked_route"] is False
+    assert m["audited"] is False  # evidence 里没有 equivalence_verdict
+    # depth>=2 -> +0.4, 其余 False
+    assert abs(m["maturity_score"] - 0.4) < 1e-9
+
+    # 坍缩: 2 < 3 -> True, 2 < 2 -> False
+    assert g.is_collapsed(min_components=3) is True
+    assert g.is_collapsed(min_components=2) is False
+
+    # 代表: 全 untested -> 最新 (h3)
+    rep = g.component_representative(comps[0])
+    assert rep is not None and rep in comps[0]
+    assert rep == h3, f"expected newest untested h3, got {rep}"
+
+    # 代表: 标 h2 为 supported 后应优先选 h2
+    g.get(h2).status = "supported"
+    rep2 = g.component_representative(comps[0])
+    assert rep2 == h2, f"expected supported h2, got {rep2}"
+
+    # 空集
+    assert g.component_representative(set()) is None
+
+    print("OK: connected_components selfcheck passed")
+
+
+if __name__ == "__main__":
+    _selfcheck_connected_components()
