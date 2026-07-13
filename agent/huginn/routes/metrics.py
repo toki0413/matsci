@@ -45,7 +45,7 @@ except ImportError:  # pragma: no cover - only hit when prometheus_client is abs
     class _FallbackMetric:
         metric_type = "untyped"
 
-        def __init__(self, name: str, documentation: str, labelnames=()) -> None:
+        def __init__(self, name: str, documentation: str, labelnames=(), **kwargs) -> None:
             self.name = name
             self.documentation = documentation
             self.labelnames = tuple(labelnames)
