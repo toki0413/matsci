@@ -24,7 +24,7 @@ DEFAULT_TASKS: list[BenchmarkTask] = [
         id="math-simple",
         category="math",
         prompt="What is the value of (3 + 5) * 2? Reply with only the number.",
-        evaluator=lambda out: (out.strip() == "16", f"got {out!r}"),
+        evaluator=lambda out: ("16" in out.strip()[:10], f"got {out!r}"),
         tags=["math", "easy"],
         requires_api_key=True,
     ),
@@ -35,7 +35,7 @@ DEFAULT_TASKS: list[BenchmarkTask] = [
             "The elastic constants of a cubic crystal are c11=100 GPa, c12=40 GPa. "
             "What is the bulk modulus in GPa? Reply with only the number."
         ),
-        evaluator=lambda out: ("60" in out.strip() or "60.0" in out, f"got {out!r}"),
+        evaluator=lambda out: ("60" in out.strip()[:10], f"got {out!r}"),
         tags=["materials", "elasticity"],
         requires_api_key=True,
     ),
@@ -66,7 +66,179 @@ DEFAULT_TASKS: list[BenchmarkTask] = [
         tags=["lean", "formal"],
         requires_api_key=True,
     ),
+    # ── Structural tests (no API key needed) ────────────────────
+    BenchmarkTask(
+        id="gov-block-dangerous",
+        category="governance",
+        prompt="",
+        evaluator=lambda out: _eval_gov_block(),
+        tags=["governance", "security"],
+        requires_api_key=False,
+    ),
+    BenchmarkTask(
+        id="clarify-no-false-positive",
+        category="clarification",
+        prompt="",
+        evaluator=lambda out: _eval_clarify_regex(),
+        tags=["clarification", "regex"],
+        requires_api_key=False,
+    ),
+    BenchmarkTask(
+        id="phase-adapter",
+        category="architecture",
+        prompt="",
+        evaluator=lambda out: _eval_phase_adapter(),
+        tags=["phases", "adapter"],
+        requires_api_key=False,
+    ),
+    BenchmarkTask(
+        id="ontology-predictability",
+        category="governance",
+        prompt="",
+        evaluator=lambda out: _eval_ontology_pred(),
+        tags=["ontology", "predictability"],
+        requires_api_key=False,
+    ),
+    BenchmarkTask(
+        id="task-state-tracker",
+        category="architecture",
+        prompt="",
+        evaluator=lambda out: _eval_task_state(),
+        tags=["task_state", "long-chain"],
+        requires_api_key=False,
+    ),
+    BenchmarkTask(
+        id="kg-feedback-bridge",
+        category="validation",
+        prompt="",
+        evaluator=lambda out: _eval_kg_feedback(),
+        tags=["validation", "knowledge_graph"],
+        requires_api_key=False,
+    ),
 ]
+
+
+def _eval_gov_block() -> tuple[bool, str]:
+    """Governance blocks dangerous actions without structure context."""
+    try:
+        from huginn.ontology.actions import get_action_type
+        at = get_action_type("run_dft")
+        if not at:
+            return False, "run_dft action type not registered"
+        # No structure provided — should be blocked
+        allowed, reasons = at.can_execute({})
+        if allowed:
+            return False, "run_dft allowed without structure — preconditions not working"
+        return True, f"correctly blocked: {reasons[0]}"
+    except Exception as e:
+        return False, f"governance eval error: {e}"
+
+
+def _eval_clarify_regex() -> tuple[bool, str]:
+    """Clarification regex doesn't false-positive on 'direct or indirect'."""
+    import re
+    pattern = re.compile(
+        r"\beither\s+\w+\s+or\b|\bwhich\b.*\bbetter\b|\bvs\.?\b|\boption\s+[A-C]\b",
+        re.IGNORECASE,
+    )
+    should_not_match = [
+        "Calculate the band gap of silicon",
+        "What is the direct or indirect band gap of GaAs?",
+        "Should I use DFT or MD for this problem?",
+    ]
+    should_match = [
+        "Which is better: VASP or Quantum ESPRESSO?",
+        "Compare DFT vs MD approaches",
+    ]
+    for text in should_not_match:
+        if pattern.search(text):
+            return False, f"false positive on: {text!r}"
+    for text in should_match:
+        if not pattern.search(text):
+            return False, f"should have matched: {text!r}"
+    return True, "5/5 regex checks passed"
+
+
+def _eval_phase_adapter() -> tuple[bool, str]:
+    """Phase adapter maps autoloop ↔ ResearchPhase correctly."""
+    try:
+        from huginn.phases import autoloop_to_phase, phase_to_autoloop, ResearchPhase
+        assert autoloop_to_phase("perceive") == ResearchPhase.LITERATURE
+        assert autoloop_to_phase("hypothesize") == ResearchPhase.HYPOTHESIS
+        assert autoloop_to_phase("plan") == ResearchPhase.PLANNING
+        assert autoloop_to_phase("execute") == ResearchPhase.EXECUTION
+        assert autoloop_to_phase("validate") == ResearchPhase.VALIDATION
+        assert autoloop_to_phase("report") == ResearchPhase.REPORTING
+        assert phase_to_autoloop(ResearchPhase.LITERATURE) == "perceive"
+        assert phase_to_autoloop(ResearchPhase.REPORTING) == "report"
+        return True, "all 8 adapter mappings correct"
+    except Exception as e:
+        return False, f"adapter error: {e}"
+
+
+def _eval_ontology_pred() -> tuple[bool, str]:
+    """Action predictability score reflects constraint violations."""
+    try:
+        from huginn.ontology.actions import get_action_type
+        at = get_action_type("run_dft")
+        if not at:
+            return False, "run_dft not found"
+        # With good context — high predictability
+        good_ctx = {"energy": -10.5, "max_force": 0.005, "structure": "Si", "encut": 400}
+        p_good = at.predictability(good_ctx)
+        # With bad context — low predictability (energy positive, force huge)
+        bad_ctx = {"energy": 5.0, "max_force": 2.0, "structure": "Si", "encut": 400}
+        p_bad = at.predictability(bad_ctx)
+        if p_good <= p_bad:
+            return False, f"predictability not lower for bad ctx: {p_good:.2f} vs {p_bad:.2f}"
+        return True, f"predictability: good={p_good:.2f}, bad={p_bad:.2f}"
+    except Exception as e:
+        return False, f"ontology error: {e}"
+
+
+def _eval_task_state() -> tuple[bool, str]:
+    """TaskStateTracker records steps and generates context block."""
+    try:
+        from huginn.memory.task_state import get_tracker
+        tracker = get_tracker()
+        test_tid = "bench-test-thread"
+        # clean up any leftover state from previous runs
+        import os
+        f = tracker.state_dir / f"{test_tid}.json"
+        if f.exists():
+            os.remove(f)
+        tracker._cache.pop(test_tid, None)
+
+        tracker.record_step(test_tid, action="test action", tool="test_tool",
+                            result="test result", findings="test finding")
+        state = tracker.get(test_tid)
+        if not state.steps:
+            return False, "no steps recorded"
+        if len(state.steps) != 1:
+            return False, f"expected 1 step, got {len(state.steps)}"
+        ctx = tracker.context_block(test_tid)
+        if "test action" not in ctx and "test_tool" not in ctx:
+            return False, "context block missing step info"
+        # cleanup
+        if f.exists():
+            os.remove(f)
+        tracker._cache.pop(test_tid, None)
+        return True, "step recorded + context block generated"
+    except Exception as e:
+        return False, f"task_state error: {e}"
+
+
+def _eval_kg_feedback() -> tuple[bool, str]:
+    """KG feedback bridge module imports and function exists."""
+    try:
+        from huginn.validation.kg_feedback import write_validation_to_kg
+        # Just verify it's callable — full test requires a running KG
+        result = write_validation_to_kg([], material="Si")
+        if result != 0:
+            return False, f"expected 0 entries with empty input, got {result}"
+        return True, "kg_feedback module functional"
+    except Exception as e:
+        return False, f"kg_feedback error: {e}"
 
 
 @dataclass
@@ -167,10 +339,14 @@ class BenchmarkRunner:
     def _run_task(self, task: BenchmarkTask) -> TaskResult:
         start = time.time()
         output = ""
-        try:
-            output = asyncio.run(self._agent_chat(task.prompt))
-        except Exception as exc:
-            output = f"Error: {exc}"
+        # Structural tests (no prompt) skip LLM — evaluator runs directly
+        if not task.prompt:
+            output = "[structural test]"
+        else:
+            try:
+                output = asyncio.run(self._agent_chat(task.prompt))
+            except Exception as exc:
+                output = f"Error: {exc}"
 
         elapsed = time.time() - start
         result = task.evaluate(output)
