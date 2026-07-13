@@ -358,7 +358,12 @@ class SmartIngester:
     # ── PDF ───────────────────────────────────────────────────────
 
     async def ingest_pdf(self, filename: str, content: bytes) -> dict[str, Any]:
-        """pymupdf 抠文字, 太少就 OCR; 内嵌图片逐个 ingest_image."""
+        """pymupdf 抠文字, 太少就 OCR; 内嵌图片逐个 ingest_image.
+
+        视觉压缩页 (DeepSeek-OCR 启发): 公式/表格密集页整页渲染成图像,
+        调多模态 LLM 解读生成 structured 字段, 图像路径 + structured 一起入库.
+        检索时多模态 agent 既能"看"图又能"读"结构.
+        """
         try:
             import fitz  # pymupdf
         except ImportError as exc:
@@ -368,6 +373,7 @@ class SmartIngester:
 
         text_parts: list[str] = []
         images_analyzed = 0
+        compressed_pages: list[dict[str, Any]] = []
         doc = None
         try:
             doc = fitz.open(stream=content, filetype="pdf")
@@ -383,6 +389,9 @@ class SmartIngester:
                 ocr_text = extract_text_with_ocr(filename, content)
                 if ocr_text.strip():
                     text_parts.insert(0, f"[OCR]\n{ocr_text}")
+
+            # 视觉压缩页: 公式/表格密集页整页存图 + LLM 解读
+            compressed_pages = await self._compress_visual_pages(doc, filename)
 
             # 提取内嵌图片, 每张跑一次图像摄入 (OCR + CV 分析)
             if self.image_analysis_tool is not None:
@@ -401,12 +410,110 @@ class SmartIngester:
             metadata={"source": "smart_ingest", "file_type": "pdf"},
         )
 
+        # 压缩页作为独立 chunk 入库, 带 image_ref + structured metadata
+        for cp in compressed_pages:
+            try:
+                self.kb.add_text(
+                    cp["text"],
+                    filename=f"{filename}_page{cp['page']}.compressed.md",
+                    metadata={
+                        "source": "smart_ingest",
+                        "file_type": "compressed_page",
+                        "image_ref": cp["image_path"],
+                        "parent_doc_id": info.get("doc_id", ""),
+                        "structured": cp.get("structured", ""),
+                        "page": cp["page"],
+                    },
+                )
+            except Exception:
+                logger.debug("compressed page ingest failed", exc_info=True)
+
         return {
             "doc_id": info.get("doc_id", ""),
             "text_length": len(full_text),
             "images_analyzed": images_analyzed,
+            "compressed_pages": len(compressed_pages),
             "smart_ingest": True,
         }
+
+    async def _compress_visual_pages(
+        self, doc: Any, filename: str
+    ) -> list[dict[str, Any]]:
+        """识别公式/表格密集页, 整页渲染存图 + LLM 解读.
+
+        DeepSeek-OCR 启发: 这类页面文本提取丢失版式结构, 不如整页当视觉信息
+        压缩. LLM 解码生成 structured 字段 (公式/表格/图注), 让检索时既能看图又能读结构.
+        ponytail: 只处理识别为压缩页的, 不全页处理. 升级: 所有页都走视觉压缩.
+        """
+        from huginn.knowledge.ocr_loader import _llm_ocr_image
+
+        results: list[dict[str, Any]] = []
+        try:
+            import fitz
+        except ImportError:
+            return results
+
+        # 压缩页存图目录 — 跟 runtime home 一致, 不依赖 SmartIngester 的 workspace 属性
+        try:
+            from huginn.utils.runtime import get_runtime_home
+            out_dir = get_runtime_home() / "compressed_pages"
+        except Exception:
+            out_dir = Path.home() / ".huginn" / "compressed_pages"
+        safe_name = Path(filename).stem.replace(" ", "_")[:40] or "doc"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        for page_idx in range(len(doc)):
+            try:
+                page = doc[page_idx]
+                page_text = page.get_text() or ""
+
+                if not self._is_visual_compression_page(page_text):
+                    continue
+
+                # 整页渲染成 PNG
+                pix = page.get_pixmap(dpi=200)
+                img_bytes = pix.tobytes("png")
+                img_path = out_dir / f"{safe_name}_p{page_idx}.png"
+                img_path.write_bytes(img_bytes)
+
+                # LLM 解读生成 structured markdown
+                from PIL import Image
+                import io as _io
+                pil_img = Image.open(_io.BytesIO(img_bytes))
+                decoded = _llm_ocr_image(pil_img, hint="compress_page")
+                if not decoded:
+                    decoded = f"[压缩页 {page_idx + 1}]\n{page_text[:500]}"
+
+                results.append({
+                    "page": page_idx,
+                    "image_path": str(img_path),
+                    "text": decoded,
+                    "structured": decoded[:2000],  # 截断, metadata 不宜太大
+                })
+            except Exception:
+                logger.debug("compress page %d failed", page_idx, exc_info=True)
+        return results
+
+    @staticmethod
+    def _is_visual_compression_page(text: str) -> bool:
+        """判断是否是视觉压缩页: 公式/表格密集, 文本提取丢失版式.
+
+        启发式: 含 LaTeX 符号 / 含多个表格标记 / 文字字符数异常低 (版式密集).
+        ponytail: 正则启发式, 不调 LLM. 升级: 让 LLM 判断页面类型.
+        """
+        if not text:
+            return True  # 无文字 → 扫描件, 必走视觉压缩
+        # LaTeX 公式标记
+        if "\\frac" in text or "\\begin{" in text or text.count("$") >= 4:
+            return True
+        # 表格标记 (markdown 表格行)
+        if text.count("|---|") >= 2 or text.count("|—|") >= 2:
+            return True
+        # 文字密度低 (版式密集, fitz 抠不全)
+        stripped = text.strip()
+        if 0 < len(stripped) < 100:
+            return True
+        return False
 
     async def _extract_and_ingest_pdf_images(self, doc: Any) -> int:
         """把 PDF 内嵌图片抠出来逐个 ingest_image, 返回处理数量."""
