@@ -104,7 +104,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MSG()]);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"chat" | "plan" | "build">("chat");
-  const [pendingPlan, setPendingPlan] = useState<string>("");
   const [status, setStatus] = useState<string>("connecting…");
   const [isConnected, setIsConnected] = useState(false);
   const [wsReconnecting, setWsReconnecting] = useState(false);
@@ -117,7 +116,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const pendingResponseRef = useRef<string>("");
   const streamingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Always-current snapshot of messages for the active thread — avoids
-  // stale closure captures in switchThread/createThread/forkThread.
+  // stale closure captures in switchThread/createThread.
   const messagesRef = useRef<Message[]>([WELCOME_MSG()]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   // Tracks which thread we last sent a user_input to, so WS messages
@@ -151,6 +150,24 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // ── Autoloop progress (SSE) ──────────────────────────────────
   const [autoloopPhase, setAutoloopPhase] = useState<string>("");
   const [autoloopProgress, setAutoloopProgress] = useState<number>(0);
+  // campaign 事件: hypothesis / retry / suspect / refine, 从 SSE /tasks/stream 收
+  // 之前前端只能正则刮消息文本, retry/suspect/refine 根本到不了. 现在走结构化 SSE.
+  const [campaignEvents, setCampaignEvents] = useState<
+    Array<{ event: string; data: Record<string, unknown>; ts: number; task_id: string }>
+  >([]);
+  // 当前 thread 的任务状态: goal / mode / iteration / 进度
+  // switchThread 时从 /threads/{id}/state 拉, 恢复 research mode + 显示研究进度
+  const [threadTaskState, setThreadTaskState] = useState<{
+    goal: string;
+    mode: string;
+    iteration: number;
+    steps_done: number;
+    steps_total: number;
+    key_findings: string[];
+  }>({ goal: "", mode: "chat", iteration: 0, steps_done: 0, steps_total: 0, key_findings: [] });
+  // plan 执行状态: plan_id -> "executing" | "done". 跟 plan 卡片绑定显示状态徽标.
+  // 之前用户点 Confirm 后整个流式期间没任何指示, 只能盯着光标.
+  const [planExecState, setPlanExecState] = useState<Record<string, "executing" | "done">>({});
 
   // ── Decision trace: governance events + state transitions ──
   const [governanceEvents, setGovernanceEvents] = useState<any[]>([]);
@@ -219,6 +236,22 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         })
         .catch(() => { /* backend offline or no history — keep welcome */ });
     }
+    // 拉 task_state 恢复 mode/goal/iteration 显示 (之前切回 research thread 后 mode 全丢)
+    api.get<any>(`/threads/${threadId}/state`)
+      .then((s) => {
+        if (s && s.mode) {
+          setThreadTaskState({
+            goal: s.goal || "",
+            mode: s.mode,
+            iteration: s.iteration || 0,
+            steps_done: s.steps_done || 0,
+            steps_total: s.steps_total || 0,
+            key_findings: s.key_findings || [],
+          });
+          setResearchMode(s.mode === "research");
+        }
+      })
+      .catch(() => { /* no task state yet */ });
     setActiveThread(threadId);
   };
 
@@ -269,47 +302,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       loadThreads();
     } catch (e: any) {
       console.error("[threads] delete failed:", e);
-    }
-  };
-
-  const forkThread = async (id: string) => {
-    try {
-      const data = await api.post<{ thread_id: string; label: string }>(`/threads/${id}/fork`);
-      // cache current thread before switching — use ref to avoid stale closure
-      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messagesRef.current }));
-      setActiveThread(data.thread_id);
-      setMessages([
-        {
-          role: "assistant",
-          content: `Forked from **${id}** — new thread **${data.label}**.`,
-          timestamp: formatTime(),
-        },
-      ]);
-      loadThreads();
-    } catch (e: any) {
-      console.error("[threads] fork failed:", e);
-    }
-  };
-
-  const archiveThread = async (id: string) => {
-    try {
-      await api.post(`/threads/${id}/archive`);
-      // drop from local list immediately
-      setThreads((prev) => prev.filter((t) => t.id !== id));
-      if (activeThread === id) {
-        setActiveThread("desktop");
-      }
-    } catch (e: any) {
-      console.error("[threads] archive failed:", e);
-    }
-  };
-
-  const unarchiveThread = async (id: string) => {
-    try {
-      await api.post(`/threads/${id}/unarchive`);
-      loadThreads();
-    } catch (e: any) {
-      console.error("[threads] unarchive failed:", e);
     }
   };
 
@@ -1317,7 +1309,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   };
 
   // ── Autoloop SSE subscription ────────────────────────────────
-  // Backend emits named events (snapshot/update), not unnamed messages.
+  // Backend emits named events (snapshot/update/campaign), not unnamed messages.
   // The old es.onmessage handler never fired — autoloop progress was dead.
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/tasks/stream`);
@@ -1332,14 +1324,42 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         // ignore malformed frames
       }
     };
+    // campaign 事件: hypothesis / retry / suspect / refine, 结构化数据
+    const handleCampaign = (e: MessageEvent) => {
+      try {
+        const t = JSON.parse(e.data);
+        if (t && t._kind === "campaign") {
+          setCampaignEvents((prev) =>
+            [...prev, {
+              event: t.event,
+              data: t.data || {},
+              ts: t.ts,
+              task_id: t.task_id || "",
+            }].slice(-200)
+          );
+          // plan 执行状态: 把 plan_id 关联到卡片
+          const pid = t.data?.plan_id;
+          if (typeof pid === "string") {
+            if (t.event === "plan.exec_start") {
+              setPlanExecState((prev) => ({ ...prev, [pid]: "executing" }));
+            } else if (t.event === "plan.exec_complete") {
+              setPlanExecState((prev) => ({ ...prev, [pid]: "done" }));
+            }
+          }
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
     es.addEventListener("snapshot", handleProgress);
     es.addEventListener("update", handleProgress);
+    es.addEventListener("campaign", handleCampaign);
     return () => es.close();
   }, []);
 
   return {
     // Chat state
-    messages, input, mode, pendingPlan,
+    messages, input, mode,
     chatSearchOpen, chatSearchQuery,
     isStreaming,
     messagesEndRef,
@@ -1354,17 +1374,19 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // Guide
     showGuide, closeGuide,
     // Setters
-    setInput, setMode, setMessages, setPendingPlan, setChatSearchOpen, setChatSearchQuery,
+    setInput, setMode, setMessages, setChatSearchOpen, setChatSearchQuery,
     setActiveThread, setThreads, setShowGuide, switchThread,
     // Functions
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
-    forkThread, archiveThread, unarchiveThread,
     startBackend, notify,
     // Approval
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
     // Autoloop
     autoloopPhase, autoloopProgress,
+    campaignEvents,
+    threadTaskState,
+    planExecState,
     // Context window
     contextPct,
     // Thinking intensity

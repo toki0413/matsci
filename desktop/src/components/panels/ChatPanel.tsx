@@ -87,8 +87,6 @@ interface ChatPanelProps {
   undoWindow?: boolean;
   undoSend?: () => void;
   sendMessage: () => void;
-  pendingPlan: string;
-  setPendingPlan: (v: string) => void;
   setMode: (v: "chat" | "plan" | "build") => void;
   input: string;
   // real type from useState — allows functional updates (e.g. drag-drop appends)
@@ -116,6 +114,21 @@ interface ChatPanelProps {
   setResearchMode: (v: boolean) => void;
   contextBudgetTokens?: number;
   onExpandResult?: (content: string, toolName?: string) => void;
+  campaignEvents?: Array<{
+    event: string;
+    data: Record<string, unknown>;
+    ts: number;
+    task_id: string;
+  }>;
+  threadTaskState?: {
+    goal: string;
+    mode: string;
+    iteration: number;
+    steps_done: number;
+    steps_total: number;
+    key_findings: string[];
+  };
+  planExecState?: Record<string, "executing" | "done">;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -123,12 +136,12 @@ export function ChatPanel(props: ChatPanelProps) {
   const {
     messages, chatSearchOpen, chatSearchQuery, setChatSearchOpen, setChatSearchQuery,
     wsClientRef, setMessages, answerClarification, pendingClarifications,
-    isConnected, wsReconnecting, wsFailed, undoWindow, undoSend, sendMessage, pendingPlan, setPendingPlan,
+    isConnected, wsReconnecting, wsFailed, undoWindow, undoSend, sendMessage,
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages, stopGeneration, pauseGeneration, resumeGeneration, isPaused, researchMode, setResearchMode,
-    contextBudgetTokens, onExpandResult,
+    contextBudgetTokens, onExpandResult, campaignEvents, threadTaskState, planExecState,
   } = props;
 
   const [showCommands, setShowCommands] = useState(false);
@@ -592,10 +605,20 @@ export function ChatPanel(props: ChatPanelProps) {
         >
           {showTimeline ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
           Iterations
+          {threadTaskState?.goal && (
+            <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, textAlign: 'left' }}>
+              {threadTaskState.goal}
+            </span>
+          )}
+          {threadTaskState && threadTaskState.iteration > 0 && (
+            <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--fg-muted)' }}>
+              iter {threadTaskState.iteration}
+            </span>
+          )}
         </button>
         {showTimeline && (
           <div className="max-h-40 overflow-y-auto px-3 pb-2">
-            <IterationTimeline messages={messages as unknown as Array<Record<string, unknown>>} />
+            <IterationTimeline messages={messages as unknown as Array<Record<string, unknown>>} campaignEvents={campaignEvents} />
           </div>
         )}
       </div>
@@ -936,7 +959,27 @@ export function ChatPanel(props: ChatPanelProps) {
                 )}
                 {/* Plan confirm/cancel buttons */}
                 {msg.isPlan && msg.planId && (
-                  <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
+                  <div className="mt-3 flex gap-2 items-center border-t border-border/50 pt-3">
+                    {(() => {
+                      const st = planExecState?.[msg.planId!];
+                      if (st === "executing") {
+                        return (
+                          <span className="mr-auto flex items-center gap-1 text-xs text-accent">
+                            <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                            Executing…
+                          </span>
+                        );
+                      }
+                      if (st === "done") {
+                        return (
+                          <span className="mr-auto flex items-center gap-1 text-xs text-success">
+                            <Check size={12} aria-hidden="true" />
+                            Executed
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                     <button
                       onClick={() => {
                         if (wsClientRef.current) {
@@ -1189,35 +1232,6 @@ export function ChatPanel(props: ChatPanelProps) {
         {pendingClarifications.length > 0 && (
           <div className="mb-3 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs text-accent">
             💡 Agent is waiting for your clarification — answer above or type below
-          </div>
-        )}
-
-        {pendingPlan && (
-          <div className="mb-3 rounded-xl border border-border bg-bg-tertiary p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold text-accent">📋 Plan</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setPendingPlan("")}
-                  className="text-xs text-text-secondary hover:text-text-primary"
-                >
-                  Dismiss
-                </button>
-                <button
-                  onClick={() => {
-                    setMode("chat");
-                    sendMessage();
-                  }}
-                  disabled={!input.trim()}
-                  className="btn-primary px-3 py-1 text-xs"
-                >
-                  {t('chat.runPlan')}
-                </button>
-              </div>
-            </div>
-            <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs text-text-primary">
-              <MessageContent content={pendingPlan} />
-            </div>
           </div>
         )}
 

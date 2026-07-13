@@ -158,6 +158,14 @@ class RAGTool(HuginnTool):
                     }
                     for c in chunks
                 ]
+                # 视觉压缩页 chunk 的 image_ref 是裸文件系统路径, 前端拿不到.
+                # 同时塞一份 image_url 让前端按 URL 直接 fetch (GET /knowledge/image).
+                # 之前 context_builder 只把路径塞进 prompt 文本, 前端永远看不到图.
+                from urllib.parse import quote
+                for r in results:
+                    img_ref = (r.get("metadata") or {}).get("image_ref")
+                    if img_ref:
+                        r["image_url"] = f"/knowledge/image?path={quote(str(img_ref))}"
                 return ToolResult(
                     data={
                         "query": args.query,

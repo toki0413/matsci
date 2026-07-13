@@ -147,6 +147,34 @@ async def get_thread_messages(thread_id: str, request: Request) -> dict[str, Any
     return {"messages": messages, "thread_id": thread_id}
 
 
+@router.get("/threads/{thread_id}/state")
+async def get_thread_state(thread_id: str, request: Request) -> dict[str, Any]:
+    """返回 thread 的任务状态 (goal/mode/iteration/key_findings).
+
+    前端 switchThread 时调, 恢复 mode 显示 + 显示研究进度.
+    之前 switchThread 只拉 messages, 切回 research thread 后 mode/进度全丢.
+    """
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
+    try:
+        from huginn.memory.task_state import get_tracker
+        state = get_tracker().get(thread_id)
+        return {
+            "thread_id": thread_id,
+            "goal": state.goal,
+            "mode": state.mode,
+            "iteration": state.iteration,
+            "key_findings": list(state.key_findings[-10:]),
+            "open_questions": list(state.open_questions[-5:]),
+            "steps_done": sum(1 for s in state.steps if s.status == "done"),
+            "steps_total": len(state.steps),
+        }
+    except Exception:
+        logger.debug("failed to fetch task state for %s", thread_id, exc_info=True)
+        return {"thread_id": thread_id, "goal": "", "mode": "chat", "iteration": 0}
+
+
 @router.patch("/threads/{thread_id}")
 async def rename_thread(thread_id: str, params: dict[str, Any], request: Request) -> dict[str, Any]:
     """Rename a thread."""

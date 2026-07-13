@@ -1,15 +1,15 @@
 /**
  * IterationTimeline — vertical timeline of autoloop iterations.
  *
- * ponytail: no new data source. Reuses existing task_progress WS messages
- * that already flow through useChatAndConnection. Just accumulates them
- * by iteration and renders as a vertical list instead of a horizontal bar.
+ * 优先用结构化 campaign SSE 事件 (campaign.iteration / hypothesis / retry /
+ * suspect / refine) 构建 timeline. 之前靠正则刮消息文本, retry/suspect/refine
+ * 事件根本到不了前端. 现在 SSE /tasks/stream 的 'campaign' event 直达.
  *
- * Also scans the message history for hypothesis/plan/result summaries to
- * build the timeline without requiring a new backend endpoint.
+ * fallback: 没有 campaign 事件时 (旧会话 / 非 autoloop), 退回正则刮文本,
+ * 保持向后兼容.
  */
 import { useMemo } from 'react';
-import { FlaskConical, CheckCircle2, XCircle, ChevronRight } from 'lucide-react';
+import { FlaskConical, CheckCircle2, XCircle, ChevronRight, RefreshCw, AlertTriangle } from 'lucide-react';
 
 interface IterationEntry {
   iteration: number;
@@ -19,71 +19,124 @@ interface IterationEntry {
   r_phys?: number;
   surprise?: number;
   persona?: string;
+  // 研究循环节点标记 (来自 campaign.retry / suspect / refine)
+  flags?: string[];
+}
+
+export interface CampaignEventEntry {
+  event: string;
+  data: Record<string, unknown>;
+  ts: number;
+  task_id: string;
 }
 
 interface Props {
   messages: Array<Record<string, unknown>>;
+  campaignEvents?: CampaignEventEntry[];
 }
 
-export function IterationTimeline({ messages }: Props) {
-  const iterations = useMemo(() => {
-    // Scan messages for autoloop iteration markers
-    const entries: IterationEntry[] = [];
-    let current: IterationEntry | null = null;
-
-    for (const msg of messages) {
-      const content = String(msg.content || '');
-
-      // Detect iteration start: "iter N:" in content or task_progress
-      const iterMatch = content.match(/iter\s+(\d+)/i);
-      if (iterMatch) {
-        const iterNum = parseInt(iterMatch[1]);
-        if (!current || current.iteration !== iterNum) {
-          if (current) entries.push(current);
-          current = { iteration: iterNum, status: 'running' };
+/** 从结构化 campaign SSE 事件构建 timeline. */
+function buildFromCampaign(events: CampaignEventEntry[]): IterationEntry[] {
+  const byIter = new Map<number, IterationEntry>();
+  for (const ev of events) {
+    const it = ev.data.iteration as number | undefined;
+    if (it == null) continue;
+    let entry = byIter.get(it);
+    if (!entry) {
+      entry = { iteration: it, status: 'running' };
+      byIter.set(it, entry);
+    }
+    switch (ev.event) {
+      case 'campaign.iteration': {
+        // 新一轮开始, 之前还没结束的标记 done
+        for (const e of byIter.values()) {
+          if (e.iteration < it && e.status === 'running') e.status = 'done';
         }
+        const max = ev.data.max as number | undefined;
+        if (max) entry.mode = `1/${max}`;
+        break;
       }
+      case 'campaign.hypothesis':
+        entry.hypothesis = ev.data.hypothesis as string | undefined;
+        break;
+      case 'campaign.retry':
+        entry.flags = [...(entry.flags || []), 'retry'];
+        entry.status = 'error';
+        break;
+      case 'campaign.suspect':
+        entry.flags = [...(entry.flags || []), 'suspect'];
+        entry.status = 'error';
+        break;
+      case 'campaign.refine':
+        entry.flags = [...(entry.flags || []), ev.data.pivot ? 'pivot' : 'refine'];
+        break;
+    }
+  }
+  return [...byIter.values()].sort((a, b) => a.iteration - b.iteration);
+}
 
-      // Detect hypothesis
-      if (current && !current.hypothesis) {
-        const hypMatch = content.match(/hypothes[i]s[:\s]+(.{10,120})/i);
-        if (hypMatch) current.hypothesis = hypMatch[1].trim();
-      }
+/** fallback: 没有结构化事件时, 从消息文本正则刮. */
+function buildFromMessages(messages: Array<Record<string, unknown>>): IterationEntry[] {
+  const entries: IterationEntry[] = [];
+  let current: IterationEntry | null = null;
 
-      // Detect mode
-      if (current && !current.mode) {
-        const modeMatch = content.match(/(?:mode|plan)[:\s]+(coder|workflow|explore|skill|visual_inspect)/i);
-        if (modeMatch) current.mode = modeMatch[1];
-      }
+  for (const msg of messages) {
+    const content = String(msg.content || '');
 
-      // Detect persona
-      if (current && !current.persona) {
-        const personaMatch = content.match(/persona[:\s]+(dft_expert|md_expert|reviewer)/i);
-        if (personaMatch) current.persona = personaMatch[1];
-      }
-
-      // Detect r_phys
-      if (current) {
-        const rMatch = content.match(/r_phys[:\s]+([\d.]+)/i);
-        if (rMatch) current.r_phys = parseFloat(rMatch[1]);
-        const sMatch = content.match(/surprise[:\s]+([\d.]+)/i);
-        if (sMatch) current.surprise = parseFloat(sMatch[1]);
-      }
-
-      // Detect completion
-      if (current && /done|complet|finish/i.test(content)) {
-        current.status = 'done';
-      }
-      if (current && /error|fail/i.test(content) && msg.role === 'tool') {
-        current.status = 'error';
+    const iterMatch = content.match(/iter\s+(\d+)/i);
+    if (iterMatch) {
+      const iterNum = parseInt(iterMatch[1]);
+      if (!current || current.iteration !== iterNum) {
+        if (current) entries.push(current);
+        current = { iteration: iterNum, status: 'running' };
       }
     }
-    if (current) entries.push(current);
-    return entries;
-  }, [messages]);
+    if (current && !current.hypothesis) {
+      const hypMatch = content.match(/hypothes[i]s[:\s]+(.{10,120})/i);
+      if (hypMatch) current.hypothesis = hypMatch[1].trim();
+    }
+    if (current && !current.mode) {
+      const modeMatch = content.match(/(?:mode|plan)[:\s]+(coder|workflow|explore|skill|visual_inspect)/i);
+      if (modeMatch) current.mode = modeMatch[1];
+    }
+    if (current && !current.persona) {
+      const personaMatch = content.match(/persona[:\s]+(dft_expert|md_expert|reviewer)/i);
+      if (personaMatch) current.persona = personaMatch[1];
+    }
+    if (current) {
+      const rMatch = content.match(/r_phys[:\s]+([\d.]+)/i);
+      if (rMatch) current.r_phys = parseFloat(rMatch[1]);
+      const sMatch = content.match(/surprise[:\s]+([\d.]+)/i);
+      if (sMatch) current.surprise = parseFloat(sMatch[1]);
+    }
+    if (current && /done|complet|finish/i.test(content)) {
+      current.status = 'done';
+    }
+    if (current && /error|fail/i.test(content) && msg.role === 'tool') {
+      current.status = 'error';
+    }
+  }
+  if (current) entries.push(current);
+  return entries;
+}
+
+const FLAG_LABEL: Record<string, string> = {
+  retry: 'retry',
+  suspect: 'suspect',
+  refine: 'refine',
+  pivot: 'pivot',
+};
+
+export function IterationTimeline({ messages, campaignEvents }: Props) {
+  const iterations = useMemo(() => {
+    if (campaignEvents && campaignEvents.length > 0) {
+      return buildFromCampaign(campaignEvents);
+    }
+    return buildFromMessages(messages);
+  }, [messages, campaignEvents]);
 
   if (iterations.length === 0) {
-    return null; // Don't render if no iterations detected
+    return null;
   }
 
   return (
@@ -111,7 +164,7 @@ export function IterationTimeline({ messages }: Props) {
 
           {/* Content */}
           <div style={{ flex: 1, paddingBottom: 12, fontSize: 11 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 600, color: 'var(--fg-primary)' }}>Iter {iter.iteration}</span>
               {iter.persona && (
                 <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 4, background: 'var(--bg-tertiary)', color: 'var(--fg-muted)' }}>
@@ -121,6 +174,18 @@ export function IterationTimeline({ messages }: Props) {
               {iter.mode && (
                 <span style={{ fontSize: 9, color: 'var(--fg-muted)' }}>· {iter.mode}</span>
               )}
+              {/* 研究循环节点标记 */}
+              {iter.flags?.map((f, idx) => (
+                <span key={idx} style={{
+                  fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                  display: 'inline-flex', alignItems: 'center', gap: 2,
+                  background: f === 'pivot' ? '#f59e0b20' : f === 'suspect' ? '#ef444420' : 'var(--bg-tertiary)',
+                  color: f === 'pivot' ? '#f59e0b' : f === 'suspect' ? '#ef4444' : 'var(--fg-muted)',
+                }}>
+                  {f === 'suspect' ? <AlertTriangle size={9} /> : <RefreshCw size={9} />}
+                  {FLAG_LABEL[f] || f}
+                </span>
+              ))}
             </div>
             {iter.hypothesis && (
               <div style={{ color: 'var(--fg-secondary)', display: 'flex', alignItems: 'flex-start', gap: 4 }}>

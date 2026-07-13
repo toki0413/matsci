@@ -10,6 +10,8 @@ interface MetricsState {
   activeConnections: number;
   model: string;
   provider: string;
+  tps: number | null;
+  ttft: number | null;
 }
 
 // Parse a single numeric value out of a Prometheus line like:
@@ -18,6 +20,19 @@ function parsePrometheusValue(text: string, metricName: string): number {
   const re = new RegExp(`^${metricName}\\s+([\\d.]+)`, "m");
   const m = text.match(re);
   return m ? parseFloat(m[1]) : 0;
+}
+
+// Histogram 暴露为 {name}_sum{labels} VALUE + {name}_count{labels} VALUE.
+// 跨 label 聚合: avg = sum_total / count_total. 返回 null 表示无数据.
+// 之前 parsePrometheusValue 正则 ^name\s+ 匹配不到 Histogram 的 _sum/_count 后缀.
+function parseHistogramAvg(text: string, metricName: string): number | null {
+  const sumRe = new RegExp(`^${metricName}_sum(?:\\{[^}]*\\})?\\s+([\\d.eE+-]+)`, "gm");
+  const countRe = new RegExp(`^${metricName}_count(?:\\{[^}]*\\})?\\s+([\\d.eE+-]+)`, "gm");
+  let sum = 0, count = 0;
+  let m: RegExpExecArray | null;
+  while ((m = sumRe.exec(text)) !== null) sum += parseFloat(m[1]);
+  while ((m = countRe.exec(text)) !== null) count += parseFloat(m[1]);
+  return count > 0 ? sum / count : null;
 }
 
 function formatTokens(n: number): string {
@@ -32,6 +47,8 @@ export function MetricsBar() {
     activeConnections: 0,
     model: "",
     provider: "",
+    tps: null,
+    ttft: null,
   });
   const [visible, setVisible] = useState(false);
 
@@ -52,6 +69,8 @@ export function MetricsBar() {
           activeConnections: parsePrometheusValue(metricsText, "huginn_active_websocket_connections"),
           model: health?.model || health?.config?.model || "",
           provider: health?.provider || health?.config?.provider || "",
+          tps: parseHistogramAvg(metricsText, "huginn_llm_tps"),
+          ttft: parseHistogramAvg(metricsText, "huginn_llm_ttft_seconds"),
         };
 
         setMetrics(next);
@@ -86,6 +105,18 @@ export function MetricsBar() {
         <span className="flex items-center gap-1">
           <span>📊</span>
           <span>{formatTokens(metrics.tokens)} tokens</span>
+        </span>
+      )}
+      {metrics.tps != null && (
+        <span className="flex items-center gap-1" title="Avg streaming tokens/sec">
+          <span>⚡</span>
+          <span>{metrics.tps.toFixed(1)} tok/s</span>
+        </span>
+      )}
+      {metrics.ttft != null && (
+        <span className="flex items-center gap-1" title="Avg time-to-first-token">
+          <span>⏱</span>
+          <span>{(metrics.ttft * 1000).toFixed(0)}ms TTFT</span>
         </span>
       )}
       <span className="flex items-center gap-1">
