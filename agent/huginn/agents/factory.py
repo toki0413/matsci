@@ -64,8 +64,13 @@ class AgentFactory:
 
         # 事件总线审计订阅 — 启动时装一次, 所有 publish 的事件落 audit.jsonl
         try:
-            from huginn.events.audit_log import install_audit_subscriber
+            from huginn.events.audit_log import (
+                install_audit_subscriber,
+                install_campaign_subscriber,
+            )
             self._audit_unsub = install_audit_subscriber()
+            # campaign.* / quality.check 业务订阅: 之前 emit→audit→dead, 现在至少 log 可见.
+            install_campaign_subscriber()
         except Exception:
             logger.debug("audit subscriber install failed (non-fatal)", exc_info=True)
             self._audit_unsub = None

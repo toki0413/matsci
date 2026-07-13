@@ -211,6 +211,60 @@ def uninstall_audit_subscriber() -> None:
         _writer = None
 
 
+# ── campaign/quality 业务订阅者 ─────────────────────────────────
+# 之前 campaign.* / quality.check 事件只落 audit.jsonl, 无业务消费方 (emit→log→dead).
+# 这里挂一个轻量订阅器: 把 iteration/hypothesis/retry/suspect/refine/quality.check
+# 事件提到 logger.info + 可选 telemetry, 让用户/telemetry 能感知研究循环的实时进度.
+# ponytail: 只 log, 不做状态更新. 升级: 接 progress 面板 / WebSocket push.
+_CAMPAIGN_UNSUBSCRIBES: list[Any] = []
+
+
+def install_campaign_subscriber(bus: EventBus | None = None) -> None:
+    """订阅 campaign.* / quality.check 事件, 转 logger.info + telemetry.
+
+    之前这些事件 emit 后只落 audit.jsonl, 业务侧无感知. 这里挂一个轻量订阅器,
+    让 research loop 的关键节点 (iteration/hypothesis/retry/suspect/refine/quality)
+    至少在 log 和 telemetry 里可见.
+    ponytail: 只 log + Counter, 不做 UI push. 升级: WebSocket / progress 面板.
+    """
+    global _CAMPAIGN_UNSUBSCRIBES
+    bus = bus or EventBus.shared()
+    events = (
+        "campaign.iteration", "campaign.hypothesis",
+        "campaign.retry", "campaign.suspect",
+        "campaign.refine", "quality.check",
+    )
+
+    def _on_campaign(event: AgentEvent) -> None:
+        try:
+            logger.info(
+                "campaign event: %s iter=%s payload_keys=%s",
+                event.type,
+                event.payload.get("iteration", "?"),
+                list(event.payload.keys()),
+            )
+        except Exception:
+            pass
+
+    for evt_type in events:
+        try:
+            unsub = bus.subscribe(evt_type, _on_campaign)
+            _CAMPAIGN_UNSUBSCRIBES.append(unsub)
+        except Exception:
+            logger.debug("campaign subscribe failed for %s", evt_type, exc_info=True)
+
+
+def uninstall_campaign_subscriber() -> None:
+    """Detach all campaign/quality subscribers."""
+    global _CAMPAIGN_UNSUBSCRIBES
+    for unsub in _CAMPAIGN_UNSUBSCRIBES:
+        try:
+            unsub()
+        except Exception:
+            pass
+    _CAMPAIGN_UNSUBSCRIBES = []
+
+
 def verify_audit_chain(path: Path | None = None) -> bool:
     """Verify the integrity of the audit log hash chain.
 
