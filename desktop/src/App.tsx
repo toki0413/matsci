@@ -554,6 +554,7 @@ export default function App() {
     setThreads, setShowGuide, switchThread,
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
+    forkThread, archiveThread, unarchiveThread,
     startBackend,
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
     autoloopPhase, autoloopProgress,
@@ -1451,6 +1452,10 @@ export default function App() {
               createThread={createThread}
               renameThread={renameThread}
               deleteThread={deleteThread}
+              forkThread={forkThread}
+              archiveThread={archiveThread}
+              unarchiveThread={unarchiveThread}
+              loadThreads={loadThreads}
             />
           )}
 

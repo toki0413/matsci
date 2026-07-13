@@ -70,6 +70,7 @@ export interface Thread {
   label: string;
   created_at: string;
   last_active: string;
+  archived?: boolean;
 }
 
 // ── Hook parameters ────────────────────────────────────────────
@@ -255,9 +256,11 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     setActiveThread(threadId);
   };
 
-  const loadThreads = async () => {
+  const loadThreads = async (includeArchived = false) => {
     try {
-      const data = await api.get<{ threads?: Thread[] }>("/threads?include_archived=false");
+      const data = await api.get<{ threads?: Thread[] }>(
+        `/threads?include_archived=${includeArchived ? "true" : "false"}`
+      );
       setThreads(data.threads || []);
     } catch (e: any) {
       console.error("[threads] load failed:", e);
@@ -302,6 +305,49 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       loadThreads();
     } catch (e: any) {
       console.error("[threads] delete failed:", e);
+    }
+  };
+
+  // fork: 在当前线程某节点分叉出新线程, 复制历史消息. 后端 POST /threads/{id}/fork.
+  // 之前函数定义了但没有任何 UI 调 — 现在接到 ThreadsPanel 菜单.
+  const forkThread = async (id: string) => {
+    try {
+      const data = await api.post<{ thread_id: string; label: string }>(`/threads/${id}/fork`);
+      setMessagesByThread((prev) => ({ ...prev, [activeThread]: messagesRef.current }));
+      setActiveThread(data.thread_id);
+      setMessages([
+        {
+          role: "assistant",
+          content: `Forked from **${id}** — new thread **${data.label}**.`,
+          timestamp: formatTime(),
+        },
+      ]);
+      loadThreads();
+    } catch (e: any) {
+      console.error("[threads] fork failed:", e);
+    }
+  };
+
+  // archive: 后端 POST /threads/{id}/archive 标记 archived=true, 本地从列表移除.
+  const archiveThread = async (id: string) => {
+    try {
+      await api.post(`/threads/${id}/archive`);
+      setThreads((prev) => prev.filter((t) => t.id !== id));
+      if (activeThread === id) {
+        setActiveThread("desktop");
+      }
+    } catch (e: any) {
+      console.error("[threads] archive failed:", e);
+    }
+  };
+
+  // unarchive: 后端 POST /threads/{id}/unarchive 恢复, 重载列表.
+  const unarchiveThread = async (id: string) => {
+    try {
+      await api.post(`/threads/${id}/unarchive`);
+      loadThreads();
+    } catch (e: any) {
+      console.error("[threads] unarchive failed:", e);
     }
   };
 
@@ -1379,6 +1425,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // Functions
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
+    forkThread, archiveThread, unarchiveThread,
     startBackend, notify,
     // Approval
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
