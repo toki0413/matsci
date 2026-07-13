@@ -281,3 +281,50 @@ class TestEdges:
         assert n2.statement == "test"
         assert n2.status == "supported"
         assert n2.refinement_basis == [{"category": "x"}]
+
+
+# ── 双覆盖查询 ─────────────────────────────────────────────────────────────
+
+
+class TestDualCoverage:
+    def test_dual_covered_false_with_no_support(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        assert g.dual_covered(h) is False
+
+    def test_dual_covered_false_with_single_modality(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.support(h, evidence={"modality": "deductive"})
+        assert g.dual_covered(h) is False
+
+    def test_dual_covered_true_with_two_modalities(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.support(h, evidence={"modality": "deductive"})
+        g.support(h, evidence={"modality": "numeric"})
+        assert g.dual_covered(h) is True
+
+    def test_dual_covered_false_with_same_modality_twice(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.support(h, evidence={"modality": "deductive"})
+        g.support(h, evidence={"modality": "deductive"})
+        assert g.dual_covered(h) is False
+
+    def test_needs_dual_coverage_root_node_false(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        assert g.needs_dual_coverage(h) is False
+
+    def test_needs_dual_coverage_with_child_true(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("H1")
+        g.add_hypothesis("H2", parent_id=h1)
+        assert g.needs_dual_coverage(h1) is True
+
+    def test_needs_dual_coverage_deep_chain_true(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("H1")
+        h2 = g.add_hypothesis("H2", parent_id=h1)
+        assert g.needs_dual_coverage(h2) is True

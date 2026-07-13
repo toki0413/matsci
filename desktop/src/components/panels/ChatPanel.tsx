@@ -491,12 +491,12 @@ export function ChatPanel(props: ChatPanelProps) {
                 aria-label="Next match"
                 title="Next match"
               >
-                <ChevronDown size={14} />
+                <ChevronDown size={14} aria-hidden="true" />
               </button>
             </div>
           )}
           <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary" aria-label="Close search">
-            <X size={14} />
+            <X size={14} aria-hidden="true" />
           </button>
         </div>
       )}
@@ -508,7 +508,7 @@ export function ChatPanel(props: ChatPanelProps) {
           className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-30"
           title="Export as Markdown"
         >
-          <Download size={12} /> MD
+          <Download size={12} aria-hidden="true" /> MD
         </button>
         <button
           onClick={() => exportConversation('json')}
@@ -516,7 +516,7 @@ export function ChatPanel(props: ChatPanelProps) {
           className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-30"
           title="Export as JSON"
         >
-          <Download size={12} /> JSON
+          <Download size={12} aria-hidden="true" /> JSON
         </button>
         <div className="mx-1 h-3 w-px bg-border" />
         <button
@@ -524,7 +524,7 @@ export function ChatPanel(props: ChatPanelProps) {
           className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors ${showStats ? 'text-accent' : 'text-text-muted hover:text-text-primary'} hover:bg-bg-tertiary`}
           title="Chat statistics"
         >
-          <BarChart3 size={12} /> Stats
+          <BarChart3 size={12} aria-hidden="true" /> Stats
         </button>
         <div className="mx-1 h-3 w-px bg-border" />
         <button
@@ -532,7 +532,7 @@ export function ChatPanel(props: ChatPanelProps) {
           className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors ${notifSound ? 'text-accent' : 'text-text-muted'} hover:bg-bg-tertiary`}
           title={notifSound ? 'Sound on (click to mute)' : 'Sound off (click to enable)'}
         >
-          <Volume2 size={12} /> {notifSound ? 'On' : 'Off'}
+          <Volume2 size={12} aria-hidden="true" /> {notifSound ? 'On' : 'Off'}
         </button>
         <div className="ml-auto flex items-center gap-2 text-[10px] text-text-muted">
           {(() => {
@@ -588,7 +588,7 @@ export function ChatPanel(props: ChatPanelProps) {
           onClick={() => setShowTimeline(v => !v)}
           className="flex w-full items-center gap-1 px-3 py-1 text-xs text-text-muted hover:text-text-primary"
         >
-          {showTimeline ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {showTimeline ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
           Iterations
         </button>
         {showTimeline && (
@@ -621,7 +621,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   }}
                   className="flex items-center gap-2 rounded-full border border-border bg-bg-tertiary px-3 py-1 text-xs text-text-muted hover:bg-bg-secondary hover:text-text-primary transition-colors max-w-2xl w-full"
                 >
-                  <ChevronRight className="w-3 h-3 shrink-0" />
+                  <ChevronRight className="w-3 h-3 shrink-0" aria-hidden="true" />
                   <span className="truncate">
                     <span className="text-text-secondary font-medium">#{turn.idx + 1}</span>
                     {" "}
@@ -639,7 +639,7 @@ export function ChatPanel(props: ChatPanelProps) {
               <div key={index} className="flex justify-center">
                 <div className="w-full max-w-2xl rounded-xl border border-border bg-bg-secondary p-4 shadow-sm">
                   <div className="flex items-center gap-2 text-sm font-semibold text-accent">
-                    <Wrench size={14} />
+                    <Wrench size={14} aria-hidden="true" />
                     <span>{(msg as any).tool_calls.length} tool calls</span>
                   </div>
                   <div className="mt-2 space-y-2">
@@ -651,11 +651,11 @@ export function ChatPanel(props: ChatPanelProps) {
                       }`}>
                         <summary className="cursor-pointer text-xs font-medium text-text-secondary flex items-center gap-1.5">
                           {tc.tool_status === "running" ? (
-                            <Loader2 size={12} className="text-accent animate-spin" />
+                            <Loader2 size={12} className="text-accent animate-spin motion-reduce:animate-none" aria-hidden="true" />
                           ) : tc.tool_status === "error" ? (
-                            <AlertCircle size={12} className="text-red-500" />
+                            <AlertCircle size={12} className="text-red-500" aria-hidden="true" />
                           ) : (
-                            <Check size={12} className="text-emerald-500" />
+                            <Check size={12} className="text-emerald-500" aria-hidden="true" />
                           )}
                           {tc.tool_name}
                         </summary>
@@ -682,14 +682,14 @@ export function ChatPanel(props: ChatPanelProps) {
                   : "border-border bg-bg-secondary"
                 }`}>
                   <div className="flex items-center gap-2 text-sm font-semibold">
-                    <Wrench size={14} className={msg.tool_status === "running" ? "text-accent" : "text-text-muted"} />
+                    <Wrench size={14} className={msg.tool_status === "running" ? "text-accent" : "text-text-muted"} aria-hidden="true" />
                     <span className={msg.tool_status === "running" ? "text-accent" : "text-text-primary"}>{msg.tool_name}</span>
                     {msg.tool_status === "running" && (
-                      <Loader2 size={14} className="text-accent animate-spin ml-1" />
+                      <Loader2 size={14} className="text-accent animate-spin motion-reduce:animate-none ml-1" aria-hidden="true" />
                     )}
                     {msg.tool_status === "done" && (
                       <span className="ml-1 inline-flex items-center gap-1 text-xs text-emerald-500">
-                        <Check size={12} />
+                        <Check size={12} aria-hidden="true" />
                         {t('chat.done')}
                       </span>
                     )}
@@ -813,7 +813,7 @@ export function ChatPanel(props: ChatPanelProps) {
                         aria-label="Copy message"
                         title="Copy"
                       >
-                        {copyingId === index ? <Check size={13} /> : <Copy size={13} />}
+                        {copyingId === index ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
                       </button>
                       {index === displayMessages.length - 1 && !isStreaming && (
                         <button
@@ -837,7 +837,7 @@ export function ChatPanel(props: ChatPanelProps) {
                           aria-label="Regenerate response"
                           title="Regenerate"
                         >
-                          <RotateCw size={13} />
+                          <RotateCw size={13} aria-hidden="true" />
                         </button>
                       )}
                     </div>
@@ -882,7 +882,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       aria-label="Edit message"
                       title="Edit"
                     >
-                      <Pencil size={13} />
+                      <Pencil size={13} aria-hidden="true" />
                     </button>
                     {editHistory[index] && editHistory[index].length > 0 && (
                       <button
@@ -919,7 +919,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       aria-label="Delete message"
                       title="Delete"
                     >
-                      <Trash2 size={13} />
+                      <Trash2 size={13} aria-hidden="true" />
                     </button>
                   </div>
                 )}
@@ -1084,7 +1084,7 @@ export function ChatPanel(props: ChatPanelProps) {
               }}
               className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
             >
-              <CornerUpLeft size={12} /> Quote reply
+              <CornerUpLeft size={12} aria-hidden="true" /> Quote reply
             </button>
           )}
           {ctxMenu.msg.role === "user" && (
@@ -1101,7 +1101,7 @@ export function ChatPanel(props: ChatPanelProps) {
               }}
               className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
             >
-              <Pencil size={12} /> Edit
+              <Pencil size={12} aria-hidden="true" /> Edit
             </button>
           )}
           {ctxMenu.index === displayMessages.length - 1 && ctxMenu.msg.role === "assistant" && (
@@ -1131,7 +1131,7 @@ export function ChatPanel(props: ChatPanelProps) {
             }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-error hover:bg-bg-tertiary"
           >
-            <Trash2 size={12} /> Delete
+            <Trash2 size={12} aria-hidden="true" /> Delete
           </button>
         </div>
       )}
@@ -1406,14 +1406,14 @@ export function ChatPanel(props: ChatPanelProps) {
 
         {quotedMsg && (
           <div className="mb-2 flex items-start gap-2 rounded-lg border-l-2 border-accent bg-accent/5 px-3 py-2">
-            <CornerUpLeft size={14} className="mt-0.5 shrink-0 text-accent" />
+            <CornerUpLeft size={14} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
             <div className="flex-1 truncate text-xs text-text-secondary">{quotedMsg}</div>
             <button
               onClick={() => setQuotedMsg(null)}
               className="shrink-0 text-text-muted hover:text-text-primary"
               aria-label="Remove quote"
             >
-              <X size={14} />
+              <X size={14} aria-hidden="true" />
             </button>
           </div>
         )}
@@ -1445,7 +1445,7 @@ export function ChatPanel(props: ChatPanelProps) {
             title={t('chat.attachFile') || 'Attach file'}
             disabled={!isConnected}
           >
-            <Paperclip size={18} />
+            <Paperclip size={18} aria-hidden="true" />
           </button>
           <textarea
             ref={textareaRef}

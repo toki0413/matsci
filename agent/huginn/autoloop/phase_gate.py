@@ -167,10 +167,22 @@ class MathEvidenceChecker:
         "constraint_check": ((0.60, 0.10, 0.30), (0.05, 0.80, 0.15)),
     }
 
-    def __init__(self, threshold: float | None = None):
+    # dual_coverage source: 节点需双覆盖时, 实际是否双覆盖
+    # ponytail: masses 与上面 source 同结构, 直接 append 进 masses 列表
+    _DUAL_COVERED_MASS = (0.55, 0.10, 0.35)
+    _DUAL_NOT_COVERED_MASS = (0.05, 0.80, 0.15)
+
+    def __init__(
+        self,
+        threshold: float | None = None,
+        graph: Any | None = None,
+        hypothesis_id_key: str = "hypothesis_id",
+    ):
         self.threshold = (
             threshold if threshold is not None else self.DEFAULT_THRESHOLD
         )
+        self._graph = graph
+        self._hyp_id_key = hypothesis_id_key
 
     def _extract_source_outcome(self, key: str, value: Any) -> bool | None:
         """从 evidence value 里抽出 verified/consistent/passed 布尔."""
@@ -195,6 +207,23 @@ class MathEvidenceChecker:
                 continue
             masses.append(pass_mass if outcome else fail_mass)
             sources.append(key)
+
+        # dual_coverage: 节点需双覆盖时, 实际是否被双模态支撑.
+        # 作为第6条 source 进入 DS 合成 — covered 加分, not-covered 扣分.
+        # graph 未注入或 hyp_id 缺失则跳过, 不影响原逻辑.
+        if self._graph is not None:
+            hyp_id = evidence.get(self._hyp_id_key)
+            if hyp_id:
+                try:
+                    if self._graph.needs_dual_coverage(hyp_id):
+                        covered = self._graph.dual_covered(hyp_id)
+                        masses.append(
+                            self._DUAL_COVERED_MASS if covered
+                            else self._DUAL_NOT_COVERED_MASS
+                        )
+                        sources.append("dual_coverage")
+                except Exception:
+                    logger.debug("dual_coverage check failed", exc_info=True)
 
         if not masses:
             # 无数学证据 — 不阻断, 让硬性证据检查决定

@@ -15,6 +15,9 @@ import {
   Activity, FileSearch, Cpu, FileEdit, Code, Network, BookOpen, MessageSquare
 } from "lucide-react";
 
+// Format predictability scores consistently across the panel
+const fmtPred = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 interface GovernanceEntry {
   action_name: string;
   category: string;
@@ -382,7 +385,7 @@ function PredictabilityView({ events }: { events: GovernanceEntry[] }) {
               />
             </div>
             <span className="text-[10px] font-mono text-text-muted w-10 text-right tabular-nums">
-              {evt.predictability.toFixed(2)}
+              {fmtPred.format(evt.predictability)}
             </span>
           </div>
         );
