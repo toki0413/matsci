@@ -30,11 +30,14 @@ export default function AutoloopProgress({ currentPhase, progress }: Props) {
   return (
     <div className="border-b border-border bg-bg-secondary">
       {/* Summary row — always visible */}
-      <div
-        className="flex items-center gap-3 px-6 py-2 cursor-pointer select-none"
+      <button
+        type="button"
+        className="flex items-center gap-3 px-6 py-2 cursor-pointer select-none w-full text-left focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
         onClick={() => setExpanded(v => !v)}
+        aria-expanded={expanded}
+        aria-label="Toggle autoloop progress details"
       >
-        <Activity size={14} className="text-accent shrink-0" />
+        <Activity size={14} className="text-accent shrink-0" aria-hidden="true" />
         <span className="text-xs font-semibold text-text-secondary whitespace-nowrap">
           Autoloop
         </span>
@@ -49,7 +52,7 @@ export default function AutoloopProgress({ currentPhase, progress }: Props) {
               <div key={phase} className="flex items-center gap-0.5 min-w-0">
                 <div className="flex flex-col items-center gap-0.5 shrink-0">
                   <div
-                    className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${
+                    className={`h-2.5 w-2.5 rounded-full transition-[background-color,transform] duration-300 ${
                       isCurrent
                         ? "bg-accent ring-2 ring-accent/30 scale-125"
                         : isDone
@@ -79,11 +82,11 @@ export default function AutoloopProgress({ currentPhase, progress }: Props) {
         </span>
 
         {expanded ? (
-          <ChevronDown size={14} className="text-text-muted shrink-0" />
+          <ChevronDown size={14} className="text-text-muted shrink-0" aria-hidden="true" />
         ) : (
-          <ChevronRight size={14} className="text-text-muted shrink-0" />
+          <ChevronRight size={14} className="text-text-muted shrink-0" aria-hidden="true" />
         )}
-      </div>
+      </button>
 
       {/* Expanded detail — phase list with status */}
       {expanded && (
@@ -100,7 +103,7 @@ export default function AutoloopProgress({ currentPhase, progress }: Props) {
                     : "bg-transparent"
                 }`}
               >
-                <span className="text-base leading-none">{PHASE_ICONS[phase]}</span>
+                <span className="text-base leading-none" aria-hidden="true">{PHASE_ICONS[phase]}</span>
                 <span
                   className={`text-[10px] capitalize ${
                     isCurrent
@@ -113,7 +116,7 @@ export default function AutoloopProgress({ currentPhase, progress }: Props) {
                   {phase}
                 </span>
                 {isCurrent && (
-                  <span className="text-[9px] text-accent animate-pulse">●</span>
+                  <span className="text-[9px] text-accent animate-pulse motion-reduce:animate-none">●</span>
                 )}
                 {isDone && (
                   <span className="text-[9px] text-accent/50">✓</span>

@@ -99,7 +99,7 @@ async function openPetWindow() {
 function LoadingFallback() {
   return (
     <div className="flex h-full w-full items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+      <div className="h-8 w-8 animate-spin motion-reduce:animate-none rounded-full border-2 border-accent border-t-transparent" />
     </div>
   );
 }
@@ -872,7 +872,7 @@ export default function App() {
       {sidebarHidden ? (
         <button
           onClick={() => setSidebarHidden(false)}
-          className="z-50 flex h-full w-10 items-center justify-center border-r border-border bg-bg-secondary text-text-muted hover:text-text-primary transition-colors"
+          className="z-50 flex h-full w-10 items-center justify-center border-r border-border bg-bg-secondary text-text-muted hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
           title="Show sidebar"
           aria-label="Show sidebar"
         >
@@ -917,8 +917,9 @@ export default function App() {
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               aria-current={activeTab === item.id ? "page" : undefined}
+              aria-label={item.label}
               title={item.label}
-              className={`flex flex-1 items-center justify-center rounded-md px-1 py-1.5 transition-all duration-150 ${
+              className={`flex flex-1 items-center justify-center rounded-md px-1 py-1.5 transition-[background-color,color] duration-150 focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none ${
                 activeTab === item.id
                   ? "bg-bg-tertiary text-text-primary"
                   : "text-text-muted hover:bg-bg-tertiary hover:text-text-secondary"
@@ -934,31 +935,32 @@ export default function App() {
           <div className="flex flex-col border-b border-border">
             <button
               onClick={() => { createThread(); }}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none rounded"
             >
-              <Plus size={16} /> {t('threads.new') || 'New Chat'}
+              <Plus size={16} aria-hidden="true" /> {t('threads.new') || 'New Chat'}
             </button>
             <div className="max-h-[calc(100vh-320px)] overflow-y-auto px-1 pb-2">
               {threads.map((th) => (
-                <div
+                <button
                   key={th.id}
                   onClick={() => switchThread(th.id)}
-                  className={`group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors ${
+                  className={`group flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none ${
                     activeThread === th.id
                       ? "bg-accent/15 text-text-primary"
                       : "text-text-secondary hover:bg-bg-tertiary"
                   }`}
                 >
-                  <MessageSquare size={13} className="shrink-0 opacity-50" />
-                  <span className="flex-1 truncate">{th.label}</span>
+                  <MessageSquare size={13} className="shrink-0 opacity-50" aria-hidden="true" />
+                  <span className="flex-1 truncate text-left">{th.label}</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); deleteThread(th.id); }}
-                    className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-error transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-error transition-opacity focus-visible:opacity-100"
                     title={t('common.delete') || 'Delete'}
+                    aria-label={`Delete conversation ${th.label}`}
                   >
-                    <Trash2 size={13} />
+                    <Trash2 size={13} aria-hidden="true" />
                   </button>
-                </div>
+                </button>
               ))}
               {threads.length === 0 && (
                 <div className="px-3 py-4 text-center text-xs text-text-muted">
@@ -973,9 +975,9 @@ export default function App() {
           {/* More tools — opens command palette */}
           <button
             onClick={() => setToolPaletteOpen(true)}
-            className="sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-all duration-150 border-t border-border/50 pt-3"
+            className="sidebar-nav-item flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] font-bold text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-[background-color,color] duration-150 border-t border-border/50 pt-3 focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
           >
-            <Grid size={16} /> More Tools
+            <Grid size={16} aria-hidden="true" /> More Tools
           </button>
 
           {/* Quick access to active tool (if non-primary) */}
@@ -985,10 +987,11 @@ export default function App() {
               <span className="truncate text-[13px] font-semibold text-text-primary">{activeTabInfo.label}</span>
               <button
                 onClick={() => setActiveTab("chat")}
-                className="ml-auto text-text-muted hover:text-text-primary"
+                className="ml-auto text-text-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none rounded"
                 title="Back to chat"
+                aria-label="Back to chat"
               >
-                <ChevronDown size={14} className="rotate-90" />
+                <ChevronDown size={14} className="rotate-90" aria-hidden="true" />
               </button>
             </div>
           )}
@@ -1007,17 +1010,19 @@ export default function App() {
           <div className="mt-2 flex gap-1.5">
             <button
               onClick={() => setShowGuide(true)}
-              className="sidebar-footer-btn flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary"
+              className="sidebar-footer-btn flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
               title="Help"
+              aria-label="Open help guide"
             >
-              <HelpCircle size={13} /> Guide
+              <HelpCircle size={13} aria-hidden="true" /> Guide
             </button>
             <button
               onClick={toggleTheme}
-              className="sidebar-footer-btn flex items-center justify-center rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary"
+              className="sidebar-footer-btn flex items-center justify-center rounded-md px-2 py-1 text-[13px] text-text-muted hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
               title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             >
-              {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+              {theme === "dark" ? <Sun size={13} aria-hidden="true" /> : <Moon size={13} aria-hidden="true" />}
             </button>
             <button
               onClick={openPetWindow}
@@ -1159,7 +1164,7 @@ export default function App() {
                   </>
                 ) : (
                   <>
-                    <div className="h-10 w-10 animate-spin rounded-full border-2 border-border border-t-accent" />
+                    <div className="h-10 w-10 animate-spin motion-reduce:animate-none rounded-full border-2 border-border border-t-accent" />
                     <div className="text-sm font-semibold text-text-primary">Reconnecting…</div>
                     <div className="text-xs text-text-muted">Waiting for backend to come back online</div>
                   </>
@@ -1735,17 +1740,17 @@ export default function App() {
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-border text-text-muted">
-                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('tool')}>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none" tabIndex={0} role="button" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleProvSort('tool'); } }} onClick={() => toggleProvSort('tool')}>
                           {t('provenance.tool')}{provSortCol === 'tool' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
                         </th>
-                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('file')}>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none" tabIndex={0} role="button" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleProvSort('file'); } }} onClick={() => toggleProvSort('file')}>
                           {t('provenance.file')}{provSortCol === 'file' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
                         </th>
-                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('format')}>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none" tabIndex={0} role="button" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleProvSort('format'); } }} onClick={() => toggleProvSort('format')}>
                           {t('provenance.format')}{provSortCol === 'format' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
                         </th>
                         <th className="py-2 pr-4 font-semibold">{t('provenance.keyProps')}</th>
-                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary" onClick={() => toggleProvSort('time')}>
+                        <th className="py-2 pr-4 font-semibold cursor-pointer select-none hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none" tabIndex={0} role="button" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleProvSort('time'); } }} onClick={() => toggleProvSort('time')}>
                           {t('provenance.time')}{provSortCol === 'time' && (provSortDir === 'asc' ? ' ▲' : ' ▼')}
                         </th>
                       </tr>
@@ -1754,8 +1759,12 @@ export default function App() {
                       {sortedProvRecords.map((rec, i) => (
                         <Fragment key={i}>
                           <tr
+                            tabIndex={0}
+                            role="button"
+                            aria-expanded={provenanceExpanded === i}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setProvenanceExpanded(provenanceExpanded === i ? null : i); } }}
                             onClick={() => setProvenanceExpanded(provenanceExpanded === i ? null : i)}
-                            className="cursor-pointer border-b border-border/50 hover:bg-bg-tertiary"
+                            className="cursor-pointer border-b border-border/50 hover:bg-bg-tertiary focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
                           >
                             <td className="py-2 pr-4 font-mono text-accent">{rec.tool || "—"}</td>
                             <td className="py-2 pr-4 text-text-secondary">{rec.file || rec.path || "—"}</td>
@@ -1920,8 +1929,8 @@ export default function App() {
                 type="text"
                 value={toolSearch}
                 onChange={(e) => setToolSearch(e.target.value)}
-                placeholder="Search tools..."
-                className="flex-1 bg-transparent text-sm font-medium text-text-primary placeholder:text-text-muted focus:outline-none"
+                placeholder="Search tools…"
+                className="flex-1 bg-transparent text-sm font-medium text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
                 autoFocus
               />
               <kbd className="rounded border border-border bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-muted">ESC</kbd>
@@ -1958,7 +1967,7 @@ export default function App() {
                             setToolPaletteOpen(false);
                             setToolSearch("");
                           }}
-                          className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-center transition-all ${
+                          className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-center transition-[background-color,border-color] ${
                             dragOverTab === tab.id && draggedTab !== tab.id
                               ? 'border-accent bg-accent/20 ring-2 ring-accent/30'
                               : activeTab === tab.id

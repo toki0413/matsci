@@ -92,38 +92,40 @@ export default function DecisionTracePanel({ governanceEvents, stateTransitions,
     <div className="border-t border-border bg-bg-secondary/80 backdrop-blur-sm">
       {/* Header — collapsed summary */}
       <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border">
-        <GitBranch size={14} className="text-accent shrink-0" />
+        <GitBranch size={14} className="text-accent shrink-0" aria-hidden="true" />
         <span className="text-xs font-semibold text-text-secondary">Decision Trace</span>
 
         {/* Quick stats */}
         <div className="flex items-center gap-3 ml-auto text-[10px] text-text-muted">
           <span className="flex items-center gap-1">
-            <CheckCircle2 size={10} className="text-emerald-400" />
+            <CheckCircle2 size={10} className="text-emerald-400" aria-hidden="true" />
             {stats.allowed}/{stats.total} allowed
           </span>
           <span className="flex items-center gap-1">
-            <ShieldCheck size={10} className="text-blue-400" />
+            <ShieldCheck size={10} className="text-blue-400" aria-hidden="true" />
             {stats.verified} verified
           </span>
           {stats.blocked > 0 && (
             <span className="flex items-center gap-1">
-              <ShieldX size={10} className="text-red-400" />
+              <ShieldX size={10} className="text-red-400" aria-hidden="true" />
               {stats.blocked} blocked
             </span>
           )}
           <span className="flex items-center gap-1">
-            <Activity size={10} className="text-accent" />
-            P={stats.avgPred.toFixed(2)}
+            <Activity size={10} className="text-accent" aria-hidden="true" />
+            P=<span className="tabular-nums">{stats.avgPred.toFixed(2)}</span>
           </span>
         </div>
 
         {/* Tab switcher */}
-        <div className="flex items-center gap-0.5 ml-2">
+        <div className="flex items-center gap-0.5 ml-2" role="tablist" aria-label="Decision trace views">
           {(["actions", "state", "predictability"] as const).map(t => (
             <button
               key={t}
+              role="tab"
+              aria-selected={tab === t}
               onClick={() => setTab(t)}
-              className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+              className={`px-2 py-0.5 text-[10px] rounded transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none ${
                 tab === t
                   ? "bg-accent/20 text-accent"
                   : "text-text-muted hover:text-text-secondary"
@@ -187,15 +189,17 @@ function ActionChain({
 
         return (
           <div key={`${i}-${evt.action_name}`} className={`rounded border ${riskBg} px-2 py-1`}>
-            <div
-              className="flex items-center gap-2 cursor-pointer"
+            <button
+              type="button"
+              className="flex items-center gap-2 cursor-pointer w-full text-left focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none rounded"
               onClick={() => setExpanded(isExpanded ? null : `${i}-${evt.action_name}`)}
+              aria-expanded={isExpanded}
             >
               {isExpanded
-                ? <ChevronDown size={12} className="text-text-muted shrink-0" />
-                : <ChevronRight size={12} className="text-text-muted shrink-0" />
+                ? <ChevronDown size={12} className="text-text-muted shrink-0" aria-hidden="true" />
+                : <ChevronRight size={12} className="text-text-muted shrink-0" aria-hidden="true" />
               }
-              <Icon size={12} className={`${riskColor} shrink-0`} />
+              <Icon size={12} className={`${riskColor} shrink-0`} aria-hidden="true" />
               <span className="text-xs font-medium text-text-primary truncate">
                 {evt.action_name}
               </span>
@@ -203,24 +207,24 @@ function ActionChain({
               {/* Status badges */}
               <div className="flex items-center gap-1.5 ml-auto shrink-0">
                 {evt.allowed ? (
-                  <CheckCircle2 size={11} className="text-emerald-400" />
+                  <CheckCircle2 size={11} className="text-emerald-400" aria-hidden="true" />
                 ) : (
-                  <XCircle size={11} className="text-red-400" />
+                  <XCircle size={11} className="text-red-400" aria-hidden="true" />
                 )}
                 {evt.verification_passed && (
-                  <ShieldCheck size={11} className="text-blue-400" />
+                  <ShieldCheck size={11} className="text-blue-400" aria-hidden="true" />
                 )}
                 {evt.requires_approval && (
-                  <ShieldAlert size={11} className="text-yellow-400" />
+                  <ShieldAlert size={11} className="text-yellow-400" aria-hidden="true" />
                 )}
                 <span className={`text-[10px] font-mono ${riskColor}`}>
                   {evt.risk_level}
                 </span>
-                <span className="text-[10px] font-mono text-text-muted">
+                <span className="text-[10px] font-mono text-text-muted tabular-nums">
                   P={evt.predictability.toFixed(2)}
                 </span>
               </div>
-            </div>
+            </button>
 
             {/* Expanded detail */}
             {isExpanded && (
@@ -235,7 +239,7 @@ function ActionChain({
                     <span className="text-text-secondary">Reasons:</span>
                     {evt.reasons.map((r, j) => (
                       <div key={j} className="ml-2 flex items-start gap-1">
-                        <AlertCircle size={10} className="mt-0.5 shrink-0" />
+                        <AlertCircle size={10} className="mt-0.5 shrink-0" aria-hidden="true" />
                         <span>{r}</span>
                       </div>
                     ))}
@@ -373,11 +377,11 @@ function PredictabilityView({ events }: { events: GovernanceEntry[] }) {
             </span>
             <div className="flex-1 h-2 bg-bg-tertiary rounded-full overflow-hidden">
               <div
-                className={`h-full ${barColor} rounded-full transition-all duration-300`}
+                className={`h-full ${barColor} rounded-full transition-[width] duration-300`}
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <span className="text-[10px] font-mono text-text-muted w-10 text-right">
+            <span className="text-[10px] font-mono text-text-muted w-10 text-right tabular-nums">
               {evt.predictability.toFixed(2)}
             </span>
           </div>
