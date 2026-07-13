@@ -39,9 +39,11 @@ jobs:
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
         run: |
           cd agent
-          python -m pytest -q --cov-fail-under=0 --timeout=120 \
+          python -m pytest -q --cov-fail-under=0 --timeout=120 -m "not network" \
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
             --ignore=tests/test_chaos_engineering.py \
@@ -92,9 +94,11 @@ jobs:
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
         run: |
           cd agent
-          pytest ${{ matrix.test-file }} -v --no-cov -m "integration" --tb=short --timeout=${{ matrix.test-timeout }}
+          pytest ${{ matrix.test-file }} -v --no-cov -m "integration and not network" --tb=short --timeout=${{ matrix.test-timeout }}
 
   frontend-build:
     runs-on: ubuntu-latest
