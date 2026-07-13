@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from huginn.autoloop import AutoloopEngine
+from huginn.autoloop import AutoloopEngine, save_autoloop_snapshot
 from huginn.cli.context import CliContext
 
 
@@ -169,13 +169,18 @@ def autoloop(
                 ))
                 progress.update(task, completed=True)
 
+                # Persist a reusable snapshot so DeliAutoResearch (or a re-run)
+                # can pick up the result without re-instantiating AutoloopEngine.
+                snap_path = save_autoloop_snapshot(result, obj.workspace)
+
                 console.print(
                     Panel(
                         f"[bold green]Loop Complete[/bold green]\n"
                         f"Run ID: {result.run_id}\n"
                         f"Success: {'Yes' if result.success else 'No'}\n"
                         f"Total time: {result.total_time_seconds:.1f}s\n"
-                        f"Report: {result.report_path or 'N/A'}",
+                        f"Report: {result.report_path or 'N/A'}\n"
+                        f"Snapshot: {snap_path or 'N/A'}",
                         title="Result",
                         border_style="green" if result.success else "red",
                     )
@@ -235,6 +240,9 @@ async def _watch_loop(
             )
             if result.report_path:
                 console.print(f"  Report: {result.report_path}")
+            snap = save_autoloop_snapshot(result, engine.workspace)
+            if snap:
+                console.print(f"  [dim]Snapshot: {snap}[/dim]")
         else:
             console.print("[dim]No changes detected.[/dim]")
 

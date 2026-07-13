@@ -18,8 +18,17 @@ from huginn.types import ToolContext
 
 @click.group(name="autoresearch")
 def autoresearch() -> None:
-    """Manage an AutoResearch workspace (init, prepare, run, step, loop)."""
-    pass
+    """Manage an AutoResearch workspace (init, prepare, run, step, loop).
+
+    注意: 这是 Karpathy autoresearch ML 训练实验 loop, 不是 DeliAutoResearch 学术写作管线.
+    学术写作请用 deli_research 工具或 WS research mode.
+    """
+    # 名字撞车警示 — 跟 deli_research.DeliAutoResearch 完全无关
+    Console().print(
+        "[yellow]注意: 这是 Karpathy autoresearch ML 训练实验 loop, "
+        "不是 DeliAutoResearch 学术写作管线. "
+        "学术写作请用 deli_research 工具或 WS research mode.[/yellow]"
+    )
 
 
 def _tool_context(obj: CliContext) -> ToolContext:
