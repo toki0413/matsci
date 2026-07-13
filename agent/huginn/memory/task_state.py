@@ -80,6 +80,12 @@ class TaskState:
             lines.append("Open questions:")
             for q in self.open_questions[-3:]:
                 lines.append(f"  - {q}")
+        # recent steps so the agent knows what it already did
+        if self.steps:
+            lines.append("Recent steps:")
+            for s in self.steps[-5:]:
+                tool_info = f" [{s.tool}]" if s.tool else ""
+                lines.append(f"  {s.action}{tool_info} -> {s.status}")
         return "\n".join(lines)
 
 
