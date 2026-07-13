@@ -240,8 +240,8 @@ def install_campaign_subscriber(bus: EventBus | None = None) -> None:
             logger.info(
                 "campaign event: %s iter=%s payload_keys=%s",
                 event.type,
-                event.payload.get("iteration", "?"),
-                list(event.payload.keys()),
+                event.data.get("iteration", "?"),
+                list(event.data.keys()),
             )
         except Exception:
             pass

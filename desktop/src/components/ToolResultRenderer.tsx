@@ -9,8 +9,9 @@
  */
 import React, { useState, useMemo, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Table2, List, Box, Activity, BarChart3 } from 'lucide-react';
+import { Table2, List, Box, Activity, BarChart3, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import { detectStructure } from './InlineStructure3D';
+import { API_BASE } from '../lib/config-store';
 
 // Lazy-load heavy components
 const InlineStructure3D = lazy(() => import('./InlineStructure3D'));
@@ -31,12 +32,25 @@ type ParsedData =
   | { kind: 'kv'; entries: [string, unknown][] }
   | { kind: 'text' };
 
-type SpecialType = 'band' | 'convergence' | 'structure' | null;
+type SpecialType = 'band' | 'convergence' | 'structure' | 'visual' | 'knowledge' | null;
 
 /** Detect if tool result has special visualization needs. */
 function detectSpecial(toolName: string | undefined, content: string): SpecialType {
   if (!toolName) return null;
   const tn = toolName.toLowerCase();
+  // Visual primitives: backend enrich_with_visual injects _visual_base64 / _visual_hint
+  // 之前这些字段被当 JSON 字符串塞进表格, base64 成乱码. 检测到就切 visual 视图.
+  try {
+    const data = JSON.parse(content);
+    if (data?._visual_base64 || data?._visual_hint || data?._visual_self_check) {
+      return 'visual';
+    }
+    // rag_tool 的 PDF 视觉压缩页 chunk 带 image_url (后端 GET /knowledge/image 服务).
+    // 之前 image_ref 路径只塞 agent prompt 文本, 前端永远看不到图.
+    if ((tn.includes('rag') || tn.includes('knowledge')) && Array.isArray(data?.results)) {
+      if (data.results.some((r: any) => r?.image_url)) return 'knowledge';
+    }
+  } catch { /* not JSON */ }
   // Band structure: vasp_band, band_structure, dos
   if (tn.includes('band') || tn.includes('dos') || tn.includes('electronic')) {
     try {
@@ -54,6 +68,31 @@ function detectSpecial(toolName: string | undefined, content: string): SpecialTy
   // Structure: detect from content (existing logic)
   if (detectStructure(content) !== null) return 'structure';
   return null;
+}
+
+/** Extract visual fields from content JSON, stripping them so they don't pollute table view. */
+function extractVisual(content: string): {
+  base64?: string;
+  hint?: string;
+  selfCheck?: { confidence: number; caveats: string[] };
+  cleaned: string;  // content with visual fields stripped, for table/raw view
+  rawData?: Record<string, unknown>;
+} {
+  try {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const base64 = data._visual_base64 as string | undefined;
+    const hint = data._visual_hint as string | undefined;
+    const selfCheck = data._visual_self_check as { confidence: number; caveats: string[] } | undefined;
+    // strip visual fields so they don't show up as table rows
+    const cleaned = { ...data };
+    delete cleaned._visual_base64;
+    delete cleaned._visual_hint;
+    delete cleaned._visual_self_check;
+    delete cleaned._visual_primitives;
+    return { base64, hint, selfCheck, cleaned: JSON.stringify(cleaned), rawData: cleaned };
+  } catch {
+    return { cleaned: content };
+  }
 }
 
 function tryParse(content: string): ParsedData {
@@ -99,13 +138,19 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
   onExpand,
 }) => {
   const { t } = useTranslation();
-  const parsed = useMemo(() => tryParse(content), [content]);
   const special = useMemo(() => detectSpecial(toolName, content), [toolName, content]);
+  // visual 分支: 把 _visual_base64 / _visual_hint / _visual_self_check 提取出来,
+  // 剩余 content 给 tryParse 做表格视图, 避免大 base64 污染表格.
+  const visualInfo = useMemo(() => special === 'visual' ? extractVisual(content) : null, [special, content]);
+  const effectiveContent = visualInfo ? visualInfo.cleaned : content;
+  const parsed = useMemo(() => tryParse(effectiveContent), [effectiveContent]);
 
-  const [view, setView] = useState<'chart' | '3d' | 'table' | 'raw'>(
+  const [view, setView] = useState<'chart' | '3d' | 'visual' | 'knowledge' | 'table' | 'raw'>(
     special === 'band' ? 'chart' :
     special === 'convergence' ? 'chart' :
     special === 'structure' ? '3d' :
+    special === 'visual' ? 'visual' :
+    special === 'knowledge' ? 'knowledge' :
     (parsed.kind !== 'text' ? 'table' : 'raw')
   );
 
@@ -123,6 +168,8 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
 
   const showChartTab = special === 'band' || special === 'convergence';
   const show3DTab = special === 'structure';
+  const showVisualTab = special === 'visual';
+  const showKnowledgeTab = special === 'knowledge';
 
   return (
     <div data-component="structured-output" className={`fade-in ${className || ''}`} style={style}>
@@ -138,6 +185,18 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
             <button className={`so-tab ${view === '3d' ? 'so-tab--active' : ''}`} onClick={() => setView('3d')}>
               <Box size={10} style={{ display: 'inline', marginRight: 4 }} />
               3D
+            </button>
+          )}
+          {showVisualTab && (
+            <button className={`so-tab ${view === 'visual' ? 'so-tab--active' : ''}`} onClick={() => setView('visual')}>
+              <ImageIcon size={10} style={{ display: 'inline', marginRight: 4 }} />
+              Visual
+            </button>
+          )}
+          {showKnowledgeTab && (
+            <button className={`so-tab ${view === 'knowledge' ? 'so-tab--active' : ''}`} onClick={() => setView('knowledge')}>
+              <ImageIcon size={10} style={{ display: 'inline', marginRight: 4 }} />
+              Pages
             </button>
           )}
           <button className={`so-tab ${view === 'table' ? 'so-tab--active' : ''}`} onClick={() => setView('table')}>
@@ -180,6 +239,86 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
             <InlineStructure3D content={content} />
           </Suspense>
         )}
+        {view === 'visual' && showVisualTab && visualInfo && (
+          <div className="space-y-2 p-2">
+            {visualInfo.base64 && (
+              <img
+                src={`data:image/png;base64,${visualInfo.base64}`}
+                alt="tool output visualization"
+                className="max-w-full rounded-lg border border-border"
+                style={{ maxHeight: 400, objectFit: 'contain' }}
+              />
+            )}
+            {visualInfo.selfCheck && (
+              <div className="flex items-center gap-2 text-xs">
+                <AlertTriangle
+                  size={12}
+                  style={{
+                    color: visualInfo.selfCheck.confidence < 0.5
+                      ? 'var(--warning, #f59e0b)'
+                      : 'var(--success, #10b981)'
+                  }}
+                />
+                <span style={{ color: 'var(--fg-muted)' }}>
+                  confidence: {(visualInfo.selfCheck.confidence * 100).toFixed(0)}%
+                </span>
+                {visualInfo.selfCheck.caveats.length > 0 && (
+                  <span style={{ color: 'var(--warning, #f59e0b)' }}>
+                    ({visualInfo.selfCheck.caveats.length} caveats)
+                  </span>
+                )}
+              </div>
+            )}
+            {visualInfo.hint && (
+              <details className="text-xs">
+                <summary style={{ cursor: 'pointer', color: 'var(--fg-muted)' }}>
+                  Visual primitives (Mirage)
+                </summary>
+                <pre className="mt-1 max-h-40 overflow-auto rounded bg-bg-tertiary p-2 text-xs">
+                  {visualInfo.hint}
+                </pre>
+              </details>
+            )}
+          </div>
+        )}
+        {view === 'knowledge' && showKnowledgeTab && (() => {
+          // rag_tool 视觉压缩页: 每个 result 项渲染 image_url (PDF 页快照) + 文本.
+          // 之前 image_ref 路径只塞 agent prompt 文本, 前端永远看不到图.
+          // ponytail: <img src> 不带 Authorization 头. desktop 跑 HUGINN_DEV_MODE=1
+          // 时 auth 自动 bypass, 没问题. 服务器部署开 auth 后图会 401 — 那时换
+          // AuthImage 组件 (fetch + authHeaders + createObjectURL) 再加 ~15 行.
+          try {
+            const data = JSON.parse(content) as { results?: any[] };
+            const items = (data?.results || []).filter((r) => r?.image_url);
+            if (items.length === 0) return null;
+            return (
+              <div className="space-y-3 p-2">
+                {items.map((r, i) => (
+                  <div key={r.id || i} className="rounded-lg border border-border overflow-hidden">
+                    <img
+                      src={`${API_BASE}${r.image_url}`}
+                      alt={`chunk ${r.id ?? i}`}
+                      className="w-full max-h-[400px] object-contain bg-bg-tertiary"
+                      loading="lazy"
+                    />
+                    {r.document && (
+                      <details className="p-2 text-xs">
+                        <summary style={{ cursor: 'pointer', color: 'var(--fg-muted)' }}>
+                          chunk text ({r.document.length} chars) · distance {String(r.distance ?? '—')}
+                        </summary>
+                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-bg-tertiary p-2">
+                          {r.document}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          } catch {
+            return null;
+          }
+        })()}
         {view === 'table' && parsed.kind === 'table' && (
           <>
             <table className="so-table">

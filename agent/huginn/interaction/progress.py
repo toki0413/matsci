@@ -201,6 +201,31 @@ class ProgressTracker:
         self._emit(task)
         return task
 
+    # ── Campaign 事件 (瞬时, 非任务状态) ───────────────────────
+
+    def emit_campaign_event(
+        self, task_id: str, event_type: str, data: dict[str, Any]
+    ) -> None:
+        """往 SSE 流压一条 campaign 事件 (hypothesis/retry/suspect/refine).
+
+        区别于 update: campaign 是研究循环的瞬时节点, 不是任务进度变更.
+        前端订阅 /tasks/stream 的 'campaign' event 拿结构化事件, 不用再
+        正则刮消息文本. 之前 retry/suspect/refine 事件根本到不了前端.
+        """
+        evt = {
+            "_kind": "campaign",
+            "task_id": task_id,
+            "event": event_type,
+            "data": data,
+            "ts": time.time(),
+        }
+        with self._lock:
+            self._events.append(evt)
+            if len(self._events) > self._max_events:
+                drop = len(self._events) - self._max_events
+                del self._events[:drop]
+        self._event_signal.set()
+
     # ── 查询 ───────────────────────────────────────────────────
 
     def get_status(self, task_id: str) -> Optional[dict[str, Any]]:
@@ -246,7 +271,11 @@ class ProgressTracker:
                 new_events = self._events[last_emitted_count:]
                 last_emitted_count = len(self._events)
             for evt in new_events:
-                yield f"event: update\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                # campaign 事件走单独的 event channel, 前端按 event name 路由
+                if evt.get("_kind") == "campaign":
+                    yield f"event: campaign\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"event: update\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n"
             # 等新事件
             self._event_signal.clear()
             # 用 timeout 避免 signal 永远不 set (比如没人 update 时)

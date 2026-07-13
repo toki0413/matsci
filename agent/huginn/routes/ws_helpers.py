@@ -1374,6 +1374,27 @@ async def _handle_plan_confirm(
     # 走 enter/exit_plan_execution 配对方法, 集中状态管理 (之前直接改 _permission_config
     # 会让 is_plan_mode() 与 _mode 不一致, 误导 research_safety_hook).
     agent.enter_plan_execution()
+    # 发 plan.exec_start / exec_complete 到 campaign SSE 通道, 前端拿到后给
+    # plan 卡片挂 "executing" / "done" 状态徽标. 之前用户点 Confirm 后整个
+    # 流式期间没有任何指示, 只能盯着 streaming 光标.
+    try:
+        from huginn.interaction.progress import get_progress_tracker
+        get_progress_tracker().emit_campaign_event(
+            task_id=plan_id,
+            event_type="plan.exec_start",
+            data={
+                "plan_id": plan_id,
+                "thread_id": thread_id,
+                "objective": plan_objective,
+                "total_steps": len(plan_data.get("steps") or []),
+                "steps": [
+                    {"name": s.get("name", "Step"), "description": s.get("description", "")}
+                    for s in (plan_data.get("steps") or [])
+                ],
+            },
+        )
+    except Exception:
+        logger.debug("plan.exec_start emit failed", exc_info=True)
     try:
         await _stream_agent_response(
             websocket,
@@ -1389,3 +1410,12 @@ async def _handle_plan_confirm(
         )
     finally:
         agent.exit_plan_execution()
+        try:
+            from huginn.interaction.progress import get_progress_tracker
+            get_progress_tracker().emit_campaign_event(
+                task_id=plan_id,
+                event_type="plan.exec_complete",
+                data={"plan_id": plan_id, "thread_id": thread_id},
+            )
+        except Exception:
+            logger.debug("plan.exec_complete emit failed", exc_info=True)

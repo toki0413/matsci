@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, lazy, Suspense, Fragment } from "react";
+import { useState, useEffect, useRef, lazy, Suspense, Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
@@ -541,7 +541,7 @@ export default function App() {
 
   // ── Chat and connection hook ─────────────────────────────────
   const {
-    messages, input, mode, pendingPlan,
+    messages, input, mode,
     chatSearchOpen, chatSearchQuery,
     isStreaming,
     messagesEndRef,
@@ -550,13 +550,16 @@ export default function App() {
     personaList, personaEmotion, pendingClarifications,
     threads, activeThread,
     showGuide, closeGuide,
-    setInput, setMode, setMessages, setPendingPlan, setChatSearchOpen, setChatSearchQuery,
+    setInput, setMode, setMessages, setChatSearchOpen, setChatSearchQuery,
     setThreads, setShowGuide, switchThread,
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
     startBackend,
     pendingApproval, autoApprove, respondToApproval, toggleAutoApprove,
     autoloopPhase, autoloopProgress,
+    campaignEvents,
+    threadTaskState,
+    planExecState,
     contextPct,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages,
@@ -1161,6 +1164,7 @@ export default function App() {
 
         {/* Content */}
         <div className="relative flex-1 min-h-0 overflow-hidden">
+          <ErrorBoundary name="Main content">
           {/* Restart waiting overlay */}
           {(wsReconnecting || wsFailed) && (
             <div className="absolute inset-0 z-40 flex items-center justify-center bg-bg-primary/80 backdrop-blur-sm">
@@ -1187,6 +1191,9 @@ export default function App() {
           <div hidden={activeTab !== "chat"} className="h-full">
             <ChatPanel
               messages={messages}
+              campaignEvents={campaignEvents}
+              threadTaskState={threadTaskState}
+              planExecState={planExecState}
               chatSearchOpen={chatSearchOpen}
               chatSearchQuery={chatSearchQuery}
               setChatSearchOpen={setChatSearchOpen}
@@ -1201,8 +1208,6 @@ export default function App() {
               undoWindow={undoWindow}
               undoSend={undoSend}
               sendMessage={sendMessage}
-              pendingPlan={pendingPlan}
-              setPendingPlan={setPendingPlan}
               setMode={setMode}
               input={input}
               setInput={setInput}
@@ -1924,6 +1929,7 @@ export default function App() {
               </div>
             </div>
           )}
+          </ErrorBoundary>
         </div>
       </main>
 

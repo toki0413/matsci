@@ -137,6 +137,38 @@ async def delete_knowledge(doc_id: str) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+@router.get("/knowledge/image")
+async def get_knowledge_image(path: str) -> Any:
+    """Serve a knowledge-base image (currently only PDF visual-compression pages).
+
+    Path must resolve under ``~/.huginn/compressed_pages/`` — we resolve and
+    ``samefile``-check to defeat traversal before reading. 之前 image_ref 只
+    塞进 agent prompt 文本, 前端拿不到. 现在前端按 image_url 直接 fetch.
+    """
+    # ponytail: 仅 compressed_pages/ 下的图能服务, 不开放任意路径读取
+    try:
+        from huginn.utils.runtime import get_runtime_home
+        base = (get_runtime_home() / "compressed_pages").resolve()
+    except Exception:
+        base = (Path.home() / ".huginn" / "compressed_pages").resolve()
+
+    try:
+        target = Path(path).resolve()
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid path")
+
+    # 路径穿越防护: 解析后必须在 base 之下
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="path outside compressed_pages")
+
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="image not found")
+
+    return FileResponse(str(target))
+
+
 @router.get("/export")
 async def export_data(
     source: str = "audit",
