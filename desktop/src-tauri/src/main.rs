@@ -174,12 +174,14 @@ fn main() {
 }
 
 #[tauri::command]
-async fn get_agent_status(state: tauri::State<'_, AppState>) -> serde_json::Value {
+async fn get_agent_status(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     let port = state.backend_port.load(std::sync::atomic::Ordering::Relaxed);
     let url = format!("http://127.0.0.1:{}/health", port);
     // 用 spawn_blocking 把 blocking reqwest 丢到线程池，
     // 否则同步 #[tauri::command] 会卡住 Tauri 主线程导致 UI 冻结。
     // 2s 超时防止 backend 离线时一直挂起。
+    // ponytail: Tauri 2 要求 async + 引用参数的命令必须返回 Result,
+    // 离线状态不算硬错误, 包成 Ok(json) 让前端拿到 status=offline
     let join = tauri::async_runtime::spawn_blocking(move || {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
@@ -194,15 +196,15 @@ async fn get_agent_status(state: tauri::State<'_, AppState>) -> serde_json::Valu
             .unwrap_or_else(|_| serde_json::json!({"status": "ok"})))
     });
     match join.await {
-        Ok(Ok(value)) => value,
-        Ok(Err(e)) => serde_json::json!({
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(e)) => Ok(serde_json::json!({
             "status": "offline",
             "error": e,
-        }),
-        Err(e) => serde_json::json!({
+        })),
+        Err(e) => Ok(serde_json::json!({
             "status": "offline",
             "error": format!("probe task failed: {}", e),
-        }),
+        })),
     }
 }
 
