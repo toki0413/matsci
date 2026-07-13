@@ -312,5 +312,53 @@ class PlanStore:
             self._save()
             return True
 
+    def export_markdown(self, plan_id: str, path: "Path | None" = None) -> "Path":
+        """导出 plan 为 markdown 文件, 供 chat mode 引用 active step.
+
+        Anthropic Context Management 2026: plan 持久化到文件, chat 上下文只引用
+        当前 active step, 不引用完整 plan. 降低 token 占用 + mode 间隔离.
+        ponytail: 纯展示层, 不改 JSON 持久化语义. 升级: 按 step 状态动态裁剪.
+        """
+        from pathlib import Path as _Path
+        plan = self.get_plan(plan_id)
+        if plan is None:
+            raise KeyError(f"plan not found: {plan_id}")
+        if path is None:
+            cache = _Path.home() / ".huginn" / "plans_md"
+            cache.mkdir(parents=True, exist_ok=True)
+            path = cache / f"{plan_id}.md"
+        else:
+            path = _Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+        lines = [
+            f"# Plan: {plan.objective}",
+            f"",
+            f"- **ID**: `{plan.id}`",
+            f"- **Status**: {plan.status}",
+            f"- **Created**: {plan.created_at}",
+        ]
+        if plan.confirmed_at:
+            lines.append(f"- **Confirmed**: {plan.confirmed_at}")
+        if plan.completed_at:
+            lines.append(f"- **Completed**: {plan.completed_at}")
+        if plan.reject_reason:
+            lines.append(f"- **Reject Reason**: {plan.reject_reason}")
+        lines.append("")
+        lines.append("## Steps")
+        lines.append("")
+        lines.append("| # | Step | Tool | Status | Result |")
+        lines.append("|---|------|------|--------|--------|")
+        for i, step in enumerate(plan.steps, 1):
+            result = ""
+            if step.result:
+                result = str(step.result)[:80].replace("|", "\\|").replace("\n", " ")
+            lines.append(
+                f"| {i} | {step.description} | {step.tool or '-'} | {step.status} | {result} |"
+            )
+        lines.append("")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return path
+
 
 __all__ = ["Plan", "PlanStep", "PlanStore"]

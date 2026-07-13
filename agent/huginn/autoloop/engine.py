@@ -242,7 +242,12 @@ class AutoloopEngine:
         from huginn.autoloop.phase_gate import MathEvidenceChecker
 
         self.phase_gate_hook = PhaseGateHook(
-            reviewer_fn=RedTeamReviewer(model=self.model),
+            reviewer_fn=RedTeamReviewer(
+                model=self.model,
+                # 跨模型审查: verification_model 默认 fallback 到 self.model,
+                # 未配置 verification 槽时退化为同模型审查, 行为不变.
+                critic_model=self.verification_model,
+            ),
             math_checker=MathEvidenceChecker(graph=self.hypothesis_graph),
         )
         # 元认知层: 信息隔离 / 方法族注册 / 等价性审计 / 阻塞-重启协议.
@@ -252,6 +257,10 @@ class AutoloopEngine:
         self._metacog_block_registry = None
         self._metacog_method_registry = None
         self._metacog_last_audit = None  # 最近一次等价性审计结果, 给 learn 用
+        # 过早收敛检测: agent 想提前返回时过一遍 effort floor, 未达标强制继续
+        self._metacog_convergence_detector = None
+        # 反完成审计: 综合 effort floor + 等价性陷阱 + 不完整性自白
+        self._metacog_completion_auditor = None
         # Goal scheduler: 持久化目标到 $HUGINN_CACHE_DIR/goals.json.
         # engine.run(goal=...) 时每轮 learn 后查 completion, 满足则提前停.
         # None → 懒加载, 避免实例化时就碰磁盘 (测试隔离用).
@@ -910,6 +919,8 @@ class AutoloopEngine:
         """
         self._max_refines = max_refines
         self._refine_count = 0
+        # 记下本轮上限给 effort floor 用 (check 方法在 self 上, 拿不到局部)
+        self._max_iterations = max_iterations
         run_id, provenance_record, run_collector = self._prepare_run(
             objective, progressive_budget, goal
         )
@@ -1021,6 +1032,9 @@ class AutoloopEngine:
             self._attach_lucid_prereqs(_current_hyp_id)
             # B: 记当前假设 id 供 _plan_context_hint / _override_plan_mode 路由
             self._current_hyp_id_for_plan = _current_hyp_id
+
+            # 拓扑维护: 检测搜索空间坍缩, 给下轮拼重定向 hint (advisory)
+            self._metacog_check_topology_collapse()
 
             # 3. Plan
             phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
@@ -1307,6 +1321,12 @@ class AutoloopEngine:
             ):
                 if _mk in validation:
                     _gate_evidence[_mk] = validation[_mk]
+            # 物理 oracle 透传: simulator tool 把 PhysicsAuditor.audit().to_dict()
+            # 填到 execution_result["physics_audit"], 这里抽出来给 PhaseGate 做 oracle 否决.
+            # ponytail: 只透传不解析. 升级: 按 finding severity 加权 + DS 合成.
+            _pa_src = execution_result if isinstance(execution_result, dict) else {}
+            if isinstance(_pa_src.get("physics_audit"), dict):
+                _gate_evidence["physics_audit"] = _pa_src["physics_audit"]
             if not self._check_gate("validate", "learn", _gate_evidence):
                 continue
 
@@ -1321,11 +1341,21 @@ class AutoloopEngine:
             # Goal completion: success_criteria 全命中 → 提前停循环.
             # 没 goal 或 criteria 为空时 check_completion 返回 False, 不影响.
             if goal is not None and GoalScheduler.check_completion(goal, validation):
-                print(f"  → Goal completed: {goal.objective}")
-                goal.status = "completed"
-                if self._goal_scheduler is not None:
-                    self._goal_scheduler.complete_goal(goal.id)
-                self._should_stop = True
+                # completion audit: goal 达标但探索不够 → 不停, 把缺口塞 hint 下轮看
+                _blk, _why = self._metacog_check_completion()
+                if _blk:
+                    logger.info("metacog completion audit blocked goal-completion stop: %s", _why)
+                    _why_msg = f"[completion audit] 不能停: {_why}"
+                    self._speculator_hint = (
+                        (self._speculator_hint + "\n" + _why_msg).strip()
+                        if self._speculator_hint else _why_msg
+                    )
+                else:
+                    print(f"  → Goal completed: {goal.objective}")
+                    goal.status = "completed"
+                    if self._goal_scheduler is not None:
+                        self._goal_scheduler.complete_goal(goal.id)
+                    self._should_stop = True
 
             # GoalJudge 反馈: 每 3 轮或最后一轮做一次快速目标判定.
             # 没达成时把 gaps 拼进 _speculator_hint, 下轮 plan 会看到.
@@ -1339,8 +1369,18 @@ class AutoloopEngine:
                                          execution_result.get("summary", ""))
                         gj = judge.judge(goal.objective, None, final_text)
                         if gj.get("achieved"):
-                            print(f"  → GoalJudge: achieved (score={gj['score']})")
-                            self._should_stop = True
+                            # completion audit: 判定达标但探索不够 → 继续迭代
+                            _blk, _why = self._metacog_check_completion()
+                            if _blk:
+                                logger.info("metacog completion audit blocked GoalJudge stop: %s", _why)
+                                _why_msg = f"[completion audit] 不能停: {_why}"
+                                self._speculator_hint = (
+                                    (self._speculator_hint + "\n" + _why_msg).strip()
+                                    if self._speculator_hint else _why_msg
+                                )
+                            else:
+                                print(f"  → GoalJudge: achieved (score={gj['score']})")
+                                self._should_stop = True
                         elif gj.get("gaps"):
                             gap_hint = "; ".join(gj["gaps"][:3])
                             self._speculator_hint = (
@@ -1383,8 +1423,18 @@ class AutoloopEngine:
                 # noise≥0.3 → threshold=0.08 (测量噪声大, 严格). 下限 0.08 防永不终止.
                 threshold = max(0.08, 0.20 - 0.4 * avg_noise)
                 if all(w < threshold for w in recent_worsts):
-                    print(f"  → Converged: surprise < {threshold:.2f} (noise={avg_noise:.2f}) for 3 consecutive iterations")
-                    self._should_stop = True
+                    # completion audit: surprise 收敛但探索不够 → 不停, 对抗快速收敛偏差
+                    _blk, _why = self._metacog_check_completion()
+                    if _blk:
+                        logger.info("metacog completion audit blocked convergence stop: %s", _why)
+                        _why_msg = f"[completion audit] 不能停: {_why}"
+                        self._speculator_hint = (
+                            (self._speculator_hint + "\n" + _why_msg).strip()
+                            if self._speculator_hint else _why_msg
+                        )
+                    else:
+                        print(f"  → Converged: surprise < {threshold:.2f} (noise={avg_noise:.2f}) for 3 consecutive iterations")
+                        self._should_stop = True
 
         # 7. Report + finalize
         return await self._finalize_run(
@@ -1702,6 +1752,127 @@ class AutoloopEngine:
             from huginn.metacog.method_registry import MethodRegistry
             self._metacog_method_registry = MethodRegistry()
         return self._metacog_method_registry
+
+    def _get_metacog_convergence_detector(self):
+        if self._metacog_convergence_detector is None:
+            from huginn.metacog.depth_search import PrematureConvergenceDetector
+            self._metacog_convergence_detector = PrematureConvergenceDetector()
+        return self._metacog_convergence_detector
+
+    def _get_metacog_completion_auditor(self):
+        if self._metacog_completion_auditor is None:
+            from huginn.metacog.completion_auditor import CompletionAuditor
+            self._metacog_completion_auditor = CompletionAuditor(
+                convergence_detector=self._get_metacog_convergence_detector(),
+                equivalence_auditor=self._get_metacog_auditor(),
+            )
+        return self._metacog_completion_auditor
+
+    def _metacog_check_effort_floor(self) -> tuple[bool, str]:
+        """[deprecated] 旧的最小努力下限检查, 保留向后兼容.
+
+        新代码用 _metacog_check_completion — 它在 effort floor 之上加了
+        等价性陷阱检查和显式不完整性自白. 这个方法只是 thin wrapper,
+        保留是因为可能有外部调用方直接调它.
+        """
+        return self._metacog_check_completion()
+
+    def _metacog_check_completion(self) -> tuple[bool, str]:
+        """反完成审计: 综合检查是否过早收敛.
+
+        替代旧的纯 effort floor, 调 CompletionAuditor 做四层检查:
+        - 最小努力下限 (迭代/方法族/连通分量)
+        - 等价性陷阱 (内部调 EquivalenceAuditor)
+        - 显式不完整性自白 (从 _last_raw_hypothesis 提取 UNEXPLORED 块)
+        - 对抗否决 (本 engine 暂不接 red_team, 留口子)
+
+        advisory: 出错放行, 不阻断.
+        """
+        try:
+            auditor = self._get_metacog_completion_auditor()
+            families_explored = len([
+                f for f in self._get_metacog_method_registry().all()
+                if f.member_agent_ids
+            ])
+            live_components = self.hypothesis_graph.component_count()
+
+            # 从最近一次 LLM 原始输出提取 UNEXPLORED: 块
+            # ponytail: 字符串切片, 不上正则. 升级路径: 结构化 schema.
+            unexplored = ""
+            raw = getattr(self, '_last_raw_hypothesis', '') or ''
+            if 'UNEXPLORED:' in raw:
+                unexplored = raw.split('UNEXPLORED:', 1)[1].strip()
+                # 截到下一个大写标记或结尾, 避免把后续块都吞进来
+                for marker in ['\n\nHYPOTHESIS', '\n\nSELECTED', '\n\nRATIONALE']:
+                    if marker in unexplored:
+                        unexplored = unexplored.split(marker)[0].strip()
+                        break
+
+            checklist = auditor.audit(
+                iteration=self._iteration,
+                families_explored=families_explored,
+                live_components=live_components,
+                total_iterations=self._max_iterations if hasattr(self, '_max_iterations') else 10,
+                candidate_finding=getattr(self, '_last_hypothesis', '') or '',
+                original_problem=str(getattr(self, '_objective', '') or ''),
+                unexplored_declaration=unexplored,
+            )
+
+            if not checklist.is_complete:
+                return True, checklist.block_reason()
+            return False, ""
+        except Exception:
+            logger.debug("metacog completion check failed", exc_info=True)
+            return False, ""  # 出错不阻断, advisory
+
+    def _metacog_check_topology_collapse(self) -> None:
+        """坍缩检测: 连通分量数过低时, 强制从冷门族启动新探索.
+
+        对应 prompt: "不要让一种方法占据主导...并发起新一轮".
+        is_collapsed 时把重定向建议拼进 _speculator_hint, 下轮 hypothesize
+        会看到. advisory: 不阻断, 出错放行.
+        """
+        try:
+            from huginn.metacog.depth_search import DynamicComponentFloor
+            # 动态下限: 早期 4, 中期 2, 后期 1. 实例化成本可忽略.
+            floor = DynamicComponentFloor().current_floor(
+                self._iteration, self._max_iterations
+            )
+            if self.hypothesis_graph.is_collapsed(min_components=floor):
+                redirect = self._get_metacog_method_registry().suggest_redirect()
+                hint = (
+                    f"[topology] 搜索空间坍缩! "
+                    f"连通分量 {self.hypothesis_graph.component_count()} < 下限 {floor}. "
+                )
+                if redirect:
+                    hint += f"强制重定向到 {redirect.target_family}: {redirect.reason}"
+                else:
+                    hint += "建议启动新方法族探索"
+                if self._speculator_hint:
+                    self._speculator_hint = f"{self._speculator_hint}\n{hint}"
+                else:
+                    self._speculator_hint = hint
+                logger.info("metacog: %s", hint)
+        except Exception:
+            logger.debug("metacog topology check failed", exc_info=True)
+
+    def _metacog_component_representatives(self) -> list[str]:
+        """每个连通分量的代表假设 id.
+
+        代表参与根 agent 综合判断, 防止单分量靠节点数主导.
+        对应 prompt: "根智能体应反复综合、挑战、重定向".
+        出错返回空列表, 调用方按 advisory 处理.
+        """
+        try:
+            components = self.hypothesis_graph.connected_components()
+            reps = []
+            for comp in components:
+                rep = self.hypothesis_graph.component_representative(comp)
+                if rep:
+                    reps.append(rep)
+            return reps
+        except Exception:
+            return []
 
     def _metacog_classify_family(self, hypothesis: str) -> str:
         """廉价关键词分类: 把假设归到方法族.
@@ -4345,7 +4516,11 @@ Please modify the code to address this task."""
         # — _speculator_hint 有 5 处 append, 不截断 20 轮后可能数 KB.
         hint_block = ""
         if self._speculator_hint:
-            hint_block = f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[:500]}\n"
+            hint_block = (
+                f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[:500]}\n"
+                "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
+                "(方法族/等价性陷阱/连通分量/缺口).\n"
+            )
         # 三路检索共用一个 query, 避免重复序列化 context 3 次
         ctx_query = json.dumps(context, ensure_ascii=False)[:500]
         # 领域知识库检索: 命中 first-principles 参考块就拼进 prompt
@@ -4411,6 +4586,28 @@ Please modify the code to address this task."""
         except Exception:
             pass
 
+        # 分量代表制: 多条独立探索路线时, 给 LLM 看各路线的代表假设,
+        # 防止单分量靠节点数主导综合判断. 只在 >1 分量时注入, advisory.
+        topology_block = ""
+        try:
+            reps = self._metacog_component_representatives()
+            if len(reps) > 1:
+                lines = []
+                for rid in reps[:5]:  # ponytail: 截前 5 个, 防超大图撑爆 prompt
+                    try:
+                        stmt = self.hypothesis_graph.get(rid).statement
+                    except Exception:
+                        stmt = ""
+                    lines.append(f"  - {rid}: {stmt[:120]}")
+                topology_block = (
+                    f"\n### Topology (advisory)\n"
+                    f"当前有 {len(reps)} 条独立探索路线, 代表假设分别是:\n"
+                    + "\n".join(lines) + "\n"
+                    "综合判断时不要让某条路线靠节点数主导, 注意挑战和重定向.\n"
+                )
+        except Exception:
+            pass
+
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         return self._trim_to_budget([
             ("body", f"""You are an autonomous material science research agent.
@@ -4436,6 +4633,7 @@ Hypothesis:"""),
             ("visual", visual_block),
             ("kb", kb_block),
             ("mem", mem_block),
+            ("topology", topology_block),
             ("hint", hint_block),
         ])
 

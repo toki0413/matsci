@@ -389,6 +389,27 @@ class PhaseGateHook:
                 # math_checker 挂了不阻断, 降级放行
                 pass
 
+        # 物理 oracle 否决: simulator tool 把 PhysicsAuditor 结果填进 evidence
+        # ["physics_audit"] (dict 含 has_errors bool). 有 error 直接 rejected,
+        # 优先级高于 reviewer — 物理 plausibility 是 first-principles 不可妥协.
+        # ponytail: 仅检查 has_errors, 不解析 findings. 升级: 按 severity 加权 + DS 合成.
+        _pa = evidence.get("physics_audit")
+        if isinstance(_pa, dict) and _pa.get("has_errors"):
+            return PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="rejected",
+                required_evidence=required,
+                missing_evidence=[],
+                feedback=(
+                    "Physics oracle rejected: tool output contains physical "
+                    "errors (AuditReport.has_errors=True). Fix the unphysical "
+                    "values (e.g. negative band gap, non-converged SCF, "
+                    "thermodynamic violation) before re-attempting the phase transition."
+                ),
+                reviewer="physics_oracle",
+            )
+
         # 走 reviewer (可选). reviewer 挂了不阻断, 降级放行.
         if self._reviewer_fn is not None:
             try:

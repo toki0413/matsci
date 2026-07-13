@@ -86,6 +86,33 @@ class ReflectionMixin:
 
         return _summarize
 
+    def _append_reflection_sidecar(self, tool_result: dict, reflection: Any) -> None:
+        """把反思结论写 sidecar 文件, 主上下文只引用结论不引用推理过程.
+
+        避免自我污染: LLM 是 P(next|history), 反思文本进 history 会抬高
+        P(next_支持_反思结论), 即便结论错. sidecar 让反思留痕但不污染主上下文.
+        ponytail: JSONL 追加写, 不做索引. 升级: 按反思类型分文件 + grep 索引.
+        """
+        import json
+        from datetime import datetime
+        from pathlib import Path
+        session_id = self._session_state.session_id or "default"
+        sidecar_dir = Path.home() / ".huginn" / "reflections"
+        sidecar_dir.mkdir(parents=True, exist_ok=True)
+        sidecar_path = sidecar_dir / f"{session_id}.jsonl"
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "tool_name": tool_result.get("tool_name", "unknown"),
+            "tool_succeeded": reflection.tool_succeeded,
+            "has_physics_errors": reflection.has_physics_errors,
+            "has_physics_warnings": reflection.has_physics_warnings,
+            "message": reflection.message,
+            "should_switch_mode": reflection.should_switch_mode,
+            "suggested_mode": reflection.suggested_mode,
+        }
+        with sidecar_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
     def _sync_plan_from_store(self) -> None:
         """Sync an executing plan from PlanStore to session_state.
 
@@ -166,8 +193,23 @@ class ReflectionMixin:
                     }))
                     self._session_state.l1_coordinates = self._csm.l1_coordinates
                     self._session_state._cognitive_prompt = self._csm.get_attention_prompt()
+                    # mode 切换 flag: S3_SWITCH / S6_FEEDBACK 时标记需要 compaction.
+                    # streaming.py 下轮开头检查 flag, 触发 summarize_compact_messages.
+                    # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
+                    from huginn.cognitive_engine import CognitiveState
+                    if self._csm._state in (CognitiveState.S3_SWITCH, CognitiveState.S6_FEEDBACK):
+                        self._needs_compaction = True
             except Exception:
                 logger.debug("CSM transition failed", exc_info=True)
+
+            # 反思 sidecar: 把反思结论写文件, 主上下文只引用结论不引用推理过程.
+            # 避免自我污染: 反思文本进入 history 会抬高 P(next_支持_反思结论).
+            # ponytail: 只在有实质内容时写. 升级: 按反思类型分文件.
+            if reflection.message or reflection.has_physics_errors:
+                try:
+                    self._append_reflection_sidecar(tr, reflection)
+                except Exception:
+                    logger.debug("reflection sidecar write failed", exc_info=True)
 
             # Persist plan progress when a step is judged done.
             if (

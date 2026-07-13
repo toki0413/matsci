@@ -245,3 +245,232 @@ def test_belief_entropy_no_auto_fact_check_without_history():
     )
     assert not mock_model.invoke.called
     assert result.c_fact == 1.0
+
+
+# ── #6: PlanStore.export_markdown ─────────────────────────────────
+
+
+def test_export_markdown_writes_file_with_plan_info(tmp_path):
+    """export_markdown 应写出含 objective + steps 表格的 md 文件."""
+    from huginn.autoloop.plan_store import PlanStep, PlanStore
+
+    store = PlanStore(path=tmp_path / "plans.json")
+    plan = store.create_plan(
+        objective="optimize Fe2O3 band gap",
+        steps=[
+            PlanStep(id="s1", description="run VASP relax", tool="vasp_tool"),
+            PlanStep(id="s2", description="extract band gap", tool="analyze"),
+        ],
+    )
+    out = store.export_markdown(plan.id, path=tmp_path / f"{plan.id}.md")
+    assert out.exists()
+    text = out.read_text(encoding="utf-8")
+    assert plan.id in text
+    assert "optimize Fe2O3 band gap" in text
+    assert "run VASP relax" in text
+    assert "| Step |" in text or "## Steps" in text
+
+
+def test_export_markdown_missing_plan_raises(tmp_path):
+    """未知 plan_id 应抛 KeyError."""
+    from huginn.autoloop.plan_store import PlanStore
+
+    store = PlanStore(path=tmp_path / "plans.json")
+    try:
+        store.export_markdown("plan_does_not_exist")
+        raised = False
+    except KeyError:
+        raised = True
+    assert raised
+
+
+# ── #7: reflection sidecar ────────────────────────────────────────
+
+
+def test_reflection_sidecar_writes_jsonl(tmp_path, monkeypatch):
+    """_append_reflection_sidecar 应写 JSONL, 含反思结论字段."""
+    from huginn.agent.reflection import ReflectionMixin
+    from huginn.autoloop.plan_store import _now_iso  # reuse iso helper if needed
+
+    # 用 monkeypatch 把 home() 指到 tmp_path 避免污染真实 ~/.huginn
+    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))
+
+    mixin = ReflectionMixin()
+    mixin._session_state = MagicMock()
+    mixin._session_state.session_id = "test-session-123"
+
+    reflection = MagicMock()
+    reflection.tool_succeeded = True
+    reflection.has_physics_errors = False
+    reflection.has_physics_warnings = True
+    reflection.message = "test warning"
+    reflection.should_switch_mode = False
+    reflection.suggested_mode = None
+
+    tr = {"tool_name": "vasp_tool", "content": "ok"}
+    mixin._append_reflection_sidecar(tr, reflection)
+
+    sidecar = tmp_path / ".huginn" / "reflections" / "test-session-123.jsonl"
+    assert sidecar.exists()
+    import json as _json
+    lines = sidecar.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 1
+    entry = _json.loads(lines[0])
+    assert entry["tool_name"] == "vasp_tool"
+    assert entry["has_physics_warnings"] is True
+    assert entry["message"] == "test warning"
+    assert "ts" in entry
+
+
+# ── #8: RedTeamReviewer critic_model ──────────────────────────────
+
+
+class _StubModel:
+    """测试用 stub model — 绕开 _is_real_model 的 MagicMock 检测.
+
+    MagicMock 有 _mock_name 属性会被当成测试 mock 跳过 LLM 增强.
+    这个 stub 故意没 _mock_name, 让 LLM 增强路径真的触发.
+    """
+
+    def __init__(self, content: str = "[]"):
+        self._content = content
+        self.invoked = False
+
+    def invoke(self, messages):
+        self.invoked = True
+        return MagicMock(content=self._content)
+
+
+def test_red_team_uses_critic_model_when_provided():
+    """传 critic_model 时, _llm_findings 用 critic 而非主 model."""
+    from huginn.autoloop.red_team import RedTeamReviewer
+
+    main_model = _StubModel()
+    critic_model = _StubModel()
+
+    reviewer = RedTeamReviewer(model=main_model, critic_model=critic_model)
+    evidence = {"hypothesis": "如果 X 成立, 则应观察到 Y (假设前提: T=300K)"}
+    reviewer.review("hypothesize", "plan", evidence)
+
+    assert critic_model.invoked, "critic_model should be invoked"
+    assert not main_model.invoked, "main model should NOT be invoked"
+
+
+def test_red_team_falls_back_to_model_when_no_critic():
+    """critic_model=None 时 fallback 到主 model (向后兼容)."""
+    from huginn.autoloop.red_team import RedTeamReviewer
+
+    main_model = _StubModel()
+
+    reviewer = RedTeamReviewer(model=main_model)
+    evidence = {"hypothesis": "如果 X 成立, 则应观察到 Y (假设前提: T=300K)"}
+    reviewer.review("hypothesize", "plan", evidence)
+
+    assert main_model.invoked, "main model should be invoked as fallback"
+
+
+def test_red_team_works_with_only_critic_no_model():
+    """只传 critic_model 不传 model 时也触发 LLM 增强."""
+    from huginn.autoloop.red_team import RedTeamReviewer
+
+    critic_model = _StubModel()
+
+    reviewer = RedTeamReviewer(model=None, critic_model=critic_model)
+    evidence = {"hypothesis": "如果 X 成立, 则应观察到 Y (假设前提: T=300K)"}
+    reviewer.review("hypothesize", "plan", evidence)
+
+    assert critic_model.invoked
+
+
+# ── #9: mode-switch compaction flag ────────────────────────────────
+
+
+def test_needs_compaction_flag_defaults_false():
+    """agent 无 _needs_compaction 属性时 getattr 应返回 False (streaming.py 用 getattr)."""
+    from huginn.agent.core import HuginnAgent
+
+    agent = MagicMock(spec=HuginnAgent)
+    # MagicMock(spec=...) 默认不暴露 _needs_compaction
+    assert getattr(agent, "_needs_compaction", False) is False
+
+
+# ── #10: physics oracle 否决 ───────────────────────────────────────
+
+
+def test_phase_gate_rejects_when_physics_audit_has_errors():
+    """evidence.physics_audit.has_errors=True → PhaseGate rejected, reviewer=physics_oracle."""
+    from huginn.autoloop.phase_gate import PhaseGateHook
+
+    hook = PhaseGateHook()
+    evidence = {
+        "tests_passed": True,
+        "physics_audit": {
+            "tool_name": "vasp_tool",
+            "action": "relax",
+            "findings": [{"severity": "error", "category": "unphysical_value"}],
+            "has_errors": True,
+            "has_warnings": False,
+        },
+    }
+    gate = hook.evaluate("validate", "learn", evidence)
+    assert gate.status == "rejected"
+    assert gate.reviewer == "physics_oracle"
+    assert gate.is_blocked
+
+
+def test_phase_gate_passes_when_physics_audit_no_errors():
+    """evidence.physics_audit.has_errors=False → 走后续 reviewer 流程."""
+    from huginn.autoloop.phase_gate import PhaseGateHook
+
+    hook = PhaseGateHook()
+    evidence = {
+        "tests_passed": True,
+        "physics_audit": {
+            "tool_name": "vasp_tool",
+            "action": "relax",
+            "findings": [{"severity": "warning", "category": "convergence_suspicious"}],
+            "has_errors": False,
+            "has_warnings": True,
+        },
+    }
+    gate = hook.evaluate("validate", "learn", evidence)
+    # 无 reviewer 时默认 approved (走完所有检查放行)
+    assert gate.status == "approved"
+    assert gate.reviewer is None
+
+
+def test_phase_gate_passes_when_no_physics_audit():
+    """evidence 无 physics_audit 字段时不阻断 (向后兼容)."""
+    from huginn.autoloop.phase_gate import PhaseGateHook
+
+    hook = PhaseGateHook()
+    evidence = {"tests_passed": True}
+    gate = hook.evaluate("validate", "learn", evidence)
+    assert gate.status == "approved"
+
+
+# ── TPS 监控: track_llm_tps + Histogram ─────────────────────────
+
+
+def test_track_llm_tps_observes_histogram():
+    """track_llm_tps 应可调用且不抛, Histogram collect 返回非 None."""
+    from huginn.routes.metrics import (
+        LLM_TPS,
+        LLM_TTFT_SECONDS,
+        track_llm_tps,
+    )
+
+    track_llm_tps(model="test-model", ttft_ms=420, tps=33.3)
+    track_llm_tps(model="test-model", ttft_ms=0, tps=88.0)  # ttft=0 不写 TTFT
+
+    # 验证 Histogram 可被 collect (即注册成功 + 可查询)
+    assert LLM_TPS.collect() is not None
+    assert LLM_TTFT_SECONDS.collect() is not None
+
+
+def test_track_llm_tps_never_raises_on_bad_input():
+    """track_llm_tps 对异常输入应吞掉异常 (best-effort)."""
+    from huginn.routes.metrics import track_llm_tps
+
+    track_llm_tps(model=None, ttft_ms=-1, tps=float("inf"))  # 不应抛
+    track_llm_tps(model="x", ttft_ms=0, tps=0.0)
