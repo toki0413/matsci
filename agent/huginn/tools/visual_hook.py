@@ -549,4 +549,112 @@ def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]
             "outliers worth investigating. Point at coordinates while reasoning."
         )
 
+    # self_check: Nullmax 启发 — 让红队/PhaseGate 能判断视觉估算可信度.
+    # 之前只有图像输入侧有 self_check (visual_to_symbols_structured), 工具产出的
+    # 数值 primitives 没有. 加 _visual_self_check 字段, RedTeamReviewer 能读它
+    # 判断可视化结论是否可信.
+    sc = _estimate_data_confidence(output)
+    if sc:
+        output["_visual_self_check"] = sc
+
     return output
+
+
+def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
+    """估算工具产出的数值数据可视化置信度.
+
+    1D 数据 (bands/dos/energies): 数据点数 / 信噪比 / 异常比例
+    2D 数据 (EDS/phase_field): 像素覆盖率 / 域数量 / 重叠度
+    ponytail: 启发式加权, 不调 LLM. 升级: 让 LLM 判断数据质量.
+    """
+    result = output.get("result", {})
+    if not isinstance(result, dict):
+        return {}
+
+    score = 0.0
+    caveats: list[str] = []
+
+    # 1D 数据
+    for key in ("bands", "dos", "frequencies", "energies", "stress", "strain"):
+        data = result.get(key)
+        if not isinstance(data, list) or not data:
+            continue
+        if isinstance(data[0], list):
+            continue  # 嵌套不估
+        try:
+            nums = [float(v) for v in data if isinstance(v, (int, float))]
+        except (ValueError, TypeError):
+            continue
+        if not nums:
+            continue
+        n = len(nums)
+        mean_v = sum(nums) / n
+        std_v = (sum((x - mean_v) ** 2 for x in nums) / n) ** 0.5
+        # 信噪比: std/mean 越大噪声越多
+        snr = abs(mean_v / std_v) if std_v > 0 else 10.0
+        # 异常比例
+        n_anom = sum(1 for v in nums if abs(v - mean_v) > 2 * std_v) if std_v > 0 else 0
+        anom_rate = n_anom / n if n > 0 else 0
+
+        if n >= 20:
+            score += 0.15
+        elif n >= 5:
+            score += 0.08
+            caveats.append(f"few_points_{key}: {n} 个数据点, 趋势分析可靠性降低")
+        else:
+            caveats.append(f"too_few_points_{key}: {n} 个数据点, 无法可靠分析")
+
+        if snr >= 3.0:
+            score += 0.1
+        elif snr < 1.0:
+            caveats.append(f"low_snr_{key}: 信噪比 {snr:.2f}, 数据噪声大")
+
+        if anom_rate > 0.1:
+            caveats.append(f"high_anomaly_rate_{key}: {anom_rate * 100:.1f}% 数据点异常")
+
+    # 2D 数据 (EDS)
+    measurements = result.get("measurements") or result
+    elements = measurements.get("elements") if isinstance(measurements, dict) else None
+    if isinstance(elements, dict) and elements:
+        total_cov = 0.0
+        n_elems = 0
+        for elem, stats in elements.items():
+            if isinstance(stats, dict):
+                cov = float(stats.get("coverage_fraction", 0))
+                total_cov += cov
+                n_elems += 1
+                # hotspots 存在说明做了连通域分析, 置信度高
+                if stats.get("hotspots"):
+                    score += 0.05
+        avg_cov = total_cov / n_elems if n_elems > 0 else 0
+        if avg_cov < 0.05:
+            caveats.append(f"low_coverage_eds: 平均覆盖率 {avg_cov * 100:.1f}%, 元素信号弱")
+        elif avg_cov > 0.5:
+            score += 0.1
+        if n_elems == 0:
+            caveats.append("no_elements_eds: 未检测到元素")
+
+    # 2D 数据 (phase_field)
+    vol_fracs = measurements.get("volume_fractions") if isinstance(measurements, dict) else None
+    if isinstance(vol_fracs, dict) and vol_fracs:
+        morphology = measurements.get("morphology") if isinstance(measurements, dict) else None
+        if isinstance(morphology, dict):
+            n_total_doms = 0
+            for phase, morph in morphology.items():
+                if isinstance(morph, dict):
+                    n_total_doms += int(morph.get("n_domains", 0))
+                    if morph.get("top_domain_centroids_px"):
+                        score += 0.05
+            if n_total_doms == 0:
+                caveats.append("no_domains_phase_field: 未检测到相域")
+            elif n_total_doms >= 3:
+                score += 0.1
+
+    if not caveats:
+        score += 0.2  # 无 caveats 加分
+
+    return {
+        "confidence": round(min(score, 1.0), 2),
+        "caveats": caveats,
+        "note": "数值数据可视化置信度估算, 让红队判断可视化结论可信度",
+    }
