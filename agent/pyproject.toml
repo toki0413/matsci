@@ -79,6 +79,7 @@ asyncio_mode = "auto"
 addopts = "--cov=huginn --cov-report=term-missing"
 markers = [
     "integration: heavy tests that need full stack (skip on fast CI)",
+    "network: tests requiring external network or model download",
 ]
 
 [tool.black]

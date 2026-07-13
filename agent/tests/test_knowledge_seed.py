@@ -9,6 +9,10 @@ from pathlib import Path
 
 from huginn.knowledge import KnowledgeBase, seed_knowledge_base
 
+# KB 初始化会下载 embedding 模型 (chromadb ONNX + sentence-transformers 兜底),
+# CI 无缓存时会挂起超时. 标 network 让 CI 用 -m "not network" 跳过.
+pytestmark = pytest.mark.network
+
 
 class TestKnowledgeSeed:
     def test_seed_adds_documents(self):
