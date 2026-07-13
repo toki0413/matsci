@@ -70,6 +70,10 @@ except ImportError:  # pragma: no cover - only hit when prometheus_client is abs
         def labels(self, **kw: Any) -> "_Child":
             return _Child(self, self._key(kw))
 
+        def collect(self) -> "_FallbackMetric":
+            # prometheus_client 兼容: 返回非 None 让测试能验证注册成功
+            return self
+
     class _Child:
         """A label-bound view onto a metric."""
 

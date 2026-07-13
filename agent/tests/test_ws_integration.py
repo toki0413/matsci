@@ -75,6 +75,13 @@ class MockAgent:
     def set_persona(self, *args: Any, **kwargs: Any) -> None:
         pass
 
+    # ws_helpers._handle_plan_confirm 调这两个, mock 里空实现就行
+    def enter_plan_execution(self) -> None:
+        pass
+
+    def exit_plan_execution(self) -> None:
+        pass
+
     async def chat(self, content: str, thread_id: str = "default"):
         for state in self._states:
             yield state
