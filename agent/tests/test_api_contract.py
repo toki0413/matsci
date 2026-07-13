@@ -188,7 +188,16 @@ def _collect_routes(schema: dict[str, Any]) -> list[RouteInfo]:
 
 
 _ALL_ROUTES = _collect_routes(_RAW_SCHEMA)
-_ROOT_ROUTES = [r for r in _ALL_ROUTES if not r.path.startswith("/v1/")]
+
+# ponytail: SSE 端点会保持连接打开持续推送事件,
+# TestClient.get() 会卡住等响应体完成 (60s timeout),
+# 不能当普通 GET 测. 从 parametrize 列表排除.
+_SSE_PATHS = frozenset({"/events", "/events/stream"})
+
+_ROOT_ROUTES = [
+    r for r in _ALL_ROUTES
+    if not r.path.startswith("/v1/") and r.path not in _SSE_PATHS
+]
 _V1_ROUTES = [r for r in _ALL_ROUTES if r.path.startswith("/v1/")]
 _GET_ROUTES = [r for r in _ROOT_ROUTES if "GET" in r.safe_methods]
 _POST_ROUTES = [r for r in _ROOT_ROUTES if "POST" in r.safe_methods]
