@@ -72,12 +72,15 @@ jobs:
       matrix:
         include:
           - test-file: tests/test_api_contract.py
+            label: api-contract
             job-timeout: 30
             test-timeout: 60
           - test-file: tests/test_security_penetration.py
+            label: security-penetration
             job-timeout: 20
             test-timeout: 120
           - test-file: tests/test_chaos_engineering.py
+            label: chaos-engineering
             job-timeout: 20
             test-timeout: 120
     steps:
@@ -115,7 +118,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-integration-${{ matrix.test-file }}
+          name: pytest-integration-${{ matrix.label }}
           path: agent/pytest_integration_output.txt
           retention-days: 7
 
