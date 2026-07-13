@@ -7,16 +7,51 @@
  * ponytail: no plugin registry. A simple detectSpecial() switch is enough.
  * recharts already in deps — used it instead of adding plotly.
  */
-import React, { useState, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useMemo, useEffect, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Table2, List, Box, Activity, BarChart3, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import { detectStructure } from './InlineStructure3D';
 import { API_BASE } from '../lib/config-store';
+import { authHeaders } from '../lib/api';
 
 // Lazy-load heavy components
 const InlineStructure3D = lazy(() => import('./InlineStructure3D'));
 const BandStructureChart = lazy(() => import('./charts/BandStructureChart'));
 const ConvergenceChart = lazy(() => import('./charts/ConvergenceChart'));
+
+// <img> 标签不能带 Authorization 头. 服务器开 auth 后 GET /knowledge/image 会 401.
+// fetch + createObjectURL 拿 blob 再塞 src. dev mode (HUGINN_DEV_MODE=1) 下 auth
+// 自动 bypass, 走普通 <img> 也行 — 但这里统一走 AuthImage 省得分两种路径.
+// ponytail: 每张图一次 fetch, 没做缓存. KB 查询 top_k 默认 5, 量小够用.
+// 升级路径: 加 LRU cache (URL.createObjectURL 的 key 按 url hash).
+const AuthImage: React.FC<{ src: string; alt: string; className?: string; loading?: 'lazy' | 'eager' }> =
+  ({ src, alt, className, loading }) => {
+    const [blobUrl, setBlobUrl] = useState<string | null>(null);
+    const [err, setErr] = useState(false);
+    useEffect(() => {
+      let cancelled = false;
+      let objUrl: string | null = null;
+      setErr(false);
+      fetch(src, { headers: authHeaders() })
+        .then(r => {
+          if (!r.ok) throw new Error(String(r.status));
+          return r.blob();
+        })
+        .then(b => {
+          if (cancelled) return;
+          objUrl = URL.createObjectURL(b);
+          setBlobUrl(objUrl);
+        })
+        .catch(() => { if (!cancelled) setErr(true); });
+      return () => {
+        cancelled = true;
+        if (objUrl) URL.revokeObjectURL(objUrl);
+      };
+    }, [src]);
+    if (err) return <span className="text-xs text-error">image load failed</span>;
+    if (!blobUrl) return <span className="text-xs text-text-muted">loading…</span>;
+    return <img src={blobUrl} alt={alt} className={className} loading={loading} />;
+  };
 
 interface ToolResultRendererProps {
   content: string;
@@ -284,9 +319,6 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
         {view === 'knowledge' && showKnowledgeTab && (() => {
           // rag_tool 视觉压缩页: 每个 result 项渲染 image_url (PDF 页快照) + 文本.
           // 之前 image_ref 路径只塞 agent prompt 文本, 前端永远看不到图.
-          // ponytail: <img src> 不带 Authorization 头. desktop 跑 HUGINN_DEV_MODE=1
-          // 时 auth 自动 bypass, 没问题. 服务器部署开 auth 后图会 401 — 那时换
-          // AuthImage 组件 (fetch + authHeaders + createObjectURL) 再加 ~15 行.
           try {
             const data = JSON.parse(content) as { results?: any[] };
             const items = (data?.results || []).filter((r) => r?.image_url);
@@ -295,7 +327,7 @@ export const ToolResultRenderer: React.FC<ToolResultRendererProps> = ({
               <div className="space-y-3 p-2">
                 {items.map((r, i) => (
                   <div key={r.id || i} className="rounded-lg border border-border overflow-hidden">
-                    <img
+                    <AuthImage
                       src={`${API_BASE}${r.image_url}`}
                       alt={`chunk ${r.id ?? i}`}
                       className="w-full max-h-[400px] object-contain bg-bg-tertiary"

@@ -34,7 +34,7 @@ async function fetchWithRetry(input: string, init: RequestInit): Promise<Respons
   }
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   const token = getAuthToken();
   if (token) {
