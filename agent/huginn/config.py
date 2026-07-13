@@ -1212,6 +1212,16 @@ def get_settings() -> Settings:
     return _cached_settings
 
 
+def _apply_feature_flags(cfg: HuginnConfig) -> None:
+    # 把 cfg.feature_flags 同步到 FeatureFlags 单例, 让配置文件的开关真正生效
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        FeatureFlags.shared().load_from_config(cfg)
+    except Exception:
+        logger.debug("feature_flags load_from_config 失败", exc_info=True)
+
+
 def get_config(
     path: str | pathlib.Path | None = None,
     *,
@@ -1238,6 +1248,7 @@ def get_config(
                 _config_cache = HuginnConfig.from_env()
                 _config_cache_path = None
                 _config_cache_mtime = 0.0
+                _apply_feature_flags(_config_cache)
                 return _config_cache
             else:
                 return _config_cache
@@ -1269,6 +1280,7 @@ def get_config(
                 _config_cache = HuginnConfig.from_env()
                 _config_cache_path = None
                 _config_cache_mtime = 0.0
+            _apply_feature_flags(_config_cache)
 
         return _config_cache
 

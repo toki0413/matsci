@@ -674,15 +674,16 @@ async def list_feature_flags() -> dict[str, Any]:
 
 @router.post("/config/features/{feature}", dependencies=[Depends(require_admin_key)])
 async def toggle_feature_flag(feature: str, params: dict[str, Any]) -> dict[str, Any]:
-    """运行时开关某个 feature flag. body: {"enabled": bool}.
+    """运行时开关某个 feature flag. body: {"enabled": bool, "persist": bool}.
 
-    改动只在内存生效, 不写盘. 要持久化得调 config wizard 或直接改配置文件.
+    persist 默认 false, 改动只在内存. 设 true 会把当前所有运行时覆盖写回配置文件.
     """
     from huginn.feature_flags import FeatureFlags
 
     if "enabled" not in params:
         return {"success": False, "error": "body 需要 enabled 字段"}
     enabled = bool(params["enabled"])
+    persist = bool(params.get("persist", False))
 
     ff = FeatureFlags.shared()
     # 未知 feature 直接报错, 别让前端以为开关成功了
@@ -695,12 +696,32 @@ async def toggle_feature_flag(feature: str, params: dict[str, Any]) -> dict[str,
 
     ff.toggle(feature, enabled)
     new_state = ff.is_enabled(feature)
+
+    persisted = False
+    if persist:
+        try:
+            cfg = get_cached_config()
+            cfg_path = os.environ.get("HUGINN_CONFIG_FILE") or "huginn.toml"
+            ff.persist_to_config(cfg, cfg_path)
+            persisted = True
+        except Exception as exc:
+            return {
+                "success": True,
+                "feature": feature,
+                "enabled": new_state,
+                "requested": enabled,
+                "applied": new_state == enabled,
+                "persisted": False,
+                "persist_error": str(exc),
+            }
+
     return {
         "success": True,
         "feature": feature,
         "enabled": new_state,
         "requested": enabled,
         "applied": new_state == enabled,
+        "persisted": persisted,
     }
 
 
