@@ -116,6 +116,8 @@ class TestSupersede:
     def test_supersede_marks_status(self):
         g = HypothesisGraph()
         hid = g.add_hypothesis("h")
+        # ponytail: supersede 现在校验源状态, untested 节点要先 refute/support
+        g.refute(hid, evidence={})
         g.supersede(hid)
         assert g.get(hid).status == "superseded"
 
