@@ -651,3 +651,8 @@ class SnapshotManager:
             tmp.replace(log)
         except OSError as exc:
             logger.warning("snapshot log compaction failed: %s", exc)
+
+
+def get_snapshot_manager() -> SnapshotManager:
+    """工厂函数, 给 governance.py 用. 不传 root 拿全局单例."""
+    return SnapshotManager()

@@ -48,7 +48,7 @@ from huginn.tools.report_tool import ReportTool
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 from huginn.workflows.engine import WorkflowEngine
-from huginn.workflows.templates import standard_dft_workflow
+from huginn.workflows.templates import get_template, standard_dft_workflow
 
 
 # Autoloop 7-phase pipeline — single source of truth for phase names.
@@ -4312,37 +4312,114 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
     # ──────────────────────────────────────────────────────────────
 
     async def _execute_coder(self, description: str, context: dict[str, Any]) -> dict[str, Any]:
-        """Execute a coder task."""
-        # Build a coding prompt from the description and context
-        prompt = f"""Task: {description}
+        """Run the coder loop on the description, reusing self.coder."""
+        task = f"""Task: {description}
 
 Context:
 - Changed files: {context.get('changed_files', [])}
 - Git diff: {context.get('git_diff', '')[:500]}
 
 Please modify the code to address this task."""
+        try:
+            # CoderRunner.run 是同步的, 丢线程里避免阻塞事件循环
+            result = await asyncio.to_thread(self.coder.run, task)
+            messages = result.get("messages", [])
+            tool_calls = sum(
+                1 for m in messages if getattr(m, "tool_calls", None)
+            )
+            return {
+                "mode": "coder",
+                "status": "completed",
+                "final_answer": result.get("final_answer", ""),
+                "tool_calls": tool_calls,
+            }
+        except Exception as e:
+            logger.exception("coder execution failed")
+            return {"mode": "coder", "status": "failed", "error": str(e)}
 
-        # Run CoderRunner
-        # (Simplified — in production this would use the full CoderRunner loop)
-        return {"mode": "coder", "prompt": prompt, "status": "submitted"}
+    # domain → 默认模板名; get_template 拿不到就 fallback standard_dft
+    # ponytail: 硬编码映射表, 新模板加一行即可; 想自动发现就扫 WORKFLOW_TEMPLATES
+    _DOMAIN_TEMPLATE_NAMES = {
+        "cfd": "turbulent_flow",
+        "fea": "structural_analysis",
+        "qc": "wavefunction_analysis",
+        "symbolic": "constitutive_derivation",
+        "dft": "standard_dft",
+    }
+
+    def _classify_workflow_domain(self, description: str) -> str:
+        """廉价关键词分类, 决定走哪个 workflow 模板."""
+        text = description.lower()
+        if any(k in text for k in ("cfd", "fluid", "fluent", "openfoam")):
+            return "cfd"
+        if any(k in text for k in ("fea", "stress", "mechanical", "abaqus", "ansys")):
+            return "fea"
+        if any(k in text for k in ("quantum", "qc", "chemistry", "gaussian", "orca")):
+            return "qc"
+        if any(k in text for k in ("symbolic", "regression", "拟合")):
+            return "symbolic"
+        return "dft"
 
     async def _execute_workflow(self, description: str, context: dict[str, Any]) -> dict[str, Any]:
-        """Execute a workflow task."""
-        # For now, use a standard DFT workflow as example
-        # In production, dynamically select workflow template based on description
+        """Execute a workflow task, picking template by domain when possible."""
         try:
-            # Find structure files in workspace
-            structure_files = list(self.workspace.rglob("*.cif")) + list(self.workspace.rglob("*.poscar")) + list(self.workspace.rglob("*.vasp"))
+            domain = self._classify_workflow_domain(description)
+            template_name = self._DOMAIN_TEMPLATE_NAMES.get(domain, "standard_dft")
+            template_fn = get_template(template_name) or standard_dft_workflow
+
+            # 找工作区里的输入文件; 只对 DFT/QC 用 structure_path
+            structure_files = (
+                list(self.workspace.rglob("*.cif"))
+                + list(self.workspace.rglob("*.poscar"))
+                + list(self.workspace.rglob("*.vasp"))
+            )
+            geometry_files = (
+                list(self.workspace.rglob("*.stp"))
+                + list(self.workspace.rglob("*.stl"))
+                + list(self.workspace.rglob("*.msh"))
+                + list(self.workspace.rglob("*.inp"))
+            )
+            xyz_files = (
+                list(self.workspace.rglob("*.xyz"))
+                + list(self.workspace.rglob("*.pdb"))
+            )
             structure_path = str(structure_files[0]) if structure_files else "structure.cif"
 
-            stages = standard_dft_workflow(structure_path, engine="vasp")
+            # 不同域模板参数不一样, 廉价 try 一组; 失败就 fallback DFT
+            try:
+                if domain == "cfd":
+                    geo = str(geometry_files[0]) if geometry_files else "geometry.stp"
+                    stages = template_fn(geometry_file=geo)
+                elif domain == "fea":
+                    geo = str(geometry_files[0]) if geometry_files else "geometry.inp"
+                    stages = template_fn(geometry_file=geo)
+                elif domain == "qc":
+                    struct = str(xyz_files[0]) if xyz_files else structure_path
+                    stages = template_fn(structure_file=struct)
+                elif domain == "symbolic":
+                    # symbolic 模板要 free_energy_expr, 没法从工作区推断, 拿 description 顶
+                    stages = template_fn(free_energy_expr=description)
+                else:
+                    stages = template_fn(structure_path=structure_path, engine="vasp")
+            except Exception as tmpl_err:
+                logger.warning(
+                    "workflow template %s (%s) failed: %s, fallback to standard_dft",
+                    template_name, domain, tmpl_err,
+                )
+                stages = standard_dft_workflow(structure_path, engine="vasp")
+
             tool_context = ToolContext(
                 session_id=f"workflow_{uuid.uuid4().hex[:8]}",
                 workspace=str(self.workspace),
                 config=self.settings,
             )
             result = await self.workflow_engine.execute(stages, tool_context)
-            return {"mode": "workflow", "success": result.success, "stages": len(stages)}
+            return {
+                "mode": "workflow",
+                "success": result.success,
+                "stages": len(stages),
+                "domain": domain,
+            }
         except Exception as e:
             return {"mode": "workflow", "success": False, "error": str(e)}
 

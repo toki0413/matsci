@@ -152,18 +152,19 @@ class GovernanceFacade:
         # 2. Policy engine check
         if self._policy_engine:
             try:
-                decision = self._policy_engine.evaluate_command_hook(
-                    action_name, context
-                )
-                if decision and decision.get("action") == "deny":
-                    reasons.append(f"Policy denied: {decision.get('reason', '')}")
+                from huginn.security.policy_engine import evaluate_command_hook
+                # governance 的 action_name 是逻辑动作名, 不是 shell 命令;
+                # 包成单元素 list 喂给 hook, 命中默认 ask 规则.
+                decision = evaluate_command_hook([action_name])
+                if decision and decision.action == "deny":
+                    reasons.append(f"Policy denied: {decision.reason}")
                     return GovernanceDecision(
                         allowed=False, reasons=reasons, risk_level=risk,
                         requires_approval=True, predictability=predictability,
                     )
-                if decision and decision.get("action") == "ask":
+                if decision and decision.action == "ask":
                     requires_approval = True
-                    reasons.append(f"Policy requires approval: {decision.get('reason', '')}")
+                    reasons.append(f"Policy requires approval: {decision.reason}")
             except Exception as e:
                 logger.debug(f"[gov] policy check failed: {e}")
 
