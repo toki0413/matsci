@@ -777,6 +777,18 @@ class StreamingMixin:
             if self.context_budget_tokens > 0:
                 summarizer = self._make_summarizer()
                 if summarizer is not None:
+                    # BeliefEntropy 闭环: 从上次 measure 结果读 adaptive 参数.
+                    # 之前断在 _last_result 存了但没人读, 导致自适应参数永远是默认值.
+                    try:
+                        from huginn.utils.belief_entropy import get_belief_entropy
+                        be = get_belief_entropy()
+                        last = getattr(be, "_last_result", None)
+                        if last is not None and last.adaptive_keep_last_n is not None:
+                            self._adaptive_keep_last_n = last.adaptive_keep_last_n
+                        if last is not None and last.adaptive_budget_ratio is not None:
+                            self._adaptive_budget_ratio = last.adaptive_budget_ratio
+                    except Exception:
+                        logger.debug("belief_entropy adaptive read failed", exc_info=True)
                     adaptive_kln = getattr(self, "_adaptive_keep_last_n", 4)
                     adaptive_budget = int(
                         self.context_budget_tokens
