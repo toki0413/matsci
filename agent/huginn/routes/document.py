@@ -196,7 +196,7 @@ async def ingest_to_kb(document_id: str) -> dict[str, Any]:
     # configured, we return a clear message instead of a 500.
     try:
         from huginn.server_context import _server_context
-        kb = getattr(_server_context, "knowledge_base", None)
+        kb = getattr(_server_context, "kb", None)
     except Exception:
         kb = None
 

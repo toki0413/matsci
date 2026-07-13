@@ -47,7 +47,17 @@ jobs:
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
             --ignore=tests/test_chaos_engineering.py \
-            --ignore=tests/stress
+            --ignore=tests/stress \
+            --tb=short --maxfail=5 2>&1 | tee pytest_output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output-${{ matrix.python-version }}
+          path: agent/pytest_output.txt
+          retention-days: 7
 
   # ponytail: 3 个集成测试文件原本串行跑, 单 job 30 分钟必超时
   # (最近 30+ 次 CI run 全部 fail/cancel). 拆成 matrix 并行,
@@ -98,7 +108,16 @@ jobs:
           TRANSFORMERS_OFFLINE: "1"
         run: |
           cd agent
-          pytest ${{ matrix.test-file }} -v --no-cov -m "integration and not network" --tb=short --timeout=${{ matrix.test-timeout }}
+          pytest ${{ matrix.test-file }} -v --no-cov -m "integration and not network" --tb=short --timeout=${{ matrix.test-timeout }} 2>&1 | tee pytest_integration_output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload integration test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-integration-${{ matrix.test-file }}
+          path: agent/pytest_integration_output.txt
+          retention-days: 7
 
   frontend-build:
     runs-on: ubuntu-latest
