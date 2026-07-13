@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from huginn.security.auth import require_api_key
 from huginn.server_core import get_context
 
-router = APIRouter(tags=["knowledge"])
+router = APIRouter(tags=["knowledge"], dependencies=[Depends(require_api_key)])
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ async def delete_knowledge(doc_id: str) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@router.get("/export", dependencies=[Depends(require_api_key)])
+@router.get("/export")
 async def export_data(
     source: str = "audit",
     fmt: str = "json",

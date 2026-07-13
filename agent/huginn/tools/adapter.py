@@ -964,20 +964,15 @@ class ToolAdapter:
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
                 try:
                     if is_async:
-                        try:
-                            loop = asyncio.get_running_loop()
-                        except RuntimeError:
-                            result = asyncio.run(
-                                asyncio.wait_for(
-                                    tool.call(payload, context), timeout=timeout
-                                )
+                        # 用统一 helper: 已在 running loop 时跑独立线程,
+                        # 之前 loop.run_until_complete 在 running loop 下
+                        # 必抛 "already running", 让 sync caller 拿不到结果.
+                        from huginn.utils.async_bridge import run_async
+                        result = run_async(
+                            asyncio.wait_for(
+                                tool.call(payload, context), timeout=timeout
                             )
-                        else:
-                            result = loop.run_until_complete(
-                                asyncio.wait_for(
-                                    tool.call(payload, context), timeout=timeout
-                                )
-                            )
+                        )
                     else:
                         result = tool.call(payload, context)
                 except asyncio.TimeoutError:

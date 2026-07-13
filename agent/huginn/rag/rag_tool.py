@@ -71,7 +71,13 @@ class RAGTool(HuginnTool):
                 encrypt_metadata=encrypt_metadata,
             )
         else:
-            self.store = VectorStore(persist_dir=persist_dir)
+            # ponytail: 用独立 collection, 不和 LongTermMemory 的 huginn_knowledge
+            # 混在一起. 否则 KB 不可用时文档块会污染 agent 记忆检索结果.
+            # 生产路径下 KB 总会注入, 这条 fallback 只在 KB 初始化失败/CLI
+            # 单跑时触发, 但一旦触发不能写错地方.
+            self.store = VectorStore(
+                persist_dir=persist_dir, collection_name="huginn_rag"
+            )
 
         # 层次化路由检索：识别 VASP/LAMMPS/Gaussian 等14种软件 + 17种方法关键词
         # 命中路由时在对应子索引里优先搜，提升精度；没命中就退回普通语义搜索

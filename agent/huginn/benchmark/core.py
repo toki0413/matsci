@@ -327,6 +327,48 @@ class BenchmarkSuite:
             category="mechanical",
             tags=["elastic", "copper"],
         ))
+        # 12. inverse design: target property → candidate composition (reverse reasoning)
+        self.add(BenchmarkCase(
+            task="给定目标带隙为 1.5 eV 的直接带隙半导体，反推一个可能的钙钛矿组成，"
+                 "并说明从目标性质到候选材料的逆向推理链。",
+            rubric_items=[
+                {"criterion": "mentions specific candidate composition",
+                 "weight": 2,
+                 "keywords": ["ba", "sn", "in", "ga", "masn", "fassn", "cs sn"]},
+                {"criterion": "mentions reverse reasoning chain (property→structure→composition)",
+                 "weight": 2,
+                 "keywords": ["bandgap", "tolerance factor", "octahedral", "direct gap",
+                              "absorption", "perovskite"]},
+                {"criterion": "mentions verification method",
+                 "weight": 1,
+                 "keywords": ["dft", "verify", "calculate", "confirm", "validate"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="inverse_design",
+            tags=["reverse_reasoning", "perovskite", "bandgap"],
+        ))
+        # 13. inverse design: target performance → structural features (reverse reasoning)
+        self.add(BenchmarkCase(
+            task="设计一个热导率低于 1 W/mK 的热电材料，反推所需的微观结构特征，"
+                 "并给出至少一个候选材料体系及其结构设计依据。",
+            rubric_items=[
+                {"criterion": "mentions low thermal conductivity mechanism",
+                 "weight": 2,
+                 "keywords": ["phonon", "scattering", "defect", "grain boundary",
+                              "anharmonic", "rattling", "complex structure"]},
+                {"criterion": "mentions candidate material system",
+                 "weight": 2,
+                 "keywords": ["skutterudite", "clathrate", "pbte", "bi2te3",
+                              "half-heusler", "zintl"]},
+                {"criterion": "mentions reverse design logic (target→structure→material)",
+                 "weight": 1,
+                 "keywords": ["structural", "design", "tailor", "engineer",
+                              "optimize", "hierarchical"]},
+            ],
+            evaluator=rubric_evaluator,
+            category="inverse_design",
+            tags=["reverse_reasoning", "thermoelectric", "thermal"],
+        ))
         return self
 
     def matscibench_cases(self) -> BenchmarkSuite:

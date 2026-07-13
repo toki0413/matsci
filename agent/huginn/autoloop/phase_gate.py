@@ -367,12 +367,16 @@ class PhaseGateState:
         self.pending_transition: tuple[str, str] | None = None
         self.submitted_evidence: dict[str, Any] = {}
         self.overrides: set[tuple[str, str]] = set()
+        # override 元数据 (并行于 overrides set): 谁/何时/为何 override
+        # ponytail: 并行结构, set.add 不写 meta 则 meta 缺. 升级: set→dict 合并
+        self.override_meta: dict[tuple[str, str], dict] = {}
 
     def reset(self) -> None:
         self.history.clear()
         self.pending_transition = None
         self.submitted_evidence.clear()
         self.overrides.clear()
+        self.override_meta.clear()
 
     def last_gate(self) -> PhaseGate | None:
         return self.history[-1] if self.history else None

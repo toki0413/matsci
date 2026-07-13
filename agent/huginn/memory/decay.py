@@ -48,7 +48,8 @@ class MemoryDecayPolicy:
 
         with memory._connect() as conn:
             rows = conn.execute(
-                "SELECT id, importance, access_count, created_at, last_accessed, tier FROM memories"
+                "SELECT id, importance, access_count, created_at, last_accessed, tier, "
+                "last_decay_access_count FROM memories"
             ).fetchall()
 
             promoted = 0
@@ -57,6 +58,12 @@ class MemoryDecayPolicy:
                 importance = row["importance"]
                 access_count = row["access_count"]
                 tier = row["tier"] if "tier" in row.keys() else "mid"
+                # 旧库没这列时 row["last_decay_access_count"] 取不到, 默认 0
+                last_decay_count = (
+                    row["last_decay_access_count"]
+                    if "last_decay_access_count" in row.keys()
+                    else 0
+                ) or 0
                 created_at = self._parse_dt(row["created_at"]) or now
                 last_accessed = self._parse_dt(row["last_accessed"]) or created_at
 
@@ -65,15 +72,18 @@ class MemoryDecayPolicy:
 
                 # Decay importance based on idle time.
                 new_importance = importance * (self.decay_per_day**idle_days)
-                # Boost based on historical access.
+                # Boost based on visits since last decay — not cumulative
+                # access_count, otherwise each decay re-adds the whole history
+                # and importance gets pinned to 1.0 forever.
+                new_visits = max(0, access_count - last_decay_count)
                 new_importance = min(
-                    1.0, new_importance + self.access_boost * access_count
+                    1.0, new_importance + self.access_boost * new_visits
                 )
 
-                if abs(new_importance - importance) > 0.001:
+                if abs(new_importance - importance) > 0.001 or new_visits > 0:
                     conn.execute(
-                        "UPDATE memories SET importance = ? WHERE id = ?",
-                        (round(new_importance, 4), entry_id),
+                        "UPDATE memories SET importance = ?, last_decay_access_count = ? WHERE id = ?",
+                        (round(new_importance, 4), access_count, entry_id),
                     )
                     decayed += 1
 

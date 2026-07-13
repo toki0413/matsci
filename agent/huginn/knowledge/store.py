@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import uuid
 from datetime import datetime
@@ -97,10 +98,164 @@ def _chunk_text(
     return chunks
 
 
+# ── BM25 关键词检索 (与向量检索做 RRF 混合) ──────────────────────────
+# ponytail: 不引入 rank_bm25 依赖, 手写倒排索引. k1=1.5/b=0.75 是 Robertson-
+# Sparck Jones 经验值. 单进程内存索引, KB < 100K chunks 性能可接受.
+# 升级路径: KB 超 100K chunks 时换 SQLite FTS5 或 Jieba 分词 (中文术语更准).
+
+_BM25_TOKEN_RE = re.compile(r'[A-Za-z0-9_]+|[\u4e00-\u9fff]')
+
+
+def _tokenize(text: str) -> list[str]:
+    """BM25 分词: ASCII 字母数字序列 + CJK 单字.
+
+    ponytail: 没有 Jieba, 中文按字切. "高熵合金" 拆成 ["高","熵","合","金"],
+    BM25 靠 tf 权重让多字命中的 doc 排名靠前. 不完美但零依赖.
+    """
+    if not text:
+        return []
+    return _BM25_TOKEN_RE.findall(text.lower())
+
+
+class _BM25Index:
+    """In-memory BM25 倒排索引. dirty 时从 ChromaDB 全量重建."""
+
+    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
+        self._k1 = k1
+        self._b = b
+        # chunk_id → tokens (保留顺序, 用于 rebuild)
+        self._docs: list[tuple[str, list[str]]] = []
+        # 倒排索引: token → [(doc_idx, tf)]; df: token → 文档频次; doc_len 每篇长度
+        self._postings: dict[str, list[tuple[int, int]]] = {}
+        self._df: dict[str, int] = {}
+        self._doc_len: list[int] = []
+        self._avgdl: float = 0.0
+        self._built: bool = False
+
+    def add(self, chunk_id: str, text: str) -> None:
+        self._docs.append((chunk_id, _tokenize(text)))
+        # 增量加入后, 索引视为失效, 下次 search 前 rebuild
+        self._built = False
+
+    def _build(self) -> None:
+        df: dict[str, int] = {}
+        postings: dict[str, list[tuple[int, int]]] = {}
+        doc_len: list[int] = []
+        for i, (_cid, toks) in enumerate(self._docs):
+            doc_len.append(len(toks))
+            tf_map: dict[str, int] = {}
+            for t in toks:
+                tf_map[t] = tf_map.get(t, 0) + 1
+            for t, tf in tf_map.items():
+                df[t] = df.get(t, 0) + 1
+                postings.setdefault(t, []).append((i, tf))
+        self._df = df
+        self._postings = postings
+        self._doc_len = doc_len
+        self._avgdl = (sum(doc_len) / len(doc_len)) if doc_len else 0.0
+        self._built = True
+
+    def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+        """返回 [(chunk_id, score), ...] 按分数降序. 没命中返回 []."""
+        if not self._built:
+            self._build()
+        if not self._docs or not query.strip():
+            return []
+        q_tokens = _tokenize(query)
+        if not q_tokens:
+            return []
+        # query 词频加权: 多次出现的词权重更高
+        q_tf: dict[str, int] = {}
+        for t in q_tokens:
+            q_tf[t] = q_tf.get(t, 0) + 1
+
+        N = len(self._docs)
+        scores: dict[int, float] = {}
+        for t, qf in q_tf.items():
+            df = self._df.get(t, 0)
+            if df == 0:
+                continue
+            # IDF (Robertson-Sparck Jones), +1 防 0/负
+            idf = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
+            for doc_idx, tf in self._postings.get(t, []):
+                dl = self._doc_len[doc_idx]
+                denom = self._k1 * (1 - self._b + self._b * dl / (self._avgdl or 1.0)) + tf
+                scores[doc_idx] = scores.get(doc_idx, 0.0) + idf * (self._k1 + 1) * tf / denom * qf
+
+        if not scores:
+            return []
+        ranked = sorted(
+            ((self._docs[i][0], s) for i, s in scores.items()),
+            key=lambda x: -x[1],
+        )
+        return ranked[:top_k]
+
+
+# ── 文档格式提取 (DOCX / XLSX / LaTeX) ──────────────────────────────
+# ponytail: python-docx 和 openpyxl 已装, 直接用. LaTeX 零依赖 regex strip.
+# 三者都 graceful: 库缺失或解析失败退回 UTF-8, 上层 _extract_text 再兜底.
+
+def _extract_docx(content: bytes) -> str:
+    """从 .docx 提取段落文本, 含表格."""
+    import io
+    try:
+        import docx
+    except ImportError:
+        return content.decode("utf-8", errors="ignore")
+    doc = docx.Document(io.BytesIO(content))
+    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells]
+            if any(c for c in cells):
+                parts.append("\t".join(cells))
+    return "\n".join(parts)
+
+
+def _extract_xlsx(content: bytes) -> str:
+    """从 .xlsx 提取所有 sheet 的单元格, tab 分隔列, 换行分隔行."""
+    import io
+    try:
+        import openpyxl
+    except ImportError:
+        return content.decode("utf-8", errors="ignore")
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    parts = []
+    for sheet in wb:
+        for row in sheet.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            if any(c.strip() for c in cells):
+                parts.append("\t".join(cells))
+    wb.close()
+    return "\n".join(parts)
+
+
+def _extract_latex(content: bytes) -> str:
+    """剥离 LaTeX 命令, 保留正文. 零依赖 regex."""
+    text = content.decode("utf-8", errors="ignore")
+    # 行注释 (% 开头, 但不是 \%)
+    text = re.sub(r'(?<!\\)%.*', '', text)
+    # \begin{env} / \end{env} 标记
+    text = re.sub(r'\\(begin|end)\{[^}]*\}', '', text)
+    # \command[opt]{arg} → arg (保留内容, 去掉命令名和可选参数)
+    text = re.sub(r'\\[a-zA-Z]+\*?(?:\[[^\]]*\])?\{([^}]*)\}', r'\1', text)
+    # 独立命令 \command → 空 (如 \centering \hline \newpage)
+    text = re.sub(r'\\[a-zA-Z]+\*?', '', text)
+    # 数学环境 $...$ $$...$$ 保留内容
+    text = text.replace('$$', '').replace('$', '')
+    # 残留花括号
+    text = text.replace('{', '').replace('}', '')
+    # 多余空行压成一段
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+
 def _extract_text(filename: str, content: bytes) -> str:
     """Extract plain text from supported file types.
 
     Images and scanned PDFs fall back to OCR when normal extraction is empty.
+    DOCX / XLSX / LaTeX are handled by dedicated helpers below.
     """
     from huginn.knowledge.ocr_loader import extract_text_with_ocr, is_image_file
 
@@ -126,6 +281,15 @@ def _extract_text(filename: str, content: bytes) -> str:
             if ocr_text.strip():
                 return ocr_text
         return text
+
+    if lower.endswith(".docx"):
+        return _extract_docx(content)
+
+    if lower.endswith(".xlsx"):
+        return _extract_xlsx(content)
+
+    if lower.endswith(".tex"):
+        return _extract_latex(content)
 
     if lower.endswith((".txt", ".md", ".py", ".json", ".yaml", ".yml", ".toml")):
         return content.decode("utf-8", errors="ignore")
@@ -417,6 +581,11 @@ class KnowledgeBase:
         except Exception:
             pass
 
+        # BM25 索引 (lazy): 和向量检索做 RRF 混合, 提高材料术语 / 精确匹配命中率.
+        # _bm25_dirty=True 表示首次查询或写入后需要从 ChromaDB 全量重建.
+        self._bm25: _BM25Index | None = None
+        self._bm25_dirty: bool = True
+
     @property
     def model(self) -> _EmbeddingModel:
         if self._model is None:
@@ -430,6 +599,83 @@ class KnowledgeBase:
                 self._semantic_cache.flush()
             except Exception:
                 logger.debug("flush failed", exc_info=True)
+
+    def _ensure_bm25_index(self) -> None:
+        """dirty 时从 ChromaDB 全量重建 BM25 索引.
+
+        ponytail: 全量重建 O(N), KB < 100K chunks 时延迟 < 1s, 写入频率低
+        (用户上传文档), 实测可接受. 多进程部署需外部锁; 真正热点时换 SQLite FTS5.
+        """
+        if self._bm25 is not None and not self._bm25_dirty:
+            return
+        try:
+            data = self.collection.get(include=["documents"])
+            idx = _BM25Index()
+            for cid, doc in zip(data.get("ids") or [], data.get("documents") or []):
+                idx.add(cid, doc or "")
+            idx._build()
+            self._bm25 = idx
+            self._bm25_dirty = False
+        except Exception:
+            logger.debug("BM25 index build failed", exc_info=True)
+            self._bm25 = None  # 退化到纯向量检索
+
+    def _rrf_fuse(
+        self,
+        vector_chunks: list[dict[str, Any]],
+        bm25_hits: list[tuple[str, float]],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Reciprocal Rank Fusion (k=60, Cormack 2009) 融合两路检索结果.
+
+        score = Σ 1/(k + rank). 向量和 BM25 各取 top_k*2 候选, 融合后取 top_k.
+        BM25-only chunks 用合成 distance (1 - rrf_score/max_score), 让下游
+        distance-based 排序一致, 不会被压到末尾.
+        """
+        K = 60
+        fused: dict[str, dict[str, Any]] = {}
+        rrf_scores: dict[str, float] = {}
+
+        for rank, c in enumerate(vector_chunks):
+            cid = c["chunk_id"]
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (K + rank)
+            if cid not in fused:
+                fused[cid] = c
+
+        bm25_only_ids: list[str] = []
+        for rank, (cid, _score) in enumerate(bm25_hits):
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (K + rank)
+            if cid not in fused:
+                bm25_only_ids.append(cid)
+
+        # BM25-only chunks 没在向量结果里, 从 ChromaDB 拉回 text/metadata
+        if bm25_only_ids:
+            try:
+                data = self.collection.get(ids=bm25_only_ids, include=["documents", "metadatas"])
+                for i, cid in enumerate(data.get("ids") or []):
+                    fused[cid] = {
+                        "chunk_id": cid,
+                        "text": data["documents"][i],
+                        "metadata": data["metadatas"][i],
+                        "distance": 1.0,  # 占位, 下面用 RRF 分数覆盖
+                    }
+            except Exception:
+                logger.debug("BM25-only chunk fetch failed", exc_info=True)
+
+        if not rrf_scores:
+            return vector_chunks
+        max_score = max(rrf_scores.values())
+        sorted_ids = sorted(rrf_scores.keys(), key=lambda cid: -rrf_scores[cid])
+        result: list[dict[str, Any]] = []
+        for cid in sorted_ids[:top_k]:
+            c = fused.get(cid)
+            if c is None:
+                continue
+            # 合成 distance: RRF 分数越高 → distance 越小, 下游排序一致
+            c["distance"] = 1.0 - (rrf_scores[cid] / max_score) if max_score > 0 else 0.5
+            result.append(c)
+        return result
+
 
     def add_document(self, filename: str, content: bytes) -> dict[str, Any]:
         """Ingest a document, chunk it, and store embeddings.
@@ -477,6 +723,7 @@ class KnowledgeBase:
         )
         self._query_cache.clear()
         self._flush_semantic_cache()
+        self._bm25_dirty = True  # BM25 索引需要重建
 
         safe_name = f"{doc_id}_{Path(filename).name}"
         doc_path = self.docs_dir / safe_name
@@ -553,6 +800,7 @@ class KnowledgeBase:
         )
         self._query_cache.clear()
         self._flush_semantic_cache()
+        self._bm25_dirty = True  # BM25 索引需要重建
 
         return {
             "doc_id": doc_id,
@@ -583,6 +831,7 @@ class KnowledgeBase:
             self.collection.delete(ids=ids)
             self._query_cache.clear()
             self._flush_semantic_cache()
+            self._bm25_dirty = True  # BM25 索引需要重建
         for path in self.docs_dir.glob(f"{doc_id}_*"):
             path.unlink(missing_ok=True)
         return len(ids) > 0
@@ -749,9 +998,10 @@ class KnowledgeBase:
 
         embedding = self.model.encode([text]).tolist()
         where_filter = {"domain": domain} if domain else None
+        # 向量候选扩到 2x top_k, 给 RRF 融合留重叠空间; 最终在下面截断回 top_k
         results = self.collection.query(
             query_embeddings=embedding,
-            n_results=min(top_k, max(1, self.collection.count())),
+            n_results=min(top_k * 2, max(1, self.collection.count())),
             where=where_filter,
             include=["documents", "metadatas", "distances"],
         )
@@ -765,6 +1015,22 @@ class KnowledgeBase:
                     "distance": results["distances"][0][i],
                 }
             )
+
+        # BM25 混合检索: RRF 融合向量 + 关键词检索, 提高材料术语 / 精确匹配命中率.
+        # ponytail: BM25 索引未按 domain 分片, 有 domain 过滤时跳过 (退回纯向量).
+        # 升级路径: BM25 按 domain 分片后, 有 domain 时也能混合检索.
+        if domain is None:
+            self._ensure_bm25_index()
+            if self._bm25 is not None and self._bm25._docs:
+                try:
+                    bm25_hits = self._bm25.search(text, top_k=top_k * 2)
+                    if bm25_hits:
+                        chunks = self._rrf_fuse(chunks, bm25_hits, top_k)
+                except Exception:
+                    logger.debug("BM25 hybrid retrieval failed", exc_info=True)
+
+        # 融合后或 BM25 未命中: 截断回 top_k, 保持下游递归激活 / reranking 行为不变
+        chunks = chunks[:top_k]
 
         # 递归激活: 从首轮结果的 domain_tags 提取标签, 再查一轮关联 chunks.
         # SillyTavern World Info 的递归激活模式 — chunk A 的内容触发 chunk B.

@@ -80,14 +80,32 @@ def test_rubric_normalization():
 def test_matsci_cases():
     suite = BenchmarkSuite("ms")
     suite.materials_science_research_cases()
-    assert len(suite.cases) >= 10
+    assert len(suite.cases) >= 12
     cats = {c.category for c in suite.cases}
     required = {
         "structure", "electronic", "database", "symbolic", "literature",
         "multiscale", "phase_diagram", "thermodynamics", "degradation",
-        "research_design", "mechanical",
+        "research_design", "mechanical", "inverse_design",
     }
     assert required.issubset(cats)
+
+
+def test_inverse_design_cases():
+    """D: 反向推理 case 存在且 rubric 结构正确."""
+    suite = BenchmarkSuite("ms")
+    suite.materials_science_research_cases()
+    inv_cases = [c for c in suite.cases if c.category == "inverse_design"]
+    assert len(inv_cases) == 2
+    for c in inv_cases:
+        assert "reverse_reasoning" in c.tags
+        assert c.rubric_items  # 必须有 rubric
+        assert len(c.rubric_items) >= 3  # 至少 3 条评分标准
+        # 每个 rubric item 必须有 criterion + weight + keywords
+        for item in c.rubric_items:
+            assert "criterion" in item
+            assert "weight" in item
+            assert "keywords" in item
+            assert item["weight"] > 0
 
 
 def test_summary_multi_trial():
@@ -153,7 +171,9 @@ if __name__ == "__main__":
     test_rubric_normalization()
     print("[OK] Rubric score normalization")
     test_matsci_cases()
-    print("[OK] materials_science_research_cases: 11 cases, 11 categories")
+    print("[OK] materials_science_research_cases: 13 cases, 12 categories (incl. inverse_design)")
+    test_inverse_design_cases()
+    print("[OK] inverse_design cases: 2 reverse-reasoning tasks with rubric")
     test_summary_multi_trial()
     print("[OK] summary(MultiTrialResult)")
     test_summary_plain_list()

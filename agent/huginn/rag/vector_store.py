@@ -27,6 +27,11 @@ def _embedding_model_cached() -> bool:
 class VectorStore:
     """Local vector store for material science documents."""
 
+    # 命名约定: 每个 collection 只装一种数据, 不混 schema.
+    # huginn_knowledge  -> LongTermMemory 的 agent 记忆 (memory_id/category/tier...)
+    # huginn_rag        -> RAGTool fallback 的文档块 (KB 不可用时才走)
+    # huginn_kb         -> KnowledgeBase 的文档块 (生产主路径, REST + agent 共享)
+    # <name>_encrypted  -> EncryptedVectorStore 自动加后缀
     DEFAULT_COLLECTION = "huginn_knowledge"
 
     # 增量缓存: 相同内容不重复计算 embedding, 1h TTL

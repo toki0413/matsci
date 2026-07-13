@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -131,7 +132,12 @@ class Orchestrator:
         ac = auto_confirm if auto_confirm is not None else self.auto_confirm
         profiles = self._format_profiles()
         # Planner role: lead model + planner persona override
-        lead = self.factory.create_lead(system_prompt_override=_PLANNER_PERSONA_PROMPT.format(profiles=profiles))
+        # 给 plan 阶段的 lead 一个独立 thread_id, 避免和 sub-agent / 其他
+        # 请求的 lead 在共享 checkpointer 上互相污染 messages 历史.
+        lead = self.factory.create_lead(
+            thread_id=f"plan:{uuid.uuid4().hex[:8]}",
+            system_prompt_override=_PLANNER_PERSONA_PROMPT.format(profiles=profiles),
+        )
         prompt = f"\n\nObjective: {objective}"
         state = lead.invoke(prompt)
         raw = self._extract_output(state)
@@ -145,7 +151,7 @@ class Orchestrator:
     async def _plan_legacy(self, objective: str) -> TaskPlan:
         """Legacy in-memory plan path (no persistence)."""
         profiles = self._format_profiles()
-        lead = self.factory.create_lead()
+        lead = self.factory.create_lead(thread_id=f"plan-legacy:{uuid.uuid4().hex[:8]}")
         prompt = (
             _PLANNER_PROMPT.format(profiles=profiles) + f"\n\nObjective: {objective}"
         )
@@ -309,8 +315,12 @@ class Orchestrator:
 
                     # Each sub-agent shares the long-term memory but gets its own session
                     sub_memory = self._make_sub_memory()
+                    # 必须传唯一 thread_id — factory 用全局共享 checkpointer,
+                    # thread_id 缺省会让并行 sub-agent 在 checkpointer 里互相
+                    # 读写 messages 历史 (状态串扰).
                     agent = self.factory.create(
                         task.agent_id,
+                        thread_id=f"sub:{task.task_id}:{uuid.uuid4().hex[:8]}",
                         memory_manager=sub_memory,
                         approval_callback=self._approval_callback,
                     )
@@ -370,7 +380,7 @@ class Orchestrator:
             "coherent final answer for the user. Be concise and highlight any conflicts or gaps.\n"
             + "\n".join(parts)
         )
-        lead = self.factory.create_lead()
+        lead = self.factory.create_lead(thread_id=f"synth:{uuid.uuid4().hex[:8]}")
         state = await asyncio.to_thread(lead.invoke, prompt)
         summary = self._extract_output(state)
         result.summary = summary

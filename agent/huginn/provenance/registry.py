@@ -87,8 +87,8 @@ class ProvenanceEntry:
 class _ProvenanceStore:
     """SQLite 持久层. append-only 写, 索引加速查询.
 
-    单连接 + 线程锁, ponytail: 不做连接池, provenance 写入频率低
-    (每个 tool call 一次), 单连接够用. 高吞吐时换 WAL + 连接池.
+    单连接 + 线程锁 + WAL (已在 __init__ 开启). ponytail: provenance 写入
+    频率低 (每个 tool call 一次), 单连接够用. 高吞吐时换连接池.
     """
 
     def __init__(self, db_path: str) -> None:
@@ -332,6 +332,16 @@ class _ProvenanceStore:
             )
             self._conn.commit()
             return cur.rowcount
+
+    def get_unreverted_ids_since(self, target_id: int) -> list[int]:
+        """返回 target_id 之后未回滚的事件 id (倒序, 供 mark_reverted 用)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id FROM entries WHERE id > ? AND reverted = 0 "
+                "ORDER BY id DESC",
+                (target_id,),
+            )
+            return [r[0] for r in cur.fetchall()]
 
     def close(self) -> None:
         with self._lock:
@@ -661,6 +671,7 @@ class ProvenanceRegistry:
 
         reverted_paths: list[str] = []
         snap_step_ids: list[str] = []
+        sid_to_path: dict[str, str] = {}  # revert 失败时按 sid 移除对应路径
 
         # reverse 顺序: 先回滚最新的
         for ev in reversed(events):
@@ -669,6 +680,7 @@ class ProvenanceRegistry:
             reverted_paths.append(ev.file_path)
             if ev.snapshot_step_id:
                 snap_step_ids.append(ev.snapshot_step_id)
+                sid_to_path[ev.snapshot_step_id] = ev.file_path
 
         # 真正的文件回滚: 调 SnapshotManager
         if snap_step_ids:
@@ -685,16 +697,16 @@ class ProvenanceRegistry:
                             mgr.revert(sid, ws)
                         except Exception:
                             logger.warning("revert %s failed (non-fatal)", sid, exc_info=True)
+                            # 失败的 path 从 reverted_paths 移除, 让调用方区分
+                            # 真回滚 vs 标记回滚但文件没动
+                            failed_path = sid_to_path.get(sid)
+                            if failed_path and failed_path in reverted_paths:
+                                reverted_paths.remove(failed_path)
             except ImportError:
                 logger.debug("SnapshotManager not available, skipping file revert")
 
-        # 标记 provenance 事件为已回滚
-        with self._store._lock:
-            cur = self._store._conn.execute(
-                "SELECT id FROM entries WHERE id > ? AND reverted = 0 ORDER BY id DESC",
-                (target_id,),
-            )
-            ev_ids = [r[0] for r in cur.fetchall()]
+        # 标记 provenance 事件为已回滚 (用 store 封装方法, 不直接访问 _lock/_conn)
+        ev_ids = self._store.get_unreverted_ids_since(target_id)
         if ev_ids:
             self._store.mark_reverted(ev_ids, reverted=True)
 

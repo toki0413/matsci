@@ -326,7 +326,12 @@ async def summarize_compact_messages(
 
         _prov_reg = ProvenanceRegistry.shared()
         if _prov_reg.summary().get("total_files", 0) > 0:
-            attachments = enhance_compact_attachments(to_summarize, _prov_reg)
+            # 之前是 `attachments = enhance_compact_attachments(...)` 直接覆盖,
+            # 把 _extract_compact_attachments 提取的活跃文件/已验证结论/关键数值
+            # 全丢了. 改成追加, 让 enhance 只补充 provenance/prefetch 信息.
+            extra = enhance_compact_attachments(to_summarize, _prov_reg)
+            if extra:
+                attachments = f"{attachments}\n{extra}" if attachments else extra
     except Exception:
         logger.debug("append provenance/prefetch to attachments failed", exc_info=True)
     if attachments:

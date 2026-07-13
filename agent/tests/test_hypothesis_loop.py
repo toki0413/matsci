@@ -100,8 +100,16 @@ class TestStatusTransitions:
     def test_supersede(self):
         g = HypothesisGraph()
         h = g.add_hypothesis("假设 E")
+        g.refute(h, evidence={})  # supersede 要求节点先测过
         g.supersede(h)
         assert g.get(h).status == "superseded"
+
+    def test_supersede_rejects_untested(self):
+        # 源状态校验: 没测过的节点不应被取代
+        g = HypothesisGraph()
+        h = g.add_hypothesis("未测试的假设")
+        with pytest.raises(HypothesisGraphError, match="未测试"):
+            g.supersede(h)
 
 
 # ── 查询 ────────────────────────────────────────────────────────────────────
@@ -212,6 +220,80 @@ class TestRefineFailed:
         assert g.get(h3).status == "untested"
 
 
+# ── pivot 战略转向 ──────────────────────────────────────────────────────────
+
+
+class TestPivot:
+    def test_pivot_template_creates_new_untested_node(self):
+        """无 model 时走模板, 新假设是 untested."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("假设 A: X 增加则 Y 增加")
+        g.refute(h, evidence={"err": "Y 反而减少"})
+        new_id = g.pivot(h, evidence={"err": "Y 反而减少"})
+        new_node = g.get(new_id)
+        assert new_node.status == "untested"
+        # pivot 不继承 parent (不是 derive 关系)
+        assert new_node.parent_id is None
+
+    def test_pivot_creates_pivot_edge_not_derive(self):
+        """pivot 关系用 "pivot" 类型, 不污染 children() 的 derive 过滤."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("原假设")
+        g.refute(h, evidence={})
+        new_id = g.pivot(h, evidence={})
+        pivot_edges = [e for e in g.edges()
+                       if e.edge_type == "pivot"
+                       and e.from_id == h and e.to_id == new_id]
+        assert len(pivot_edges) == 1
+        assert pivot_edges[0].evidence["reason"] == "max_refines_reached"
+        # 不应该有 derive 边连这两点
+        derive_edges = [e for e in g.edges()
+                        if e.edge_type == "derive"
+                        and e.from_id == h and e.to_id == new_id]
+        assert derive_edges == []
+
+    def test_pivot_does_not_pollute_derivation_chain(self):
+        """derivation_chain 只跟 derive 边, pivot 关系不算衍生."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("root")
+        g.refute(h, evidence={})
+        new_id = g.pivot(h, evidence={})
+        chain = g.derivation_chain(new_id)
+        # pivot 后新节点没 derive 祖先, chain 只含自己
+        assert chain == [g.get(new_id)]
+
+    def test_pivot_records_pivot_event(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("失败假设")
+        g.refute(h, evidence={})
+        new_id = g.pivot(h, evidence={})
+        piv_evs = [e for e in g.events() if e["event"] == "pivot"]
+        assert len(piv_evs) == 1
+        assert piv_evs[0]["node_id"] == new_id
+        assert piv_evs[0]["from_node"] == h
+        assert piv_evs[0]["failed_count"] >= 1
+
+    def test_pivot_with_mock_model_skips_llm(self):
+        """MagicMock model 应该走模板, 不调 LLM."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("原方向假设")
+        g.refute(h, evidence={})
+        mock_model = MagicMock()
+        new_id = g.pivot(h, evidence={}, model=mock_model)
+        mock_model.ainvoke.assert_not_called()
+        mock_model.invoke.assert_not_called()
+        # 模板生成, 新假设不为空
+        assert g.get(new_id).statement != ""
+
+    def test_pivot_does_not_supersede_failed_node(self):
+        """pivot 不会自动 supersede 失败节点 — 它已 refuted, 状态足够明确."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("原方向假设")
+        g.refute(h, evidence={})
+        g.pivot(h, evidence={})
+        assert g.get(h).status == "refuted"
+
+
 # ── 序列化 ──────────────────────────────────────────────────────────────────
 
 
@@ -312,19 +394,150 @@ class TestDualCoverage:
         g.support(h, evidence={"modality": "deductive"})
         assert g.dual_covered(h) is False
 
+    def test_dual_covered_false_with_same_data_source(self):
+        """两条不同 modality 但同一 data_source → 假双覆盖 (IPI 防御).
+        攻击场景: 两条 support 边都来自同一被污染的 CIF."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.support(h, evidence={
+            "modality": "deductive", "data_source": "polluted_cif"
+        })
+        g.support(h, evidence={
+            "modality": "numeric", "data_source": "polluted_cif"
+        })
+        assert g.dual_covered(h) is False
+
+    def test_dual_covered_true_with_different_data_sources(self):
+        """两条不同 modality 且不同 data_source → 真双覆盖."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.support(h, evidence={
+            "modality": "deductive", "data_source": "symbolic_tool"
+        })
+        g.support(h, evidence={
+            "modality": "numeric", "data_source": "gp_tool"
+        })
+        assert g.dual_covered(h) is True
+
+    def test_dual_covered_backward_compat_no_data_source(self):
+        """没有 data_source 字段时, 退回只检查 modality (向后兼容)."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.support(h, evidence={"modality": "deductive"})
+        g.support(h, evidence={"modality": "numeric"})
+        assert g.dual_covered(h) is True
+
     def test_needs_dual_coverage_root_node_false(self):
+        """单节点图无割点."""
         g = HypothesisGraph()
         h = g.add_hypothesis("H")
         assert g.needs_dual_coverage(h) is False
 
-    def test_needs_dual_coverage_with_child_true(self):
-        g = HypothesisGraph()
-        h1 = g.add_hypothesis("H1")
-        g.add_hypothesis("H2", parent_id=h1)
-        assert g.needs_dual_coverage(h1) is True
-
-    def test_needs_dual_coverage_deep_chain_true(self):
+    def test_needs_dual_coverage_chain_middle_true(self):
+        """链 H1→H2→H3: H2 是割点 (删后 H1 与 H3 断开)."""
         g = HypothesisGraph()
         h1 = g.add_hypothesis("H1")
         h2 = g.add_hypothesis("H2", parent_id=h1)
+        h3 = g.add_hypothesis("H3", parent_id=h2)
         assert g.needs_dual_coverage(h2) is True
+        # 端点不是割点
+        assert g.needs_dual_coverage(h1) is False
+        assert g.needs_dual_coverage(h3) is False
+
+    def test_needs_dual_coverage_star_center_true(self):
+        """星形: 中心 H1 是割点 (删后所有叶子断开)."""
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("H1")
+        h2 = g.add_hypothesis("H2", parent_id=h1)
+        h3 = g.add_hypothesis("H3", parent_id=h1)
+        assert g.needs_dual_coverage(h1) is True
+        assert g.needs_dual_coverage(h2) is False
+        assert g.needs_dual_coverage(h3) is False
+
+    def test_needs_dual_coverage_tree_leaf_false(self):
+        """树形叶子不是割点."""
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("H1")
+        h2 = g.add_hypothesis("H2", parent_id=h1)
+        h3 = g.add_hypothesis("H3", parent_id=h1)
+        assert g.needs_dual_coverage(h2) is False
+        assert g.needs_dual_coverage(h3) is False
+
+
+# ── 事件日志 ───────────────────────────────────────────────────────────────
+
+
+class TestEventLog:
+    """Session event log: 结构化事件可回放/调试 (Anthropic Managed Agents 模式)."""
+
+    def test_add_records_event(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H", parent_id=None)
+        evs = g.events()
+        assert len(evs) == 1
+        assert evs[0]["event"] == "add"
+        assert evs[0]["node_id"] == h
+        assert "ts" in evs[0]
+
+    def test_support_records_modality_and_data_source(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.support(h, evidence={
+            "modality": "deductive", "data_source": "symbolic_tool",
+        })
+        sup_evs = [e for e in g.events() if e["event"] == "support"]
+        assert len(sup_evs) == 1
+        assert sup_evs[0]["modality"] == "deductive"
+        assert sup_evs[0]["data_source"] == "symbolic_tool"
+
+    def test_refute_records_reason(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.refute(h, evidence={"errors": "带隙反而增加"})
+        ref_evs = [e for e in g.events() if e["event"] == "refute"]
+        assert len(ref_evs) == 1
+        assert "带隙反而增加" in ref_evs[0]["reason"]
+
+    def test_supersede_records_event(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("H")
+        g.refute(h, evidence={})  # supersede 要求节点先测过
+        g.supersede(h)
+        sup_evs = [e for e in g.events() if e["event"] == "supersede"]
+        assert len(sup_evs) == 1
+        assert sup_evs[0]["node_id"] == h
+
+    def test_refine_failed_records_refine_event_with_from_node(self):
+        g = HypothesisGraph()
+        h = g.add_hypothesis("如果 X 则 Y, 在所有条件下成立")
+        g.refute(h, evidence={})
+        new_id = g.refine_failed(h, evidence={})
+        refine_evs = [e for e in g.events() if e["event"] == "refine"]
+        assert len(refine_evs) == 1
+        assert refine_evs[0]["node_id"] == new_id
+        assert refine_evs[0]["from_node"] == h
+        assert refine_evs[0]["findings_count"] >= 0
+
+    def test_events_are_append_only_and_ordered(self):
+        """完整生命周期事件按发生顺序排列."""
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("H1")
+        g.refute(h1, evidence={"errors": "fail1"})
+        h2 = g.refine_failed(h1, evidence={"errors": "fail1"})
+        ev_types = [e["event"] for e in g.events()]
+        # add(h1) → refute(h1) → add(h2) → refine → supersede(h1)
+        assert ev_types == ["add", "refute", "add", "refine", "supersede"]
+        # ts 单调不减
+        timestamps = [e["ts"] for e in g.events()]
+        assert timestamps == sorted(timestamps)
+
+    def test_events_returns_copy(self):
+        """events() 返回副本, 修改不影响内部状态."""
+        g = HypothesisGraph()
+        g.add_hypothesis("H")
+        evs = g.events()
+        evs.clear()
+        assert len(g.events()) == 1
+
+    def test_empty_graph_events(self):
+        assert HypothesisGraph().events() == []

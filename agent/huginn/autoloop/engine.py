@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -188,11 +189,17 @@ class AutoloopEngine:
 
         self._should_stop = False
         self._iteration = 0
-        # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户
+        # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户;
+        # 超过 _max_consecutive_failures 时强制停止 autoloop, 避免无限重试坏方向.
         self._consecutive_failures = 0
+        self._max_consecutive_failures = 5
         # refine 循环计数: 防止 refute→refine 无限循环
         self._refine_count = 0
         self._max_refines = 8
+        # pivot 计数: refine 耗尽后换方向, 但 pivot 本身也要有上限 —
+        # 否则 pivot→fail→refine→pivot→fail 无限循环, 烧 token 不出结果.
+        self._pivot_count = 0
+        self._max_pivots = 3
         # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
         self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
@@ -629,6 +636,7 @@ class AutoloopEngine:
         state = get_shared_phase_gate_state()
         # override 优先: 已强制放行的转移直接记一条 approved, 不再评估
         if (from_phase, to_phase) in state.overrides:
+            meta = state.override_meta.get((from_phase, to_phase), {})
             state.history.append(
                 PhaseGate(
                     from_phase=from_phase,
@@ -638,6 +646,7 @@ class AutoloopEngine:
                         from_phase, to_phase
                     ),
                     feedback="override 放行",
+                    reviewer=meta.get("actor", "user"),
                 )
             )
             state.pending_transition = (from_phase, to_phase)
@@ -912,6 +921,15 @@ class AutoloopEngine:
 
         while self._iteration < max_iterations and not self._should_stop:
             self._iteration += 1
+            # pivot 上限: 连续换方向 _max_pivots 次还没跑通, 说明 objective 本身
+            # 有问题, 继续烧 token 没意义, 让循环自然退出.
+            if self._pivot_count >= self._max_pivots:
+                print(f"\n[Autoloop] pivot budget exhausted ({self._pivot_count}/{self._max_pivots}), stopping.")
+                logger.warning(
+                    "autoloop stopping: pivot budget exhausted (%d/%d)",
+                    self._pivot_count, self._max_pivots,
+                )
+                break
             print(f"\n[Autoloop] Iteration {self._iteration}/{max_iterations}: {objective}")
 
             # goal persistence: increment iteration count on active goal
@@ -991,6 +1009,10 @@ class AutoloopEngine:
                 )
             except Exception:
                 logger.warning("error in run: hypothesis_graph.add_hypothesis failed", exc_info=True)
+            # A: LUCID 必要条件闭环 — 把 LLM 自检的 necessary condition 加成派生节点
+            self._attach_lucid_prereqs(_current_hyp_id)
+            # B: 记当前假设 id 供 _plan_context_hint / _override_plan_mode 路由
+            self._current_hyp_id_for_plan = _current_hyp_id
 
             # 3. Plan
             phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
@@ -1042,21 +1064,26 @@ class AutoloopEngine:
             # Git commit after execute — EurekAgent artifact engineering:
             # 每轮 execute 后提交, 让下轮 perceive 能 git diff 看到本轮变更,
             # 而不是看到从 run 开始累积的全部 diff.
-            try:
-                import subprocess as _sp
-                _sp.run(["git", "add", "-A"], cwd=self.workspace,
-                        capture_output=True, timeout=10)
-                _msg = f"[iter {self._iteration}] {plan.get('mode','?')}: {plan.get('description','')[:80]}"
-                for _attempt in range(3):
-                    _r = _sp.run(["git", "commit", "-m", _msg], cwd=self.workspace,
-                                 capture_output=True, timeout=10)
-                    if _r.returncode == 0:
-                        break
-                    # index.lock 冲突等瞬时错误, 退避后重试
-                    if _attempt < 2:
-                        import time; time.sleep(1 * (_attempt + 1))
-            except Exception:
-                pass  # no git repo or git unavailable — not our problem
+            # subprocess.run / time.sleep 都是阻塞的, 在 async run() 里直接调
+            # 会卡住事件循环 — 用 asyncio.to_thread 把整段丢到线程池.
+            def _git_commit_after_execute():
+                try:
+                    import subprocess as _sp
+                    import time as _time
+                    _sp.run(["git", "add", "-A"], cwd=self.workspace,
+                            capture_output=True, timeout=10)
+                    _msg = f"[iter {self._iteration}] {plan.get('mode','?')}: {plan.get('description','')[:80]}"
+                    for _attempt in range(3):
+                        _r = _sp.run(["git", "commit", "-m", _msg], cwd=self.workspace,
+                                     capture_output=True, timeout=10)
+                        if _r.returncode == 0:
+                            break
+                        # index.lock 冲突等瞬时错误, 退避后重试
+                        if _attempt < 2:
+                            _time.sleep(1 * (_attempt + 1))
+                except Exception:
+                    pass  # no git repo or git unavailable — not our problem
+            await asyncio.to_thread(_git_commit_after_execute)
 
             # Deviation log: 执行结果与 plan 预期不符时记录
             # 借鉴 "Finding Your Unknowns" 的 implementation-notes 技术
@@ -1094,13 +1121,19 @@ class AutoloopEngine:
                 if _current_hyp_id is not None:
                     if tests_passed:
                         # 循环A: 演绎路径 — tests_passed 即演绎证据, 标记 modality
+                        # data_source: 标记数据来源, 供 dual_covered 检查独立性 (防 IPI)
                         self.hypothesis_graph.support(
                             _current_hyp_id,
-                            evidence={**validation, "modality": "deductive"},
+                            evidence={
+                                **validation,
+                                "modality": "deductive",
+                                "data_source": "symbolic_tool",
+                            },
                         )
                         # 循环B: 割边节点触发 GP 数值验证 (跨模态独立路径)
                         # ponytail: GP 与符号演绎基底正交, 但同模型权重
                         # 是软独立. 跨模型/跨模态是升级路径.
+                        # data_source 不同 → dual_covered 检查来源独立性
                         if self.hypothesis_graph.needs_dual_coverage(_current_hyp_id):
                             try:
                                 gp_verdict = self._verify_via_gp(_current_hyp_id, validation)
@@ -1109,6 +1142,7 @@ class AutoloopEngine:
                                         _current_hyp_id,
                                         evidence={
                                             "modality": "numeric",
+                                            "data_source": "gp_tool",
                                             "gp_fit": gp_verdict,
                                         },
                                     )
@@ -1118,72 +1152,110 @@ class AutoloopEngine:
                                     _current_hyp_id, exc_info=True,
                                 )
                     else:
-                        self.hypothesis_graph.refute(
-                            _current_hyp_id,
-                            evidence={"errors": validation.get("errors", "tests failed")},
+                        # C: 失败类型区分 — 工具失败不 refute, 直接下轮重试
+                        # RedTeam high severity findings 参与 classification
+                        failure_type = self._classify_failure(
+                            validation, redteam_cats=self._redteam_findings()
                         )
-                        # refine 闭环: refute 后生成修正假设, 下轮迭代处理
-                        if self._refine_count < self._max_refines:
-                            try:
-                                new_hyp = self.hypothesis_graph.refine_failed(
-                                    _current_hyp_id,
-                                    evidence={"errors": validation.get("errors", "tests failed")},
-                                    model=self._get_refine_model(),
-                                )
-                                self._refine_count += 1
-                                logger.info(
-                                    "refine %d/%d: %s → %s",
-                                    self._refine_count, self._max_refines,
-                                    _current_hyp_id, new_hyp,
-                                )
-                                # 发布 campaign.refine 事件
-                                self._emit_campaign("campaign.refine", {
-                                    "iteration": self._iteration,
-                                    "refine_count": self._refine_count,
-                                    "max_refines": self._max_refines,
-                                    "old_hypothesis": str(_current_hyp_id),
-                                    "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
-                                })
-                            except Exception:
-                                logger.warning("refine_failed failed", exc_info=True)
+                        if failure_type == "tool_error":
+                            logger.info(
+                                "tool_error for %s, skipping refute (will retry)",
+                                _current_hyp_id,
+                            )
+                            self._emit_campaign("campaign.retry", {
+                                "iteration": self._iteration,
+                                "hypothesis": str(_current_hyp_id),
+                                "reason": "tool_error",
+                            })
                         else:
-                            # refine 次数耗尽 → 战略 pivot, 不再修参数, 换方向
-                            try:
-                                _obj = self._objective if hasattr(self, "_objective") else ""
-                                new_hyp = self.hypothesis_graph.pivot(
-                                    _current_hyp_id,
-                                    evidence={"errors": validation.get("errors", "tests failed")},
-                                    model=self._get_refine_model(),
-                                    objective=_obj,
-                                )
-                                self._refine_count = 0  # reset: 新方向有新的 refine 预算
-                                logger.info(
-                                    "PIVOT: %s → %s (refine budget reset)",
-                                    _current_hyp_id, new_hyp,
-                                )
-                                self._emit_campaign("campaign.refine", {
-                                    "iteration": self._iteration,
-                                    "pivot": True,
-                                    "old_hypothesis": str(_current_hyp_id),
-                                    "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
-                                    "reason": "max_refines_reached",
-                                })
-                            except Exception:
-                                logger.warning(
-                                    "pivot failed for %s, giving up on this hypothesis",
-                                    _current_hyp_id, exc_info=True,
-                                )
+                            self.hypothesis_graph.refute(
+                                _current_hyp_id,
+                                evidence={"errors": validation.get("errors", "tests failed"),
+                                          "failure_type": failure_type},
+                            )
+                            # refine 闭环: refute 后生成修正假设, 下轮迭代处理
+                            if self._refine_count < self._max_refines:
+                                try:
+                                    new_hyp = self.hypothesis_graph.refine_failed(
+                                        _current_hyp_id,
+                                        evidence={"errors": validation.get("errors", "tests failed"),
+                                                  "failure_type": failure_type},
+                                        model=self._get_refine_model(),
+                                    )
+                                    self._refine_count += 1
+                                    logger.info(
+                                        "refine %d/%d (%s): %s → %s",
+                                        self._refine_count, self._max_refines,
+                                        failure_type,
+                                        _current_hyp_id, new_hyp,
+                                    )
+                                    # 发布 campaign.refine 事件
+                                    self._emit_campaign("campaign.refine", {
+                                        "iteration": self._iteration,
+                                        "refine_count": self._refine_count,
+                                        "max_refines": self._max_refines,
+                                        "failure_type": failure_type,
+                                        "old_hypothesis": str(_current_hyp_id),
+                                        "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
+                                    })
+                                except Exception:
+                                    logger.warning("refine_failed failed", exc_info=True)
+                            else:
+                                # refine 次数耗尽 → 战略 pivot, 不再修参数, 换方向
+                                try:
+                                    _obj = self._objective if hasattr(self, "_objective") else ""
+                                    new_hyp = self.hypothesis_graph.pivot(
+                                        _current_hyp_id,
+                                        evidence={"errors": validation.get("errors", "tests failed"),
+                                                  "failure_type": failure_type},
+                                        model=self._get_refine_model(),
+                                        objective=_obj,
+                                    )
+                                    self._refine_count = 0  # reset: 新方向有新的 refine 预算
+                                    self._pivot_count += 1
+                                    logger.info(
+                                        "PIVOT (%s): %s → %s (refine budget reset)",
+                                        failure_type, _current_hyp_id, new_hyp,
+                                    )
+                                    self._emit_campaign("campaign.refine", {
+                                        "iteration": self._iteration,
+                                        "pivot": True,
+                                        "failure_type": failure_type,
+                                        "old_hypothesis": str(_current_hyp_id),
+                                        "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
+                                        "reason": "max_refines_reached",
+                                    })
+                                except Exception:
+                                    logger.warning(
+                                        "pivot failed for %s, giving up on this hypothesis",
+                                        _current_hyp_id, exc_info=True,
+                                    )
             except Exception:
                 logger.warning("error in run: hypothesis_graph support/refute update failed", exc_info=True)
 
             # 连续失败计数: 通过则清零, 不通过则累加并在阈值时问用户
-            _tests_ok = _extract_tests_passed(validation)
+            # validate 阶段抛异常时 phase.result 是 None, _extract_tests_passed
+            # 默认放行 True 会把"validate 挂了"误判成"测试通过"并清零失败计数,
+            # 所以先看 phase.status — failed 直接视为没通过.
+            if phase.status == "failed":
+                _tests_ok = False
+                validation = {"tests_passed": False, "error": phase.error or "validate phase failed"}
+            else:
+                _tests_ok = _extract_tests_passed(validation)
             if _tests_ok:
                 self._consecutive_failures = 0
             else:
                 self._consecutive_failures += 1
                 # 连续 3+ 次失败, 问用户方向 (非阻塞, 超时走默认继续)
                 await self._maybe_clarify("validation_fail", validation)
+                # 连续失败超上限: objective 可能在死循环, 强制停.
+                # _should_stop 让 while 条件自然退出, 不抛异常, 调用方拿到正常返回.
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    logger.warning(
+                        "autoloop stopping: %d consecutive validation failures (max %d)",
+                        self._consecutive_failures, self._max_consecutive_failures,
+                    )
+                    self._should_stop = True
 
             # gate: validate→learn — 要有 tests_passed 证据才放行.
             # tests 没过 = 没有"测试通过"的证据, 传空 dict 让门阻断,
@@ -1340,6 +1412,7 @@ class AutoloopEngine:
         self._last_visual_context = ""  # reset per run, stale data shapes mislead
         self._current_prediction = ""  # reset JEPA prediction buffer
         self._last_surprise = 0.0
+        self._last_raw_hypothesis = ""  # 完整 LLM 输出, 含 LUCID review
         try:
             from huginn.agents.speculator import on_turn_start
             spec_result = on_turn_start(objective)
@@ -1559,15 +1632,155 @@ class AutoloopEngine:
                     _after = raw.split("SELECTED:", 1)[1].strip()
                     _sel = _after.split("\n")[0].strip() if _after else ""
                     self._last_hypothesis = _sel or raw
+                    self._last_raw_hypothesis = raw  # 保留 LUCID review 文本
                     return self._last_hypothesis
             # No SELECTED: found — fall back to first non-exception result
             for raw in results:
                 if not isinstance(raw, Exception) and raw:
-                    self._last_hypothesis = raw.strip()
+                    raw = raw.strip()
+                    self._last_hypothesis = raw
+                    self._last_raw_hypothesis = raw
                     return self._last_hypothesis
             return None
         except Exception:
             return None
+
+    @staticmethod
+    def _extract_lucid_prereqs(raw: str) -> dict[str, str]:
+        """从 LLM 输出里解析 LUCID review 的三项必要条件.
+
+        prompt 要求 LLM 在 SELECTED 后输出:
+        - necessary condition: ...
+        - hidden assumption: ...
+        - falsifiable test: ...
+
+        返回 {"necessary": ..., "hidden": ..., "falsifiable": ...}, 缺项为空串.
+        LLM 格式不固定时降级到关键词模糊匹配."""
+        if not raw:
+            return {"necessary": "", "hidden": "", "falsifiable": ""}
+        text = raw.lower()
+        result = {"necessary": "", "hidden": "", "falsifiable": ""}
+        # 关键词 + 后续行内容, 容忍中英文标点
+        patterns = {
+            "necessary": r"necessary[^:：]*[:：]\s*(.+)",
+            "hidden": r"hidden\s*assumption[^:：]*[:：]\s*(.+)",
+            "falsifiable": r"falsifiable\s*test[^:：]*[:：]\s*(.+)",
+        }
+        for key, pat in patterns.items():
+            m = re.search(pat, text)
+            if m:
+                # 取到行尾或句号
+                val = m.group(1).split("\n")[0].strip().rstrip(".。")
+                result[key] = val[:300]  # 长度限制, 防异常输入
+        return result
+
+    @staticmethod
+    def _classify_failure(
+        validation: dict[str, Any],
+        redteam_cats: list[str] | None = None,
+    ) -> str:
+        """根据 validation 证据分类失败类型, 决定走 retry/refine/pivot.
+
+        返回值:
+        - "tool_error": 工具崩溃/超时/连接失败 → 不 refute, 下轮重试同一假设
+        - "param_error": 输入参数错 → refine (改参数)
+        - "data_noise": 结果不确定/噪声大 → refine (重做或换方法)
+        - "hypothesis_error": 结果与假设相反 → refine 或 pivot (假设本身错)
+
+        优先级: tool_error (工具问题与假设无关) > RedTeam high severity findings
+        > 关键词匹配 param/noise > 默认 hypothesis_error.
+
+        ponytail: RedTeam findings 通过 redteam_cats 注入, 保持 staticmethod
+        可测性. 映射: methodology_gap/hidden_assumption → param_error,
+        confounder → data_noise, alternative_explanation → hypothesis_error.
+        升级: 让 LLM 对 ambiguous 失败做语义分类 (当前纯关键词+规则).
+        """
+        errors = str(validation.get("errors", ""))
+        result = str(validation.get("result", ""))
+        text = (errors + " " + result).lower()
+        # 工具失败: 超时/崩溃/连接/OOM — 不是假设错, 重试即可
+        tool_markers = (
+            "timeout", "timed out", "connection", "crash", "segfault",
+            "oom", "out of memory", "exception", "subprocess",
+            "slurm", "queue", "killed", "abort",
+        )
+        if any(m in text for m in tool_markers):
+            return "tool_error"
+        # RedTeam high severity findings: 对抗性发现优先于关键词匹配
+        # methodology_gap (方法论缺陷) / hidden_assumption (隐含前提缺失) → 改参数
+        # confounder (混淆变量) → 数据噪声, 需重做排除混淆
+        # alternative_explanation (替代解释) → 假设本身可能错
+        if redteam_cats:
+            _RT_MAP = {
+                "methodology_gap": "param_error",
+                "hidden_assumption": "param_error",
+                "confounder": "data_noise",
+                "alternative_explanation": "hypothesis_error",
+            }
+            for cat in redteam_cats:
+                if cat in _RT_MAP:
+                    return _RT_MAP[cat]
+        # 参数错: 输入无效/类型错/值错
+        param_markers = (
+            "invalid", "argument", "parameter", "value error",
+            "type error", "dimension", "shape mismatch", "key error",
+        )
+        if any(m in text for m in param_markers):
+            return "param_error"
+        # 数据噪声: 不确定/模糊/噪声大
+        noise_markers = (
+            "noise", "uncertain", "ambiguous", "inconclusive",
+            "not converge", "did not converge", "no clear",
+        )
+        if any(m in text for m in noise_markers):
+            return "data_noise"
+        # 默认: 假设错 (结果与预期相反, 或无明确错误但测试失败)
+        return "hypothesis_error"
+
+    def _redteam_findings(self) -> list[str]:
+        """拿最近一次 RedTeam 审查的 high severity findings category.
+
+        C: _classify_failure 用这些 category 覆盖关键词分类.
+        RedTeam reviewer 在 phase_gate_hook.reviewer_fn 上, _last_report
+        存最近一次审查结果. 失败返回空列表, 不影响分类.
+        """
+        try:
+            reviewer = getattr(self.phase_gate_hook, "reviewer_fn", None)
+            report = getattr(reviewer, "_last_report", None)
+            if not report:
+                return []
+            return [
+                f.category for f in report.findings
+                if f.severity == "high"
+            ]
+        except Exception:
+            return []
+
+    def _attach_lucid_prereqs(self, hyp_id: str) -> None:
+        """把 LUCID review 的 necessary condition 加成派生假设节点, 进 frontier 队列.
+
+        闭环: prompt 要求 LLM 自检必要条件, 但之前只取 SELECTED 行丢弃了 LUCID 文本.
+        现在解析出来, 把 necessary condition 转成 hypothesis_graph 的派生节点,
+        让 campaign 队列去验证它. 如果必要条件被 refute, 原假设也站不住.
+
+        ponytail: 只加 necessary (最关键), hidden/falsifiable 记到 evidence.
+        升级: necessary refute 时级联 refute parent (需改 refute 方法).
+        """
+        raw = getattr(self, "_last_raw_hypothesis", "")
+        if not raw or not hyp_id:
+            return
+        prereqs = self._extract_lucid_prereqs(raw)
+        necessary = prereqs["necessary"]
+        if not necessary:
+            return
+        try:
+            self.hypothesis_graph.add_hypothesis(
+                statement=f"[必要条件] {necessary}",
+                rationale=f"LUCID necessary condition for {hyp_id}",
+                parent_id=hyp_id,
+            )
+        except Exception:
+            logger.debug("attach lucid prereqs failed", exc_info=True)
 
     def _should_imaginate(self) -> bool:
         """是否触发想象力模式. 高 surprise 或连续 refine 时返回 True.
@@ -1790,6 +2003,9 @@ class AutoloopEngine:
 
         if not plan:
             return None
+
+        # B: 硬路由 — 根据上下文信号覆盖 LLM 的 mode 选择
+        plan = self._override_plan_mode(plan)
 
         # 落 PlanStore: 创建 plan → cost 确认门 → confirm/reject
         plan_store = self._get_plan_store()
@@ -2776,19 +2992,22 @@ class AutoloopEngine:
     def _verify_via_gp(self, hyp_id: str, validation: dict) -> dict:
         """循环B: 用 GP 数值验证做独立路径. 与符号演绎 (循环A) 基底正交.
 
-        best-effort: 从 validation / _last_execution_result 挖 (X, y),
-        挖不到就返回 agrees=False (不阻断主流程, 只是不加 numeric 边).
+        升级: fit + leave-one-out 风格 predict, 检查后验均值与实验值
+        的偏差是否在 ±2σ 内. 若有测试集 (X_test, y_test) 则用之, 否则
+        在训练集上做 LOO-style 检查 (GP 在 fit 数据上 predict 时, sigma
+        较小但仍有信号).
 
-        ponytail: 当前用「GP fit 成功」作为 agrees 信号 — 弱判定, 但已
-        与符号路径正交 (一个走结构推导, 一个走数据拟合). 升级路径:
-        解析节点的 testable_prediction 为数值区间, 用 GP predict 在
-        预测点查后验, 检查均值是否落在假设区间 ±2σ 内.
+        ponytail: ±2σ 是 ~95% 置信区间. 拒绝域 = 5%. 升级路径:
+        对假设的 testable_prediction 做数值区间解析, 用 KL(GP_posterior
+        || hypothesis_interval) 代替 ±2σ 检查.
         """
         exec_res = getattr(self, "_last_execution_result", None)
-        X = y = None
+        X = y = X_test = y_test = None
         for cand in (validation, exec_res if isinstance(exec_res, dict) else {}):
             X = cand.get("X") or cand.get("x_data") or cand.get("samples")
             y = cand.get("y") or cand.get("y_data") or cand.get("targets")
+            X_test = cand.get("X_test") or cand.get("x_test")
+            y_test = cand.get("y_test") or cand.get("y_true")
             if X is not None and y is not None:
                 break
             X = y = None
@@ -2796,17 +3015,57 @@ class AutoloopEngine:
             return {"agrees": False, "reason": "no numeric data for GP fit"}
 
         try:
+            import numpy as np
             from huginn.tools.sci.gp_tool import GPTool
 
             tool = GPTool()
-            fit_res = tool.call({"action": "fit", "X": X, "y": y})
-            if not getattr(fit_res, "success", False):
+
+            # 若有独立测试集, predict 在 X_test 上, 与 y_test 比对
+            # 否则 fit 后 predict 在 X 上做自洽检查 (弱信号, sigma 小)
+            pred_X = X_test if X_test is not None else X
+            pred_y_ref = y_test if y_test is not None else y
+
+            predict_res = tool.call({
+                "action": "predict",
+                "X": X, "y": y,
+                "X_new": pred_X,
+            })
+            if not getattr(predict_res, "success", False):
                 return {
                     "agrees": False,
-                    "reason": "GP fit failed",
-                    "error": getattr(fit_res, "error", ""),
+                    "reason": "GP predict failed",
+                    "error": getattr(predict_res, "error", ""),
                 }
-            return {"agrees": True, "gp_fit": getattr(fit_res, "data", None)}
+
+            data = getattr(predict_res, "data", None) or {}
+            mu = np.asarray(data.get("mean", []), dtype=float)
+            sigma = np.asarray(data.get("std", []), dtype=float)
+            y_ref = np.asarray(pred_y_ref, dtype=float)
+
+            # 后验一致检验: |y - mu| <= 2σ (95% CI)
+            # sigma=0 时退化为 |y - mu| < eps (GP 完全过拟合)
+            n = min(len(mu), len(y_ref))
+            if n == 0:
+                return {"agrees": True, "gp_fit": data,
+                        "reason": "GP fit ok, no comparable points"}
+            mu, sigma, y_ref = mu[:n], sigma[:n], y_ref[:n]
+            eps = 1e-8
+            deviation = np.abs(y_ref - mu)
+            tolerance = np.maximum(2.0 * sigma, eps)
+            agrees = bool(np.all(deviation <= tolerance))
+            max_dev = float(np.max(deviation))
+            max_tol = float(np.max(tolerance))
+            return {
+                "agrees": agrees,
+                "gp_fit": data,
+                "max_deviation": max_dev,
+                "max_tolerance": max_tol,
+                "n_points": n,
+                "reason": (
+                    f"posterior ±2σ check: max_dev={max_dev:.4g} "
+                    f"vs tol={max_tol:.4g} over {n} points"
+                ),
+            }
         except Exception as e:
             return {"agrees": False, "reason": f"GP verify error: {e}"}
 
@@ -4213,7 +4472,121 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
             ("composite", composite_block),
             ("pipeline", pipeline_block),
             ("subgoal", self._build_subgoal_block()),
+            ("ctx_hint", self._plan_context_hint()),
         ])
+
+    def _plan_context_hint(self) -> str:
+        """B: 把上下文信号转成 plan prompt 提示文本 (软路由).
+
+        让 LLM 知道当前图状态/失败次数/refine 次数, 倾向选验证型 mode.
+        硬路由在 _override_plan_mode 里做.
+        """
+        hints = []
+        # 割点节点需要双覆盖 → 倾向选能跑验证的 mode
+        try:
+            current_hyp = getattr(self, "_current_hyp_id_for_plan", None)
+            if current_hyp and self.hypothesis_graph.needs_dual_coverage(current_hyp):
+                hints.append(
+                    "CRITICAL: 当前假设是图的关键割点, 需要双模态验证. "
+                    "优先选 workflow/skill 跑符号验证, 不要只选 coder."
+                )
+        except Exception:
+            pass
+        # 连续失败 → 倾向换方向
+        cf = getattr(self, "_consecutive_failures", 0)
+        if cf >= 3:
+            hints.append(
+                f"WARNING: 已连续失败 {cf} 次. 考虑 explore 换参数空间, "
+                "或换一个完全不同的方法论."
+            )
+        # refine 次数多 → 假设可能方向错
+        rc = getattr(self, "_refine_count", 0)
+        if rc >= 3:
+            hints.append(
+                f"NOTE: 已 refine {rc} 次. 如果再失败可能需要 pivot 换方向."
+            )
+        # surprise 高 → 预测误差大, 倾向 explore 重新假设
+        surprise = getattr(self, "_last_surprise", 0.0)
+        if surprise > 0.5:
+            hints.append(
+                f"NOTE: 预测误差大 (surprise={surprise:.2f}). "
+                "预测与实际差异显著, 考虑 explore 重新假设或换方法论."
+            )
+        if not hints:
+            return ""
+        return "\n\nContext signals:\n" + "\n".join(f"- {h}" for h in hints) + "\n"
+
+    def _override_plan_mode(self, plan: dict[str, Any]) -> dict[str, Any]:
+        """B: 硬路由 — 在 LLM 选完 mode 后, 根据硬性规则覆盖.
+
+        只在极端情况覆盖, 不破坏 LLM 的常规选择:
+        - needs_dual_coverage=True → mode 不能是 coder (必须能跑验证)
+        - consecutive_failures >= 5 或 surprise > 0.9 → 强制 explore
+
+        覆盖记到 PhaseGateState.history 补审计缺口 (reviewer="auto_router"),
+        plan["override_reason"] 留结构化标记供调用方读取.
+
+        ponytail: 只覆盖极端情况, 常规让 LLM 决定.
+        budget tier 已由 _check_budget 处理, 这里不重复.
+        升级: campaign 队列状态 (queue 满则 workflow 批量验证).
+        """
+        current_mode = plan.get("mode", "coder")
+        # 割点节点: 强制非 coder mode
+        try:
+            current_hyp = getattr(self, "_current_hyp_id_for_plan", None)
+            if (current_hyp
+                    and self.hypothesis_graph.needs_dual_coverage(current_hyp)
+                    and current_mode == "coder"):
+                plan["mode"] = "workflow"
+                plan["override_reason"] = "cut_vertex_dual_coverage"
+                plan["description"] = (
+                    f"[auto-routed: 割点需双覆盖] {plan.get('description', '')}"
+                )
+                logger.info("override mode coder→workflow for cut vertex %s",
+                            current_hyp)
+                self._log_plan_override(
+                    "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖")
+        except Exception:
+            pass
+        # 连败/surprise 强制 explore (合并条件, 共享覆盖路径)
+        cf = getattr(self, "_consecutive_failures", 0)
+        surprise = getattr(self, "_last_surprise", 0.0)
+        explore_reasons: list[str] = []
+        if cf >= 5:
+            explore_reasons.append(f"连续失败{cf}次")
+        if surprise > 0.9:
+            explore_reasons.append(f"surprise={surprise:.2f}")
+        if explore_reasons and plan["mode"] != "explore":
+            reason = "+".join(explore_reasons)
+            plan["mode"] = "explore"
+            plan["override_reason"] = "force_explore"
+            plan["description"] = (
+                f"[auto-routed: {reason}] {plan.get('description', '')}"
+            )
+            logger.info("override mode →explore: %s", reason)
+            self._log_plan_override("force_explore", reason)
+        return plan
+
+    def _log_plan_override(self, reason_code: str, reason_text: str) -> None:
+        """把 mode 覆盖记到 PhaseGateState.history, 补审计缺口.
+
+        _override_plan_mode 之前只 logger.info, PhaseGate.history 不知道发生过
+        覆盖. 现在复用 history 通道, reviewer="auto_router" 标记来源.
+        失败不阻塞 (测试/无 phase_gate_hook 场景).
+        """
+        try:
+            from huginn.autoloop.phase_gate import (
+                get_shared_phase_gate_state, PhaseGate,
+            )
+            state = get_shared_phase_gate_state()
+            state.history.append(PhaseGate(
+                from_phase="plan", to_phase="plan",
+                status="approved",
+                feedback=f"[auto-routed] {reason_code}: {reason_text}",
+                reviewer="auto_router",
+            ))
+        except Exception:
+            logger.debug("log plan override failed", exc_info=True)
 
     def _parse_plan(self, response: str) -> dict[str, Any]:
         """Parse LLM plan response."""

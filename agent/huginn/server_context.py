@@ -68,6 +68,9 @@ class ServerContext:
     planner_agent: Any | None = None
     plan_store: PlanStore | None = None
     mcp_manager: Any | None = None
+    # 加密 RAG 管理器 (可选): encryption_enabled=True 时由 lifespan 初始化,
+    # 提供文档级 + DB 级加密. 与 kb (ChromaDB 明文) 独立存储.
+    encrypted_rag: Any | None = None
 
 
 def create_server_context(config: HuginnConfig | None = None) -> ServerContext:

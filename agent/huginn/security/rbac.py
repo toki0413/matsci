@@ -186,7 +186,9 @@ def jwt_decode(token: str, secret: str | bytes) -> dict[str, Any]:
     payload: dict[str, Any] = json.loads(_b64url_decode(p_b64))
 
     exp = payload.get("exp")
-    if exp is not None and int(time.time()) > int(exp):
+    if exp is None:
+        raise ValueError("JWT missing exp claim")
+    if int(time.time()) > int(exp):
         raise ValueError("JWT has expired")
 
     return payload

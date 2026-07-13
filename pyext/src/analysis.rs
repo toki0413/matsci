@@ -5,21 +5,40 @@ use pyo3::types::{PyDict, PyList};
 ///
 /// `positions` is a flat slice of length `n_frames * n_atoms * 3`,
 /// ordered as [frame0_atom0_x, frame0_atom0_y, frame0_atom0_z, ...].
-pub fn msd_from_slice(positions: &[f64], n_frames: usize, n_atoms: usize) -> Vec<(i64, f64)> {
+///
+/// `box_dims`: optional orthorhombic box `[lx, ly, lz]`. When supplied,
+/// the minimum image convention is applied to each displacement so the
+/// caller may pass wrapped coordinates (LAMMPS dump default). When None,
+/// positions are assumed already unwrapped and used as-is.
+///
+/// ponytail: MIC is exact for displacements up to L/2; for longer-time
+/// diffusion a full unwrap (xu/yu/zu) is the correct upgrade path.
+pub fn msd_from_slice(
+    positions: &[f64],
+    n_frames: usize,
+    n_atoms: usize,
+    box_dims: Option<[f64; 3]>,
+) -> Vec<(i64, f64)> {
     if n_frames < 2 || n_atoms == 0 {
         return Vec::new();
     }
 
     let mut result = Vec::with_capacity(n_frames - 1);
+    let cell = box_dims.filter(|b| b[0] > 0.0 && b[1] > 0.0 && b[2] > 0.0);
 
     for frame_idx in 1..n_frames {
         let mut sum = 0.0;
         for atom_idx in 0..n_atoms {
             let ref_base = atom_idx * 3;
             let cur_base = (frame_idx * n_atoms + atom_idx) * 3;
-            let dx = positions[cur_base] - positions[ref_base];
-            let dy = positions[cur_base + 1] - positions[ref_base + 1];
-            let dz = positions[cur_base + 2] - positions[ref_base + 2];
+            let mut dx = positions[cur_base] - positions[ref_base];
+            let mut dy = positions[cur_base + 1] - positions[ref_base + 1];
+            let mut dz = positions[cur_base + 2] - positions[ref_base + 2];
+            if let Some(b) = cell {
+                dx -= b[0] * (dx / b[0]).round();
+                dy -= b[1] * (dy / b[1]).round();
+                dz -= b[2] * (dz / b[2]).round();
+            }
             sum += dx * dx + dy * dy + dz * dz;
         }
         result.push((frame_idx as i64, sum / n_atoms as f64));
