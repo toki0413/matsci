@@ -274,6 +274,20 @@ class RedTeamReviewer:
                         mitigation="确认物理合理性后再采信结果, 或修复后重跑",
                     ))
 
+        # 视觉自验证: 工具产出的数值数据有 _visual_self_check 字段 (Nullmax 启发).
+        # low confidence 或有 caveats 时, 红队报告标注可视化结论不可信.
+        vsc = evidence.get("_visual_self_check")
+        if isinstance(vsc, dict):
+            conf = float(vsc.get("confidence", 1.0))
+            caveats = vsc.get("caveats") or []
+            if conf < 0.3 or any("too_few" in c or "low_snr" in c for c in caveats):
+                findings.append(RedTeamFinding(
+                    category="methodology_gap",
+                    description=f"可视化数据置信度低 (confidence={conf:.2f}): {'; '.join(caveats[:3])}",
+                    severity="medium",
+                    mitigation="增加数据点 / 检查数据质量 / 用替代方法交叉验证可视化结论",
+                ))
+
         mode = str(evidence.get("mode", ""))
         # 单一方法验证: 没有交叉验证
         if mode and not any(
