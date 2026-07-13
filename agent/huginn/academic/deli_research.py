@@ -908,7 +908,11 @@ class DeliAutoResearch:
 
         # 懒加载 AutoloopEngine — 不可用就跳过
         try:
-            from huginn.autoloop.engine import AutoloopEngine
+            from huginn.autoloop.engine import (
+                AutoloopEngine,
+                load_autoloop_snapshot,
+                save_autoloop_snapshot,
+            )
         except ImportError:
             state.integrity_log.append(
                 "[compute] AutoloopEngine unavailable, skipping computational loop"
@@ -928,6 +932,50 @@ class DeliAutoResearch:
                 stage_index=i,
                 total_stages=len(comp_gaps),
             )
+
+            # 优先复用 CLI 或上一轮存下的快照, 避免重跑 autoloop.
+            # ponytail: 同一 workspace + 同一 objective 的结果可复用, 这是 autoloop
+            # 的不变量; 想强制重跑就删 .huginn/autoloop_results/{hash}.json
+            snapshot = load_autoloop_snapshot(ws_path, objective)
+            if snapshot is not None:
+                comp_entry = {
+                    "gap": gap.get("gap", ""),
+                    "objective": objective,
+                    "success": snapshot.get("success", False),
+                    "goal_achieved": snapshot.get("goal_achieved"),
+                    "goal_judgment": snapshot.get("goal_judgment"),
+                    "report_path": snapshot.get("report_path"),
+                    "provenance_path": snapshot.get("provenance_path"),
+                    "trajectory_path": snapshot.get("trajectory_path"),
+                    "total_time_seconds": snapshot.get("total_time_seconds", 0.0),
+                    "phases_count": snapshot.get("phases_count", 0),
+                    "phases_summary": snapshot.get("phases_summary", []),
+                    "from_snapshot": True,
+                }
+                if comp_entry.get("report_path"):
+                    try:
+                        _rp = Path(comp_entry["report_path"])
+                        if _rp.exists():
+                            comp_entry["report_excerpt"] = _rp.read_text(
+                                encoding="utf-8"
+                            )[:3000]
+                    except Exception:
+                        pass
+                state.computational_data[objective] = comp_entry
+                state.gaps_filled.append(gap.get("gap", objective))
+                state.integrity_log.append(
+                    f"[compute] gap '{gap.get('gap', '?')[:50]}' → reused snapshot"
+                )
+                await self._emit_progress(
+                    state, "compute_gap", "done",
+                    f"[{i+1}/{len(comp_gaps)}] reused snapshot",
+                    pipeline="computational_loop",
+                    stage_label=objective[:60],
+                    stage_index=i,
+                    total_stages=len(comp_gaps),
+                )
+                continue
+
             try:
                 result = await engine.run(
                     objective=objective,
@@ -961,6 +1009,9 @@ class DeliAutoResearch:
                             )[:3000]
                     except Exception:
                         pass
+
+                # 跑完存快照, 下次同一 objective 直接复用, 不再重跑 autoloop
+                save_autoloop_snapshot(result, ws_path)
 
                 state.computational_data[objective] = comp_entry
                 state.gaps_filled.append(gap.get("gap", objective))
@@ -1109,6 +1160,39 @@ class DeliAutoResearch:
                         )
         except Exception:
             pass
+
+        # 3. 查 computational_data — autoloop 跑出来的结构化结果
+        # 每个 objective 的 phases_summary / goal_judgment 拍平成数值行喂给 SR+GP
+        for objective, comp_entry in state.computational_data.items():
+            if not isinstance(comp_entry, dict):
+                continue
+            # ponytail: 直接抽数值字段, 不做语义解读; SR 自己找关系
+            row: dict[str, float] = {}
+            for k in ("total_time_seconds", "phases_count",
+                      "success", "goal_achieved"):
+                v = comp_entry.get(k)
+                if isinstance(v, (int, float)):
+                    row[k] = float(v)
+            # phases_summary: list of {name, status} — 按 status 计数
+            phases = comp_entry.get("phases_summary") or []
+            if isinstance(phases, list):
+                status_count: dict[str, int] = {}
+                for p in phases:
+                    if isinstance(p, dict):
+                        s = str(p.get("status", "unknown"))
+                        status_count[s] = status_count.get(s, 0) + 1
+                for s, c in status_count.items():
+                    col = "phase_" + re.sub(r"[^a-zA-Z0-9_]", "_", s)
+                    row[col] = float(c)
+            # goal_judgment: dict — 抽数值字段
+            gj = comp_entry.get("goal_judgment")
+            if isinstance(gj, dict):
+                for k, v in gj.items():
+                    if isinstance(v, (int, float)):
+                        col = "gj_" + re.sub(r"[^a-zA-Z0-9_]", "_", str(k))
+                        row[col] = float(v)
+            if len(row) >= 2:
+                data_rows.append(row)
 
         if not data_rows:
             return None
@@ -1793,6 +1877,10 @@ class DeliAutoResearch:
                             f"only {verified_count}/{len(unverified)} mathematical structures "
                             f"verified (dimensional/consistency check)"
                         )
+            # 计算数据落地检查: autoloop 跑出来的东西得真用上, 不能白跑
+            ok, reason = self._check_computational_data_usage(state)
+            if not ok:
+                issues.append(reason)
         elif stage == ResearchStage.CITATION_VERIFY:
             if state.citation_issues:
                 issues.append(f"{len(state.citation_issues)} citation issues found")
@@ -1805,6 +1893,40 @@ class DeliAutoResearch:
             )
         else:
             state.integrity_log.append(f"[gate:{stage.value}] PASSED")
+
+    def _check_computational_data_usage(
+        self, state: ResearchState
+    ) -> tuple[bool, str]:
+        """DRAFTING gate 子检查: methods/results 是否真引用了 autoloop 计算数据.
+
+        computational_data 非空但章节没引用 -> 不通过. 对齐"完成判据排他性":
+        没用上计算数据不算完成, autoloop 不能白跑.
+        """
+        if not state.computational_data:
+            return True, ""
+
+        methods = state.draft_sections.get("methods", "") + state.draft_sections.get(
+            "methodology", ""
+        )
+        results = state.draft_sections.get("results", "")
+        combined = (methods + " " + results).lower()
+
+        # 廉价检查: 抓几个常见引用标记. 命中任一就放行.
+        # ponytail: 没做 objective 关键词匹配, 纯标记法可能漏掉"the barrier is 0.5 eV"
+        # 这种隐式引用, 但漏报比误报便宜, 后续可加 keyword overlap 兜底.
+        citation_markers = [
+            "our calculations", "our dft", "our results", "our computation",
+            "our md", "our simulation", "we computed", "we calculated",
+            "computational results", "we find", "our model predicts",
+            "我们计算", "计算结果", "我们的计算", "我们的模拟",
+        ]
+        if not any(m in combined for m in citation_markers):
+            return False, (
+                "methods/results 未引用计算数据 (缺 'our calculations' 等标记), "
+                "但 computational_data 非空"
+            )
+
+        return True, ""
 
 
 # ──────────────────────────────────────────────────────────────────────

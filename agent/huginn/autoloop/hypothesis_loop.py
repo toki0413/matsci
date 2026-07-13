@@ -108,6 +108,9 @@ class HypothesisGraph:
         # h2 是新假设, parent=h1, status=untested, 进 campaign 队列
     """
 
+    # 交叉授粉延迟: 分量成熟度达到此阈值才允许跨分量 derive/pivot
+    _CROSS_POLLINATION_MATURITY_THRESHOLD = 0.6
+
     def __init__(self) -> None:
         self._nodes: dict[str, HypothesisNode] = {}
         self._edges: list[HypothesisEdge] = []
@@ -171,6 +174,17 @@ class HypothesisGraph:
         )
         self._nodes[node_id] = node
         if parent_id is not None:
+            # 交叉授粉延迟: 跨分量 derive 需两端分量都成熟.
+            # 新节点是 singleton, _is_cross_component_edge 排除单节点 → 正常 derive 不受影响.
+            # 防的是未来直接连两个已有节点的场景.
+            ok, reason = self._check_cross_pollination_readiness(parent_id, node_id)
+            if not ok:
+                logging.getLogger(__name__).info(
+                    "derive 被交叉授粉延迟拒绝: %s -> %s, %s",
+                    parent_id, node_id, reason,
+                )
+                del self._nodes[node_id]
+                return None
             self._edges.append(HypothesisEdge(
                 from_id=parent_id, to_id=node_id, edge_type="derive",
                 evidence={"rationale": rationale},
@@ -321,6 +335,17 @@ class HypothesisGraph:
             statement=new_statement,
             rationale=f"战略转向: refine 次数耗尽, 放弃 {failed_node_id} 方向",
         )
+        # 交叉授粉延迟: pivot 跨分量需两端分量都成熟.
+        # new_id 是 singleton, _is_cross_component_edge 排除单节点 → 正常 pivot 不受影响.
+        ok, reason = self._check_cross_pollination_readiness(
+            failed_node_id, new_id,
+        )
+        if not ok:
+            logging.getLogger(__name__).info(
+                "pivot 被交叉授粉延迟拒绝: %s -> %s, %s",
+                failed_node_id, new_id, reason,
+            )
+            return None
         # 把 pivot 关系记到边里 — 用 "pivot" 类型, 不污染 children() 的 derive 过滤
         self._edges.append(HypothesisEdge(
             from_id=failed_node_id, to_id=new_id, edge_type="pivot",
@@ -671,6 +696,53 @@ class HypothesisGraph:
         """拓扑坍缩: 连通分量数 < min_components."""
         return self.component_count() < min_components
 
+    def _is_cross_component_edge(self, from_id: str, to_id: str) -> bool:
+        """检查 from 和 to 是否在不同连通分量.
+
+        ponytail: 排除单节点分量 — singleton 要么是刚加的新节点 (接枝到已有线),
+        要么是还没发展的孤立假设. 交叉授粉指两条已发展的线 (size>=2) 之间搭桥.
+        不排除的话 add_hypothesis/pivot 每次加新节点都会被误判 (新节点必然是
+        singleton, 永远不成熟), 整个 derive/pivot 流程就废了.
+        """
+        components = self.connected_components()
+        from_comp = None
+        to_comp = None
+        for comp in components:
+            if from_id in comp:
+                from_comp = comp
+            if to_id in comp:
+                to_comp = comp
+        if from_comp is None or to_comp is None:
+            return False
+        if len(from_comp) == 1 or len(to_comp) == 1:
+            return False
+        return from_comp is not to_comp
+
+    def _check_cross_pollination_readiness(
+        self, from_id: str, to_id: str,
+    ) -> tuple[bool, str]:
+        """检查跨分量边是否允许 (交叉授粉延迟).
+
+        两分量都成熟 (maturity_score >= 阈值) 才允许.
+        对应 prompt: "仅在独立 agent 已将其发展到足以暴露其真正优势和缺口
+        后才进行交叉授粉".
+        """
+        if not self._is_cross_component_edge(from_id, to_id):
+            return True, ""  # 同分量或单节点, 放行
+
+        components = self.connected_components()
+        for comp in components:
+            if from_id in comp or to_id in comp:
+                maturity = self.component_maturity(comp)
+                if maturity["maturity_score"] < self._CROSS_POLLINATION_MATURITY_THRESHOLD:
+                    return False, (
+                        f"交叉授粉延迟: 分量 (size={maturity['size']}) "
+                        f"成熟度 {maturity['maturity_score']:.2f} < 阈值 "
+                        f"{self._CROSS_POLLINATION_MATURITY_THRESHOLD}, "
+                        f"暂不允许跨分量边"
+                    )
+        return True, ""
+
     # ── 边查询 ───────────────────────────────────────────────────────
 
     def edges(self) -> list[HypothesisEdge]:
@@ -845,6 +917,44 @@ def _selfcheck_connected_components() -> None:
 
     # 空集
     assert g.component_representative(set()) is None
+
+    # ── 交叉授粉延迟 ─────────────────────────────────────────────
+    # 构造 2 个不成熟的多节点分量, 验证跨分量边被拒绝; 成熟后才放行
+    g2 = HypothesisGraph()
+    # 分量 A: a1 -> a2 (depth=2, 无 refute 无 audit → score=0.4 < 0.6)
+    a1 = g2.add_hypothesis("a1")
+    a2 = g2.add_hypothesis("a2", parent_id=a1)
+    # 分量 B: b1 -> b2 (同样不成熟)
+    b1 = g2.add_hypothesis("b1")
+    b2 = g2.add_hypothesis("b2", parent_id=b1)
+
+    # 两个多节点 + 不同分量 → 是跨分量边
+    assert g2._is_cross_component_edge(a1, b1) is True
+    # 同分量不算跨分量
+    assert g2._is_cross_component_edge(a1, a2) is False
+    # singleton 不算跨分量 (新节点 / 孤立假设)
+    g3 = HypothesisGraph()
+    s1 = g3.add_hypothesis("s1")
+    s2 = g3.add_hypothesis("s2")
+    assert g3._is_cross_component_edge(s1, s2) is False
+
+    # 两端都不成熟 → 拒绝
+    ok, reason = g2._check_cross_pollination_readiness(a1, b1)
+    assert ok is False, f"不成熟分量应拒绝, got ok={ok}"
+    assert "交叉授粉延迟" in reason
+
+    # 让 A 成熟 (refute a2 → has_refuted +0.3 → score=0.7 >= 0.6)
+    g2.refute(a2, evidence={"r": "test"})
+    # B 仍不成熟 → 仍拒绝
+    ok2, reason2 = g2._check_cross_pollination_readiness(a1, b1)
+    assert ok2 is False, f"B 不成熟应拒绝, got ok={ok2}"
+    assert "交叉授粉延迟" in reason2
+
+    # 让 B 也成熟
+    g2.refute(b2, evidence={"r": "test"})
+    ok3, reason3 = g2._check_cross_pollination_readiness(a1, b1)
+    assert ok3 is True, f"两边都成熟应放行, got ok={ok3}"
+    assert reason3 == ""
 
     print("OK: connected_components selfcheck passed")
 

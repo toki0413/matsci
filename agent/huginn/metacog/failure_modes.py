@@ -33,7 +33,7 @@ class FailureMode:
     severity: Severity
     # 廉价启发式: evidence 文本里出现这些关键词就 flag, 让 LLM 做深入判断
     match_keywords: list[str] = field(default_factory=list)
-    # 该模式适用的方法族 (None = 所有族). 用于 transfer-lunar 这种特例
+    # 该模式适用的方法族 (None = 所有族). 用于特定族的特例检查
     applies_to_families: list[str] | None = None
     mitigation: str = ""
 
@@ -138,15 +138,6 @@ _DEFAULT_MODES: list[FailureMode] = [
         mitigation="做反事实测试或干预分析, 报告因果方向证据",
     ),
     FailureMode(
-        id="lunar-domain-shift",
-        category="transfer",
-        description="月壤迁移学习的 domain shift 未被检测, 直接套用地壳模型",
-        severity="block",
-        match_keywords=["lunar", "moon", "transfer", "fine-tune", "domain"],
-        applies_to_families=["transfer-lunar"],
-        mitigation="用 MMD / KS 检验做 domain shift 量化, shift > 阈值时强制 fine-tune",
-    ),
-    FailureMode(
         id="first-principles-violation",
         category="methodology",
         description="ML 组件不符合第一性原理 (纯黑盒拟合, 无物理约束)",
@@ -219,16 +210,15 @@ DEFAULT_REGISTRY = FailureModeRegistry()
 
 # ── 自检 ─────────────────────────────────────────────────────────
 # ponytail: 非平凡逻辑留一个 runnable check. 这里验证 scan 能正确命中
-# 关键词, 且 for_family 对 transfer-lunar 的特例过滤生效.
+# 关键词, 且 for_family 对特定族的过滤生效.
 
 def _selfcheck() -> None:
     reg = FailureModeRegistry()
 
-    # 1. 通用模式 + lunar 特例模式都应在 family=transfer-lunar 下命中
-    lunar_modes = reg.for_family("transfer-lunar")
-    ids = {m.id for m in lunar_modes}
-    assert "lunar-domain-shift" in ids, "transfer-lunar 族应包含 lunar-domain-shift"
-    assert "data-leakage-structural" in ids, "通用模式也应出现在 transfer-lunar 族"
+    # 1. 通用模式应在任意 family 下命中 (applies_to_families=None)
+    all_modes = reg.for_family(None)
+    ids = {m.id for m in all_modes}
+    assert "data-leakage-structural" in ids
 
     # 2. scan 命中关键词
     evidence = {"description": "we trained on the full CIF structure set"}

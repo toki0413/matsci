@@ -8,7 +8,7 @@
 
 初始族清单针对材料科学:
 - dft-direct, ml-potential, symbolic-regression, gaussian-process,
-  calphad-thermo, phase-field, transfer-lunar (用户明确保留),
+  calphad-thermo, phase-field,
   bourbaki-structure (advisory), extreme-argument, computational-check
 """
 
@@ -35,7 +35,7 @@ class MethodFamily:
     essence: str  # 一句话描述思想本质, 不是表面措辞
     member_agent_ids: list[str] = field(default_factory=list)
     last_block_reason: str | None = None
-    # 该族是否豁免第一性原理淘汰 (transfer-lunar 是用户明确保留的)
+    # 该族是否豁免第一性原理淘汰 (经验方法可标记, 如迁移学习)
     exempt_from_fp_check: bool = False
 
     @property
@@ -49,8 +49,7 @@ class MethodFamily:
         return len(self.member_agent_ids) / total_agents
 
 
-# 初始族清单. 应随研究领域扩充, 但 transfer-lunar 是用户明确保留的,
-# 不参与 first-principles 淘汰.
+# 初始族清单. 应随研究领域扩充.
 _DEFAULT_FAMILIES: list[MethodFamily] = [
     MethodFamily(id="dft-direct", essence="从第一性原理直接计算目标性质"),
     MethodFamily(id="ml-potential", essence="ML 势函数 + MD 模拟"),
@@ -58,11 +57,6 @@ _DEFAULT_FAMILIES: list[MethodFamily] = [
     MethodFamily(id="gaussian-process", essence="GP + 不确定性量化"),
     MethodFamily(id="calphad-thermo", essence="CALPHAD 热力学相图"),
     MethodFamily(id="phase-field", essence="相场模拟演化"),
-    MethodFamily(
-        id="transfer-lunar",
-        essence="月壤迁移学习",
-        exempt_from_fp_check=True,
-    ),
     MethodFamily(id="bourbaki-structure", essence="数学结构映射 (advisory)"),
     MethodFamily(id="extreme-argument", essence="极值/反例论证"),
     MethodFamily(id="computational-check", essence="计算合理性检查 (独立于其他族)"),
@@ -210,9 +204,10 @@ def _selfcheck() -> None:
     blocked_fam = reg.by_id("calphad-thermo")
     assert blocked_fam is not None and blocked_fam.is_blocked
 
-    # 4. transfer-lunar 标记为 fp 豁免
-    lunar = reg.by_id("transfer-lunar")
-    assert lunar is not None and lunar.exempt_from_fp_check
+    # 4. exempt_from_fp_check 可手动标记
+    from huginn.metacog.method_registry import MethodFamily as _MF
+    custom_reg = MethodRegistry([_MF(id="empirical-fit", essence="经验拟合", exempt_from_fp_check=True)])
+    assert custom_reg.by_id("empirical-fit").exempt_from_fp_check
 
     # 5. unregister 后 pressure 下降
     reg.unregister_agent("agent-0")
