@@ -404,7 +404,7 @@ class GaussianTool(HuginnTool):
 
             gjf_path.write_text("\n".join(lines), encoding="utf-8")
         except Exception as e:
-            print(f"Warning: failed to modify route section: {e}")
+            logger.warning("Gaussian input autofix failed", exc_info=True)
 
     @staticmethod
     def _format_keyword(kw: str, val: Any) -> str:

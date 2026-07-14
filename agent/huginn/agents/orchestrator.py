@@ -139,7 +139,9 @@ class Orchestrator:
             system_prompt_override=_PLANNER_PERSONA_PROMPT.format(profiles=profiles),
         )
         prompt = f"\n\nObjective: {objective}"
-        state = lead.invoke(prompt)
+        # HuginnAgent 只有同步 invoke, 用 to_thread 丢给默认线程池, 避免阻塞事件循环
+        # (lead 调用走 sync 路径, 跟 _execute_taskplan/synthesize 保持一致)
+        state = await asyncio.to_thread(lead.invoke, prompt)
         raw = self._extract_output(state)
         steps = self._parse_steps(raw, objective)
         plan = self.plan_store.create_plan(objective, steps, auto_confirm=ac)
@@ -155,7 +157,8 @@ class Orchestrator:
         prompt = (
             _PLANNER_PROMPT.format(profiles=profiles) + f"\n\nObjective: {objective}"
         )
-        state = lead.invoke(prompt)
+        # 同 plan(): HuginnAgent 无 ainvoke, 用 to_thread 避免阻塞事件循环
+        state = await asyncio.to_thread(lead.invoke, prompt)
         raw = self._extract_output(state)
         return self._parse_plan(objective, raw)
 

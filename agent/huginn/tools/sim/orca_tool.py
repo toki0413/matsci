@@ -394,7 +394,7 @@ class OrcaTool(HuginnTool):
 
             inp_path.write_text("\n".join(lines), encoding="utf-8")
         except Exception as e:
-            print(f"Warning: failed to modify ORCA input: {e}")
+            logger.warning("ORCA input autofix failed", exc_info=True)
 
     @staticmethod
     def _format_orca_token(key: str, val: Any) -> str | None:

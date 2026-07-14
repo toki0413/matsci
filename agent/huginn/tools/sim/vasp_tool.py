@@ -1041,4 +1041,4 @@ class VaspTool(HuginnTool):
             incar_path.write_text("\n".join(modified), encoding="utf-8")
 
         except Exception as e:
-            print(f"Warning: Failed to modify INCAR: {e}")
+            logger.warning("INCAR autofix modification failed", exc_info=True)

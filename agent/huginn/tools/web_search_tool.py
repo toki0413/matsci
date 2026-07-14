@@ -24,6 +24,17 @@ from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 
+# DDG HTML 解析正则; 提到模块级避免每次重编译
+_DDG_LINK_RE = re.compile(
+    r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+    re.DOTALL,
+)
+# 摘要单独拎出来, 标签可能是 a/td/span
+_DDG_SNIPPET_RE = re.compile(
+    r'class="result__snippet"[^>]*>(.*?)</(?:a|td|span|div)>',
+    re.DOTALL,
+)
+
 
 def _search_timeout() -> float:
     """网络请求超时 (秒). 默认 15s, 用 HUGINN_WEB_SEARCH_TIMEOUT 覆盖.
@@ -302,19 +313,8 @@ class WebSearchTool(HuginnTool):
 
         结构比较脆，DDG 改版可能就要跟着改，但作为最后兜底够用了。
         """
-        # 标题和链接在 result__a 这个锚点里
-        link_re = re.compile(
-            r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
-            re.DOTALL,
-        )
-        # 摘要单独拎出来，标签可能是 a/td/span
-        snippet_re = re.compile(
-            r'class="result__snippet"[^>]*>(.*?)</(?:a|td|span|div)>',
-            re.DOTALL,
-        )
-
-        links = link_re.findall(html)
-        snippets = snippet_re.findall(html)
+        links = _DDG_LINK_RE.findall(html)
+        snippets = _DDG_SNIPPET_RE.findall(html)
 
         results: list[dict[str, Any]] = []
         for i, (href, title) in enumerate(links[:max_results]):

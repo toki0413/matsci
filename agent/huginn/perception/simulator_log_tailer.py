@@ -100,6 +100,14 @@ class SimulatorLogTailer:
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
+        # 关闭所有 watch 的文件句柄, 否则 fd 泄漏到进程退出
+        with self._lock:
+            for info in self._watches.values():
+                try:
+                    info["file"].close()
+                except Exception:
+                    pass
+            self._watches.clear()
 
     def updates(self) -> Iterator[SimulationUpdate]:
         """Yield all new updates from watched files (non-blocking)."""

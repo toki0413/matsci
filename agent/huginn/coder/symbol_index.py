@@ -249,12 +249,12 @@ class SymbolIndex:
             symbols.append(
                 Symbol(name=match.group(1), kind="class", file=str(path), line=line)
             )
-        for match in func_re.finditer(source):
+        for match in _GENERIC_FUNC_RE.finditer(source):
             line = source[: match.start()].count("\n") + 1
             symbols.append(
                 Symbol(name=match.group(1), kind="function", file=str(path), line=line)
             )
-        for match in method_re.finditer(source):
+        for match in _GENERIC_METHOD_RE.finditer(source):
             line = source[: match.start()].count("\n") + 1
             symbols.append(
                 Symbol(name=match.group(1), kind="method", file=str(path), line=line)

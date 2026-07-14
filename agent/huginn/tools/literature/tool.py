@@ -674,11 +674,11 @@ class LiteratureTool(HuginnTool):
             )
 
         try:
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            pages_text: list[str] = []
-            for page in doc:
-                pages_text.append(page.get_text())
-            doc.close()
+            # 用 with 保证异常路径也释放文件句柄
+            with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+                pages_text: list[str] = []
+                for page in doc:
+                    pages_text.append(page.get_text())
         except Exception as exc:
             return ToolResult(
                 data=None, success=False,
@@ -1358,29 +1358,29 @@ class LiteratureTool(HuginnTool):
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="lit_figures_"))
 
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        extracted: list[dict[str, Any]] = []
-        for page_num, page in enumerate(doc):
-            for img_index, img in enumerate(page.get_images(full=True)):
-                xref = img[0]
-                try:
-                    base_image = doc.extract_image(xref)
-                except Exception as exc:
-                    logger.warning("extract_image xref=%s 失败: %s", xref, exc)
-                    continue
-                image_bytes = base_image["image"]
-                image_ext = base_image["ext"]
-                img_filename = f"page{page_num + 1}_img{img_index + 1}.{image_ext}"
-                img_path = tmp_dir / img_filename
-                img_path.write_bytes(image_bytes)
-                extracted.append({
-                    "page": page_num + 1,
-                    "index": img_index + 1,
-                    "path": str(img_path),
-                    "ext": image_ext,
-                    "size_bytes": len(image_bytes),
-                })
-        doc.close()
+        # 用 with 保证异常路径也释放文件句柄
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            extracted: list[dict[str, Any]] = []
+            for page_num, page in enumerate(doc):
+                for img_index, img in enumerate(page.get_images(full=True)):
+                    xref = img[0]
+                    try:
+                        base_image = doc.extract_image(xref)
+                    except Exception as exc:
+                        logger.warning("extract_image xref=%s 失败: %s", xref, exc)
+                        continue
+                    image_bytes = base_image["image"]
+                    image_ext = base_image["ext"]
+                    img_filename = f"page{page_num + 1}_img{img_index + 1}.{image_ext}"
+                    img_path = tmp_dir / img_filename
+                    img_path.write_bytes(image_bytes)
+                    extracted.append({
+                        "page": page_num + 1,
+                        "index": img_index + 1,
+                        "path": str(img_path),
+                        "ext": image_ext,
+                        "size_bytes": len(image_bytes),
+                    })
 
         if not extracted:
             return ToolResult(

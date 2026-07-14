@@ -123,24 +123,6 @@ def validate_code(code: str) -> None:
     if not code or not code.strip():
         raise RestrictedPythonError("Empty code")
 
-    # Quick regex pre-filter for common evasion patterns
-    dangerous_patterns = [
-        r"__import__\s*\(",
-        r"import\s+os\b",
-        r"import\s+sys\b",
-        r"import\s+subprocess\b",
-        r"import\s+socket\b",
-        r"import\s+urllib\b",
-        r"import\s+ctypes\b",
-        r"from\s+os\b",
-        r"from\s+sys\b",
-        r"from\s+subprocess\b",
-    ]
-    for pattern in dangerous_patterns:
-        if re.search(pattern, code, re.IGNORECASE):
-            # AST will give a more precise error, but this speeds up rejection
-            pass
-
     try:
         tree = ast.parse(code)
     except SyntaxError as e:

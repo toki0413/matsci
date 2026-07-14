@@ -48,7 +48,7 @@ async def generate_plan(params: dict[str, Any]) -> dict[str, Any]:
                     f"Request: {content}"
                 )
         except Exception as e:
-            print(f"[plan] codebase search warning: {e}")
+            logger.warning("planner codebase search failed", exc_info=True)
 
     try:
         full_response = ""

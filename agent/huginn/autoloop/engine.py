@@ -50,6 +50,12 @@ from huginn.types import ToolContext, ToolResult
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.templates import get_template, standard_dft_workflow
 
+# 跨源属性冲突检测用的正则; 提到模块级避免每次调用重编译
+_PROP_RE = re.compile(
+    r'([\w\s]{3,25}?)\s*[:=]\s*(-?\d+\.?\d*)\s*(eV(?:/\w+)?|GPa|THz|nm)',
+    re.IGNORECASE,
+)
+
 
 # Autoloop 7-phase pipeline — single source of truth for phase names.
 # ponytail: constants, not an enum — engine phases are imperative control
@@ -602,13 +608,8 @@ class AutoloopEngine:
         property appears in multiple blocks with different numeric values,
         returns a warning string. Uses regex only, no LLM calls.
         """
-        import re as _re
         # ponytail: 属性名前缀不一致 (如 "band gap" vs "the band gap") 会导致漏检,
         # 但对 <10 blocks 的 prompt 场景足够; 如需精确匹配可改用 NER 提取属性名
-        _PROP_RE = _re.compile(
-            r'([\w\s]{3,25}?)\s*[:=]\s*(-?\d+\.?\d*)\s*(eV(?:/\w+)?|GPa|THz|nm)',
-            _re.IGNORECASE,
-        )
         prop_values: dict[str, dict[str, str]] = {}
         for name, text in blocks:
             if not text:
@@ -752,9 +753,9 @@ class AutoloopEngine:
             self._speculator_hint = (
                 (self._speculator_hint + "\n" + fb).strip() if self._speculator_hint else fb
             )
-            print(
-                f"  → Gate blocked {from_phase}→{to_phase}: "
-                f"missing {gate.missing_evidence}"
+            logger.info(
+                "gate blocked %s→%s: missing %s",
+                from_phase, to_phase, gate.missing_evidence,
             )
             return False
         return True
@@ -787,9 +788,9 @@ class AutoloopEngine:
         if tier.max_calls is not None and rejects > tier.max_calls:
             # 拒绝额度用尽, 降级放行剩下的所有 mode, 不再卡
             self._budget_degraded = True
-            print(
-                f"  → Budget degraded at iter {iteration}: "
-                f"{tier.label} reject cap {tier.max_calls} hit, allowing all modes"
+            logger.info(
+                "budget degraded at iter %d: %s reject cap %s hit, allowing all modes",
+                iteration, tier.label, tier.max_calls,
             )
             return True
 
@@ -801,9 +802,9 @@ class AutoloopEngine:
         self._speculator_hint = (
             (self._speculator_hint + "\n" + fb).strip() if self._speculator_hint else fb
         )
-        print(
-            f"  → Budget rejected mode={mode} at iter {iteration} "
-            f"(tier {tier.label}, reject {rejects}/{tier.max_calls})"
+        logger.info(
+            "budget rejected mode=%s at iter %d (tier %s, reject %d/%s)",
+            mode, iteration, tier.label, rejects, tier.max_calls,
         )
         return False
 
@@ -850,10 +851,10 @@ class AutoloopEngine:
                 if answer:
                     channel.respond(sq.id, answer)
                     answered += 1
-                    print(f"  → [side] answered {sq.id}: {answer[:80]}")
+                    logger.info("side answered %s: %s", sq.id, answer[:80])
             except Exception as exc:
                 # 单条失败不影响其他, 也不影响主 loop
-                print(f"  → [side] failed to answer {sq.id}: {exc}")
+                logger.warning("side failed to answer %s", sq.id, exc_info=True)
         return answered
 
     def _get_clarification_manager(self):
@@ -957,10 +958,10 @@ class AutoloopEngine:
                     "iteration": self._iteration,
                 },
             )
-            print(f"  → [clarify] {checkpoint}: {answer[:80]}")
+            logger.info("clarify %s: %s", checkpoint, answer[:80])
             return answer
         except Exception as exc:
-            print(f"  → [clarify] {checkpoint} failed: {exc}")
+            logger.warning("clarify %s failed", checkpoint, exc_info=True)
             return None
 
     # ──────────────────────────────────────────────────────────────
@@ -1017,13 +1018,12 @@ class AutoloopEngine:
             # pivot 上限: 连续换方向 _max_pivots 次还没跑通, 说明 objective 本身
             # 有问题, 继续烧 token 没意义, 让循环自然退出.
             if self._pivot_count >= self._max_pivots:
-                print(f"\n[Autoloop] pivot budget exhausted ({self._pivot_count}/{self._max_pivots}), stopping.")
                 logger.warning(
                     "autoloop stopping: pivot budget exhausted (%d/%d)",
                     self._pivot_count, self._max_pivots,
                 )
                 break
-            print(f"\n[Autoloop] Iteration {self._iteration}/{max_iterations}: {objective}")
+            logger.info("autoloop iteration %d/%d: %s", self._iteration, max_iterations, objective)
 
             # goal persistence: increment iteration count on active goal
             try:
@@ -1047,14 +1047,15 @@ class AutoloopEngine:
             if len(self._speculator_hint) > 2000:
                 self._speculator_hint = self._speculator_hint[-2000:]
 
-            # 1. Perceive
-            phase = self._run_phase("perceive", self._perceive)
+            # 1. Perceive — 走 async 路径, _perceive_legacy 里的 subprocess + rglob
+            # 会阻塞事件循环 5-15s, 必须丢到线程池
+            phase = await self._run_phase_async("perceive", self._perceive_async)
             phases.append(phase)
             completed_steps += 1
             tracker.update(progress_task_id, current_step=completed_steps,
                            current_label=f"iter {self._iteration}: perceive ({phase.status})")
             if not phase.result:
-                print("  → No changes detected, waiting...")
+                logger.info("no changes detected, waiting...")
                 # 轮空时 drain 侧边对话: 有 pending 问题就顺手答掉, 不白等.
                 await self._drain_side_questions()
                 await asyncio.sleep(0.5)  # reduced from 2s for faster response
@@ -1070,7 +1071,7 @@ class AutoloopEngine:
                     blind_spots = await self._blind_spot_pass(context, self._objective)
                     if blind_spots:
                         context["blind_spots"] = blind_spots
-                        print(f"  → Blind spot pass: {len(blind_spots)} potential unknowns found")
+                        logger.info("blind spot pass: %d potential unknowns found", len(blind_spots))
                 except Exception:
                     logger.warning("blind spot pass failed", exc_info=True)
 
@@ -1085,9 +1086,9 @@ class AutoloopEngine:
                 # propagate error to speculator hint so next iteration knows why
                 if phase.error:
                     self._speculator_hint += f"\n[failed: hypothesize] {phase.error}\n"
-                print(f"  → No hypothesis generated ({phase.error or 'unknown'}), skipping")
+                logger.info("no hypothesis generated (%s), skipping", phase.error or "unknown")
                 continue
-            print(f"  → Hypothesis: {hypothesis}")
+            logger.info("hypothesis: %s", hypothesis)
             # 发布 campaign.hypothesis 事件
             self._emit_campaign("campaign.hypothesis", {
                 "iteration": self._iteration,
@@ -1120,9 +1121,9 @@ class AutoloopEngine:
             if not plan:
                 if phase.error:
                     self._speculator_hint += f"\n[failed: plan] {phase.error}\n"
-                print(f"  → No plan generated ({phase.error or 'unknown'}), skipping")
+                logger.info("no plan generated (%s), skipping", phase.error or "unknown")
                 continue
-            print(f"  → Plan: {plan['mode']} | {plan['description']}")
+            logger.info("plan: %s | %s", plan['mode'], plan['description'])
 
             # 高成本 plan 时问用户确认. 有 plan_id 说明 _plan 里已经走过
             # PlanStore 确认门了, 别重复问; 没 plan_id (PlanStore 不可用)
@@ -1153,9 +1154,9 @@ class AutoloopEngine:
             execution_result = phase.result
             if phase.error:
                 self._speculator_hint += f"\n[failed: execute] {phase.error}\n"
-                print(f"  → Execution failed: {phase.error}")
+                logger.info("execution failed: %s", phase.error)
                 continue
-            print(f"  → Execution complete: {execution_result}")
+            logger.info("execution complete: %s", execution_result)
 
             # Git commit after execute — EurekAgent artifact engineering:
             # 每轮 execute 后提交, 让下轮 perceive 能 git diff 看到本轮变更,
@@ -1209,7 +1210,7 @@ class AutoloopEngine:
             tracker.update(progress_task_id, current_step=completed_steps,
                            current_label=f"iter {self._iteration}: validate ({phase.status})")
             validation = phase.result
-            print(f"  → Validation: {validation}")
+            logger.info("validation: %s", validation)
 
             # 更新假设图: tests_passed → support, 否则 → refute → refine
             try:
@@ -1410,7 +1411,7 @@ class AutoloopEngine:
             completed_steps += 1
             tracker.update(progress_task_id, current_step=completed_steps,
                            current_label=f"iter {self._iteration}: learn ({phase.status})")
-            print(f"  → Learning complete")
+            logger.info("learning complete")
 
             # Goal completion: success_criteria 全命中 → 提前停循环.
             # 没 goal 或 criteria 为空时 check_completion 返回 False, 不影响.
@@ -1425,7 +1426,7 @@ class AutoloopEngine:
                         if self._speculator_hint else _why_msg
                     )
                 else:
-                    print(f"  → Goal completed: {goal.objective}")
+                    logger.info("goal completed: %s", goal.objective)
                     goal.status = "completed"
                     if self._goal_scheduler is not None:
                         self._goal_scheduler.complete_goal(goal.id)
@@ -1453,7 +1454,7 @@ class AutoloopEngine:
                                     if self._speculator_hint else _why_msg
                                 )
                             else:
-                                print(f"  → GoalJudge: achieved (score={gj['score']})")
+                                logger.info("goaljudge: achieved (score=%s)", gj['score'])
                                 self._should_stop = True
                         elif gj.get("gaps"):
                             gap_hint = "; ".join(gj["gaps"][:3])
@@ -1461,7 +1462,7 @@ class AutoloopEngine:
                                 (self._speculator_hint + "\n" + gap_hint).strip()
                                 if self._speculator_hint else gap_hint
                             )
-                            print(f"  → GoalJudge gaps: {gap_hint}")
+                            logger.info("goaljudge gaps: %s", gap_hint)
                     except Exception:
                         logger.warning("error in run: GoalJudge evaluation failed", exc_info=True)
 
@@ -1480,9 +1481,9 @@ class AutoloopEngine:
                     (self._speculator_hint + "\n" + surprise_hint).strip()
                     if self._speculator_hint else surprise_hint
                 )
-                print(f"  → Surprise: {surprise:.2f} (high — exploring)")
+                logger.info("surprise: %.2f (high — exploring)", surprise)
             elif surprise > 0 and self._iteration > 1:
-                print(f"  → Surprise: {surprise:.2f} (low — model matches reality)")
+                logger.info("surprise: %.2f (low — model matches reality)", surprise)
 
             # Surprise-based early termination: 连续 3 轮低 surprise
             # 说明 agent 预测持续命中实际结果, 心智模型已收敛.
@@ -1507,7 +1508,10 @@ class AutoloopEngine:
                             if self._speculator_hint else _why_msg
                         )
                     else:
-                        print(f"  → Converged: surprise < {threshold:.2f} (noise={avg_noise:.2f}) for 3 consecutive iterations")
+                        logger.info(
+                            "converged: surprise < %.2f (noise=%.2f) for 3 consecutive iterations",
+                            threshold, avg_noise,
+                        )
                         self._should_stop = True
 
         # 7. Report + finalize
@@ -1586,9 +1590,9 @@ class AutoloopEngine:
             spec_result = on_turn_start(objective)
             self._speculator_hint = spec_result.get("hint", "")
             if spec_result.get("predictions"):
-                print(f"[Autoloop] Speculator: {self._speculator_hint}")
+                logger.info("autoloop speculator: %s", self._speculator_hint)
         except Exception as exc:
-            print(f"[Autoloop] Speculator skipped: {exc}")
+            logger.warning("autoloop speculator skipped", exc_info=True)
 
         return run_id, provenance_record, run_collector
 
@@ -1647,7 +1651,7 @@ class AutoloopEngine:
             )
             goal_achieved = goal_judgment.get("achieved")
         except Exception as e:
-            print(f"[Autoloop] GoalJudge skipped: {e}")
+            logger.warning("autoloop goal judge skipped", exc_info=True)
 
         # provenance
         provenance_path = None
@@ -1721,6 +1725,40 @@ class AutoloopEngine:
         if not snapshot.has_activity():
             return None
         return context
+
+    async def _perceive_async(self) -> dict[str, Any] | None:
+        """Async 版 _perceive: _perceive_legacy 里的 git subprocess + rglob
+        会阻塞事件循环 5-15s, 必须丢到线程池. perception snapshot 是内存操作
+        可以直接跑.
+        """
+        perception = self._get_perception()
+        if perception is None:
+            return await asyncio.to_thread(self._perceive_legacy)
+        try:
+            snapshot = perception.get_snapshot()
+        except Exception:
+            return await asyncio.to_thread(self._perceive_legacy)
+        context = snapshot.to_context()
+        if not snapshot.has_activity():
+            return None
+        # L3/L4: 语义对齐 + 认知整合, 把冲突和推荐动作塞进 context
+        try:
+            cog = perception.get_cognitive_state()
+            if cog.conflicts:
+                context["semantic_conflicts"] = [
+                    {"sources": [c.source_a, c.source_b], "description": c.description}
+                    for c in cog.conflicts
+                ]
+            if cog.recommended_actions:
+                context["recommended_actions"] = cog.recommended_actions
+            if cog.recommended_tools:
+                context["recommended_tools"] = cog.recommended_tools
+            if cog.simulation_converged is not None:
+                context["simulation_converged"] = cog.simulation_converged
+        except Exception:
+            logger.debug("L3/L4 cognitive integration 失败", exc_info=True)
+        return context
+
     def _perceive_legacy(self) -> dict[str, Any] | None:
         """Legacy perceive (fallback)."""
         changed_files = []
@@ -3781,7 +3819,7 @@ class AutoloopEngine:
                 if kb and hasattr(kb, "cleanup_old_documents"):
                     deleted = kb.cleanup_old_documents(max_docs=200)
                     if deleted:
-                        print(f"  → KB cleanup: removed {deleted} old documents")
+                        logger.info("KB cleanup: removed %d old documents", deleted)
             except Exception:
                 pass
 

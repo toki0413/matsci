@@ -595,6 +595,15 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("[MCP] Health monitor stopped")
+
+    if pmk_task and not pmk_task.done():
+        pmk_task.cancel()
+        try:
+            await pmk_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("[shutdown] PMK loop cancelled")
+
     await _shutdown_mcp()
 
     # Lock encrypted RAG vault: clear decrypted data from memory before
