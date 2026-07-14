@@ -40,6 +40,7 @@ class AgentEvent:
     data: dict[str, Any] = field(default_factory=dict)
     thread_id: str = ""
     source: str = ""  # which component emitted this
+    request_id: str = ""  # 关联请求 id，留空时由 publish 从 contextvar 补
 
     def to_sse(self) -> str:
         """Serialize to an SSE frame: ``event: <type>\\ndata: <json>\\n\\n``.
@@ -98,6 +99,15 @@ class EventBus:
         Safe to call from any async context. Subscriber exceptions are
         caught and logged — one bad subscriber must not break the bus.
         """
+        # 没带 request_id 时从当前请求上下文补一个，方便跨日志/SSE 串联
+        if not event.request_id:
+            try:
+                from huginn.utils.json_logging import request_id_var
+
+                event.request_id = request_id_var.get("")
+            except Exception:
+                pass
+
         # History first — even if a subscriber blows up, the event is recorded.
         self._history.append(event)
 

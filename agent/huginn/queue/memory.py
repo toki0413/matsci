@@ -119,6 +119,11 @@ class InMemoryTaskBackend(TaskBackend):
                         result=value,
                     )
                 except Exception as exc:
+                    # 记录完整 traceback，否则只存 str(exc) 排查时缺现场
+                    _log.exception(
+                        "task handler failed",
+                        extra={"task_id": task_id, "task_name": name},
+                    )
                     result = TaskResult(
                         task_id=task_id,
                         status="FAILURE",

@@ -122,7 +122,7 @@ class AutoresearchTool(HuginnTool):
             if args.action == "results":
                 return self._results(args)
             if args.action == "status":
-                return self._status(args)
+                return await self._status(args)
             if args.action == "propose_edit":
                 return await self._propose_edit(args)
             if args.action == "step":
@@ -427,7 +427,7 @@ class AutoresearchTool(HuginnTool):
             }
         )
 
-    def _status(self, args: AutoresearchInput) -> ToolResult:
+    async def _status(self, args: AutoresearchInput) -> ToolResult:
         ws = self._workspace(args)
         if args.skip_git or not self._git_available():
             return ToolResult(
@@ -438,23 +438,29 @@ class AutoresearchTool(HuginnTool):
                 }
             )
 
-        branch_proc = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(ws),
-            capture_output=True,
-            text=True,
-        )
-        commit_proc = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(ws),
-            capture_output=True,
-            text=True,
-        )
-        dirty_proc = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(ws),
-            capture_output=True,
-            text=True,
+        # 三个 git 查询彼此独立，丢到线程池并行跑，避免串行阻塞事件循环
+        branch_proc, commit_proc, dirty_proc = await asyncio.gather(
+            asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(ws),
+                capture_output=True,
+                text=True,
+            ),
+            asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(ws),
+                capture_output=True,
+                text=True,
+            ),
+            asyncio.to_thread(
+                subprocess.run,
+                ["git", "status", "--porcelain"],
+                cwd=str(ws),
+                capture_output=True,
+                text=True,
+            ),
         )
         return ToolResult(
             data={
@@ -621,13 +627,12 @@ class AutoresearchTool(HuginnTool):
         )
         if commit_result["returncode"] != 0:
             return None
-        rev = subprocess.run(
+        rev = await self._run_command(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(ws),
-            capture_output=True,
-            text=True,
+            cwd=ws,
+            timeout=10,
         )
-        return rev.stdout.strip() if rev.returncode == 0 else None
+        return rev["stdout"].strip() if rev["returncode"] == 0 else None
 
     async def _git_reset(self, ws: Path) -> None:
         await self._run_command(

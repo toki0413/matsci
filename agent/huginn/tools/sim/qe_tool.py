@@ -431,7 +431,7 @@ class QuantumEspressoTool(HuginnTool):
                     block_end += 1
             input_path.write_text("\n".join(lines), encoding="utf-8")
         except Exception as e:
-            print(f"Warning: failed to patch QE input: {e}")
+            logger.warning("QE input autofix failed", exc_info=True)
 
     def _try_autofix(self, input_path: Path, error: str) -> dict[str, Any] | None:
         """跑一次 AutoFixLoop, 命中规则就改 QE 输入返回修了啥. 没命中返回 None."""

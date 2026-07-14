@@ -270,11 +270,12 @@ def _extract_text(filename: str, content: bytes) -> str:
             raise RuntimeError(
                 "PDF support requires pymupdf. Install: pip install pymupdf"
             ) from e
-        doc = fitz.open(stream=content, filetype="pdf")
-        parts = []
-        for page in doc:
-            parts.append(page.get_text())
-        text = "\n".join(parts)
+        # 用 with 保证异常路径也释放文件句柄
+        with fitz.open(stream=content, filetype="pdf") as doc:
+            parts = []
+            for page in doc:
+                parts.append(page.get_text())
+            text = "\n".join(parts)
         # Fall back to OCR for scanned/image-based PDFs.
         if not text.strip():
             ocr_text = extract_text_with_ocr(filename, content)

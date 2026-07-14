@@ -120,7 +120,11 @@ class EnvSecretBackend(SecretBackend):
                 os.unlink(tmp)
                 raise
         except Exception as e:
-            logger.error("Failed to encrypt persisted secrets: %s", e)
+            # 加密失败必须向上抛，否则调用方会误以为保存成功
+            logger.error(
+                "Failed to encrypt persisted secrets: %s", e, exc_info=True
+            )
+            raise
 
     def get(self, name: str) -> str | None:
         return os.environ.get(name)

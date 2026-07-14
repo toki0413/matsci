@@ -185,7 +185,8 @@ class MCPClientManager:
             except RuntimeError:
                 loop = asyncio.new_event_loop()
             if loop.is_running():
-                asyncio.create_task(self.disconnect(name))
+                from huginn.utils.concurrency import track_task
+                track_task(self.disconnect(name), name=f"mcp-disconnect-{name}")
             else:
                 loop.run_until_complete(self.disconnect(name))
         except Exception as e:
