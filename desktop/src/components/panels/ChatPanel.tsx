@@ -71,6 +71,79 @@ function CollapsibleMessageContent({ content, isStreaming }: { content: string; 
   );
 }
 
+// HRI #4: SUGGEST mode editor — agent 代码先展示给用户编辑, Ctrl+Enter 执行
+function SuggestCodeEditor({
+  code, risk, reason, onRespond,
+}: {
+  code: string;
+  risk: string;
+  reason: string;
+  onRespond: (action: "approve" | "edit" | "deny", editedCode?: string) => void;
+}) {
+  const [editedCode, setEditedCode] = useState(code);
+  const isHighRisk = risk === "high";
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      // 有改动 → edit, 没改动 → approve
+      const changed = editedCode !== code;
+      onRespond(changed ? "edit" : "approve", changed ? editedCode : undefined);
+    }
+  };
+
+  return (
+    <div className={`mb-3 rounded-xl border-2 p-3 ${isHighRisk ? "border-error bg-error/5" : "border-accent bg-accent/5"}`}>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className={`text-sm font-bold ${isHighRisk ? "text-error" : "text-accent"}`}>
+          {isHighRisk ? "🔴 SUGGEST (high risk)" : "💡 SUGGEST mode"}
+        </span>
+        <span className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${
+          risk === "high" ? "bg-red-500/15 text-red-400" : risk === "medium" ? "bg-yellow-500/15 text-yellow-400" : "bg-green-500/15 text-green-400"
+        }`}>
+          {risk}
+        </span>
+      </div>
+      {reason && <p className="mb-2 text-xs text-text-secondary">{reason}</p>}
+      <textarea
+        value={editedCode}
+        onChange={(e) => setEditedCode(e.target.value)}
+        onKeyDown={handleKeyDown}
+        spellCheck={false}
+        className="mb-2 h-48 w-full resize-y rounded-lg border border-border bg-bg-tertiary p-2 font-mono text-xs text-text-primary focus:border-accent focus:outline-none"
+        placeholder="Edit code here..."
+      />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => {
+            const changed = editedCode !== code;
+            onRespond(changed ? "edit" : "approve", changed ? editedCode : undefined);
+          }}
+          className="btn-success px-4 py-2 text-sm"
+        >
+          {editedCode !== code ? "Approve edit (Ctrl+↵)" : "Approve (Ctrl+↵)"}
+        </button>
+        <button
+          onClick={() => onRespond("deny")}
+          className="btn-danger px-4 py-2 text-sm"
+        >
+          Deny
+        </button>
+        <button
+          onClick={() => setEditedCode(code)}
+          className="rounded px-3 py-2 text-xs text-text-muted hover:text-text-secondary transition-colors"
+          title="Reset to original code"
+        >
+          Reset
+        </button>
+        <span className="ml-auto text-[10px] text-text-muted">
+          {editedCode !== code ? "edited" : "unchanged"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 interface ChatPanelProps {
   messages: Message[];
   chatSearchOpen: boolean;
@@ -129,6 +202,16 @@ interface ChatPanelProps {
     key_findings: string[];
   };
   planExecState?: Record<string, "executing" | "done">;
+  agentMode?: { exec_mode: string; user_mode: string; flags: string[] };
+  trustScore?: number;
+  approvalBudget?: number;
+  suggestMode?: boolean;
+  pendingSuggestCode?: {
+    code: string; risk: string; reason: string; turn: number;
+  } | null;
+  toggleSuggestMode?: (enabled: boolean) => void;
+  respondToSuggestCode?: (action: "approve" | "edit" | "deny", editedCode?: string) => void;
+  riskThreshold?: number;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -142,6 +225,14 @@ export function ChatPanel(props: ChatPanelProps) {
     thinkingIntensity, setThinkingIntensity,
     pendingMessages, stopGeneration, pauseGeneration, resumeGeneration, isPaused, researchMode, setResearchMode,
     contextBudgetTokens, onExpandResult, campaignEvents, threadTaskState, planExecState,
+    agentMode,
+    trustScore,
+    approvalBudget,
+    suggestMode,
+    pendingSuggestCode,
+    toggleSuggestMode,
+    respondToSuggestCode,
+    riskThreshold,
   } = props;
 
   const [showCommands, setShowCommands] = useState(false);
@@ -550,6 +641,62 @@ export function ChatPanel(props: ChatPanelProps) {
           <Volume2 size={12} aria-hidden="true" /> {notifSound ? 'On' : 'Off'}
         </button>
         <div className="ml-auto flex items-center gap-2 text-[10px] text-text-muted">
+          {agentMode && (
+            <div className="flex items-center gap-1" title="Agent execution mode (HRI situation awareness)">
+              <span className={`rounded px-1.5 py-0.5 font-medium ${
+                agentMode.exec_mode === 'code_act'
+                  ? 'bg-purple-500/15 text-purple-400'
+                  : 'bg-blue-500/15 text-blue-400'
+              }`}>
+                {agentMode.exec_mode === 'code_act' ? 'Code' : 'Tool'}
+              </span>
+              {agentMode.user_mode !== 'chat' && (
+                <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-medium text-orange-400">
+                  {agentMode.user_mode === 'research' ? 'Research' : 'Plan'}
+                </span>
+              )}
+              {agentMode.flags.includes('plan_mode') && (
+                <span className="rounded bg-yellow-500/15 px-1.5 py-0.5 font-medium text-yellow-400">
+                  plan_mode
+                </span>
+              )}
+            </div>
+          )}
+          {trustScore !== undefined && (
+            <div className="flex items-center gap-1" title={`Trust: ${trustScore.toFixed(2)} (< 0.3 forces ask, > 0.7 auto-medium)`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${
+                trustScore > 0.7 ? 'bg-green-400' : trustScore < 0.3 ? 'bg-red-400' : 'bg-yellow-400'
+              }`} />
+              <span className={
+                trustScore > 0.7 ? 'text-green-400' : trustScore < 0.3 ? 'text-red-400' : 'text-yellow-400'
+              }>
+                {trustScore.toFixed(2)}
+              </span>
+            </div>
+          )}
+          {approvalBudget !== undefined && (
+            <div className="flex items-center gap-1" title={`Approval budget: ${approvalBudget} remaining (auto-escalates at ≤ 3)`}>
+              <span className={
+                approvalBudget <= 3 ? 'text-red-400' : approvalBudget <= 6 ? 'text-yellow-400' : 'text-text-muted'
+              }>
+                ◐{approvalBudget}
+              </span>
+            </div>
+          )}
+          {riskThreshold !== undefined && (
+            <div className="flex items-center gap-1" title={`Risk threshold: ${riskThreshold.toFixed(2)} (>0.7 lenient, <0.3 strict)`}>
+              <span className={
+                riskThreshold > 0.7 ? 'text-green-400' : riskThreshold < 0.3 ? 'text-red-400' : 'text-text-muted'
+              }>
+                ⚖{riskThreshold.toFixed(2)}
+              </span>
+            </div>
+          )}
+          {suggestMode && (
+            <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-medium text-cyan-400" title="SUGGEST mode: all code shown for editing before execution">
+              Suggest
+            </span>
+          )}
           {(() => {
             const budget = contextBudgetTokens || 32000;
             const totalChars = messages.reduce((sum, m) => sum + (m.content?.length || 0) + (m.reasoning?.length || 0), 0) + input.length;
@@ -1269,6 +1416,16 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
+        {/* HRI #4: SUGGEST mode — 可编辑代码块, 用户 Approve/Edit/Deny */}
+        {pendingSuggestCode && respondToSuggestCode && (
+          <SuggestCodeEditor
+            code={pendingSuggestCode.code}
+            risk={pendingSuggestCode.risk}
+            reason={pendingSuggestCode.reason}
+            onRespond={respondToSuggestCode}
+          />
+        )}
+
         {/* @mention popover */}
         {showMentions && filteredMentions.length > 0 && (
           <div className="mb-2 rounded-lg border border-border bg-bg-secondary shadow-lg overflow-hidden">
@@ -1363,6 +1520,13 @@ export function ChatPanel(props: ChatPanelProps) {
                 <input type="checkbox" checked={autoApprove} onChange={(e) => toggleAutoApprove(e.target.checked)} className="h-3.5 w-3.5" />
                 {t('chat.autoApprove')}
               </label>
+              {toggleSuggestMode && (
+                <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-text-secondary" title="SUGGEST mode: all CodeAct code shown for editing before execution (LoA Level 4-6)">
+                  <input type="checkbox" checked={!!suggestMode} onChange={(e) => toggleSuggestMode(e.target.checked)} className="h-3.5 w-3.5" />
+                  SUGGEST mode
+                  <span className="text-[10px] text-text-muted">(review every code)</span>
+                </label>
+              )}
               <div className="mt-3 border-t border-border pt-3">
                 <div className="mb-1.5 text-xs text-text-muted">🧠 Thinking intensity</div>
                 <div className="flex gap-1">

@@ -94,6 +94,9 @@ class PhaseGate:
     missing_evidence: list[str] = field(default_factory=list)
     feedback: str = ""
     reviewer: str | None = None
+    # OAK 启发: trace_id 贯穿, 让前端能按 trace 聚合而非线性展示
+    trace_id: str | None = None
+    parent_trace_id: str | None = None  # fork 时记录父 trace
 
     @property
     def is_blocked(self) -> bool:
@@ -108,6 +111,8 @@ class PhaseGate:
             "missing_evidence": list(self.missing_evidence),
             "feedback": self.feedback,
             "reviewer": self.reviewer,
+            "trace_id": self.trace_id,
+            "parent_trace_id": self.parent_trace_id,
         }
 
 

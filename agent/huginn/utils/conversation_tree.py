@@ -123,6 +123,15 @@ class ConversationTree:
         self._active_leaf_id = node.parent_id
         return node
 
+    def fork_from_active(self) -> ConversationNode | None:
+        """OAK 启发: 从当前 active leaf fork, 下条消息成为兄弟节点.
+
+        用于 phase 转移时标记新实验分支 — 不丢弃旧分支, 保留完整探索树.
+        """
+        if self._active_leaf_id is None:
+            return None
+        return self.fork(self._active_leaf_id)
+
     def set_active_leaf(self, node_id: str) -> bool:
         """Switch the active conversation path to end at ``node_id``."""
         if node_id not in self._nodes:

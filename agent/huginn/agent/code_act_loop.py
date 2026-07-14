@@ -21,6 +21,7 @@ import io
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any, AsyncIterator, Awaitable, Callable
 
@@ -125,6 +126,134 @@ def reset_auto_approvals(session_id: str | None = None) -> None:
         _auto_approved.clear()
     else:
         _auto_approved.pop(session_id, None)
+
+
+# ── Trust score (HRI: trust calibration, Lee & See 2004) ──
+# trust = f(performance, process, purpose). 这里用 approval 历史近似:
+# deny → -0.10, edit → -0.05, approve_always → +0.05, approve → +0.02
+# trust < 0.3: 即使 approve_always 也强制 ASK (微管理倾向)
+# trust > 0.7: medium 风险自动放行 (减少打扰)
+_trust_scores: dict[str, float] = {}
+_approval_history: dict[str, list[dict]] = {}
+
+_TRUST_DELTA = {
+    "deny": -0.10,
+    "edit": -0.05,
+    "approve_always": 0.05,
+    "approve": 0.02,
+}
+
+
+def _get_trust(session_id: str) -> float:
+    return _trust_scores.get(session_id, 0.5)
+
+
+def _record_approval(session_id: str, action: str, risk: str, code_preview: str = "") -> float:
+    """记录一次 approval 决策, 更新 trust_score, 返回新值."""
+    delta = _TRUST_DELTA.get(action, 0.0)
+    new_score = max(0.0, min(1.0, _get_trust(session_id) + delta))
+    _trust_scores[session_id] = new_score
+    hist = _approval_history.setdefault(session_id, [])
+    hist.append({"action": action, "risk": risk, "ts": time.time(), "code": code_preview[:200]})
+    if len(hist) > 50:
+        del hist[: len(hist) - 50]
+    return new_score
+
+
+def _should_force_ask(session_id: str) -> bool:
+    """trust < 0.3 时强制 ASK, 即使 approve_always 也不放行."""
+    return _get_trust(session_id) < 0.3
+
+
+def _should_auto_medium(session_id: str, risk: str) -> bool:
+    """trust > 0.7 时 medium 风险自动放行."""
+    return risk == "medium" and _get_trust(session_id) > 0.7
+
+
+# ── Approval frequency budget (HRI: alert fatigue avoidance) ──
+# 每次进 approval gate decrement, budget <= 3 时自动升级 (避免确认疲劳)
+# 但 trust < 0.3 时不升级 (微管理优先于疲劳)
+_approval_budgets: dict[str, int] = {}
+_BUDGET_INITIAL = 10
+_BUDGET_ESCALATION_THRESHOLD = 3
+
+
+def _get_budget(session_id: str) -> int:
+    return _approval_budgets.get(session_id, _BUDGET_INITIAL)
+
+
+def _decrement_budget(session_id: str) -> int:
+    curr = _get_budget(session_id)
+    if curr > 0:
+        curr -= 1
+        _approval_budgets[session_id] = curr
+    return curr
+
+
+# ── SUGGEST mode (HRI: Levels of Automation Level 4-6) ──
+# agent 输出代码, 前端展示为可编辑, 用户 Ctrl+Enter 才执行.
+# 强制所有 risk 级别都走 approval 流程, 用 suggest_code 事件让前端展示编辑器.
+_suggest_modes: dict[str, bool] = {}
+
+
+def _is_suggest_mode(session_id: str) -> bool:
+    return _suggest_modes.get(session_id, False)
+
+
+def set_suggest_mode(session_id: str, enabled: bool) -> None:
+    _suggest_modes[session_id] = enabled
+
+
+# SUGGEST 恢复机制: WS handler 调 resume_suggest() 唤醒被阻塞的 code_act_turn.
+# ponytail: 模块级 dict 做 agent 注册表, 进程内共享. 升级: 按 user_id 隔离 + TTL.
+_active_agents: dict[str, Any] = {}
+
+
+def _register_agent(session_id: str, agent: Any) -> None:
+    _active_agents[session_id] = agent
+
+
+def _unregister_agent(session_id: str) -> None:
+    _active_agents.pop(session_id, None)
+
+
+def resume_suggest(session_id: str, action: str, edited_code: str = "") -> bool:
+    """WS handler 调这个来唤醒被 SUGGEST 阻塞的 agent."""
+    agent = _active_agents.get(session_id)
+    if agent is None:
+        return False
+    agent._approval_decision = (action, edited_code or None)
+    event = getattr(agent, "_approval_resume", None)
+    if event is None:
+        return False
+    event.set()
+    return True
+
+
+# ── Dynamic risk threshold (HRI: trust-adaptive risk classification) ──
+# threshold > 0.7: lenient — medium 降级为 low (auto-approve)
+# threshold < 0.3: strict — medium 升级为 high (force ask)
+# threshold = f(trust, error_streak): trust 高 + 无错误 → 宽容; 反之 → 严格
+_risk_thresholds: dict[str, float] = {}
+
+
+def _compute_risk_threshold(session_id: str, error_streak: int = 0) -> float:
+    trust = _get_trust(session_id)
+    # error_streak 拉低阈值: 每次错误 -0.05, 最多 -0.2
+    error_penalty = min(error_streak * 0.05, 0.2)
+    threshold = max(0.1, min(0.9, trust - error_penalty))
+    _risk_thresholds[session_id] = threshold
+    return threshold
+
+
+def _apply_dynamic_threshold(risk: str, threshold: float) -> tuple[str, str]:
+    """根据动态阈值调整 risk 级别. 返回 (new_risk, reason)."""
+    if risk == "medium":
+        if threshold > 0.7:
+            return ("low", f"lenient threshold={threshold:.2f}, medium→low")
+        if threshold < 0.3:
+            return ("high", f"strict threshold={threshold:.2f}, medium→high")
+    return (risk, "")
 
 
 def _extract_python_blocks(text: str) -> list[str]:
@@ -307,11 +436,18 @@ async def run_code_act_turn(
 
     model = agent.select_model("agent") if hasattr(agent, "select_model") else agent.model
 
+    # 注册 agent 供 SUGGEST mode WS handler 唤醒
+    import asyncio
+    if not hasattr(agent, "_approval_resume"):
+        agent._approval_resume = asyncio.Event()
+    _register_agent(context.session_id, agent)
+
     error_streak = 0
     for turn in range(_MAX_TURNS):
         try:
             resp = await model.ainvoke(messages)
         except Exception as exc:
+            _unregister_agent(context.session_id)
             yield {"type": "final", "content": f"[CodeAct] model call failed: {exc}"}
             return
 
@@ -325,6 +461,7 @@ async def run_code_act_turn(
         code_blocks = _extract_python_blocks(content)
         if not code_blocks:
             # No code → terminal answer
+            _unregister_agent(context.session_id)
             yield {"type": "final", "content": content}
             return
 
@@ -336,7 +473,89 @@ async def run_code_act_turn(
             approval_fn: ApprovalFn | None = getattr(agent, "approval_fn", None)
             session_id = context.session_id
 
-            if risk != "low" and not _is_auto_approved(session_id, risk):
+            # ── Dynamic risk threshold (HRI #5: trust-adaptive classification) ──
+            threshold = _compute_risk_threshold(session_id, error_streak)
+            new_risk, adj_reason = _apply_dynamic_threshold(risk, threshold)
+            threshold_evt: dict[str, Any] = {
+                "type": "risk_threshold",
+                "threshold": round(threshold, 2),
+                "risk": new_risk,
+            }
+            if new_risk != risk:
+                threshold_evt["original_risk"] = risk
+                threshold_evt["adjusted_risk"] = new_risk
+                threshold_evt["reason"] = adj_reason
+                risk = new_risk
+                if adj_reason:
+                    risk_reason = f"{risk_reason} | {adj_reason}" if risk_reason else adj_reason
+            yield threshold_evt
+
+            # ── SUGGEST mode (HRI #4: LoA Level 4-6, 强制所有代码先经用户编辑) ──
+            # SUGGEST 批准后设 suggest_skip=True, 跳过下面的 trust/budget gate
+            suggest_skip = False
+            if _is_suggest_mode(session_id):
+                resume_event = agent._approval_resume
+                resume_event.clear()
+                yield {
+                    "type": "suggest_code",
+                    "code": code,
+                    "risk": risk,
+                    "reason": risk_reason,
+                    "turn": turn,
+                }
+                await resume_event.wait()
+                resume_decision = getattr(agent, "_approval_decision", None)
+                agent._approval_decision = None
+                _nt = _record_approval(
+                    session_id,
+                    resume_decision[0] if resume_decision else "deny",
+                    risk,
+                    code[:200],
+                )
+                yield {"type": "trust_update", "trust": _nt, "action": resume_decision[0] if resume_decision else "deny", "risk": risk}
+                if resume_decision is None or resume_decision[0] == "deny":
+                    err = f"用户拒绝 (suggest, risk={risk}): {resume_decision[1] if resume_decision else 'no decision'}"
+                    combined_feedback.append(f"```python\n{code}\n```\n--- DENIED ---\n{err}")
+                    error_streak += 1
+                    continue
+                action, payload = resume_decision
+                if action == "approve_always":
+                    _mark_auto_approved(session_id, risk)
+                if action == "edit" and payload:
+                    code = payload
+                suggest_skip = True
+
+            # ── Trust + Budget adaptive threshold ──
+            trust = _get_trust(session_id)
+            budget = _get_budget(session_id)
+            # budget 不足 + 信任度不低 → 自动升级 (避免确认疲劳)
+            budget_escalated = (
+                not suggest_skip
+                and risk != "low"
+                and budget <= _BUDGET_ESCALATION_THRESHOLD
+                and not _should_force_ask(session_id)
+                and not _is_auto_approved(session_id, risk)
+            )
+            if budget_escalated:
+                _mark_auto_approved(session_id, risk)
+
+            skip_approval = suggest_skip or (
+                risk == "low"
+                or _should_auto_medium(session_id, risk)
+                or budget_escalated
+                or (_is_auto_approved(session_id, risk) and not _should_force_ask(session_id))
+            )
+
+            if budget_escalated:
+                yield {
+                    "type": "budget_escalation",
+                    "remaining": budget,
+                    "risk": risk,
+                }
+
+            if not skip_approval:
+                new_budget = _decrement_budget(session_id)
+                yield {"type": "budget_update", "remaining": new_budget}
                 if approval_fn is not None:
                     # 调用方注入了同步/异步审批回调, 直接等结果
                     action, payload = await approval_fn(code, risk, risk_reason)
@@ -348,6 +567,7 @@ async def run_code_act_turn(
                         )
                         error_streak += 1
                         if error_streak >= _DEGRADE_AFTER_ERRORS:
+                            _unregister_agent(context.session_id)
                             yield {
                                 "type": "code_act_degraded",
                                 "reason": f"{error_streak} consecutive errors/denials",
@@ -387,6 +607,8 @@ async def run_code_act_turn(
                         error_streak += 1
                         continue
                     action, payload = resume_decision
+                    _nt = _record_approval(session_id, action, risk, code[:200])
+                    yield {"type": "trust_update", "trust": _nt, "action": action, "risk": risk}
                     if action == "deny":
                         err = f"用户拒绝 (risk={risk}): {payload or risk_reason}"
                         combined_feedback.append(
@@ -447,6 +669,7 @@ async def run_code_act_turn(
                 )
 
             if error_streak >= _DEGRADE_AFTER_ERRORS:
+                _unregister_agent(context.session_id)
                 yield {
                     "type": "code_act_degraded",
                     "reason": f"{error_streak} consecutive code errors",
@@ -463,6 +686,7 @@ async def run_code_act_turn(
         )
 
     # Hit the turn ceiling — emit what we have as final.
+    _unregister_agent(context.session_id)
     yield {
         "type": "final",
         "content": f"[CodeAct] reached max turns ({_MAX_TURNS}). Last assistant message above.",

@@ -4,6 +4,14 @@ from huginn.agent.code_act_loop import (
     _mark_auto_approved,
     _is_auto_approved,
     reset_auto_approvals,
+    _compute_risk_threshold,
+    _apply_dynamic_threshold,
+    _trust_scores,
+    set_suggest_mode,
+    _is_suggest_mode,
+    _suggest_modes,
+    resume_suggest,
+    _active_agents,
 )
 from huginn.memory.intuition import detect_intuition
 from huginn.interaction.clarification import should_ask_clarification
@@ -73,6 +81,52 @@ def test_phase_gate_checkpoint():
     assert state.needs_human_checkpoint("plan", "execute") is False
 
 
+def test_dynamic_risk_threshold():
+    # high trust + no errors → lenient threshold → medium 降级为 low
+    _trust_scores["test_hri"] = 0.85
+    t = _compute_risk_threshold("test_hri", error_streak=0)
+    assert t > 0.7, f"expected lenient threshold, got {t}"
+    new_risk, reason = _apply_dynamic_threshold("medium", t)
+    assert new_risk == "low", f"expected medium→low, got {new_risk}"
+    assert "lenient" in reason
+
+    # low trust → strict threshold → medium 升级为 high
+    _trust_scores["test_hri"] = 0.15
+    t = _compute_risk_threshold("test_hri", error_streak=0)
+    assert t < 0.3, f"expected strict threshold, got {t}"
+    new_risk, reason = _apply_dynamic_threshold("medium", t)
+    assert new_risk == "high", f"expected medium→high, got {new_risk}"
+    assert "strict" in reason
+
+    # errors 拉低阈值: trust=0.5 + 4 errors → threshold ~0.3
+    _trust_scores["test_hri"] = 0.5
+    t = _compute_risk_threshold("test_hri", error_streak=4)
+    assert t <= 0.3, f"expected errors to pull threshold down, got {t}"
+
+    # low/high 不受阈值影响
+    _trust_scores["test_hri"] = 0.9
+    t = _compute_risk_threshold("test_hri", 0)
+    r, _ = _apply_dynamic_threshold("low", t)
+    assert r == "low"
+    r, _ = _apply_dynamic_threshold("high", t)
+    assert r == "high"
+
+    del _trust_scores["test_hri"]
+
+
+def test_suggest_mode():
+    _suggest_modes.pop("test_hri", None)
+    assert not _is_suggest_mode("test_hri")
+    set_suggest_mode("test_hri", True)
+    assert _is_suggest_mode("test_hri")
+    set_suggest_mode("test_hri", False)
+    assert not _is_suggest_mode("test_hri")
+
+    # resume_suggest 没有 agent 注册时返回 False
+    _active_agents.pop("test_hri", None)
+    assert resume_suggest("test_hri", "approve") is False
+
+
 if __name__ == "__main__":
     test_risk_assessment()
     print("PASS: risk_assessment")
@@ -84,4 +138,8 @@ if __name__ == "__main__":
     print("PASS: clarification_trigger")
     test_phase_gate_checkpoint()
     print("PASS: phase_gate_checkpoint")
+    test_dynamic_risk_threshold()
+    print("PASS: dynamic_risk_threshold")
+    test_suggest_mode()
+    print("PASS: suggest_mode")
     print("ALL CHECKS PASSED")

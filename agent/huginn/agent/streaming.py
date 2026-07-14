@@ -86,6 +86,13 @@ class StreamingMixin:
             return False
         self._agent_graph = None
         self._invalidate_tool_description_cache()
+        # OAK 启发: 进入 hypothesis/planning 时 fork 对话树, 标记新实验分支
+        # 失败的分支保留在树里, 成功路径合并回主干 — 树状研究历史
+        try:
+            if target_phase.value in ("hypothesis", "planning"):
+                self._conversation_tree.fork_from_active()
+        except Exception:
+            logger.debug("ConversationTree fork skipped", exc_info=True)
         logger.info("Research phase -> %s", target_phase.value)
         return True
 
@@ -538,6 +545,27 @@ class StreamingMixin:
         # ponytail: 不写 self.thread_id / self._current_user_message 实例属性,
         # 并发 chat() 调用会互相覆盖. contextvars 已隔离每协程副本, core.py
         # 的 _build_graph 用 get_user_message() 读, 无竞争.
+
+        # OAK 启发: ConversationTree 通电 — 把每条 user/ai 消息写进树
+        # phase 转移时 fork 出新分支, 让研究历史成为树而非线性序列
+        try:
+            user_node = self._conversation_tree.add_message(
+                role="user", content=message,
+                metadata={"thread_id": thread_id, "trace_id": thread_id},
+            )
+        except Exception:
+            logger.debug("ConversationTree add_message (user) skipped", exc_info=True)
+
+        # ── Mode banner: 告诉前端当前 agent 工作模式 (端到端通信) ──
+        # exec_mode: tool_call / code_act; user_mode: chat / research / plan
+        yield {
+            "type": "mode_banner",
+            "exec_mode": self.mode,
+            "user_mode": self.get_mode(),
+            "flags": ["plan_mode"] if self.is_plan_mode() else [],
+            # OAK 启发: trace_id 贯穿, 前端按 trace 聚合事件
+            "trace_id": thread_id,
+        }
 
         # ── 人机协作: 模糊意图捕捉 + 主动 questioning ──
         # 两件事都在 agent loop 之前做, 不阻断主流程:
@@ -1129,6 +1157,14 @@ class StreamingMixin:
 
                     ai_content = self._extract_last_ai_content(final_state)
                     if ai_content:
+                        # OAK 启发: ai 消息写进 ConversationTree
+                        try:
+                            self._conversation_tree.add_message(
+                                role="assistant", content=ai_content,
+                                metadata={"thread_id": thread_id, "phase": self.phase},
+                            )
+                        except Exception:
+                            logger.debug("ConversationTree add_message (ai) skipped", exc_info=True)
                         if self.style_learner is not None:
                             try:
                                 self.style_learner.observe(message, ai_content)

@@ -148,6 +148,30 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   } | null>(null);
   const [autoApprove, setAutoApprove] = useState<boolean>(true);
 
+  // ── Agent mode banner (HRI: situation awareness) ────────────
+  // 后端每次 chat() 入口 emit mode_banner, 前端展示当前 agent 工作模式
+  const [agentMode, setAgentMode] = useState<{
+    exec_mode: string; user_mode: string; flags: string[]; trace_id?: string;
+  }>({ exec_mode: "tool_call", user_mode: "chat", flags: [] });
+
+  // OAK 启发: trace_id 贯穿 — 当前活跃 trace, 前端按 trace 聚合事件
+  const [activeTraceId, setActiveTraceId] = useState<string>("");
+
+  // ── Trust score (HRI: trust calibration) ────────────────────
+  const [trustScore, setTrustScore] = useState<number>(0.5);
+
+  // ── Approval budget (HRI: alert fatigue avoidance) ──────────
+  const [approvalBudget, setApprovalBudget] = useState<number>(10);
+
+  // ── SUGGEST mode (HRI: LoA Level 4-6, 代码先展示给用户编辑) ──
+  const [suggestMode, setSuggestMode] = useState<boolean>(false);
+  const [pendingSuggestCode, setPendingSuggestCode] = useState<{
+    code: string; risk: string; reason: string; turn: number;
+  } | null>(null);
+
+  // ── Dynamic risk threshold (HRI: trust-adaptive risk classification) ──
+  const [riskThreshold, setRiskThreshold] = useState<number>(0.5);
+
   // ── Autoloop progress (SSE) ──────────────────────────────────
   const [autoloopPhase, setAutoloopPhase] = useState<string>("");
   const [autoloopProgress, setAutoloopProgress] = useState<number>(0);
@@ -806,6 +830,43 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         })));
         break;
       }
+      case "mode_banner": {
+        setAgentMode({
+          exec_mode: data.exec_mode || "tool_call",
+          user_mode: data.user_mode || "chat",
+          flags: data.flags || [],
+        });
+        break;
+      }
+      case "trust_update": {
+        setTrustScore(data.trust);
+        break;
+      }
+      case "budget_update": {
+        setApprovalBudget(data.remaining);
+        break;
+      }
+      case "budget_escalation": {
+        setApprovalBudget(data.remaining);
+        break;
+      }
+      case "suggest_code": {
+        setPendingSuggestCode({
+          code: data.code || "",
+          risk: data.risk || "medium",
+          reason: data.reason || "",
+          turn: data.turn ?? 0,
+        });
+        break;
+      }
+      case "suggest_mode_set": {
+        setSuggestMode(data.enabled);
+        break;
+      }
+      case "risk_threshold": {
+        setRiskThreshold(data.threshold);
+        break;
+      }
       case "side_question_pending": {
         // Backend sends a single question, not an array
         const q = data.question;
@@ -1354,6 +1415,31 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     }
   };
 
+  // HRI #4: SUGGEST mode toggle — 所有 code_act 代码先展示给用户编辑
+  const toggleSuggestMode = (enabled: boolean) => {
+    setSuggestMode(enabled);
+    if (wsClientRef.current) {
+      wsClientRef.current.send(JSON.stringify({
+        type: "set_suggest_mode",
+        enabled,
+        thread_id: activeThreadRef.current,
+      }));
+    }
+  };
+
+  // HRI #4: 用户对 suggest_code 的响应 (approve / edit / deny)
+  const respondToSuggestCode = (action: "approve" | "edit" | "deny", editedCode?: string) => {
+    if (wsClientRef.current) {
+      wsClientRef.current.send(JSON.stringify({
+        type: "suggest_response",
+        thread_id: activeThreadRef.current,
+        action,
+        edited_code: editedCode || "",
+      }));
+    }
+    setPendingSuggestCode(null);
+  };
+
   // ── Autoloop SSE subscription ────────────────────────────────
   // Backend emits named events (snapshot/update/campaign), not unnamed messages.
   // The old es.onmessage handler never fired — autoloop progress was dead.
@@ -1452,5 +1538,18 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     petState,
     // Decision trace
     governanceEvents, stateTransitions,
+    // Agent mode banner
+    agentMode,
+    // Trust score
+    trustScore,
+    // Approval budget
+    approvalBudget,
+    // SUGGEST mode + pending suggest code
+    suggestMode,
+    pendingSuggestCode,
+    toggleSuggestMode,
+    respondToSuggestCode,
+    // Dynamic risk threshold
+    riskThreshold,
   };
 }
