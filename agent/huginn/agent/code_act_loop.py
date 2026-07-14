@@ -22,7 +22,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.tools.registry import ToolRegistry
@@ -43,11 +43,88 @@ _BLOCKED_TOOLS = frozenset(
 )
 
 # Hard ceiling on turns per CodeAct run. The paper shows median 6-8 steps on
-# M3ToolEval; 15 leaves headroom for exploration without runaway cost.
+# M³ToolEval; 15 leaves headroom for exploration without runaway cost.
 _MAX_TURNS = 15
 _DEGRADE_AFTER_ERRORS = 3
 
 _CODE_BLOCK_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+
+# ── Human-in-the-loop approval gate ─────────────────────────────────────
+#
+# 借鉴 Cline 三档审批: 只读自动放行 / 写入确认 / 破坏性强制确认.
+# 避免确认疲劳的关键是 default-allow 纯计算代码, 只在真有副作用时拦.
+#
+# ApprovalFn 签名: async (code, risk_level, reason) -> ApprovalDecision
+#   - risk_level: "low" | "medium" | "high"
+#   - 返回 ("approve", None) 放行, ("approve_always", reason) 本会话同类自动放行,
+#     ("deny", reason) 拒绝并把 reason 喂回 LLM, ("edit", new_code) 替换代码.
+#
+# 不传 approval_fn 时: low 自动放行, medium/high yield approval_request 事件
+# 并暂停 (调用方负责 resume). 这是 LangGraph interrupt 模式的轻量版.
+RiskLevel = str  # "low" | "medium" | "high"
+ApprovalDecision = tuple[str, str | None]  # (action, payload)
+ApprovalFn = Callable[[str, RiskLevel, str], Awaitable[ApprovalDecision]]
+
+# 代码里暗示副作用的关键词. 命中任一就升到 high risk.
+# ponytail: 关键词扫描会有误报 (如变量名含 "write"), 但 exec 前拦一道比
+# 事后审计强. 升级: AST 分析精确识别 Call 节点的函数名.
+_SIDE_EFFECT_PATTERNS = re.compile(
+    r"\b(?:savefig|to_csv|to_excel|to_json|to_sql|\.write\(|open\(|"
+    r"mkdir|rmdir|remove|unlink|system|popen|subprocess|"
+    r"requests\.|urllib|httpx|aiohttp)\b"
+)
+# 调用 destructive 工具的代码块也是 high risk
+_DESTRUCTIVE_TOOL_CALLS = re.compile(
+    r"\b(?:delete_|remove_|drop_|submit_|run_job|execute_hpc|deploy_)\w*\s*\("
+)
+
+
+def _assess_risk(code: str, tools: dict[str, Any]) -> tuple[RiskLevel, str]:
+    """三档风险评级 (Cline 模式).
+
+    low: 纯计算, 只调 print/math/json/numpy 等只读工具, 无副作用关键词
+    medium: 调用 search/rag/literature 等只读外部工具 (有网络/IO 但不改状态)
+    high: 代码含 savefig/open/write 等副作用, 或调用 destructive 工具
+    """
+    if _SIDE_EFFECT_PATTERNS.search(code) or _DESTRUCTIVE_TOOL_CALLS.search(code):
+        return ("high", "代码含副作用关键词或 destructive 工具调用")
+    # 扫代码里调用的工具名, 看是否触发 destructive
+    called = set()
+    for name in tools:
+        if name in _BLOCKED_TOOLS:
+            continue
+        if re.search(rf"\b{name}\s*\(", code):
+            called.add(name)
+    for name in called:
+        tool = tools.get(name)
+        if tool is None:
+            continue
+        if getattr(tool, "destructive", False):
+            return ("high", f"调用 destructive 工具 {name}")
+    if called:
+        return ("medium", f"调用工具: {sorted(called)}")
+    return ("low", "纯计算")
+
+
+# 本会话内 "approve_always" 的风险级别白名单, 避免确认疲劳.
+# ponytail: 模块级 dict, 进程内共享. 升级: 按 session_id 隔离.
+_auto_approved: dict[str, set[str]] = {}
+
+
+def _mark_auto_approved(session_id: str, risk_level: RiskLevel) -> None:
+    _auto_approved.setdefault(session_id, set()).add(risk_level)
+
+
+def _is_auto_approved(session_id: str, risk_level: RiskLevel) -> bool:
+    return risk_level in _auto_approved.get(session_id, set())
+
+
+def reset_auto_approvals(session_id: str | None = None) -> None:
+    """测试用: 清空 approve_always 白名单."""
+    if session_id is None:
+        _auto_approved.clear()
+    else:
+        _auto_approved.pop(session_id, None)
 
 
 def _extract_python_blocks(text: str) -> list[str]:
@@ -254,6 +331,74 @@ async def run_code_act_turn(
         # Exec each block in order; feed results back as a single ToolMessage.
         combined_feedback: list[str] = []
         for code in code_blocks:
+            # ── Human-in-the-loop approval gate (Cline 三档模式) ──
+            risk, risk_reason = _assess_risk(code, tools)
+            approval_fn: ApprovalFn | None = getattr(agent, "approval_fn", None)
+            session_id = context.session_id
+
+            if risk != "low" and not _is_auto_approved(session_id, risk):
+                if approval_fn is not None:
+                    # 调用方注入了同步/异步审批回调, 直接等结果
+                    action, payload = await approval_fn(code, risk, risk_reason)
+                    if action == "deny":
+                        err = f"用户拒绝执行 (risk={risk}): {payload or risk_reason}"
+                        _audit_code(agent, code, err)
+                        combined_feedback.append(
+                            f"```python\n{code}\n```\n--- DENIED ---\n{err}"
+                        )
+                        error_streak += 1
+                        if error_streak >= _DEGRADE_AFTER_ERRORS:
+                            yield {
+                                "type": "code_act_degraded",
+                                "reason": f"{error_streak} consecutive errors/denials",
+                                "last_error": err,
+                            }
+                            return
+                        continue
+                    if action == "approve_always":
+                        _mark_auto_approved(session_id, risk)
+                    if action == "edit" and payload:
+                        code = payload  # 用户改了代码, 用新版执行
+                else:
+                    # 没有回调 → yield approval_request, 调用方 resume 后继续
+                    # ponytail: 简化版 LangGraph interrupt. 调用方拿到事件后
+                    # 决定 approve/deny/edit, 通过 asyncio.Event 或类似机制 resume.
+                    # 这里用 yield + 等待 agent._approval_resume event 的模式.
+                    resume_event = getattr(agent, "_approval_resume", None)
+                    resume_decision: ApprovalDecision | None = None
+                    yield {
+                        "type": "approval_request",
+                        "code": code,
+                        "risk": risk,
+                        "reason": risk_reason,
+                        "turn": turn,
+                    }
+                    if resume_event is not None:
+                        # 调用方 set event 后把决策放进 agent._approval_decision
+                        await resume_event.wait()
+                        resume_decision = getattr(agent, "_approval_decision", None)
+                        resume_event.clear()
+                    if resume_decision is None:
+                        # 无 resume 机制 → 保守拒绝
+                        err = f"approval required (risk={risk}) but no resume mechanism"
+                        combined_feedback.append(
+                            f"```python\n{code}\n```\n--- DENIED ---\n{err}"
+                        )
+                        error_streak += 1
+                        continue
+                    action, payload = resume_decision
+                    if action == "deny":
+                        err = f"用户拒绝 (risk={risk}): {payload or risk_reason}"
+                        combined_feedback.append(
+                            f"```python\n{code}\n```\n--- DENIED ---\n{err}"
+                        )
+                        error_streak += 1
+                        continue
+                    if action == "approve_always":
+                        _mark_auto_approved(session_id, risk)
+                    if action == "edit" and payload:
+                        code = payload
+
             stdout_buf = io.StringIO()
             namespace = _build_namespace(agent, tools, context, stdout_buf)
             error: str | None = None
@@ -287,6 +432,7 @@ async def run_code_act_turn(
                 "stdout": stdout,
                 "error": error,
                 "turn": turn,
+                "risk": risk,
             }
 
             if error:

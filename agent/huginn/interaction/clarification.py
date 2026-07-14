@@ -422,3 +422,95 @@ def get_clarification_manager() -> ClarificationManager:
             if _singleton is None:
                 _singleton = ClarificationManager()
     return _singleton
+
+
+# ── 轻量声明式触发 (chat 入口用, 不阻塞) ─────────────────────────
+#
+# ClarificationManager 是给 LLM 主动调 clarification_tool 用的 (阻塞式).
+# should_ask_clarification 是给 chat() 入口用的声明式预检 — 在 agent loop
+# 之前扫一遍用户消息, 命中模糊信号就 yield clarification_request 事件,
+# 不阻塞, 用户可选择回答或忽略继续. 两者互补: 一个事前提示, 一个事中追问.
+# 用户 profile: "more questioning环节" + "capturing vague intuitions".
+
+import re as _re
+
+_ACTION_VERBS = _re.compile(
+    r"(?:计算|模拟|分析|优化|生成|查找|搜索|对比|预测|拟合|"
+    r"跑|做|算|查|看|画|写|改|删|建|run|calc|simul|analy|"
+    r"optimi|generat|search|find|compar|predict|fit|plot|"
+    r"write|create|build|delete|update)",
+    _re.IGNORECASE,
+)
+
+_ANALOGY_SIGNAL = _re.compile(
+    r"(?:这就像|类似于|好像.*一样|好比|reminds me of|it's like)",
+    _re.IGNORECASE,
+)
+
+_MATERIAL_PATTERN = _re.compile(
+    r"\b(?:[A-Z][a-z]?\d?(?:[A-Z][a-z]?\d?)*|"
+    r"perovskite|MXene|MOF|COF|"
+    r"钙钛矿|石墨烯|氮化镓|碳化硅|氧化物|合金|"
+    r"GaN|SiC|TiO2|ZnO|Fe2O3|Cu2O|MoS2|WSe2|hBN)\b"
+)
+
+
+def should_ask_clarification(
+    message: str,
+    session_history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """声明式模糊意图检测. 命中返回 clarification dict, 否则 None.
+
+    三档触发 (任一命中即问):
+      1. cross_domain_analogy: 跨领域类比 → 问是机制映射还是比喻
+      2. no_action_verb: 无明确动词 + 短消息 → 问想做什么
+      3. new_material: 首次提到材料体系 → 问具体操作
+
+    不做语义判断, 纯关键词. 宁可误问也不漏问 — 反正不阻塞.
+    """
+    if not message or len(message) < 3:
+        return None
+
+    if _ANALOGY_SIGNAL.search(message):
+        return {
+            "reason": "cross_domain_analogy",
+            "suggestion": [
+                "你想把这个机制的物理原理迁移过来吗?",
+                "还是只是打个比方帮助理解?",
+                "需要我查一下两个领域的相关性吗?",
+            ],
+            "raw": message[:120],
+        }
+
+    if not _ACTION_VERBS.search(message) and len(message.split()) <= 8:
+        return {
+            "reason": "no_action_verb",
+            "suggestion": [
+                "你是想让我计算/模拟这个体系?",
+                "还是查找相关文献/数据?",
+                "或者只是记录这个想法供后续参考?",
+            ],
+            "raw": message[:120],
+        }
+
+    mat_match = _MATERIAL_PATTERN.search(message)
+    if mat_match and session_history is not None:
+        material = mat_match.group(0)
+        seen_before = any(
+            material in (m.get("content", "") or "")
+            for m in session_history[-20:]
+        )
+        if not seen_before:
+            return {
+                "reason": "new_material",
+                "material": material,
+                "suggestion": [
+                    f"首次提到 {material}, 你想做什么?",
+                    f"查 {material} 的结构/性质数据?",
+                    f"用 {material} 跑模拟 (VASP/LAMMPS)?",
+                    f"只是记录, 不需要现在处理?",
+                ],
+                "raw": message[:120],
+            }
+
+    return None

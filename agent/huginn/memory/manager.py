@@ -890,3 +890,21 @@ class MemoryManager:
                 "long": tier_counts["long"],
             },
         }
+
+    # ── 模糊意图捕捉 (见 huginn/memory/intuition.py) ──────────────
+    # 轻量代理, 实际逻辑在 intuition 模块. 这里暴露便捷方法让 chat() 入口
+    # 直接调, 不用 import intuition 模块.
+
+    def capture_intuition(self, message: str) -> str | None:
+        """检测用户消息里的模糊意图/跨领域类比, 命中则存为 long tier 永久记忆.
+
+        不打分, 不过滤, 不改写 — 原样保留让用户后续自己取舍.
+        path=sessions/{session_id}/intuitions, hypothesis 阶段可拉回做 hint.
+        """
+        from huginn.memory.intuition import capture
+        return capture(self, message, self.session.session_id)
+
+    def recall_intuitions(self, top_k: int = 20) -> list[dict[str, Any]]:
+        """拉回本会话的直觉信号, 给 hypothesis 阶段做 hint."""
+        from huginn.memory.intuition import recall_intuitions
+        return recall_intuitions(self, self.session.session_id, top_k=top_k)
