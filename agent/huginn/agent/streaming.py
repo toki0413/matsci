@@ -512,6 +512,27 @@ class StreamingMixin:
         If *image_path* is provided, the agent routes the image through
         the vision fallback chain.
         """
+        # ponytail: CodeAct 早返回 — 不走 langgraph / vision / cognitive engine,
+        # 直接进 code_act_loop. CodeAct 模式下 LLM 输出 Python 代码块替代 JSON
+        # tool_call, 工具作为 namespace 函数注入. 连续 3 次代码异常自动降级回
+        # tool_call (走下面的原逻辑). 见 huginn/agent/code_act_loop.py.
+        if getattr(self, "mode", "tool_call") == "code_act":
+            from huginn.agent.code_act_loop import run_code_act_turn
+
+            degraded = False
+            async for ev in run_code_act_turn(self, message, thread_id):
+                if ev.get("type") == "code_act_degraded":
+                    degraded = True
+                    break
+                yield ev
+            if not degraded:
+                return
+            # 降级路径: 切回 tool_call 并继续执行下面的原 chat 逻辑
+            self.mode = "tool_call"
+            logger.warning(
+                "CodeAct degraded to tool_call after repeated code errors"
+            )
+
         set_thread_id(thread_id)
         set_user_message(message)
         # ponytail: 不写 self.thread_id / self._current_user_message 实例属性,

@@ -39,38 +39,53 @@ class ToolRegistry:
 
     @classmethod
     def get_all_schemas(cls) -> list[dict]:
-        """Get JSON schemas for all registered tools (for LLM function calling)."""
+        """Get JSON schemas for all registered tools (for LLM function calling).
+
+        Filters on two layers:
+          - active=False: tool is administratively hidden from the LLM but
+            still callable via ToolRegistry.get() directly (e.g. disabled
+            via config). Static, cached.
+          - is_available()=False: tool's external resource is currently down
+            (MCP server disconnected, optional dep missing). Runtime state,
+            re-checked on every call because caching it would freeze the
+            schema list across reconnects.
+        """
         # Tools are registered at startup and don't change at runtime,
         # so we cache the serialized schemas to avoid re-serializing 132
         # tools on every /tools request.
-        if cls._schemas_cache is not None:
-            return cls._schemas_cache
+        if cls._schemas_cache is None:
+            schemas = []
+            for name, tool in cls._tools.items():
+                # active=False 的工具对 LLM 不可见, 但仍可被 ToolRegistry.get() 直接调用
+                if not tool.active:
+                    continue
+                schema = {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": tool.description,
+                        "parameters": tool.input_json_schema
+                        or {"type": "object", "properties": {}},
+                    },
+                    "destructive": tool.destructive,
+                    "read_only": tool.read_only,
+                    # fail-closed 默认值: 未显式声明只读的工具一律需要确认
+                    "metadata": ToolMetadata(
+                        is_read_only=tool.read_only,
+                        is_destructive=tool.destructive,
+                        requires_confirmation=not tool.read_only,
+                    ),
+                }
+                schemas.append(schema)
+            cls._schemas_cache = schemas
 
-        schemas = []
-        for name, tool in cls._tools.items():
-            # active=False 的工具对 LLM 不可见, 但仍可被 ToolRegistry.get() 直接调用
-            if not tool.active:
-                continue
-            schema = {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": tool.description,
-                    "parameters": tool.input_json_schema
-                    or {"type": "object", "properties": {}},
-                },
-                "destructive": tool.destructive,
-                "read_only": tool.read_only,
-                # fail-closed 默认值: 未显式声明只读的工具一律需要确认
-                "metadata": ToolMetadata(
-                    is_read_only=tool.read_only,
-                    is_destructive=tool.destructive,
-                    requires_confirmation=not tool.read_only,
-                ),
-            }
-            schemas.append(schema)
-        cls._schemas_cache = schemas
-        return schemas
+        # ponytail: is_available() 是运行时状态 (MCP 重连 / 依赖加载), 不能进缓存.
+        # 缓存的是 schema 序列化结果, 这里每次返回前做一次轻量过滤.
+        # 升级路径: 若 is_available() 变贵 (网络 ping), 加一个短 TTL 缓存层.
+        return [
+            s for s in cls._schemas_cache
+            if cls._tools[s["function"]["name"]].is_available()
+        ]
 
     @classmethod
     def get_schemas_for_provider(cls, provider: str = "openai") -> list[dict]:

@@ -284,6 +284,11 @@ class HuginnAgent(
         self._telemetry_collector = TelemetryCollector()
         self._turn_count = 0
 
+        # ponytail: CodeAct 双轨制 — 默认走原 langgraph tool_call 路径,
+        # 设 "code_act" 后 chat() 早返回到 code_act_loop. 用户通过实例属性切换,
+        # 不改 __init__ 签名. 升级: 加 config 字段 + AgentConfig.mode.
+        self.mode: str = "tool_call"
+
         self.memory_decay_enabled = mem.memory_decay_enabled
         self.memory_decay_interval_turns = mem.memory_decay_interval_turns
         self.memory_decay_prune_threshold = mem.memory_decay_prune_threshold

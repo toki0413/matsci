@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
+from huginn.security.prompt_security import wrap_rag_chunks
 from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 import logging
@@ -166,6 +167,10 @@ class RAGTool(HuginnTool):
                     img_ref = (r.get("metadata") or {}).get("image_ref")
                     if img_ref:
                         r["image_url"] = f"/knowledge/image?path={quote(str(img_ref))}"
+                # ponytail: 外部检索到的 chunk 是不可信内容, LLM 可能被注入
+                # "ignore previous instructions" 之类的文本. 用显式标记包起来,
+                # 让模型把这段当数据而非指令 (Odysseus untrusted_context_message 模式)
+                wrap_rag_chunks(results)
                 return ToolResult(
                     data={
                         "query": args.query,
@@ -192,6 +197,7 @@ class RAGTool(HuginnTool):
                     filter_dict=filter_dict,
                 )
                 results = routed.get("results", [])
+                wrap_rag_chunks(results)
                 return ToolResult(
                     data={
                         "query": args.query,
@@ -214,7 +220,7 @@ class RAGTool(HuginnTool):
                 top_k=args.top_k,
                 filter_dict=filter_dict,
             )
-
+            wrap_rag_chunks(results)
             return ToolResult(
                 data={
                     "query": args.query,
