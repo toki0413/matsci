@@ -42,6 +42,65 @@ def _make_diff(old: str, new: str, path: str) -> str:
     return "".join(diff_lines)
 
 
+# OAK 启发: 结构文件语义 diff — 对 CIF/POSCAR/INCAR 做语义级变更说明
+# 而非行级 unified diff. 复用 pymatgen 解析结构, 提取人类可读的变更.
+_STRUCTURE_EXTS = {".cif", ".poscar", ".vasp", ".contcar"}
+_PARAM_EXTS = {".incar", ".yaml", ".yml", ".json"}
+
+
+def _semantic_diff(old: str, new: str, path: str) -> str | None:
+    """对结构/参数文件返回语义级 diff 说明, 不支持的格式返回 None."""
+    ext = Path(path).suffix.lower()
+    if ext in _STRUCTURE_EXTS:
+        try:
+            from pymatgen.core import Structure
+            s_old = Structure.from_str(old, fmt="cif" if ext == ".cif" else "poscar")
+            s_new = Structure.from_str(new, fmt="cif" if ext == ".cif" else "poscar")
+            changes = []
+            if s_old.composition.reduced_formula != s_new.composition.reduced_formula:
+                changes.append(f"组分: {s_old.composition.reduced_formula} → {s_new.composition.reduced_formula}")
+            if abs(s_old.lattice.volume - s_new.lattice.volume) > 0.01:
+                changes.append(f"体积: {s_old.lattice.volume:.2f} → {s_new.lattice.volume:.2f} Å³")
+            if abs(s_old.lattice.a - s_new.lattice.a) > 0.001:
+                changes.append(f"a: {s_old.lattice.a:.3f} → {s_new.lattice.a:.3f} Å")
+            if abs(s_old.lattice.b - s_new.lattice.b) > 0.001:
+                changes.append(f"b: {s_old.lattice.b:.3f} → {s_new.lattice.b:.3f} Å")
+            if abs(s_old.lattice.c - s_new.lattice.c) > 0.001:
+                changes.append(f"c: {s_old.lattice.c:.3f} → {s_new.lattice.c:.3f} Å")
+            if len(s_old) != len(s_new):
+                changes.append(f"原子数: {len(s_old)} → {len(s_new)}")
+            return "; ".join(changes) if changes else None
+        except Exception:
+            return None
+    if ext in _PARAM_EXTS:
+        try:
+            import json
+            old_d = json.loads(old) if ext == ".json" else _parse_kv(old)
+            new_d = json.loads(new) if ext == ".json" else _parse_kv(new)
+            changes = []
+            for k in sorted(set(old_d) | set(new_d)):
+                ov, nv = old_d.get(k), new_d.get(k)
+                if ov != nv:
+                    changes.append(f"{k}: {ov} → {nv}")
+            return "; ".join(changes) if changes else None
+        except Exception:
+            return None
+    return None
+
+
+def _parse_kv(text: str) -> dict:
+    """解析 INCAR 风格的 key = value 格式."""
+    result = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        if "=" in line:
+            k, _, v = line.partition("=")
+            result[k.strip().upper()] = v.strip()
+    return result
+
+
 def _content_hash(text: str) -> str:
     """Short SHA-256 hash for snapshot/rollback identification."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
@@ -114,6 +173,8 @@ class FileEditTool(HuginnTool):
                 input_data.old_string, input_data.new_string, 1
             )
             diff = _make_diff(content, new_content, str(path))
+            # OAK 启发: 结构文件附加语义 diff (组分/体积/参数变化)
+            sem_diff = _semantic_diff(content, new_content, str(path))
 
             # Preview / dry-run: return the diff without writing.
             if input_data.dry_run or input_data.action == "preview":
@@ -122,6 +183,7 @@ class FileEditTool(HuginnTool):
                         "file_path": str(path),
                         "dry_run": True,
                         "diff": diff,
+                        "semantic_diff": sem_diff,
                         "message": f"Preview of edit to {path}.",
                     },
                     success=True,
@@ -147,6 +209,7 @@ class FileEditTool(HuginnTool):
                         "dry_run": True,
                         "needs_approval": True,
                         "diff": diff,
+                        "semantic_diff": sem_diff,
                         "reason": perm_result.reason,
                         "message": (
                             f"Edit to {path} requires approval — "
@@ -169,6 +232,7 @@ class FileEditTool(HuginnTool):
                     "file_path": str(path),
                     "replacements": 1,
                     "diff": diff,
+                    "semantic_diff": sem_diff,
                     "snapshot_hash": _content_hash(content),
                     "message": f"Edited {path}.",
                 },

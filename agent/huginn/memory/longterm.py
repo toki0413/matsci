@@ -172,6 +172,14 @@ class LongTermMemory:
 
         # Indexes on migrated columns + FTS (depend on columns added above)
         with self._connect() as conn:
+            # Self-heal: stale DBs may have user_version=1 from before
+            # path/formula/user_id were added to _migrate_memories_v1.
+            # MigrationManager skips v1 on those, so we ensure columns here.
+            from huginn.utils.migrations import column_exists
+            for col in ("formula", "user_id", "path"):
+                if not column_exists(conn, "memories", col):
+                    conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
+
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_formula ON memories(formula)
             """)

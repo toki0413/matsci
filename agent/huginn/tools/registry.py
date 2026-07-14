@@ -80,11 +80,17 @@ class ToolRegistry:
             cls._schemas_cache = schemas
 
         # ponytail: is_available() 是运行时状态 (MCP 重连 / 依赖加载), 不能进缓存.
-        # 缓存的是 schema 序列化结果, 这里每次返回前做一次轻量过滤.
-        # 升级路径: 若 is_available() 变贵 (网络 ping), 加一个短 TTL 缓存层.
+        # 但大多数情况所有工具都可用, 此时直接返回缓存对象 (保持身份一致性).
+        # 仅当有工具不可用时才创建过滤后的新列表.
+        unavailable = [
+            name for name, tool in cls._tools.items()
+            if not getattr(tool, "is_available", lambda: True)()
+        ]
+        if not unavailable:
+            return cls._schemas_cache
         return [
             s for s in cls._schemas_cache
-            if cls._tools[s["function"]["name"]].is_available()
+            if s["function"]["name"] not in unavailable
         ]
 
     @classmethod

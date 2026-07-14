@@ -111,6 +111,37 @@ export type WSMessage =
       created_at?: string;
       thread_id?: string;
     }
+  | {
+      type: "mode_banner";
+      exec_mode: string;
+      user_mode: string;
+      flags: string[];
+      trace_id?: string;
+    }
+  | {
+      type: "trust_update";
+      trust: number;
+      action: string;
+      risk: string;
+    }
+  | { type: "budget_update"; remaining: number }
+  | { type: "budget_escalation"; remaining: number; risk: string }
+  | {
+      type: "suggest_code";
+      code: string;
+      risk: string;
+      reason: string;
+      turn: number;
+    }
+  | { type: "suggest_mode_set"; enabled: boolean; scope: string }
+  | {
+      type: "risk_threshold";
+      threshold: number;
+      risk: string;
+      original_risk?: string;
+      adjusted_risk?: string;
+      reason?: string;
+    }
   | { type: "ping" }
   | { type: "pong" }
   | { type: "context_compacted"; before_pct: number; after_pct: number }
@@ -128,6 +159,9 @@ export type WSMessage =
       verification_passed?: boolean;
       verification_message?: string;
       rollback_available?: boolean;
+      // OAK 启发: trace_id 贯穿, 前端按 trace 聚合
+      trace_id?: string;
+      parent_trace_id?: string;
     }
   | {
       type: "state_transition";
@@ -135,6 +169,8 @@ export type WSMessage =
       to_phase: string;
       reason: string;
       iteration: number;
+      trace_id?: string;
+      parent_trace_id?: string;
     }
   | { type: "done" }
   | { type: "error"; error: string }

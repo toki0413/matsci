@@ -569,6 +569,14 @@ export default function App() {
     researchMode, setResearchMode,
     petState,
     governanceEvents, stateTransitions,
+    agentMode,
+    trustScore,
+    approvalBudget,
+    suggestMode,
+    pendingSuggestCode,
+    toggleSuggestMode,
+    respondToSuggestCode,
+    riskThreshold,
   } = useChatAndConnection({
     config,
     activeTab,
@@ -1195,6 +1203,14 @@ export default function App() {
               campaignEvents={campaignEvents}
               threadTaskState={threadTaskState}
               planExecState={planExecState}
+              agentMode={agentMode}
+              trustScore={trustScore}
+              approvalBudget={approvalBudget}
+              suggestMode={suggestMode}
+              pendingSuggestCode={pendingSuggestCode}
+              toggleSuggestMode={toggleSuggestMode}
+              respondToSuggestCode={respondToSuggestCode}
+              riskThreshold={riskThreshold}
               chatSearchOpen={chatSearchOpen}
               chatSearchQuery={chatSearchQuery}
               setChatSearchOpen={setChatSearchOpen}

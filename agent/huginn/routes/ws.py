@@ -241,6 +241,33 @@ async def agent_websocket(websocket: WebSocket):
                         }
                     )
 
+                elif msg_type == "set_suggest_mode":
+                    # HRI #4: SUGGEST mode toggle — 所有 code_act 代码先展示给用户编辑
+                    enabled = bool(data.get("enabled", True))
+                    tid = data.get("thread_id", msg.thread_id or "default")
+                    from huginn.agent.code_act_loop import set_suggest_mode as _set_suggest
+                    _set_suggest(f"code_act:{tid}", enabled)
+                    await websocket.send_json(
+                        {
+                            "type": "suggest_mode_set",
+                            "enabled": enabled,
+                            "scope": "session",
+                        }
+                    )
+
+                elif msg_type == "suggest_response":
+                    # HRI #4: 用户对 suggest_code 的响应 (approve/edit/deny + 可选 edited_code)
+                    tid = data.get("thread_id", msg.thread_id or "default")
+                    action = str(data.get("action", "approve"))
+                    edited_code = str(data.get("edited_code", ""))
+                    from huginn.agent.code_act_loop import resume_suggest
+                    ok = resume_suggest(f"code_act:{tid}", action, edited_code)
+                    if not ok:
+                        await _send_error(
+                            websocket,
+                            "No active SUGGEST approval for this thread.",
+                        )
+
                 elif msg_type == "ping":
                     await websocket.send_json({"type": "pong"})
 

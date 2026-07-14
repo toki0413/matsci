@@ -724,6 +724,9 @@ class AutoloopEngine:
         共享状态写一条记录进 history, 让 phase_tool 能查到最新门决策.
         """
         state = get_shared_phase_gate_state()
+        # OAK 启发: trace_id 贯穿, 每个 gate 记录归属的 run
+        tid = getattr(self, "_run_id", None) or ""
+        parent_tid = getattr(self, "_parent_run_id", None)
         # override 优先: 已强制放行的转移直接记一条 approved, 不再评估
         if (from_phase, to_phase) in state.overrides:
             meta = state.override_meta.get((from_phase, to_phase), {})
@@ -737,6 +740,8 @@ class AutoloopEngine:
                     ),
                     feedback="override 放行",
                     reviewer=meta.get("actor", "user"),
+                    trace_id=tid,
+                    parent_trace_id=parent_tid,
                 )
             )
             state.pending_transition = (from_phase, to_phase)
@@ -746,6 +751,8 @@ class AutoloopEngine:
             return True
 
         gate = self.phase_gate_hook.evaluate(from_phase, to_phase, evidence)
+        gate.trace_id = tid
+        gate.parent_trace_id = parent_tid
         state.history.append(gate)
         state.pending_transition = (from_phase, to_phase)
 
@@ -783,6 +790,8 @@ class AutoloopEngine:
                 feedback="等待人工 checkpoint 审查. 用 phase_tool override 放行, "
                          "或 submit_evidence 补充后 resume.",
                 reviewer="human_checkpoint",
+                trace_id=tid,
+                parent_trace_id=parent_tid,
             ))
             return False
 
@@ -1028,6 +1037,9 @@ class AutoloopEngine:
         run_id, provenance_record, run_collector = self._prepare_run(
             objective, progressive_budget, goal
         )
+        # OAK 启发: trace_id 贯穿, _check_gate 读这两个属性注入 PhaseGate
+        self._run_id = run_id
+        self._parent_run_id = None  # fork 时设为父 run_id
         tracker = get_progress_tracker()
         total_steps = max_iterations * 6 + 1
         progress_task_id = f"autoloop:{run_id}"
@@ -2443,7 +2455,9 @@ class AutoloopEngine:
         """
         prompt = self._build_plan_prompt(hypothesis, context)
         try:
-            response = await self._llm_chat(prompt, persona_name="default", task="reasoning")
+            # OAK 启发: 三阶段角色分工 — hypothesize 用 reasoning (强模型发散),
+            # plan 用 planning (中档模型收敛), execute 不调 LLM 直接跑工具
+            response = await self._llm_chat(prompt, persona_name="default", task="planning")
             plan = self._parse_plan(response)
         except Exception:
             return None
@@ -4695,7 +4709,8 @@ Please modify the code to address this task."""
         model 不为空时用传入的模型 (用于三槽 verification), 否则用默认 self.model.
 
         task 不为空时, 优先从 model_router 路由 (team 模式):
-        - "reasoning"/"science" → 强模型 (云端)
+        - "reasoning"/"science" → 强模型 (云端, 发散性假设)
+        - "planning" → 中档模型 (收敛, 把假设变步骤)  [OAK 三阶段角色]
         - "summarize"/"format" → 便宜模型 (本地/小模型)
         - "verification" → 独立验证模型
         model 参数优先于 task — 显式指定的模型不被路由覆盖.
@@ -4707,7 +4722,7 @@ Please modify the code to address this task."""
             router = getattr(self, 'model_router', None)
             if router is not None:
                 try:
-                    routed = router.select(task, prefer_cheap=(task in ("summarize", "format", "archival")))
+                    routed = router.select(task, prefer_cheap=(task in ("summarize", "format", "archival", "planning")))
                     if routed is not None:
                         model = routed
                 except Exception:
