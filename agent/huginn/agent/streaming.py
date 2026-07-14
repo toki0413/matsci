@@ -579,8 +579,9 @@ class StreamingMixin:
             logger.debug("intuition capture skipped", exc_info=True)
 
         from huginn.interaction.clarification import should_ask_clarification
+        # AgentMessage 是 dataclass 不是 dict, 直接取 .content 属性
         session_msgs = [
-            {"content": m.get("content", "")}
+            {"content": m.content if isinstance(m.content, str) else str(m.content)}
             for m in (self.memory.session.messages or [])[-20:]
         ]
         clarification = should_ask_clarification(message, session_msgs)

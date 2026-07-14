@@ -27,8 +27,10 @@ class TestBashTool:
 
     async def test_stream_echo(self):
         tool = BashTool()
+        # Linux/CI 上 python 经常不存在, 只有 python3
+        py = "python" if sys.platform == "win32" else "python3"
         result = await tool.call(
-            {"command": ["python", "-c", "print('streamed')"], "stream": True},
+            {"command": [py, "-c", "print('streamed')"], "stream": True},
             ToolContext(session_id="test", workspace="."),
         )
         assert result.success is True
