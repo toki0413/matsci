@@ -1047,9 +1047,11 @@ class AutoloopEngine:
             if len(self._speculator_hint) > 2000:
                 self._speculator_hint = self._speculator_hint[-2000:]
 
-            # 1. Perceive — 走 async 路径, _perceive_legacy 里的 subprocess + rglob
-            # 会阻塞事件循环 5-15s, 必须丢到线程池
-            phase = await self._run_phase_async("perceive", self._perceive_async)
+            # 1. Perceive — _perceive 里的 _perceive_legacy 会跑 git subprocess + rglob,
+            # 阻塞事件循环 5-15s, 用 to_thread 丢到线程池
+            phase = await self._run_phase_async(
+                "perceive", lambda: asyncio.to_thread(self._perceive)
+            )
             phases.append(phase)
             completed_steps += 1
             tracker.update(progress_task_id, current_step=completed_steps,
@@ -1721,23 +1723,6 @@ class AutoloopEngine:
             snapshot = perception.get_snapshot()
         except Exception:
             return self._perceive_legacy()
-        context = snapshot.to_context()
-        if not snapshot.has_activity():
-            return None
-        return context
-
-    async def _perceive_async(self) -> dict[str, Any] | None:
-        """Async 版 _perceive: _perceive_legacy 里的 git subprocess + rglob
-        会阻塞事件循环 5-15s, 必须丢到线程池. perception snapshot 是内存操作
-        可以直接跑.
-        """
-        perception = self._get_perception()
-        if perception is None:
-            return await asyncio.to_thread(self._perceive_legacy)
-        try:
-            snapshot = perception.get_snapshot()
-        except Exception:
-            return await asyncio.to_thread(self._perceive_legacy)
         context = snapshot.to_context()
         if not snapshot.has_activity():
             return None
