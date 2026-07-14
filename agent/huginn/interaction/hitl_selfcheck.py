@@ -127,6 +127,51 @@ def test_suggest_mode():
     assert resume_suggest("test_hri", "approve") is False
 
 
+def test_conversation_tree_fork():
+    """OAK 启发: ConversationTree 通电 + fork_from_active."""
+    from huginn.utils.conversation_tree import ConversationTree
+
+    tree = ConversationTree()
+    n1 = tree.add_message(role="user", content="hypothesis A")
+    n2 = tree.add_message(role="assistant", content="result A")
+    assert len(tree._nodes) == 2
+    assert tree.active_path() == [n1.id, n2.id]
+
+    # fork 从 active leaf — 下条消息成为 n2 的兄弟
+    tree.fork_from_active()
+    n3 = tree.add_message(role="user", content="hypothesis B")
+    assert n3.parent_id == n1.id  # n3 是 n2 的兄弟, 共享 parent n1
+    branches = tree.get_branches(n1.id)
+    assert len(branches) == 2  # 两条分支: A 和 B
+
+
+def test_semantic_diff():
+    """OAK 启发: 结构文件语义 diff."""
+    from huginn.tools.file_edit_tool import _semantic_diff, _parse_kv
+
+    # INCAR 参数 diff
+    old_incar = "ENCUT = 400\nISMEAR = 0\nSIGMA = 0.05"
+    new_incar = "ENCUT = 520\nISMEAR = 0\nSIGMA = 0.05"
+    diff = _semantic_diff(old_incar, new_incar, "INCAR")
+    assert diff is not None
+    assert "ENCUT" in diff
+    assert "400" in diff and "520" in diff
+
+    # 无变化返回 None
+    diff_none = _semantic_diff(old_incar, old_incar, "INCAR")
+    assert diff_none is None
+
+    # 非结构文件返回 None
+    diff_py = _semantic_diff("print('a')", "print('b')", "script.py")
+    assert diff_py is None
+
+    # kv 解析
+    kv = _parse_kv("ENCUT = 400\n# comment\nISMEAR = 1")
+    assert kv["ENCUT"] == "400"
+    assert kv["ISMEAR"] == "1"
+    assert "# comment" not in kv
+
+
 if __name__ == "__main__":
     test_risk_assessment()
     print("PASS: risk_assessment")
@@ -142,4 +187,8 @@ if __name__ == "__main__":
     print("PASS: dynamic_risk_threshold")
     test_suggest_mode()
     print("PASS: suggest_mode")
+    test_conversation_tree_fork()
+    print("PASS: conversation_tree_fork")
+    test_semantic_diff()
+    print("PASS: semantic_diff")
     print("ALL CHECKS PASSED")

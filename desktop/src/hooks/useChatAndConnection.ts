@@ -222,6 +222,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // ── Pet state (pushed via pet_update WS messages) ────────────
   const [petState, setPetState] = useState<PetStatusState | null>(null);
 
+  // ── Forest result (随机森林多 engine 并行探索的 DS 合成结果) ──
+  const [forestResult, setForestResult] = useState<any>(null);
+
   // ── Thread state ─────────────────────────────────────────────
   const [threads, setThreads] = useState<Thread[]>([
     { id: "desktop", label: "Default", created_at: "", last_active: "" },
@@ -831,11 +834,14 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         break;
       }
       case "mode_banner": {
+        const tid = data.trace_id || "";
         setAgentMode({
           exec_mode: data.exec_mode || "tool_call",
           user_mode: data.user_mode || "chat",
           flags: data.flags || [],
+          trace_id: tid,
         });
+        if (tid) setActiveTraceId(tid);
         break;
       }
       case "trust_update": {
@@ -1064,6 +1070,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       case "state_transition":
         setStateTransitions((prev) => [...prev, data].slice(-30));
         if (data.to_phase) setAutoloopPhase(data.to_phase);
+        break;
+      case "forest_result":
+        setForestResult(data);
         break;
     }
   };
@@ -1536,10 +1545,14 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     soundEnabled, setSoundEnabled,
     // Pet state
     petState,
+    // Forest result (随机森林 DS 合成)
+    forestResult,
     // Decision trace
     governanceEvents, stateTransitions,
     // Agent mode banner
     agentMode,
+    // OAK: trace_id 贯穿
+    activeTraceId,
     // Trust score
     trustScore,
     // Approval budget

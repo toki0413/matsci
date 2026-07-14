@@ -45,17 +45,24 @@ def _make_diff(old: str, new: str, path: str) -> str:
 # OAK 启发: 结构文件语义 diff — 对 CIF/POSCAR/INCAR 做语义级变更说明
 # 而非行级 unified diff. 复用 pymatgen 解析结构, 提取人类可读的变更.
 _STRUCTURE_EXTS = {".cif", ".poscar", ".vasp", ".contcar"}
+_STRUCTURE_NAMES = {"poscar", "contcar", "conTCAR"}  # VASP 无扩展名文件
 _PARAM_EXTS = {".incar", ".yaml", ".yml", ".json"}
+_PARAM_NAMES = {"incar", "kpoints"}  # VASP 无扩展名参数文件
 
 
 def _semantic_diff(old: str, new: str, path: str) -> str | None:
     """对结构/参数文件返回语义级 diff 说明, 不支持的格式返回 None."""
-    ext = Path(path).suffix.lower()
-    if ext in _STRUCTURE_EXTS:
+    p = Path(path)
+    ext = p.suffix.lower()
+    name = p.stem.lower()  # INCAR → "incar", POSCAR → "poscar"
+    is_structure = ext in _STRUCTURE_EXTS or name in _STRUCTURE_NAMES
+    is_param = ext in _PARAM_EXTS or name in _PARAM_NAMES
+    if is_structure:
         try:
             from pymatgen.core import Structure
-            s_old = Structure.from_str(old, fmt="cif" if ext == ".cif" else "poscar")
-            s_new = Structure.from_str(new, fmt="cif" if ext == ".cif" else "poscar")
+            fmt = "cif" if ext == ".cif" else "poscar"
+            s_old = Structure.from_str(old, fmt=fmt)
+            s_new = Structure.from_str(new, fmt=fmt)
             changes = []
             if s_old.composition.reduced_formula != s_new.composition.reduced_formula:
                 changes.append(f"组分: {s_old.composition.reduced_formula} → {s_new.composition.reduced_formula}")
@@ -72,7 +79,7 @@ def _semantic_diff(old: str, new: str, path: str) -> str | None:
             return "; ".join(changes) if changes else None
         except Exception:
             return None
-    if ext in _PARAM_EXTS:
+    if is_param:
         try:
             import json
             old_d = json.loads(old) if ext == ".json" else _parse_kv(old)

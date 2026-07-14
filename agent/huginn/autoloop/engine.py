@@ -255,6 +255,8 @@ class AutoloopEngine:
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
         self.hypothesis_graph = HypothesisGraph()
         self.report_tool = ReportTool()
+        # OAK 启发: forest_id 标记归属森林, 交叉授粉时记录来源
+        self.forest_id: str | None = None
 
         # Sub-engines
         self.explorer = ExplorationOrchestrator(
