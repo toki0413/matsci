@@ -73,6 +73,12 @@ def _migrate_memories_v1(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE memories ADD COLUMN last_decay_access_count INTEGER DEFAULT 0"
         )
+    # 路径化层级记忆 (Open WebUI _path_rank 模式): 每条记忆可选挂在一个
+    # 逻辑路径上, 如 "materials/GaN/synthesis" 或 "sessions/abc/insights".
+    # retrieve 时按 lookup_path 计算 rank: 精确 > 后代 > 祖先 > 兄弟 > 共享 token.
+    # 默认 NULL 表示全局, 不参与路径排序.
+    if not column_exists(conn, "memories", "path"):
+        conn.execute("ALTER TABLE memories ADD COLUMN path TEXT")
 
 
 def _run_memory_migrations(db_path: str) -> None:
@@ -179,6 +185,9 @@ class LongTermMemory:
                 CREATE INDEX IF NOT EXISTS idx_user_id ON memories(user_id)
             """)
             conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_path ON memories(path)
+            """)
+            conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
                     content, tags, source,
                     content='memories',
@@ -198,6 +207,7 @@ class LongTermMemory:
         ttl_hours: float | None = None,
         formula: str | None = None,
         user_id: str | None = None,
+        path: str | None = None,
     ) -> str:
         """Store a new memory entry. Returns the entry ID.
 
@@ -205,6 +215,9 @@ class LongTermMemory:
         formula: optional material formula (e.g. "GaN") for material entries.
         user_id: optional owner. When set the memory is private to that user;
             when omitted the memory is shared (backward compatible).
+        path: optional hierarchical path (e.g. "materials/GaN/synthesis").
+            retrieve() uses _path_rank to prefer memories at or near the
+            lookup path. NULL means global, no path preference.
         """
         if tier not in TIER_TTL_HOURS:
             raise ValueError(f"Invalid tier {tier}; choose from {list(TIER_TTL_HOURS)}")
@@ -224,8 +237,8 @@ class LongTermMemory:
                 conn.execute(
                     """
                     INSERT INTO memories
-                    (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula, user_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, category, content, tags, source, importance, tier, created_at, last_accessed, expires_at, formula, user_id, path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         entry_id,
@@ -240,6 +253,7 @@ class LongTermMemory:
                         expires,
                         formula,
                         user_id,
+                        path,
                     ),
                 )
                 # formula 进 tags 让 FTS5 也能搜到
@@ -276,6 +290,7 @@ class LongTermMemory:
                         "tier": tier,
                         "formula": formula or "",
                         "user_id": user_id or "",
+                        "path": path or "",
                     }
                 ],
                 ids=[entry_id],
@@ -323,6 +338,55 @@ class LongTermMemory:
         )
 
     @staticmethod
+    def _path_rank(memory_path: str | None, lookup_path: str | None) -> tuple[int, int]:
+        """Hierarchical distance between a memory's path and the lookup path.
+
+        Returns (rank, distance). Lower rank wins; within the same rank,
+        lower distance wins. Open WebUI pattern adapted.
+
+        rank 0 — exact match (path == lookup)
+        rank 1 — memory is a descendant of lookup (lookup/* matches)
+        rank 2 — memory is an ancestor of lookup (specific lookup falls under broad memory)
+        rank 3 — siblings (same parent, different leaf)
+        rank 4 — share at least one path token (cross-branch relevance hint)
+        rank 5 — leaf segment matches (e.g. "synthesis" in two different parents)
+        rank 6 — no relationship (memory has no path, or paths are disjoint)
+
+        When lookup_path is None, every memory gets rank 6 (path-neutral) —
+        preserves the pre-path behaviour exactly.
+        """
+        if not lookup_path:
+            return (6, 0)
+        mp = (memory_path or "").strip("/")
+        lp = lookup_path.strip("/")
+        if not mp:
+            return (6, 0)
+        m_segs = mp.split("/")
+        l_segs = lp.split("/")
+
+        if mp == lp:
+            return (0, 0)
+        # descendant: lookup is a prefix of memory (memory deeper than lookup)
+        if len(m_segs) > len(l_segs) and m_segs[: len(l_segs)] == l_segs:
+            return (1, len(m_segs) - len(l_segs))
+        # ancestor: memory is a prefix of lookup (memory broader than lookup)
+        if len(l_segs) > len(m_segs) and l_segs[: len(m_segs)] == m_segs:
+            return (2, len(l_segs) - len(m_segs))
+        # siblings: same parent, different leaf
+        if len(m_segs) == len(l_segs) and m_segs[:-1] == l_segs[:-1] and m_segs[-1] != l_segs[-1]:
+            return (3, 1)
+        # leaf segment matches (only the leaf is shared, nothing else)
+        # checked before general shared-token so "synthesis in two branches"
+        # lands at rank 5, not rank 4
+        if m_segs[-1] == l_segs[-1] and set(m_segs) & set(l_segs) == {m_segs[-1]}:
+            return (5, abs(len(m_segs) - len(l_segs)))
+        # shared token anywhere (non-leaf)
+        if set(m_segs) & set(l_segs):
+            shared = len(set(m_segs) & set(l_segs))
+            return (4, max(len(m_segs), len(l_segs)) - shared)
+        return (6, 0)
+
+    @staticmethod
     def _build_fts_query(query: str) -> str:
         """Convert a natural-language query into a safe FTS5 MATCH string.
 
@@ -350,15 +414,24 @@ class LongTermMemory:
         semantic: bool = True,
         formula: str | None = None,
         user_id: str | None = None,
+        path: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve alive memories matching query (FTS5 + optional semantic).
 
         user_id: when supplied, only memories owned by that user are
             returned (multi-tenant isolation). When omitted, all memories
             are visible — this preserves the pre-isolation behaviour.
+        path: when supplied, results are re-ranked by _path_rank against
+            this lookup path (closer memories win). SQL LIMIT is widened
+            to top_k * 3 so path-near matches that FTS ranked low still
+            make it into the candidate pool. When omitted, the original
+            tier/importance ordering is preserved unchanged.
         """
         results = []
         alive_where, alive_params = self._where_alive()
+        # ponytail: 路径排序需要更大候选池, 否则 SQL LIMIT 直接砍掉了应该靠前的行.
+        # 拉到 3 倍候选, Python 层 re-rank 后取 top_k. 不传 path 时拉 1 倍, 行为不变.
+        fetch_k = top_k * 3 if path else top_k
 
         # FTS5 tokenized search — handles multi-word queries that LIKE misses.
         # Falls back to LIKE substring match if FTS5 query syntax errors out.
@@ -391,7 +464,7 @@ class LongTermMemory:
                         )
                         fts_params = params + [fts_query]
                         fts_sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
-                        fts_params.append(top_k)
+                        fts_params.append(fetch_k)
                         rows = conn.execute(fts_sql, tuple(fts_params)).fetchall()
                         fts_matched = True
                     except sqlite3.OperationalError:
@@ -401,11 +474,11 @@ class LongTermMemory:
                     sql += f" AND content LIKE ?"
                     params.append(f"%{query}%")
                     sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
-                    params.append(top_k)
+                    params.append(fetch_k)
                     rows = conn.execute(sql, tuple(params)).fetchall()
             else:
                 sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
-                params.append(top_k)
+                params.append(fetch_k)
                 rows = conn.execute(sql, tuple(params)).fetchall()
 
             now = datetime.now().isoformat()
@@ -422,7 +495,7 @@ class LongTermMemory:
         # Semantic search via vector store
         if semantic and self._enable_semantic:
             try:
-                vec_results = self._vector_store.search(query, top_k=top_k)
+                vec_results = self._vector_store.search(query, top_k=fetch_k)
             except Exception:
                 logger.warning("vector search failed, falling back to FTS-only", exc_info=True)
                 vec_results = []
@@ -445,6 +518,19 @@ class LongTermMemory:
                         ).fetchone()
                     if row:
                         results.append(dict(row))
+
+        if path:
+            # ponytail: SQL 已经按 tier/importance 排过, 但路径近邻更重要 —
+            # 在 Python 层按 (path_rank, tier_order, importance) 再排一次.
+            # 升级路径: 把 _path_rank 写成 SQL 表达式避免双排序.
+            tier_rank = {"long": 0, "mid": 1, "short": 2}
+            results.sort(
+                key=lambda r: (
+                    self._path_rank(r.get("path"), path),
+                    tier_rank.get(r.get("tier", "mid"), 3),
+                    -(r.get("importance", 0.5)),
+                )
+            )
 
         return results[:top_k]
 

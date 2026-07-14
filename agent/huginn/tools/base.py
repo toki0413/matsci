@@ -121,6 +121,19 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     # True 时工具调用立即返回 task_id, 结果异步轮询
     is_background_task: bool = False
 
+    def is_available(self) -> bool:
+        """Whether this tool is currently usable.
+
+        Active flag gates LLM visibility; is_available() gates real-world
+        readiness — e.g. MCP server disconnected, optional dependency missing,
+        HPC endpoint down. AnythingLLM isToolAvailable() pattern: tools that
+        report False here are filtered out of the schema list the LLM sees,
+        so the model never wastes a turn trying to call a dead tool.
+
+        Default True. Override in subclasses that own external resources.
+        """
+        return True
+
     def __init__(self) -> None:
         # Subclasses that hardcode their own description are left alone.
         # Empty / placeholder -> fall back to a sibling .md file so the

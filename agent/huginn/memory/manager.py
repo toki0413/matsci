@@ -113,8 +113,13 @@ class MemoryManager:
         tags: list[str] | None = None,
         importance: float = 0.5,
         tier: str = "mid",
+        path: str | None = None,
     ) -> str:
-        """Explicitly store a fact in long-term memory."""
+        """Explicitly store a fact in long-term memory.
+
+        path: optional hierarchical path (e.g. "materials/GaN/synthesis")
+            for path-ranked recall. See LongTermMemory.store.
+        """
         return self.longterm.store(
             content=content,
             category=category,
@@ -122,6 +127,7 @@ class MemoryManager:
             source=f"session:{self.session.session_id}",
             importance=importance,
             tier=tier,
+            path=path,
         )
 
     def recall(
@@ -131,8 +137,14 @@ class MemoryManager:
         tier: str | None = None,
         top_k: int = 5,
         material_filter: dict[str, str] | None = None,
+        path: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search long-term memory. material_filter 可按 formula/category 过滤材料记忆."""
+        """Search long-term memory. material_filter 可按 formula/category 过滤材料记忆.
+
+        path: optional lookup path — when set, results are re-ranked by
+            _path_rank so memories at or near this path win over equally
+            scoring global memories. See LongTermMemory.retrieve.
+        """
         formula = None
         cat = category
         if material_filter:
@@ -147,6 +159,7 @@ class MemoryManager:
             top_k=top_k,
             semantic=self.config.enable_semantic_search,
             formula=formula,
+            path=path,
         )
 
     def recall_for_prompt(

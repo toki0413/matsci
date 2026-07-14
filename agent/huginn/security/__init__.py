@@ -13,6 +13,10 @@ from huginn.security.policy_engine import (
     PolicyRule,
     evaluate_command_hook,
 )
+from huginn.security.prompt_security import (
+    untrusted_context_message,
+    wrap_rag_chunks,
+)
 from huginn.security.rate_limiter import (
     RateLimitConfig,
     RateLimitExceeded,
@@ -66,4 +70,6 @@ __all__ = [
     "RateLimitConfig",
     "RateLimitExceeded",
     "get_rate_limiter",
+    "untrusted_context_message",
+    "wrap_rag_chunks",
 ]
