@@ -465,6 +465,12 @@ class PhaseGateState:
 
     engine 写 (pending_transition / history), PhaseTool 读+写
     (submit_evidence / override). 单例通过 get_shared_phase_gate_state 拿.
+
+    human_checkpoint_phases: 配置哪些 (from, to) 转移需要人工 checkpoint.
+        命中时 engine 不自动推进, 而是把 pending_human_review 设为该转移,
+        yield phase_checkpoint 事件给 UI 层. 用户通过 override 或
+        submit_evidence + resume 推进. 借鉴 LangGraph interrupt_before 模式.
+    pending_human_review: 当前等待人工审查的转移, None 表示无.
     """
 
     def __init__(self) -> None:
@@ -475,6 +481,9 @@ class PhaseGateState:
         # override 元数据 (并行于 overrides set): 谁/何时/为何 override
         # ponytail: 并行结构, set.add 不写 meta 则 meta 缺. 升级: set→dict 合并
         self.override_meta: dict[tuple[str, str], dict] = {}
+        # Human-in-the-loop checkpoint 配置 + 运行时状态
+        self.human_checkpoint_phases: set[tuple[str, str]] = set()
+        self.pending_human_review: tuple[str, str] | None = None
 
     def reset(self) -> None:
         self.history.clear()
@@ -482,9 +491,16 @@ class PhaseGateState:
         self.submitted_evidence.clear()
         self.overrides.clear()
         self.override_meta.clear()
+        self.pending_human_review = None
 
     def last_gate(self) -> PhaseGate | None:
         return self.history[-1] if self.history else None
+
+    def needs_human_checkpoint(self, from_phase: str, to_phase: str) -> bool:
+        """该转移是否配置了人工 checkpoint (未被 override 覆盖)."""
+        if (from_phase, to_phase) in self.overrides:
+            return False
+        return (from_phase, to_phase) in self.human_checkpoint_phases
 
 
 _shared_state: PhaseGateState | None = None

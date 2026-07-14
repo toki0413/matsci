@@ -740,6 +740,9 @@ class AutoloopEngine:
                 )
             )
             state.pending_transition = (from_phase, to_phase)
+            # override 同时清除 pending_human_review (用户已决策)
+            if state.pending_human_review == (from_phase, to_phase):
+                state.pending_human_review = None
             return True
 
         gate = self.phase_gate_hook.evaluate(from_phase, to_phase, evidence)
@@ -758,6 +761,34 @@ class AutoloopEngine:
                 from_phase, to_phase, gate.missing_evidence,
             )
             return False
+
+        # ── Human-in-the-loop checkpoint (LangGraph interrupt_before 模式) ──
+        # 硬性证据已通过, 但用户配置了该转移需要人工审查. 设 pending_human_review
+        # 并返回 False 让 engine 停在当前 phase. UI 层读到 phase_checkpoint 事件后
+        # 展示 evidence 给用户, 用户通过 phase_tool override 或 submit_evidence + resume.
+        if state.needs_human_checkpoint(from_phase, to_phase):
+            state.pending_human_review = (from_phase, to_phase)
+            logger.info(
+                "human checkpoint pending %s→%s: awaiting user review",
+                from_phase, to_phase,
+            )
+            # 记一条 pending 状态, phase_tool 查得到
+            state.history.append(PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="pending",
+                required_evidence=self.phase_gate_hook.config.required_for(
+                    from_phase, to_phase
+                ),
+                feedback="等待人工 checkpoint 审查. 用 phase_tool override 放行, "
+                         "或 submit_evidence 补充后 resume.",
+                reviewer="human_checkpoint",
+            ))
+            return False
+
+        # 用户已审查完毕 (pending_human_review 被清除), 正常放行
+        if state.pending_human_review == (from_phase, to_phase):
+            state.pending_human_review = None
         return True
 
     # ──────────────────────────────────────────────────────────────

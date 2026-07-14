@@ -539,6 +539,33 @@ class StreamingMixin:
         # 并发 chat() 调用会互相覆盖. contextvars 已隔离每协程副本, core.py
         # 的 _build_graph 用 get_user_message() 读, 无竞争.
 
+        # ── 人机协作: 模糊意图捕捉 + 主动 questioning ──
+        # 两件事都在 agent loop 之前做, 不阻断主流程:
+        # 1. capture_intuition: 检测直觉/类比信号, 命中则静默存 long tier
+        # 2. should_ask_clarification: 检测模糊意图, 命中则 yield 事件让 UI 问
+        # 用户 profile: "more questioning环节" + "capturing vague intuitions
+        # without judgment". 这里是声明式触发, 不做语义判断.
+        try:
+            self.memory.capture_intuition(message)
+        except Exception:
+            logger.debug("intuition capture skipped", exc_info=True)
+
+        from huginn.interaction.clarification import should_ask_clarification
+        session_msgs = [
+            {"content": m.get("content", "")}
+            for m in (self.memory.session.messages or [])[-20:]
+        ]
+        clarification = should_ask_clarification(message, session_msgs)
+        if clarification is not None:
+            yield {
+                "type": "clarification_request",
+                "reason": clarification["reason"],
+                "suggestion": clarification["suggestion"],
+                "raw": clarification.get("raw", ""),
+                "material": clarification.get("material"),
+            }
+            # 不 return — yield 完继续走 agent loop, 用户可以选择回答或忽略
+
         if self._turn_count == 0:
             self._init_session_continuity()
 
