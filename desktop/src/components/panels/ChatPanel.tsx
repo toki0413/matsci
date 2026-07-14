@@ -202,7 +202,7 @@ interface ChatPanelProps {
     key_findings: string[];
   };
   planExecState?: Record<string, "executing" | "done">;
-  agentMode?: { exec_mode: string; user_mode: string; flags: string[] };
+  agentMode?: { exec_mode: string; user_mode: string; flags: string[]; trace_id?: string };
   trustScore?: number;
   approvalBudget?: number;
   suggestMode?: boolean;
@@ -695,6 +695,12 @@ export function ChatPanel(props: ChatPanelProps) {
           {suggestMode && (
             <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-medium text-cyan-400" title="SUGGEST mode: all code shown for editing before execution">
               Suggest
+            </span>
+          )}
+          {/* OAK 启发: trace_id 贯穿 — 当前研究分支标识 */}
+          {agentMode?.trace_id && (
+            <span className="font-mono text-[10px] text-cyan-400/70" title={`Trace: ${agentMode.trace_id}`}>
+              ⟡{agentMode.trace_id.length > 10 ? agentMode.trace_id.slice(0, 8) : agentMode.trace_id}
             </span>
           )}
           {(() => {

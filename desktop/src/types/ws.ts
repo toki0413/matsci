@@ -181,6 +181,23 @@ export type WSMessage =
       level: number;
       hunger: number;
       happiness: number;
+    }
+  | {
+      // 随机森林启发的多 engine 并行探索结果
+      type: "forest_result";
+      objective: string;
+      n_trees: number;
+      combined: { pass: number; fail: number; uncertain: number };
+      diversity: number;
+      consensus: string;
+      passed: boolean;
+      trees: Array<{
+        tree_id: string;
+        hypothesis_count: number;
+        supported: number;
+        refuted: number;
+        ds_mass: { pass: number; fail: number; uncertain: number };
+      }>;
     };
 
 /**

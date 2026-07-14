@@ -1,4 +1,9 @@
-"""Benchmark runner command."""
+"""Benchmark runner command.
+
+6 个能力层对标社区 AI Scientist 评测:
+  general / physics / lineage / repro / optim / research
+research 多 trial 走独立脚本, 其余 5 个走本命令.
+"""
 
 from __future__ import annotations
 
@@ -8,35 +13,58 @@ from huginn.cli.context import CliContext
 from huginn.cli.design_system import get_design_system
 from huginn.config import HuginnConfig
 
+SUITES = ["general", "physics", "lineage", "repro", "optim", "research"]
+
 
 @click.command()
-@click.option("--evolve", is_flag=True, help="Run evolution cycle after benchmarking")
-@click.option("--categories", "-c", help="Comma-separated categories to run")
+@click.option("--suite", "-s", default="general", type=click.Choice(SUITES),
+              help="Benchmark suite: general/physics/lineage/repro/optim/research")
+@click.option("--evolve", is_flag=True, help="Run evolution cycle after benchmarking (general only)")
+@click.option("--categories", "-c", help="Comma-separated categories to run (general only)")
 @click.option("--output", "-o", default="bench_report.json", help="Report output path")
 @click.pass_obj
-def bench(ctx: CliContext, evolve: bool, categories: str | None, output: str) -> None:
-    """Run the benchmark suite and optionally trigger self-evolution."""
-    from huginn.bench.runner import BenchmarkRunner
-
+def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None, output: str) -> None:
+    """Run benchmark suite against Huginn agent (DeepSeek v4-flash)."""
     ds = get_design_system()
     cfg = (
         HuginnConfig.load(ctx.config_path)
         if ctx.config_path
         else HuginnConfig.from_env()
     )
-    runner = BenchmarkRunner(config=cfg)
+
+    if suite == "research":
+        # ResearchClawBench 多 trial (11 题 × 3), 走独立脚本
+        ds.dialog(
+            title="Bench",
+            content=(
+                "[yellow]ResearchClawBench 需要多 trial, 请用独立脚本:[/yellow]\n"
+                "  python tests/test_clawbench_runner.py --trials 3"
+            ),
+        )
+        return
+
+    from huginn.bench import BenchmarkRunner, get_suite_tasks
+
+    tasks = get_suite_tasks(suite)
+    if not tasks:
+        ds.error(f"未知 suite: {suite}")
+        return
+
+    runner = BenchmarkRunner(tasks=tasks, config=cfg)
     cats = (
         [c.strip() for c in categories.split(",") if c.strip()] if categories else None
     )
 
-    report = runner.run(evolve=evolve, categories=cats)
+    ds.dialog(title="Bench", content=f"[bold blue]Running suite: {suite} ({len(tasks)} tasks)[/bold blue]")
+
+    report = runner.run(evolve=evolve and suite == "general", categories=cats)
     report_path = ctx.workspace / output
     runner.save_report(report, report_path)
 
     ds.dialog(
         title="Bench",
         content=(
-            f"[bold blue]Benchmark Report[/bold blue]\n"
+            f"[bold blue]Benchmark Report ({suite})[/bold blue]\n"
             f"Run ID: {report.run_id}\n"
             f"Total: {report.total}  Passed: {report.passed}  Failed: {report.failed}  Skipped: {report.skipped}\n"
             f"Pass rate: {report.metrics.get('pass_rate', 0):.0%}\n"
@@ -45,7 +73,6 @@ def bench(ctx: CliContext, evolve: bool, categories: str | None, output: str) ->
         ),
     )
 
-    # 进度可视化：按通过/失败比例渲染一条进度条
     ds.progress_bar(
         current=report.passed,
         total=report.total or 1,

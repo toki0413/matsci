@@ -44,6 +44,7 @@ interface Props {
   governanceEvents: GovernanceEntry[];
   stateTransitions: StateTransition[];
   currentPhase: string;
+  activeTraceId?: string;
 }
 
 const CATEGORY_ICONS: Record<string, typeof Cpu> = {
@@ -75,7 +76,7 @@ const RISK_BG: Record<string, string> = {
 
 const PHASE_FLOW = ["literature", "hypothesis", "planning", "execution", "validation", "reporting"];
 
-export default function DecisionTracePanel({ governanceEvents, stateTransitions, currentPhase }: Props) {
+export default function DecisionTracePanel({ governanceEvents, stateTransitions, currentPhase, activeTraceId }: Props) {
   const [tab, setTab] = useState<"actions" | "state" | "predictability">("actions");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -100,6 +101,13 @@ export default function DecisionTracePanel({ governanceEvents, stateTransitions,
 
         {/* Quick stats */}
         <div className="flex items-center gap-3 ml-auto text-[10px] text-text-muted">
+          {/* OAK 启发: trace_id 贯穿展示, 让用户知道当前事件属于哪个研究分支 */}
+          {activeTraceId && (
+            <span className="flex items-center gap-1 font-mono text-cyan-400" title={`Active trace: ${activeTraceId}`}>
+              <GitBranch size={10} aria-hidden="true" />
+              {activeTraceId.length > 12 ? `${activeTraceId.slice(0, 8)}…` : activeTraceId}
+            </span>
+          )}
           <span className="flex items-center gap-1">
             <CheckCircle2 size={10} className="text-emerald-400" aria-hidden="true" />
             {stats.allowed}/{stats.total} allowed

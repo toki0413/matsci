@@ -24,6 +24,7 @@ export function BenchmarkPanel({
           <h2 className="mb-2 text-base font-semibold">{t('benchmark.title')}</h2>
           <p className="text-sm text-text-secondary">{t('benchmark.desc')}</p>
         </div>
+
         <div className="card space-y-3">
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" checked={benchEvolve} onChange={(e) => setBenchEvolve(e.target.checked)} className="h-4 w-4 rounded border-border" />
@@ -41,6 +42,7 @@ export function BenchmarkPanel({
           </button>
           {benchError && <div className="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">{benchError}</div>}
         </div>
+
         {benchResult && (
           <div className="card space-y-3">
             <h3 className="text-sm font-semibold">{t('benchmark.report')}</h3>
@@ -50,8 +52,12 @@ export function BenchmarkPanel({
             <div className="space-y-2">
               {(benchResult.results || []).map((r: any) => (
                 <div key={r.task_id} className="rounded-lg border border-border bg-bg-tertiary p-3 text-xs">
-                  <span className={`font-semibold ${r.passed ? "text-success" : "text-error"}`}>{r.passed ? "✓" : "✗"}</span>{" "}
-                  <span className="font-mono">{r.task_id}</span> — {r.reason}
+                  <div className="flex items-center gap-2">
+                    <span className={`font-semibold ${r.passed ? "text-success" : "text-error"}`}>{r.passed ? "✓" : "✗"}</span>
+                    <span className="font-mono">{r.task_id}</span>
+                    <span className="ml-auto text-text-muted">{r.category}</span>
+                  </div>
+                  <p className="mt-1 text-text-secondary">{r.reason}</p>
                 </div>
               ))}
             </div>

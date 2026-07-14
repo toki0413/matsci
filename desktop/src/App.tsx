@@ -568,8 +568,10 @@ export default function App() {
     pauseGeneration, resumeGeneration, isPaused,
     researchMode, setResearchMode,
     petState,
+    forestResult,
     governanceEvents, stateTransitions,
     agentMode,
+    activeTraceId,
     trustScore,
     approvalBudget,
     suggestMode,
@@ -1159,12 +1161,43 @@ export default function App() {
           <AutoloopProgress currentPhase={autoloopPhase} progress={autoloopProgress} />
         )}
 
+        {/* Forest result: 随机森林多 engine DS 合成 */}
+        {forestResult && (
+          <div className="flex items-center gap-3 border-b border-border bg-bg-secondary px-4 py-2 text-xs">
+            <span className="text-base">🌲</span>
+            <span className={`font-semibold ${forestResult.passed ? "text-success" : "text-error"}`}>
+              {forestResult.passed ? "✓" : "✗"} Forest
+            </span>
+            <span className="text-text-secondary">
+              {forestResult.n_trees} trees · diversity {forestResult.diversity}
+            </span>
+            {/* DS 合成三元组 */}
+            <div className="flex items-center gap-1.5 font-mono">
+              <span className="text-success">pass {forestResult.combined.pass}</span>
+              <span className="text-error">fail {forestResult.combined.fail}</span>
+              <span className="text-text-muted">unc {forestResult.combined.uncertain}</span>
+            </div>
+            {/* 每棵树的状态 */}
+            <div className="flex items-center gap-1">
+              {(forestResult.trees || []).map((t: any, i: number) => (
+                <span key={i} className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[10px]" title={`${t.tree_id}: ${t.supported}✓ ${t.refuted}✗`}>
+                  {t.supported}✓{t.refuted}✗
+                </span>
+              ))}
+            </div>
+            <span className="ml-auto truncate text-text-muted" title={forestResult.consensus}>
+              {forestResult.consensus}
+            </span>
+          </div>
+        )}
+
         {/* Decision trace: governance + state machine */}
         {(governanceEvents.length > 0 || stateTransitions.length > 0) && (
           <DecisionTracePanel
             governanceEvents={governanceEvents}
             stateTransitions={stateTransitions}
             currentPhase={autoloopPhase}
+            activeTraceId={activeTraceId}
           />
         )}
 
