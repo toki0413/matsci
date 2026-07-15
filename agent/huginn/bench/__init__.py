@@ -11,15 +11,61 @@
 
 from .runner import BenchmarkReport, BenchmarkRunner
 from .task import BenchmarkTask, TaskResult
+from .llm_judge import judge_task, judge_with_regex_fallback, JudgeRubric
+from .baselines import BASELINES, get_baselines_for_suite, format_baseline_table
 
-__all__ = ["BenchmarkRunner", "BenchmarkReport", "BenchmarkTask", "TaskResult", "get_suite_tasks"]
+__all__ = [
+    "BenchmarkRunner", "BenchmarkReport", "BenchmarkTask", "TaskResult",
+    "get_suite_tasks", "judge_task", "judge_with_regex_fallback", "JudgeRubric",
+    "BASELINES", "get_baselines_for_suite", "format_baseline_table",
+]
 
 
-def get_suite_tasks(suite: str) -> list[BenchmarkTask]:
-    """按 suite 名返回 BenchmarkTask 列表. research 返回空 (走独立脚本)."""
+def get_suite_tasks(suite: str, max_tasks: int | None = None) -> list[BenchmarkTask]:
+    """按 suite 名返回 BenchmarkTask 列表.
+
+    suite:
+      - general:    原有结构测试题 + 知识题 (20)
+      - mmlu:       MMLU 科学学科 (默认 500, 对标 MMMU/GPQA)
+      - sciq:       SciQ 自然科学 (默认 500)
+      - arc:        ARC-Challenge 科学推理 (默认 500)
+      - gpqa:       GPQA PhD 级 (ModelScope, 默认 100, HF 上 gated)
+      - cmmlu:      CMMLU 中文科学 (ModelScope, 默认 500)
+      - mmlu_pro:   MMLU-Pro 10 选项更难 (ModelScope, 默认 500)
+      - external:   全部外部数据集合并 (MMLU+SciQ+ARC+GPQA+CMMLU+MMLU-Pro)
+      - physics:    MatWorldBench adapter (10)
+      - lineage:    IdeaGene-Bench (15)
+      - repro:      PaperReproBench (10)
+      - optim:      OptimBench (8)
+      - naturebench: NatureBench-mini (10, Nature 系列论文复现)
+      - research:   走独立脚本, 返回空
+
+    max_tasks: 限制题量 (从全量随机抽样), None 表示不限制.
+    """
     if suite == "general":
         from .runner import DEFAULT_TASKS
         return list(DEFAULT_TASKS)
+    if suite == "mmlu":
+        from .adapters import load_mmlu_tasks
+        return load_mmlu_tasks(max_tasks=max_tasks or 500)
+    if suite == "sciq":
+        from .adapters import load_sciq_tasks
+        return load_sciq_tasks(max_tasks=max_tasks or 500)
+    if suite == "arc":
+        from .adapters import load_arc_tasks
+        return load_arc_tasks(max_tasks=max_tasks or 500)
+    if suite == "gpqa":
+        from .adapters import load_gpqa_tasks
+        return load_gpqa_tasks(max_tasks=max_tasks or 100)
+    if suite == "cmmlu":
+        from .adapters import load_cmmlu_tasks
+        return load_cmmlu_tasks(max_tasks=max_tasks or 500)
+    if suite == "mmlu_pro":
+        from .adapters import load_mmlu_pro_tasks
+        return load_mmlu_pro_tasks(max_tasks=max_tasks or 500)
+    if suite == "external":
+        from .adapters import load_all_external
+        return load_all_external(max_per_dataset=max_tasks or 400)
     if suite == "lineage":
         from .ideagene_bench import build_ideagene_tasks
         return build_ideagene_tasks()
@@ -29,6 +75,9 @@ def get_suite_tasks(suite: str) -> list[BenchmarkTask]:
     if suite == "optim":
         from .optim_bench import build_optim_tasks
         return build_optim_tasks()
+    if suite == "naturebench":
+        from .naturebench import build_naturebench_tasks
+        return build_naturebench_tasks()
     if suite == "physics":
         return _build_physics_tasks()
     return []
