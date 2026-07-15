@@ -163,10 +163,15 @@ class _CLIPBackend(_Backend):
 
         device = os.environ.get("CLIP_DEVICE", "cuda" if _torch_cuda_available() else "cpu")
         self._device = torch.device(device)
-        self._model = CLIPModel.from_pretrained(model_name)
+
+        # 优先从 ModelScope 下载
+        local_path = _try_modelscope_download(model_name)
+        load_name = local_path if local_path else model_name
+
+        self._model = CLIPModel.from_pretrained(load_name)
         self._model.eval()
         self._model.to(self._device)
-        self._processor = CLIPProcessor.from_pretrained(model_name)
+        self._processor = CLIPProcessor.from_pretrained(load_name)
         # CLIP vision feature dim — base patch32 is 512.
         self.dim = int(self._model.config.projection_dim)
 
@@ -266,6 +271,41 @@ def _l2_normalize(vec: np.ndarray) -> np.ndarray:
     return v
 
 
+def _try_modelscope_download(hf_model_name: str) -> str | None:
+    """尝试从 ModelScope 下载模型, 返回本地路径. 失败返回 None.
+
+    ponytail: HF -> MS 映射是硬编码的. 升级路径: 从配置文件/环境变量读取映射表.
+    """
+    try:
+        from modelscope import snapshot_download
+    except ImportError:
+        return None
+
+    _MS_MAP: dict[str, str] = {
+        "openai/clip-vit-base-patch32": "AI-ModelScope/clip-vit-base-patch32",
+    }
+    ms_name = _MS_MAP.get(hf_model_name)
+    if not ms_name:
+        return None
+    try:
+        return snapshot_download(ms_name)
+    except Exception:
+        logger.debug("ModelScope download failed for %s", ms_name)
+        return None
+
+
+def _is_offline_mode() -> bool:
+    """检查是否处于离线模式.
+
+    通过环境变量判断: HF_HUB_OFFLINE=1 或 TRANSFORMERS_OFFLINE=1 或 HUGINN_OFFLINE=1
+    """
+    return any(os.environ.get(k) == "1" for k in (
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "HUGINN_OFFLINE",
+    ))
+
+
 # ── public API ──────────────────────────────────────────────────────
 
 
@@ -286,6 +326,13 @@ class VisualEncoder:
         self._backend: _Backend | None = None
         self._backend_name: str | None = None
         self._init_error: str | None = None
+        self._built: bool = False
+
+    def _ensure_backend(self) -> None:
+        """懒加载: 只在第一次需要时尝试构建 backend."""
+        if self._built:
+            return
+        self._built = True
         self._build_backend()
 
     def _build_backend(self) -> None:
@@ -296,6 +343,11 @@ class VisualEncoder:
             ("resnet50", _ResNetBackend),
         ]
         errors: list[str] = []
+
+        # 离线模式下只尝试不需要网络下载的 backend (只有 I-JEPA 需要本地 checkpoint)
+        if _is_offline_mode():
+            attempts = [a for a in attempts if a[0] == "ijepa"]
+
         for label, cls in attempts:
             try:
                 self._backend = cls()
@@ -312,18 +364,22 @@ class VisualEncoder:
 
     @property
     def available(self) -> bool:
+        self._ensure_backend()
         return self._backend is not None
 
     @property
     def backend_name(self) -> str | None:
+        self._ensure_backend()
         return self._backend_name
 
     @property
     def dim(self) -> int:
+        self._ensure_backend()
         return self._backend.dim if self._backend is not None else 0
 
     @property
     def init_error(self) -> str | None:
+        self._ensure_backend()
         return self._init_error
 
     # ── encoding ──
@@ -334,6 +390,7 @@ class VisualEncoder:
         ``image`` may be a filesystem path or raw bytes. Returns ``None``
         when no backend is available or the image cannot be decoded.
         """
+        self._ensure_backend()
         if self._backend is None:
             return None
         try:

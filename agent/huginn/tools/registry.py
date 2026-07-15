@@ -5,6 +5,7 @@ Centralized tool registration and discovery.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any
 
 from huginn.tools.assembly import annotate_metadata, assemble_tool_pool
@@ -19,23 +20,27 @@ class ToolRegistry:
 
     _tools: dict[str, HuginnTool] = {}
     _schemas_cache: list[dict] | None = None
+    _lock = threading.Lock()
 
     @classmethod
     def register(cls, tool: HuginnTool) -> HuginnTool:
         """Register a tool instance."""
         if not tool.name:
             raise ValueError("Tool must have a name")
-        cls._tools[tool.name] = tool
-        cls._schemas_cache = None  # invalidate cache on register
+        with cls._lock:
+            cls._tools[tool.name] = tool
+            cls._schemas_cache = None
         return tool
 
     @classmethod
     def get(cls, name: str) -> HuginnTool | None:
-        return cls._tools.get(name)
+        with cls._lock:
+            return cls._tools.get(name)
 
     @classmethod
     def list_tools(cls) -> list[str]:
-        return list(cls._tools.keys())
+        with cls._lock:
+            return list(cls._tools.keys())
 
     @classmethod
     def get_all_schemas(cls) -> list[dict]:
@@ -53,20 +58,21 @@ class ToolRegistry:
         # Tools are registered at startup and don't change at runtime,
         # so we cache the serialized schemas to avoid re-serializing 132
         # tools on every /tools request.
-        if cls._schemas_cache is None:
-            schemas = []
-            for name, tool in cls._tools.items():
-                # active=False 的工具对 LLM 不可见, 但仍可被 ToolRegistry.get() 直接调用
-                if not tool.active:
-                    continue
-                schema = {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": tool.description,
-                        "parameters": tool.input_json_schema
-                        or {"type": "object", "properties": {}},
-                    },
+        with cls._lock:
+            if cls._schemas_cache is None:
+                schemas = []
+                for name, tool in cls._tools.items():
+                    # active=False 的工具对 LLM 不可见, 但仍可被 ToolRegistry.get() 直接调用
+                    if not tool.active:
+                        continue
+                    schema = {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": tool.description,
+                            "parameters": tool.input_json_schema
+                            or {"type": "object", "properties": {}},
+                        },
                     "destructive": tool.destructive,
                     "read_only": tool.read_only,
                     # fail-closed 默认值: 未显式声明只读的工具一律需要确认
@@ -79,19 +85,19 @@ class ToolRegistry:
                 schemas.append(schema)
             cls._schemas_cache = schemas
 
-        # ponytail: is_available() 是运行时状态 (MCP 重连 / 依赖加载), 不能进缓存.
-        # 但大多数情况所有工具都可用, 此时直接返回缓存对象 (保持身份一致性).
-        # 仅当有工具不可用时才创建过滤后的新列表.
-        unavailable = [
-            name for name, tool in cls._tools.items()
-            if not getattr(tool, "is_available", lambda: True)()
-        ]
-        if not unavailable:
-            return cls._schemas_cache
-        return [
-            s for s in cls._schemas_cache
-            if s["function"]["name"] not in unavailable
-        ]
+            # ponytail: is_available() 是运行时状态 (MCP 重连 / 依赖加载), 不能进缓存.
+            # 但大多数情况所有工具都可用, 此时直接返回缓存对象 (保持身份一致性).
+            # 仅当有工具不可用时才创建过滤后的新列表.
+            unavailable = [
+                name for name, tool in cls._tools.items()
+                if not getattr(tool, "is_available", lambda: True)()
+            ]
+            if not unavailable:
+                return cls._schemas_cache
+            return [
+                s for s in cls._schemas_cache
+                if s["function"]["name"] not in unavailable
+            ]
 
     @classmethod
     def get_schemas_for_provider(cls, provider: str = "openai") -> list[dict]:
