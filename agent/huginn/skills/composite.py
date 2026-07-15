@@ -86,6 +86,7 @@ def _make_band_structure_analysis() -> SkillDefinition:
                 },
                 output_key="band_result",
                 condition=_cond("scf_result"),
+                parallel_group="post_scf",  # band + DOS 同波函数并行, 合成缺陷态判断
             ),
             SkillStep(
                 name="dos_calculation",
@@ -100,6 +101,7 @@ def _make_band_structure_analysis() -> SkillDefinition:
                 },
                 output_key="dos_result",
                 condition=_cond("scf_result"),
+                parallel_group="post_scf",
             ),
         ],
         required_tools=["vasp_tool"],

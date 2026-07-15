@@ -99,6 +99,82 @@ class TestDeclarativeSkillExecutor:
         assert result["success"] is False
         assert result["steps"][0]["error"] == "Tool 'nonexistent_tool' not found"
 
+    def test_parallel_group_runs_concurrently(self):
+        """同 parallel_group 的 step 应并行执行 (耗时 ≈ max 而非 sum)."""
+        import asyncio
+        import time
+
+        from huginn.tools.base import HuginnTool, ToolResult
+        from huginn.tools.registry import ToolRegistry
+        from pydantic import BaseModel
+
+        # 清理残留注册, 避免上一次测试污染
+        ToolRegistry.clear()
+
+        class SlowInput(BaseModel):
+            label: str = ""
+            delay: float = 0.2
+
+        # 记录每个 step 的启动时间, 验证并发
+        start_times: dict[str, float] = {}
+
+        class SlowTool(HuginnTool):
+            input_schema = SlowInput
+            read_only = True
+
+            async def call(self, raw, ctx):
+                data = raw if isinstance(raw, dict) else raw.model_dump()
+                start_times[data["label"]] = time.monotonic()
+                await asyncio.sleep(data["delay"])
+                return ToolResult(success=True, data={"label": data["label"]})
+
+        class SlowToolA(SlowTool):
+            name = "slow_a"
+            description = "slow tool a"
+
+        class SlowToolB(SlowTool):
+            name = "slow_b"
+            description = "slow tool b"
+
+        ToolRegistry.register(SlowToolA())
+        ToolRegistry.register(SlowToolB())
+
+        executor = DeclarativeSkillExecutor(ToolRegistry)
+        skill = SkillDefinition(
+            name="parallel_test",
+            description="two parallel slow steps",
+            category="test",
+            steps=[
+                SkillStep(
+                    name="step_a",
+                    tool="slow_a",
+                    input_mapping={"label": "'a'", "delay": "0.2"},
+                    output_key="out_a",
+                    parallel_group="g1",
+                ),
+                SkillStep(
+                    name="step_b",
+                    tool="slow_b",
+                    input_mapping={"label": "'b'", "delay": "0.2"},
+                    output_key="out_b",
+                    parallel_group="g1",
+                ),
+            ],
+        )
+
+        t0 = time.monotonic()
+        result = asyncio.run(executor.execute(skill, {}, {}))
+        elapsed = time.monotonic() - t0
+
+        assert result["success"] is True
+        # 串行 ≈ 0.4s, 并行 ≈ 0.2s. 用 0.35s 阈值区分
+        assert elapsed < 0.35, f"expected parallel (<0.35s), got {elapsed:.3f}s"
+        # 两个 step 启动时间差应 < delay (基本同时启动)
+        if "a" in start_times and "b" in start_times:
+            assert abs(start_times["a"] - start_times["b"]) < 0.1
+
+        ToolRegistry.clear()
+
 
 class TestUQGPSkills:
     @staticmethod
