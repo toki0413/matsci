@@ -56,6 +56,7 @@ def parse_skill_header(path: Path) -> dict[str, Any]:
             "paths": [],
             "model": None,
             "effort": None,
+            "version": "0.0.0",
             "content": "",
             "skill_dir": str(path.parent),
             "skill_path": str(path),
@@ -72,6 +73,8 @@ def parse_skill_header(path: Path) -> dict[str, Any]:
         "paths": frontmatter.get("paths", []) or [],
         "model": frontmatter.get("model"),
         "effort": frontmatter.get("effort"),
+        # 版本号来自 frontmatter, 没写就当 "0.0.0"
+        "version": str(frontmatter.get("version", "0.0.0")),
         "content": "",  # body not loaded — call parse_skill_body() to get it
         "skill_dir": str(path.parent),
         "skill_path": str(path),
@@ -247,3 +250,70 @@ def get_file_identity(path: Path) -> str:
     能保证只算一次。
     """
     return str(path.resolve())
+
+
+# ── 版本化 manifest ──────────────────────────────────────────────
+# PinableAgents 启发: 高频迭代层(Skills)独立版本化, 用 SHA-256
+# 做增量比对, 只下载哈希变化的文件. 这里是生成和比对工具, 不含
+# 下载逻辑 (下载交给调用方, 保持工具函数纯净).
+
+def generate_manifest(skill_dir: Path) -> dict[str, Any]:
+    """扫描目录下所有 SKILL.md, 返回带 SHA-256 的版本清单.
+
+    输出格式::
+
+        {
+          "version": "1",
+          "skills": {
+            "ponytail": {
+              "version": "0.1.0",
+              "sha256": "ab12...",
+              "path": "ponytail/SKILL.md",
+              "description": "..."
+            },
+            ...
+          }
+        }
+    """
+    import hashlib
+
+    manifest: dict[str, Any] = {"version": "1", "skills": {}}
+    skills = load_skills_from_dir(skill_dir)
+
+    for skill in skills:
+        skill_path = Path(skill["skill_path"])
+        rel_path = str(skill_path.resolve().relative_to(skill_dir.resolve()))
+        raw = skill_path.read_bytes()
+        sha256 = hashlib.sha256(raw).hexdigest()
+
+        manifest["skills"][skill["name"]] = {
+            "version": skill.get("version", "0.0.0"),
+            "sha256": sha256,
+            "path": rel_path,
+            "description": skill.get("description", ""),
+        }
+
+    return manifest
+
+
+def diff_manifest(
+    local: dict[str, Any], remote: dict[str, Any]
+) -> list[dict[str, str]]:
+    """比对本地和远端 manifest, 返回需要更新的技能列表.
+
+    每个元素是 ``{"name": ..., "reason": "changed|new", "path": ...}``.
+    reason="changed" 表示 SHA-256 不匹配, reason="new" 表示远端有本地没有的.
+    本地有但远端没有的技能不报 (不算更新, 算本地自定义).
+    """
+    local_skills = local.get("skills", {})
+    remote_skills = remote.get("skills", {})
+    updates: list[dict[str, str]] = []
+
+    for name, remote_info in remote_skills.items():
+        local_info = local_skills.get(name)
+        if local_info is None:
+            updates.append({"name": name, "reason": "new", "path": remote_info.get("path", "")})
+        elif local_info.get("sha256") != remote_info.get("sha256"):
+            updates.append({"name": name, "reason": "changed", "path": remote_info.get("path", "")})
+
+    return updates
