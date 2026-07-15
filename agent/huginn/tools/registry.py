@@ -62,7 +62,6 @@ class ToolRegistry:
             if cls._schemas_cache is None:
                 schemas = []
                 for name, tool in cls._tools.items():
-                    # active=False 的工具对 LLM 不可见, 但仍可被 ToolRegistry.get() 直接调用
                     if not tool.active:
                         continue
                     schema = {
@@ -73,21 +72,17 @@ class ToolRegistry:
                             "parameters": tool.input_json_schema
                             or {"type": "object", "properties": {}},
                         },
-                    "destructive": tool.destructive,
-                    "read_only": tool.read_only,
-                    # fail-closed 默认值: 未显式声明只读的工具一律需要确认
-                    "metadata": ToolMetadata(
-                        is_read_only=tool.read_only,
-                        is_destructive=tool.destructive,
-                        requires_confirmation=not tool.read_only,
-                    ),
-                }
-                schemas.append(schema)
-            cls._schemas_cache = schemas
+                        "destructive": tool.destructive,
+                        "read_only": tool.read_only,
+                        "metadata": ToolMetadata(
+                            is_read_only=tool.read_only,
+                            is_destructive=tool.destructive,
+                            requires_confirmation=not tool.read_only,
+                        ),
+                    }
+                    schemas.append(schema)
+                cls._schemas_cache = schemas
 
-            # ponytail: is_available() 是运行时状态 (MCP 重连 / 依赖加载), 不能进缓存.
-            # 但大多数情况所有工具都可用, 此时直接返回缓存对象 (保持身份一致性).
-            # 仅当有工具不可用时才创建过滤后的新列表.
             unavailable = [
                 name for name, tool in cls._tools.items()
                 if not getattr(tool, "is_available", lambda: True)()
