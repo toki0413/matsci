@@ -147,8 +147,13 @@ class StreamingMixin:
         turn_span: Any,
         thread_id: str,
         pet: Any,
+        records: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Update memory, branch tree, telemetry, and pet status from one graph state."""
+        """Update memory, branch tree, telemetry, and pet status from one graph state.
+
+        records: 可选 list, 传入则按 wire-level 抓 prompt/response/tool_call/tool_result.
+        Polar 启发: stream 层统一抓, 不在 harness 里散写 logger.
+        """
         msgs = state.get("messages", [])
         offset = self._state_msg_offsets.get(thread_id, 0)
         new_msgs = msgs[offset:]
@@ -188,6 +193,15 @@ class StreamingMixin:
                             tool_name=tc.get("name", "unknown"),
                             input_args=tc.get("args", {}),
                         )
+                if records is not None:
+                    records.append(
+                        {
+                            "type": "assistant",
+                            "content": msg.content,
+                            "tool_calls": getattr(msg, "tool_calls", None),
+                            "ts": time.time(),
+                        }
+                    )
             elif isinstance(msg, ToolMessage):
                 self.memory.add_message("tool", msg.content)
                 self._conversation_tree.add_message(
@@ -198,6 +212,16 @@ class StreamingMixin:
                         "name": getattr(msg, "name", None),
                     },
                 )
+                if records is not None:
+                    records.append(
+                        {
+                            "type": "tool",
+                            "content": msg.content,
+                            "tool_call_id": msg.tool_call_id,
+                            "name": getattr(msg, "name", None),
+                            "ts": time.time(),
+                        }
+                    )
                 try:
                     self._session_state.add_tool_result(
                         {
@@ -732,6 +756,13 @@ class StreamingMixin:
         _tps_t0 = time.monotonic()
         _tps_t_first: float | None = None
         _tps_chunk_chars = 0
+        # wire-level completion capture: 收集 prompt/response/tool_call/tool_result
+        # 给 red_team 提供结构化输入 + 未来 RL 训练留数据.
+        # 借鉴 Polar: 不在 harness 里手写 logger, 在 stream 层统一抓.
+        # ponytail: 只覆盖 langgraph 路径 (chat 主流程). CodeAct/plan-mode 直调
+        # 漏掉, 升级路径: 在 model.ainvoke 处再包一层 (monkeypatch BaseChatModel).
+        _completion_records: list[dict[str, Any]] = []
+        _capture_turn_id = f"{thread_id}_{int(time.time() * 1000)}"
 
         with self._telemetry_collector.span(
             "agent_turn", thread_id=thread_id
@@ -946,9 +977,12 @@ class StreamingMixin:
                         ),
                     )
 
+            # langgraph recursion: 每个 tool call 约 2-3 次 (agent + tool + routing)
+            # max_tool_calls=100 需要 ~500 recursion. 默认 250 只够 ~80 calls.
+            _mc = self._max_tool_calls or 50
             config = {
                 "configurable": {"thread_id": thread_id},
-                "recursion_limit": 250,
+                "recursion_limit": max(250, _mc * 5),
             }
 
             try:
@@ -1012,7 +1046,7 @@ class StreamingMixin:
                                             yield {"_reasoning": r}
                                             _last_reasoning = r
                                 self._process_stream_state(
-                                    state, turn_span, thread_id, pet
+                                    state, turn_span, thread_id, pet, _completion_records
                                 )
                                 states_yielded += 1
                                 final_state = state
@@ -1064,7 +1098,7 @@ class StreamingMixin:
 
                                 state = data
                                 self._process_stream_state(
-                                    state, turn_span, thread_id, pet
+                                    state, turn_span, thread_id, pet, _completion_records
                                 )
                                 states_yielded += 1
                                 final_state = state
@@ -1223,6 +1257,21 @@ class StreamingMixin:
                     )
                 except Exception:
                     logger.debug("trajectory save failed", exc_info=True)
+                # wire-level completion dump: prompt/response/tool_call/tool_result
+                # 落盘 jsonl 给 red_team + 未来 RL 训练消费.
+                # ponytail: 只 dump 非空 records, 失败静默. 升级路径: 加 prefix_merging.
+                if _completion_records:
+                    try:
+                        import json
+                        from huginn.utils.runtime import get_runtime_home
+                        comp_dir = get_runtime_home() / "completions" / thread_id
+                        comp_dir.mkdir(parents=True, exist_ok=True)
+                        comp_path = comp_dir / f"{_capture_turn_id}.jsonl"
+                        with open(comp_path, "w", encoding="utf-8") as f:
+                            for rec in _completion_records:
+                                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+                    except Exception:
+                        logger.debug("completion dump failed", exc_info=True)
                 # STOP event
                 try:
                     stop_ctx = HookContext(
