@@ -229,17 +229,12 @@ class RedTeamReviewer:
         """
         import asyncio
 
+        # 不用 self._critic_model 做临时传参 — 多协程并行会互相覆盖. 直接传参.
         async def _run_one_critic(critic: Any) -> list[RedTeamFinding]:
             if hasattr(critic, "_mock_name"):
                 return []
             try:
-                # 复用 _llm_findings 但指定 critic model
-                old_critic = self._critic_model
-                self._critic_model = critic
-                try:
-                    return self._llm_findings(from_phase, to_phase, evidence)
-                finally:
-                    self._critic_model = old_critic
+                return self._llm_findings_with(from_phase, to_phase, evidence, critic)
             except Exception:
                 logger.debug("critic review failed", exc_info=True)
                 return []
@@ -259,12 +254,9 @@ class RedTeamReviewer:
                     per_critic.append([])
                     continue
                 try:
-                    old_critic = self._critic_model
-                    self._critic_model = c
-                    try:
-                        per_critic.append(self._llm_findings(from_phase, to_phase, evidence))
-                    finally:
-                        self._critic_model = old_critic
+                    per_critic.append(
+                        self._llm_findings_with(from_phase, to_phase, evidence, c)
+                    )
                 except Exception:
                     per_critic.append([])
 
@@ -272,14 +264,16 @@ class RedTeamReviewer:
 
         masses: list[tuple[float, float, float]] = []
         all_findings: list[RedTeamFinding] = []
-        for i, findings in enumerate(per_critic):
+        for findings in per_critic:
             all_findings.extend(findings)
             masses.append(self._findings_to_mass(findings))
 
         k = DempsterShaferCombiner.conflict(masses)
         if k > 0.5:
-            # 高冲突: 按各 critic findings 数反向加权 (findings 少的更可信)
-            weights = [0.4 + 0.6 * min(len(f) / 5.0, 1.0) for f in per_critic]
+            # 高冲突: findings 少的 critic 更可信 (findings 多 = 吹毛求疵/误报多)
+            # 公式: 0 findings→w=1.0, 5+ findings→w=0.4. 少 findings 高权重.
+            # ponytail: 反向加权是启发式, 升级: 按 critic 历史准确率
+            weights = [1.0 - 0.6 * min(len(f) / 5.0, 1.0) for f in per_critic]
             combined = DempsterShaferCombiner.combine_robust(masses, weights)
             method = f"Smets (K={k:.2f})"
         else:
@@ -304,6 +298,18 @@ class RedTeamReviewer:
             ))
 
         return all_findings, ds_note
+
+    def _llm_findings_with(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any], critic: Any
+    ) -> list[RedTeamFinding]:
+        """用指定 critic model 跑 LLM 审查 (不修改 self._critic_model, 线程安全).
+
+        根因修复: 之前 _multi_critic_review 用 self._critic_model = critic 临时
+        传参, 多协程并行会互相覆盖. 现在直接给 _llm_findings 传 model 参数,
+        消除共享状态. 同步 invoke 下不真并行所以暂时安全, 但未来加 to_thread
+        会暴露 — 现在就修掉.
+        """
+        return self._llm_findings(from_phase, to_phase, evidence, model=critic)
 
     @staticmethod
     def _findings_to_mass(findings: list[RedTeamFinding]) -> tuple[float, float, float]:
@@ -435,9 +441,15 @@ class RedTeamReviewer:
         return not hasattr(self._model, "_mock_name")
 
     def _llm_findings(
-        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any],
+        model: Any | None = None,
     ) -> list[RedTeamFinding]:
-        """用 LLM 生成对抗性意见. 失败返回空列表 (调用方 try/except)."""
+        """用 LLM 生成对抗性意见. 失败返回空列表 (调用方 try/except).
+
+        model 参数: 显式指定审查用的 LLM, 不再依赖 self._critic_model 共享状态.
+        None 时 fallback 到 self._critic_model or self._model (向后兼容).
+        多 critic 并行时通过 model 参数传参, 避免实例属性互相覆盖.
+        """
         from langchain_core.messages import HumanMessage, SystemMessage
 
         prompt = self._build_llm_prompt(from_phase, to_phase, evidence)
@@ -455,8 +467,8 @@ class RedTeamReviewer:
             HumanMessage(content=prompt),
         ]
         # 用同步 invoke 避免在 async 引擎上下文里 run_until_complete 报错.
-        # 跨模型审查: 优先 critic_model, fallback 主 model (与 review() 同源选择).
-        critic = self._critic_model or self._model
+        # 跨模型审查: 优先显式 model 参数, fallback 到 self._critic_model/self._model.
+        critic = model or self._critic_model or self._model
         resp = critic.invoke(messages)
         text = str(resp.content).strip()
         findings = self._parse_llm_findings(text)
