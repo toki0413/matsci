@@ -153,6 +153,9 @@ class AutoloopResult:
     goal_judgment: dict[str, Any] | None = None
     # 落盘的 provenance JSONL, run 结束后可回放整条 tool chain
     provenance_path: str | None = None
+    # Forest 回流: 多树共识的假设图和提示
+    merged_graph: Any = None
+    speculator_hint: str = ""
 
 
 def objective_hash(objective: str) -> str:
@@ -300,6 +303,8 @@ class AutoloopEngine:
         self.progress_tracker: ProgressTracker | None = None
         # 投机执行 hint: on_turn_start 写入, _build_*_prompt 读出注入 LLM
         self._speculator_hint: str = ""
+        # Forest 回流假设图: 多树共识的 HypothesisGraph, learn 阶段可接续探索
+        self._merged_graph: Any = None
         # 视觉基元: _validate 从 tool 输出提取, _build_*_prompt 注入 LLM.
         # 跨迭代传递 — 上轮 tool 的数值指针下轮假设/计划能用到.
         self._last_visual_context: str = ""
@@ -823,6 +828,14 @@ class AutoloopEngine:
         key = (from_phase, to_phase)
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
+
+        # 推送 checkpoint 等待事件到前端
+        await self._publish_checkpoint_event(
+            event_type="checkpoint_pending",
+            from_phase=from_phase,
+            to_phase=to_phase,
+        )
+
         while state.pending_human_review == key and key not in state.overrides:
             if loop.time() > deadline:
                 logger.warning(
@@ -830,8 +843,38 @@ class AutoloopEngine:
                     from_phase, to_phase, timeout,
                 )
                 state.pending_human_review = None
+                await self._publish_checkpoint_event(
+                    event_type="checkpoint_timeout",
+                    from_phase=from_phase,
+                    to_phase=to_phase,
+                )
                 return
             await asyncio.sleep(1.0)
+
+        # checkpoint 已解决 (override 添加或 pending 被清除)
+        await self._publish_checkpoint_event(
+            event_type="checkpoint_resolved",
+            from_phase=from_phase,
+            to_phase=to_phase,
+        )
+
+    async def _publish_checkpoint_event(
+        self, event_type: str, from_phase: str, to_phase: str
+    ) -> None:
+        """推送 PhaseGate checkpoint 事件到 EventBus."""
+        bus = self._get_event_bus()
+        if bus is None:
+            return
+        from huginn.api.event import EventType
+        try:
+            await bus.dispatch({
+                "type": event_type,
+                "from_phase": from_phase,
+                "to_phase": to_phase,
+                "timestamp": asyncio.get_event_loop().time(),
+            })
+        except Exception:
+            logger.debug("checkpoint event publish failed", exc_info=True)
 
     # ──────────────────────────────────────────────────────────────
     # Progressive budget
@@ -1806,6 +1849,8 @@ class AutoloopEngine:
             goal_achieved=goal_achieved,
             goal_judgment=goal_judgment,
             provenance_path=provenance_path,
+            merged_graph=self._merged_graph,
+            speculator_hint=self._speculator_hint,
         )
 
     def stop(self) -> None:
@@ -3879,6 +3924,39 @@ class AutoloopEngine:
                     )
             except Exception as e:
                 logger.warning("reward evolution failed: %s", e)
+
+        # Forest 回流: 如果是森林模式运行, 把 merged_graph 合并到本地假设图
+        # 并写入 memory, 供后续迭代接续探索多树共识的结论.
+        if self._merged_graph is not None:
+            try:
+                # 合并到本地 hypothesis_graph
+                for node_id in self._merged_graph.nodes:
+                    node = self._merged_graph.nodes.get(node_id)
+                    if node and hasattr(node, 'statement'):
+                        # 跳过已存在的节点
+                        if not any(existing.statement == node.statement 
+                                   for existing in self.hypothesis_graph.nodes.values()):
+                            nid = self.hypothesis_graph.add_hypothesis(
+                                statement=node.statement,
+                                rationale=getattr(node, 'rationale', ''),
+                                testable_prediction=getattr(node, 'testable_prediction', ''),
+                            )
+                            if nid is not None:
+                                if getattr(node, 'status', '') == 'supported':
+                                    self.hypothesis_graph.support(nid, getattr(node, 'evidence', {}))
+                                elif getattr(node, 'status', '') == 'refuted':
+                                    self.hypothesis_graph.refute(nid, getattr(node, 'evidence', {}))
+                # 写入 memory
+                graph_summary = f"Forest merged: {len(self._merged_graph.nodes)} nodes"
+                self.memory.add_message("system", {
+                    "iteration": self._iteration,
+                    "type": "forest_merge",
+                    "graph_summary": graph_summary,
+                })
+                logger.info("Forest merged %d nodes into hypothesis_graph", 
+                           len(self._merged_graph.nodes))
+            except Exception:
+                logger.warning("Forest merge failed", exc_info=True)
 
         # KB 回写: 把本次实验结论存入知识库, 下次同类问题能从 KB 召回.
         # 不存原始数据 (太大), 只存 hypothesis + validation 摘要.
