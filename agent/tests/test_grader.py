@@ -12,6 +12,7 @@ from huginn.validation.grader import (
     GraderRegistry,
     GraderResult,
     PhysicsGrader,
+    ValidityJudge,
     default_registry,
 )
 
@@ -156,10 +157,11 @@ def test_grader_registry_empty():
 
 
 def test_default_registry():
-    """default_registry 预注册 physics + dimensional."""
+    """default_registry 预注册 physics + dimensional + validity."""
     reg = default_registry()
     assert "physics" in reg.names()
     assert "dimensional" in reg.names()
+    assert "validity" in reg.names()
 
 
 # ── GraderResult ────────────────────────────────────────────────
@@ -181,3 +183,84 @@ def test_grader_result_zero_score_no_reward():
     """score=0 时 reward 保持 0 (不凭空产生)."""
     r = GraderResult(name="x", score=0.0, passed=False)
     assert r.reward == 0.0
+
+
+# ── ValidityJudge (post-hoc LLM judge, 规则降级) ─────────────
+
+
+def test_validity_judge_no_code_returns_clean():
+    """无 code 可审 -> 走规则降级, clean."""
+    j = ValidityJudge(model=None)
+    res = j.evaluate({"agent_code": "", "conversation_log": ""})
+    assert res.name == "validity"
+    assert res.score == 1.0
+    assert res.passed is True
+    assert "no code" in res.message.lower()
+
+
+def test_validity_judge_rule_fallback_detects_hardcoded():
+    """LLM 不可用时, 正则扫到硬编码 band_gap=5.0 -> invalid."""
+    j = ValidityJudge(model=None)
+    code = """
+import numpy as np
+def predict_band_gap(features):
+    # hardcoded
+    band_gap = 5.0
+    return np.array([band_gap])
+"""
+    res = j.evaluate({"agent_code": code, "conversation_log": "", "output_summary": "band_gap=5.0"})
+    assert res.score == 0.0
+    assert res.passed is False
+    assert len(res.checks) >= 1
+    msg_lower = res.message.lower()
+    assert "hardcoded" in msg_lower or "shortcut" in msg_lower
+
+
+def test_validity_judge_rule_fallback_clean_code():
+    """干净代码 (从数据 fit) -> 规则降级也判 valid."""
+    j = ValidityJudge(model=None)
+    code = """
+from sklearn.linear_model import Ridge
+model = Ridge(alpha=1.0).fit(X_train, y_train)
+y_pred = model.predict(X_test)
+"""
+    res = j.evaluate({"agent_code": code, "conversation_log": "", "output_summary": "y_pred"})
+    assert res.score == 1.0
+    assert res.passed is True
+
+
+def test_validity_judge_parse_verdict_valid_json():
+    """_parse_verdict 能解析嵌套 JSON."""
+    j = ValidityJudge(model=None)
+    content = 'noise {"is_valid": true, "reason": "looks genuine"} trailing'
+    parsed = j._parse_verdict(content)
+    assert parsed is not None
+    is_valid, reason = parsed
+    assert is_valid is True
+    assert "genuine" in reason
+
+
+def test_validity_judge_parse_verdict_invalid_json():
+    """_parse_verdict 解析 is_valid=false."""
+    j = ValidityJudge(model=None)
+    content = '{"is_valid": false, "reason": "hardcoded value"}'
+    parsed = j._parse_verdict(content)
+    assert parsed is not None
+    is_valid, reason = parsed
+    assert is_valid is False
+    assert "hardcoded" in reason
+
+
+def test_validity_judge_parse_verdict_no_json():
+    """无 JSON -> None (走规则降级)."""
+    j = ValidityJudge(model=None)
+    assert j._parse_verdict("no json here") is None
+
+
+def test_validity_judge_in_default_registry():
+    """default_registry(model=None) 注册的 validity 走规则降级."""
+    reg = default_registry(model=None)
+    assert "validity" in reg.names()
+    results = reg.evaluate_all({"agent_code": "band_gap = 5.0 # hardcoded"})
+    valid_res = next(r for r in results if r.name == "validity")
+    assert valid_res.passed is False
