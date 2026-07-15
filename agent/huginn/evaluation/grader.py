@@ -9,6 +9,8 @@ from huginn.validation.grader import (
     GraderRegistry,
     GraderResult,
     HallucinationGrader,
+    LiteratureGrader,
+    MaterialsBoundsGrader,
     PhysicsGrader,
     RedTeamGrader,
     default_registry,
@@ -21,6 +23,8 @@ __all__ = [
     "RedTeamGrader",
     "HallucinationGrader",
     "BenchGrader",
+    "LiteratureGrader",
+    "MaterialsBoundsGrader",
     "GraderRegistry",
     "default_registry",
 ]

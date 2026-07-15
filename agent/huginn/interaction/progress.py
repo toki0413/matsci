@@ -43,6 +43,16 @@ class TaskProgress:
     engine_kind: str = ""
     # 自由扩展字段, 引擎想塞什么就塞什么
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Polar 启发: timeout 从 started_at (INIT) 开始算, 不是从执行开始.
+    # None = 无限制. 引擎在 while 循环里查 is_expired 决定停不停.
+    timeout_seconds: Optional[float] = None
+
+    @property
+    def is_expired(self) -> bool:
+        """超时检查: started_at + timeout_seconds < now. None = 永不超时."""
+        if self.timeout_seconds is None:
+            return False
+        return time.time() - self.started_at > self.timeout_seconds
 
     @property
     def percentage(self) -> float:
@@ -68,6 +78,7 @@ class TaskProgress:
             "error": self.error,
             "engine_kind": self.engine_kind,
             "metadata": dict(self.metadata),
+            "timeout_seconds": self.timeout_seconds,
         }
 
 
@@ -104,8 +115,13 @@ class ProgressTracker:
         stage_labels: list[str] | None = None,
         engine_kind: str = "",
         metadata: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
     ) -> TaskProgress:
-        """登记一个新任务. 同 task_id 已存在会被覆盖 (视为重启)."""
+        """登记一个新任务. 同 task_id 已存在会被覆盖 (视为重启).
+
+        timeout_seconds: 从 started_at (INIT) 开始算的 wall-clock 上限.
+        Polar 语义: 不从执行开始算, 从任务登记就开始算.
+        """
         task = TaskProgress(
             task_id=task_id,
             description=description,
@@ -117,11 +133,20 @@ class ProgressTracker:
             current_step=0,
             started_at=time.time(),
             updated_at=time.time(),
+            timeout_seconds=timeout_seconds,
         )
         with self._lock:
             self._tasks[task_id] = task
         self._emit(task)
         return task
+
+    def is_expired(self, task_id: str) -> bool:
+        """查任务是否超时. 不存在或没设 timeout 返回 False."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+        if task is None:
+            return False
+        return task.is_expired
 
     def update(
         self,

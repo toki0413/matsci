@@ -1017,6 +1017,7 @@ class AutoloopEngine:
         progressive_budget: bool = True,
         goal: Goal | None = None,
         max_refines: int = 8,
+        timeout_seconds: float | None = None,
     ) -> AutoloopResult:
         """Run the full autonomous loop for the given objective.
 
@@ -1027,6 +1028,10 @@ class AutoloopEngine:
 
         max_refines 控制 refute→refine 循环次数上限, 默认 8.
         超过后不再生成修正假设, 避免在错误方向上反复迭代.
+
+        timeout_seconds: wall-clock 上限, 从 start_task (INIT) 开始算.
+        Polar 语义: 不从执行开始算, 从任务登记就开始算. None = 无限制.
+        超时后 while 循环自然退出, 不抛异常.
 
         goal 不为空时, 每轮 learn 后用 GoalScheduler.check_completion 查
         success_criteria 是否满足, 满足则提前停循环并在 scheduler 里标记
@@ -1052,6 +1057,7 @@ class AutoloopEngine:
             stage_labels=list(AUTOLOOP_PHASES),
             engine_kind="autoloop",
             metadata={"run_id": run_id, "objective": objective[:200]},
+            timeout_seconds=timeout_seconds,
         )
         completed_steps = 0
         phases: list[LoopPhase] = []
@@ -1059,6 +1065,14 @@ class AutoloopEngine:
         self._progress_task_id = progress_task_id
 
         while self._iteration < max_iterations and not self._should_stop:
+            # Polar 语义: timeout 从 INIT (start_task) 开始算, 不从执行开始.
+            # tracker 持有 started_at, is_expired 检查 wall-clock 是否超限.
+            if tracker.is_expired(progress_task_id):
+                logger.warning(
+                    "autoloop stopping: timeout %ss exceeded",
+                    timeout_seconds,
+                )
+                break
             self._iteration += 1
             # pivot 上限: 连续换方向 _max_pivots 次还没跑通, 说明 objective 本身
             # 有问题, 继续烧 token 没意义, 让循环自然退出.

@@ -337,6 +337,58 @@ class LiteratureGrader:
         return 0.0
 
 
+class MaterialsBoundsGrader:
+    """材料科学物理界限检查 — 抓幻觉值.
+
+    BenchGrader 对已知答案, 这个对未知题: 检查 agent 算出的值是否
+    落在物理合理范围. band_gap=50eV 或 lattice=0.1Å 一眼假.
+    data: {"properties": {key: value, ...}}
+    ponytail: 硬编码常见属性范围. 升级: 从 Materials Project 查.
+    """
+
+    name = "materials_bounds"
+
+    # 物理合理范围 (min, max). 没列的 key 跳过.
+    _BOUNDS: dict[str, tuple[float, float]] = {
+        "band_gap_eV": (0.0, 10.0),
+        "lattice_constant_A": (2.0, 10.0),
+        "bulk_modulus_GPa": (0.0, 600.0),
+        "conductivity_S_per_m": (0.0, 1e8),
+        "cohesive_energy_eV_per_atom": (0.0, 12.0),
+        "adsorption_energy_eV": (-10.0, 5.0),
+        "delta_E_eV_per_fu": (-5.0, 5.0),
+        "formation_energy_eV_per_atom": (-5.0, 5.0),
+        "magnetic_moment_uB": (-20.0, 20.0),
+        "debye_temperature_K": (0.0, 2000.0),
+    }
+
+    def evaluate(self, data: dict[str, Any]) -> GraderResult:
+        props = data.get("properties") or data.get("result_data") or {}
+        if not isinstance(props, dict):
+            props = {}
+        violations: list[str] = []
+        for key, val in props.items():
+            bounds = self._BOUNDS.get(key)
+            if bounds is None:
+                continue
+            try:
+                v = float(val)
+            except (TypeError, ValueError):
+                continue
+            lo, hi = bounds
+            if v < lo or v > hi:
+                violations.append(f"{key}={v} outside [{lo}, {hi}]")
+        score = 1.0 if not violations else 0.0
+        return GraderResult(
+            name=self.name, score=score, passed=not violations,
+            checks=[{"violation": v} for v in violations],
+            message="; ".join(violations),
+        )
+
+    def __call__(self, data: dict[str, Any]) -> GraderResult:
+        return self.evaluate(data)
+
+
 class GraderRegistry:
     """注册多个 Grader, 统一跑 evaluate_all 拿同构结果."""
 
@@ -350,6 +402,22 @@ class GraderRegistry:
     ) -> None:
         self._graders[name] = grader
 
+    def register_from_spec(self, name: str, spec: str) -> None:
+        """Polar 启发: 按 'module.path:ClassName' 字符串动态导入并注册.
+
+        让外部 grader 不用改本文件就能接入. spec 里类要无参构造或接受 kwargs.
+        ponytail: 只做 importlib 动态加载, 不做 entry-point 扫描.
+        升级路径: setuptools entry_points 自动发现.
+        """
+        import importlib
+
+        module_path, _, cls_name = spec.partition(":")
+        if not cls_name:
+            raise ValueError(f"spec must be 'module.path:ClassName', got: {spec}")
+        mod = importlib.import_module(module_path)
+        cls = getattr(mod, cls_name)
+        self._graders[name] = cls()
+
     def evaluate_all(self, data: dict[str, Any]) -> list[GraderResult]:
         return [g(data) for g in self._graders.values()]
 
@@ -358,12 +426,14 @@ class GraderRegistry:
 
 
 def default_registry() -> GraderRegistry:
-    """预注册 physics + dimensional + hallucination + literature 四个内置 grader."""
+    """预注册内置 grader: physics + dimensional + hallucination + literature + red_team + materials_bounds."""
     reg = GraderRegistry()
     reg.register("physics", PhysicsGrader())
     reg.register("dimensional", DimensionalGrader())
     reg.register("hallucination", HallucinationGrader())
     reg.register("literature", LiteratureGrader())
+    reg.register("red_team", RedTeamGrader())
+    reg.register("materials_bounds", MaterialsBoundsGrader())
     return reg
 
 
@@ -375,6 +445,7 @@ __all__ = [
     "HallucinationGrader",
     "BenchGrader",
     "LiteratureGrader",
+    "MaterialsBoundsGrader",
     "GraderRegistry",
     "default_registry",
 ]
