@@ -101,8 +101,12 @@ class MemoryDecayPolicy:
                     promoted += 1
 
                 # Prune low-importance, non-permanent memories that are old enough.
+                # long tier 是"永久保留"的 (直觉/关键洞察/蒸馏知识), 不参与 prune.
+                # 之前不检查 tier, 科研长周期项目里早期直觉 memory 会因 importance
+                # 衰减被误删 — 研究线索断裂.
                 if (
-                    new_importance < self.prune_threshold
+                    tier != "long"
+                    and new_importance < self.prune_threshold
                     and age_days >= self.min_age_days
                     and age_days <= self.max_age_days
                 ):
