@@ -118,12 +118,18 @@ class RedTeamReviewer:
         enabled_transitions: set[tuple[str, str]] | None = None,
         failure_mode_registry: Any | None = None,
         critic_model: Any | None = None,
+        critic_models: list[Any] | None = None,
     ) -> None:
         self._model = model
         # 跨模型审查: 优先用 critic_model 做对抗, 避免同模型自审 (confirmation bias).
         # None 时 fallback 到 self._model, 保持向后兼容.
-        # ponytail: 单 critic, 升级路径: 并行多 critic 投票 + Dempster 合成.
         self._critic_model = critic_model
+        # 多 critic 并行审查 + DS 合成: 每个 critic 独立产 findings, 按 severity
+        # 分布转 (m_pass, m_fail, m_unc), 用 DempsterShaferCombiner 合成.
+        # 高冲突 (K>0.5) 自动降级到 Smets 折扣. 这是高阶交互: N 个 critic
+        # 作为整体形成共识, 而非简单多数决.
+        # ponytail: severity→mass 映射是启发式, 未做大规模校准. 升级: 学习映射.
+        self._critic_models = critic_models or []
         self._enabled = enabled_transitions or _REVIEW_TRANSITIONS
         self._last_report: RedTeamReport | None = None
         # 领域失败模式注册表 (材料科学具体陷阱). None 时用默认单例.
@@ -158,22 +164,28 @@ class RedTeamReviewer:
         else:
             findings = []
 
-        # LLM 增强 (可选, 失败不阻塞).
-        # 跨模型审查: 优先用 critic_model, fallback 到 self._model.
-        # 同模型自审有 confirmation bias, 但比无 LLM 增强好.
-        # ponytail: 单 critic 同步调用. 升级: 异步并行多 critic 投票.
-        model_for_review = self._critic_model or self._model
-        if model_for_review is not None and not hasattr(model_for_review, "_mock_name"):
-            try:
-                findings.extend(self._llm_findings(from_phase, to_phase, evidence))
-            except Exception:
-                logger.debug("extend failed", exc_info=True)  # LLM 挂了用规则结果
+        # 多 critic 并行 + DS 合成 (如果配置了 critic_models)
+        if self._critic_models:
+            critic_findings, ds_note = self._multi_critic_review(
+                from_phase, to_phase, evidence
+            )
+            findings.extend(critic_findings)
+        else:
+            # 单 critic 路径 (向后兼容)
+            model_for_review = self._critic_model or self._model
+            if model_for_review is not None and not hasattr(model_for_review, "_mock_name"):
+                try:
+                    findings.extend(self._llm_findings(from_phase, to_phase, evidence))
+                except Exception:
+                    logger.debug("extend failed", exc_info=True)
+            ds_note = ""
 
         # 领域失败模式扫描 (材料科学具体陷阱: 数据泄漏 / 单位混乱 / 对称性 / ...)
-        # 把通用规则检查无法覆盖的领域具体失败模式补上.
         findings.extend(self._domain_failure_scan(evidence))
 
         summary = self._build_summary(findings, transition)
+        if ds_note:
+            summary = f"{summary}\n{ds_note}" if summary else ds_note
         return RedTeamReport(transition=transition, findings=findings, summary=summary)
 
     def _domain_failure_scan(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
@@ -200,6 +212,120 @@ class RedTeamReviewer:
         return out
 
     # ── 规则审查 ────────────────────────────────────────────────────
+
+    def _multi_critic_review(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> tuple[list[RedTeamFinding], str]:
+        """多 critic 并行审查 + DS 合成.
+
+        每个 critic 独立调 LLM 产 findings, 按 severity 分布转 (m_pass, m_fail, m_unc),
+        用 DempsterShaferCombiner 合成. 高冲突 (K>0.5) 降级到 Smets 折扣.
+
+        返回 (合并 findings, DS 合成备注). 备注含各 critic mass 和合成结果,
+        让下游 prompt 能看到"N 个 critic 作为整体形成共识"的置信度.
+
+        ponytail: severity→mass 映射是启发式 (0 finding→全 pass, 有 high→
+        主 fail, 只有 medium/low→主 unc). 升级: 学习映射或用 LLM 自报置信度.
+        """
+        import asyncio
+
+        async def _run_one_critic(critic: Any) -> list[RedTeamFinding]:
+            if hasattr(critic, "_mock_name"):
+                return []
+            try:
+                # 复用 _llm_findings 但指定 critic model
+                old_critic = self._critic_model
+                self._critic_model = critic
+                try:
+                    return self._llm_findings(from_phase, to_phase, evidence)
+                finally:
+                    self._critic_model = old_critic
+            except Exception:
+                logger.debug("critic review failed", exc_info=True)
+                return []
+
+        async def _run_all() -> list[list[RedTeamFinding]]:
+            return await asyncio.gather(
+                *[_run_one_critic(c) for c in self._critic_models]
+            )
+
+        try:
+            per_critic = asyncio.run(_run_all())
+        except RuntimeError:
+            # 嵌套事件循环 fallback: 串行跑
+            per_critic = []
+            for c in self._critic_models:
+                if hasattr(c, "_mock_name"):
+                    per_critic.append([])
+                    continue
+                try:
+                    old_critic = self._critic_model
+                    self._critic_model = c
+                    try:
+                        per_critic.append(self._llm_findings(from_phase, to_phase, evidence))
+                    finally:
+                        self._critic_model = old_critic
+                except Exception:
+                    per_critic.append([])
+
+        from huginn.autoloop.phase_gate import DempsterShaferCombiner
+
+        masses: list[tuple[float, float, float]] = []
+        all_findings: list[RedTeamFinding] = []
+        for i, findings in enumerate(per_critic):
+            all_findings.extend(findings)
+            masses.append(self._findings_to_mass(findings))
+
+        k = DempsterShaferCombiner.conflict(masses)
+        if k > 0.5:
+            # 高冲突: 按各 critic findings 数反向加权 (findings 少的更可信)
+            weights = [0.4 + 0.6 * min(len(f) / 5.0, 1.0) for f in per_critic]
+            combined = DempsterShaferCombiner.combine_robust(masses, weights)
+            method = f"Smets (K={k:.2f})"
+        else:
+            combined = DempsterShaferCombiner.combine(masses)
+            method = f"Dempster (K={k:.2f})"
+
+        m_pass, m_fail, m_unc = combined
+        ds_note = (
+            f"[DS共识] {len(self._critic_models)} critics, {method}, "
+            f"m_pass={m_pass:.2f} m_fail={m_fail:.2f} m_unc={m_unc:.2f}"
+        )
+        # 如果 DS 合成 m_fail > 0.5, 强制补一条 high severity finding 确保阻断
+        # ponytail: 0.5 阈值未校准. 升级: 用 m_fail vs m_pass 的 belief/plausibility 区间.
+        if m_fail > 0.5 and not any(f.severity == "high" for f in all_findings):
+            all_findings.append(RedTeamFinding(
+                category="methodology_gap",
+                description=f"多 critic DS 共识判定 fail mass={m_fail:.2f} > 0.5, "
+                           f"虽无单 critic 产 high finding, 但共识认为应阻断",
+                severity="high",
+                mitigation="检查 critic 分歧原因, 补充证据或修正假设",
+                source_class="agent_generated",
+            ))
+
+        return all_findings, ds_note
+
+    @staticmethod
+    def _findings_to_mass(findings: list[RedTeamFinding]) -> tuple[float, float, float]:
+        """把单个 critic 的 findings 转 DS mass (m_pass, m_fail, m_unc).
+
+        启发式映射:
+        - 0 findings → (0.9, 0.05, 0.05) 强 pass
+        - 有 high → (0.05, 0.8, 0.15) 强 fail
+        - 只有 medium → (0.2, 0.4, 0.4) 偏 fail 不确定
+        - 只有 low → (0.5, 0.1, 0.4) 偏 pass 不确定
+
+        ponytail: 启发式映射, 未做大规模校准. 升级: 学习映射或 LLM 自报.
+        """
+        if not findings:
+            return (0.9, 0.05, 0.05)
+        severities = [f.severity for f in findings]
+        if "high" in severities:
+            return (0.05, 0.8, 0.15)
+        if "medium" in severities:
+            return (0.2, 0.4, 0.4)
+        # 只有 low
+        return (0.5, 0.1, 0.4)
 
     def _review_hypothesis(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
         """审查假设: 隐含前提 / 可证伪性 / 混淆变量."""

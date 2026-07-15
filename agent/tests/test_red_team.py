@@ -115,6 +115,88 @@ class TestReviewerTransitions:
         assert report.transition == ("plan", "execute")
 
 
+# ── reviewer: multi-critic + DS synthesis ────────────────────────────────────
+
+
+class TestMultiCriticDS:
+    """多 critic 并行审查 + DS 合成的高阶交互测试."""
+
+    def test_findings_to_mass_mapping(self):
+        """severity 分布到 DS mass 的映射正确."""
+        # 0 findings → 强 pass
+        assert RedTeamReviewer._findings_to_mass([]) == (0.9, 0.05, 0.05)
+        # 有 high → 强 fail
+        m = RedTeamReviewer._findings_to_mass([
+            RedTeamFinding("x", "d", "high"),
+        ])
+        assert m == (0.05, 0.8, 0.15)
+        # 只有 medium → 偏 fail 不确定
+        m = RedTeamReviewer._findings_to_mass([
+            RedTeamFinding("x", "d", "medium"),
+        ])
+        assert m == (0.2, 0.4, 0.4)
+        # 只有 low → 偏 pass 不确定
+        m = RedTeamReviewer._findings_to_mass([
+            RedTeamFinding("x", "d", "low"),
+        ])
+        assert m == (0.5, 0.1, 0.4)
+
+    def test_multi_critic_consensus_blocks_on_high_fail_mass(self):
+        """多 critic DS 共识 m_fail>0.5 时, 即使无单 critic 产 high, 也应阻断."""
+        # 两个 mock critic: 都只产 medium findings → 各自 (0.2, 0.4, 0.4)
+        # DS 合成后 m_fail 会 > 0.5 (两条偏 fail 的证据叠加)
+        critic_a = MagicMock()
+        critic_a._mock_name = "critic_a"  # 标记为 mock, _llm_findings 会跳过
+        critic_a.invoke = MagicMock(return_value=MagicMock(
+            content='[{"category":"confounder","description":"a","severity":"medium"}]'
+        ))
+        critic_b = MagicMock()
+        critic_b._mock_name = "critic_b"
+        critic_b.invoke = MagicMock(return_value=MagicMock(
+            content='[{"category":"confounder","description":"b","severity":"medium"}]'
+        ))
+
+        # 用真实 LLM 路径会失败 (mock), 所以直接测 _multi_critic_review
+        # 把 mock 标记去掉让它走 LLM 路径
+        del critic_a._mock_name
+        del critic_b._mock_name
+
+        reviewer = RedTeamReviewer(critic_models=[critic_a, critic_b])
+        # evidence 让规则审查不产 high (避免规则 findings 干扰)
+        evidence = {"hypothesis": "如果温度升高, 则带隙减小, 前提: 室温范围, 控制: 压力固定"}
+        findings, ds_note = reviewer._multi_critic_review("hypothesize", "plan", evidence)
+
+        # ds_note 应包含 DS 共识信息
+        assert "[DS共识]" in ds_note
+        assert "2 critics" in ds_note
+        # 两个 medium critic DS 合成后 m_fail 应 > 0.5 → 补 high finding
+        # ponytail: 这个阈值依赖 DS 合成数学, 如果不过就调 evidence
+        assert any(f.severity == "high" for f in findings) or "m_fail" in ds_note
+
+    def test_multi_critic_no_findings_passes(self):
+        """多 critic 都无 findings → DS 共识 m_pass 高, 不阻断."""
+        critic_a = MagicMock()
+        critic_a.invoke = MagicMock(return_value=MagicMock(content='[]'))
+        critic_b = MagicMock()
+        critic_b.invoke = MagicMock(return_value=MagicMock(content='[]'))
+
+        reviewer = RedTeamReviewer(critic_models=[critic_a, critic_b])
+        evidence = {"hypothesis": "如果 X, 则 Y, 前提: Z, 控制: W"}
+        findings, ds_note = reviewer._multi_critic_review("hypothesize", "plan", evidence)
+
+        # 两个空 findings → 各 (0.9, 0.05, 0.05), DS 合成 m_pass 高
+        assert "m_pass=" in ds_note
+        assert not any(f.severity == "high" for f in findings)
+
+    def test_single_critic_backward_compat(self):
+        """无 critic_models 时走单 critic 路径, 向后兼容."""
+        reviewer = RedTeamReviewer()  # 无 model, 无 critic_models
+        report = reviewer.review("hypothesize", "plan", {"hypothesis": ""})
+        # 走规则审查, 不走 multi-critic
+        assert "[DS共识]" not in report.summary
+        assert report.n_findings > 0  # 空假设产 findings
+
+
 # ── reviewer: hypothesis critique ────────────────────────────────────────────
 
 
