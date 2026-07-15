@@ -1,5 +1,6 @@
 ---
 name: ponytail
+version: 0.1.0
 description: >
   Forces the laziest solution that actually works — simplest, shortest,
   most minimal. A 7-rung decision ladder: YAGNI → stdlib → platform →
