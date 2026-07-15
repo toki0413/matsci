@@ -70,6 +70,29 @@ class TestMemoryDecayPolicy:
             entry = mem.get_by_id(eid)
             assert entry["importance"] >= 0.5
 
+    def test_long_tier_not_pruned_even_with_low_importance(self):
+        """long tier memory (直觉/关键洞察) 即使 importance 衰减到阈值以下也不应被删除."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = LongTermMemory(db_path=Path(tmp) / "memory.db")
+            eid = mem.store("关键直觉: 这就像相变临界点", importance=0.05, tier="long")
+
+            old = (datetime.now() - timedelta(days=60)).isoformat()
+            with mem._connect() as conn:
+                conn.execute(
+                    "UPDATE memories SET created_at = ?, last_accessed = ? WHERE id = ?",
+                    (old, old, eid),
+                )
+                conn.commit()
+
+            summary = mem.apply_decay_policy(
+                decay_per_day=0.9, prune_threshold=0.5, min_age_days=1
+            )
+            # long tier 不应被 prune (即使 importance=0.05 < prune_threshold=0.5)
+            assert summary["pruned"] == 0
+            entry = mem.get_by_id(eid)
+            assert entry is not None
+            assert entry["tier"] == "long"
+
 
 class TestMemoryDeduplicator:
     def test_deduplicate_keeps_most_important(self):
