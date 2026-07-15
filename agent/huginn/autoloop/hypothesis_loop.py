@@ -115,6 +115,10 @@ class HypothesisGraph:
         self._nodes: dict[str, HypothesisNode] = {}
         self._edges: list[HypothesisEdge] = []
         self._events: list[dict[str, Any]] = []
+        # 2-单纯形: frozenset[node_id, ev_key_1, ev_key_2] 表示"N 条独立证据作为整体支撑假设".
+        # dual_covered 命中时自动注册. 满足 downward closure: 任意 1-子集 (节点本身) 也在图里.
+        # ponytail: 用 frozenset 模拟, 不引入新依赖. 升级: SimplicialComplex (gudhi/TopoNetX) 当 >2-ary 关系变常见.
+        self._simplicials: set[frozenset[str]] = set()
         # ponytail: in-memory event log, 不持久化. 升级: 写入 session event log
         # (Anthropic Managed Agents: Session as event log, 可 resume/replay/debug)
 
@@ -570,6 +574,10 @@ class HypothesisGraph:
         - 若 support 边带 data_source 字段, 则 data_source 也必须不同
           (防 IPI: 两条边若来自同一被污染数据源, 是假双覆盖)
 
+        命中时自动注册 2-单纯形 {node, ev_key_1, ev_key_2}, 把"N 条证据
+        作为整体支撑"的语义显式化. 之前靠组合判定隐式表达, 下游无法区分
+        "碰巧有 2 条 support 边"和"2 条证据形成独立支撑整体".
+
         ponytail: 'deductive' 与 'numeric' 是软独立 — GP 数值验证与符号
         推导基底不同, 但仍是同模型权重. 真独立需跨模型/跨模态, 等幻觉
         断裂数据再升级. data_source 检查是 IPI 防御的硬约束."""
@@ -598,7 +606,16 @@ class HypothesisGraph:
         # 没有 data_source 标签时, 退回到只检查 modality (向后兼容)
         if sources and len(sources) < 2:
             return False
+
+        # 注册 2-单纯形: 取前两条独立 support 边的 modality 作为 ev_key
+        # ponytail: 只存 frozenset, 不存边的完整引用 — 避免边删除后悬空指针
+        ev_keys = [f"ev:{node_id}:{e.evidence['modality']}" for e in support_edges[:2]]
+        self._simplicials.add(frozenset({node_id, *ev_keys}))
         return True
+
+    def simplicial_faces(self, node_id: str) -> list[frozenset[str]]:
+        """返回包含该节点的所有 2-单纯形 (作为整体支撑关系的显式记录)."""
+        return [s for s in self._simplicials if node_id in s]
 
     # ── 连通分量监控 ───────────────────────────────────────────────────
 
@@ -776,6 +793,8 @@ class HypothesisGraph:
         return {
             "nodes": [n.to_dict() for n in self._nodes.values()],
             "edges": [e.to_dict() for e in self._edges],
+            # 2-单纯形: list[list[str]] (frozenset 不可 JSON 序列化)
+            "simplicials": [sorted(s) for s in self._simplicials],
         }
 
     @classmethod
@@ -791,6 +810,8 @@ class HypothesisGraph:
                 edge_type=ed["edge_type"],
                 evidence=ed.get("evidence", {}),
             ))
+        for s in d.get("simplicials", []):
+            graph._simplicials.add(frozenset(s))
         return graph
 
     # ── 内部 ─────────────────────────────────────────────────────────

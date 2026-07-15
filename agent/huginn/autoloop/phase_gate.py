@@ -225,6 +225,53 @@ class DempsterShaferCombiner:
             result = DempsterShaferCombiner.combine_pair(result, m)
         return result
 
+    @staticmethod
+    def conflict(masses: list[tuple[float, float, float]]) -> float:
+        """返回 DS 合成的全局冲突度 K ∈ [0, 1).
+
+        标准 Dempster 规则在 K→1 时 m_pass 异常放大 (DS 痛点). 调用方
+        检测 K > 0.5 后应改用 combine_robust (Smets 折扣) 降权不可信源.
+        之前 combine 不返回 K, 调用方无法感知冲突 — 算子层的高阶合成
+        盲跑, 高冲突场景下结论失真.
+        """
+        if len(masses) < 2:
+            return 0.0
+        result = masses[0]
+        max_k = 0.0
+        for m in masses[1:]:
+            m_p1, m_f1, _ = result
+            m_p2, m_f2, _ = m
+            k = m_p1 * m_f2 + m_f1 * m_p2
+            max_k = max(max_k, k)
+            result = DempsterShaferCombiner.combine_pair(result, m)
+        return max_k
+
+    @staticmethod
+    def combine_robust(
+        masses: list[tuple[float, float, float]],
+        weights: list[float] | None = None,
+    ) -> tuple[float, float, float]:
+        """Smets 折扣规则: m'(A) = w·m(A), m'(Theta) = w·m(Theta) + (1-w).
+
+        高冲突 (K > 0.5) 时 Dempster 规则放大 m_pass, 用折扣规则降权
+        不可信源更稳. weights=None 时等价于 combine (w=1.0).
+        算法复用 evidence_fusion_tool._weighted_combine 的 Smets 实现,
+        避免两套独立 DS 实现逻辑漂移.
+        """
+        if not masses:
+            return (0.0, 0.0, 1.0)
+        if weights is None:
+            weights = [1.0] * len(masses)
+        # 折扣每个 mass
+        discounted: list[tuple[float, float, float]] = []
+        for (m_p, m_f, m_u), w in zip(masses, weights):
+            if w >= 1.0 - 1e-9:
+                discounted.append((m_p, m_f, m_u))
+                continue
+            # m'(pass) = w·m(pass), m'(fail) = w·m(fail), m'(unc) = w·m(unc) + (1-w)
+            discounted.append((m_p * w, m_f * w, m_u * w + (1.0 - w)))
+        return DempsterShaferCombiner.combine(discounted)
+
 
 class MathEvidenceChecker:
     """数学证据检查器 — 论文级 Dempster-Shafer 合成.

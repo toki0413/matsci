@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from huginn.autoloop.engine import AutoloopEngine, AutoloopResult
-from huginn.autoloop.hypothesis_loop import HypothesisGraph, HypothesisNode
+from huginn.autoloop.hypothesis_loop import HypothesisEdge, HypothesisGraph, HypothesisNode
 from huginn.autoloop.phase_gate import DempsterShaferCombiner
 
 logger = logging.getLogger(__name__)
@@ -157,9 +157,16 @@ class ForestOrchestrator:
             else:
                 valid_results.append(tr)
 
-        # DS 合成
+        # DS 合成 — 高冲突时降级到 Smets 折扣 (DS 痛点: K→1 时 m_pass 异常放大)
         masses = [t.ds_mass for t in valid_results]
-        combined = DempsterShaferCombiner.combine(masses)
+        k = DempsterShaferCombiner.conflict(masses)
+        if k > 0.5:
+            # 按各树假设数给权重 (假设多的树更可信, 假设少的可能采样不足)
+            weights = [0.3 + 0.7 * min(t.hypothesis_count / 10.0, 1.0) for t in valid_results]
+            combined = DempsterShaferCombiner.combine_robust(masses, weights)
+            logger.warning("Forest DS conflict K=%.3f > 0.5, using Smets discounting", k)
+        else:
+            combined = DempsterShaferCombiner.combine(masses)
 
         # 多样性: 假设重叠度 (Jaccard 相似度的补)
         diversity = self._compute_diversity(valid_results)
@@ -195,19 +202,33 @@ class ForestOrchestrator:
         """把各棵树的 supported/refuted 节点汇到一张新图.
 
         evidence 里标 tree_id 来源, 让下游能看出某条假设是被哪棵树验证的.
+        多棵树支持同一假设时, consensus_trees 字段记录所有支持树 — 保留
+        "N 棵树作为整体形成共识"的高阶关系, 之前按 statement 去重会丢失.
         ponytail: 只搬 supported/refuted, untested 节点不带结论不搬.
         升级路径: 用语义相似度合并重复假设 (当前按 statement 去重).
         """
         merged = HypothesisGraph()
-        seen: set[str] = set()  # 按 statement 去重, 避免重复 add
+        seen: dict[str, str] = {}  # statement -> merged node_id (去重 + 共识累积)
         for t in trees:
             for node in t.nodes:
                 if node.status not in ("supported", "refuted"):
                     continue
-                if node.statement in seen:
-                    continue
-                seen.add(node.statement)
                 try:
+                    if node.statement in seen:
+                        # 已有节点: 累积共识树, 不重复 add
+                        nid = seen[node.statement]
+                        mn = merged._nodes[nid]  # 直接访问, 避免 add_hypothesis 的重复检查
+                        ev = mn.evidence
+                        ev.setdefault("consensus_trees", []).append(t.tree_id)
+                        # 用每棵树的 modality 注册 support 边, 让 dual_covered 能判定跨树双覆盖
+                        tree_ev = dict(node.evidence)
+                        tree_ev["tree_id"] = t.tree_id
+                        tree_ev["data_source"] = f"forest:{t.tree_id}"
+                        if node.status == "supported" and "modality" in tree_ev:
+                            merged._edges.append(HypothesisEdge(
+                                from_id=nid, to_id=nid, edge_type="support", evidence=tree_ev,
+                            ))
+                        continue
                     nid = merged.add_hypothesis(
                         statement=node.statement,
                         rationale=f"[from {t.tree_id}] {node.rationale}",
@@ -215,8 +236,10 @@ class ForestOrchestrator:
                     )
                     if nid is None:
                         continue
+                    seen[node.statement] = nid
                     ev = dict(node.evidence)
                     ev["tree_id"] = t.tree_id
+                    ev["consensus_trees"] = [t.tree_id]
                     if node.status == "supported":
                         merged.support(nid, ev)
                     else:
