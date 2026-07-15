@@ -10,12 +10,15 @@ multiple models and pick one per task:
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 from huginn.config import ThinkingIntensity
 from huginn.models.registry import ProviderT, create_langchain_model
+
+logger = logging.getLogger(__name__)
 
 TaskT = Literal[
     "default",
@@ -155,6 +158,49 @@ class ModelRouter:
 
         return candidates[0].model
 
+    def select_candidates(
+        self, task: TaskT | str | None = None, top_n: int = 3
+    ) -> list[Any]:
+        """返回按优先级排序的候选模型列表, 供调用方做 fallback retry."""
+        task = task or self._default_task
+        task = task if isinstance(task, str) else task.value  # type: ignore[attr-defined]
+        preferred_tags = self._TASK_TAGS.get(task, ["default"])  # type: ignore[arg-type]
+
+        candidates: list[RegisteredModel] = []
+        for tag in preferred_tags:
+            matches = [m for m in self._models.values() if tag in m.tags]
+            if matches:
+                candidates = matches
+                break
+        if not candidates:
+            candidates = list(self._models.values())
+        if not candidates:
+            return []
+
+        candidates.sort(key=lambda m: (-m.priority, m.cost_input + m.cost_output))
+        return [m.model for m in candidates[:top_n]]
+
+    async def select_with_fallback(
+        self,
+        task: TaskT | str | None,
+        try_fn: Callable[[Any], Awaitable[Any]],
+        top_n: int = 3,
+    ) -> tuple[Any, Exception | None]:
+        """按优先级依次 try, 返回第一个成功的结果.
+
+        try_fn 接收模型实例, 返回调用结果. 全部失败时返回 (None, last_error).
+        """
+        models = self.select_candidates(task, top_n=top_n)
+        last_err: Exception | None = None
+        for model in models:
+            try:
+                result = await try_fn(model)
+                return result, None
+            except Exception as e:
+                last_err = e
+                logger.warning("model fallback: %s failed: %s", type(model).__name__, e)
+        return None, last_err
+
     def select_verification(self) -> Any:
         """选验证用 LLM. 优先 verification 标签的独立模型,
         没注册就退回 reasoning/science, 最后退回 default.
@@ -190,6 +236,7 @@ class ModelRouter:
         """
         router = cls()
         prefix = "HUGINN_MODEL_"
+        failed_providers: list[str] = []
         for key, value in os.environ.items():
             if not key.startswith(prefix):
                 continue
@@ -200,7 +247,19 @@ class ModelRouter:
             try:
                 model = create_langchain_model(provider=provider, model_name=model_name)
                 router.register(name, model, tags={name})
-            except Exception:
-                # Skip providers that are not configured (missing API keys, etc.)
+            except Exception as e:
+                failed_providers.append(f"{name}={provider}:{model_name} ({e})")
+                logger.warning("model provider %s skipped: %s", name, e)
                 continue
+        # router 空时尝试 fallback 到本地 ollama
+        if not router._models and failed_providers:
+            logger.warning(
+                "all model providers failed (%s), trying ollama fallback",
+                failed_providers,
+            )
+            try:
+                model = create_langchain_model(provider="ollama", model_name="qwen2.5:7b")
+                router.register("default", model, tags={"default"})
+            except Exception:
+                pass  # ollama 也没装就只能让 select() 报 RuntimeError
         return router

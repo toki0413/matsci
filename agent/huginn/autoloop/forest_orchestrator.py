@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from huginn.autoloop.engine import AutoloopEngine, AutoloopResult
+from huginn.autoloop.hypothesis_loop import HypothesisGraph, HypothesisNode
 from huginn.autoloop.phase_gate import DempsterShaferCombiner
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ class TreeResult:
     refuted_count: int
     # 该 engine 的置信度三元组 (m_pass, m_fail, m_unc)
     ds_mass: tuple[float, float, float]
+    # 假设节点快照 (含 status / evidence), 供森林层合并用.
+    # ponytail: 拷贝一份, 避免 engine 被 GC 后图也丢.
+    nodes: list[HypothesisNode] = field(default_factory=list)
 
 
 @dataclass
@@ -61,6 +65,11 @@ class ForestResult:
     # 聚合结论
     consensus: str
     passed: bool
+    # 合并后的假设图: 把各棵树的 supported/refuted 节点汇到一张图,
+    # evidence 里标 tree_id 来源. 下游 engine 可直接接续探索.
+    merged_graph: HypothesisGraph = field(default_factory=HypothesisGraph)
+    # 给下游 engine _speculator_hint 的回流水印.
+    speculator_hint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -174,7 +183,68 @@ class ForestOrchestrator:
             diversity=diversity,
             consensus=consensus,
             passed=passed,
+            merged_graph=self._merge_trees_into_graph(valid_results),
+            speculator_hint=self._build_speculator_hint(
+                consensus, combined, diversity, valid_results
+            ),
         )
+
+    def _merge_trees_into_graph(
+        self, trees: list[TreeResult]
+    ) -> HypothesisGraph:
+        """把各棵树的 supported/refuted 节点汇到一张新图.
+
+        evidence 里标 tree_id 来源, 让下游能看出某条假设是被哪棵树验证的.
+        ponytail: 只搬 supported/refuted, untested 节点不带结论不搬.
+        升级路径: 用语义相似度合并重复假设 (当前按 statement 去重).
+        """
+        merged = HypothesisGraph()
+        seen: set[str] = set()  # 按 statement 去重, 避免重复 add
+        for t in trees:
+            for node in t.nodes:
+                if node.status not in ("supported", "refuted"):
+                    continue
+                if node.statement in seen:
+                    continue
+                seen.add(node.statement)
+                try:
+                    nid = merged.add_hypothesis(
+                        statement=node.statement,
+                        rationale=f"[from {t.tree_id}] {node.rationale}",
+                        testable_prediction=node.testable_prediction,
+                    )
+                    if nid is None:
+                        continue
+                    ev = dict(node.evidence)
+                    ev["tree_id"] = t.tree_id
+                    if node.status == "supported":
+                        merged.support(nid, ev)
+                    else:
+                        merged.refute(nid, ev)
+                except Exception:
+                    logger.debug("merge node from %s failed", t.tree_id, exc_info=True)
+        return merged
+
+    @staticmethod
+    def _build_speculator_hint(
+        consensus: str,
+        combined: tuple[float, float, float],
+        diversity: float,
+        trees: list[TreeResult],
+    ) -> str:
+        """给下游 engine 的回流水印: consensus + DS 质量 + 各树结论摘要."""
+        m_pass, m_fail, m_unc = combined
+        parts = [
+            f"[forest consensus] {consensus}",
+            f"[DS mass] pass={m_pass:.2f} fail={m_fail:.2f} unc={m_unc:.2f}",
+            f"[diversity] {diversity:.2f} (0=独立, 1=重复)",
+        ]
+        for t in trees:
+            parts.append(
+                f"[{t.tree_id}] supported={t.supported_count} "
+                f"refuted={t.refuted_count} m_pass={t.ds_mass[0]:.2f}"
+            )
+        return "\n".join(parts)
 
     async def _run_single_tree(
         self,
@@ -209,6 +279,7 @@ class ForestOrchestrator:
             supported_count=len(supported),
             refuted_count=len(refuted),
             ds_mass=(m_pass, m_fail, m_unc),
+            nodes=list(all_nodes),
         )
 
     def _compute_diversity(self, trees: list[TreeResult]) -> float:
@@ -307,7 +378,31 @@ def _selfcheck():
     assert conflict_combined[2] > 0.3 or conflict_combined[1] > 0.3, \
         f"高冲突应升高 m_unc 或 m_fail, got {conflict_combined}"
 
-    print("PASS: forest_orchestrator DS 合成 + 多样性")
+    # 回流检查: merged_graph 应收下 supported/refuted 节点, speculator_hint 非空
+    from huginn.autoloop.hypothesis_loop import HypothesisNode
+    merge_trees = [
+        TreeResult(
+            "t0", "obj", None, 2, 1, 1, (0.6, 0.4, 0.0),
+            nodes=[
+                HypothesisNode(id="a", statement="H_supported", status="supported"),
+                HypothesisNode(id="b", statement="H_refuted", status="refuted"),
+            ],
+        ),
+        TreeResult(
+            "t1", "obj", None, 1, 1, 0, (0.9, 0.1, 0.0),
+            nodes=[
+                HypothesisNode(id="c", statement="H_supported", status="supported"),  # 重复, 应被去重
+            ],
+        ),
+    ]
+    merged = orch._merge_trees_into_graph(merge_trees)
+    assert len(merged.all_nodes()) == 2, f"去重后应 2 个, got {len(merged.all_nodes())}"
+    assert len(merged.supported()) == 1 and len(merged.refuted()) == 1, \
+        "supported/refuted 各 1"
+    hint = orch._build_speculator_hint("test consensus", (0.6, 0.4, 0.0), 0.5, merge_trees)
+    assert "forest consensus" in hint and "DS mass" in hint, "hint 缺字段"
+
+    print("PASS: forest_orchestrator DS 合成 + 多样性 + 回流")
 
 
 if __name__ == "__main__":

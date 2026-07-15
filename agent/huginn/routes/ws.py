@@ -217,17 +217,13 @@ async def agent_websocket(websocket: WebSocket):
                     question_id = data.get("question_id")
                     answer = data.get("answer", "")
                     thread_id = data.get("thread_id", "default")
+                    from huginn.interaction.clarification import (
+                        get_clarification_manager,
+                    )
+                    mgr = get_clarification_manager()
                     if question_id:
-                        from huginn.interaction.clarification import (
-                            ClarificationManager,
-                        )
-                        mgr = ClarificationManager()
                         mgr.resolve(question_id, answer)
                     else:
-                        from huginn.interaction.clarification import (
-                            ClarificationManager,
-                        )
-                        mgr = ClarificationManager()
                         mgr.resolve_thread(thread_id, answer)
 
                 elif msg_type == "set_auto_approve":

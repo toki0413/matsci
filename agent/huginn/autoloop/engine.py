@@ -263,8 +263,9 @@ class AutoloopEngine:
             strategy=ParetoPruningStrategy(),
             max_parallel=3,
         )
+        from huginn.tools.registry import ToolRegistry
         self.workflow_engine = WorkflowEngine(
-            tool_registry=None,  # Will use default tool registry
+            tool_registry=ToolRegistry,  # 传类本身, .get() 是 classmethod
         )
         self.coder = CoderRunner()
 
@@ -776,6 +777,9 @@ class AutoloopEngine:
         # 并返回 False 让 engine 停在当前 phase. UI 层读到 phase_checkpoint 事件后
         # 展示 evidence 给用户, 用户通过 phase_tool override 或 submit_evidence + resume.
         if state.needs_human_checkpoint(from_phase, to_phase):
+            if state.pending_human_review == (from_phase, to_phase):
+                # 已经在等了, 不重复设 — 避免 dead loop
+                return False
             state.pending_human_review = (from_phase, to_phase)
             logger.info(
                 "human checkpoint pending %s→%s: awaiting user review",
@@ -801,6 +805,33 @@ class AutoloopEngine:
         if state.pending_human_review == (from_phase, to_phase):
             state.pending_human_review = None
         return True
+
+    async def _wait_if_checkpoint_pending(
+        self, from_phase: str, to_phase: str, timeout: float = 600.0
+    ) -> None:
+        """等用户完成 checkpoint 审查.
+
+        _check_gate 设了 pending_human_review 后, 调这个方法阻塞等.
+        用户通过 phase_tool 加 override 后, 下一轮 _check_gate 走 override
+        分支会清掉 pending 并放行. 所以这里同时盯 overrides 和 pending —
+        任一变化就返回.
+
+        timeout 到了还没决策, 强制清 pending 让下一轮放行, 避免无限阻塞.
+        ponytail: 1s 轮询. 升级路径是 asyncio.Condition + phase_tool notify.
+        """
+        state = get_shared_phase_gate_state()
+        key = (from_phase, to_phase)
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while state.pending_human_review == key and key not in state.overrides:
+            if loop.time() > deadline:
+                logger.warning(
+                    "human checkpoint %s→%s timed out after %ss, force proceed",
+                    from_phase, to_phase, timeout,
+                )
+                state.pending_human_review = None
+                return
+            await asyncio.sleep(1.0)
 
     # ──────────────────────────────────────────────────────────────
     # Progressive budget
@@ -993,7 +1024,7 @@ class AutoloopEngine:
                 options=options,
                 context=ctx.get("summary", ""),
                 default_answer=default,
-                timeout=5,  # short timeout: if no human watching, proceed with default
+                timeout=60,  # 给用户足够时间回答
                 metadata={
                     "question_type": ctx.get("question_type", ""),
                     "checkpoint": checkpoint,
@@ -1041,6 +1072,9 @@ class AutoloopEngine:
         self._refine_count = 0
         # 记下本轮上限给 effort floor 用 (check 方法在 self 上, 拿不到局部)
         self._max_iterations = max_iterations
+        # 跨 run 状态隔离: 清掉上轮的 gate history / pending review / evidence.
+        # 用 reset_runtime 不用 reset — reset 会清掉 caller 预设的 overrides.
+        get_shared_phase_gate_state().reset_runtime()
         run_id, provenance_record, run_collector = self._prepare_run(
             objective, progressive_budget, goal
         )
@@ -1116,7 +1150,11 @@ class AutoloopEngine:
             tracker.update(progress_task_id, current_step=completed_steps,
                            current_label=f"iter {self._iteration}: perceive ({phase.status})")
             if not phase.result:
-                logger.info("no changes detected, waiting...")
+                if phase.error:
+                    self._speculator_hint += f"\n[failed: perceive] {phase.error}\n"
+                    logger.warning("perceive failed: %s", phase.error)
+                else:
+                    logger.info("no changes detected, waiting...")
                 # 轮空时 drain 侧边对话: 有 pending 问题就顺手答掉, 不白等.
                 await self._drain_side_questions()
                 await asyncio.sleep(0.5)  # reduced from 2s for faster response
@@ -1190,7 +1228,9 @@ class AutoloopEngine:
             # PlanStore 确认门了, 别重复问; 没 plan_id (PlanStore 不可用)
             # 才走老的 fire-and-forget 提问
             if not plan.get("plan_id"):
-                await self._maybe_clarify("plan", plan)
+                clarify_answer = await self._maybe_clarify("plan", plan)
+                if clarify_answer:
+                    self._speculator_hint += f"\n[用户澄清] {clarify_answer}\n"
 
             # 预算: 后期迭代限制昂贵 mode. 拒绝时把可用 mode 写进 hint,
             # continue 到下一轮让 LLM 改提 plan. 降级后全程放行.
@@ -1202,6 +1242,7 @@ class AutoloopEngine:
                 "plan", "execute",
                 {"mode": plan.get("mode"), "description": plan.get("description")},
             ):
+                await self._wait_if_checkpoint_pending("plan", "execute")
                 continue
 
             # 4. Execute
@@ -1216,6 +1257,10 @@ class AutoloopEngine:
             if phase.error:
                 self._speculator_hint += f"\n[failed: execute] {phase.error}\n"
                 logger.info("execution failed: %s", phase.error)
+                continue
+            if execution_result is None:
+                self._speculator_hint += "\n[failed: execute] 产出为空, 跳过本轮 validate\n"
+                logger.warning("execute returned None, skipping validate")
                 continue
             logger.info("execution complete: %s", execution_result)
 
@@ -1262,6 +1307,7 @@ class AutoloopEngine:
                 "execute", "validate",
                 {"mode": plan.get("mode")},
             ):
+                await self._wait_if_checkpoint_pending("execute", "validate")
                 continue
 
             # 5. Validate
@@ -1428,7 +1474,9 @@ class AutoloopEngine:
             else:
                 self._consecutive_failures += 1
                 # 连续 3+ 次失败, 问用户方向 (非阻塞, 超时走默认继续)
-                await self._maybe_clarify("validation_fail", validation)
+                clarify_answer = await self._maybe_clarify("validation_fail", validation)
+                if clarify_answer:
+                    self._speculator_hint += f"\n[用户方向指引] {clarify_answer}\n"
                 # 连续失败超上限: objective 可能在死循环, 强制停.
                 # _should_stop 让 while 条件自然退出, 不抛异常, 调用方拿到正常返回.
                 if self._consecutive_failures >= self._max_consecutive_failures:
@@ -1464,6 +1512,7 @@ class AutoloopEngine:
             if isinstance(_pa_src.get("physics_audit"), dict):
                 _gate_evidence["physics_audit"] = _pa_src["physics_audit"]
             if not self._check_gate("validate", "learn", _gate_evidence):
+                await self._wait_if_checkpoint_pending("validate", "learn")
                 continue
 
             # 6. Learn
@@ -4429,12 +4478,13 @@ Please modify the code to address this task."""
             return {
                 "mode": "coder",
                 "status": "completed",
+                "success": True,
                 "final_answer": result.get("final_answer", ""),
                 "tool_calls": tool_calls,
             }
         except Exception as e:
             logger.exception("coder execution failed")
-            return {"mode": "coder", "status": "failed", "error": str(e)}
+            return {"mode": "coder", "status": "failed", "success": False, "error": str(e)}
 
     # domain → 默认模板名; get_template 拿不到就 fallback standard_dft
     # ponytail: 硬编码映射表, 新模板加一行即可; 想自动发现就扫 WORKFLOW_TEMPLATES
@@ -4518,6 +4568,12 @@ Please modify the code to address this task."""
                 "success": result.success,
                 "stages": len(stages),
                 "domain": domain,
+                "outputs": result.outputs,
+                "error": result.error,
+                "stage_results": [
+                    {"name": s.stage_name, "success": s.success, "output": s.output_data}
+                    for s in result.stages
+                ],
             }
         except Exception as e:
             return {"mode": "workflow", "success": False, "error": str(e)}
