@@ -2899,11 +2899,38 @@ class AutoloopEngine:
 
         try:
             from huginn.validation.grader import default_registry
-            reg = default_registry()
+            # ValidityJudge 需要 model + 对话日志/代码做 post-hoc 审查
+            # NatureBench judge.py 启发: r_phys 高不代表真算, 可能 gaming grader
+            reg = default_registry(model=getattr(self, "verification_model", None) or self.model)
             merged: dict[str, Any] = {}
             if isinstance(execution_result, dict):
                 merged.update(execution_result)
             merged.update(results)
+            # 喂给 ValidityJudge: 从 memory 取最近对话 + execution_result 里的 code
+            try:
+                recent = self.memory.get_recent_messages(n=20)
+                conv_snippets = []
+                for m in recent:
+                    role = getattr(m, "role", "?")
+                    content = getattr(m, "content", "")
+                    if isinstance(content, (dict, list)):
+                        content = str(content)[:500]
+                    conv_snippets.append(f"[{role}] {str(content)[:500]}")
+                merged["conversation_log"] = "\n".join(conv_snippets)
+            except Exception:
+                logger.debug("conversation_log extract for judge failed", exc_info=True)
+            # agent_code: execution_result 里可能带 code/parsed/script
+            if isinstance(execution_result, dict):
+                for k in ("code", "script", "generated_code", "final_answer"):
+                    v = execution_result.get(k)
+                    if v and isinstance(v, str) and len(v) > 50:
+                        merged["agent_code"] = v
+                        break
+                else:
+                    # 退而求其次: tool_input 里的 description 可能含代码片段
+                    ti = execution_result.get("_tool_input") or {}
+                    if isinstance(ti, dict):
+                        merged["agent_code"] = str(ti.get("description", ""))[:5000]
             grader_list = reg.evaluate_all(merged)
             results["grader_scores"] = {
                 gr.name: {
