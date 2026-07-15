@@ -8,6 +8,7 @@ into declarative units.
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import typing
 from abc import ABC, abstractmethod
@@ -40,6 +41,11 @@ class SkillStep:
     - ``loop_until``: safe_eval expression. If present, the step repeats
       until the expression evaluates True (or ``loop_max_iterations``).
     - ``loop_max_iterations``: safety cap for loops (default 20).
+    - ``parallel_group``: 同组 step 用 asyncio.gather 并行执行, 结果一起
+      commit 到 working_context. 用于"N 个工具必须同时就绪才能合成结论"
+      的科研场景 (如 band + DOS 同波函数并行计算). 同组 step 必须互不
+      依赖对方的 output_key. 这是工具协同 2-单纯形的显式声明:
+      {step_1, step_2, ..., synthesizer} 作为原子单元.
     """
 
     name: str
@@ -53,6 +59,7 @@ class SkillStep:
     condition: str | None = None  # skip step if evaluates False
     loop_until: str | None = None  # repeat step until evaluates True
     loop_max_iterations: int = 20
+    parallel_group: str | None = None  # 同组并行执行
 
 
 @dataclass
@@ -135,7 +142,38 @@ class DeclarativeSkillExecutor(SkillExecutor):
             if param.name not in working_context and param.default is not None:
                 working_context[param.name] = param.default
 
-        for step in skill.steps:
+        # 按 parallel_group 把 steps 切成执行单元: 单 step 或同组并行 batch
+        # ponytail: 不改 SkillStep 结构, 只在执行前做一次分组. 升级: 声明式
+        # 依赖图 + split_by_dependency (当 parallel_group 不够表达时).
+        units: list[tuple[SkillStep, ...]] = []
+        i = 0
+        while i < len(skill.steps):
+            grp = skill.steps[i].parallel_group
+            if grp is None:
+                units.append((skill.steps[i],))
+                i += 1
+                continue
+            # 收集连续的同组 step
+            batch: list[SkillStep] = []
+            while i < len(skill.steps) and skill.steps[i].parallel_group == grp:
+                batch.append(skill.steps[i])
+                i += 1
+            units.append(tuple(batch))
+
+        for unit in units:
+            # ── Parallel batch: 同组 step 用 asyncio.gather 并行 ────
+            if len(unit) > 1:
+                batch_results = await self._run_parallel_batch(
+                    list(unit), working_context, ToolContext
+                )
+                results["steps"].extend(batch_results)
+                # 任一 abort 失败则终止; 否则继续 (失败 step 的 output 不写入 context)
+                if any(not r["success"] and r.get("on_failure") == "abort" for r in batch_results):
+                    results["success"] = False
+                    break
+                continue
+
+            step = unit[0]
             # ── Condition guard (if-branch) ───────────────────────────
             if step.condition is not None:
                 try:
@@ -266,6 +304,81 @@ class DeclarativeSkillExecutor(SkillExecutor):
             k: v for k, v in working_context.items() if not k.startswith("_")
         }
         return results
+
+    async def _run_parallel_batch(
+        self,
+        steps: list[SkillStep],
+        working_context: dict[str, Any],
+        ToolContext: type,
+    ) -> list[dict[str, Any]]:
+        """并行执行同 parallel_group 的 step, 结果一起 commit 到 working_context.
+
+        同组 step 必须互不依赖对方的 output_key (调用方负责声明). 条件
+        不满足的 step 跳过, 失败的 step 不写 context 但其他 step 继续.
+        ponytail: 不做依赖检查 (YAGNI), 靠声明正确性. 升级: static analysis.
+        """
+        async def _run_one(step: SkillStep) -> dict[str, Any]:
+            # 条件检查
+            if step.condition is not None:
+                try:
+                    if not safe_eval(step.condition, working_context):
+                        return {
+                            "step": step.name, "success": True, "output": None,
+                            "error": None, "skipped": True,
+                        }
+                except Exception as e:
+                    return {
+                        "step": step.name, "success": False, "output": None,
+                        "error": f"Condition eval error: {e}",
+                        "on_failure": step.on_failure,
+                    }
+
+            tool_input = {}
+            for key, mapping in step.input_mapping.items():
+                tool_input[key] = self._resolve_value(mapping, working_context)
+
+            tool = self.tool_registry.get(step.tool)
+            if tool is None:
+                return {
+                    "step": step.name, "success": False, "output": None,
+                    "error": f"Tool '{step.tool}' not found",
+                    "on_failure": step.on_failure,
+                }
+
+            step_result: dict[str, Any] = {
+                "step": step.name, "success": False, "output": None, "error": None,
+            }
+            try:
+                input_model = tool.input_schema
+                parsed = input_model(**tool_input)
+                tool_ctx = ToolContext(session_id="skill", workspace=".")
+                payload = parsed.model_dump() if _wants_dict(tool) else parsed
+                if inspect.iscoroutinefunction(tool.call):
+                    output = await tool.call(payload, tool_ctx)
+                else:
+                    # 同步工具在 gather 里会阻塞事件循环, 包到 to_thread
+                    output = await asyncio.to_thread(tool.call, payload, tool_ctx)
+                step_result["success"] = output.success
+                step_result["output"] = output.data
+                if output.error:
+                    step_result["error"] = output.error
+                # 成功才写 context (失败不污染, 下游可继续)
+                if output.success:
+                    working_context[step.output_key] = output.data
+                # validation
+                if step.validation and output.success:
+                    try:
+                        if not safe_eval(step.validation, working_context):
+                            step_result["success"] = False
+                            step_result["error"] = "Validation failed"
+                    except Exception as e:
+                        step_result["error"] = f"Validation error: {e}"
+            except Exception as e:
+                step_result["error"] = str(e)
+            step_result["on_failure"] = step.on_failure
+            return step_result
+
+        return await asyncio.gather(*[_run_one(s) for s in steps])
 
     @staticmethod
     def _resolve_value(mapping: str, context: dict[str, Any]) -> Any:
