@@ -316,6 +316,10 @@ class DeclarativeSkillExecutor(SkillExecutor):
         同组 step 必须互不依赖对方的 output_key (调用方负责声明). 条件
         不满足的 step 跳过, 失败的 step 不写 context 但其他 step 继续.
         ponytail: 不做依赖检查 (YAGNI), 靠声明正确性. 升级: static analysis.
+
+        线程安全: 同步工具走 asyncio.to_thread 后是真多线程. 不同 output_key
+        写不同 dict slot, CPython GIL 保护单次 setitem, 安全. 但相同
+        output_key 会竞争 — 声明错误的责任在调用方, 不加锁 (YAGNI).
         """
         async def _run_one(step: SkillStep) -> dict[str, Any]:
             # 条件检查
