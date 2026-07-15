@@ -330,9 +330,12 @@ class VisualEncoder:
 
     def _ensure_backend(self) -> None:
         """懒加载: 只在第一次需要时尝试构建 backend."""
-        if self._built:
+        if getattr(self, "_built", False):
             return
         self._built = True
+        # 已经有 backend (比如测试 fixture 直接注入的) 就不再构建
+        if self._backend is not None:
+            return
         self._build_backend()
 
     def _build_backend(self) -> None:
