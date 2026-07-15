@@ -80,14 +80,21 @@ class ExecutionOrchestrator:
     def __init__(
         self,
         working_dir: str = "",
-        tool_registry: dict[str, Callable] | None = None,
+        tool_registry: Any = None,
         enable_autofix: bool = True,
         max_retries: int = 2,
         compute_router: Any = None,
     ):
         self.working_dir = Path(working_dir) if working_dir else Path.cwd()
         self.working_dir.mkdir(parents=True, exist_ok=True)
-        self.tool_registry = tool_registry or {}
+        # tool_registry 三种形态:
+        #   None  → 默认接全局 ToolRegistry (classmethod .get), 启动时已注册好工具
+        #   dict[str, Callable] → 老风格, 直接调 tool_fn(action=, **params)
+        #   ToolRegistry 类 → 新风格, .get(name) 返回 HuginnTool, 用 .call(args, ctx)
+        if tool_registry is None:
+            from huginn.tools.registry import ToolRegistry as _GlobalToolRegistry
+            tool_registry = _GlobalToolRegistry
+        self.tool_registry = tool_registry
         self.enable_autofix = enable_autofix
         self.max_retries = max_retries
         # ComputeRouter — auto-selects local vs HPC. Default instance so
@@ -96,8 +103,17 @@ class ExecutionOrchestrator:
         self._execution_history: list[WorkflowExecutionRecord] = []
 
     def register_tool(self, name: str, fn: Callable) -> None:
-        """Register a tool function for execution."""
-        self.tool_registry[name] = fn
+        """Register a tool function for execution.
+
+        仅对 dict-style registry 有意义; ToolRegistry 类有自己的 .register.
+        """
+        if isinstance(self.tool_registry, dict):
+            self.tool_registry[name] = fn
+        else:
+            logger.warning(
+                "register_tool ignored: tool_registry is %s, not a dict",
+                type(self.tool_registry).__name__,
+            )
 
     # ------------------------------------------------------------------
     # Core execution
@@ -241,8 +257,8 @@ class ExecutionOrchestrator:
         t0 = time.time()
 
         # Find and call the tool
-        tool_fn = self.tool_registry.get(tool_name)
-        if tool_fn is None:
+        tool = self.tool_registry.get(tool_name)
+        if tool is None:
             return StageResult(
                 stage_id=stage_id,
                 stage_name=stage_name,
@@ -257,12 +273,7 @@ class ExecutionOrchestrator:
             )
 
         try:
-            # Call tool (sync or async)
-            if asyncio.iscoroutinefunction(tool_fn):
-                output = await tool_fn(action=action, **params)
-            else:
-                output = tool_fn(action=action, **params)
-
+            output = await self._invoke_tool(tool, action, params, workflow_name=stage_id)
             walltime = time.time() - t0
             return StageResult(
                 stage_id=stage_id,
@@ -292,6 +303,50 @@ class ExecutionOrchestrator:
                 execution_target=_route_target,
                 route_reason=_route_reason,
             )
+
+    async def _invoke_tool(
+        self,
+        tool: Any,
+        action: str,
+        params: dict[str, Any],
+        workflow_name: str = "",
+    ) -> Any:
+        """统一工具调用入口, 屏蔽 dict-callable 和 HuginnTool 两种形态.
+
+        - HuginnTool (有 .call 和 .input_schema): 构造 input_schema 实例,
+          带 action 时一并塞进去, 走 await tool.call(args, ctx).
+        - dict-callable: 老路径 tool_fn(action=, **params).
+        """
+        # HuginnTool 分支: 有 .call 方法 (async) + .input_schema
+        if hasattr(tool, "call") and hasattr(tool, "input_schema"):
+            from huginn.types import ToolContext
+
+            schema = tool.input_schema
+            kwargs = dict(params)
+            if action and schema is not None:
+                # 多数工具的 input schema 有 action 字段, 没有的话 try-except 兜底
+                try:
+                    args_obj = schema(action=action, **kwargs)
+                except Exception:
+                    args_obj = schema(**kwargs)
+            elif schema is not None:
+                args_obj = schema(**kwargs)
+            else:
+                args_obj = kwargs
+            ctx = ToolContext(
+                session_id=workflow_name or "orchestrator",
+                workspace=str(self.working_dir),
+            )
+            result = await tool.call(args_obj, ctx)
+            # ToolResult → 取 data; 失败抛上去让外层标 failed
+            if hasattr(result, "success") and not result.success:
+                raise RuntimeError(result.error or "tool call failed")
+            return getattr(result, "data", result)
+
+        # dict-callable 分支 (老行为)
+        if asyncio.iscoroutinefunction(tool):
+            return await tool(action=action, **params)
+        return tool(action=action, **params)
 
     # ------------------------------------------------------------------
     # Auto-fix integration

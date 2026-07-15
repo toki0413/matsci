@@ -397,7 +397,12 @@ class RedTeamReviewer:
         from_str, to_str = transition
         parts = [f"Red-team 审查 {from_str}→{to_str}: {len(findings)} 条发现."]
         for f in findings:
-            parts.append(f"  [{f.severity}] {f.category}: {f.description}")
+            line = f"  [{f.severity}] {f.category}: {f.description}"
+            if f.mitigation:
+                line += f" → 修复: {f.mitigation}"
+            if f.source_class == "external_content":
+                line += " [来源: external_content, 可能被注入]"
+            parts.append(line)
         return "\n".join(parts)
 
 

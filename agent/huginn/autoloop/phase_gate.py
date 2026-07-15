@@ -12,10 +12,30 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 import logging
 logger = logging.getLogger(__name__)
+
+
+def _load_checkpoint_config() -> set[tuple[str, str]]:
+    """从 HUGINN_HUMAN_CHECKPOINT_PHASES 环境变量加载 checkpoint 配置.
+
+    格式: "plan:execute,validate:learn"
+    空或未设置时返回空集 (不启用任何 checkpoint).
+    """
+    raw = os.environ.get("HUGINN_HUMAN_CHECKPOINT_PHASES", "").strip()
+    if not raw:
+        return set()
+    result: set[tuple[str, str]] = set()
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if ":" not in pair:
+            continue
+        frm, to = pair.split(":", 1)
+        result.add((frm.strip(), to.strip()))
+    return result
 
 
 
@@ -487,7 +507,8 @@ class PhaseGateState:
         # ponytail: 并行结构, set.add 不写 meta 则 meta 缺. 升级: set→dict 合并
         self.override_meta: dict[tuple[str, str], dict] = {}
         # Human-in-the-loop checkpoint 配置 + 运行时状态
-        self.human_checkpoint_phases: set[tuple[str, str]] = set()
+        # 从 HUGINN_HUMAN_CHECKPOINT_PHASEES=plan:execute,validate:learn 加载
+        self.human_checkpoint_phases: set[tuple[str, str]] = _load_checkpoint_config()
         self.pending_human_review: tuple[str, str] | None = None
 
     def reset(self) -> None:
@@ -496,6 +517,18 @@ class PhaseGateState:
         self.submitted_evidence.clear()
         self.overrides.clear()
         self.override_meta.clear()
+        self.pending_human_review = None
+
+    def reset_runtime(self) -> None:
+        """只清每轮瞬态 (history / pending / submitted_evidence),
+        保留 caller 配置的 overrides 和 override_meta.
+
+        engine.run() 开头调这个, 不用 reset() — reset() 会清掉 caller
+        在 run 之前预设的 override, 破坏 "用户预先放行某转移" 的用法.
+        """
+        self.history.clear()
+        self.pending_transition = None
+        self.submitted_evidence.clear()
         self.pending_human_review = None
 
     def last_gate(self) -> PhaseGate | None:
