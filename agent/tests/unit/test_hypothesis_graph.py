@@ -242,9 +242,26 @@ class TestSerialization:
     def test_empty_graph_serialization(self):
         g = HypothesisGraph()
         data = g.to_dict()
-        assert data == {"nodes": [], "edges": []}
+        assert data == {"nodes": [], "edges": [], "simplicials": []}
         g2 = HypothesisGraph.from_dict(data)
         assert len(g2.all_nodes()) == 0
+
+    def test_dual_covered_registers_simplicial(self):
+        """dual_covered 命中时注册 2-单纯形, 保留"N 条证据作为整体支撑"语义."""
+        g = HypothesisGraph()
+        h = g.add_hypothesis("掺杂增加带隙减小", testable_prediction="dE/dx < 0")
+        # 两条 modality 不同的 support 边 → 命中 dual_covered
+        g.support(h, {"modality": "deductive", "data_source": "sym"})
+        g.support(h, {"modality": "numeric", "data_source": "gp"})
+        assert g.dual_covered(h) is True
+        faces = g.simplicial_faces(h)
+        assert len(faces) == 1
+        assert h in faces[0]
+        # 单 modality 不应命中
+        h2 = g.add_hypothesis("另一个假设")
+        g.support(h2, {"modality": "numeric"})
+        assert g.dual_covered(h2) is False
+        assert g.simplicial_faces(h2) == []
 
     def test_node_to_from_dict_round_trip(self):
         node = HypothesisNode(
