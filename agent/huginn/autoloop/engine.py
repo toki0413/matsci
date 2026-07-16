@@ -318,6 +318,13 @@ class AutoloopEngine:
         # Chemputer 启发: Jaccard 稳定 = 反应完成; 这里 = 理解完成.
         # 每条存 (worst, cross_perturbation_std): std 高 = 测量噪声大, 需更严阈值.
         self._surprise_history: list[tuple[float, float]] = []
+        # Darwin ratchet (darwin-skill 启发): 每轮算假设质量分, 只保留改进.
+        # best_score = 历史最佳, 当前轮 score < best → 回退假设 (不更新 preferred).
+        # 连续 2 轮 Δ<0.5 → early stop (边际收益递减, 不烧 token).
+        # 互补于 surprise-based stop: surprise 测"预测准不准", ratchet 测"假设好不好".
+        self._darwin_best_score: float = 0.0
+        self._darwin_stagnation: int = 0  # 连续低增益轮数
+        self._darwin_last_score: float = 0.0
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
@@ -1545,6 +1552,7 @@ class AutoloopEngine:
                 "pde_classification",
                 "sobol_top_features",
                 "constraint_check",
+                "literature_claims",  # multi_review high_confidence_claims → red_team
             ):
                 if _mk in validation:
                     _gate_evidence[_mk] = validation[_mk]
@@ -1667,11 +1675,99 @@ class AutoloopEngine:
                         )
                         self._should_stop = True
 
+            # Darwin ratchet: 每轮算假设质量分, 只保留改进, 连续低增益 → early stop.
+            # 互补于 surprise: surprise 测预测误差, ratchet 测假设图质量.
+            if not self._should_stop:
+                self._darwin_ratchet_check()
+
         # 7. Report + finalize
         return await self._finalize_run(
             objective, phases, run_id, provenance_record,
             run_collector, tracker, progress_task_id, completed_steps,
         )
+
+    def _darwin_ratchet_check(self) -> None:
+        """Darwin ratchet: 算假设质量分, 只保留改进, 连续低增益 → early stop.
+
+        评分 (0-10, 对齐 darwin-skill 原版 0-10 分制):
+        - supported_ratio * 10: 证据强度 (supported 节点占比)
+        - testable_ratio * 10: 可证伪性 (有 testable_prediction 的节点占比)
+        - graph_diversity * 10: 假设多样性 (unique statements 占比)
+        - topology_richness * 10: 假设网络结构丰富度 (β₁/n, 独立环数占比)
+        四项平均 → 0-10 分
+
+        β₁ 解释: 假设图的独立环数. β₁=0 → 树状 (无交叉支持);
+        β₁>0 → 有交叉支持/反驳链 (假设间相互关联). 标准化到 [0,1] 避免大图偏向.
+        ponytail: 不区分"良性交叉支持"和"恶性循环论证" — 留给 red_team._topology_scan 判.
+        这里只测结构丰富度, 作为 4 维代理之一. 升级: LLM 9 维评分 (darwin-skill 原版).
+
+        棘轮逻辑:
+        - score > best_score → 更新 best, stagnation=0
+        - score <= best_score → stagnation++, 回退 (不更新 preferred_hypothesis)
+        - 连续 2 轮 Δ<0.5 (0-10 分制下, 增量 <0.5) → early stop
+
+        ponytail: 4 维代理是粗启发式. 升级: LLM 9 维评分 (darwin-skill 原版).
+        ponytail: 回退只标记, 不真删假设 (保留在图里供 cross-pollination).
+        """
+        graph = self.hypothesis_graph
+        all_nodes = graph.all_nodes()
+        if not all_nodes:
+            return
+
+        supported = graph.supported()
+        n = len(all_nodes)
+        supported_ratio = len(supported) / n
+
+        testable = sum(
+            1 for nd in all_nodes
+            if getattr(nd, "testable_prediction", None)
+        )
+        testable_ratio = testable / n
+
+        statements = [nd.statement for nd in all_nodes if nd.statement]
+        unique = len(set(statements))
+        graph_diversity = unique / len(statements) if statements else 0.0
+
+        # 第 4 维: 拓扑丰富度 — 用 hodge_signature 的 β₁ 算独立环数占比
+        # ponytail: 失败时降级为 0 (不影响其他 3 维). 升级: gudhi 算真实 Betti.
+        topology_richness = 0.0
+        try:
+            from huginn.metacog.topology_lens import hodge_signature
+            node_ids = [nd.id for nd in all_nodes]
+            edge_pairs = []
+            for e in graph.edges():
+                if e.from_id in node_ids and e.to_id in node_ids:
+                    edge_pairs.append((e.from_id, e.to_id))
+            sig = hodge_signature(node_ids, edge_pairs)
+            # β₁/n 标准化到 [0,1]: 树状图 β₁=0 → 0 分; 完全交叉 → 趋近 1
+            topology_richness = min(sig.beta1_approx / max(n, 1), 1.0)
+        except Exception:
+            logger.debug("topology_richness calc failed (non-fatal)", exc_info=True)
+
+        # 0-10 分制, 对齐 darwin-skill 原版
+        score = (
+            supported_ratio + testable_ratio + graph_diversity + topology_richness
+        ) / 4.0 * 10.0
+
+        delta = score - self._darwin_last_score
+        if delta < 0.5:
+            self._darwin_stagnation += 1
+        else:
+            self._darwin_stagnation = 0
+
+        if score > self._darwin_best_score:
+            self._darwin_best_score = score
+            # ponytail: 只在改进时更新 preferred, 退化时保留上次最佳
+        # else: 保留 best_score, preferred_hypothesis 不更新 (棘轮)
+
+        self._darwin_last_score = score
+
+        if self._darwin_stagnation >= 2 and self._iteration > 2:
+            logger.info(
+                "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
+                self._darwin_stagnation, self._darwin_best_score,
+            )
+            self._should_stop = True
 
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         """发布 campaign.* 事件到 EventBus + SSE 流, fire-and-forget.
@@ -2578,6 +2674,10 @@ class AutoloopEngine:
         # B: 硬路由 — 根据上下文信号覆盖 LLM 的 mode 选择
         plan = self._override_plan_mode(plan)
 
+        # KRCL 启发: 反向校验 plan 能否达成 hypothesis, 失败反馈 LLM 重生成
+        # 单 LLM 反向校验, 最多 1 次重试, 失败不阻塞 (标 warning 继续)
+        plan = await self._plan_check_and_refine(plan, hypothesis, context)
+
         # 落 PlanStore: 创建 plan → cost 确认门 → confirm/reject
         plan_store = self._get_plan_store()
         if plan_store is None:
@@ -3072,6 +3172,11 @@ class AutoloopEngine:
             lit_comp = await self._literature_comparison(execution_result)
             if lit_comp:
                 results["literature_comparison"] = lit_comp
+                # 平铺 high_confidence_claims 给 red_team._literature_consensus_check
+                # 消费. evidence["literature_claims"] 是 red_team 约定的 key.
+                high_claims = lit_comp.get("high_confidence_claims") or []
+                if high_claims:
+                    results["literature_claims"] = high_claims
         except Exception as e:
             results["literature_comparison_error"] = str(e)
 
@@ -3162,6 +3267,27 @@ class AutoloopEngine:
                 comparison[prop_key] = signal
             except Exception:
                 continue
+
+        # 知识注入层: multi_review 产 high_confidence_claims, 平铺到 comparison
+        # 给 red_team._literature_consensus_check 消费 (evidence["literature_claims"])
+        # ponytail: 2 透镜 + max_results=5 控成本. 失败无所谓, comparison 已有 benchmark 部分
+        try:
+            mr_res = await tool.call(
+                LiteratureInput(
+                    action="multi_review",
+                    query=system,
+                    max_results=5,
+                    lenses=["methodology", "limitations"],
+                    verify_claims=True,
+                ),
+                tool_ctx,
+            )
+            if mr_res.success and mr_res.data:
+                high_claims = mr_res.data.get("high_confidence_claims") or []
+                if high_claims:
+                    comparison["high_confidence_claims"] = high_claims
+        except Exception:
+            logger.debug("multi_review in _literature_comparison failed (non-fatal)", exc_info=True)
 
         return comparison
 
@@ -5355,6 +5481,171 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         if prediction:
             plan["expected_prediction"] = prediction
         return plan
+
+    # ── KRCL plan check (反向校验 + 闭环重生成) ─────────────────
+    # 磐石100 KRCL 启发: 正向神经规划器生成 plan → 反向符号规划识别器校验
+    # → 失败反馈重生成. ponytail: 单 LLM 反向校验, 不上 PDDL solver.
+    # ceiling: LLM 自校验有同模型盲点, 不如 KRCL 的符号识别器硬.
+    # 升级路径: 接 BourbakiTool.check_conservation 做符号反推 (需 Lean 成熟).
+    _PLAN_CHECK_MAX_REFINES = 1
+
+    async def _plan_check_and_refine(
+        self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """KRCL 闭环: 反向校验 plan, 失败反馈 LLM 重生成, 超限不阻塞.
+
+        失败时保留 warning 但继续返回 plan (physical_precheck 同款设计 —
+        警告不拦截, 让用户决定). 重试次数耗尽就把 reason 塞进 plan 让
+        后续 _validate 能看到.
+        """
+        # 自我控制: trivial plan (description 太短) 跳过, 不浪费 LLM 调用
+        desc = plan.get("description", "")
+        if len(desc) < 20:
+            return plan
+        for attempt in range(self._PLAN_CHECK_MAX_REFINES + 1):
+            try:
+                check = await self._plan_check(plan, hypothesis, context)
+            except Exception as e:
+                logger.debug("plan_check LLM call failed: %s", e)
+                return plan
+            if check.get("is_valid", True):
+                plan["plan_check"] = check
+                logger.info("plan_check passed (attempt %d)", attempt)
+                return plan
+            if attempt >= self._PLAN_CHECK_MAX_REFINES:
+                plan["plan_check"] = check
+                plan["plan_check_warning"] = check.get("reason", "unknown")
+                logger.warning(
+                    "plan_check failed after %d refines: %s",
+                    self._PLAN_CHECK_MAX_REFINES, check.get("reason"),
+                )
+                return plan
+            logger.info(
+                "plan_check failed (attempt %d), refining: %s",
+                attempt, check.get("reason"),
+            )
+            plan = await self._refine_plan(plan, check, hypothesis, context)
+        return plan
+
+    async def _plan_check(
+        self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """单次反向校验: 让 LLM 判断 plan 执行后能否达成 hypothesis.
+
+        用 task='verification' 让 model_router 路由到独立验证模型,
+        避免正向/反向用同一个模型 (同模型有同盲点).
+        """
+        prompt = self._build_plan_check_prompt(plan, hypothesis, context)
+        response = await self._llm_chat(
+            prompt, persona_name="default", task="verification",
+        )
+        return self._parse_plan_check(response)
+
+    def _build_plan_check_prompt(
+        self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
+    ) -> str:
+        """反向规划识别器 prompt: 判断 plan 能否达成 hypothesis."""
+        # 从 context 抽最近失败模式, 帮 LLM 避开已知坑
+        failure_modes = context.get("failure_modes", "")
+        if not failure_modes and self._speculator_hint:
+            failure_modes = self._speculator_hint[-500:]
+        return f"""你是反向规划识别器 (KRCL 启发). 判断以下 plan 执行后能否达成 hypothesis.
+
+# 目标 (hypothesis)
+{hypothesis}
+
+# 当前 plan
+MODE: {plan.get('mode', 'coder')}
+DESCRIPTION: {plan.get('description', '')}
+PREDICTION: {plan.get('expected_prediction', 'N/A')}
+
+# 已知失败模式 (避免重蹈覆辙)
+{failure_modes or 'N/A'}
+
+# 任务
+判断这个 plan 执行后能否达成 hypothesis. 严格检查:
+- MODE 是否匹配任务类型 (coder 写代码 / workflow 跑流程 / explore 探索 / skill 复合技能)
+- DESCRIPTION 是否覆盖 hypothesis 的关键要求
+- PREDICTION 是否可验证 (能跑出数值/结构/代码对比)
+- 是否遗漏必要前置步骤 (如 band 前需 SCF / MD 前需 minimize / elastic 前需 relax)
+
+输出 JSON (不要其他文本):
+{{
+  "is_valid": true 或 false,
+  "reason": "为什么 valid / invalid",
+  "missing_steps": ["如果 invalid, 缺少哪些步骤"],
+  "risks": ["潜在风险"]
+}}"""
+
+    def _parse_plan_check(self, response: str) -> dict[str, Any]:
+        """解析反向校验 JSON — 括号配平法 (ValidityJudge._parse_verdict 同款).
+
+        解析失败返回 is_valid=True (跳过校验, 不阻塞).
+        """
+        import json
+        start = response.find("{")
+        if start < 0:
+            return {"is_valid": True, "reason": "no json, skip"}
+        depth = 0
+        for i, ch in enumerate(response[start:], start=start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        obj = json.loads(response[start:i + 1])
+                        # 字段补全, 保证下游一致
+                        obj.setdefault("is_valid", True)
+                        obj.setdefault("reason", "")
+                        obj.setdefault("missing_steps", [])
+                        obj.setdefault("risks", [])
+                        return obj
+                    except json.JSONDecodeError:
+                        return {"is_valid": True, "reason": "json parse failed, skip"}
+        return {"is_valid": True, "reason": "no closing brace, skip"}
+
+    async def _refine_plan(
+        self,
+        plan: dict[str, Any],
+        check: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """根据反向校验反馈, 让 LLM 重新生成 plan (保留 plan_id)."""
+        prompt = f"""之前的 plan 未通过反向校验. 根据反馈重新生成.
+
+# 目标
+{hypothesis}
+
+# 之前的 plan
+MODE: {plan.get('mode', 'coder')}
+DESCRIPTION: {plan.get('description', '')}
+
+# 校验反馈
+reason: {check.get('reason', '')}
+missing_steps: {check.get('missing_steps', [])}
+risks: {check.get('risks', [])}
+
+# 任务
+根据反馈重新生成 plan. 严格按格式输出:
+MODE: <coder|workflow|explore|skill|visual_inspect>
+DESCRIPTION: <brief description>
+SKILL: <composite skill name, only if MODE is skill>
+PREDICTION: <预期结果, 用于后续 validate 对比>"""
+        try:
+            response = await self._llm_chat(
+                prompt, persona_name="default", task="planning",
+            )
+            new_plan = self._parse_plan(response)
+            new_plan = self._override_plan_mode(new_plan)
+            # 保留 plan_id (如果有), 让 PlanStore 能跟踪同一 plan 的演进
+            if "plan_id" in plan:
+                new_plan["plan_id"] = plan["plan_id"]
+            return new_plan
+        except Exception as e:
+            logger.debug("plan refine failed: %s", e)
+            return plan
 
     # ──────────────────────────────────────────────────────────────
     # Phase runner utilities
