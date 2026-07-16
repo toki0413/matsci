@@ -51,6 +51,13 @@ jobs:
             --tb=short --maxfail=5 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
+      - name: Expose failures to step summary
+        if: failure()
+        run: |
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat agent/pytest_output.txt | tail -200 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
       - name: Upload test output
         if: always()
         uses: actions/upload-artifact@v4
