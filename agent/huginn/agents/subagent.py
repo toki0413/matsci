@@ -111,25 +111,31 @@ class SubagentDispatch:
             name="coder",
             description="执行代码编写和修改任务",
             system_prompt="You are a coding agent. Write and modify code files as requested.",
+            # ponytail: 去掉 file_write_tool/file_edit_tool — Windows 路径 bug (§2.1).
+            # 子 agent 用 code_tool 的 open() 写文件, 和主 agent 一致.
+            # ponytail: 去掉 bench_infra (plot/training_matrix) — 让 coder 自己用 code_tool 实现
             allowed_tools=[
-                "code_tool", "file_edit_tool", "file_write_tool", "bash_tool",
+                "code_tool", "bash_tool",
+                "file_read_tool", "glob", "grep",
             ],
-            max_tool_calls=10,
-            max_iterations=5,
+            # benchmark 需要更多预算: 训练循环 + 画图 + 调试
+            max_tool_calls=50,
+            max_iterations=10,
         ),
         "analyst": SubagentSpec(
             name="analyst",
             description="分析计算结果/数据，返回结构化洞察",
             system_prompt=(
                 "You are a data analysis agent. Analyze results, compute "
-                "statistics, and return structured insights."
+                "statistics, and return structured insights. "
+                "Implement metrics (C2ST/MCMC) in code_tool, don't expect pre-built tools."
             ),
             allowed_tools=[
-                "code_tool", "file_read_tool",
+                "code_tool", "bash_tool", "file_read_tool",
                 "numerical_tool", "visualize_tool",
             ],
-            max_tool_calls=8,
-            max_iterations=3,
+            max_tool_calls=20,
+            max_iterations=5,
         ),
     }
 
