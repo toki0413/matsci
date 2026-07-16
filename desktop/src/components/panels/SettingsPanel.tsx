@@ -439,6 +439,44 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </div>
                 )}
               </ConfigField>
+              <ConfigField label="Accent Color" full>
+                <div className="flex items-center gap-3">
+                  {[
+                    { name: 'Blue', rgb: '66 133 244' },
+                    { name: 'Green', rgb: '52 168 83' },
+                    { name: 'Orange', rgb: '212 136 74' },
+                    { name: 'Purple', rgb: '168 85 247' },
+                    { name: 'Pink', rgb: '236 72 153' },
+                    { name: 'Cyan', rgb: '6 182 212' },
+                  ].map((c) => (
+                    <button
+                      key={c.name}
+                      onClick={() => {
+                        document.documentElement.style.setProperty('--accent-rgb', c.rgb);
+                        document.documentElement.style.setProperty('--seed-primary', `rgb(${c.rgb})`);
+                        localStorage.setItem('accent-color', c.rgb);
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-110"
+                      style={{
+                        background: `rgb(${c.rgb})`,
+                        borderColor: localStorage.getItem('accent-color') === c.rgb ? 'var(--text-primary)' : 'transparent',
+                      }}
+                      title={c.name}
+                      aria-label={`Set accent to ${c.name}`}
+                    />
+                  ))}
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('accent-color');
+                      document.documentElement.style.setProperty('--accent-rgb', '66 133 244');
+                      document.documentElement.style.setProperty('--seed-primary', '#4285f4');
+                    }}
+                    className="text-xs text-text-muted hover:text-text-primary"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </ConfigField>
               <div className="md:col-span-2">
                 <label className="flex cursor-pointer items-center gap-2">
                   <input
