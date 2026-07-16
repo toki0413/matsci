@@ -39,7 +39,7 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-export function StatusBar({ isConnected, status, wsReconnecting, wsFailed, cwd }: StatusBarProps) {
+export function StatusBar({ isConnected, wsReconnecting, wsFailed, cwd }: StatusBarProps) {
   const [metrics, setMetrics] = useState<Metrics>({
     tokens: 0,
     model: "",

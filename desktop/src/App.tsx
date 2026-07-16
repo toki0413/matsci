@@ -33,7 +33,6 @@ import { ContextBar } from "./components/ContextBar";
 import { ChatPanel } from "./components/panels/ChatPanel";
 import { MetricsBar } from "./components/MetricsBar";
 import { StatusBar } from "./components/StatusBar";
-import { Modal } from "./components/Modal";
 import { MemoryPanel } from "./components/panels/MemoryPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";

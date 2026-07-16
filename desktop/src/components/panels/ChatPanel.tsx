@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play, FolderTree, Pin, MessageSquare, Code2, BookOpen, User, ThumbsUp, ThumbsDown, FileDown } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play, FolderTree, Pin, MessageSquare, Code2, BookOpen, ThumbsUp, ThumbsDown, FileDown } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -1835,7 +1835,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       <button
                         key={p.name}
                         onClick={() => {
-                          setCurrentPersona(p.name);
+                          setCurrentPersona?.(p.name);
                           setShowPersonaSelector(false);
                         }}
                         className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors ${
