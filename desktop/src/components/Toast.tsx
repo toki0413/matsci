@@ -28,18 +28,23 @@ function _render() {
       {_queue.map((t) => (
         <div
           key={t.id}
+          role={t.kind === "error" ? "alert" : "status"}
+          aria-live={t.kind === "error" ? "assertive" : "polite"}
           onClick={() => _dismiss(t.id)}
           style={{
             pointerEvents: "auto",
             cursor: "pointer",
             borderRadius: "8px",
-            padding: "8px 16px",
+            padding: "8px 12px 8px 16px",
             fontSize: "13px",
             fontWeight: 500,
             boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
             animation: "toast-in 0.2s ease-out",
             maxWidth: "400px",
             wordBreak: "break-word",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
             ...(
               t.kind === "success" ? { background: "var(--success, #22c55e)", color: "#fff" } :
               t.kind === "error" ? { background: "var(--error, #ef4444)", color: "#fff" } :
@@ -47,7 +52,26 @@ function _render() {
             ),
           }}
         >
-          {t.msg}
+          <span style={{ flex: 1 }}>{t.msg}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); _dismiss(t.id); }}
+            aria-label="Dismiss notification"
+            style={{
+              background: "none",
+              border: "none",
+              color: "currentColor",
+              cursor: "pointer",
+              padding: "2px",
+              display: "flex",
+              alignItems: "center",
+              borderRadius: "4px",
+              opacity: 0.6,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       ))}
     </>

@@ -4,6 +4,7 @@ import { useScrollMemory } from '../../hooks/useScrollMemory';
 import { ChevronDown, Brain, Pencil, Check, X } from 'lucide-react';
 import { PanelHeader } from '../settings-shared';
 import EmptyState from '../EmptyState';
+import { SkeletonText } from '../Skeleton';
 import type { MemoryEntry, MemoryStats } from '../../types/domain';
 
 export interface MemoryPanelProps {
@@ -182,9 +183,11 @@ export function MemoryPanel({
           </div>
           <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-2">
             {memoriesLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-accent" />
-              </div>
+              [0, 1, 2].map(i => (
+                <div key={i} className="card">
+                  <SkeletonText lines={3} />
+                </div>
+              ))
             ) : memories.length === 0 && (
               <EmptyState
                 icon={Brain}

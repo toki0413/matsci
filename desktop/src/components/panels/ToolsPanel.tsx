@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Wrench } from 'lucide-react';
 import { api } from '../../lib/api';
+import { SkeletonCard } from '../Skeleton';
 import type { ToolInfo } from '../../types/domain';
 
 // ── Schema helpers (local to this panel) ──
@@ -178,9 +179,8 @@ export function ToolsPanel({ tools, isConnected }: ToolsPanelProps) {
               </p>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-              <p className="mt-4 text-sm text-text-muted">{t('tools.loading')}</p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {[0, 1, 2].map(i => <SkeletonCard key={i} />)}
             </div>
           )
         ) : (

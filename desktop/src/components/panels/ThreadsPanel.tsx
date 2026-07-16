@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, MoreVertical, GitFork, Archive, ArchiveRestore } from 'lucide-react';
+import { Search, MoreVertical, GitFork, Archive, ArchiveRestore, MessageSquare } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PanelHeader } from '../settings-shared';
+import EmptyState from '../EmptyState';
 
 interface Thread {
   id: string;
@@ -82,21 +83,21 @@ export function ThreadsPanel({
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {threads.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-            <div className="text-5xl opacity-30">💬</div>
-            <div>
-              <div className="text-base font-medium text-text-secondary">{t('threads.empty') || 'No threads yet'}</div>
-              <div className="mt-1 text-sm text-text-muted">{t('threads.emptyHint') || 'Create a thread to start a new conversation'}</div>
-            </div>
-            <button onClick={createThread} className="btn-primary px-4 py-2 text-sm">
-              + {t('threads.new')}
-            </button>
-          </div>
+          <EmptyState
+            icon={MessageSquare}
+            title={t('threads.empty') || 'No threads yet'}
+            subtitle={t('threads.emptyHint') || 'Create a thread to start a new conversation'}
+            action={
+              <button onClick={createThread} className="btn-primary px-4 py-2 text-sm">
+                + {t('threads.new')}
+              </button>
+            }
+          />
         ) : filteredThreads.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-text-muted">
-            <Search size={28} className="opacity-30" />
-            <span className="text-sm">No threads match "{threadSearch}"</span>
-          </div>
+          <EmptyState
+            icon={Search}
+            title={`No threads match "${threadSearch}"`}
+          />
         ) : (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {filteredThreads.map((th) => (
