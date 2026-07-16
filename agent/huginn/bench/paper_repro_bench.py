@@ -213,6 +213,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_hall_petch,
             tags=["reproduction", "formula", "metallurgy"],
             requires_api_key=True,
+            reference="σ = 50 + 0.4/sqrt(10e-6) = 176.5 MPa",
         ),
         BenchmarkTask(
             id="repro-arrhenius",
@@ -229,6 +230,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_arrhenius,
             tags=["reproduction", "fitting", "kinetics"],
             requires_api_key=True,
+            reference="Ea ≈ 23.0 kJ/mol (ln(k) vs 1/T 线性拟合, 斜率=-Ea/R)",
         ),
         BenchmarkTask(
             id="repro-debye-code",
@@ -242,6 +244,8 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_debye_code,
             tags=["reproduction", "code", "thermal"],
             requires_api_key=True,
+            is_code_task=True,
+            reference="Python 函数 def debye_cv + scipy.integrate.quad + exp + theta_D",
         ),
         BenchmarkTask(
             id="repro-bragg",
@@ -254,6 +258,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_bragg,
             tags=["reproduction", "diffraction", "crystallography"],
             requires_api_key=True,
+            reference="d=3.135Å, sinθ=0.2456, θ=14.22°",
         ),
         BenchmarkTask(
             id="repro-linear-regression",
@@ -267,6 +272,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_linear_regression,
             tags=["reproduction", "ml", "regression"],
             requires_api_key=True,
+            reference="w=2.0, b=0.0",
         ),
         BenchmarkTask(
             id="repro-curie-weiss",
@@ -279,6 +285,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_curie_weiss,
             tags=["reproduction", "magnetic"],
             requires_api_key=True,
+            reference="χ = 1.0/(300-50) = 0.004 emu/mol",
         ),
         BenchmarkTask(
             id="repro-hooke",
@@ -291,6 +298,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_hooke,
             tags=["reproduction", "mechanical"],
             requires_api_key=True,
+            reference="σ = 210*0.002 = 0.42 GPa = 420 MPa",
         ),
         BenchmarkTask(
             id="repro-debye-temp",
@@ -304,6 +312,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_debye_temp,
             tags=["reproduction", "thermal", "phonon"],
             requires_api_key=True,
+            reference="θD = 6.626e-34*10e12/1.381e-23 = 479.6 K",
         ),
         BenchmarkTask(
             id="repro-fermi-energy",
@@ -318,6 +327,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_fermi_energy,
             tags=["reproduction", "electronic"],
             requires_api_key=True,
+            reference="EF ≈ 1.66 eV",
         ),
         BenchmarkTask(
             id="repro-nernst",
@@ -332,6 +342,7 @@ def build_repro_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_nernst,
             tags=["reproduction", "electrochemistry"],
             requires_api_key=True,
+            reference="E = 1.1 + (8.314*298/(2*96485))*ln(100) = 1.159 V",
         ),
     ]
 

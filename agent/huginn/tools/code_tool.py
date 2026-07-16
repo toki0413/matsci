@@ -53,7 +53,13 @@ class CodeToolInput(BaseModel):
         default=None, description="Variable to serialize and return"
     )
     timeout: float = Field(
-        default=60.0, gt=0, description="Execution timeout in seconds"
+        default=60.0, gt=0, le=1800, description="Execution timeout in seconds (max 1800 for training runs)"
+    )
+    self_check: str | None = Field(
+        default=None,
+        description="Optional assert-based check code run AFTER main code succeeds. "
+        "Use to verify rubric requirements: 'assert tok.value_embed(torch.tensor([1.0])).shape[0]==d_value'. "
+        "Failure returns success=False with the AssertionError message."
     )
 
 
@@ -198,6 +204,16 @@ class CodeTool(HuginnTool):
 
         parsed_result = self._parse_result_marker(result.stdout)
 
+        # 失败时附修复建议, 让 agent 知道下一步该做什么
+        suggest = ""
+        if not result.success:
+            from huginn.tools.bash_tool import _suggest_fix
+            suggest = _suggest_fix(result.returncode, result.stderr, result.stdout, ["python"])
+
+        # 从 stdout 提取进度行 (loss/epoch/step/error), 让 agent 快速看训练曲线
+        from huginn.tools.bash_tool import _extract_progress
+        progress = _extract_progress(result.stdout)
+
         tool_result = ToolResult(
             data={
                 "returncode": result.returncode,
@@ -205,6 +221,8 @@ class CodeTool(HuginnTool):
                 "stderr": result.stderr,
                 "result": parsed_result,
                 "output_files": output_paths,
+                "suggest_fix": suggest,
+                "stream_progress": progress,
                 "message": (
                     "Code executed successfully."
                     if result.success
@@ -214,8 +232,67 @@ class CodeTool(HuginnTool):
             success=result.success,
         )
 
+        # 主代码成功后跑 self_check (assert-based rubric 对照)
+        # 失败返回 success=False + AssertionError 消息, agent 能看到具体哪条没过
+        if result.success and args.self_check:
+            check_result = self._run_self_check(args.self_check, work_dir, context)
+            if check_result is not None:
+                tool_result.data["self_check"] = check_result
+                tool_result.success = False
+                tool_result.data["message"] = f"Self-check FAILED: {check_result}"
+
         self._audit_execution(args, tool_result, context)
         return tool_result
+
+    def _run_self_check(
+        self, check_code: str, work_dir: Path, context: ToolContext | None
+    ) -> str | None:
+        """跑 agent 提供的 assert 代码, 返回失败消息或 None.
+
+        主代码的变量在 __main__ 里, self_check 作为同一进程的 exec 跑,
+        能访问主代码定义的类/函数/变量. AssertionError → 返回消息.
+        其他异常 → 返回消息 (不算 pass). None = 通过.
+        """
+        check_script = work_dir / "_code_tool_selfcheck.py"
+        # self_check 跑在独立脚本, import 主脚本拿变量
+        # ponytail: 不在主脚本里 exec — 隔离崩溃, 主结果已存
+        check_script.write_text(
+            "import sys, json, importlib.util\n"
+            "spec = importlib.util.spec_from_file_location('_main_code', '_code_tool_script.py')\n"
+            "_mod = importlib.util.module_from_spec(spec)\n"
+            "try:\n"
+            "    spec.loader.exec_module(_mod)\n"
+            f"    {check_code}\n"
+            "    print('__SELFCHECK_PASS__')\n"
+            "except AssertionError as e:\n"
+            "    print('__SELFCHECK_FAIL__:' + str(e))\n"
+            "except Exception as e:\n"
+            "    print('__SELFCHECK_ERROR__:' + f'{type(e).__name__}: {e}')\n",
+            encoding="utf-8",
+        )
+        try:
+            r = self.sandbox.run(
+                [sys.executable, str(check_script)],
+                cwd=work_dir,
+                config=SandboxConfig(
+                    dry_run=False,
+                    allowed_executables=self.sandbox.config.allowed_executables | {"python"},
+                    default_timeout=30.0,
+                ),
+                capture_output=True,
+                text=True,
+                timeout=30.0,
+            )
+            for line in reversed(r.stdout.splitlines()):
+                if line.startswith("__SELFCHECK_PASS__"):
+                    return None
+                if line.startswith("__SELFCHECK_FAIL__"):
+                    return line[len("__SELFCHECK_FAIL__:"):]
+                if line.startswith("__SELFCHECK_ERROR__"):
+                    return line[len("__SELFCHECK_ERROR__:"):]
+            return f"self-check produced no marker. stdout: {r.stdout[:500]}"
+        except Exception as e:
+            return f"self-check execution error: {e}"
 
     def _audit_execution(
         self,

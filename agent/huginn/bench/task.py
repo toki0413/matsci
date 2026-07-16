@@ -17,9 +17,13 @@ class BenchmarkTask:
     category: str
     prompt: str
     evaluator: Callable[[str], tuple[bool, str] | tuple[bool, str, float]]
-    timeout_seconds: float = 120.0
+    timeout_seconds: float = 180.0
     tags: list[str] = field(default_factory=list)
     requires_api_key: bool = True
+    # 参考答案, 给 LLM judge 用 (regex 评分低时触发 judge 二次评审)
+    reference: str | None = None
+    # 是否代码题 (judge 会评估 code_quality 维度)
+    is_code_task: bool = False
 
     def evaluate(self, output: str) -> TaskResult:
         """Run the evaluator and return a scored result.
