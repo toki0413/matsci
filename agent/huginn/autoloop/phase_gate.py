@@ -38,6 +38,29 @@ def _load_checkpoint_config() -> set[tuple[str, str]]:
     return result
 
 
+def _load_hard_checkpoint_config() -> set[tuple[str, str]]:
+    """从 HUGINN_HARD_CHECKPOINT_PHASES 加载硬性 checkpoint 配置.
+
+    硬性 checkpoint 与普通 checkpoint 的区别: 不可超时自动放行.
+    普通 checkpoint 600s 后 force proceed, 硬性的一直阻塞到用户显式 override.
+    用户仍可 override 强制放行 (符合 "warnings first, option to force proceed" 偏好),
+    只是不会被超时偷偷放过去.
+
+    格式同 _load_checkpoint_config: "plan:execute,validate:learn"
+    """
+    raw = os.environ.get("HUGINN_HARD_CHECKPOINT_PHASES", "").strip()
+    if not raw:
+        return set()
+    result: set[tuple[str, str]] = set()
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if ":" not in pair:
+            continue
+        frm, to = pair.split(":", 1)
+        result.add((frm.strip(), to.strip()))
+    return result
+
+
 
 GateStatus = Literal["pending", "approved", "blocked", "rejected"]
 
@@ -556,6 +579,8 @@ class PhaseGateState:
         # Human-in-the-loop checkpoint 配置 + 运行时状态
         # 从 HUGINN_HUMAN_CHECKPOINT_PHASEES=plan:execute,validate:learn 加载
         self.human_checkpoint_phases: set[tuple[str, str]] = _load_checkpoint_config()
+        # 硬性 checkpoint: 不可超时自动放行, 一直阻塞到用户显式 override
+        self.hard_checkpoint_phases: set[tuple[str, str]] = _load_hard_checkpoint_config()
         self.pending_human_review: tuple[str, str] | None = None
 
     def reset(self) -> None:
@@ -582,10 +607,18 @@ class PhaseGateState:
         return self.history[-1] if self.history else None
 
     def needs_human_checkpoint(self, from_phase: str, to_phase: str) -> bool:
-        """该转移是否配置了人工 checkpoint (未被 override 覆盖)."""
+        """该转移是否配置了人工 checkpoint (未被 override 覆盖).
+
+        硬性 checkpoint 也算人工 checkpoint — 只是阻塞强度不同 (见 is_hard_checkpoint).
+        """
         if (from_phase, to_phase) in self.overrides:
             return False
-        return (from_phase, to_phase) in self.human_checkpoint_phases
+        key = (from_phase, to_phase)
+        return key in self.human_checkpoint_phases or key in self.hard_checkpoint_phases
+
+    def is_hard_checkpoint(self, from_phase: str, to_phase: str) -> bool:
+        """该转移是否配置为硬性 checkpoint (不可超时自动放行)."""
+        return (from_phase, to_phase) in self.hard_checkpoint_phases
 
 
 _shared_state: PhaseGateState | None = None
