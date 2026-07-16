@@ -183,6 +183,12 @@ class RedTeamReviewer:
         # 领域失败模式扫描 (材料科学具体陷阱: 数据泄漏 / 单位混乱 / 对称性 / ...)
         findings.extend(self._domain_failure_scan(evidence))
 
+        # 拓扑透镜扫描 (高阶网络视角: 检查假设的证据网络结构是否合理)
+        findings.extend(self._topology_scan(evidence))
+
+        # 文献共识扫描: multi_review 产出的 high_conf claims 与假设对齐检查
+        findings.extend(self._literature_consensus_check(evidence))
+
         summary = self._build_summary(findings, transition)
         if ds_note:
             summary = f"{summary}\n{ds_note}" if summary else ds_note
@@ -210,6 +216,144 @@ class RedTeamReviewer:
                 mitigation=mode.mitigation,
             ))
         return out
+
+    def _topology_scan(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
+        """拓扑透镜扫描: 用高阶网络视角检查假设的证据网络结构.
+
+        检查项 (从 topology_lens 调判据):
+        1. 若 evidence 带 interactions 且需拓扑不变量, 检查是否用了错误族
+           (该用单纯复形却用超图 → 丢失同调工具 → medium)
+        2. 若 evidence 带 target_mode + nodes/edges, 检查拓扑是否许可该模式
+           (β_k=0 但假设该模式 → high, 假设物理上不可能)
+        3. 若 evidence 带 local_models, 检查层粘合障碍
+           (H¹≠0 但声称全局一致 → high)
+
+        ponytail: 只在 evidence 显式带拓扑字段时触发, 不强加给所有 review.
+        无拓扑字段 → 返回空, 不干扰现有流程.
+        """
+        out: list[RedTeamFinding] = []
+        try:
+            from huginn.metacog.topology_lens import (
+                classify_system, needs_downward_closure,
+                topology_permits, gluing_obstruction,
+            )
+
+            # 1. 族 + 闭包检查
+            interactions = evidence.get("interactions")
+            if interactions and isinstance(interactions, list):
+                need_inv = evidence.get("need_topological_invariants", False)
+                need_hodge = evidence.get("need_orthogonal_decomposition", False)
+                fam = classify_system(interactions, need_inv, need_hodge)
+                # 若需要拓扑不变量但 evidence 标记用了 combinatorial → 警告
+                used_family = evidence.get("used_network_family")
+                if need_inv and used_family == "combinatorial" and fam.family == "topological":
+                    out.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=(
+                            f"假设需要拓扑不变量 (Betti/同调) 但证据网络用了超图 "
+                            f"(无向下闭包), 丢失同调工具. 应升级到单纯复形."
+                        ),
+                        severity="medium",
+                        mitigation="转单纯复形, 或显式标注放弃同调分析",
+                        source_class="agent_generated",
+                    ))
+
+            # 2. 拓扑许可检查
+            nodes = evidence.get("topology_nodes")
+            edges = evidence.get("topology_edges")
+            target_mode = evidence.get("target_dynamics_mode")
+            if nodes and edges and target_mode:
+                perm = topology_permits(nodes, edges, target_mode)
+                if not perm.permitted:
+                    out.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=(
+                            f"假设的动力学模式 '{target_mode}' 被当前拓扑不允许: "
+                            f"{perm.reason}. 物理上不可能, 假设需重构."
+                        ),
+                        severity="high",
+                        mitigation=perm.required_change or "重构假设以匹配拓扑约束",
+                        source_class="agent_generated",
+                    ))
+
+            # 3. 层粘合障碍检查
+            local_models = evidence.get("local_models")
+            overlap_pairs = evidence.get("overlap_pairs")
+            if local_models and overlap_pairs:
+                glu = gluing_obstruction(local_models, overlap_pairs)
+                claims_global = evidence.get("claims_global_consistency", False)
+                if not glu.can_glue and claims_global:
+                    out.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=(
+                            f"假设声称全局一致但局部模型存在粘合障碍: {glu.reason}. "
+                            f"拓扑障碍 H¹≠0, 无法一致粘合."
+                        ),
+                        severity="high",
+                        mitigation="修正局部模型使粘合条件一致, 或显式处理障碍",
+                        source_class="agent_generated",
+                    ))
+
+        except Exception:
+            logger.debug("topology_scan failed (non-fatal)", exc_info=True)
+        return out
+
+    def _literature_consensus_check(
+        self, evidence: dict[str, Any]
+    ) -> list[RedTeamFinding]:
+        """检查假设是否对齐 multi_review 产出的高置信文献共识.
+
+        evidence 带 literature_claims (list[dict], 每个 claim + final_confidence) 时触发.
+        high_confidence claims 是 V1 跨域复现 + V2 生成力 + V3 排他性三重验证通过的.
+        假设与所有 high_conf claims 零关键词重叠 → medium (假设与文献共识脱节).
+
+        ponytail: 关键词重叠是粗启发式. 升级: LLM 判定语义对齐.
+        ponytail: 只在 evidence 显式带 literature_claims 时触发, 不强加给所有 review.
+        """
+        import re
+
+        claims = evidence.get("literature_claims")
+        if not claims or not isinstance(claims, list):
+            return []
+
+        hyp = self._extract_hypothesis(evidence)
+        if not hyp:
+            return []  # 假设为空的 finding 已由 _review_hypothesis 报
+
+        high_conf = [
+            c for c in claims
+            if isinstance(c, dict) and c.get("final_confidence") == "high"
+        ]
+        if not high_conf:
+            return []
+
+        # 简单分词: 英文按 \w+, 中文按字. 去停用词避免假重叠.
+        _STOP = {
+            "the", "a", "an", "is", "are", "of", "in", "to", "and", "for",
+            "with", "that", "this", "be", "by", "on", "at", "as",
+        }
+
+        def _tokens(s: str) -> set[str]:
+            toks = set(re.findall(r"\w+", s.lower()))
+            return toks - _STOP
+
+        hyp_toks = _tokens(hyp)
+        # 假设与任一 high_conf claim 有关键词重叠 → 对齐, 不报
+        for c in high_conf:
+            if hyp_toks & _tokens(c.get("claim", "")):
+                return []
+
+        return [RedTeamFinding(
+            category="methodology_gap",
+            description=(
+                f"假设与 {len(high_conf)} 条高置信文献共识零关键词重叠. "
+                "multi_review 三重验证 (V1 跨域/V2 生成力/V3 排他性) 通过的 claims "
+                "未被假设引用, 假设可能与文献共识脱节."
+            ),
+            severity="medium",
+            mitigation="在假设中显式对齐文献共识: 引用相关 high_conf claims, 或说明为何不适用",
+            source_class="external_content",
+        )]
 
     # ── 规则审查 ────────────────────────────────────────────────────
 
@@ -375,6 +519,11 @@ class RedTeamReviewer:
                 severity="low",
                 mitigation="列出可能的混淆变量及控制策略",
             ))
+
+        # 文献共识检查: multi_review 产出的 high_confidence_claims 作为外部共识
+        # 对抗 agent 自欺 — 假设与文献共识冲突或无视共识 → flag
+        # _literature_consensus_check 自己从 evidence 抽假设, 无需传 hyp
+        findings.extend(self._literature_consensus_check(evidence))
 
         return findings
 

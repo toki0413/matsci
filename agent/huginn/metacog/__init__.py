@@ -8,11 +8,13 @@
 - failure_modes:       材料科学领域失败模式清单, 给对抗 agent 用
 - block_registry:      阻塞-新机制重启协议, 防止换名重启死路线
 - depth_search:        深度搜索机制, 对抗 LLM 快速收敛偏差
+- topology_lens:       高阶网络视角的结构判据 (四族/闭包/Hodge签名/拓扑许可/层粘合)
 
 接入点见:
 - autoloop/red_team.py        → 读取 failure_modes
 - autoloop/hypothesis_loop.py → refine_failed 接入 block_registry + 连通分量监控
 - autoloop/engine.py          → PhaseGateHook / _hypothesize 接入 + 最小努力下限
+- metacog/topology_lens.py    → 给 red_team / equivalence_auditor 调用的结构透镜
 """
 
 from __future__ import annotations
@@ -32,6 +34,21 @@ from huginn.metacog.completion_auditor import (
     CompletionChecklist,
     CompletionAuditor,
     parse_unexplored_declaration,
+)
+from huginn.metacog.topology_lens import (
+    Family,
+    FamilyVerdict,
+    ClosureCheck,
+    HodgeSignature,
+    TopologyPermit,
+    GluingObstruction,
+    TopologyDiagnosis,
+    classify_system,
+    needs_downward_closure,
+    hodge_signature,
+    topology_permits,
+    gluing_obstruction,
+    diagnose,
 )
 
 __all__ = [
@@ -55,4 +72,18 @@ __all__ = [
     "CompletionChecklist",
     "CompletionAuditor",
     "parse_unexplored_declaration",
+    # 拓扑透镜 (高阶网络视角)
+    "Family",
+    "FamilyVerdict",
+    "ClosureCheck",
+    "HodgeSignature",
+    "TopologyPermit",
+    "GluingObstruction",
+    "TopologyDiagnosis",
+    "classify_system",
+    "needs_downward_closure",
+    "hodge_signature",
+    "topology_permits",
+    "gluing_obstruction",
+    "diagnose",
 ]
