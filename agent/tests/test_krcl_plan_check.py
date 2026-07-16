@@ -84,7 +84,7 @@ def test_trivial_plan_skips_check():
     eng = _make_engine()
     eng._plan_check = AsyncMock()
     plan = {"mode": "coder", "description": "short"}  # 5 chars
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         eng._plan_check_and_refine(plan, "hypothesis", {})
     )
     assert result is plan  # 原样返回
@@ -98,7 +98,7 @@ def test_valid_plan_passes_first_try():
         "is_valid": True, "reason": "ok", "missing_steps": [], "risks": []
     })
     plan = {"mode": "coder", "description": "run SCF then band calculation"}
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         eng._plan_check_and_refine(plan, "calc band gap", {})
     )
     assert result["plan_check"]["is_valid"] is True
@@ -117,7 +117,7 @@ def test_invalid_plan_refines_once_then_gives_up():
     })
     eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation directly"}
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         eng._plan_check_and_refine(plan, "calc band gap", {})
     )
     # 重试 1 次, 总共调 _plan_check 2 次
@@ -133,7 +133,7 @@ def test_llm_failure_returns_plan():
     eng = _make_engine()
     eng._plan_check = AsyncMock(side_effect=Exception("LLM down"))
     plan = {"mode": "coder", "description": "run SCF calculation on Si"}
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         eng._plan_check_and_refine(plan, "calc band gap", {})
     )
     assert result is plan
