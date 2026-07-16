@@ -691,11 +691,12 @@ class AutoloopEngine:
             return "".join(v for _, v in kept)
 
         # Pass 3: 从最低优先级开始删除
+        # skill/composite 受保护 — skills 引用保留系统: 可截断可摘要, 但不可清空
         for i in range(len(kept) - 1, -1, -1):
             if total <= self._PROMPT_BUDGET:
                 break
             name, text = kept[i]
-            if name == "body":
+            if name in ("body", "skill", "composite"):
                 continue
             total -= len(text)
             kept[i] = (name, "")
@@ -805,8 +806,14 @@ class AutoloopEngine:
                 required_evidence=self.phase_gate_hook.config.required_for(
                     from_phase, to_phase
                 ),
-                feedback="等待人工 checkpoint 审查. 用 phase_tool override 放行, "
-                         "或 submit_evidence 补充后 resume.",
+                feedback=(
+                    "⚠ 硬性检查点: 此转移不可超时自动放行, 必须人工确认. "
+                    "请审查 evidence 后用 phase_tool override 显式放行, "
+                    "或 submit_evidence 补充后 resume."
+                    if state.is_hard_checkpoint(from_phase, to_phase)
+                    else "等待人工 checkpoint 审查. 用 phase_tool override 放行, "
+                         "或 submit_evidence 补充后 resume."
+                ),
                 reviewer="human_checkpoint",
                 trace_id=tid,
                 parent_trace_id=parent_tid,
@@ -834,13 +841,16 @@ class AutoloopEngine:
         state = get_shared_phase_gate_state()
         key = (from_phase, to_phase)
         loop = asyncio.get_event_loop()
-        deadline = loop.time() + timeout
+        is_hard = state.is_hard_checkpoint(from_phase, to_phase)
+        # 硬门不设 deadline — 一直阻塞到用户显式 override, 不可超时偷偷放行
+        deadline = loop.time() + timeout if not is_hard else float("inf")
 
         # 推送 checkpoint 等待事件到前端
         await self._publish_checkpoint_event(
             event_type="checkpoint_pending",
             from_phase=from_phase,
             to_phase=to_phase,
+            is_hard=is_hard,
         )
 
         while state.pending_human_review == key and key not in state.overrides:
@@ -854,6 +864,7 @@ class AutoloopEngine:
                     event_type="checkpoint_timeout",
                     from_phase=from_phase,
                     to_phase=to_phase,
+                    is_hard=is_hard,
                 )
                 return
             await asyncio.sleep(1.0)
@@ -863,10 +874,12 @@ class AutoloopEngine:
             event_type="checkpoint_resolved",
             from_phase=from_phase,
             to_phase=to_phase,
+            is_hard=is_hard,
         )
 
     async def _publish_checkpoint_event(
-        self, event_type: str, from_phase: str, to_phase: str
+        self, event_type: str, from_phase: str, to_phase: str,
+        is_hard: bool = False,
     ) -> None:
         """推送 PhaseGate checkpoint 事件到 EventBus."""
         bus = self._get_event_bus()
@@ -878,6 +891,7 @@ class AutoloopEngine:
                 "type": event_type,
                 "from_phase": from_phase,
                 "to_phase": to_phase,
+                "is_hard": is_hard,
                 "timestamp": asyncio.get_event_loop().time(),
             })
         except Exception:
