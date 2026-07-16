@@ -95,6 +95,7 @@ function SuggestCodeEditor({
   reason: string;
   onRespond: (action: "approve" | "edit" | "deny", editedCode?: string) => void;
 }) {
+  const { t } = useTranslation();
   const [editedCode, setEditedCode] = useState(code);
   const isHighRisk = risk === "high";
 
@@ -136,23 +137,23 @@ function SuggestCodeEditor({
           }}
           className="btn-success px-4 py-2 text-sm"
         >
-          {editedCode !== code ? "Approve edit (Ctrl+↵)" : "Approve (Ctrl+↵)"}
+          {editedCode !== code ? t('chat.approveEdit') : t('chat.approveWithShortcut')}
         </button>
         <button
           onClick={() => onRespond("deny")}
           className="btn-danger px-4 py-2 text-sm"
         >
-          Deny
+          {t('chat.deny')}
         </button>
         <button
           onClick={() => setEditedCode(code)}
           className="rounded px-3 py-2 text-xs text-text-muted hover:text-text-secondary transition-colors"
           title="Reset to original code"
         >
-          Reset
+          {t('chat.reset')}
         </button>
         <span className="ml-auto text-[10px] text-text-muted">
-          {editedCode !== code ? "edited" : "unchanged"}
+          {editedCode !== code ? t('chat.edited') : t('chat.unchanged')}
         </span>
       </div>
     </div>
@@ -714,7 +715,7 @@ export function ChatPanel(props: ChatPanelProps) {
           onClick={() => exportConversation('md')}
           disabled={messages.length === 0}
           className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-30"
-          title="Export as Markdown"
+          title={t('chat.exportMarkdown')}
         >
           <Download size={12} aria-hidden="true" /> MD
         </button>
@@ -722,7 +723,7 @@ export function ChatPanel(props: ChatPanelProps) {
           onClick={() => exportConversation('json')}
           disabled={messages.length === 0}
           className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors disabled:opacity-30"
-          title="Export as JSON"
+          title={t('chat.exportJson')}
         >
           <Download size={12} aria-hidden="true" /> JSON
         </button>
@@ -841,7 +842,7 @@ export function ChatPanel(props: ChatPanelProps) {
                 {showCmdHistory && (
                   <div className="absolute top-full right-0 mt-1 w-96 max-h-80 overflow-y-auto rounded-lg border border-border bg-bg-secondary shadow-lg z-20">
                     <div className="sticky top-0 bg-bg-secondary border-b border-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-text-muted">
-                      Shell Commands ({shellCmds.length})
+                      {t('chat.shellCommands')} ({shellCmds.length})
                     </div>
                     {shellCmds.map((m, i) => (
                       <div key={i} className="border-b border-border/50 px-3 py-2 hover:bg-bg-tertiary">
@@ -866,10 +867,10 @@ export function ChatPanel(props: ChatPanelProps) {
               <button
                 onClick={() => setShowExportMenu(!showExportMenu)}
                 className="flex items-center gap-1 text-text-muted hover:text-text-primary"
-                title="Export conversation"
+                title={t('chat.exportConversation')}
               >
                 <FileDown size={12} />
-                Export
+                {t('chat.export')}
               </button>
               {showExportMenu && (
                 <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-border bg-bg-secondary shadow-lg z-20">
@@ -887,7 +888,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       a.href = url; a.download = `chat-${Date.now()}.md`; a.click();
                       URL.revokeObjectURL(url);
                       setShowExportMenu(false);
-                      toast.success('Exported as Markdown');
+                      toast.success(t('chat.exportedAsMarkdown'));
                     }}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
                   >
@@ -902,7 +903,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       a.href = url; a.download = `chat-${Date.now()}.json`; a.click();
                       URL.revokeObjectURL(url);
                       setShowExportMenu(false);
-                      toast.success('Exported as JSON');
+                      toast.success(t('chat.exportedAsJson'));
                     }}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
                   >
@@ -1138,7 +1139,7 @@ export function ChatPanel(props: ChatPanelProps) {
             >
               <div className="flex flex-col items-center gap-0.5">
                 {pinnedMsgIds.has(index) && (
-                  <span className="text-[10px] text-yellow-500" title="Pinned">📌</span>
+                  <span className="text-[10px] text-yellow-500" title={t('chat.pinned')}>📌</span>
                 )}
                 <div
                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
@@ -1249,7 +1250,7 @@ export function ChatPanel(props: ChatPanelProps) {
                           navigator.clipboard.writeText(msg.content).then(() => {
                             setCopyingId(index);
                             setTimeout(() => setCopyingId(null), 1500);
-                            toast.success('Copied');
+                            toast.success(t('chat.copied'));
                           });
                         }}
                         className="rounded p-1 text-text-muted hover:text-text-primary transition-colors"
@@ -1333,12 +1334,12 @@ export function ChatPanel(props: ChatPanelProps) {
                         className="text-[10px] italic text-text-muted hover:text-accent transition-colors cursor-pointer"
                         title={`Edited ${editHistory[index].length}x — click to view history`}
                       >
-                        edited ({editHistory[index].length}x)
+                        {t('chat.editedXTimes', { count: editHistory[index].length })}
                       </button>
                     )}
                     {viewingHistory === index && editHistory[index] && (
                       <div className="absolute right-0 top-full z-20 mt-1 w-80 rounded-lg border border-border bg-bg-secondary p-3 shadow-xl">
-                        <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-text-muted">Edit History</div>
+                        <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-text-muted">{t('chat.editHistory')}</div>
                         {editHistory[index].map((old, hi) => {
                           const prev = hi === 0 ? '' : editHistory[index][hi - 1];
                           const oldLines = old.split('\n');
@@ -1544,7 +1545,7 @@ export function ChatPanel(props: ChatPanelProps) {
             <button
               onClick={() => {
                 navigator.clipboard.writeText(ctxMenu.msg.content);
-                toast.success('Copied');
+                toast.success(t('chat.copied'));
                 setCtxMenu(null);
               }}
               className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
@@ -1609,12 +1610,12 @@ export function ChatPanel(props: ChatPanelProps) {
                 else next.add(ctxMenu.index);
                 return next;
               });
-              toast.success(pinnedMsgIds.has(ctxMenu.index) ? 'Unpinned' : 'Pinned');
+              toast.success(pinnedMsgIds.has(ctxMenu.index) ? t('chat.unpinned') : t('chat.pinned'));
               setCtxMenu(null);
             }}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
           >
-            <Pin size={12} aria-hidden="true" /> {pinnedMsgIds.has(ctxMenu.index) ? 'Unpin' : 'Pin'}
+            <Pin size={12} aria-hidden="true" /> {pinnedMsgIds.has(ctxMenu.index) ? t('chat.unpin') : t('chat.pin')}
           </button>
           <button
             onClick={() => {

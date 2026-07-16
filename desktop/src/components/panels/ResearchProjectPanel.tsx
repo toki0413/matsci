@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { PanelHeader } from '../settings-shared';
+import { SkeletonCard } from '../Skeleton';
 import { api } from '../../lib/api';
 
 // types kept inline — one panel, no need for a shared domain file
@@ -375,7 +376,9 @@ export function ResearchProjectPanel({ onOpenInChat }: ResearchProjectPanelProps
         )}
 
         {loading ? (
-          <div className="text-sm text-text-muted">Loading…</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {[0, 1, 2].map(i => <SkeletonCard key={i} />)}
+          </div>
         ) : projects.length === 0 ? (
           <div className="text-sm text-text-muted">
             No research projects yet. Click "+ New" to create one.

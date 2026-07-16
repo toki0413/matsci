@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PanelHeader } from '../settings-shared';
+import { Skeleton, SkeletonText } from '../Skeleton';
 import type { AppConfig } from '../../types/domain';
 
 interface KbDoc {
@@ -241,8 +242,10 @@ export function KnowledgePanel({
 
           <div className="flex-1 overflow-y-auto">
             {kbLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-accent" />
+              <div className="space-y-2">
+                {[0, 1, 2, 3].map(i => (
+                  <Skeleton key={i} className="h-8 w-full" />
+                ))}
               </div>
             ) : (
             <>
@@ -339,10 +342,11 @@ export function KnowledgePanel({
 
           <div className="flex-1 overflow-y-auto space-y-3">
             {searching ? (
-              <div className="flex items-center gap-2 text-sm text-text-secondary">
-                <span className="animate-pulse">🔍</span>
-                <span className="animate-pulse">{t('kb.searching')}</span>
-              </div>
+              [0, 1, 2].map(i => (
+                <div key={i} className="kb-chunk rounded-lg border border-border bg-bg-secondary p-3">
+                  <SkeletonText lines={3} />
+                </div>
+              ))
             ) : kbChunks.length === 0 ? (
               <div className="text-xs text-text-muted">{t('kb.query.empty')}</div>
             ) : (
