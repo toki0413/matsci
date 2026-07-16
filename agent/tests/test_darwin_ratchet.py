@@ -8,8 +8,17 @@
 """
 from __future__ import annotations
 
+import pytest
+from unittest.mock import MagicMock
+
 from huginn.autoloop.hypothesis_loop import HypothesisEdge, HypothesisNode, HypothesisGraph
 from huginn.autoloop.engine import AutoloopEngine
+
+
+# ponytail: CI 无 HUGINN_MODEL 时 get_model 抛 ValueError, stub 掉
+@pytest.fixture(autouse=True)
+def _stub_model(monkeypatch):
+    monkeypatch.setattr("huginn.autoloop.engine.get_model", lambda s: MagicMock())
 
 
 def _make_node(

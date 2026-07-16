@@ -109,6 +109,36 @@ assert set(_PHASE_PERSONAS.keys()) == set(
     AUTOLOOP_PHASES
 ), "Phase persona keys must match AUTOLOOP_PHASES"
 
+# Controllable thinking effort (Inkling-inspired): 每个 phase 一个 0-1 连续值,
+# 映射到 prompt 前缀控制 LLM 思考深度. prompt 层实现 — 对所有 provider 统一生效,
+# 不依赖 API 级 reasoning_effort (Anthropic/OpenAI/DeepSeek 各家不同).
+# ponytail: 软控制, LLM 可无视. 升级: per-provider API 层 bind(extra_body=...)
+_PHASE_THINKING_EFFORT: dict[str, float] = {
+    "perceive": 0.3,     # 扫描, 不需要深推理
+    "hypothesize": 0.9,  # 核心创新点, 深度推理
+    "plan": 0.6,         # 中等, 把假设变步骤
+    "execute": 0.2,      # 直接调工具, 不需要 LLM 思考
+    "validate": 0.7,     # 批判性审视, 需要深度但不如 hypothesize
+    "learn": 0.5,        # 反思, 中等
+    "report": 0.3,       # 总结性输出
+}
+
+# effort float → prompt 指令片段. 3 档够用, 更细粒度收益递减.
+_EFFORT_TO_PROMPT: list[tuple[float, str]] = [
+    (0.8, "Think deeply and step-by-step. Explore multiple angles before concluding. "
+          "Consider edge cases and alternative explanations."),
+    (0.5, "Reason carefully but concisely. One main line of thought, briefly check alternatives."),
+    (0.2, "Answer directly and briefly. No step-by-step reasoning needed."),
+]
+
+
+def _effort_to_prompt(effort: float) -> str:
+    """Map 0-1 effort to a prompt directive. Linear threshold lookup."""
+    for threshold, text in _EFFORT_TO_PROMPT:
+        if effort >= threshold:
+            return text
+    return _EFFORT_TO_PROMPT[-1][1]
+
 # result_data 里的 key -> 文献检索时用的性质名. _literature_comparison 遍历这个表.
 _LIT_PROPERTY_MAP: dict[str, str] = {
     "energy": "total energy",
@@ -396,6 +426,9 @@ class AutoloopEngine:
         self._event_bus = None
         # 阶段索引: 给 WorkflowStageEvent 用, 从 phase name 推算.
         self._phase_order = list(AUTOLOOP_PHASES)
+        # 当前 phase 名 — _run_phase_async 写, _llm_chat 读, 用于 phase-aware thinking effort.
+        # ponytail: 隐式状态, 但只在 single-threaded async run() 里用, 无竞态.
+        self._current_phase: str = ""
 
     def _get_evolution(self):
         """懒加载 EvolutionEngine, 避免实例化时就拉起日志和规则文件。"""
@@ -4809,6 +4842,92 @@ class AutoloopEngine:
                     exc_info=True,
                 )
 
+        # RSI 入门: 让 agent 反思本轮, 给下一轮的自己写一条指令.
+        # 借鉴 Inkling self-finetune loop: agent 改的不是自己的权重, 是自己下一轮的 prompt.
+        # directive 写进 memory (不走 prompt 注入), 下轮 _build_hypothesis_prompt
+        # 和 _build_plan_prompt 的 _build_memory_text 自然检索到 — 复用现有 memory loop.
+        # maker/checker split: learn 写 directive, 下轮 validate 校验效果.
+        # ponytail: 复用 memory tier 机制做衰减, 不引入新字段. 升级: 结构化 directive
+        try:
+            await self._generate_next_loop_directive(
+                hypothesis, plan, validation, r_phys
+            )
+        except Exception:
+            logger.debug(
+                "RSI directive generation failed — loop continues without directive",
+                exc_info=True,
+            )
+
+    async def _generate_next_loop_directive(
+        self,
+        hypothesis: str,
+        plan: dict[str, Any],
+        validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        """生成下一轮的自我指令 — RSI 的最小工程实现.
+
+        Agent 反思本轮, 输出一条 directive 写入 memory (category=self_directive).
+        下轮 _build_hypothesis_prompt / _build_plan_prompt 通过 _build_memory_text
+        自然检索到, 不需要显式注入. memory tier 机制负责衰减, 老指令自动淡出.
+
+        失败静默 — 这是 enhancement 不是 critical path.
+        """
+        tests_passed = (
+            validation.get("tests_passed", False)
+            if isinstance(validation, dict)
+            else False
+        )
+        pred_err = (
+            validation.get("prediction_error", {})
+            if isinstance(validation, dict)
+            else {}
+        )
+        surprise = pred_err.get("surprise", 0) if isinstance(pred_err, dict) else 0
+
+        prompt = (
+            "You just finished an autoloop iteration. Reflect on it and write "
+            "a single concise directive to your future self for the NEXT iteration.\n\n"
+            f"Hypothesis (this iter): {hypothesis[:200]}\n"
+            f"Mode: {plan.get('mode', 'unknown') if isinstance(plan, dict) else 'unknown'}\n"
+            f"Tests passed: {tests_passed}\n"
+            f"R_phys: {r_phys}\n"
+            f"Surprise: {surprise:.2f}\n\n"
+            "Based on this, output ONE directive (max 2 sentences, no preamble):\n"
+            "- If failed: what to AVOID next time (which method/path didn't work)\n"
+            "- If high surprise: what to INVESTIGATE deeper\n"
+            "- If high r_phys: what method to REUSE\n"
+            "- If mundane: what to SKIP to save tokens\n\n"
+            "Output only the directive, no markdown headers."
+        )
+
+        try:
+            response = await self._llm_chat(prompt, task="summarize")
+        except Exception:
+            # LLM 挂了不阻断 — directive 是 enhancement, 不是 critical path
+            logger.debug("RSI directive LLM call failed", exc_info=True)
+            return
+
+        if not (response and response.strip()):
+            return
+
+        directive = response.strip()[:300]
+        # 写入 memory: 用 self_directive category + rsi tag, 让 recall 能定向检索.
+        # tier=mid: 几轮后衰减, 不会永久占据 context. importance 跟 surprise 挂钩 —
+        # 高 surprise 的 directive 更重要, 衰减更慢.
+        importance = 0.5 + min(0.4, surprise * 0.4)
+        try:
+            self.memory.remember(
+                content=f"[self-directive iter {self._iteration}] {directive}",
+                category="self_directive",
+                tags=["rsi", "autoloop"],
+                importance=importance,
+                tier="mid",
+            )
+            logger.info("RSI directive stored in memory: %s", directive[:120])
+        except Exception:
+            logger.debug("RSI directive memory write failed", exc_info=True)
+
     async def _report(
         self, objective: str, phases: list[LoopPhase], total_time: float
     ) -> str | None:
@@ -5678,6 +5797,15 @@ Please modify the code to address this task."""
                 ):
                     sys_msg.additional_kwargs["cache_control"] = {"type": "ephemeral"}
                 messages.append(sys_msg)
+        # Controllable thinking effort: 按 current phase 注入思考深度指令.
+        # Inkling 启发 — 连续旋钮, prompt 层实现, 对所有 provider 统一.
+        # 无 _current_phase (非 phase 上下文调用, 如 _feynman_learn) 时不注入.
+        effort_directive = ""
+        if self._current_phase:
+            effort = _PHASE_THINKING_EFFORT.get(self._current_phase, 0.5)
+            effort_directive = _effort_to_prompt(effort)
+        if effort_directive:
+            prompt = f"[Thinking effort: {effort_directive}]\n\n{prompt}"
         messages.append(HumanMessage(content=prompt))
         response = await llm.ainvoke(messages)
         return str(response.content)
@@ -6935,6 +7063,9 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
         phase = LoopPhase(name=name)
         phase.start_time = time.time()
         phase.status = "running"
+        # 记下当前 phase, 让 _llm_chat 能注入 phase-aware thinking effort 指令.
+        # ponytail: 隐式状态, 但 run() 是 single-threaded async, 无竞态.
+        self._current_phase = name
         await self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
         from huginn.telemetry import get_telemetry_collector
 
