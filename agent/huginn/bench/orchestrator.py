@@ -87,14 +87,15 @@ HLE_DELIVERABLES = DeliverableSpec(checks=[])
 # ── 三档分流 prompt ───────────────────────────────────────────
 
 def _triage_prompt(missing: set[str]) -> str:
-    """减法停治: 根据缺失文件生成明确的兜底指令."""
+    """advisory: 提示缺失交付物, 让 LLM 自己决定最小可行实现."""
     return (
-        "CRITICAL: Submission incomplete. Missing deliverables:\n"
+        "Submission incomplete. Missing deliverables:\n"
         + "".join(f"  - {m}\n" for m in sorted(missing))
-        + "\nSTOP reading. STOP exploring. Generate the MINIMAL viable version of each missing file NOW:\n"
-        "- *.py: 50-line skeleton with main() that saves dummy output\n"
-        "- reproduce.sh: one line `python train.py`\n"
-        "- outputs/*.json: run your script, save {\"loss\":[1.0,0.5,0.3]}\n"
+        + "\nYou decide the minimal viable version of each missing file. "
+        "Prefer REAL stubs (runnable code that produces actual output, even if "
+        "results are weak) over dummy output. If a full implementation is "
+        "infeasible in remaining budget, write a working skeleton and document "
+        "the gap honestly in report.md."
     )
 
 

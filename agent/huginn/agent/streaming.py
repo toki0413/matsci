@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections.abc import AsyncIterator
@@ -926,6 +927,7 @@ class StreamingMixin:
                         inputs["messages"],
                         self.context_budget_tokens,
                         keep_last_n=1,
+                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "0")),
                     )
             elif self.context_budget_tokens > 0:
                 summarizer = self._make_summarizer()
@@ -961,6 +963,7 @@ class StreamingMixin:
                         inputs["messages"],
                         self.context_budget_tokens,
                         keep_last_n=1,
+                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "0")),
                     )
                 estimated = (
                     count_tokens(self.system_prompt)

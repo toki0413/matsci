@@ -60,6 +60,7 @@ def compact_messages(
     budget_tokens: int,
     keep_last_n: int = 2,
     tool_result_ttl: int = 6,
+    keep_root_n: int = 0,
 ) -> list[Any]:
     """Drop oldest messages until the remaining list fits the token budget.
 
@@ -69,42 +70,54 @@ def compact_messages(
     tool_result_ttl: 历史工具消息超过 N 步后, content 替换为摘要标记.
     Anthropic Context Management (2026) 最佳实践: tool result clearing 是最轻触的 compaction.
     ponytail: 只清 content 不删消息, 保持消息顺序完整. 升级: 按工具类型差异化 TTL.
+
+    keep_root_n: 保留前 N 条 root messages (task instructions + checklist).
+    修同伦断裂 (σ₂) — Step 1 checklist 在对话早期, compaction 丢它 = 上下文断连续.
+    升级: 按消息 metadata 标记 root 而非按位置.
     """
     if budget_tokens <= 0:
         return messages
 
+    # 分离 root messages — 这部分永不被 drop, 也不被 tool clearing 影响
+    if keep_root_n > 0 and len(messages) > keep_root_n:
+        root_messages = list(messages[:keep_root_n])
+        body_messages = list(messages[keep_root_n:])
+    else:
+        root_messages = []
+        body_messages = list(messages)
+
     # Tool result clearing: 超 TTL 的工具消息 content 替换为摘要标记
     # 保留消息存在性 (顺序/引用不断), 只清大块输出
-    if tool_result_ttl > 0 and len(messages) > tool_result_ttl + keep_last_n:
+    if tool_result_ttl > 0 and len(body_messages) > tool_result_ttl + keep_last_n:
         cleared = []
-        cutoff = len(messages) - tool_result_ttl
-        for i, m in enumerate(messages):
+        cutoff = len(body_messages) - tool_result_ttl
+        for i, m in enumerate(body_messages):
             role = _msg_role(m)
             if i < cutoff and role == "tool":
                 # 历史 tool 消息: 替换 content 为摘要标记, 不动 metadata
                 cleared.append(_replace_tool_content(m, "[cleared: tool result over TTL]"))
             else:
                 cleared.append(m)
-        messages = cleared
+        body_messages = cleared
 
     # Token counts per message — computed once so we don't rescan the
     # whole list on every iteration (the old pop-and-recount loop was O(n^2)).
     per_msg_tokens = [
-        count_message_tokens(_msg_content(m), _msg_role(m)) for m in messages
+        count_message_tokens(_msg_content(m), _msg_role(m)) for m in body_messages
     ]
     total = sum(per_msg_tokens)
     if total <= budget_tokens:
-        return list(messages)
+        return root_messages + body_messages
 
     # Walk from the front, subtracting each message's tokens, until we're
     # under budget or we'd dip below keep_last_n.
-    max_droppable = max(0, len(messages) - keep_last_n)
+    max_droppable = max(0, len(body_messages) - keep_last_n)
     drop_count = 0
     while drop_count < max_droppable and total > budget_tokens:
         total -= per_msg_tokens[drop_count]
         drop_count += 1
 
-    return list(messages[drop_count:])
+    return root_messages + body_messages[drop_count:]
 
 
 def _replace_tool_content(msg: Any, new_content: str) -> Any:

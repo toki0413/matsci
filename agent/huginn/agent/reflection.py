@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -171,6 +172,11 @@ class ReflectionMixin:
         Failures here never break the turn.
         """
         if not self._session_state.tool_results_this_turn:
+            return
+
+        # ponytail: RCB/benchmark 场景 skip CSM transition — 无人工 subprocess,
+        # CSM attention prompt 是 noise 还触发不必要 compaction. 升级: mode-aware.
+        if os.environ.get("HUGINN_SKIP_CSM", "").lower() in ("1", "true", "yes"):
             return
 
         for tr in self._session_state.tool_results_this_turn:
