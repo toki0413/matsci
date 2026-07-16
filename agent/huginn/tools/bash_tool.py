@@ -6,6 +6,7 @@ Always requires approval.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Literal
@@ -117,44 +118,48 @@ class BashTool(HuginnTool):
             return ToolResult(data=None, success=False, error="Empty command.")
 
         # Use the Rust sandbox runner when the compiled extension is available.
-        try:
-            from huginn_ext.sandbox import (
-                run_sandboxed,  # type: ignore[import-not-found]
-            )
-
-            allowed_base_dirs = [str(work_dir.resolve()), str(Path.cwd().resolve())]
-            result = run_sandboxed(
-                command=input_data.command[0],
-                args=input_data.command[1:],
-                cwd=str(work_dir),
-                timeout=input_data.timeout,
-                allowed_base_dirs=allowed_base_dirs,
-            )
-            if not result["success"]:
-                error = (
-                    result.get("stderr")
-                    or result.get("message")
-                    or "Sandboxed command failed."
+        # ponytail: HUGINN_NO_RUST_SANDBOX=1 跳过 Rust sandbox — 它在某些场景
+        # (RDKit+sklearn GPR) 会静默崩溃返回空 stderr, 导致 "Unknown error".
+        # 升级: 修 Rust 侧的崩溃根因 (可能 fork/exec 或内存限制).
+        if os.environ.get("HUGINN_NO_RUST_SANDBOX", "").lower() not in ("1", "true", "yes"):
+            try:
+                from huginn_ext.sandbox import (
+                    run_sandboxed,  # type: ignore[import-not-found]
                 )
-            else:
-                error = None
-            return ToolResult(
-                data={
-                    "command": input_data.command,
-                    "returncode": result["returncode"],
-                    "stdout": result["stdout"],
-                    "stderr": result["stderr"],
-                    "message": result["message"],
-                    "timed_out": result["timed_out"],
-                    "suggest_fix": _suggest_fix(result["returncode"], result["stderr"], result["stdout"], input_data.command) if not result["success"] else "",
-                    "stream_progress": _extract_progress(result["stdout"]),
-                },
-                success=result["success"],
-                error=error,
-            )
-        except Exception:
-            # Rust extension not available; proceed to the configured backend.
-            pass
+
+                allowed_base_dirs = [str(work_dir.resolve()), str(Path.cwd().resolve())]
+                result = run_sandboxed(
+                    command=input_data.command[0],
+                    args=input_data.command[1:],
+                    cwd=str(work_dir),
+                    timeout=input_data.timeout,
+                    allowed_base_dirs=allowed_base_dirs,
+                )
+                if not result["success"]:
+                    error = (
+                        result.get("stderr")
+                        or result.get("message")
+                        or "Sandboxed command failed."
+                    )
+                else:
+                    error = None
+                return ToolResult(
+                    data={
+                        "command": input_data.command,
+                        "returncode": result["returncode"],
+                        "stdout": result["stdout"],
+                        "stderr": result["stderr"],
+                        "message": result["message"],
+                        "timed_out": result["timed_out"],
+                        "suggest_fix": _suggest_fix(result["returncode"], result["stderr"], result["stdout"], input_data.command) if not result["success"] else "",
+                        "stream_progress": _extract_progress(result["stdout"]),
+                    },
+                    success=result["success"],
+                    error=error,
+                )
+            except Exception:
+                # Rust extension not available; proceed to the configured backend.
+                pass
 
         try:
             executor = get_executor()
