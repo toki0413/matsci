@@ -801,6 +801,13 @@ const resources = {
       'empty.noData': 'No data available',
       'empty.loading': 'Loading...',
       'empty.error': 'An error occurred',
+
+      /* ── Command palette actions ── */
+      'cmd.quickActions': 'Quick Actions',
+      'cmd.themeToggle': 'Toggle Theme',
+      'cmd.newThread': 'New Thread',
+      'cmd.clearChat': 'Clear Chat',
+      'cmd.goSettings': 'Go to Settings',
     },
   },
   zh: {
@@ -1610,6 +1617,13 @@ const resources = {
       'empty.noData': '暂无数据',
       'empty.loading': '加载中...',
       'empty.error': '发生错误',
+
+      /* ── Command palette actions ── */
+      'cmd.quickActions': '快捷操作',
+      'cmd.themeToggle': '切换主题',
+      'cmd.newThread': '新建线程',
+      'cmd.clearChat': '清空对话',
+      'cmd.goSettings': '跳转设置',
     },
   },
 };
