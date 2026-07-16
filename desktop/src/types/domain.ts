@@ -163,3 +163,21 @@ export interface SkillInfo {
   }>;
   tags: string[];
 }
+
+export type SearchResultType = "thread" | "memory" | "knowledge" | "provenance";
+
+export interface GlobalSearchResult {
+  type: SearchResultType;
+  id: string;
+  title: string;
+  snippet: string;
+  score: number;
+  metadata: Record<string, any>;
+}
+
+export interface GlobalSearchResponse {
+  results: GlobalSearchResult[];
+  total: number;
+  sources: string[];
+  error?: string;
+}

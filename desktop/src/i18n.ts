@@ -808,6 +808,13 @@ const resources = {
       'cmd.newThread': 'New Thread',
       'cmd.clearChat': 'Clear Chat',
       'cmd.goSettings': 'Go to Settings',
+      'cmd.globalSearch': 'Global Search',
+
+      /* ── Global search ── */
+      'search.placeholder': 'Search across threads, memory, knowledge…',
+      'search.noResults': 'No results found',
+      'search.hint': 'Type at least 2 characters to search',
+      'search.results': 'results',
     },
   },
   zh: {
@@ -1624,6 +1631,13 @@ const resources = {
       'cmd.newThread': '新建线程',
       'cmd.clearChat': '清空对话',
       'cmd.goSettings': '跳转设置',
+      'cmd.globalSearch': '全局搜索',
+
+      /* ── Global search ── */
+      'search.placeholder': '搜索对话、记忆、知识库…',
+      'search.noResults': '没有找到结果',
+      'search.hint': '输入至少 2 个字符进行搜索',
+      'search.results': '个结果',
     },
   },
 };

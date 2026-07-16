@@ -261,11 +261,11 @@ class TestAutoloopBudgetExhaustion:
 
     @pytest.mark.asyncio
     async def test_progressive_budget_rejects_expensive_mode(self, tmp_path, monkeypatch):
-        """Workflow mode is rejected at medium tier (iteration 6+).
+        """Workflow mode is rejected at medium tier (iteration 11+).
 
-        ponytail: We don't run 6 full iterations (too slow). Instead we
+        ponytail: We don't run 11 full iterations (too slow). Instead we
         verify the budget mechanism directly: feed a 'workflow' plan at
-        iteration 6 and check _check_budget returns False.
+        iteration 11 and check _check_budget returns False.
         """
         from huginn.autoloop.budget import ProgressiveBudget
 
@@ -275,12 +275,12 @@ class TestAutoloopBudgetExhaustion:
         engine._budget_degraded = False
         engine._budget_rejects = {}
 
-        # Iteration 6 falls in the 'medium' tier where 'workflow' is not allowed
-        allowed = engine._check_budget(6, {"mode": "workflow"})
-        assert allowed is False, "workflow should be rejected at iteration 6"
+        # Iteration 11 falls in the 'medium' tier where 'workflow' is not allowed
+        allowed = engine._check_budget(11, {"mode": "workflow"})
+        assert allowed is False, "workflow should be rejected at iteration 11"
 
         # 'coder' is always allowed
-        allowed_coder = engine._check_budget(6, {"mode": "coder"})
+        allowed_coder = engine._check_budget(11, {"mode": "coder"})
         assert allowed_coder is True
 
         # At iteration 1 (open tier), 'workflow' is allowed

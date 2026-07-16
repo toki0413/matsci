@@ -63,6 +63,7 @@ from huginn.routes.export_share import router as export_share_router
 from huginn.routes.tunnels import router as tunnels_router
 from huginn.routes.transfer import router as transfer_router
 from huginn.routes.terminal import router as terminal_router
+from huginn.routes.search import router as search_router
 # 实时 3D 分子查看器: REST (load/trajectory/elements) + WebSocket (/ws/viewer3d)
 from huginn.routes.viewer3d import router as viewer3d_router
 from huginn.routes.viewer3d import ws_router as viewer3d_ws_router
@@ -81,6 +82,7 @@ ALL_ROUTERS = [
     codebase_router,
     knowledge_router,
     tools_router,
+    search_router,
     events_router,
     # 实时事件 SSE: 订阅全局 EventBus 推送所有 agent 生命周期事件
     event_stream_router,
