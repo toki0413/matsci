@@ -97,6 +97,9 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
         lambda *a, **kw: {"hint": "", "predictions": []},
         raising=False,
     )
+    # ponytail: KB 第一次懒加载会 seed_knowledge_base 跑 ONNX 嵌入,
+    # CI 首次冷启动 > 120s timeout. _build_kb_text 已处理 None, 直接跳过.
+    monkeypatch.setattr("huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None)
 
 
 def _bypass_validate_gate():
