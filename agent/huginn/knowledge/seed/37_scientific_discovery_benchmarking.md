@@ -14,7 +14,12 @@ out of tool budget before writing any report. The fix is a hard phase schedule:
 - Phase 4 (calls 41+): Iterate — add models, update report.
 - Phase 5: Verify report references all figures.
 
-Deep learning (VAE/transformer/GNN) is FORBIDDEN until report.md exists.
+Deep learning (VAE/transformer/GNN) is ADVISORY-DELAYED until report.md exists —
+UNLESS the task explicitly requires reproducing a DL architecture (e.g. "reproduce
+this VAE", "implement CGCNN"). For DL-required tasks, proceed with DL immediately
+but write report.md EARLY (after first DL attempt, even if broken) and OVERWRITE
+as you iterate. The phase discipline is "report first" for open-ended discovery;
+for paper-reproduction tasks it is "DL early, report alongside".
 A short report with correct simple analysis beats a long report with broken complex ML.
 
 ## 2. Path discipline
