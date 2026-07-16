@@ -145,6 +145,30 @@ class PhaseGate:
     def is_blocked(self) -> bool:
         return self.status in ("blocked", "rejected")
 
+    def __post_init__(self) -> None:
+        """遥测: 把每个 PhaseGate 决策写到 HUGINN_TELEMETRY_PATH (jsonl).
+        ponytail: 用 __post_init__ 拦截所有 5 个 return 点, 0 处业务代码改动.
+        失败静默 — 遥测挂了不影响 phase gate 本身. 升级: 加 evidence_keys.
+        """
+        path = os.environ.get("HUGINN_TELEMETRY_PATH", "")
+        if not path:
+            return
+        try:
+            import json
+            import time
+            record = {
+                "ts": time.time(),
+                "from_phase": self.from_phase,
+                "to_phase": self.to_phase,
+                "status": self.status,
+                "missing": self.missing_evidence,
+                "reviewer": self.reviewer,
+            }
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "from_phase": self.from_phase,
