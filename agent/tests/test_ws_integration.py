@@ -437,7 +437,8 @@ class TestWSClarification:
         fake = _FakeMgr()
         import huginn.interaction.clarification as clar_mod
 
-        monkeypatch.setattr(clar_mod, "ClarificationManager", lambda: fake)
+        # ponytail: get_clarification_manager 缓存了 _singleton, patch 类没用
+        monkeypatch.setattr(clar_mod, "get_clarification_manager", lambda: fake)
 
         with client.websocket_connect(WS_PATH) as ws:
             ws.send_json(

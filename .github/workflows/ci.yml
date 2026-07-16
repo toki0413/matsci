@@ -29,7 +29,7 @@ jobs:
           pip install -e "./agent[dev]"
           pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
           pip install pymatgen ase paramiko PyPDF2 pint spglib
-          pip install toml croniter fastapi uvicorn
+          pip install toml croniter fastapi uvicorn nbformat
           pip install langchain-openai langgraph-checkpoint-sqlite
           # Lightweight optional deps — keeps test coverage up on CI
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
@@ -117,7 +117,7 @@ jobs:
           pip install -e "./agent[dev]"
           pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
           pip install pymatgen ase paramiko PyPDF2 pint spglib
-          pip install toml croniter fastapi uvicorn
+          pip install toml croniter fastapi uvicorn nbformat
           pip install langchain-openai langgraph-checkpoint-sqlite
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
           pip install pytest-timeout
