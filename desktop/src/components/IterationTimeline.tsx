@@ -19,6 +19,8 @@ interface IterationEntry {
   r_phys?: number;
   surprise?: number;
   persona?: string;
+  // 模型推理摘要 (reasoning/thinking/summary 字段, 看后端发哪个)
+  reasoning?: string;
   // 研究循环节点标记 (来自 campaign.retry / suspect / refine)
   flags?: string[];
 }
@@ -45,6 +47,11 @@ function buildFromCampaign(events: CampaignEventEntry[]): IterationEntry[] {
     if (!entry) {
       entry = { iteration: it, status: 'running' };
       byIter.set(it, entry);
+    }
+    // 推理摘要可能挂在任意 campaign 事件上, 三个常见字段名都认
+    if (!entry.reasoning) {
+      const r = ev.data.reasoning ?? ev.data.thinking ?? ev.data.summary;
+      if (typeof r === 'string' && r.trim()) entry.reasoning = r;
     }
     switch (ev.event) {
       case 'campaign.iteration': {
@@ -194,6 +201,16 @@ export function IterationTimeline({ messages, campaignEvents }: Props) {
                   {iter.hypothesis}
                 </span>
               </div>
+            )}
+            {(iter.reasoning || iter.hypothesis) && (
+              <details style={{ marginTop: 2 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--fg-muted)' }}>
+                  推理摘要
+                </summary>
+                <pre className="whitespace-pre-wrap text-xs opacity-70" style={{ margin: '4px 0 0', maxHeight: 120, overflow: 'auto' }}>
+                  {iter.reasoning ?? (iter.hypothesis ? iter.hypothesis.slice(0, 200) : '')}
+                </pre>
+              </details>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
               {iter.r_phys != null && (

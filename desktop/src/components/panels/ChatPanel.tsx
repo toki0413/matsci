@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play, FolderTree, Pin, MessageSquare, Code2, BookOpen, User } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -37,9 +37,18 @@ if (import.meta.env.DEV) {
   console.assert(!TEXT_FILE_EXTS.includes(_ext('image.png')), 'png should NOT be text');
 }
 
+// 这些工具默认展开 — 命令执行/文件编辑类操作, 用户一般想直接看清楚干了什么
+const AUTO_EXPAND_TOOLS = new Set([
+  "shell", "bash", "terminal",
+  "edit", "write", "patch", "replace", "str_replace", "file_edit",
+]);
+const shouldAutoExpand = (toolName?: string) =>
+  AUTO_EXPAND_TOOLS.has((toolName || "").toLowerCase());
+
 function CollapsibleMessageContent({ content, isStreaming }: { content: string; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const isLong = content.length > 1500;
+  const isLong = content.length > 800;
+  const isVeryLong = content.length > 3000;
   if (!isLong || isStreaming || expanded) {
     return (
       <>
@@ -55,18 +64,24 @@ function CollapsibleMessageContent({ content, isStreaming }: { content: string; 
       </>
     );
   }
+  const preview = content.slice(0, isVeryLong ? 500 : 800);
+  const lastNewline = preview.lastIndexOf('\n');
+  const trimmedPreview = lastNewline > 0 ? preview.slice(0, lastNewline) : preview;
   return (
     <div>
-      <div className="max-h-[400px] overflow-hidden relative">
-        <MessageContent content={content} />
-        <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-bg-secondary to-transparent pointer-events-none" />
+      <MessageContent content={trimmedPreview + '\n\n'} />
+      <div className="relative rounded-lg border border-border bg-bg-tertiary/50 px-4 py-3">
+        <div className="absolute inset-0 overflow-hidden rounded-lg">
+          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-bg-tertiary/50 to-transparent pointer-events-none" />
+        </div>
+        <button
+          onClick={() => setExpanded(true)}
+          className="relative flex items-center gap-2 text-xs text-accent hover:underline"
+        >
+          <ChevronDown size={14} />
+          Show more ({(content.length - trimmedPreview.length).toLocaleString()} more chars)
+        </button>
       </div>
-      <button
-        onClick={() => setExpanded(true)}
-        className="mt-1 text-xs text-accent hover:underline"
-      >
-        Show more ({content.length.toLocaleString()} chars)
-      </button>
     </div>
   );
 }
@@ -212,6 +227,12 @@ interface ChatPanelProps {
   toggleSuggestMode?: (enabled: boolean) => void;
   respondToSuggestCode?: (action: "approve" | "edit" | "deny", editedCode?: string) => void;
   riskThreshold?: number;
+  // 跳到 files tab — FilesPanel 自己管 cwd/editor 那堆状态, 不在这里重做
+  onOpenFiles?: () => void;
+  // multi-agent persona
+  personas?: Array<{ name: string; description?: string }>;
+  currentPersona?: string;
+  setCurrentPersona?: (name: string) => void;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -233,6 +254,10 @@ export function ChatPanel(props: ChatPanelProps) {
     toggleSuggestMode,
     respondToSuggestCode,
     riskThreshold,
+    onOpenFiles,
+    personas = [],
+    currentPersona,
+    setCurrentPersona,
   } = props;
 
   const [showCommands, setShowCommands] = useState(false);
@@ -254,6 +279,14 @@ export function ChatPanel(props: ChatPanelProps) {
   const [streamingWasActive, setStreamingWasActive] = useState(false);
   // reasoning 折叠状态: 用户手动 toggle 后记住, 否则跟随 streaming 自动开/关
   const [reasoningOpen, setReasoningOpen] = useState<Record<number, boolean>>({});
+  // 搜索范围
+  const [chatSearchScope, setChatSearchScope] = useState<'messages' | 'files' | 'code' | 'knowledge'>('messages');
+  // 消息管理：选中状态、置顶状态
+  const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
+  const [pinnedMsgIds, setPinnedMsgIds] = useState<Set<number>>(new Set());
+  const [lastClickedIdx, setLastClickedIdx] = useState<number | null>(null);
+  // persona selector
+  const [showPersonaSelector, setShowPersonaSelector] = useState(false);
 
   // Play notification sound when streaming completes
   useEffect(() => {
@@ -565,44 +598,107 @@ export function ChatPanel(props: ChatPanelProps) {
   return (
     <div className="flex h-full flex-col">
       {chatSearchOpen && (
-        <div className="flex items-center gap-2 border-b border-border bg-bg-secondary/50 px-6 py-2">
-          <Search size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
-          <input
-            type="text"
-            autoFocus
-            value={chatSearchQuery}
-            onChange={(e) => setChatSearchQuery(e.target.value)}
-            placeholder={t('chat.searchPlaceholder')}
-            aria-label="Search messages"
-            className="flex-1 bg-transparent text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded placeholder:text-text-muted"
-          />
-          {chatSearchQuery && (
-            <div className="flex shrink-0 items-center gap-1">
-              <span className="text-[11px] text-text-muted">
-                {searchMatchCount > 0 ? `${Math.min(searchMatchIdx + 1, searchMatchCount)}/${searchMatchCount}` : '0'}
-              </span>
-              <button
-                onClick={() => setSearchMatchIdx(prev => (prev - 1 + searchMatchCount) % Math.max(searchMatchCount, 1))}
-                disabled={searchMatchCount === 0}
-                className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-tertiary disabled:opacity-30"
-                aria-label="Previous match"
-                title="Previous match"
-              >
-                <ChevronUp size={14} />
-              </button>
-              <button
-                onClick={() => setSearchMatchIdx(prev => (prev + 1) % Math.max(searchMatchCount, 1))}
-                disabled={searchMatchCount === 0}
-                className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-tertiary disabled:opacity-30"
-                aria-label="Next match"
-                title="Next match"
-              >
-                <ChevronDown size={14} aria-hidden="true" />
-              </button>
+        <div className="flex flex-col border-b border-border bg-bg-secondary/50">
+          <div className="flex items-center gap-2 px-6 py-2">
+            <Search size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
+            <div className="flex rounded-lg border border-border bg-bg-tertiary p-0.5">
+              {[
+                { id: 'messages' as const, label: 'Messages', icon: <MessageSquare size={12} /> },
+                { id: 'files' as const, label: 'Files', icon: <FolderTree size={12} /> },
+                { id: 'code' as const, label: 'Code', icon: <Code2 size={12} /> },
+                { id: 'knowledge' as const, label: 'KB', icon: <BookOpen size={12} /> },
+              ].map((scope) => (
+                <button
+                  key={scope.id}
+                  onClick={() => setChatSearchScope(scope.id)}
+                  className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] transition-colors ${
+                    chatSearchScope === scope.id
+                      ? 'bg-accent text-white'
+                      : 'text-text-muted hover:text-text-secondary'
+                  }`}
+                  aria-label={`Search in ${scope.label}`}
+                >
+                  {scope.icon}
+                  {scope.label}
+                </button>
+              ))}
             </div>
-          )}
-          <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary" aria-label="Close search">
-            <X size={14} aria-hidden="true" />
+            <input
+              type="text"
+              autoFocus
+              value={chatSearchQuery}
+              onChange={(e) => setChatSearchQuery(e.target.value)}
+              placeholder={`Search ${chatSearchScope === 'messages' ? 'messages' : chatSearchScope === 'files' ? 'files' : chatSearchScope === 'code' ? 'code' : 'knowledge'}…`}
+              aria-label="Search"
+              className="flex-1 bg-transparent text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded placeholder:text-text-muted"
+            />
+            {chatSearchQuery && chatSearchScope === 'messages' && (
+              <div className="flex shrink-0 items-center gap-1">
+                <span className="text-[11px] text-text-muted">
+                  {searchMatchCount > 0 ? `${Math.min(searchMatchIdx + 1, searchMatchCount)}/${searchMatchCount}` : '0'}
+                </span>
+                <button
+                  onClick={() => setSearchMatchIdx(prev => (prev - 1 + searchMatchCount) % Math.max(searchMatchCount, 1))}
+                  disabled={searchMatchCount === 0}
+                  className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-tertiary disabled:opacity-30"
+                  aria-label="Previous match"
+                  title="Previous match"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  onClick={() => setSearchMatchIdx(prev => (prev + 1) % Math.max(searchMatchCount, 1))}
+                  disabled={searchMatchCount === 0}
+                  className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-tertiary disabled:opacity-30"
+                  aria-label="Next match"
+                  title="Next match"
+                >
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+            <button onClick={() => { setChatSearchOpen(false); setChatSearchQuery(""); }} className="shrink-0 text-text-muted hover:text-text-secondary" aria-label="Close search">
+              <X size={14} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Multi-select toolbar */}
+      {selectedMsgIds.size > 0 && (
+        <div className="flex items-center justify-between border-b border-border bg-accent/10 px-6 py-1.5">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-accent">{selectedMsgIds.size} selected</span>
+            <button
+              onClick={() => {
+                setMessages(prev => prev.filter((_, i) => !selectedMsgIds.has(i)));
+                toast.success(`Deleted ${selectedMsgIds.size} messages`);
+                setSelectedMsgIds(new Set());
+              }}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-error hover:bg-error/10 transition-colors"
+              aria-label="Delete selected"
+            >
+              <Trash2 size={12} /> Delete
+            </button>
+            <button
+              onClick={() => {
+                const text = Array.from(selectedMsgIds)
+                  .sort((a, b) => a - b)
+                  .map(i => messages[i]?.content || '')
+                  .join('\n\n');
+                navigator.clipboard.writeText(text);
+                toast.success('Copied selected');
+              }}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+              aria-label="Copy selected"
+            >
+              <Copy size={12} /> Copy
+            </button>
+          </div>
+          <button
+            onClick={() => setSelectedMsgIds(new Set())}
+            className="text-xs text-text-muted hover:text-text-secondary"
+          >
+            Deselect all
           </button>
         </div>
       )}
@@ -822,7 +918,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   </div>
                   <div className="mt-2 space-y-2">
                     {(msg as any).tool_calls.map((tc: Message, ti: number) => (
-                      <details key={ti} className={`rounded-lg border p-2 ${
+                      <details key={ti} open={shouldAutoExpand(tc.tool_name)} className={`rounded-lg border p-2 ${
                         tc.tool_status === "running" ? "border-accent/30 bg-accent/5"
                         : tc.tool_status === "error" ? "border-red-500/30 bg-red-500/5"
                         : "border-border bg-bg-tertiary"
@@ -872,7 +968,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       </span>
                     )}
                   </div>
-                  <details className="mt-2">
+                  <details className="mt-2" open={shouldAutoExpand(msg.tool_name)}>
                     <summary className="cursor-pointer text-xs text-text-secondary">{t('chat.arguments')}</summary>
                     <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-bg-tertiary p-2 text-xs">
                       {JSON.stringify(msg.tool_args, null, 2)}
@@ -918,18 +1014,46 @@ export function ChatPanel(props: ChatPanelProps) {
           return (
             <div
               key={index}
-              className={`group flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+              className={`group flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""} ${
+                selectedMsgIds.has(index) ? "bg-accent/5" : ""
+              }`}
+              onClick={(e) => {
+                if (e.shiftKey && lastClickedIdx !== null) {
+                  const start = Math.min(index, lastClickedIdx);
+                  const end = Math.max(index, lastClickedIdx);
+                  const newSelected = new Set(selectedMsgIds);
+                  for (let i = start; i <= end; i++) {
+                    newSelected.add(i);
+                  }
+                  setSelectedMsgIds(newSelected);
+                } else if (e.ctrlKey || e.metaKey) {
+                  setSelectedMsgIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(index)) next.delete(index);
+                    else next.add(index);
+                    return next;
+                  });
+                } else {
+                  setSelectedMsgIds(new Set([index]));
+                }
+                setLastClickedIdx(index);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setCtxMenu({ x: e.clientX, y: e.clientY, msg, index });
               }}
             >
-              <div
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
-                  msg.role === "user" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-                }`}
-              >
-                {msg.role === "user" ? t('chat.you') : t('chat.ai')}
+              <div className="flex flex-col items-center gap-0.5">
+                {pinnedMsgIds.has(index) && (
+                  <span className="text-[10px] text-yellow-500" title="Pinned">📌</span>
+                )}
+                <div
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm ${
+                    msg.role === "user" ? "bg-accent text-white" : msg.persona ? "bg-purple-500 text-white" : "bg-bg-tertiary text-text-secondary"
+                  }`}
+                >
+                  {msg.role === "user" ? t('chat.you') : msg.persona ? msg.persona[0].toUpperCase() : t('chat.ai')}
+                </div>
               </div>
               <div
                 className={`max-w-[75%] px-5 py-3 ${
@@ -939,7 +1063,12 @@ export function ChatPanel(props: ChatPanelProps) {
                 }`}
               >
                 <div className="mb-1 flex items-center gap-2 text-xs opacity-70">
-                  <span>{msg.role === "user" ? t('chat.you') : t('chat.assistant')}</span>
+                  <span>{msg.role === "user" ? t('chat.you') : msg.persona || t('chat.assistant')}</span>
+                  {msg.persona && (
+                    <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
+                      {msg.persona}
+                    </span>
+                  )}
                   <span>
                     {msg.timestamp === "streaming" ? t('chat.typing') : formatTimeAgo(msg.timestamp)}
                   </span>
@@ -1332,6 +1461,21 @@ export function ChatPanel(props: ChatPanelProps) {
           )}
           <button
             onClick={() => {
+              setPinnedMsgIds(prev => {
+                const next = new Set(prev);
+                if (next.has(ctxMenu.index)) next.delete(ctxMenu.index);
+                else next.add(ctxMenu.index);
+                return next;
+              });
+              toast.success(pinnedMsgIds.has(ctxMenu.index) ? 'Unpinned' : 'Pinned');
+              setCtxMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
+          >
+            <Pin size={12} aria-hidden="true" /> {pinnedMsgIds.has(ctxMenu.index) ? 'Unpin' : 'Pin'}
+          </button>
+          <button
+            onClick={() => {
               setMessages(prev => prev.filter((_, i) => i !== ctxMenu.index));
               toast.success('Message deleted');
               setCtxMenu(null);
@@ -1468,37 +1612,81 @@ export function ChatPanel(props: ChatPanelProps) {
 
         <div className="mb-2 flex items-center justify-between gap-2">
           {/* Mode selector — segmented control */}
-          <div className="flex items-center gap-1 rounded-lg bg-bg-tertiary p-0.5" role="radiogroup" aria-label="Chat mode">
-            <button
-              onClick={() => { setMode("chat"); setResearchMode(false); }}
-              aria-checked={mode === "chat" && !researchMode}
-              role="radio"
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                mode === "chat" && !researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
-              }`}
-            >
-              {t('chat.mode.chat')}
-            </button>
-            <button
-              onClick={() => { setMode("plan"); setResearchMode(false); }}
-              aria-checked={mode === "plan"}
-              role="radio"
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                mode === "plan" ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
-              }`}
-            >
-              {t('chat.mode.plan')}
-            </button>
-            <button
-              onClick={() => { setResearchMode(!researchMode); if (!researchMode) setMode("chat"); }}
-              aria-checked={researchMode}
-              role="radio"
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
-              }`}
-            >
-              {t('chat.mode.research') || 'Research'}
-            </button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg bg-bg-tertiary p-0.5" role="radiogroup" aria-label="Chat mode">
+              <button
+                onClick={() => { setMode("chat"); setResearchMode(false); }}
+                aria-checked={mode === "chat" && !researchMode}
+                role="radio"
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                  mode === "chat" && !researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
+                }`}
+              >
+                {t('chat.mode.chat')}
+              </button>
+              <button
+                onClick={() => { setMode("plan"); setResearchMode(false); }}
+                aria-checked={mode === "plan"}
+                role="radio"
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                  mode === "plan" ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
+                }`}
+              >
+                {t('chat.mode.plan')}
+              </button>
+              <button
+                onClick={() => { setResearchMode(!researchMode); if (!researchMode) setMode("chat"); }}
+                aria-checked={researchMode}
+                role="radio"
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                  researchMode ? "bg-accent text-white" : "text-text-muted hover:text-text-secondary"
+                }`}
+              >
+                {t('chat.mode.research') || 'Research'}
+              </button>
+            </div>
+            {/* Persona selector */}
+            {currentPersona && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowPersonaSelector(!showPersonaSelector)}
+                  className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-secondary hover:text-text-primary"
+                  aria-label="Select persona"
+                >
+                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-purple-500 text-[10px] text-white">
+                    {currentPersona[0].toUpperCase()}
+                  </span>
+                  {currentPersona}
+                  <ChevronDown size={12} />
+                </button>
+                {showPersonaSelector && (
+                  <div className="absolute bottom-full left-0 mb-2 w-48 overflow-hidden rounded-lg border border-border bg-bg-secondary shadow-lg">
+                    <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-text-muted border-b border-border">
+                      Personas
+                    </div>
+                    {personas.map((p) => (
+                      <button
+                        key={p.name}
+                        onClick={() => {
+                          setCurrentPersona(p.name);
+                          setShowPersonaSelector(false);
+                        }}
+                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors ${
+                          currentPersona === p.name ? 'bg-bg-tertiary text-text-primary' : 'text-text-secondary hover:bg-bg-tertiary'
+                        }`}
+                      >
+                        <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${
+                          currentPersona === p.name ? 'bg-purple-500 text-white' : 'bg-bg-tertiary text-text-muted'
+                        }`}>
+                          {p.name[0].toUpperCase()}
+                        </span>
+                        <span className="truncate">{p.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Thinking intensity — always visible */}
@@ -1517,6 +1705,16 @@ export function ChatPanel(props: ChatPanelProps) {
               </button>
             ))}
           </div>
+          {onOpenFiles && (
+            <button
+              onClick={onOpenFiles}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+              title={t('chat.openFiles') || 'Open files panel'}
+              aria-label="Open files panel"
+            >
+              <FolderTree size={14} />
+            </button>
+          )}
           <details className="relative">
             <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors" title="Options" aria-label="Chat options" role="button" aria-expanded="false">
               <Settings size={14} />
@@ -1756,7 +1954,7 @@ export function ChatPanel(props: ChatPanelProps) {
                 }
                 setTimeout(autoResize, 0);
               }
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && (!e.shiftKey || (e.ctrlKey || e.metaKey))) {
                 e.preventDefault();
                 const val = input.trim();
                 if (val) {
