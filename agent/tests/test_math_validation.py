@@ -35,6 +35,9 @@ def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AutoloopEngine:
         lambda *a, **kw: {"hint": "", "predictions": []},
         raising=False,
     )
+    # ponytail: KB 冷启动跑 ONNX embedding > 120s, KG 写 ~/.huginn 污染 home
+    monkeypatch.setattr("huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None)
+    monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
     return AutoloopEngine(workspace=tmp_path)
 
 
