@@ -131,6 +131,7 @@ export function ThreadsPanel({
                 <div className="mt-2 text-[10px] text-text-muted">
                   ID: {th.id}
                   {th.archived && <span className="ml-2 text-warning">· archived</span>}
+                  {th.id.includes('fork') && <span className="ml-2 text-purple-400">· forked</span>}
                 </div>
                 <button
                   onClick={() => switchThread(th.id)}

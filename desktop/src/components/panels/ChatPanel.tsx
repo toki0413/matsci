@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode, useCallback } from 'react';
-import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play, FolderTree, Pin, MessageSquare, Code2, BookOpen, User } from 'lucide-react';
+import { Search, X, Settings, Archive, Copy, RotateCw, Trash2, ArrowDown, Check, Pencil, CornerUpLeft, Download, BarChart3, Volume2, ChevronUp, ChevronDown, ChevronRight, Clock, Wrench, Loader2, AlertCircle, Paperclip, Pause, Play, FolderTree, Pin, MessageSquare, Code2, BookOpen, User, ThumbsUp, ThumbsDown, FileDown } from 'lucide-react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
@@ -287,6 +287,12 @@ export function ChatPanel(props: ChatPanelProps) {
   const [lastClickedIdx, setLastClickedIdx] = useState<number | null>(null);
   // persona selector
   const [showPersonaSelector, setShowPersonaSelector] = useState(false);
+  // message reactions: index → 'up' | 'down'
+  const [reactions, setReactions] = useState<Record<number, 'up' | 'down'>>({});
+  // export menu
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  // command history popover
+  const [showCmdHistory, setShowCmdHistory] = useState(false);
 
   // Play notification sound when streaming completes
   useEffect(() => {
@@ -819,6 +825,93 @@ export function ChatPanel(props: ChatPanelProps) {
             );
           })()}
           <span>{messages.length} {messages.length === 1 ? 'message' : 'messages'}</span>
+          {(() => {
+            const shellCmds = messages.filter(m => m.role === 'tool' && (m.tool_name?.toLowerCase().includes('shell') || m.tool_name?.toLowerCase().includes('bash')));
+            if (shellCmds.length === 0) return null;
+            return (
+              <div className="relative">
+                <button
+                  onClick={() => setShowCmdHistory(!showCmdHistory)}
+                  className="flex items-center gap-1 text-text-muted hover:text-text-primary"
+                  title="Shell command history"
+                >
+                  <Clock size={12} />
+                  {shellCmds.length} cmds
+                </button>
+                {showCmdHistory && (
+                  <div className="absolute top-full right-0 mt-1 w-96 max-h-80 overflow-y-auto rounded-lg border border-border bg-bg-secondary shadow-lg z-20">
+                    <div className="sticky top-0 bg-bg-secondary border-b border-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-text-muted">
+                      Shell Commands ({shellCmds.length})
+                    </div>
+                    {shellCmds.map((m, i) => (
+                      <div key={i} className="border-b border-border/50 px-3 py-2 hover:bg-bg-tertiary">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className={`text-[10px] font-medium ${m.tool_status === 'error' ? 'text-red-400' : 'text-green-400'}`}>
+                            {m.tool_status === 'error' ? '✗' : '✓'} {m.tool_status || 'done'}
+                          </span>
+                          <span className="text-[10px] text-text-muted">{m.timestamp}</span>
+                        </div>
+                        <code className="text-xs text-text-primary font-mono">
+                          {typeof m.tool_args === 'object' ? m.tool_args?.command || m.tool_args?.cmd || JSON.stringify(m.tool_args).slice(0, 120) : String(m.tool_args || '').slice(0, 120)}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          {messages.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="flex items-center gap-1 text-text-muted hover:text-text-primary"
+                title="Export conversation"
+              >
+                <FileDown size={12} />
+                Export
+              </button>
+              {showExportMenu && (
+                <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-border bg-bg-secondary shadow-lg z-20">
+                  <button
+                    onClick={() => {
+                      const md = messages.map(m => {
+                        if (m.role === 'user') return `## 🧑 User\n\n${m.content}`;
+                        if (m.role === 'assistant') return `## 🤖 Assistant\n\n${m.content}`;
+                        if (m.role === 'tool') return `### 🔧 ${m.tool_name || 'Tool'}\n\n\`\`\`\n${m.tool_result || m.content}\n\`\`\``;
+                        return m.content;
+                      }).join('\n\n---\n\n');
+                      const blob = new Blob([`# Conversation Export\n\n${new Date().toISOString()}\n\n---\n\n${md}`], { type: 'text/markdown' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url; a.download = `chat-${Date.now()}.md`; a.click();
+                      URL.revokeObjectURL(url);
+                      setShowExportMenu(false);
+                      toast.success('Exported as Markdown');
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                  >
+                    📝 Markdown
+                  </button>
+                  <button
+                    onClick={() => {
+                      const json = JSON.stringify({ exported_at: new Date().toISOString(), messages }, null, 2);
+                      const blob = new Blob([json], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url; a.download = `chat-${Date.now()}.json`; a.click();
+                      URL.revokeObjectURL(url);
+                      setShowExportMenu(false);
+                      toast.success('Exported as JSON');
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                  >
+                    {'{ }'} JSON
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1119,6 +1212,40 @@ export function ChatPanel(props: ChatPanelProps) {
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
                       <button
                         onClick={() => {
+                          setReactions(prev => {
+                            const next = { ...prev };
+                            if (next[index] === 'up') delete next[index];
+                            else next[index] = 'up';
+                            return next;
+                          });
+                        }}
+                        className={`rounded p-1 transition-colors ${
+                          reactions[index] === 'up' ? 'text-green-500' : 'text-text-muted hover:text-green-500'
+                        }`}
+                        aria-label="Good response"
+                        title="Good response"
+                      >
+                        <ThumbsUp size={13} aria-hidden="true" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setReactions(prev => {
+                            const next = { ...prev };
+                            if (next[index] === 'down') delete next[index];
+                            else next[index] = 'down';
+                            return next;
+                          });
+                        }}
+                        className={`rounded p-1 transition-colors ${
+                          reactions[index] === 'down' ? 'text-red-500' : 'text-text-muted hover:text-red-500'
+                        }`}
+                        aria-label="Bad response"
+                        title="Bad response"
+                      >
+                        <ThumbsDown size={13} aria-hidden="true" />
+                      </button>
+                      <button
+                        onClick={() => {
                           navigator.clipboard.writeText(msg.content).then(() => {
                             setCopyingId(index);
                             setTimeout(() => setCopyingId(null), 1500);
@@ -1210,14 +1337,29 @@ export function ChatPanel(props: ChatPanelProps) {
                       </button>
                     )}
                     {viewingHistory === index && editHistory[index] && (
-                      <div className="absolute right-0 top-full z-20 mt-1 w-72 rounded-lg border border-border bg-bg-secondary p-3 shadow-xl">
+                      <div className="absolute right-0 top-full z-20 mt-1 w-80 rounded-lg border border-border bg-bg-secondary p-3 shadow-xl">
                         <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-text-muted">Edit History</div>
-                        {editHistory[index].map((old, hi) => (
-                          <div key={hi} className="mb-2 border-b border-border pb-2 last:border-0">
-                            <div className="text-[10px] text-text-muted">v{hi + 1}</div>
-                            <div className="text-xs text-text-secondary line-clamp-3">{old}</div>
-                          </div>
-                        ))}
+                        {editHistory[index].map((old, hi) => {
+                          const prev = hi === 0 ? '' : editHistory[index][hi - 1];
+                          const oldLines = old.split('\n');
+                          const prevLines = prev.split('\n');
+                          const maxLines = Math.max(oldLines.length, prevLines.length);
+                          return (
+                            <div key={hi} className="mb-2 border-b border-border pb-2 last:border-0">
+                              <div className="text-[10px] text-text-muted">v{hi + 1}</div>
+                              <div className="mt-1 rounded border border-border/50 bg-bg-tertiary/50 p-1.5 font-mono text-[10px] leading-relaxed">
+                                {Array.from({ length: maxLines }).map((_, li) => {
+                                  const oldL = oldLines[li] || '';
+                                  const prevL = prevLines[li] || '';
+                                  if (oldL === prevL) return <div key={li} className="text-text-muted/50">{oldL || '\u00a0'}</div>;
+                                  if (prevL && !oldL) return <div key={li} className="text-red-400/60 line-through">{prevL}</div>;
+                                  if (!prevL && oldL) return <div key={li} className="text-green-400/80">+ {oldL}</div>;
+                                  return <div key={li} className="text-green-400/80">+ {oldL}</div>;
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
                         <button
                           onClick={() => setViewingHistory(null)}
                           className="mt-1 text-[10px] text-accent hover:underline"
@@ -2028,7 +2170,13 @@ export function ChatPanel(props: ChatPanelProps) {
           <span>
             <kbd className="rounded border border-border bg-bg-tertiary px-1">Enter</kbd> send · <kbd className="rounded border border-border bg-bg-tertiary px-1">Shift+Enter</kbd> newline · <kbd className="rounded border border-border bg-bg-tertiary px-1">↑</kbd> history
           </span>
-          {input.length > 0 && <span className={input.length > 4000 ? 'text-warning' : ''}>{input.length} chars</span>}
+          {input.length > 0 && (
+            <span className="flex items-center gap-2">
+              <span className={input.length > 4000 ? 'text-warning' : ''}>{input.length} chars</span>
+              <span className="text-text-muted/60">·</span>
+              <span>~{Math.round(input.length / 4)} tokens</span>
+            </span>
+          )}
         </div>
       </div>
     </div>
