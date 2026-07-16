@@ -6,10 +6,10 @@ allowed and caps how many rejections the budget will issue before degrading to
 "allow everything" — that's the safety valve so a stuck LLM doesn't stall the
 loop forever.
 
-Default tiers (matches the W2 R1 plan):
-  iterations 1-5   open    any mode, no rejection cap
-  iterations 6-15  medium  coder / explore only, max 15 rejections
-  iterations 16-20 light   coder only, max 10 rejections
+Default tiers (调松后, 材料任务多轮 DFT 不再被过早一刀切):
+  iterations 1-10   open    any mode, no rejection cap
+  iterations 11-30  medium  coder / explore only, max 30 rejections
+  iterations 31-50 light   coder only, max 20 rejections
 
 The engine consults this right after _plan returns and before the plan->execute
 phase-gate. A rejected plan injects a hint into _speculator_hint so the next
@@ -47,9 +47,9 @@ class IterationBudget:
 # 默认三档预算. 用 frozenset 之外的 tuple 是为了让 label 在 hint 里有序可读.
 _OPEN = IterationBudget(allowed_modes=None, max_calls=None, label="open")
 _MEDIUM = IterationBudget(
-    allowed_modes=("coder", "explore"), max_calls=15, label="medium"
+    allowed_modes=("coder", "explore"), max_calls=30, label="medium"
 )
-_LIGHT = IterationBudget(allowed_modes=("coder",), max_calls=10, label="light")
+_LIGHT = IterationBudget(allowed_modes=("coder",), max_calls=20, label="light")
 
 
 @dataclass(frozen=True)
@@ -73,9 +73,9 @@ class ProgressiveBudget:
     def default(cls) -> ProgressiveBudget:
         return cls(
             tiers=(
-                (5, _OPEN),
-                (15, _MEDIUM),
-                (20, _LIGHT),
+                (10, _OPEN),
+                (30, _MEDIUM),
+                (50, _LIGHT),
             )
         )
 

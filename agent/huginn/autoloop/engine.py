@@ -1108,7 +1108,7 @@ class AutoloopEngine:
     async def run(
         self,
         objective: str,
-        max_iterations: int = 20,
+        max_iterations: int = 50,
         progressive_budget: bool = True,
         goal: Goal | None = None,
         max_refines: int = 8,
