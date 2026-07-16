@@ -243,6 +243,49 @@ class EquivalenceAuditor:
         except (json.JSONDecodeError, TypeError, AttributeError):
             return EquivalenceVerdict(verdict="undetermined", missing_mechanism="LLM 解析失败")
 
+    # ── 拓扑审计 (高阶网络视角) ──────────────────────────────────
+
+    def audit_topology(
+        self,
+        candidate_nodes: list[str],
+        candidate_edges: list[tuple[str, str]],
+        original_nodes: list[str],
+        original_edges: list[tuple[str, str]],
+    ) -> EquivalenceVerdict:
+        """拓扑审计: 用 Hodge 签名判断候选发现与原问题的证据网络是否拓扑等价.
+
+        高阶网络视角: 两个假设的证据网络拓扑不同 → 真不同 (非换名).
+        拓扑相同 → 可能等价, 需更深判断.
+
+        判据:
+        - β₁ 不同 → 拓扑不同 → advances (真推进)
+        - 度熵差异 > 0.3 → 证据分布不同 → advances
+        - 调和分量存在性不同 → 拓扑环结构不同 → advances
+        - 全相同 → equivalent_renaming (可能换名)
+
+        ponytail: 用图论近似 Betti 数, 不是真实同调. 升级: 接 gudhi.
+        """
+        from huginn.metacog.topology_lens import hodge_signature
+
+        sig_cand = hodge_signature(candidate_nodes, candidate_edges)
+        sig_orig = hodge_signature(original_nodes, original_edges)
+
+        is_diff, reason = sig_cand.differs_from(sig_orig)
+        if is_diff:
+            return EquivalenceVerdict(
+                verdict="advances",
+                missing_mechanism=f"拓扑结构不同: {reason}",
+                evidence=[f"候选 β₁={sig_cand.beta1_approx}, 原 β₁={sig_orig.beta1_approx}"],
+                trap_category="topological_distinction",
+            )
+        return EquivalenceVerdict(
+            verdict="equivalent_renaming",
+            reduction_target="same_topology",
+            evidence=[f"拓扑签名相同 (β₁={sig_cand.beta1_approx}, 度熵≈{sig_cand.degree_entropy:.2f})"],
+            trap_category="topological_equivalence",
+            missing_mechanism="拓扑签名相同, 可能是换名归约, 需更深判断",
+        )
+
 
 # ── 自检 ─────────────────────────────────────────────────────────
 
