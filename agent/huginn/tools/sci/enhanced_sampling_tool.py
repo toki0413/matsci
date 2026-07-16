@@ -246,32 +246,21 @@ class EnhancedSamplingTool(HuginnTool):
         max_iter = 50000
         tol = 1e-6
 
+        # 预计算偏置势矩阵, 避免三重 Python 循环 (50000×50×8=20M 次 math.exp 超时)
+        V = 0.5 * k * (bin_centers[:, None] - centers[None, :]) ** 2  # (bin_count, n_windows)
+        exp_negbV = np.exp(-beta * V)  # (bin_count, n_windows)
+        hists_T = hists.T  # (bin_count, n_windows)
+        sum_term = (n_per_window * exp_negbV).sum(axis=1)  # Σᵢ Nᵢ·exp(−βVᵢ)
+
         for iteration in range(max_iter):
             F_old = F.copy()
-            # Compute unbiased probability
-            prob = np.zeros(args.bin_count)
-            for b in range(args.bin_count):
-                numerator = 0.0
-                denominator = 0.0
-                for i in range(n_windows):
-                    V_i = 0.5 * k * (bin_centers[b] - centers[i]) ** 2
-                    w = n_per_window[i] * math.exp(-beta * V_i)
-                    numerator += hists[i, b] * math.exp(-beta * V_i)
-                    denominator += w * math.exp(-beta * F_old[b])
-
-                if denominator > eps:
-                    prob[b] = numerator / max(denominator, eps)
-                else:
-                    prob[b] = 0.0
-
-            # Update F
+            numerator = (hists_T * exp_negbV).sum(axis=1)  # Σᵢ hᵢ·exp(−βVᵢ)
+            denominator = np.exp(-beta * F_old) * sum_term  # Σᵢ Nᵢ·exp(−βVᵢ)·exp(−βF)
+            prob = np.where(denominator > eps,
+                            numerator / np.maximum(denominator, eps), 0.0)
             prob = np.maximum(prob, eps)
             F = -np.log(prob) / beta
-
-            # Shift so min(F) = 0
             F = F - np.min(F)
-
-            # Check convergence
             if np.max(np.abs(F - F_old)) < tol:
                 break
 
