@@ -49,7 +49,7 @@ class TemporalMemory:
 
 
 @dataclass
-class CognitiveState:
+class PerceptionSnapshot:
     """Integrated cognitive state from multi-modal perception."""
     timestamp: float
     workspace: str
@@ -98,7 +98,7 @@ class CognitiveIntegrator:
         self.memory: deque[TemporalMemory] = deque(maxlen=max_memory)
         self._last_integration_time: float = 0.0
 
-    def integrate(self, snapshot: Any) -> CognitiveState:
+    def integrate(self, snapshot: Any) -> PerceptionSnapshot:
         """Integrate a perception snapshot into cognitive state."""
         now = time.time()
         self._last_integration_time = now
@@ -122,7 +122,7 @@ class CognitiveIntegrator:
         if hasattr(snapshot, "get"):
             sim_updates = snapshot.get("simulation_updates", sim_updates)
 
-        state = CognitiveState(timestamp=now, workspace=workspace)
+        state = PerceptionSnapshot(timestamp=now, workspace=workspace)
 
         # ── File events summary ──
         if file_events:
@@ -177,7 +177,7 @@ class CognitiveIntegrator:
 
         return state
 
-    def _extract_modalities(self, state: CognitiveState, snapshot: Any) -> list[tuple[str, str]]:
+    def _extract_modalities(self, state: PerceptionSnapshot, snapshot: Any) -> list[tuple[str, str]]:
         """Extract (modality, text) pairs for conflict detection."""
         modalities = []
         if state.file_summary:
@@ -210,7 +210,7 @@ class CognitiveIntegrator:
             return "structure analysis"
         return "code development"
 
-    def _update_memory(self, now: float, state: CognitiveState, snapshot: Any) -> None:
+    def _update_memory(self, now: float, state: PerceptionSnapshot, snapshot: Any) -> None:
         """Store current state to temporal memory."""
         summary = f"{state.file_summary}; {state.terminal_summary[:50]}"
         vec = self.aligner.embed(summary)
@@ -225,7 +225,7 @@ class CognitiveIntegrator:
             importance=importance,
         ))
 
-    def _retrieve_relevant_memory(self, now: float, state: CognitiveState, top_k: int = 3) -> list[TemporalMemory]:
+    def _retrieve_relevant_memory(self, now: float, state: PerceptionSnapshot, top_k: int = 3) -> list[TemporalMemory]:
         """Retrieve most relevant past memories."""
         if not self.memory:
             return []
@@ -238,7 +238,7 @@ class CognitiveIntegrator:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [mem for _, mem in scored[:top_k]]
 
-    def _generate_hypothesis(self, state: CognitiveState, memory: list[TemporalMemory]) -> str:
+    def _generate_hypothesis(self, state: PerceptionSnapshot, memory: list[TemporalMemory]) -> str:
         """Generate a hypothesis from current state and memory."""
         if state.errors_present and state.simulation_running:
             return "Simulation may be failing due to convergence issues; check parameters"
@@ -255,7 +255,7 @@ class CognitiveIntegrator:
             return "No recent activity detected; workspace is idle"
         return f"Active task: {state.active_task or 'unknown'}; monitoring for changes"
 
-    def _compute_confidence(self, state: CognitiveState) -> float:
+    def _compute_confidence(self, state: PerceptionSnapshot) -> float:
         """Compute confidence score for the hypothesis."""
         score = 0.5
         if state.errors_present:
@@ -266,7 +266,7 @@ class CognitiveIntegrator:
             score += 0.1
         return min(score, 1.0)
 
-    def _recommend_tools(self, state: CognitiveState) -> list[str]:
+    def _recommend_tools(self, state: PerceptionSnapshot) -> list[str]:
         """Recommend tools based on state."""
         tools = []
         if state.errors_present:
@@ -286,7 +286,7 @@ class CognitiveIntegrator:
             tools.append("file_read_tool")
         return tools
 
-    def _recommend_actions(self, state: CognitiveState) -> list[str]:
+    def _recommend_actions(self, state: PerceptionSnapshot) -> list[str]:
         """Recommend high-level actions."""
         actions = []
         if state.errors_present:

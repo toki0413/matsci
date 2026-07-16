@@ -25,6 +25,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from huginn.metacog import recall_audit_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,6 +131,21 @@ class EquivalenceAuditor:
         reduction_chain: str = "",
     ) -> EquivalenceVerdict:
         """审计一个候选发现是否为换名归约."""
+        # recall 历史假设: 若与历史假设等价 (换名重提), 直接判 equivalent_renaming
+        historical = recall_audit_context(
+            category="hypothesis", query=candidate_finding, limit=20
+        )
+        for record in historical:
+            past = record.get("content", "") or ""
+            if past and self._is_equivalent(candidate_finding, past):
+                return EquivalenceVerdict(
+                    verdict="equivalent_renaming",
+                    reduction_target=f"historical:{record.get('id', '')}",
+                    trap_category="historical_duplicate",
+                    evidence=[f"与历史假设等价: {past[:120]}"],
+                    missing_mechanism="需提出与历史假设实质不同的新机制, 不是换名重提",
+                )
+
         # 规则先跑, LLM 增强作为补充
         rule_verdict = self._rule_based_audit(
             candidate_finding, original_problem, reduction_chain
@@ -148,6 +165,15 @@ class EquivalenceAuditor:
                 logger.debug("LLM audit failed, falling back to rules", exc_info=True)
 
         return rule_verdict
+
+    def _is_equivalent(self, a: str, b: str) -> bool:
+        """字符串相似度 > 0.8 视为等价.
+
+        ponytail: difflib 字面相似度, 抓不住同义改写 (如"稳定性预测" vs "预测稳定性").
+        升级路径: 接 embedding cosine, 阈值 0.92.
+        """
+        import difflib
+        return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio() > 0.8
 
     def _rule_based_audit(
         self,

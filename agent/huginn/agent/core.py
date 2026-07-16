@@ -16,12 +16,13 @@ from typing import Any
 from langchain_core.messages import SystemMessage
 
 from huginn.agent_config import _UNSET_SENTINEL, AgentConfig
-from huginn.benchmark import BenchmarkSuite
+from huginn.self_improvement import BenchmarkSuite
 from huginn.checkpointer import create_in_memory_checkpointer
 from huginn.context_manager import (
     get_context_window,
     reset_context_cache,
 )
+from huginn.cognitive_engine import STATE_TO_MODEL_TASK
 from huginn.hooks import HookManager
 from huginn.models.router import ModelRouter
 from huginn.permissions import PermissionConfig
@@ -255,7 +256,7 @@ class HuginnAgent(
             persona_system_prompt=self.system_prompt,
         )
 
-        from huginn.reflection import TaskReflector
+        from huginn.task_reflector import TaskReflector
 
         self._reflector = TaskReflector()
 
@@ -409,6 +410,12 @@ class HuginnAgent(
     # ── Mode management ───────────────────────────────────────────
 
     def set_mode(self, mode: str) -> None:
+        """切换 agent mode (chat/research/plan).
+
+        内部委托 CSM S3_SWITCH 处理 (R7 减法: 合并 mode 切换和 CSM 控制).
+        保留公开 API 向后兼容. CSM transition 是 advisory — 当前状态不允许转 S3
+        时返回当前 state 不强制, 不破坏现有 mode 逻辑.
+        """
         if mode not in ("chat", "research", "plan"):
             raise ValueError(f"unknown mode: {mode}. options: chat, research, plan")
         if mode != self._mode:
@@ -425,6 +432,17 @@ class HuginnAgent(
             if perm_cfg is not None:
                 perm_cfg.plan_mode = (mode == "plan")
             logger.info("agent mode switched to '%s'", mode)
+
+            # R7: mode 切换 = cognitive switch, 委托 CSM S3_SWITCH.
+            # reflection.py 的 should_switch_mode 路径也走 set_mode → 这里一处覆盖两边.
+            # ponytail: getattr 兜底 + try/except 静默, 不破坏 turn. 升级: 显式 CSM 注入.
+            csm = getattr(self, "_csm", None)
+            if csm is not None:
+                try:
+                    from huginn.cognitive_engine import TransitionSignal
+                    csm.transition(TransitionSignal("user_confirmed", {"mode": mode}))
+                except Exception:
+                    logger.debug("set_mode CSM delegation failed", exc_info=True)
 
     def get_mode(self) -> str:
         return self._mode
@@ -658,6 +676,14 @@ class HuginnAgent(
         if task == "agent" and self._main_fallback_override is not None:
             return self._main_fallback_override
         if self.model_router is not None:
+            # 让 CSM state 覆盖 task: 构造用 reasoning, 验证/自修改用 verification
+            # ponytail: 用 .get 避免 KeyError，未映射状态保留原 task；升级路径是加完整 CSM state → model task 映射
+            try:
+                csm = getattr(self, "_csm", None)
+                if csm is not None:
+                    task = STATE_TO_MODEL_TASK.get(csm.state, task)
+            except Exception:
+                pass
             return self.model_router.select(task)
         if self.model is None:
             raise RuntimeError("HuginnAgent has no model or model_router configured")
@@ -801,7 +827,7 @@ class HuginnAgent(
         suite: BenchmarkSuite | None = None,
         store_failures: bool = True,
     ) -> dict[str, Any]:
-        from huginn.benchmark import SelfImprovementLoop
+        from huginn.self_improvement import SelfImprovementLoop
 
         suite = suite or BenchmarkSuite().add_defaults()
         loop = SelfImprovementLoop(suite=suite, memory_manager=self.memory)

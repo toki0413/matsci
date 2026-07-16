@@ -1,7 +1,12 @@
 """Memory and knowledge management package."""
 
 from huginn.memory.index import build_memory_index, get_topic_file_path
-from huginn.memory.longterm import LongTermMemory, MemoryEntry
+from huginn.memory.longterm import (
+    LongTermMemory,
+    MemoryEntry,
+    load_stable_principles,
+    store_stable_principle,
+)
 from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.memory.session import SessionContext, ToolCallRecord
 from huginn.memory.truncation import (
@@ -25,4 +30,6 @@ __all__ = [
     "MAX_ENTRYPOINT_BYTES",
     "build_memory_index",
     "get_topic_file_path",
+    "store_stable_principle",
+    "load_stable_principles",
 ]

@@ -108,6 +108,44 @@ class ContextMixin:
         except Exception:
             logger.debug("tool availability check failed", exc_info=True)
 
+        # STABLE_PRINCIPLES: S7 自修改回流进来的 persona 原则. 闭合
+        # persona→behavior→memory→knowledge→persona 回路 (G8 加法).
+        # 不走 CSM, RCB/benchmark 场景也保留 — 这部分是 persona 一部分,
+        # memory_manager 在 bench 里是 None 不影响这里 (走文件不走 SQLite).
+        try:
+            from huginn.memory import load_stable_principles
+
+            _principles = load_stable_principles()
+            if _principles:
+                base += "\n\n## STABLE_PRINCIPLES\n"
+                base += "\n".join(f"- {p}" for p in _principles) + "\n"
+        except Exception:
+            logger.debug("stable_principles injection skipped", exc_info=True)
+
+        # ponytail: 委托 prompt_builder 但保留原逻辑 fallback；
+        # 升级路径是逐步迁移 persona/tools 段到 prompt_builder 后删 fallback
+        try:
+            from huginn.agent.prompt_builder import build_prompt as _build_prompt
+
+            _mode = getattr(self, "_mode", "chat")
+            _pm = getattr(self, "_phase_manager", None)
+            _phase = "execute"
+            try:
+                _phase = _pm.phase.value  # type: ignore[union-attr]
+            except Exception:
+                pass
+            _csm = getattr(self, "_csm", None)
+            _metacog = "s0_blank"
+            try:
+                _metacog = _csm.state.value or "s0_blank"  # type: ignore[union-attr]
+            except Exception:
+                pass
+            built = _build_prompt(_mode, _phase, _metacog)
+            if built and len(built) > len(base) * 0.5:
+                return built
+        except Exception:
+            logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
+
         return base
 
     def _effective_tools(self, query: str | None = None) -> list[Any]:

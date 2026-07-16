@@ -27,6 +27,7 @@ from huginn.metacog.depth_search import (
     PrematureConvergenceDetector,
 )
 from huginn.metacog.equivalence_auditor import EquivalenceAuditor, EquivalenceVerdict
+from huginn.metacog import recall_audit_context
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class CompletionChecklist:
     unexplored_count: int = 0
     adversarial_veto: bool = False
     adversarial_veto_reason: str = ""
+    # 历史子目标探索记录, 供根 agent 对比当前探索与历史 (不参与 is_complete 判定)
+    historical_context: list[dict] = field(default_factory=list)
 
     @property
     def is_complete(self) -> bool:
@@ -140,8 +143,13 @@ class CompletionAuditor:
         unexplored_declaration: str = "",
         adversarial_veto: bool = False,
         adversarial_veto_reason: str = "",
+        provenance_snapshot: list | None = None,
     ) -> CompletionChecklist:
-        """反完成审计: 综合检查是否过早收敛, 返回 CompletionChecklist."""
+        """反完成审计: 综合检查是否过早收敛, 返回 CompletionChecklist.
+
+        provenance_snapshot: 可选的 ProvenanceEntry 列表, 塞进 historical_context
+        供根 agent 对比当前探索与历史工具产出. 不传则不影响现有行为.
+        """
         # 1. 努力下限 (PrematureConvergenceDetector)
         status = self._detector.check(
             iteration=iteration,
@@ -172,6 +180,24 @@ class CompletionAuditor:
         # 3. 不完整性自白
         unexplored_count = parse_unexplored_declaration(unexplored_declaration)
 
+        # recall 历史子目标探索, 给根 agent 提供对比上下文 (不影响 is_complete 判定)
+        # ponytail: 只挂到 historical_context, 不参与四层检查. 升级路径: 命中过深时计入 deficit.
+        historical = recall_audit_context(
+            category="subgoal",
+            query=original_problem or candidate_finding,
+            limit=10,
+        )
+
+        # ponytail: provenance_snapshot 可选, 不破坏现有调用; 升级路径是 audit 自动拉 ProvenanceRegistry.recent_entries()
+        if provenance_snapshot:
+            if isinstance(historical, list):
+                historical = list(historical)
+                historical.extend(provenance_snapshot)
+            elif isinstance(historical, dict):
+                historical["provenance"] = provenance_snapshot
+            else:
+                historical = list(provenance_snapshot)
+
         return CompletionChecklist(
             effort_floor_passed=effort_floor_passed,
             effort_deficits=effort_deficits,
@@ -180,6 +206,7 @@ class CompletionAuditor:
             unexplored_count=unexplored_count,
             adversarial_veto=adversarial_veto,
             adversarial_veto_reason=adversarial_veto_reason,
+            historical_context=historical,
         )
 
 

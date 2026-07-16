@@ -13,7 +13,10 @@
 
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 
@@ -164,6 +167,9 @@ _DEFAULT_MODES: list[FailureMode] = [
 ]
 
 
+_OBS_LOG_PATH = Path(".huginn/failure_mode_obs.jsonl")
+
+
 class FailureModeRegistry:
     """失败模式注册表, 支持按 category / family 过滤."""
 
@@ -171,6 +177,66 @@ class FailureModeRegistry:
         self._modes: dict[str, FailureMode] = {
             m.id: m for m in (modes or _DEFAULT_MODES)
         }
+        # ponytail: observed_counts 无 LRU 上限, 长期跑会膨胀;
+        # 升级路径是加窗口 LRU + 按 timestamp 老化
+        self.observed_counts: dict[str, int] = {}
+        self._load_observed_counts()
+
+    def _load_observed_counts(self) -> None:
+        """启动时从 jsonl 恢复计数, 文件缺失或损坏就跳过."""
+        path = _OBS_LOG_PATH
+        if not path.is_file():
+            return
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    mid = rec.get("mode_id")
+                    if mid:
+                        self.observed_counts[mid] = (
+                            self.observed_counts.get(mid, 0) + 1
+                        )
+        except (OSError, json.JSONDecodeError):
+            # 损坏的日志不阻断, 后续 append 会继续写
+            pass
+
+    def record_observation(
+        self, mode_id: str, tool_name: str, evidence: str
+    ) -> None:
+        """记一次失败观察: 计数+1, 追加落盘, 路由信号给 SignalHub.
+
+        任何一步失败都不抛 — 调用方 (tool base) 依赖这个不阻断特性.
+        """
+        self.observed_counts[mode_id] = (
+            self.observed_counts.get(mode_id, 0) + 1
+        )
+        rec = {
+            "timestamp": time.time(),
+            "mode_id": mode_id,
+            "tool_name": tool_name,
+            "evidence": evidence,
+        }
+        try:
+            path = _OBS_LOG_PATH
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            # 落盘失败不抹掉内存计数, 下次进程起来会丢这条历史
+            pass
+        try:
+            from huginn.metacog.signal_hub import SignalHub
+
+            SignalHub.shared().route(
+                "skill_failure",
+                {"mode_id": mode_id, "tool_name": tool_name},
+            )
+        except Exception:
+            # SignalHub / TransitionSignal 链路出问题不阻断
+            pass
 
     def all(self) -> list[FailureMode]:
         return list(self._modes.values())
@@ -234,6 +300,21 @@ def _selfcheck() -> None:
     severities = [m.severity for m in mixed_hit]
     if "block" in severities and "warn" in severities:
         assert severities.index("block") < severities.index("warn"), "block 应排在 warn 前"
+
+    # 4. record_observation 计数 + 持久化 (跑完清掉日志, 不污染仓库)
+    log_path = _OBS_LOG_PATH
+    if log_path.is_file():
+        log_path.unlink()
+    try:
+        r = FailureModeRegistry()
+        r.record_observation("selfcheck_mode", "selfcheck_tool", "boom")
+        assert r.observed_counts.get("selfcheck_mode") == 1, r.observed_counts
+        # 重新构造应从 jsonl 恢复计数
+        r2 = FailureModeRegistry()
+        assert r2.observed_counts.get("selfcheck_mode") == 1, r2.observed_counts
+    finally:
+        if log_path.is_file():
+            log_path.unlink()
 
     print("failure_modes selfcheck OK")
 

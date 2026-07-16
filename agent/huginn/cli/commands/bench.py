@@ -56,7 +56,14 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
         ds.error(f"未知 suite: {suite}")
         return
 
-    runner = BenchmarkRunner(tasks=tasks, config=cfg)
+    # ponytail: bench 命令注入 MemoryManager; 升级路径是 bench 复用 live agent 的 memory
+    try:
+        from huginn.memory.manager import MemoryManager
+        mem = MemoryManager()
+    except Exception:
+        mem = None
+
+    runner = BenchmarkRunner(tasks=tasks, config=cfg, memory_manager=mem)
     cats = (
         [c.strip() for c in categories.split(",") if c.strip()] if categories else None
     )

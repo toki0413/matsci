@@ -39,7 +39,7 @@ from huginn.perception.terminal_capture import TerminalCapture, TerminalStatus
 from huginn.perception.webbridge_monitor import WebBridgeMonitor, BrowserSnapshot
 from huginn.perception.simulator_log_tailer import SimulatorLogTailer, SimulationUpdate
 from huginn.perception.semantic_alignment import SemanticAligner, SemanticConflict
-from huginn.perception.cognitive_integration import CognitiveIntegrator, CognitiveState
+from huginn.perception.cognitive_integration import CognitiveIntegrator, PerceptionSnapshot
 
 # DocGraph pipeline modules (M1-M7)
 from huginn.perception.doc_types import (
@@ -148,7 +148,7 @@ class PerceptionLayer:
             simulation_updates=list(self.simulator.updates()),
         )
 
-    def get_cognitive_state(self) -> CognitiveState:
+    def get_cognitive_state(self) -> PerceptionSnapshot:
         """Capture full L1-L4 integrated cognitive state."""
         snapshot = self.get_snapshot()
         return self.integrator.integrate(snapshot)

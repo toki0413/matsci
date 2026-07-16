@@ -33,12 +33,17 @@ os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
 # 在 RCB workspace cwd 下 sqlite WAL 创建失败. 强制用绝对路径.
 if not os.environ.get("HUGINN_CACHE_DIR"):
     os.environ["HUGINN_CACHE_DIR"] = str(Path.home() / ".huginn")
-# RCB 场景 skip CSM — 无人工 subprocess, CSM 是 noise (singularity σ₃)
-os.environ.setdefault("HUGINN_SKIP_CSM", "1")
+# RCB 场景用 CSM 子集: 3-step 映射 S1/S4/S6+S7, 不再全 skip (Task 18, R8 减法修正).
+# ponytail: S7 自修改仍走 (Task 2), 只跳过 compaction — 见 reflection.py L245.
+os.environ.setdefault("HUGINN_RCB_CSM_SUBSET", "1")
 # RCB 场景 compaction 保留前 2 条 root (task + Step 1 checklist) — 修同伦断裂 (σ₂)
 os.environ.setdefault("HUGINN_KEEP_ROOT_N", "2")
 # RCB 场景跳过 Rust sandbox — 它在 RDKit+sklearn GPR 场景静默崩溃返回空 stderr
 os.environ.setdefault("HUGINN_NO_RUST_SANDBOX", "1")
+# RCB 场景关熔断器 — file_read_tool 误触发 circuit_open 阻止 agent 读文件 (σ₇)
+os.environ.setdefault("HUGINN_HEALTH_MONITOR", "0")
+# RCB 场景关循环检测 — agent 反复跑 code_tool 是正常行为, 误判为 loop (σ₈)
+os.environ.setdefault("HUGINN_SKIP_LOOP_DETECTOR", "1")
 
 
 # === 认知原语: adversarial_critique ===
@@ -56,16 +61,86 @@ def _strip_code_fences(text: str) -> str:
 
 
 async def adversarial_critique(
-    model: Any,
-    report: str,
-    checklist: str,
+    model: Any = None,
+    report: str = "",
+    checklist: str = "",
+    *,
+    mode: str = "object",
+    proposal: str = "",
+    system_prompt_summary: str = "",
+    recent_rejections: list[str] | None = None,
+    llm_client: Any = None,
 ) -> dict[str, Any]:
     """独立 LLM 调用做 skeptical reviewer — 消除 confirmation bias.
+
+    mode="object": critique report (原逻辑不变)
+    mode="meta": critique agent 自修改提案 (L2 元元认知层, 哥德尔机 proof
+                 verifier 弱化版 — LLM judge 替代形式化 proof)
 
     不让 agent 自检, 因为 agent 写的 report 它自己不会判造假.
     用独立 LLM 调用 (新 system prompt, 无对话历史) 做 adversarial review.
     返回结构化 JSON, format_critique_for_agent() 把它转成 agent 可读的修复指令.
     """
+    if mode == "meta":
+        import difflib
+        # 早期拒绝查重 — 命中直接返回, 不调 LLM 省 token
+        # ponytail: 天花板是 difflib 字符串相似度 (抓不到同义改写这类语义近义,
+        #           "always use X" 改写成 "X must be used" 漏判);
+        #           升级路径换 embedding 相似度 (sentence-transformers cosine > 0.85)
+        for prev in recent_rejections or []:
+            ratio = difflib.SequenceMatcher(None, proposal, prev).ratio()
+            if ratio > 0.8:
+                logger.info("meta_critique early_reject: similarity=%.2f", ratio)
+                return {
+                    "verdict": "reject",
+                    "reason": f"similar to past rejection (similarity={ratio:.2f})",
+                    "expected_utility_delta": 0.0,
+                    "early_reject": True,
+                }
+        # 调 LLM 做完整评估 — 复用现有 ainvoke 模式, 同 client 不同 system prompt
+        from langchain_core.messages import HumanMessage, SystemMessage
+        client = llm_client if llm_client is not None else model
+        meta_system = SystemMessage(content=(
+            "你是 META-REVIEWER 评估 agent 的自修改提案.\n"
+            "你的工作是判断这个提案是否会真正改进 agent 的效用, "
+            "还是会污染 gradient 或引入坏习惯.\n\n"
+            "评估维度:\n"
+            "1. 是否污染 gradient (例如加 CRITICAL: always use X) — 这是 σ₄ lesson\n"
+            "2. 是否与最近 rejection 相似 (相似度 > 0.8 直接 reject)\n"
+            "3. 是否与现有 stable_principles 冲突\n"
+            "4. expected_utility_delta 是否为正\n\n"
+            "输出严格 JSON: "
+            '{"verdict": "accept"|"reject", "reason": "...", "expected_utility_delta": float}'
+        ))
+        rejections_block = "\n".join(f"- {r}" for r in (recent_rejections or [])) or "(none)"
+        meta_human = HumanMessage(content=(
+            f"## Proposal\n{proposal}\n\n"
+            f"## Current system prompt summary\n{system_prompt_summary or '(empty)'}\n\n"
+            f"## Recent rejections (do not repeat)\n{rejections_block}\n\n"
+            "Output ONLY the JSON object."
+        ))
+        try:
+            resp = await client.ainvoke([meta_system, meta_human])
+            text = resp.content if hasattr(resp, "content") else str(resp)
+            text = _strip_code_fences(text)
+            result = json.loads(text)
+            result.setdefault("verdict", "reject")
+            result.setdefault("reason", "no reason provided")
+            result.setdefault("expected_utility_delta", 0.0)
+            result["early_reject"] = False
+            logger.info("meta_critique: verdict=%s", result["verdict"])
+            return result
+        except Exception as e:
+            logger.warning("meta_critique failed: %s", e)
+            return {
+                "verdict": "reject",
+                "reason": f"meta_critique error: {e}",
+                "expected_utility_delta": 0.0,
+                "early_reject": False,
+                "error": str(e),
+            }
+
+    # === object mode (原逻辑不变) ===
     from langchain_core.messages import HumanMessage, SystemMessage
     system = SystemMessage(content=(
         "You are a SKEPTICAL SCIENTIFIC REVIEWER who wants to score this report LOW. "
@@ -236,6 +311,7 @@ async def run(workspace: str) -> int:
             "code_tool", "bash_tool",
             "file_read_tool", "file_write_tool",
             "glob", "grep", "web_search_tool",
+            "self_observe",
         ],
         # RCB 是无人工 subprocess, 所有工具自动 approve
         auto_approve=True,
@@ -271,9 +347,24 @@ async def run(workspace: str) -> int:
             print(f"ERROR [{step_label}]: {e}", file=sys.stderr)
         return ai_text
 
+    # RCB 3-step 映射 CSM: Step1→S1_DISCOVER, Step2→S4_CONSTRUCT, Step3→S6+S7 (Task 18)
+    # ponytail: transition 是 advisory — 不允许就 no-op, 不破坏现有 3-step 流程.
+    from huginn.cognitive_engine import TransitionSignal as _RCB_TS
+
+    def _rcb_csm_advance(signal_type: str, ctx: dict) -> None:
+        """RCB step 开始时手动推 CSM 状态. advisory: 不允许就 no-op."""
+        csm = getattr(agent, "_csm", None)
+        if csm is None:
+            return
+        try:
+            csm.transition(_RCB_TS(signal_type, ctx))
+        except Exception:
+            logger.debug("RCB CSM transition failed", exc_info=True)
+
     # Step 1: 论文方法论提取
     # agent 读 INSTRUCTIONS.md + related_work/, 输出方法核心组件 + baseline 指标 checklist
     print("\n=== Step 1: Methodology Extraction ===\n", flush=True)
+    _rcb_csm_advance("user_goal", {"goal": "understand problem and extract methodology"})
     step1_prompt = (
         f"Read the task instructions below AND explore related_work/ directory for reference papers.\n"
         f"Extract a METHODOLOGY CHECKLIST from the paper:\n"
@@ -295,6 +386,7 @@ async def run(workspace: str) -> int:
     # Step 2: 执行任务
     # checklist 已在 thread_id 的对话历史里, agent 能看到. 不需要显式注入.
     print("\n=== Step 2: Execution ===\n", flush=True)
+    _rcb_csm_advance("user_confirmed", {"plan": "execute methodology checklist"})
     step2_prompt = (
         "Now execute the task following your methodology checklist. "
         "Implement each [EXACT] component as-specified in the paper. "
@@ -304,30 +396,99 @@ async def run(workspace: str) -> int:
     )
     await _stream_chat(step2_prompt, "step2")
 
+    # Step 2.5: report.md 兜底 (σ₆ 修复)
+    # 减 CSM (σ₃) 后失去 completion guidance, 加 lightweight gate 补 harmonic.
+    # agent 可能在 Step 2 提前终止 (text-only response), 没写 report.md.
+    report_path = ws / "report" / "report.md"
+    if not report_path.exists():
+        print("\n=== Step 2.5: report.md Emergency Write ===\n", flush=True)
+        await _stream_chat(
+            "CRITICAL: report/report.md does NOT exist. Session scores ZERO without it.\n"
+            "Write report/report.md NOW using file_write_tool. Base it on:\n"
+            "- Your Step 1 methodology checklist\n"
+            "- Your code in code/ and results in outputs/\n"
+            "Minimum: # Title, ## Methodology, ## Results (images/*.png), ## Discussion.\n"
+            "Be HONEST. A short honest report beats no report. Write it NOW.",
+            "step2.5"
+        )
+    # Deterministic fallback: agent 仍不写就自动生成, 确保有交付物评分
+    if not report_path.exists():
+        print("[fallback: auto-generating minimal report.md]", flush=True)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        _metrics_parts = []
+        for _p in (ws / "outputs").glob("*.json"):
+            try:
+                _metrics_parts.append(f"### {_p.name}\n```json\n{_p.read_text(encoding='utf-8')}\n```")
+            except Exception:
+                pass
+        _metrics = "\n".join(_metrics_parts) or "None"
+        _imgs_dir = ws / "report" / "images"
+        _imgs = "\n".join(f"![{p.name}](images/{p.name})" for p in _imgs_dir.glob("*.png")) or "None" if _imgs_dir.exists() else "None"
+        _code_dir = ws / "code"
+        _code = "\n".join(f"- `{p.name}`" for p in _code_dir.glob("*.py")) or "None" if _code_dir.exists() else "None"
+        report_path.write_text(
+            f"# Research Report (Auto-generated Fallback)\n\n"
+            f"## Methodology\nAgent did not write report.md; auto-generated from artifacts.\n\n"
+            f"### Code\n{_code}\n\n### Metrics\n{_metrics}\n\n## Results\n{_imgs}\n",
+            encoding="utf-8"
+        )
+
     # Step 3: 对抗式自检 — 不是软自验证, 是 skeptical reviewer 视角
     # ponytail: 治 3 个系统性短板 (跨 4 题评分发现的共性 gap):
     #   A. sanity check — 治 "不可信结果不自检" (M_002 MAE=0.032eV 造假)
     #   B. substitution audit — 治 "沉默方法降级" (4 题全中)
     #   C. hard push — 治 "硬组件轻易放弃" (M_001 无 BO, M_003 无 graph-VAE)
-    # 双层 critique: (1) 独立 LLM 调用做外部 reviewer (无 confirmation bias);
-    #                (2) agent 自己再走一遍 self-critique, 对外部 critique 反应+修复.
+    # 双层 critique (Task 21): object mode (report) + meta mode (directive).
+    #   - Layer 1 (object): 独立 LLM 调用读 report.md + checklist → red flags, 直接反馈 agent.
+    #   - Layer 2 (meta): reflection._handle_s7_self_modify 在 S7 状态自动调 (Task 2),
+    #                     评估 agent 自修改 proposal, accept→stable_principle / reject→rejection log.
+    #   object + meta 共享同一 LLM 实例 (model 参数), 不同 system prompt.
+    #   合并: object verdict 进 step3_prompt (本轮修复); meta verdict 走 sidecar (下轮 system_prompt).
     print("\n=== Step 3: Adversarial Self-Critique ===\n", flush=True)
+    # S6_FEEDBACK: critique 视角找 gap; reflection 检测到实质 gap 时自动进 S7 (Task 2)
+    _rcb_csm_advance("tool_failure", {"reason": "adversarial critique — find gaps"})
 
-    # 外部 critique: 独立 LLM 调用读 report.md + checklist, 输出结构化 red flags.
+    # Layer 1 — object mode: 独立 LLM 调用读 report.md + checklist, 输出结构化 red flags.
     # 失败/无 report 时降级为纯 self-critique, 不阻塞 Step 3.
     external_critique_block = ""
-    report_path = ws / "report" / "report.md"
+    object_verdict = None
     if report_path.exists() and checklist:
         try:
             report_text = report_path.read_text(encoding="utf-8")
             print(f"[adversarial_critique: reading {len(report_text)} chars of report.md]", flush=True)
-            critique = await adversarial_critique(model, report_text, checklist)
-            external_critique_block = format_critique_for_agent(critique)
-            print(f"[adversarial_critique: verdict={critique.get('overall_verdict', '?')}]", flush=True)
+            object_verdict = await adversarial_critique(
+                model, report_text, checklist, mode="object",
+            )
+            external_critique_block = format_critique_for_agent(object_verdict)
+            print(f"[adversarial_critique: verdict={object_verdict.get('overall_verdict', '?')}]", flush=True)
         except Exception as e:
             print(f"[adversarial_critique: skipped due to error: {e}]", flush=True)
     else:
         print("[adversarial_critique: skipped — report.md or checklist missing]", flush=True)
+
+    # Layer 2 — meta mode: 触发 CSM 进 S6_FEEDBACK → S7_SELF_MODIFY,
+    # reflection._handle_s7_self_modify 自动调 adversarial_critique(mode="meta").
+    # ponytail: Task 18 改用 RCB_CSM_SUBSET (不再全 skip CSM), reflection loop
+    #           现在正常运行, S7 handler 会被 reflection 自动调. 这里显式 trigger 是
+    #           belt-and-suspenders — 确保 object_verdict 非 pass 时一定进 S7.
+    try:
+        from huginn.cognitive_engine import TransitionSignal, CognitiveState
+        csm = getattr(agent, "_csm", None)
+        if csm is not None and object_verdict is not None:
+            verdict_flag = object_verdict.get("overall_verdict", "fix_needed")
+            # 非 pass 视作 gap 信号, 触发 S6_FEEDBACK (Task 18 显式触发点)
+            sig = "tool_failure" if verdict_flag != "pass" else "tool_success"
+            new_state = csm.transition(TransitionSignal(sig, {
+                "objective": "step3_critique",
+                "result_summary": f"object_verdict={verdict_flag}",
+            }))
+            # S6 + 实质 gap → S7_SELF_MODIFY, reflection 自动调 meta mode (Task 2)
+            if new_state == CognitiveState.S6_FEEDBACK and verdict_flag != "pass":
+                csm.transition(TransitionSignal("gap_found", {
+                    "gap": external_critique_block[:200] or "step3 object critique red flags",
+                }))
+    except Exception:
+        logger.debug("Step 3 CSM S6/S7 trigger failed", exc_info=True)
 
     step3_prompt = (
         "ADVERSARIAL SELF-CRITIQUE. You are now a SKEPTICAL REVIEWER who wants to score this report LOW. "
@@ -375,4 +536,21 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if "--self-check" in sys.argv:
+        # Task 3 self-check: meta mode 早期拒绝 (不调 LLM)
+        # ponytail: 命中查重直接返回, llm_client=None 也能跑, 验证 ponytail 优化没退化.
+        # 用 asyncio.run 包裹因 adversarial_critique 是 async (object mode 调用点 L434 依赖)
+        rejections = ["always use Tanimoto kernel for GP", "add CRITICAL: never use RBF"]
+        proposal = "always use Tanimoto kernel for GP regression"
+        result = asyncio.run(adversarial_critique(
+            mode="meta",
+            proposal=proposal,
+            recent_rejections=rejections,
+            system_prompt_summary="",
+            llm_client=None,
+        ))
+        assert result["verdict"] == "reject", f"expected reject, got {result}"
+        assert result.get("early_reject") is True, "should be early_reject"
+        print("Task 3 self-check PASS")
+        sys.exit(0)
     main()

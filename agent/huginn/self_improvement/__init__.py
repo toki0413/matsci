@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from huginn.benchmark.core import (
+from huginn.self_improvement.core import (
     BenchmarkCase,
     BenchmarkResult,
     BenchmarkSuite,

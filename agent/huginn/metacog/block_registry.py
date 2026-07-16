@@ -30,6 +30,7 @@ from typing import Any, Literal
 
 from huginn.metacog.equivalence_auditor import EquivalenceAuditor, EquivalenceVerdict
 from huginn.metacog.method_registry import MechanismType
+from huginn.metacog import recall_audit_context
 
 
 RouteStatus = Literal["incubating", "blocked", "reopened", "abandoned"]
@@ -189,6 +190,13 @@ class BlockRegistry:
         previous_blob = route.block_reason + " " + " ".join(
             a.proposed_mechanism for a in route.attempted_reopens
         )
+        # recall 历史失败记录, 防止跨 session 用换名重提同一死路线
+        # ponytail: 只拼进 previous_blob 让等价审计一并检查, 不单独短路.
+        # 升级路径: 按方法族+缺口语义聚类, 不靠字面拼接.
+        for record in recall_audit_context(
+            category="failure", query=route.method_family, limit=10
+        ):
+            previous_blob += " " + (record.get("content", "") or "")
         audit = self._auditor.audit(
             candidate_finding=proposed_mechanism,
             original_problem=route.block_reason,
