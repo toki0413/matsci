@@ -64,7 +64,7 @@ import {
   Users, Code2, BookOpen,
   MessageCircle, Bird, Briefcase, HelpCircle,
   ChevronDown, Sparkles,
-  Search, Grid, Sun, Moon, Plus, Trash2,
+  Search, Grid, Sun, Moon, Plus, Trash2, Globe,
   Maximize2, GitBranch, Brain, Cpu,
 } from 'lucide-react';
 
@@ -113,7 +113,7 @@ export default function App() {
     return <Pet />;
   }
 
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   // Focus trap for modals
   const toolPaletteRef = useRef<HTMLDivElement>(null);
@@ -566,7 +566,7 @@ export default function App() {
     threads, activeThread,
     showGuide, closeGuide,
     setInput, setMode, setMessages, setChatSearchOpen, setChatSearchQuery,
-    setThreads, setShowGuide, switchThread,
+    setThreads, setShowGuide, switchThread, setMessagesByThread,
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
     forkThread, archiveThread, unarchiveThread,
@@ -722,6 +722,45 @@ export default function App() {
         { id: "threads" as const, label: t('tab.threads'), icon: <MessageCircle size={16} aria-hidden="true" /> },
         { id: "settings" as const, label: t('tab.settings'), icon: <Settings size={16} aria-hidden="true" /> },
       ],
+    },
+  ];
+
+  // Command palette actions
+  const commandActions = [
+    {
+      id: "theme-toggle",
+      label: t('cmd.themeToggle'),
+      icon: theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />,
+      handler: toggleTheme,
+      group: "quick",
+    },
+    {
+      id: "lang-toggle",
+      label: i18n.language === 'en' ? '中文' : 'English',
+      icon: <Globe size={16} />,
+      handler: () => i18n.changeLanguage(i18n.language === 'en' ? 'zh' : 'en'),
+      group: "quick",
+    },
+    {
+      id: "new-thread",
+      label: t('cmd.newThread'),
+      icon: <Plus size={16} />,
+      handler: createThread,
+      group: "thread",
+    },
+    {
+      id: "clear-chat",
+      label: t('cmd.clearChat'),
+      icon: <Trash2 size={16} />,
+      handler: () => { setMessages([]); setMessagesByThread(prev => ({ ...prev, [activeThread]: [] })); },
+      group: "thread",
+    },
+    {
+      id: "go-settings",
+      label: t('cmd.goSettings'),
+      icon: <Settings size={16} />,
+      handler: () => setActiveTab("settings"),
+      group: "nav",
     },
   ];
 
@@ -2077,6 +2116,32 @@ export default function App() {
               </button>
             </div>
             <div className="max-h-[55vh] overflow-y-auto p-3">
+              {(() => {
+                const actionsFiltered = toolSearch === ""
+                  ? commandActions
+                  : commandActions.filter((action) =>
+                      action.label.toLowerCase().includes(toolSearch.toLowerCase())
+                    );
+                return (toolSearch === "" || actionsFiltered.length > 0) ? (
+                  <div key="actions" className="mb-3">
+                    <div className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-widest text-text-muted">
+                      {t('cmd.quickActions')}
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {actionsFiltered.map((action) => (
+                        <button
+                          key={action.id}
+                          onClick={() => { action.handler(); setToolPaletteOpen(false); setToolSearch(""); }}
+                          className="flex flex-col items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary p-2.5 text-center hover:border-accent/50 hover:bg-accent/5"
+                        >
+                          <span className="text-text-secondary">{action.icon}</span>
+                          <span className="text-[11px] font-medium leading-tight text-text-primary">{action.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
               {orderedSidebarGroups.map((group) => {
                 const filtered = group.tabs.filter((tab) =>
                   tab.label.toLowerCase().includes(toolSearch.toLowerCase())
@@ -2132,7 +2197,7 @@ export default function App() {
                   </div>
                 );
               })}
-              {toolSearch && !orderedSidebarGroups.some((g) => g.tabs.some((t) => t.label.toLowerCase().includes(toolSearch.toLowerCase()))) && (
+              {toolSearch && !orderedSidebarGroups.some((g) => g.tabs.some((t) => t.label.toLowerCase().includes(toolSearch.toLowerCase()))) && !commandActions.some((a) => a.label.toLowerCase().includes(toolSearch.toLowerCase())) && (
                 <div className="py-8 text-center text-sm text-text-muted">No tools match "{toolSearch}"</div>
               )}
             </div>

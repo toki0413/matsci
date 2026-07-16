@@ -295,6 +295,21 @@ export function ChatPanel(props: ChatPanelProps) {
   // command history popover
   const [showCmdHistory, setShowCmdHistory] = useState(false);
 
+  // ponytail: dev-only progress toast test button — remove before prod
+  const testProgressToast = () => {
+    const id = `test-${Date.now()}`;
+    toast.progress('Processing...', { progress: 0, id, cancelable: true });
+    let p = 0;
+    const timer = setInterval(() => {
+      p += 10;
+      toast.updateProgress(id, p);
+      if (p >= 100) {
+        clearInterval(timer);
+        toast.complete(id, 'Done!');
+      }
+    }, 500);
+  };
+
   // Play notification sound when streaming completes
   useEffect(() => {
     if (isStreaming) {
@@ -604,6 +619,15 @@ export function ChatPanel(props: ChatPanelProps) {
 
   return (
     <div className="flex h-full flex-col">
+      {/* ponytail: dev-only test button for progress toast — remove before prod */}
+      {import.meta.env.DEV && (
+        <button
+          onClick={testProgressToast}
+          className="absolute top-2 left-2 z-50 rounded bg-accent/20 px-2 py-1 text-xs font-medium text-accent hover:bg-accent/30"
+        >
+          Test Progress Toast
+        </button>
+      )}
       {chatSearchOpen && (
         <div className="flex flex-col border-b border-border bg-bg-secondary/50">
           <div className="flex items-center gap-2 px-6 py-2">

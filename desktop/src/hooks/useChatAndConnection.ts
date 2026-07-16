@@ -920,6 +920,25 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           const pipelineKey = tp.pipeline || "pipeline";
           const sIdx = tp.stage_index ?? 0;
           const sTotal = tp.total_stages ?? 1;
+
+          // Toast 进度条：长时间运行的 pipeline 任务
+          const toastId = `pipeline-${pipelineKey}`;
+          const progressPct = tp.progress_pct ?? ((sIdx + 1) / sTotal * 100);
+          const stageLabel = tp.stage_label || tp.message || `Stage ${sIdx + 1}`;
+
+          if (tp.status === "done" || tp.status === "completed") {
+            toast.complete(toastId, `Pipeline 完成: ${tp.topic || pipelineKey}`);
+          } else if (tp.status === "error") {
+            toast.cancel(toastId);
+            toast.error(`Pipeline 失败: ${tp.detail || tp.message}`);
+          } else {
+            toast.progress(stageLabel, {
+              progress: progressPct,
+              id: toastId,
+              cancelable: false,
+            });
+          }
+
           setMessages((prev) => {
             for (let i = prev.length - 1; i >= Math.max(0, prev.length - 20); i--) {
               const m = prev[i];
@@ -987,11 +1006,51 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         if (tp.task_type === "hpc_job") {
           const icon = tp.status === "completed" ? "✅" : tp.status === "failed" ? "❌" : tp.status === "running" ? "🔄" : "⏳";
           progressText = `${icon} HPC Job ${tp.job_id}: ${tp.status}`;
+
+          // Toast 进度条：HPC 任务
+          const toastId = `hpc-${tp.job_id || 'job'}`;
+          if (tp.status === "completed") {
+            toast.complete(toastId, `HPC Job 完成: ${tp.job_id}`);
+          } else if (tp.status === "failed") {
+            toast.cancel(toastId);
+            toast.error(`HPC Job 失败: ${tp.job_id}`);
+          } else if (tp.status === "running") {
+            toast.progress(`HPC Job ${tp.job_id}`, {
+              progress: tp.progress_pct ?? 50,
+              id: toastId,
+              cancelable: false,
+            });
+          }
         } else if (tp.task_type === "sweep") {
           progressText = `📊 Sweep: ${tp.completed}/${tp.total} (${tp.progress_pct}%)`;
+
+          // Toast 进度条：参数扫描
+          const toastId = `sweep-${tp.job_id || 'sweep'}`;
+          if (tp.progress_pct !== undefined && tp.progress_pct >= 100) {
+            toast.complete(toastId, `Sweep 完成: ${tp.completed}/${tp.total}`);
+          } else {
+            toast.progress(`Sweep: ${tp.completed}/${tp.total}`, {
+              progress: tp.progress_pct,
+              id: toastId,
+              cancelable: false,
+            });
+          }
         } else {
           progressText = `📈 Progress: ${tp.progress_pct}%`;
+
+          // Toast 进度条：通用任务
+          const toastId = `task-${tp.task_type}-${tp.job_id || Date.now()}`;
+          if (tp.progress_pct !== undefined && tp.progress_pct >= 100) {
+            toast.complete(toastId, `任务完成`);
+          } else {
+            toast.progress(tp.message || `Processing...`, {
+              progress: tp.progress_pct,
+              id: toastId,
+              cancelable: false,
+            });
+          }
         }
+
         setMessages((prev) => {
           for (let i = prev.length - 1; i >= Math.max(0, prev.length - 10); i--) {
             const m = prev[i];
@@ -1526,6 +1585,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     // Setters
     setInput, setMode, setMessages, setChatSearchOpen, setChatSearchQuery,
     setActiveThread, setThreads, setShowGuide, switchThread,
+    setMessagesByThread,
     // Functions
     sendMessage, answerClarification,
     loadThreads, createThread, renameThread, deleteThread,
