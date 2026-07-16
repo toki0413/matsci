@@ -13,17 +13,23 @@ from huginn.cli.context import CliContext
 from huginn.cli.design_system import get_design_system
 from huginn.config import HuginnConfig
 
-SUITES = ["general", "physics", "lineage", "repro", "optim", "research"]
+SUITES = [
+    "general", "mmlu", "sciq", "arc",
+    "gpqa", "cmmlu", "mmlu_pro", "external",
+    "physics", "lineage", "repro", "optim", "research",
+]
 
 
 @click.command()
 @click.option("--suite", "-s", default="general", type=click.Choice(SUITES),
-              help="Benchmark suite: general/physics/lineage/repro/optim/research")
+              help="Benchmark suite: general/mmlu/sciq/arc/gpqa/cmmlu/mmlu_pro/external/physics/lineage/repro/optim/research")
 @click.option("--evolve", is_flag=True, help="Run evolution cycle after benchmarking (general only)")
 @click.option("--categories", "-c", help="Comma-separated categories to run (general only)")
+@click.option("--max-tasks", "-n", type=int, default=None, help="Limit task count (for mmlu/sciq/arc)")
 @click.option("--output", "-o", default="bench_report.json", help="Report output path")
 @click.pass_obj
-def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None, output: str) -> None:
+def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
+          max_tasks: int | None, output: str) -> None:
     """Run benchmark suite against Huginn agent (DeepSeek v4-flash)."""
     ds = get_design_system()
     cfg = (
@@ -45,7 +51,7 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None, out
 
     from huginn.bench import BenchmarkRunner, get_suite_tasks
 
-    tasks = get_suite_tasks(suite)
+    tasks = get_suite_tasks(suite, max_tasks=max_tasks)
     if not tasks:
         ds.error(f"未知 suite: {suite}")
         return

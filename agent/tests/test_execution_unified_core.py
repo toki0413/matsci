@@ -559,7 +559,8 @@ class TestExecutionOrchestrator:
         assert d["success"] is True
 
     def test_orchestrator_register_tool(self):
-        orch = ExecutionOrchestrator()
+        # register_tool 只对 dict-style registry 有效 (见 orchestrator.register_tool 注释)
+        orch = ExecutionOrchestrator(tool_registry={})
         orch.register_tool("test_tool", lambda x: x)
         assert "test_tool" in orch.tool_registry
 

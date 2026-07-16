@@ -41,6 +41,7 @@ into the Huginn RAG knowledge base on first use.
 | `31_biomaterials.md` | Biocompatibility, scaffolds, implants |
 | `32_mechanical_properties.md` | Elasticity, strength, DFT prediction |
 | `33_computational_thermodynamics.md` | Phonons, free energy, phase diagrams |
+| `38_benchmark_evaluation_lessons.md` | Benchmark evaluation lessons: PaperBench/MLE-bench/SAB/HLE + noise-as-feature epistemology |
 
 ## Updating seeds
 

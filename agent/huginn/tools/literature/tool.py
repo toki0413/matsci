@@ -122,6 +122,43 @@ _BENCHMARK_SYSTEM_PROMPT = """你是材料科学数据提取专家. 从给定的
 如果没有任何论文报数值, 返回 {"values": []}"""
 
 
+# ───────────────────────── multi_review 透镜 (nuwa 启发) ─────────────────────────
+# 6 路并行透镜, 每路独立 LLM 调用, 独立产出 findings. 失败透镜降级为空, 不阻塞其他.
+# ponytail: 透镜数固定 6, 不做动态扩展. 升级: 根据 query 类型自适应选透镜.
+
+_LENS_PROMPTS: dict[str, str] = {
+    "methodology": """你是方法论审查员. 从给定论文里抽出方法论相关的关键论断 (claim).
+关注: 使用的方法/实验设计/统计处理/控制变量/样本量是否充分.
+每条 claim 标注: 哪些论文 (paper_idx) 支持它, 你的置信度 (high/medium/low).
+输出 JSON: {"lens":"methodology","findings":[{"claim":"...","paper_idx":[1,3],"confidence":"medium"}],"summary":"一句话总结方法论整体情况"}""",
+    "contributions": """你是贡献提取员. 从给定论文里抽出核心贡献相关的关键论断 (claim).
+关注: 声称的新发现/改进幅度/理论突破/工程价值. 区分"作者声称"和"证据支持".
+每条 claim 标注: 哪些论文 (paper_idx) 支持它, 你的置信度 (high/medium/low).
+输出 JSON: {"lens":"contributions","findings":[{"claim":"...","paper_idx":[1],"confidence":"high"}],"summary":"一句话总结贡献整体情况"}""",
+    "limitations": """你是局限性探测员. 从给定论文里抽出局限性和未解决问题相关的关键论断 (claim).
+关注: 作者自承的局限/未测试的假设/外推风险/泛化边界/缺失的对照.
+每条 claim 标注: 哪些论文 (paper_idx) 提到它, 你的置信度 (high/medium/low).
+输出 JSON: {"lens":"limitations","findings":[{"claim":"...","paper_idx":[2,4],"confidence":"high"}],"summary":"一句话总结局限性整体情况"}""",
+    "reproduction": """你是可复现性评估员. 从给定论文里抽出可复现性相关的关键论断 (claim).
+关注: 是否给完整参数/数据是否公开/代码是否公开/随机种子/硬件依赖/复现成本.
+每条 claim 标注: 哪些论文 (paper_idx) 涉及它, 你的置信度 (high/medium/low).
+输出 JSON: {"lens":"reproduction","findings":[{"claim":"...","paper_idx":[1,2],"confidence":"medium"}],"summary":"一句话总结可复现性整体情况"}""",
+    "citation_context": """你是引用语境分析员. 从给定论文里抽出引用定位相关的关键论断 (claim).
+关注: 本文相对前人工作的定位/争议点/学派归属/与主流的异同.
+每条 claim 标注: 哪些论文 (paper_idx) 体现它, 你的置信度 (high/medium/low).
+输出 JSON: {"lens":"citation_context","findings":[{"claim":"...","paper_idx":[1,3],"confidence":"medium"}],"summary":"一句话总结引用语境整体情况"}""",
+    "temporal": """你是时间脉络定位员. 从给定论文里抽出时间演化相关的关键论断 (claim).
+关注: 领域的发展轨迹/转折点/当前热点/未来方向/方法迭代代际.
+每条 claim 标注: 哪些论文 (paper_idx) 体现它, 你的置信度 (high/medium/low).
+输出 JSON: {"lens":"temporal","findings":[{"claim":"...","paper_idx":[1,2,3],"confidence":"medium"}],"summary":"一句话总结时间脉络整体情况"}""",
+}
+
+_DEFAULT_LENSES: list[str] = [
+    "methodology", "contributions", "limitations",
+    "reproduction", "citation_context", "temporal",
+]
+
+
 # ───────────────────────── Input schema ─────────────────────────
 
 
@@ -130,12 +167,14 @@ class LiteratureInput(BaseModel):
         "search", "summarize", "benchmark_lookup",
         "fetch_pdf", "citations", "ingest_to_rag",
         "crawl_web", "citation_graph", "extract_figures",
+        "multi_review",
     ] = Field(
         ..., description="search/summarize/benchmark_lookup (第一期) + "
                          "fetch_pdf/citations/ingest_to_rag (第二期) + "
                          "crawl_web (第四期, 爬虫补无API的源) + "
                          "citation_graph (BFS 引文图) + "
-                         "extract_figures (从PDF提图调image_analysis)"
+                         "extract_figures (从PDF提图调image_analysis) + "
+                         "multi_review (N 路并行透镜 + 三重验证, nuwa/cangjie 启发)"
     )
     query: str = Field(default="", description="搜索/综述 query")
     max_results: int = Field(
@@ -233,6 +272,19 @@ class LiteratureInput(BaseModel):
                     "wiley/acs/rsc/nature/wos/tandfonline. 配 auth_action 用",
     )
 
+    # multi_review 专用: N 路并行透镜 (nuwa 启发) + 三重验证 (cangjie 启发)
+    lenses: list[str] | None = Field(
+        default=None,
+        description="multi_review 透镜列表. None=默认 6 透镜全开. "
+                    "可选: methodology/contributions/limitations/reproduction/"
+                    "citation_context/temporal. 可子集.",
+    )
+    verify_claims: bool = Field(
+        default=True,
+        description="multi_review 是否做三重验证 (V1 跨域复现/V2 生成力/V3 排他性). "
+                    "False=只跑透镜不验证, 适合快速扫描.",
+    )
+
     model_config = {"protected_namespaces": ()}
 
 
@@ -288,6 +340,8 @@ class LiteratureTool(HuginnTool):
                 return await self._do_crawl_web(args, context)
             if args.action == "extract_figures":
                 return await self._do_extract_figures(args, context)
+            if args.action == "multi_review":
+                return await self._do_multi_review(args, context)
             return ToolResult(
                 data=None, success=False, error=f"unknown action: {args.action}"
             )
@@ -1440,6 +1494,234 @@ class LiteratureTool(HuginnTool):
             success=True,
         )
 
+    # ── multi_review (nuwa 6 路并行透镜 + cangjie 三重验证) ────
+
+    async def _do_multi_review(
+        self, args: LiteratureInput, context: ToolContext
+    ) -> ToolResult:
+        """N 路并行透镜 + 三重验证的深度综述.
+
+        nuwa 启发: 6 个透镜 (methodology/contributions/limitations/reproduction/
+        citation_context/temporal) 各自独立 LLM 调用, asyncio.gather 并行.
+        失败透镜降级为空 findings, 不阻塞其他 (failure degradation).
+
+        cangjie 启发: 对每条 claim 做三重验证 —
+          V1 跨域复现: claim 出现在 ≥2 篇论文 → +1
+          V2 生成力: claim 含可证伪预测结构 (if/则/当/predict) → +1
+          V3 排他性: claim 不是常识 (出现在 <50% 论文) → +1
+        得分 2-3 → high, 1 → medium, 0 → low.
+
+        高阶网络视角: 论文-概念构成单纯复形 (概念共现有向下闭包).
+        V1 检测 claim 跨多个极大单纯形 → 跨域复现.
+        调和分量 (β₁>0) 对应"研究孤岛" — 共享概念但无引用连接的论文群.
+        """
+        # 1. 拿 papers: 优先用显式传入, 没有就 search
+        papers = args.papers
+        if not papers and args.query:
+            search_res = await self._do_search(args)
+            if not search_res.success:
+                return search_res
+            papers = (search_res.data or {}).get("papers", [])
+        if not papers:
+            return ToolResult(
+                data=None, success=False,
+                error="no papers to review (provide papers or a query)",
+            )
+        # 截断, 避免每个透镜的 LLM context 爆掉
+        papers = papers[:12]
+
+        # 2. 选透镜
+        lens_names = args.lenses if args.lenses else _DEFAULT_LENSES
+        # 过滤掉不认识的透镜名, 避免传垃圾进 _LENS_PROMPTS
+        lens_names = [l for l in lens_names if l in _LENS_PROMPTS]
+        if not lens_names:
+            return ToolResult(
+                data=None, success=False,
+                error=f"no valid lenses in {args.lenses}, valid: {list(_LENS_PROMPTS.keys())}",
+            )
+
+        # 3. 构造论文清单 (各透镜共用同一份)
+        paper_block = self._build_paper_block(papers)
+
+        # 4. 拿 LLM model
+        try:
+            model = self._get_model(context)
+        except Exception as exc:
+            return ToolResult(
+                data=None, success=False,
+                error=f"LLM 初始化失败: {exc}",
+            )
+
+        # 5. 并行跑 N 个透镜 (nuwa 6-way agent swarm)
+        # ponytail: 每个透镜独立 LLM 调用, 用 asyncio.gather 并行.
+        # 同步 invoke 包 asyncio.to_thread 才能真并行. 失败透镜返回 None,
+        # 后续过滤掉, 不阻塞其他 — 这是 nuwa 的 failure degradation 路径.
+        async def _run_lens(lens_name: str) -> dict[str, Any] | None:
+            system_prompt = _LENS_PROMPTS[lens_name]
+            user_prompt = (
+                f"研究 query: {args.query or '(未指定)'}\n\n"
+                f"论文列表 ({len(papers)} 篇):\n\n{paper_block}\n\n"
+                f"请用 '{lens_name}' 透镜分析, 按 JSON 格式输出."
+            )
+            try:
+                content = await self._llm_invoke(model, system_prompt, user_prompt)
+                parsed = self._parse_json(content)
+                if not parsed or "findings" not in parsed:
+                    logger.warning("lens %s 返回无效 JSON: %s", lens_name, content[:200])
+                    return None
+                parsed["lens"] = lens_name
+                return parsed
+            except Exception as exc:
+                logger.warning("lens %s 失败 (降级为空): %s", lens_name, exc)
+                return None
+
+        lens_results = await asyncio.gather(*[_run_lens(l) for l in lens_names])
+        # 过滤掉失败的透镜
+        lenses_ok: list[dict[str, Any]] = [r for r in lens_results if r is not None]
+        lenses_failed: list[str] = [
+            l for l, r in zip(lens_names, lens_results) if r is None
+        ]
+
+        # 6. 三重验证 (cangjie V1/V2/V3)
+        # 收集所有 claims, 每条带 lens + paper_idx
+        all_claims: list[dict[str, Any]] = []
+        for lens_out in lenses_ok:
+            for finding in (lens_out.get("findings") or []):
+                if not isinstance(finding, dict):
+                    continue
+                claim = (finding.get("claim") or "").strip()
+                if not claim:
+                    continue
+                all_claims.append({
+                    "claim": claim,
+                    "lens": lens_out.get("lens", ""),
+                    "paper_idx": finding.get("paper_idx", []) or [],
+                    "llm_confidence": finding.get("confidence", "medium"),
+                })
+
+        verified_claims: list[dict[str, Any]] = []
+        if args.verify_claims and all_claims:
+            n_papers = len(papers)
+            for c in all_claims:
+                v1, v2, v3 = self._triple_verify(c, n_papers)
+                score = sum([v1, v2, v3])
+                if score >= 2:
+                    final_conf = "high"
+                elif score == 1:
+                    final_conf = "medium"
+                else:
+                    final_conf = "low"
+                verified_claims.append({
+                    **c,
+                    "v1_cross_domain": v1,
+                    "v2_generative": v2,
+                    "v3_exclusive": v3,
+                    "verification_score": score,
+                    "final_confidence": final_conf,
+                })
+        else:
+            # 不验证时, 直接用 LLM 自报置信度
+            verified_claims = [
+                {**c, "final_confidence": c.get("llm_confidence", "medium")}
+                for c in all_claims
+            ]
+
+        # 7. 汇总
+        # 按透镜分组 findings 方便阅读
+        by_lens: dict[str, list[dict[str, Any]]] = {}
+        for vc in verified_claims:
+            by_lens.setdefault(vc.get("lens", ""), []).append(vc)
+
+        # 高置信 claims 单独拎出来 (cangjie stress test: 只信通过 2/3 验证的)
+        high_conf_claims = [
+            vc for vc in verified_claims
+            if vc.get("final_confidence") == "high"
+        ]
+
+        # 透镜 summary 汇总
+        lens_summaries = {
+            (lo.get("lens") or ""): (lo.get("summary") or "")
+            for lo in lenses_ok
+        }
+
+        return ToolResult(
+            data={
+                "action": "multi_review",
+                "query": args.query or "",
+                "n_papers": len(papers),
+                "n_lenses_requested": len(lens_names),
+                "n_lenses_ok": len(lenses_ok),
+                "lenses_failed": lenses_failed,
+                "lens_summaries": lens_summaries,
+                "findings_by_lens": by_lens,
+                "high_confidence_claims": high_conf_claims,
+                "all_claims": verified_claims,
+                "n_claims_total": len(verified_claims),
+                "n_claims_high": len(high_conf_claims),
+                "verification_enabled": args.verify_claims,
+                "papers": [
+                    {"idx": i + 1, "title": p.get("title", ""),
+                     "doi": p.get("doi"), "year": p.get("year")}
+                    for i, p in enumerate(papers)
+                ],
+            },
+            success=True,
+        )
+
+    @staticmethod
+    def _triple_verify(
+        claim: dict[str, Any], n_papers: int
+    ) -> tuple[bool, bool, bool]:
+        """cangjie 三重验证: V1 跨域复现 / V2 生成力 / V3 排他性.
+
+        V1: claim 出现在 ≥2 篇论文 → True (跨域复现)
+        V2: claim 含可证伪预测结构 (如果/if/则/当/predict/应当/should) → True (生成力)
+        V3: claim 不是常识 (出现在 <50% 论文) → True (排他性)
+
+        ponytail: V2 用关键词匹配是粗启发式. 升级: LLM 判定可证伪性.
+        ponytail: V3 的 50% 阈值未校准. 升级: 按领域动态调整.
+        """
+        paper_idx = claim.get("paper_idx") or []
+        # V1: 跨域复现 — 出现在 ≥2 篇
+        v1 = len(paper_idx) >= 2
+
+        # V2: 生成力 — 含可证伪预测结构
+        claim_text = (claim.get("claim") or "").lower()
+        generative_markers = [
+            "如果", "if ", "则", "then", "当", "when ",
+            "predict", "应当", "should", "预期", "expect",
+            "会导致", "leads to", "implies",
+        ]
+        v2 = any(m in claim_text for m in generative_markers)
+
+        # V3: 排他性 — 不是常识 (出现在 <50% 论文)
+        # ponytail: n_papers=0 时除零保护
+        coverage = len(paper_idx) / n_papers if n_papers > 0 else 1.0
+        v3 = coverage < 0.5
+
+        return (v1, v2, v3)
+
+    @staticmethod
+    def _build_paper_block(papers: list[dict[str, Any]]) -> str:
+        """构造论文清单给 LLM, multi_review 和 summarize 共用格式."""
+        parts: list[str] = []
+        for i, p in enumerate(papers, 1):
+            authors_short = ", ".join(p.get("authors", [])[:3])
+            if len(p.get("authors", [])) > 3:
+                authors_short += " et al."
+            year = p.get("year") or ""
+            venue = p.get("venue") or ""
+            abstract = (p.get("abstract") or "").strip()
+            if len(abstract) > 1500:
+                abstract = abstract[:1500] + "..."
+            parts.append(
+                f"[{i}] {p.get('title','')}\n"
+                f"  Authors: {authors_short}\n"
+                f"  Year: {year}  Venue: {venue}  DOI: {p.get('doi') or '-'}\n"
+                f"  Abstract: {abstract}"
+            )
+        return "\n\n".join(parts)
+
     # ── helpers ─────────────────────────────────────────────
 
     def _get_model(self, context: ToolContext) -> Any:
@@ -1528,4 +1810,8 @@ class LiteratureTool(HuginnTool):
         if args.action == "extract_figures":
             # 下载 PDF + 提图 + 逐张调 image_analysis, 图多时偏慢
             return {"cpu_hours": 0.0, "walltime_hours": 0.2}
+        if args.action == "multi_review":
+            # N 路透镜并行 LLM 调用 (默认 6), 比单次 summarize 慢但并行
+            n_lenses = len(args.lenses) if args.lenses else 6
+            return {"cpu_hours": 0.0, "walltime_hours": 0.05 * n_lenses / 6}
         return {"cpu_hours": 0.0, "walltime_hours": 0.02}  # summarize/benchmark_lookup 调 LLM

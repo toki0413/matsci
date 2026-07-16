@@ -184,6 +184,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_alloy_optim,
             tags=["optimization", "linear", "alloy"],
             requires_api_key=True,
+            reference="x=10, y=0, H=50 (LP: max 5x+3y, x+y<=10)",
         ),
         BenchmarkTask(
             id="optim-lattice",
@@ -196,6 +197,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_lattice_optim,
             tags=["optimization", "potential", "lattice"],
             requires_api_key=True,
+            reference="a₀=2^(1/6)=1.1225, E_min=-1.0 (LJ 势能最小值)",
         ),
         BenchmarkTask(
             id="optim-krr",
@@ -209,6 +211,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_krr_optim,
             tags=["optimization", "hyperparameter", "ml"],
             requires_api_key=True,
+            reference="σ=0.5, C=10 (5折CV网格搜索最优)",
         ),
         BenchmarkTask(
             id="optim-bandgap",
@@ -220,6 +223,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_bandgap_optim,
             tags=["optimization", "quadratic", "electronic"],
             requires_api_key=True,
+            reference="x=2.5, Eg=1.625 eV (二次函数顶点)",
         ),
         BenchmarkTask(
             id="optim-knapsack",
@@ -232,6 +236,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_knapsack,
             tags=["optimization", "dp", "combinatorial"],
             requires_api_key=True,
+            reference="选物品0+1, V=7 (w=[2,3], v=[3,4], C=5)",
         ),
         BenchmarkTask(
             id="optim-gradient-descent",
@@ -244,6 +249,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_gradient_descent,
             tags=["optimization", "gradient", "continuous"],
             requires_api_key=True,
+            reference="x=-1.0 (f(x)=x²+2x+1=(x+1)² 的最小值)",
         ),
         BenchmarkTask(
             id="optim-pareto",
@@ -260,6 +266,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_pareto,
             tags=["optimization", "multi_objective", "pareto"],
             requires_api_key=True,
+            reference="Pareto 前沿 4 个: A,B,D,E (C 被 B 支配)",
         ),
         BenchmarkTask(
             id="optim-monte-carlo",
@@ -272,6 +279,7 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             evaluator=_eval_monte_carlo_pi,
             tags=["optimization", "monte_carlo", "stochastic"],
             requires_api_key=True,
+            reference="π ≈ 3.14 (N=10000 蒙特卡洛估算)",
         ),
     ]
 

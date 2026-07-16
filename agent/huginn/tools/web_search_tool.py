@@ -128,6 +128,11 @@ class WebSearchTool(HuginnTool):
 
     input_schema = WebSearchInput
 
+    # 失败熔断: 同一 session 连续失败 N 次后直接拒绝, 避免死循环重试
+    _MAX_CONSECUTIVE_FAILURES = 3
+    _consecutive_failures: int = 0
+    _circuit_broken: bool = False
+
     @property
     def name(self) -> str:
         return "web_search_tool"
@@ -146,11 +151,24 @@ class WebSearchTool(HuginnTool):
         return WebSearchInput.model_json_schema()
 
     def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-        """执行搜索/抓取。action=search 按优先级降级：Tavily → duckduckgo_search → urllib。
+        """执行搜索/抓取。action=search 按优先级降级：Tavily → arxiv → duckduckgo_search → urllib。
 
         compact=True (默认) 时把结果压成索引化文本块, 方便 LLM 用 [0]/[1] 引用。
+        连续失败 3 次后熔断, 直接返回错误, 避免死循环重试。
         """
         action = (args.get("action") or "search").strip().lower()
+
+        # 熔断检查: 连续失败太多直接拒绝
+        if self._circuit_broken:
+            return ToolResult(
+                data={
+                    "error": "web_search circuit broken (连续失败过多)",
+                    "hint": "搜索不可用, 请用 code_tool / materials_database_tool / 已有知识回答.",
+                    "results": [],
+                },
+                success=False,
+                error="web_search circuit broken",
+            )
 
         if action == "fetch":
             return self._fetch(args)
@@ -185,15 +203,41 @@ class WebSearchTool(HuginnTool):
         if os.environ.get("TAVILY_API_KEY"):
             result = self._search_tavily(query, max_results)
             if result is not None:
+                self._on_success()
                 return self._maybe_compact(result, args)
 
-        # 2) duckduckgo_search 库
-        result = self._search_ddgs(query, max_results)
+        # 2) arxiv API — 学术搜索, 稳定免费, 对 paper/physics query 尤其有效
+        result = self._search_arxiv(query, max_results)
         if result is not None:
+            self._on_success()
             return self._maybe_compact(result, args)
 
-        # 3) urllib 兜底
+        # 3) duckduckgo_search 库
+        result = self._search_ddgs(query, max_results)
+        if result is not None:
+            self._on_success()
+            return self._maybe_compact(result, args)
+
+        # 4) urllib 兜底 — 到这里说明前面全失败
+        self._on_failure()
         return self._maybe_compact(self._search_fallback(query, max_results), args)
+
+    @classmethod
+    def _on_success(cls) -> None:
+        """搜索成功, 重置失败计数."""
+        cls._consecutive_failures = 0
+        cls._circuit_broken = False
+
+    @classmethod
+    def _on_failure(cls) -> None:
+        """搜索失败, 累计计数, 达到阈值后熔断."""
+        cls._consecutive_failures += 1
+        if cls._consecutive_failures >= cls._MAX_CONSECUTIVE_FAILURES:
+            cls._circuit_broken = True
+            logger.warning(
+                "web_search 熔断: 连续失败 %d 次, 后续调用直接拒绝",
+                cls._consecutive_failures,
+            )
 
     async def call(self, args: dict, context: ToolContext) -> ToolResult:
         """HuginnTool 入口。放到线程池里跑，避免阻塞事件循环。"""
@@ -233,15 +277,79 @@ class WebSearchTool(HuginnTool):
             logger.warning("Tavily 搜索失败，降级到下一个后端: %s", exc)
             return None
 
+    # ── arxiv API ────────────────────────────────────────────────────
+
+    def _search_arxiv(
+        self, query: str, max_results: int
+    ) -> ToolResult | None:
+        """arxiv API 搜索, 返回 None 表示无结果/失败, 降级到下一个后端.
+
+        arxiv API 稳定免费, 无需 key, 对论文/物理/材料 query 尤其有效.
+        对非学术 query (如"铜的电导率") 通常返回空, 自然降级到 DDG.
+        """
+        try:
+            import xml.etree.ElementTree as ET
+        except ImportError:
+            return None
+
+        try:
+            api_url = (
+                f"http://export.arxiv.org/api/query?"
+                f"search_query=all:{urllib.parse.quote(query)}"
+                f"&max_results={max_results}"
+            )
+            req = urllib.request.Request(
+                api_url,
+                headers={"User-Agent": "HuginnAgent/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
+                xml_data = resp.read().decode("utf-8", errors="ignore")
+
+            root = ET.fromstring(xml_data)
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+            results: list[dict[str, Any]] = []
+            for entry in root.findall("atom:entry", ns):
+                title_el = entry.find("atom:title", ns)
+                summary_el = entry.find("atom:summary", ns)
+                id_el = entry.find("atom:id", ns)
+                title = (title_el.text or "").strip().replace("\n", " ") if title_el is not None else ""
+                summary = (summary_el.text or "").strip().replace("\n", " ") if summary_el is not None else ""
+                arxiv_id = (id_el.text or "").strip() if id_el is not None else ""
+                if len(summary) > 300:
+                    summary = summary[:297] + "..."
+                results.append({
+                    "title": title,
+                    "url": arxiv_id,
+                    "snippet": summary,
+                })
+            if not results:
+                return None
+            return ToolResult(
+                data={
+                    "query": query,
+                    "results": results,
+                    "search_engine": "arxiv",
+                },
+                success=True,
+            )
+        except Exception as exc:
+            logger.warning("arxiv 搜索失败, 降级到下一个后端: %s", exc)
+            return None
+
     # ── duckduckgo_search ───────────────────────────────────────────
 
     def _search_ddgs(
         self, query: str, max_results: int
     ) -> ToolResult | None:
+        # duckduckgo_search 已重命名为 ddgs, 两个都试一下
+        DDGS = None
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
         except ImportError:
-            return None
+            try:
+                from duckduckgo_search import DDGS
+            except ImportError:
+                return None
 
         try:
             results = []
@@ -264,7 +372,7 @@ class WebSearchTool(HuginnTool):
                 success=True,
             )
         except Exception as exc:
-            logger.warning("duckduckgo_search 失败，降级到 urllib: %s", exc)
+            logger.warning("ddgs/duckduckgo_search 失败，降级到 urllib: %s", exc)
             return None
 
     # ── urllib 兜底（直接抓 DDG HTML）──────────────────────────────

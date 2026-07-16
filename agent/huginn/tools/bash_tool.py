@@ -29,6 +29,70 @@ class BashToolInput(BaseModel):
     )
 
 
+# 常见错误的修复建议, 让 agent 知道下一步该做什么而不是干等 CONTINUE_MSG
+# ponytail: 只覆盖高频模式, 不做 NLP. 升级: LLM 生成建议.
+def _suggest_fix(returncode: int, stderr: str, stdout: str, command: list[str]) -> str:
+    """从 stderr 提取常见错误模式, 返回具体修复建议."""
+    s = (stderr or "") + (stdout or "")
+    sl = s.lower()
+    if "modulenotfounderror" in sl or "no module named" in sl:
+        m = ""
+        for line in s.splitlines():
+            if "No module named" in line:
+                m = line.split("named")[-1].strip().strip("'\"")
+                break
+        return f"ModuleNotFoundError: pip install {m} in bash_tool, then re-run."
+    if "syntaxerror" in sl:
+        return "SyntaxError: re-read the .py file, fix the syntax, re-run."
+    if "filenotfounderror" in sl or "no such file" in sl:
+        return "FileNotFoundError: check path with glob/grep, or create the file first via code_tool."
+    if "importerror" in sl:
+        return "ImportError: check if the module exists in workspace, or pip install it."
+    if "timed out" in sl or "timeout" in sl:
+        return f"Timeout: reduce iterations or split the task. Command was: {' '.join(command[:5])}."
+    if "attributeerror" in sl:
+        return "AttributeError: check the class/module API. Use dir() or help() in code_tool to inspect."
+    if "valueerror" in sl or "typeerror" in sl:
+        return "Value/TypeError: check input shapes/types. Use code_tool to print them before the failing line."
+    if "runtimeerror" in sl and "cuda" in sl:
+        return "CUDA RuntimeError: fall back to CPU (device='cpu'), or reduce batch size."
+    if returncode != 0 and not s.strip():
+        return "Command failed with no output. Check if the executable exists and is in PATH."
+    return ""
+
+
+# 从 stdout 提取进度行, 让 agent 快速看训练曲线 / 执行进度
+# ponytail: 不是真正流式 IO (那需要 async generator), 而是从已捕获的 stdout
+# 提取关键行. 升级路径: Popen 逐行读 + async yield.
+_PROGRESS_KEYWORDS = (
+    "loss", "epoch", "step", "it/s", "s/it", "accuracy", "error",
+    "traceback", "exception", "warning", "complete", "done", "finished",
+    "epoch:", "step:", "iter", "train", "val", "test", "metric", "score",
+)
+
+
+def _extract_progress(stdout: str, max_lines: int = 50) -> list[str]:
+    """从 stdout 提取含进度关键词的行, 最多 max_lines 行.
+
+    训练日志通常有大量 print, agent 只需看 loss/epoch/step 趋势.
+    提取后 agent 能快速判断训练是否收敛 / 哪步出错.
+    """
+    if not stdout:
+        return []
+    lines = stdout.splitlines()
+    progress = []
+    for line in lines:
+        ll = line.lower().strip()
+        if not ll:
+            continue
+        # 含进度关键词的行, 或 Error/Traceback 块
+        if any(kw in ll for kw in _PROGRESS_KEYWORDS):
+            progress.append(line.rstrip())
+            if len(progress) >= max_lines:
+                break
+    return progress
+
+
 class BashTool(HuginnTool):
     """Run shell commands in the workspace."""
 
@@ -82,6 +146,8 @@ class BashTool(HuginnTool):
                     "stderr": result["stderr"],
                     "message": result["message"],
                     "timed_out": result["timed_out"],
+                    "suggest_fix": _suggest_fix(result["returncode"], result["stderr"], result["stdout"], input_data.command) if not result["success"] else "",
+                    "stream_progress": _extract_progress(result["stdout"]),
                 },
                 success=result["success"],
                 error=error,
@@ -115,6 +181,8 @@ class BashTool(HuginnTool):
                         "Command succeeded." if result.success else "Command failed."
                     ),
                     "container": True,
+                    "suggest_fix": _suggest_fix(result.returncode, result.stderr, result.stdout, input_data.command) if not result.success else "",
+                    "stream_progress": _extract_progress(result.stdout),
                 },
                 success=result.success,
             )
@@ -141,6 +209,8 @@ class BashTool(HuginnTool):
                             else "Command failed."
                         ),
                         "sandbox": True,
+                        "suggest_fix": _suggest_fix(result.returncode, result.stderr, result.stdout, input_data.command) if result.returncode != 0 else "",
+                        "stream_progress": _extract_progress(result.stdout),
                     },
                     success=result.returncode == 0,
                 )
