@@ -37,6 +37,7 @@ class CognitiveState(str, Enum):
     S4_CONSTRUCT = "s4_construct"  # executing plan, building solution rigorously
     S5_UNIFY = "s5_unify"          # integrating results into coherent whole
     S6_FEEDBACK = "s6_feedback"    # gaps found, looping back to discovery
+    S7_SELF_MODIFY = "s7_self_modify"   # 哥德尔机自修改触发点：评估要不要改策略/原则
 
 
 class AttentionMode(str, Enum):
@@ -57,6 +58,16 @@ STATE_TO_ATTENTION: dict[CognitiveState, AttentionMode] = {
     CognitiveState.S4_CONSTRUCT: AttentionMode.AXIOM_FOCUS,
     CognitiveState.S5_UNIFY: AttentionMode.AXIOM_FOCUS,
     CognitiveState.S6_FEEDBACK: AttentionMode.MODE_SWITCH,
+    CognitiveState.S7_SELF_MODIFY: AttentionMode.MODE_SWITCH,  # meta 状态，不归任一链
+}
+
+# CSM state → model router task: 构造阶段走 reasoning, 验证/自修改走 verification
+# 没列出的 state (S0/S1/S3/S5) 沿用调用方传入的 task
+STATE_TO_MODEL_TASK: dict = {
+    CognitiveState.S4_CONSTRUCT: "reasoning",
+    CognitiveState.S2_VALIDATE: "verification",
+    CognitiveState.S7_SELF_MODIFY: "verification",
+    CognitiveState.S6_FEEDBACK: "reasoning",
 }
 
 # States that belong to the discovery chain (Ramanujan)
@@ -119,6 +130,11 @@ ALLOWED_TRANSITIONS: dict[CognitiveState, set[CognitiveState]] = {
     CognitiveState.S6_FEEDBACK: {
         CognitiveState.S0_BLANK,
         CognitiveState.S1_DISCOVER,
+        CognitiveState.S7_SELF_MODIFY,   # gap_found 时进自修改评估
+    },
+    CognitiveState.S7_SELF_MODIFY: {
+        CognitiveState.S1_DISCOVER,   # 提案处理完回 discovery
+        CognitiveState.S0_BLANK,       # 兜底重置
     },
 }
 
@@ -140,8 +156,8 @@ def resolve_transition(
     if st == "session_start":
         return CognitiveState.S0_BLANK
 
-    # user_goal from blank/discovery → discover
-    if st == "user_goal" and current in (CognitiveState.S0_BLANK, CognitiveState.S6_FEEDBACK):
+    # user_goal from blank/feedback/self-modify → discover
+    if st == "user_goal" and current in (CognitiveState.S0_BLANK, CognitiveState.S6_FEEDBACK, CognitiveState.S7_SELF_MODIFY):
         return CognitiveState.S1_DISCOVER if CognitiveState.S1_DISCOVER in allowed else None
 
     # new_question from any state → back to discover
@@ -172,12 +188,29 @@ def resolve_transition(
     if st in ("tool_failure", "physics_error") and CognitiveState.S6_FEEDBACK in allowed:
         return CognitiveState.S6_FEEDBACK
 
+    # gap_found in S6 → S7 (self-modify trigger)
+    if st == "gap_found" and current == CognitiveState.S6_FEEDBACK:
+        if CognitiveState.S7_SELF_MODIFY in allowed:
+            return CognitiveState.S7_SELF_MODIFY
+
     # gap_found → feedback or discover
     if st == "gap_found":
         if CognitiveState.S6_FEEDBACK in allowed:
             return CognitiveState.S6_FEEDBACK
         if CognitiveState.S1_DISCOVER in allowed:
             return CognitiveState.S1_DISCOVER
+
+    # belief_high → S6_FEEDBACK (confused, reassess)
+    if st == "belief_high" and CognitiveState.S6_FEEDBACK in allowed:
+        return CognitiveState.S6_FEEDBACK
+
+    # context_overflow → S6_FEEDBACK (summarize and reset)
+    if st == "context_overflow" and CognitiveState.S6_FEEDBACK in allowed:
+        return CognitiveState.S6_FEEDBACK
+
+    # evolution_rule_learned → S1_DISCOVER (re-explore with new rule)
+    if st == "evolution_rule_learned" and CognitiveState.S1_DISCOVER in allowed:
+        return CognitiveState.S1_DISCOVER
 
     return None
 
@@ -214,6 +247,9 @@ SWITCH_PROMPT = (
     "You are transitioning from discovery to construction. Record the current "
     "structural coordinates (what we've learned so far), then switch to "
     "rigorous execution mode. The user has confirmed the approach.\n"
+    "If a mode switch (chat/research/plan) is in progress, this state handles it: "
+    "the mode change is a cognitive switch, treat the new mode's tool filter and "
+    "phase as the new execution context.\n"
     "### End Cognitive Mode"
 )
 
@@ -230,6 +266,18 @@ FEEDBACK_PROMPT = (
     "### End Cognitive Mode"
 )
 
+SELF_MODIFY_PROMPT = (
+    "### Cognitive Mode: Self-Modification (Gödel Machine Trigger)\n"
+    "You are in S7_SELF_MODIFY. A gap was just found. Step back and evaluate "
+    "whether your own strategy or principles need to change. Read the reflection "
+    "sidecar to identify failure patterns. Call self_observe tool to read recent "
+    "failure patterns before proposing. Propose a concrete self-modification "
+    "(e.g. a new stable principle, a prompt patch, a tool preference change). "
+    "The meta-critic will evaluate your proposal — accept means it becomes a "
+    "stable principle, reject means it goes to the rejection log.\n"
+    "### End Cognitive Mode"
+)
+
 STATE_PROMPTS: dict[CognitiveState, str] = {
     CognitiveState.S0_BLANK: DISCOVERY_PROMPT,
     CognitiveState.S1_DISCOVER: DISCOVERY_PROMPT,
@@ -238,6 +286,7 @@ STATE_PROMPTS: dict[CognitiveState, str] = {
     CognitiveState.S4_CONSTRUCT: CONSTRUCTION_PROMPT,
     CognitiveState.S5_UNIFY: CONSTRUCTION_PROMPT,
     CognitiveState.S6_FEEDBACK: FEEDBACK_PROMPT,
+    CognitiveState.S7_SELF_MODIFY: SELF_MODIFY_PROMPT,
 }
 
 
@@ -252,6 +301,12 @@ def get_tool_preference(state: CognitiveState) -> dict[str, list[str]]:
     Discovery favors exploration tools; construction favors computation tools.
     This is advisory — the agent can still use any tool.
     """
+    if state == CognitiveState.S7_SELF_MODIFY:
+        # S7: 自省工具优先，计算工具靠边（self_observe 暂未实现也无所谓，advisory 会自动忽略）
+        return {
+            "prefer": ["self_observe", "recall", "file_read_tool"],
+            "deprioritize": ["vasp", "lammps", "qe", "cp2k", "abaqus"],
+        }
     if state in DISCOVERY_STATES:
         return {
             "prefer": [

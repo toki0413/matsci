@@ -19,6 +19,28 @@ from huginn.skills.registry import SkillRegistry
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext, ToolResult
+from huginn.memory.longterm import LongTermMemory
+
+
+# ponytail: memory 单例懒加载, 第一次初始化失败就标死不再试.
+# 升级路径: 加 healthcheck 探活 + 降级到 in-memory 缓存.
+_memory_singleton: LongTermMemory | None = None
+_memory_broken: bool = False
+
+
+def _get_memory() -> LongTermMemory | None:
+    """拿 LongTermMemory 单例. SQLite 文件路径走默认 (~/.huginn/memory.db),
+    多个调用方共享同一份库. 任何初始化异常都吞掉返回 None."""
+    global _memory_singleton, _memory_broken
+    if _memory_broken:
+        return None
+    if _memory_singleton is None:
+        try:
+            _memory_singleton = LongTermMemory()
+        except Exception:
+            _memory_broken = True
+            return None
+    return _memory_singleton
 
 
 class SkillToolInput(BaseModel):
@@ -156,9 +178,17 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         if context.session_id:
             exec_context["session_id"] = context.session_id
 
+        # 调 skill 前先 recall 历史, 塞到 exec_context 给 executor 当 hint.
+        # ponytail: memory recall/remember 用 try/except 包失败静默;
+        # 升级路径是加 memory 可用性检查 + 降级策略
+        history_hint = self._recall_skill_history(args.skill_name)
+        if history_hint:
+            exec_context["_skill_history_hint"] = history_hint
+
         try:
             result = await self._executor.execute(skill, args.parameters, exec_context)
         except Exception as exc:
+            self._record_skill_invocation(args.skill_name, success=False, error=str(exc))
             out = SkillToolOutput(
                 success=False,
                 action="execute",
@@ -167,13 +197,71 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
             )
             return ToolResult(data=out.model_dump(), success=False, error=str(exc))
 
+        success = bool(result.get("success", False))
+        self._record_skill_invocation(args.skill_name, success=success, result=result)
+
         out = SkillToolOutput(
-            success=bool(result.get("success", False)),
+            success=success,
             action="execute",
             skill_name=skill.name,
             result=result,
         )
         return ToolResult(data=out.model_dump(), success=out.success)
+
+    # -- memory helpers ----------------------------------------------------
+
+    def _recall_skill_history(self, skill_name: str) -> str | None:
+        """从长期记忆拉该 skill 的历史调用记录, 拼成提示串.
+        memory 不可用 / 出错 / 没历史都返回 None, 不影响 skill 主流程."""
+        mem = _get_memory()
+        if mem is None:
+            return None
+        try:
+            rows = mem.retrieve(
+                query=skill_name,
+                category="skill_invocation",
+                top_k=3,
+            )
+        except Exception:
+            return None
+        if not rows:
+            return None
+        lines = []
+        for r in rows:
+            ts = (r.get("created_at") or "")[:19]
+            content = r.get("content") or ""
+            lines.append(f"[{ts}] {content}")
+        return "历史调用记录:\n" + "\n".join(lines)
+
+    def _record_skill_invocation(
+        self,
+        skill_name: str,
+        success: bool,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        """落一条 skill_invocation 记忆. 任何异常都吞掉, 不阻断 skill 调用."""
+        mem = _get_memory()
+        if mem is None:
+            return
+        summary = f"success={success}"
+        if error:
+            summary += f" error={error[:200]}"
+        elif result is not None:
+            # 截断防止单条记忆太长, 300 字符够复盘也够 FTS 检索
+            summary += f" result={str(result)[:300]}"
+        content = f"skill={skill_name} {summary}"
+        try:
+            mem.store(
+                content=content,
+                category="skill_invocation",
+                tags=[skill_name],
+                source=f"skill_tool:{skill_name}",
+                importance=0.5,
+                tier="mid",
+            )
+        except Exception:
+            pass
 
     # -- helpers -----------------------------------------------------------
 

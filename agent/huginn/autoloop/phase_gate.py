@@ -1,7 +1,8 @@
 """Phase-gate hooks for the autoloop engine.
 
-每个阶段转移可以挂在硬性证据上. 证据缺失时门阻断, engine 跳到下一轮迭代,
-把 feedback 留在共享状态里供 agent 下一轮参考, 避免半成品往后流.
+缺证据默认走 advisory: warning + feedback, 不阻断 transition, 避免 agent
+"curl override gradient" (绕过 gate 而非补证据). human_checkpoint_phases
+仍硬阻断 — 人工 checkpoint 必须用户 override 才能放行.
 
 设计要点:
 - PhaseGate: 一次门评估的结果 (status / missing / feedback)
@@ -441,7 +442,9 @@ class MathEvidenceChecker:
 class PhaseGateHook:
     """评估阶段转移门. 纯评估, 无运行时状态.
 
-    证据不足直接返回 blocked, 不抛异常. caller 决定怎么处理.
+    缺证据默认走 advisory (warning + feedback, 不阻断), 避免 agent 绕开
+    gate 而不补证据. 人工 checkpoint 仍硬阻断 — 由 human_checkpoint_phases
+    显式配置或从 shared state 懒查.
     可选注入 reviewer_fn 做主观审查 (LLM 调用), 不传就只做硬性检查.
     可选注入 math_checker 做论文级 Dempster-Shafer 证据合成, 在硬性证据
     齐全后评估数学证据是否足够支撑阶段推进.
@@ -452,10 +455,27 @@ class PhaseGateHook:
         config: PhaseGateConfig | None = None,
         reviewer_fn: ReviewerFn | None = None,
         math_checker: MathCheckerFn | None = None,
+        human_checkpoint_phases: set[tuple[str, str]] | None = None,
     ):
         self.config = config or PhaseGateConfig()
         self._reviewer_fn = reviewer_fn
         self._math_checker = math_checker
+        # None = 评估时懒查 shared state; 显式传 set 时以调用方为准 (测试用)
+        self._human_checkpoint_phases = human_checkpoint_phases
+
+    def _is_human_checkpoint(self, from_phase: str, to_phase: str) -> bool:
+        """该转移是否需人工 checkpoint (硬阻断, advisory 不放行).
+
+        未显式注入时懒查 shared state — engine 默认场景无需改 __init__ 签名.
+        已被 override 的转移不算 checkpoint (用户已决策).
+        """
+        if self._human_checkpoint_phases is not None:
+            return (from_phase, to_phase) in self._human_checkpoint_phases
+        try:
+            state = get_shared_phase_gate_state()
+            return state.needs_human_checkpoint(from_phase, to_phase)
+        except Exception:
+            return False
 
     def evaluate(
         self,
@@ -475,18 +495,42 @@ class PhaseGateHook:
         ]
 
         if missing:
-            feedback = (
-                f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺少证据 {missing}. "
-                f"已有证据 keys: {list(evidence.keys())}. "
-                f"补齐后再推进, 或用 phase_tool override 强制放行."
+            # 人工 checkpoint 仍硬阻断: 让 engine 走 hitl 流程, 用户必须 override
+            # 才能放行. 缺证据时不能 advisory 跳过 — checkpoint 就是 checkpoint.
+            if self._is_human_checkpoint(from_phase, to_phase):
+                feedback = (
+                    f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺少证据 {missing}. "
+                    f"已有证据 keys: {list(evidence.keys())}. "
+                    f"补齐后再推进, 或用 phase_tool override 强制放行."
+                )
+                return PhaseGate(
+                    from_phase=from_phase,
+                    to_phase=to_phase,
+                    status="blocked",
+                    required_evidence=required,
+                    missing_evidence=missing,
+                    feedback=feedback,
+                )
+            # advisory: 缺证据只 warning + feedback, 不阻断 transition.
+            # ponytail: ceiling 是 agent 可能忽略 warning 继续推进, 升级路径:
+            # PhaseGateState 累计同一 (from,to) advisory 反馈 N 次后强制回退到 blocked.
+            logger.warning(
+                "phase_gate advisory: %s→%s 缺证据 %s, 已放行 (非 checkpoint)",
+                from_phase,
+                to_phase,
+                missing,
             )
             return PhaseGate(
                 from_phase=from_phase,
                 to_phase=to_phase,
-                status="blocked",
+                status="approved",
                 required_evidence=required,
                 missing_evidence=missing,
-                feedback=feedback,
+                feedback=(
+                    f"advisory: {from_phase}→{to_phase} 缺少证据 {missing}, "
+                    f"已有 keys: {list(evidence.keys())}. "
+                    f"未阻断, 下游应补齐后再推进."
+                ),
             )
 
         # 硬性证据齐全, 走 math_checker (可选, 论文级 Dempster-Shafer 合成).

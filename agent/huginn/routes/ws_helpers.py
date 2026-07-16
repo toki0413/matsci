@@ -899,6 +899,12 @@ async def _handle_user_input(
 
     # ── Team mode ──
     if use_team:
+        # ponytail: fusion/team 走 set_mode('research') 复用 CSM S3；升级路径是加 S_FUSION 独立状态
+        try:
+            if hasattr(agent, "set_mode"):
+                agent.set_mode("research")
+        except Exception as e:
+            logger.warning("set_mode('research') for team failed: %s", e)
         try:
             from huginn.agents.orchestrator import Orchestrator
             orch = Orchestrator(factory=factory)
@@ -926,6 +932,12 @@ async def _handle_user_input(
 
     # ── Fusion mode ──
     if use_fusion and not use_team:
+        # ponytail: fusion/team 走 set_mode('research') 复用 CSM S3；升级路径是加 S_FUSION 独立状态
+        try:
+            if hasattr(agent, "set_mode"):
+                agent.set_mode("research")
+        except Exception as e:
+            logger.warning("set_mode('research') for fusion failed: %s", e)
         try:
             from huginn.routes.team import _build_model_team
 

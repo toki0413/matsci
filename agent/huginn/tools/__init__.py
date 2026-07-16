@@ -54,6 +54,8 @@ _CORE_MODULES = [
     ("huginn.tools.skill_tool", "SkillTool"),
     ("huginn.tools.memory_tool", "RememberTool"),
     ("huginn.tools.memory_tool", "RecallTool"),
+    ("huginn.tools.self_observe_tool", "SelfObserveTool"),
+    ("huginn.tools.recall_context_tool", "RecallContextTool"),
     ("huginn.tools.todo_tool", "TodoWriteTool"),
     ("huginn.tools.todo_tool", "TodoReadTool"),
     ("huginn.tools.notebook_tool", "NotebookEditTool"),

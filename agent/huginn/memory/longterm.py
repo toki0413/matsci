@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1094,3 +1095,37 @@ class LongTermMemory:
             report["auto_fixed"] = fixed
 
         return report
+
+
+# ── stable_principles: persona 一部分, S7 自修改回流 ──────────────────────
+# G8 加法: knowledge→persona 回路. S7 accepted 提案写进来, 下一轮 build_system_prompt
+# 的 STABLE_PRINCIPLES 段会读它. 不走 SQLite 是因为这部分属于 persona 而非记忆,
+# RCB/benchmark 也要保留 (memory_manager 在 bench 里是 None).
+STABLE_PRINCIPLES_PATH = Path(".huginn/stable_principles.jsonl")
+
+
+def store_stable_principle(principle: str, source: str = "S7_self_modify") -> None:
+    """追加一条 stable_principle. 每行 {principle, source, timestamp}."""
+    STABLE_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    record = {"principle": principle, "source": source, "timestamp": time.time()}
+    with STABLE_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def load_stable_principles() -> list[str]:
+    """读全部 stable_principles, 返回 principle 字符串列表. 文件不存在算空."""
+    if not STABLE_PRINCIPLES_PATH.exists():
+        return []
+    principles: list[str] = []
+    for line in STABLE_PRINCIPLES_PATH.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            principles.append(json.loads(line)["principle"])
+        except (json.JSONDecodeError, KeyError):
+            # 损坏行直接跳过, 别让一条坏数据把整个 persona 干废
+            continue
+    return principles
+
+
+# seeds 仅走 RAG (knowledge/store.py)，不直接进 system_prompt

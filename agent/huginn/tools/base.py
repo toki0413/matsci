@@ -283,7 +283,22 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
         so existing manual provenance capture (vasp_tool / lammps_tool) is
         untouched and never double-captured.
         """
-        result = await self._execute(args, context)
+        try:
+            result = await self._execute(args, context)
+        except Exception as exc:
+            # tool 运行时异常, 回写 FailureModeRegistry 给 metacog 层用.
+            # metacog 不可用绝不能拖垮 tool 本身的异常路径, 全程 try 包.
+            try:
+                from huginn.metacog.failure_modes import DEFAULT_REGISTRY
+
+                DEFAULT_REGISTRY.record_observation(
+                    "runtime_error",
+                    self.name or type(self).__name__,
+                    str(exc)[:200],
+                )
+            except Exception:
+                pass
+            raise
         try:
             self._capture_provenance(args, result)
         except Exception:

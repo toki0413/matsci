@@ -8,6 +8,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# v4 G17 续: 信号统一走 SignalHub, import 失败不阻断 v3 逻辑
+try:
+    from huginn.metacog.signal_hub import SignalHub
+except ImportError:
+    SignalHub = None  # type: ignore[assignment]
+
 # Prompt for the conversation summarizer — preserves research context.
 _SUMMARY_SYSTEM_PROMPT = (
     "You are a research conversation summarizer. Condense the following "
@@ -207,10 +213,21 @@ class ReflectionMixin:
                         if reflection.tool_succeeded
                         else str(_content),
                     )
+                    _new_rules = []
                     if reflection.evolve_signal == "failure":
-                        ev_engine.evolve_from_failures()
+                        _new_rules = ev_engine.evolve_from_failures()
                     elif reflection.evolve_signal == "success":
-                        ev_engine.evolve_from_successes()
+                        _new_rules = ev_engine.evolve_from_successes()
+                    # G7: evolution 学新规则后让 CSM 重新探索 (新规则可能改路径)
+                    if _new_rules:
+                        try:
+                            from huginn.cognitive_engine import TransitionSignal as _TS
+                            self._csm.transition(_TS("evolution_rule_learned", {
+                                "count": len(_new_rules),
+                                "signal": reflection.evolve_signal,
+                            }))
+                        except Exception:
+                            logger.debug("evolution CSM signal failed", exc_info=True)
                 except Exception:
                     logger.debug("evolution trigger failed", exc_info=True)
 
@@ -219,7 +236,7 @@ class ReflectionMixin:
                 sig_type = reflection.to_transition_signal()
                 if sig_type:
                     from huginn.cognitive_engine import TransitionSignal as TS
-                    self._csm.transition(TS(sig_type, {
+                    new_state = self._csm.transition(TS(sig_type, {
                         "tool_name": tr.get("tool_name", ""),
                         "objective": self._session_state.active_plan_objective,
                         "step": str(self._session_state.active_plan_step_index + 1),
@@ -232,7 +249,24 @@ class ReflectionMixin:
                     # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
                     from huginn.cognitive_engine import CognitiveState
                     if self._csm._state in (CognitiveState.S3_SWITCH, CognitiveState.S6_FEEDBACK):
-                        self._needs_compaction = True
+                        # RCB 子集模式: CSM transition 走 (含 S7), 但不触发 compaction (Task 18)
+                        self._needs_compaction = not os.environ.get("HUGINN_RCB_CSM_SUBSET")
+
+                    # 哥德尔机闭环: S6 + 实质 gap → S7_SELF_MODIFY (打通 L232 flag 断层)
+                    if (new_state == CognitiveState.S6_FEEDBACK
+                            and self._has_substantive_gap(reflection)):
+                        new_state = self._csm.transition(
+                            TS("gap_found", {"gap": getattr(reflection, "message", "")})
+                        )
+                    # S7 状态: 调 meta critique 评估 proposal, accept→stable_principle / reject→rejection log
+                    # S7 是 meta 状态, RCB 场景也不触发 compaction (与 S3/S6 不同)
+                    if new_state == CognitiveState.S7_SELF_MODIFY:
+                        self._needs_compaction = False
+                        try:
+                            from huginn.utils.async_bridge import run_async
+                            run_async(self._handle_s7_self_modify(reflection, self._csm))
+                        except Exception:
+                            logger.warning("S7 self-modify handler failed", exc_info=True)
             except Exception:
                 logger.debug("CSM transition failed", exc_info=True)
 
@@ -289,6 +323,17 @@ class ReflectionMixin:
                         exc_info=True,
                     )
 
+        # 新增: 信号驱动 CSM (G5 events / G6 belief_entropy). G7 在 evolution 调用点触发.
+        # ponytail: 补充现有 reflection 规则信号, 不替代. try/except 静默, 不破坏 turn.
+        try:
+            self._check_event_signals(self._csm)
+        except Exception:
+            logger.debug("event signal check failed", exc_info=True)
+        try:
+            self._check_belief_entropy_signal(self._csm)
+        except Exception:
+            logger.debug("belief entropy signal check failed", exc_info=True)
+
         # 节流保存 session snapshot: 每 3 turn 一次, 让下次会话能恢复 _mode/_csm/_phase.
         # 之前 session resume 只恢复消息历史, mode/csm/phase 全丢. 放这里集中, 不污染 mutation 点.
         # ponytail: 节流 + try/except 静默. 升级: dirty flag + 增量 diff.
@@ -299,3 +344,217 @@ class ReflectionMixin:
                 logger.debug("session snapshot save failed", exc_info=True)
 
         self._session_state.clear_turn_results()
+
+    # ── S7 self-modification helpers ────────────────────────────────────
+    # 哥德尔机闭环: 把 reflection gap → proposal, 调 meta critique 评估,
+    # accept 写 stable_principles, reject 写 directive_rejections.jsonl.
+
+    def _has_substantive_gap(self, reflection_result: Any) -> bool:
+        """判断 reflection 是否有实质 gap (够触发 S7_SELF_MODIFY).
+
+        ponytail: 复用 _extract_proposal_from_gap, 简单 bool 化. 升级: LLM 判 severity.
+        """
+        return bool(self._extract_proposal_from_gap(reflection_result))
+
+    def _extract_proposal_from_gap(self, reflection_result: Any) -> str | None:
+        """从 reflection 结果提取自修改提案.
+
+        ponytail: 直接拼 message/failure_mode, ceiling 是 LLM 生成结构化 proposal
+                  (含 motivation / patch / expected_utility_delta); 升级走专门 generator.
+        """
+        # ReflectionResult 没有 gap/failure_modes 字段, 用 message + 失败标志当 gap.
+        msg = getattr(reflection_result, "message", "") or ""
+        if getattr(reflection_result, "has_physics_errors", False):
+            return f"address physics error: {msg}"
+        if not getattr(reflection_result, "tool_succeeded", True):
+            return f"avoid tool failure: {msg}"
+        if getattr(reflection_result, "has_physics_warnings", False):
+            return f"address physics warning: {msg}"
+        return None
+
+    def _load_recent_rejections(self, limit: int = 10) -> list[str]:
+        """读最近 N 条 rejection 记录的 proposal 字段, 用于 meta critique 早期查重.
+
+        ponytail: 全文 read + slice. 升级: 流式 tail + 索引 by similarity.
+        """
+        import json
+        from pathlib import Path
+        path = Path(".huginn/directive_rejections.jsonl")
+        if not path.exists():
+            return []
+        proposals: list[str] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                proposals.append(rec.get("proposal", ""))
+            except json.JSONDecodeError:
+                continue
+        return proposals[-limit:]
+
+    def _write_rejection(self, proposal: str, reason: str) -> None:
+        """追加一条 rejection 记录到 .huginn/directive_rejections.jsonl."""
+        import json
+        import time
+        from pathlib import Path
+        path = Path(".huginn/directive_rejections.jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rec = {"timestamp": time.time(), "proposal": proposal, "reason": reason}
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def _get_system_prompt_summary(self) -> str:
+        """返回当前 system_prompt 的摘要, 给 meta critique 当上下文.
+
+        ponytail: 简单截断前 500 字符. ceiling 是 LLM 压缩成结构化摘要
+                  (persona / tools / constraints 分段); 升级走 summarizer.
+        """
+        sp = getattr(self, "system_prompt", "") or ""
+        return sp[:500]
+
+    async def _handle_s7_self_modify(self, reflection_result: Any, csm: Any) -> None:
+        """S7 状态: 把 gap 总结成 proposal, 调 meta critique 评估,
+        accept→store_stable_principle; reject→directive_rejections.jsonl;
+        处理完回 S1_DISCOVER.
+
+        ponytail: gap→proposal 是字段拼接, ceiling 是 LLM 生成正式 proposal;
+                  meta critique 失败默认 reject (保守, 不污染 stable_principles).
+        """
+        from huginn.cli.rcb_runner import adversarial_critique
+        from huginn.memory import store_stable_principle
+
+        # 1. 从 reflection gap 提取 proposal
+        proposal = self._extract_proposal_from_gap(reflection_result)
+        if not proposal:
+            # 没 proposal 直接回 S1
+            from huginn.cognitive_engine import TransitionSignal
+            csm.transition(TransitionSignal("user_goal", {"goal": "continue"}))
+            return
+
+        # 2-3. 读 recent rejections + system_prompt 摘要
+        recent_rejections = self._load_recent_rejections(limit=10)
+        sys_prompt_summary = self._get_system_prompt_summary()
+
+        # 4. 调 meta critique (model/llm_client 都传 None, 让函数内部兜底, 失败默认 reject)
+        try:
+            verdict = await adversarial_critique(
+                model=None,
+                mode="meta",
+                proposal=proposal,
+                system_prompt_summary=sys_prompt_summary,
+                recent_rejections=recent_rejections,
+            )
+        except Exception as e:
+            logger.warning("S7 meta critique invocation failed: %s, treating as reject", e)
+            verdict = {
+                "verdict": "reject",
+                "reason": f"meta critique error: {e}",
+                "expected_utility_delta": 0.0,
+            }
+
+        # 5. 处理 verdict: accept→stable_principle, reject→rejection log
+        if verdict.get("verdict") == "accept":
+            try:
+                store_stable_principle(proposal, source="S7_self_modify")
+                logger.info("S7 accepted proposal: %s", proposal[:80])
+            except Exception:
+                logger.warning("store_stable_principle failed", exc_info=True)
+        else:
+            try:
+                self._write_rejection(proposal, verdict.get("reason", "unknown"))
+                logger.info(
+                    "S7 rejected proposal: %s reason: %s",
+                    proposal[:80],
+                    verdict.get("reason"),
+                )
+            except Exception:
+                logger.warning("write_rejection failed", exc_info=True)
+
+        # 6. 回 S1_DISCOVER (无论 accept/reject, S7 处理完都回 discovery)
+        from huginn.cognitive_engine import TransitionSignal
+        csm.transition(TransitionSignal("user_goal", {"goal": "continue after S7"}))
+
+
+    def _check_event_signals(self, csm) -> None:
+        """从 EventBus 拉关键事件转 CSM TransitionSignal (G5).
+
+        context.overflow / compact.start / tool.error 连发都映射到
+        context_overflow 信号, CSM resolve_transition 决定是否真切换.
+        v4 G17 续: 信号构造优先走 SignalHub, 失败 fallback 到 v3 直构.
+        """
+        # ponytail: recent_events 轮询, 不订阅. last_ts 去重避免重复处理.
+        # 升级: subscribe + 异步队列实时驱动; 缺点是跨 async 边界事件可能丢.
+        try:
+            from huginn.events import (
+                EventBus, CONTEXT_OVERFLOW, COMPACT_START, TOOL_ERROR,
+            )
+        except ImportError:
+            return
+        try:
+            bus = EventBus.shared()
+            last_ts = getattr(self, "_last_event_check_ts", 0.0)
+            overflow_events = [
+                e for et in (CONTEXT_OVERFLOW, COMPACT_START)
+                for e in bus.recent_events(n=5, event_type=et)
+                if e.timestamp > last_ts
+            ]
+            tool_errors = [
+                e for e in bus.recent_events(n=20, event_type=TOOL_ERROR)
+                if e.timestamp > last_ts
+            ]
+            if overflow_events or len(tool_errors) >= 3:
+                payload = {
+                    "overflow_events": len(overflow_events),
+                    "tool_error_count": len(tool_errors),
+                }
+                # 优先走 Hub: overflow 用 event_overflow, tool 连发用 event_tool_burst
+                sig = None
+                if SignalHub is not None:
+                    source = "event_overflow" if overflow_events else "event_tool_burst"
+                    sig = SignalHub.shared().route(source, payload)
+                # ponytail: 保留 v3 逻辑骨架作 fallback, 只改信号构造走 Hub;
+                # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
+                if sig is None:
+                    from huginn.cognitive_engine import TransitionSignal as TS
+                    sig = TS("context_overflow", payload)
+                csm.transition(sig)
+                all_ts = [e.timestamp for e in overflow_events] + \
+                         [e.timestamp for e in tool_errors]
+                if all_ts:
+                    self._last_event_check_ts = max(all_ts)
+        except Exception:
+            logger.debug("event signal check failed", exc_info=True)
+
+    def _check_belief_entropy_signal(self, csm) -> None:
+        """高 belief_entropy 触发 CSM 重新评估 (G6).
+
+        h_belief > 0.7 说明压缩丢信息太多, agent 迷糊了, 让 CSM 进 feedback.
+        v4 G17 续: 信号构造优先走 SignalHub, 失败 fallback 到 v3 直构.
+        """
+        # ponytail: 阈值 0.7 硬编码, 跟 BeliefEntropyConfig.threshold_high 默认对齐.
+        # 升级: 读 be.config.threshold_high, 别硬编码. 单次检查不看趋势.
+        try:
+            from huginn.utils.belief_entropy import get_belief_entropy
+        except ImportError:
+            return
+        try:
+            be = get_belief_entropy()
+            history = be.get_history()
+            if not history:
+                return
+            h_belief = history[-1]
+            if h_belief > 0.7:
+                payload = {"h_belief": h_belief}
+                # 优先走 Hub
+                sig = None
+                if SignalHub is not None:
+                    sig = SignalHub.shared().route("belief_high", payload)
+                # ponytail: 保留 v3 逻辑骨架作 fallback, 只改信号构造走 Hub;
+                # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
+                if sig is None:
+                    from huginn.cognitive_engine import TransitionSignal as TS
+                    sig = TS("belief_high", payload)
+                csm.transition(sig)
+        except Exception:
+            logger.debug("belief_entropy signal check failed", exc_info=True)

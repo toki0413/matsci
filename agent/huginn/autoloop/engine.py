@@ -46,6 +46,7 @@ from huginn.interaction.progress import ProgressTracker, get_progress_tracker
 from huginn.kg.builder import ProjectKnowledgeGraph
 from huginn.llm import get_model
 from huginn.memory.manager import MemoryManager
+from huginn.metacog.signal_hub import SignalHub
 from huginn.tools.report_tool import ReportTool
 from huginn.types import ToolContext
 from huginn.workflows.engine import WorkflowEngine
@@ -305,8 +306,6 @@ class AutoloopEngine:
 
         self.hypothesis_graph = HypothesisGraph()
         self.report_tool = ReportTool()
-        # OAK 启发: forest_id 标记归属森林, 交叉授粉时记录来源
-        self.forest_id: str | None = None
 
         # Sub-engines
         self.explorer = ExplorationOrchestrator(
@@ -424,6 +423,9 @@ class AutoloopEngine:
         # 事件总线: 让外部插件能在阶段开始/结束/失败时挂钩.
         # 懒加载, 避免 import 时拉起 StarHandlerRegistry.
         self._event_bus = None
+        # perception → CSM 信号暂存. _perceive 产生 TransitionSignal 后放这里,
+        # agent 层定期拉取并调 csm.transition(). engine 自己不持有 csm.
+        self._pending_signals: list = []
         # 阶段索引: 给 WorkflowStageEvent 用, 从 phase name 推算.
         self._phase_order = list(AUTOLOOP_PHASES)
         # 当前 phase 名 — _run_phase_async 写, _llm_chat 读, 用于 phase-aware thinking effort.
@@ -2315,6 +2317,29 @@ class AutoloopEngine:
                 context["recommended_tools"] = cog.recommended_tools
             if cog.simulation_converged is not None:
                 context["simulation_converged"] = cog.simulation_converged
+            # G10/F14: perception 信号经 SignalHub 路由成 TransitionSignal.
+            # ponytail: engine 无 csm 引用，走 _pending_signals 解耦；升级路径是 engine 注入 csm 直接 transition
+            try:
+                hub = SignalHub.shared()
+                if getattr(cog, "errors_present", False):
+                    sig = hub.route("perception_error", {"errors_present": True})
+                    if sig is not None:
+                        self._pending_signals.append(sig)
+                if getattr(cog, "conflicts", None):
+                    sig = hub.route("perception_conflict", {
+                        "conflicts": [
+                            {"sources": [c.source_a, c.source_b], "description": c.description}
+                            for c in cog.conflicts
+                        ],
+                    })
+                    if sig is not None:
+                        self._pending_signals.append(sig)
+                if getattr(cog, "simulation_converged", None) is True:
+                    sig = hub.route("perception_converged", {"converged": True})
+                    if sig is not None:
+                        self._pending_signals.append(sig)
+            except Exception:
+                logger.debug("perception 信号构造失败, 不阻断 _perceive", exc_info=True)
         except Exception:
             logger.debug("L3/L4 cognitive integration 失败", exc_info=True)
         return context
@@ -4855,6 +4880,36 @@ class AutoloopEngine:
         except Exception:
             logger.debug(
                 "RSI directive generation failed — loop continues without directive",
+                exc_info=True,
+            )
+
+        # 收尾: 把本轮结果落一条 autoloop_summary, chat agent recall 时能拉到.
+        # ponytail: 只落 summary 不共享 SessionContext; 升级路径是共享 SessionContext
+        # 或加 autoloop_result 专用 category (目前先复用 memory.remember 通用通道).
+        try:
+            _tests_passed = (
+                validation.get("tests_passed", True)
+                if isinstance(validation, dict)
+                else True
+            )
+            _summary = (
+                f"iteration_count={self._iteration}; "
+                f"refined_hypotheses={len(self.hypothesis_graph.nodes)}; "
+                f"speculator_hints={self._speculator_hint[:200]!r}; "
+                f"benchmark_failures={'no' if _tests_passed else 'yes'}; "
+                f"r_phys={r_phys}; hypothesis={hypothesis[:120]!r}"
+            )
+            self.memory.remember(
+                content=_summary,
+                category="autoloop_summary",
+                importance=0.9,
+                tier="long",
+                tags=["autoloop", "summary", f"iter:{self._iteration}"],
+            )
+        except Exception:
+            # memory 失败不阻断 _learn, 上一轮的迭代已经入账
+            logger.debug(
+                "autoloop_summary writeback failed — loop continues",
                 exc_info=True,
             )
 

@@ -373,10 +373,13 @@ class BenchmarkRunner:
         tasks: list[BenchmarkTask] | None = None,
         config: HuginnConfig | None = None,
         logger: ExecutionLogger | None = None,
+        memory_manager: Any = None,
     ):
         self.tasks = tasks or DEFAULT_TASKS
         self.config = config or HuginnConfig.from_env()
         self.logger = logger or ExecutionLogger()
+        # ponytail: memory_manager 可选, 不破坏现有调用; 升级路径是 bench 自动注入 agent 的 memory
+        self.memory_manager = memory_manager
 
     def run(
         self,
@@ -427,6 +430,28 @@ class BenchmarkRunner:
 
             engine = EvolutionEngine(logger=self.logger)
             evolution_report = engine.run_full_evolution_cycle()
+
+        # 落 memory (可选). memory 故障不能拖死 bench, 静默吞掉.
+        if self.memory_manager is not None:
+            try:
+                summary = (
+                    f"bench run_id={run_id} passed={passed}/{len(results)} "
+                    f"pass_rate={metrics['pass_rate']:.2%} evolve={evolve}"
+                )
+                if hasattr(self.memory_manager, "remember"):
+                    self.memory_manager.remember(
+                        content=summary,
+                        category="benchmark_run_summary",
+                        importance=0.8,
+                    )
+                elif hasattr(self.memory_manager, "store"):
+                    self.memory_manager.store(
+                        content=summary,
+                        category="benchmark_run_summary",
+                        importance=0.8,
+                    )
+            except Exception:
+                pass
 
         return BenchmarkReport(
             run_id=run_id,

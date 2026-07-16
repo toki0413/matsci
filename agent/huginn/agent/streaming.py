@@ -1016,7 +1016,12 @@ class StreamingMixin:
             self._tool_adapter.set_budget(turn_budget)
             turn_router = ToolCallRouter(budget=turn_budget)
             self._tool_adapter.set_router(turn_router)
-            turn_loop_detector = LoopDetector()
+            # ponytail: RCB 场景 skip loop detector — agent 反复跑分析脚本是正常行为,
+            # loop detector 误判为循环. 升级: mode-aware detector with semantic diff.
+            if os.environ.get("HUGINN_SKIP_LOOP_DETECTOR", "").lower() not in ("1", "true", "yes"):
+                turn_loop_detector = LoopDetector()
+            else:
+                turn_loop_detector = None
             self._tool_adapter.set_loop_detector(turn_loop_detector)
 
             from huginn.agents.loop_detector import ThoughtLoopDetector

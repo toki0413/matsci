@@ -1,6 +1,6 @@
-"""Self-check for ClawBench metrics in benchmark/core.py. No frameworks, just asserts.
+"""Self-check for ClawBench metrics in self_improvement/core.py. No frameworks, just asserts.
 
-Run: python -m huginn.benchmark._selfcheck
+Run: python -m huginn.self_improvement._selfcheck
 """
 
 import asyncio
@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from huginn.benchmark.core import (
+from huginn.self_improvement.core import (
     BenchmarkCase,
     BenchmarkResult,
     BenchmarkSuite,
