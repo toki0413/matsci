@@ -28,7 +28,7 @@ from huginn.llm_retry import (
     _exponential_backoff,
 )
 from huginn.pet import PetMood, get_pet_bus
-from huginn.phases import ResearchPhase
+from huginn.phases import BudgetSpec, ResearchPhase
 from huginn.privacy import redact_secrets, scan_for_secrets
 from huginn.utils.context import (
     compact_messages,
@@ -534,6 +534,7 @@ class StreamingMixin:
         message: str,
         thread_id: str = "default",
         image_path: str | None = None,
+        budget_override: "BudgetSpec | None" = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Send a message to the Agent and stream responses.
 
@@ -542,6 +543,10 @@ class StreamingMixin:
 
         If *image_path* is provided, the agent routes the image through
         the vision fallback chain.
+
+        If *budget_override* is provided (BudgetSpec), temporarily
+        overrides max_tool_calls / recursion_limit for this turn.
+        PhaseManager.proposed_budget → Orchestrator → chat(budget_override=...).
         """
         # ponytail: CodeAct 早返回 — 不走 langgraph / vision / cognitive engine,
         # 直接进 code_act_loop. CodeAct 模式下 LLM 输出 Python 代码块替代 JSON
@@ -979,10 +984,16 @@ class StreamingMixin:
 
             # langgraph recursion: 每个 tool call 约 2-3 次 (agent + tool + routing)
             # max_tool_calls=100 需要 ~500 recursion. 默认 250 只够 ~80 calls.
-            _mc = self._max_tool_calls or 50
+            # budget_override: PhaseManager 转移后通过 Orchestrator 传入, 打通 phase→budget
+            if budget_override is not None:
+                _mc = budget_override.max_calls
+                _rec_limit = budget_override.recursion_limit
+            else:
+                _mc = self._max_tool_calls or 50
+                _rec_limit = max(250, _mc * 5)
             config = {
                 "configurable": {"thread_id": thread_id},
-                "recursion_limit": max(250, _mc * 5),
+                "recursion_limit": _rec_limit,
             }
 
             try:
@@ -996,7 +1007,7 @@ class StreamingMixin:
             from huginn.agents.tool_call_router import ToolCallRouter
 
             turn_budget = ToolCallBudget(
-                max_calls=self._max_tool_calls,
+                max_calls=_mc,
                 max_per_tool=self._max_tool_calls_per_tool,
             )
             self._tool_adapter.set_budget(turn_budget)

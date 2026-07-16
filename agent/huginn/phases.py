@@ -17,6 +17,7 @@ response.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -32,6 +33,27 @@ class ResearchPhase(str, Enum):
     REPORTING = "reporting"
     # Free-form mode — no phase constraints (default for backwards compat)
     OPEN = "open"
+
+
+@dataclass
+class BudgetSpec:
+    """Per-phase tool-call budget. 打通 phase → chat() 的 budget 通道."""
+    max_calls: int
+    recursion_limit: int
+    max_tool_output_tokens: int | None = None
+
+
+# Phase-aware budget: 每 phase 独立预算, EXECUTION 给最多 (写代码+训练),
+# LITERATURE 最少 (只读论文). 总和 ~530 calls.
+PHASE_BUDGETS: dict[ResearchPhase, BudgetSpec] = {
+    ResearchPhase.LITERATURE:  BudgetSpec(max_calls=50,  recursion_limit=300),
+    ResearchPhase.HYPOTHESIS:  BudgetSpec(max_calls=30,  recursion_limit=200),
+    ResearchPhase.PLANNING:    BudgetSpec(max_calls=30,  recursion_limit=200),
+    ResearchPhase.EXECUTION:   BudgetSpec(max_calls=300, recursion_limit=1600),
+    ResearchPhase.VALIDATION:  BudgetSpec(max_calls=100, recursion_limit=550),
+    ResearchPhase.REPORTING:   BudgetSpec(max_calls=20,  recursion_limit=150),
+    ResearchPhase.OPEN:        BudgetSpec(max_calls=500, recursion_limit=2600),
+}
 
 
 # Phase-specific system prompt prefixes. These are prepended to the main
@@ -175,6 +197,8 @@ class PhaseManager:
     def __init__(self, initial: ResearchPhase = ResearchPhase.OPEN) -> None:
         self._phase: ResearchPhase = initial
         self._history: list[ResearchPhase] = [initial]
+        # budget channel: transition 后提议新 budget, Orchestrator 读它传给 chat()
+        self.proposed_budget: BudgetSpec | None = PHASE_BUDGETS.get(initial)
 
     @property
     def phase(self) -> ResearchPhase:
@@ -198,6 +222,8 @@ class PhaseManager:
         if target != self._phase:
             self._phase = target
             self._history.append(target)
+        # phase 转移时提议新 budget, chat() 通过 budget_override 接受
+        self.proposed_budget = PHASE_BUDGETS.get(target)
         return True
 
     def prompt_prefix(self) -> str:
@@ -212,6 +238,7 @@ class PhaseManager:
         """Reset to *phase* and clear history."""
         self._phase = phase
         self._history = [phase]
+        self.proposed_budget = PHASE_BUDGETS.get(phase)
 
     def to_dict(self) -> dict[str, Any]:
         return {
