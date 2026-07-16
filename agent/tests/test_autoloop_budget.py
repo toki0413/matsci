@@ -66,6 +66,14 @@ def _patch_phases(engine: AutoloopEngine, plan_mode: str = "coder") -> None:
     engine._validate = AsyncMock(return_value={"tests_passed": True})  # type: ignore[assignment]
     engine._learn = AsyncMock(return_value=None)  # type: ignore[assignment]
     engine._report = AsyncMock(return_value=str(engine.workspace / "r.md"))  # type: ignore[assignment]
+    # ponytail: 这三个 inter-phase 编排 helper 都会阻塞 event loop:
+    #   _blind_spot_pass -> _llm_chat -> await MagicMock.ainvoke (TypeError 被吞)
+    #   _maybe_clarify("plan", workflow) -> mgr.ask(timeout=60) 等用户输入
+    #   _wait_if_checkpoint_pending -> 600s 轮询 pending_human_review
+    # budget 测的是 tier 逻辑, 不关心这些, 全部短路.
+    engine._blind_spot_pass = AsyncMock(return_value=[])  # type: ignore[assignment]
+    engine._maybe_clarify = AsyncMock(return_value=None)  # type: ignore[assignment]
+    engine._wait_if_checkpoint_pending = AsyncMock(return_value=None)  # type: ignore[assignment]
 
 
 def _fast_forward_perceive(skip_until: int):
