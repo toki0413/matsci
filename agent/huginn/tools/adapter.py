@@ -462,6 +462,12 @@ class ToolAdapter:
                 data = {"result": result.data}
             else:
                 data = {"error": result.error or "Unknown error"}
+                # 暴露 stderr/stdout 帮助 agent 自调试 (RCB 场景尤其重要)
+                # ponytail: 之前只有 "Unknown error", agent 无法 debug. 加 error_detail.
+                if getattr(result, "stderr", None):
+                    data["error_detail"] = result.stderr[-2000:]
+                elif getattr(result, "stdout", None):
+                    data["error_detail"] = result.stdout[-2000:]
             # ARGUS: tool 输出统一标 source_class, 下游 PhaseGate 可识别.
             # 顶层 _source_class 不进 LLM-visible content, 只作元数据.
             data["_source_class"] = "tool_output"

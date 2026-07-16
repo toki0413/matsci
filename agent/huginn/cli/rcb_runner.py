@@ -37,6 +37,8 @@ if not os.environ.get("HUGINN_CACHE_DIR"):
 os.environ.setdefault("HUGINN_SKIP_CSM", "1")
 # RCB 场景 compaction 保留前 2 条 root (task + Step 1 checklist) — 修同伦断裂 (σ₂)
 os.environ.setdefault("HUGINN_KEEP_ROOT_N", "2")
+# RCB 场景跳过 Rust sandbox — 它在 RDKit+sklearn GPR 场景静默崩溃返回空 stderr
+os.environ.setdefault("HUGINN_NO_RUST_SANDBOX", "1")
 
 
 # === 认知原语: adversarial_critique ===
