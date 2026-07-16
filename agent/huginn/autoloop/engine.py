@@ -1,4 +1,4 @@
-"""Autoloop Engine — the main autonomous loop for Huginn.
+﻿"""Autoloop Engine — the main autonomous loop for Huginn.
 
 Ties together exploration, coder, workflow, benchmark, and report
 into a single closed-loop ecosystem:
@@ -19,22 +19,25 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from huginn.autoloop.budget import IterationBudget, ProgressiveBudget
+from huginn.api.event import EventType, WorkflowStageEvent
+from huginn.autoloop.budget import ProgressiveBudget
 from huginn.autoloop.goal_scheduler import Goal, GoalScheduler
 from huginn.autoloop.phase_gate import (
     PhaseGate,
     PhaseGateHook,
-    _has_external_source as _validation_has_external_source,
     get_shared_phase_gate_state,
 )
-from huginn.bench.runner import BenchmarkRunner
+from huginn.autoloop.phase_gate import (
+    _has_external_source as _validation_has_external_source,
+)
+from huginn.bench.runner import BenchmarkRunner  # noqa: F401  # monkeypatch
 from huginn.coder.loop import CoderRunner
 from huginn.config import get_settings
 from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -43,16 +46,14 @@ from huginn.interaction.progress import ProgressTracker, get_progress_tracker
 from huginn.kg.builder import ProjectKnowledgeGraph
 from huginn.llm import get_model
 from huginn.memory.manager import MemoryManager
-from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.tools.report_tool import ReportTool
-from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
+from huginn.types import ToolContext
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.templates import get_template, standard_dft_workflow
 
 # 跨源属性冲突检测用的正则; 提到模块级避免每次调用重编译
 _PROP_RE = re.compile(
-    r'([\w\s]{3,25}?)\s*[:=]\s*(-?\d+\.?\d*)\s*(eV(?:/\w+)?|GPa|THz|nm)',
+    r"([\w\s]{3,25}?)\s*[:=]\s*(-?\d+\.?\d*)\s*(eV(?:/\w+)?|GPa|THz|nm)",
     re.IGNORECASE,
 )
 
@@ -75,10 +76,25 @@ AUTOLOOP_PHASES = (
 # (比如 Execute 直接调 workflow, 不需要 persona 影响输出).
 # Hypothesize 用 default, 真正的 persona 在 _hypothesize 里按研究类型动态选.
 _MATH_SIGNALS = (
-    "equation", "lagrangian", "pde", "hamiltonian", "derivative",
-    "differential", "integral", "eigenvalue", "tensor", "manifold",
-    "symmetry", "conservation", "variational", "continuum",
-    "stress", "strain", "energy", "phonon", "band",
+    "equation",
+    "lagrangian",
+    "pde",
+    "hamiltonian",
+    "derivative",
+    "differential",
+    "integral",
+    "eigenvalue",
+    "tensor",
+    "manifold",
+    "symmetry",
+    "conservation",
+    "variational",
+    "continuum",
+    "stress",
+    "strain",
+    "energy",
+    "phonon",
+    "band",
 )
 _PHASE_PERSONAS: dict[str, str | None] = {
     "perceive": "default",
@@ -89,9 +105,9 @@ _PHASE_PERSONAS: dict[str, str | None] = {
     "learn": "default",
     "report": "tutor",  # 教学风格输出
 }
-assert set(_PHASE_PERSONAS.keys()) == set(AUTOLOOP_PHASES), (
-    "Phase persona keys must match AUTOLOOP_PHASES"
-)
+assert set(_PHASE_PERSONAS.keys()) == set(
+    AUTOLOOP_PHASES
+), "Phase persona keys must match AUTOLOOP_PHASES"
 
 # result_data 里的 key -> 文献检索时用的性质名. _literature_comparison 遍历这个表.
 _LIT_PROPERTY_MAP: dict[str, str] = {
@@ -256,6 +272,7 @@ class AutoloopEngine:
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
+
         self.hypothesis_graph = HypothesisGraph()
         self.report_tool = ReportTool()
         # OAK 启发: forest_id 标记归属森林, 交叉授粉时记录来源
@@ -267,6 +284,7 @@ class AutoloopEngine:
             max_parallel=3,
         )
         from huginn.tools.registry import ToolRegistry
+
         self.workflow_engine = WorkflowEngine(
             tool_registry=ToolRegistry,  # 传类本身, .get() 是 classmethod
         )
@@ -292,6 +310,9 @@ class AutoloopEngine:
         self._plan_check_last_result: dict[str, Any] | None = None
         self._plan_check_warnings: list[str] = []
         self._plan_check_patterns: list[dict[str, Any]] = []
+        # 自动发现的 scene_tag 关键词 (跨 run 积累), 跟写死的关键词表互补.
+        # ponytail: dict[label, set[keyword]], 简单加法; 不上 embedding.
+        self._scene_tag_extra_keywords: dict[str, set[str]] = {}
         # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
         self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
@@ -338,8 +359,8 @@ class AutoloopEngine:
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
         # 在 validate→learn 做 adversarial 审查, 有 high 发现则阻断.
-        from huginn.autoloop.red_team import RedTeamReviewer
         from huginn.autoloop.phase_gate import MathEvidenceChecker
+        from huginn.autoloop.red_team import RedTeamReviewer
 
         self.phase_gate_hook = PhaseGateHook(
             reviewer_fn=RedTeamReviewer(
@@ -394,6 +415,7 @@ class AutoloopEngine:
         if self._perception is None:
             try:
                 from huginn.perception import PerceptionLayer
+
                 self._perception = PerceptionLayer(self.workspace)
                 self._perception.start()
             except Exception:
@@ -443,7 +465,11 @@ class AutoloopEngine:
         bus = self._get_event_bus()
         if bus is None:
             return
-        idx = self._phase_order.index(stage_name) + 1 if stage_name in self._phase_order else 0
+        idx = (
+            self._phase_order.index(stage_name) + 1
+            if stage_name in self._phase_order
+            else 0
+        )
         event = WorkflowStageEvent(
             type=event_type,
             workflow_name="autoloop",
@@ -457,10 +483,13 @@ class AutoloopEngine:
             if result.executed == 0 and result.failed == 0:
                 logger.debug(
                     "stage event %s.%s had no handlers",
-                    event_type.name, stage_name,
+                    event_type.name,
+                    stage_name,
                 )
         except Exception:
-            logger.warning("error in _dispatch_stage_event: bus.dispatch failed", exc_info=True)
+            logger.warning(
+                "error in _dispatch_stage_event: bus.dispatch failed", exc_info=True
+            )
 
     def _build_kb_text(self, query: str) -> str:
         """检索领域知识库, 把命中 chunk 拼成 prompt 上下文块. KB 没装、
@@ -536,7 +565,11 @@ class AutoloopEngine:
             gap_hints = self._detect_kg_gaps(kg, nodes)
             gap_block = ""
             if gap_hints:
-                gap_block = "\n\n### KG Gap Detection (potential research directions)\n" + "\n".join(gap_hints) + "\n"
+                gap_block = (
+                    "\n\n### KG Gap Detection (potential research directions)\n"
+                    + "\n".join(gap_hints)
+                    + "\n"
+                )
             return (
                 "### Knowledge Graph Context\n"
                 "Previously discovered entities and relations from prior runs:\n"
@@ -556,6 +589,7 @@ class AutoloopEngine:
             if graph is None or graph.number_of_nodes() < 3:
                 return []
             import networkx as nx
+
             hints: list[str] = []
             # 只检查高置信度节点 (conf > 0.5)
             high_conf_nodes = []
@@ -565,14 +599,20 @@ class AutoloopEngine:
             # 对每对高置信度节点, 检查是否有共同邻居但彼此无边
             checked = 0
             for i, a in enumerate(high_conf_nodes[:10]):
-                for b in high_conf_nodes[i+1:10]:
+                for b in high_conf_nodes[i + 1 : 10]:
                     if graph.has_edge(a, b) or graph.has_edge(b, a):
                         continue  # 已有边, 不是缺口
-                    common = set(nx.common_neighbors(graph, a, b)) if graph.has_node(a) and graph.has_node(b) else set()
+                    common = (
+                        set(nx.common_neighbors(graph, a, b))
+                        if graph.has_node(a) and graph.has_node(b)
+                        else set()
+                    )
                     if common:
                         a_label = graph.nodes[a].get("label", a)[:40]
                         b_label = graph.nodes[b].get("label", b)[:40]
-                        hints.append(f"- {a_label} and {b_label} share connections but no direct link — consider whether they relate")
+                        hints.append(
+                            f"- {a_label} and {b_label} share connections but no direct link — consider whether they relate"
+                        )
                         checked += 1
                     if checked >= 3:
                         break
@@ -784,11 +824,15 @@ class AutoloopEngine:
                 f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺 {gate.missing_evidence}"
             )
             self._speculator_hint = (
-                (self._speculator_hint + "\n" + fb).strip() if self._speculator_hint else fb
+                (self._speculator_hint + "\n" + fb).strip()
+                if self._speculator_hint
+                else fb
             )
             logger.info(
                 "gate blocked %s→%s: missing %s",
-                from_phase, to_phase, gate.missing_evidence,
+                from_phase,
+                to_phase,
+                gate.missing_evidence,
             )
             return False
 
@@ -803,28 +847,31 @@ class AutoloopEngine:
             state.pending_human_review = (from_phase, to_phase)
             logger.info(
                 "human checkpoint pending %s→%s: awaiting user review",
-                from_phase, to_phase,
+                from_phase,
+                to_phase,
             )
             # 记一条 pending 状态, phase_tool 查得到
-            state.history.append(PhaseGate(
-                from_phase=from_phase,
-                to_phase=to_phase,
-                status="pending",
-                required_evidence=self.phase_gate_hook.config.required_for(
-                    from_phase, to_phase
-                ),
-                feedback=(
-                    "⚠ 硬性检查点: 此转移不可超时自动放行, 必须人工确认. "
-                    "请审查 evidence 后用 phase_tool override 显式放行, "
-                    "或 submit_evidence 补充后 resume."
-                    if state.is_hard_checkpoint(from_phase, to_phase)
-                    else "等待人工 checkpoint 审查. 用 phase_tool override 放行, "
-                         "或 submit_evidence 补充后 resume."
-                ),
-                reviewer="human_checkpoint",
-                trace_id=tid,
-                parent_trace_id=parent_tid,
-            ))
+            state.history.append(
+                PhaseGate(
+                    from_phase=from_phase,
+                    to_phase=to_phase,
+                    status="pending",
+                    required_evidence=self.phase_gate_hook.config.required_for(
+                        from_phase, to_phase
+                    ),
+                    feedback=(
+                        "⚠ 硬性检查点: 此转移不可超时自动放行, 必须人工确认. "
+                        "请审查 evidence 后用 phase_tool override 显式放行, "
+                        "或 submit_evidence 补充后 resume."
+                        if state.is_hard_checkpoint(from_phase, to_phase)
+                        else "等待人工 checkpoint 审查. 用 phase_tool override 放行, "
+                        "或 submit_evidence 补充后 resume."
+                    ),
+                    reviewer="human_checkpoint",
+                    trace_id=tid,
+                    parent_trace_id=parent_tid,
+                )
+            )
             return False
 
         # 用户已审查完毕 (pending_human_review 被清除), 正常放行
@@ -864,7 +911,9 @@ class AutoloopEngine:
             if loop.time() > deadline:
                 logger.warning(
                     "human checkpoint %s→%s timed out after %ss, force proceed",
-                    from_phase, to_phase, timeout,
+                    from_phase,
+                    to_phase,
+                    timeout,
                 )
                 state.pending_human_review = None
                 await self._publish_checkpoint_event(
@@ -885,22 +934,26 @@ class AutoloopEngine:
         )
 
     async def _publish_checkpoint_event(
-        self, event_type: str, from_phase: str, to_phase: str,
+        self,
+        event_type: str,
+        from_phase: str,
+        to_phase: str,
         is_hard: bool = False,
     ) -> None:
         """推送 PhaseGate checkpoint 事件到 EventBus."""
         bus = self._get_event_bus()
         if bus is None:
             return
-        from huginn.api.event import EventType
         try:
-            await bus.dispatch({
-                "type": event_type,
-                "from_phase": from_phase,
-                "to_phase": to_phase,
-                "is_hard": is_hard,
-                "timestamp": asyncio.get_event_loop().time(),
-            })
+            await bus.dispatch(
+                {
+                    "type": event_type,
+                    "from_phase": from_phase,
+                    "to_phase": to_phase,
+                    "is_hard": is_hard,
+                    "timestamp": asyncio.get_event_loop().time(),
+                }
+            )
         except Exception:
             logger.debug("checkpoint event publish failed", exc_info=True)
 
@@ -934,7 +987,9 @@ class AutoloopEngine:
             self._budget_degraded = True
             logger.info(
                 "budget degraded at iter %d: %s reject cap %s hit, allowing all modes",
-                iteration, tier.label, tier.max_calls,
+                iteration,
+                tier.label,
+                tier.max_calls,
             )
             return True
 
@@ -948,7 +1003,11 @@ class AutoloopEngine:
         )
         logger.info(
             "budget rejected mode=%s at iter %d (tier %s, reject %d/%s)",
-            mode, iteration, tier.label, rejects, tier.max_calls,
+            mode,
+            iteration,
+            tier.label,
+            rejects,
+            tier.max_calls,
         )
         return False
 
@@ -971,7 +1030,9 @@ class AutoloopEngine:
 
         # Side questions are low-priority — use a cheap model when available
         side_model = self.model
-        router = getattr(self, 'model_router', None) or getattr(getattr(self, 'agent', None), 'model_router', None)
+        router = getattr(self, "model_router", None) or getattr(
+            getattr(self, "agent", None), "model_router", None
+        )
         if router is not None:
             try:
                 side_model = router.select("cheap", prefer_cheap=True) or self.model
@@ -996,7 +1057,7 @@ class AutoloopEngine:
                     channel.respond(sq.id, answer)
                     answered += 1
                     logger.info("side answered %s: %s", sq.id, answer[:80])
-            except Exception as exc:
+            except Exception:
                 # 单条失败不影响其他, 也不影响主 loop
                 logger.warning("side failed to answer %s", sq.id, exc_info=True)
         return answered
@@ -1007,6 +1068,7 @@ class AutoloopEngine:
             return self._clarification_mgr
         try:
             from huginn.interaction.clarification import get_clarification_manager
+
             self._clarification_mgr = get_clarification_manager()
         except Exception:
             return None
@@ -1018,6 +1080,7 @@ class AutoloopEngine:
             return self._plan_store
         try:
             from huginn.autoloop.plan_store import PlanStore
+
             self._plan_store = PlanStore()
         except Exception:
             return None
@@ -1123,7 +1186,7 @@ class AutoloopEngine:
             )
             logger.info("clarify %s: %s", checkpoint, answer[:80])
             return answer
-        except Exception as exc:
+        except Exception:
             logger.warning("clarify %s failed", checkpoint, exc_info=True)
             return None
 
@@ -1203,14 +1266,21 @@ class AutoloopEngine:
             if self._pivot_count >= self._max_pivots:
                 logger.warning(
                     "autoloop stopping: pivot budget exhausted (%d/%d)",
-                    self._pivot_count, self._max_pivots,
+                    self._pivot_count,
+                    self._max_pivots,
                 )
                 break
-            logger.info("autoloop iteration %d/%d: %s", self._iteration, max_iterations, objective)
+            logger.info(
+                "autoloop iteration %d/%d: %s",
+                self._iteration,
+                max_iterations,
+                objective,
+            )
 
             # goal persistence: increment iteration count on active goal
             try:
                 from huginn.autoloop.goal_store import get_goal_store
+
                 _gs = get_goal_store()
                 _active_goal = _gs.get_active()
                 if _active_goal:
@@ -1219,11 +1289,14 @@ class AutoloopEngine:
                 logger.debug("goal_store.increment_iteration failed", exc_info=True)
 
             # 发布 campaign.iteration 事件
-            self._emit_campaign("campaign.iteration", {
-                "iteration": self._iteration,
-                "max": max_iterations,
-                "objective": objective[:200],
-            })
+            self._emit_campaign(
+                "campaign.iteration",
+                {
+                    "iteration": self._iteration,
+                    "max": max_iterations,
+                    "objective": objective[:200],
+                },
+            )
 
             # truncate speculator hint to prevent unbounded growth across iterations
             # ponytail: keep last 2000 chars, earlier feedback is stale anyway
@@ -1237,8 +1310,11 @@ class AutoloopEngine:
             )
             phases.append(phase)
             completed_steps += 1
-            tracker.update(progress_task_id, current_step=completed_steps,
-                           current_label=f"iter {self._iteration}: perceive ({phase.status})")
+            tracker.update(
+                progress_task_id,
+                current_step=completed_steps,
+                current_label=f"iter {self._iteration}: perceive ({phase.status})",
+            )
             if not phase.result:
                 if phase.error:
                     self._speculator_hint += f"\n[failed: perceive] {phase.error}\n"
@@ -1260,29 +1336,42 @@ class AutoloopEngine:
                     blind_spots = await self._blind_spot_pass(context, self._objective)
                     if blind_spots:
                         context["blind_spots"] = blind_spots
-                        logger.info("blind spot pass: %d potential unknowns found", len(blind_spots))
+                        logger.info(
+                            "blind spot pass: %d potential unknowns found",
+                            len(blind_spots),
+                        )
                 except Exception:
                     logger.warning("blind spot pass failed", exc_info=True)
 
             # 2. Hypothesize
-            phase = await self._run_phase_async("hypothesize", self._hypothesize, context)
+            phase = await self._run_phase_async(
+                "hypothesize", self._hypothesize, context
+            )
             phases.append(phase)
             completed_steps += 1
-            tracker.update(progress_task_id, current_step=completed_steps,
-                           current_label=f"iter {self._iteration}: hypothesize ({phase.status})")
+            tracker.update(
+                progress_task_id,
+                current_step=completed_steps,
+                current_label=f"iter {self._iteration}: hypothesize ({phase.status})",
+            )
             hypothesis = phase.result
             if not hypothesis:
                 # propagate error to speculator hint so next iteration knows why
                 if phase.error:
                     self._speculator_hint += f"\n[failed: hypothesize] {phase.error}\n"
-                logger.info("no hypothesis generated (%s), skipping", phase.error or "unknown")
+                logger.info(
+                    "no hypothesis generated (%s), skipping", phase.error or "unknown"
+                )
                 continue
             logger.info("hypothesis: %s", hypothesis)
             # 发布 campaign.hypothesis 事件
-            self._emit_campaign("campaign.hypothesis", {
-                "iteration": self._iteration,
-                "hypothesis": str(hypothesis)[:300],
-            })
+            self._emit_campaign(
+                "campaign.hypothesis",
+                {
+                    "iteration": self._iteration,
+                    "hypothesis": str(hypothesis)[:300],
+                },
+            )
             # 把假设记进 hypothesis graph, 方便后续 support/refute 追踪
             _current_hyp_id = None
             try:
@@ -1291,7 +1380,10 @@ class AutoloopEngine:
                     rationale=context.get("summary", ""),
                 )
             except Exception:
-                logger.warning("error in run: hypothesis_graph.add_hypothesis failed", exc_info=True)
+                logger.warning(
+                    "error in run: hypothesis_graph.add_hypothesis failed",
+                    exc_info=True,
+                )
             # A: LUCID 必要条件闭环 — 把 LLM 自检的 necessary condition 加成派生节点
             self._attach_lucid_prereqs(_current_hyp_id)
             # B: 记当前假设 id 供 _plan_context_hint / _override_plan_mode 路由
@@ -1304,15 +1396,20 @@ class AutoloopEngine:
             phase = await self._run_phase_async("plan", self._plan, hypothesis, context)
             phases.append(phase)
             completed_steps += 1
-            tracker.update(progress_task_id, current_step=completed_steps,
-                           current_label=f"iter {self._iteration}: plan ({phase.status})")
+            tracker.update(
+                progress_task_id,
+                current_step=completed_steps,
+                current_label=f"iter {self._iteration}: plan ({phase.status})",
+            )
             plan = phase.result
             if not plan:
                 if phase.error:
                     self._speculator_hint += f"\n[failed: plan] {phase.error}\n"
-                logger.info("no plan generated (%s), skipping", phase.error or "unknown")
+                logger.info(
+                    "no plan generated (%s), skipping", phase.error or "unknown"
+                )
                 continue
-            logger.info("plan: %s | %s", plan['mode'], plan['description'])
+            logger.info("plan: %s | %s", plan["mode"], plan["description"])
 
             # 高成本 plan 时问用户确认. 有 plan_id 说明 _plan 里已经走过
             # PlanStore 确认门了, 别重复问; 没 plan_id (PlanStore 不可用)
@@ -1329,7 +1426,8 @@ class AutoloopEngine:
 
             # gate: plan→execute — 必须有 mode + description 才放行
             if not self._check_gate(
-                "plan", "execute",
+                "plan",
+                "execute",
                 {"mode": plan.get("mode"), "description": plan.get("description")},
             ):
                 await self._wait_if_checkpoint_pending("plan", "execute")
@@ -1341,15 +1439,20 @@ class AutoloopEngine:
             phase = await self._run_phase_async("execute", self._execute, plan, context)
             phases.append(phase)
             completed_steps += 1
-            tracker.update(progress_task_id, current_step=completed_steps,
-                           current_label=f"iter {self._iteration}: execute ({phase.status})")
+            tracker.update(
+                progress_task_id,
+                current_step=completed_steps,
+                current_label=f"iter {self._iteration}: execute ({phase.status})",
+            )
             execution_result = phase.result
             if phase.error:
                 self._speculator_hint += f"\n[failed: execute] {phase.error}\n"
                 logger.info("execution failed: %s", phase.error)
                 continue
             if execution_result is None:
-                self._speculator_hint += "\n[failed: execute] 产出为空, 跳过本轮 validate\n"
+                self._speculator_hint += (
+                    "\n[failed: execute] 产出为空, 跳过本轮 validate\n"
+                )
                 logger.warning("execute returned None, skipping validate")
                 continue
             logger.info("execution complete: %s", execution_result)
@@ -1363,12 +1466,21 @@ class AutoloopEngine:
                 try:
                     import subprocess as _sp
                     import time as _time
-                    _sp.run(["git", "add", "-A"], cwd=self.workspace,
-                            capture_output=True, timeout=10)
+
+                    _sp.run(
+                        ["git", "add", "-A"],
+                        cwd=self.workspace,
+                        capture_output=True,
+                        timeout=10,
+                    )
                     _msg = f"[iter {self._iteration}] {plan.get('mode','?')}: {plan.get('description','')[:80]}"
                     for _attempt in range(3):
-                        _r = _sp.run(["git", "commit", "-m", _msg], cwd=self.workspace,
-                                     capture_output=True, timeout=10)
+                        _r = _sp.run(
+                            ["git", "commit", "-m", _msg],
+                            cwd=self.workspace,
+                            capture_output=True,
+                            timeout=10,
+                        )
                         if _r.returncode == 0:
                             break
                         # index.lock 冲突等瞬时错误, 退避后重试
@@ -1376,6 +1488,7 @@ class AutoloopEngine:
                             _time.sleep(1 * (_attempt + 1))
                 except Exception:
                     pass  # no git repo or git unavailable — not our problem
+
             await asyncio.to_thread(_git_commit_after_execute)
 
             # Deviation log: 执行结果与 plan 预期不符时记录
@@ -1390,22 +1503,30 @@ class AutoloopEngine:
                     if store is not None:
                         store.complete_plan(_plan_id)
                 except Exception:
-                    logger.warning("error in run: store.complete_plan failed", exc_info=True)
+                    logger.warning(
+                        "error in run: store.complete_plan failed", exc_info=True
+                    )
 
             # gate: execute→validate — 必须有 mode (执行模式) 才放行
             if not self._check_gate(
-                "execute", "validate",
+                "execute",
+                "validate",
                 {"mode": plan.get("mode")},
             ):
                 await self._wait_if_checkpoint_pending("execute", "validate")
                 continue
 
             # 5. Validate
-            phase = await self._run_phase_async("validate", self._validate, execution_result)
+            phase = await self._run_phase_async(
+                "validate", self._validate, execution_result
+            )
             phases.append(phase)
             completed_steps += 1
-            tracker.update(progress_task_id, current_step=completed_steps,
-                           current_label=f"iter {self._iteration}: validate ({phase.status})")
+            tracker.update(
+                progress_task_id,
+                current_step=completed_steps,
+                current_label=f"iter {self._iteration}: validate ({phase.status})",
+            )
             validation = phase.result
             logger.info("validation: %s", validation)
 
@@ -1430,7 +1551,9 @@ class AutoloopEngine:
                         # data_source 不同 → dual_covered 检查来源独立性
                         if self.hypothesis_graph.needs_dual_coverage(_current_hyp_id):
                             try:
-                                gp_verdict = self._verify_via_gp(_current_hyp_id, validation)
+                                gp_verdict = self._verify_via_gp(
+                                    _current_hyp_id, validation
+                                )
                                 if gp_verdict.get("agrees"):
                                     self.hypothesis_graph.support(
                                         _current_hyp_id,
@@ -1443,7 +1566,8 @@ class AutoloopEngine:
                             except Exception:
                                 logger.debug(
                                     "GP verification failed for %s",
-                                    _current_hyp_id, exc_info=True,
+                                    _current_hyp_id,
+                                    exc_info=True,
                                 )
                     else:
                         # C: 失败类型区分 — 工具失败不 refute, 直接下轮重试
@@ -1456,11 +1580,14 @@ class AutoloopEngine:
                                 "tool_error for %s, skipping refute (will retry)",
                                 _current_hyp_id,
                             )
-                            self._emit_campaign("campaign.retry", {
-                                "iteration": self._iteration,
-                                "hypothesis": str(_current_hyp_id),
-                                "reason": "tool_error",
-                            })
+                            self._emit_campaign(
+                                "campaign.retry",
+                                {
+                                    "iteration": self._iteration,
+                                    "hypothesis": str(_current_hyp_id),
+                                    "reason": "tool_error",
+                                },
+                            )
                         else:
                             if failure_type == "prompt_injection_suspect":
                                 # ARGUS: 失败 + external_content 来源, 证据可能被注入.
@@ -1470,15 +1597,20 @@ class AutoloopEngine:
                                     "external_content source, evidence may be tainted",
                                     _current_hyp_id,
                                 )
-                                self._emit_campaign("campaign.suspect", {
-                                    "iteration": self._iteration,
-                                    "hypothesis": str(_current_hyp_id),
-                                    "reason": "prompt_injection_suspect",
-                                })
+                                self._emit_campaign(
+                                    "campaign.suspect",
+                                    {
+                                        "iteration": self._iteration,
+                                        "hypothesis": str(_current_hyp_id),
+                                        "reason": "prompt_injection_suspect",
+                                    },
+                                )
                             self.hypothesis_graph.refute(
                                 _current_hyp_id,
-                                evidence={"errors": validation.get("errors", "tests failed"),
-                                          "failure_type": failure_type},
+                                evidence={
+                                    "errors": validation.get("errors", "tests failed"),
+                                    "failure_type": failure_type,
+                                },
                             )
                             # refine 闭环: refute 后生成修正假设, 下轮迭代处理
                             if self._refine_count < self._max_refines:
@@ -1493,8 +1625,12 @@ class AutoloopEngine:
                                         )
                                     new_hyp = self.hypothesis_graph.refine_failed(
                                         _current_hyp_id,
-                                        evidence={"errors": validation.get("errors", "tests failed"),
-                                                  "failure_type": failure_type},
+                                        evidence={
+                                            "errors": validation.get(
+                                                "errors", "tests failed"
+                                            ),
+                                            "failure_type": failure_type,
+                                        },
                                         model=self._get_refine_model(),
                                         block_registry=self._get_metacog_block_registry(),
                                         method_family=_metacog_family,
@@ -1502,53 +1638,83 @@ class AutoloopEngine:
                                     self._refine_count += 1
                                     logger.info(
                                         "refine %d/%d (%s): %s → %s",
-                                        self._refine_count, self._max_refines,
+                                        self._refine_count,
+                                        self._max_refines,
                                         failure_type,
-                                        _current_hyp_id, new_hyp,
+                                        _current_hyp_id,
+                                        new_hyp,
                                     )
                                     # 发布 campaign.refine 事件
-                                    self._emit_campaign("campaign.refine", {
-                                        "iteration": self._iteration,
-                                        "refine_count": self._refine_count,
-                                        "max_refines": self._max_refines,
-                                        "failure_type": failure_type,
-                                        "old_hypothesis": str(_current_hyp_id),
-                                        "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
-                                    })
+                                    self._emit_campaign(
+                                        "campaign.refine",
+                                        {
+                                            "iteration": self._iteration,
+                                            "refine_count": self._refine_count,
+                                            "max_refines": self._max_refines,
+                                            "failure_type": failure_type,
+                                            "old_hypothesis": str(_current_hyp_id),
+                                            "new_hypothesis": (
+                                                str(new_hyp)[:300] if new_hyp else ""
+                                            ),
+                                        },
+                                    )
                                 except Exception:
-                                    logger.warning("refine_failed failed", exc_info=True)
+                                    logger.warning(
+                                        "refine_failed failed", exc_info=True
+                                    )
                             else:
                                 # refine 次数耗尽 → 战略 pivot, 不再修参数, 换方向
                                 try:
-                                    _obj = self._objective if hasattr(self, "_objective") else ""
+                                    _obj = (
+                                        self._objective
+                                        if hasattr(self, "_objective")
+                                        else ""
+                                    )
                                     new_hyp = self.hypothesis_graph.pivot(
                                         _current_hyp_id,
-                                        evidence={"errors": validation.get("errors", "tests failed"),
-                                                  "failure_type": failure_type},
+                                        evidence={
+                                            "errors": validation.get(
+                                                "errors", "tests failed"
+                                            ),
+                                            "failure_type": failure_type,
+                                        },
                                         model=self._get_refine_model(),
                                         objective=_obj,
                                     )
-                                    self._refine_count = 0  # reset: 新方向有新的 refine 预算
+                                    self._refine_count = (
+                                        0  # reset: 新方向有新的 refine 预算
+                                    )
                                     self._pivot_count += 1
                                     logger.info(
                                         "PIVOT (%s): %s → %s (refine budget reset)",
-                                        failure_type, _current_hyp_id, new_hyp,
+                                        failure_type,
+                                        _current_hyp_id,
+                                        new_hyp,
                                     )
-                                    self._emit_campaign("campaign.refine", {
-                                        "iteration": self._iteration,
-                                        "pivot": True,
-                                        "failure_type": failure_type,
-                                        "old_hypothesis": str(_current_hyp_id),
-                                        "new_hypothesis": str(new_hyp)[:300] if new_hyp else "",
-                                        "reason": "max_refines_reached",
-                                    })
+                                    self._emit_campaign(
+                                        "campaign.refine",
+                                        {
+                                            "iteration": self._iteration,
+                                            "pivot": True,
+                                            "failure_type": failure_type,
+                                            "old_hypothesis": str(_current_hyp_id),
+                                            "new_hypothesis": (
+                                                str(new_hyp)[:300] if new_hyp else ""
+                                            ),
+                                            "reason": "max_refines_reached",
+                                        },
+                                    )
                                 except Exception:
                                     logger.warning(
                                         "pivot failed for %s, giving up on this hypothesis",
-                                        _current_hyp_id, exc_info=True,
+                                        _current_hyp_id,
+                                        exc_info=True,
                                     )
             except Exception:
-                logger.warning("error in run: hypothesis_graph support/refute update failed", exc_info=True)
+                logger.warning(
+                    "error in run: hypothesis_graph support/refute update failed",
+                    exc_info=True,
+                )
 
             # 连续失败计数: 通过则清零, 不通过则累加并在阈值时问用户
             # validate 阶段抛异常时 phase.result 是 None, _extract_tests_passed
@@ -1556,7 +1722,10 @@ class AutoloopEngine:
             # 所以先看 phase.status — failed 直接视为没通过.
             if phase.status == "failed":
                 _tests_ok = False
-                validation = {"tests_passed": False, "error": phase.error or "validate phase failed"}
+                validation = {
+                    "tests_passed": False,
+                    "error": phase.error or "validate phase failed",
+                }
             else:
                 _tests_ok = _extract_tests_passed(validation)
             if _tests_ok:
@@ -1564,7 +1733,9 @@ class AutoloopEngine:
             else:
                 self._consecutive_failures += 1
                 # 连续 3+ 次失败, 问用户方向 (非阻塞, 超时走默认继续)
-                clarify_answer = await self._maybe_clarify("validation_fail", validation)
+                clarify_answer = await self._maybe_clarify(
+                    "validation_fail", validation
+                )
                 if clarify_answer:
                     self._speculator_hint += f"\n[用户方向指引] {clarify_answer}\n"
                 # 连续失败超上限: objective 可能在死循环, 强制停.
@@ -1572,16 +1743,15 @@ class AutoloopEngine:
                 if self._consecutive_failures >= self._max_consecutive_failures:
                     logger.warning(
                         "autoloop stopping: %d consecutive validation failures (max %d)",
-                        self._consecutive_failures, self._max_consecutive_failures,
+                        self._consecutive_failures,
+                        self._max_consecutive_failures,
                     )
                     self._should_stop = True
 
             # gate: validate→learn — 要有 tests_passed 证据才放行.
             # tests 没过 = 没有"测试通过"的证据, 传空 dict 让门阻断,
             # 而不是传 tests_passed=False (hook 只查 key 存在性, False 会被当成有值)
-            _gate_evidence: dict[str, Any] = (
-                {"tests_passed": True} if _tests_ok else {}
-            )
+            _gate_evidence: dict[str, Any] = {"tests_passed": True} if _tests_ok else {}
             # 透传数学证据 key (由 _validate 从 execution_result 收集):
             # conservation_law / dimensional_consistent / pde_classification /
             # sobol_top_features / constraint_check. math_checker 用 Dempster-
@@ -1607,11 +1777,16 @@ class AutoloopEngine:
                 continue
 
             # 6. Learn
-            phase = await self._run_phase_async("learn", self._learn, hypothesis, plan, validation)
+            phase = await self._run_phase_async(
+                "learn", self._learn, hypothesis, plan, validation
+            )
             phases.append(phase)
             completed_steps += 1
-            tracker.update(progress_task_id, current_step=completed_steps,
-                           current_label=f"iter {self._iteration}: learn ({phase.status})")
+            tracker.update(
+                progress_task_id,
+                current_step=completed_steps,
+                current_label=f"iter {self._iteration}: learn ({phase.status})",
+            )
             logger.info("learning complete")
 
             # Goal completion: success_criteria 全命中 → 提前停循环.
@@ -1620,11 +1795,15 @@ class AutoloopEngine:
                 # completion audit: goal 达标但探索不够 → 不停, 把缺口塞 hint 下轮看
                 _blk, _why = self._metacog_check_completion()
                 if _blk:
-                    logger.info("metacog completion audit blocked goal-completion stop: %s", _why)
+                    logger.info(
+                        "metacog completion audit blocked goal-completion stop: %s",
+                        _why,
+                    )
                     _why_msg = f"[completion audit] 不能停: {_why}"
                     self._speculator_hint = (
                         (self._speculator_hint + "\n" + _why_msg).strip()
-                        if self._speculator_hint else _why_msg
+                        if self._speculator_hint
+                        else _why_msg
                     )
                 else:
                     logger.info("goal completed: %s", goal.objective)
@@ -1639,33 +1818,47 @@ class AutoloopEngine:
                 if self._iteration % 3 == 2 or self._iteration >= max_iterations - 1:
                     try:
                         from huginn.evaluation.goal_judge import GoalJudge
-                        judge = GoalJudge(llm=None)  # rule-based in loop, LLM judge at exit
-                        final_text = str(validation.get("summary") or
-                                         validation.get("result_data") or
-                                         execution_result.get("summary", ""))
+
+                        judge = GoalJudge(
+                            llm=None
+                        )  # rule-based in loop, LLM judge at exit
+                        final_text = str(
+                            validation.get("summary")
+                            or validation.get("result_data")
+                            or execution_result.get("summary", "")
+                        )
                         gj = judge.judge(goal.objective, None, final_text)
                         if gj.get("achieved"):
                             # completion audit: 判定达标但探索不够 → 继续迭代
                             _blk, _why = self._metacog_check_completion()
                             if _blk:
-                                logger.info("metacog completion audit blocked GoalJudge stop: %s", _why)
+                                logger.info(
+                                    "metacog completion audit blocked GoalJudge stop: %s",
+                                    _why,
+                                )
                                 _why_msg = f"[completion audit] 不能停: {_why}"
                                 self._speculator_hint = (
                                     (self._speculator_hint + "\n" + _why_msg).strip()
-                                    if self._speculator_hint else _why_msg
+                                    if self._speculator_hint
+                                    else _why_msg
                                 )
                             else:
-                                logger.info("goaljudge: achieved (score=%s)", gj['score'])
+                                logger.info(
+                                    "goaljudge: achieved (score=%s)", gj["score"]
+                                )
                                 self._should_stop = True
                         elif gj.get("gaps"):
                             gap_hint = "; ".join(gj["gaps"][:3])
                             self._speculator_hint = (
                                 (self._speculator_hint + "\n" + gap_hint).strip()
-                                if self._speculator_hint else gap_hint
+                                if self._speculator_hint
+                                else gap_hint
                             )
                             logger.info("goaljudge gaps: %s", gap_hint)
                     except Exception:
-                        logger.warning("error in run: GoalJudge evaluation failed", exc_info=True)
+                        logger.warning(
+                            "error in run: GoalJudge evaluation failed", exc_info=True
+                        )
 
             # JEPA intrinsic motivation: 高 surprise = 预测误差大 = 这个方向
             # agent 的心智模型不准, 值得继续探索. 把 surprise 信号注入
@@ -1680,7 +1873,8 @@ class AutoloopEngine:
                 )
                 self._speculator_hint = (
                     (self._speculator_hint + "\n" + surprise_hint).strip()
-                    if self._speculator_hint else surprise_hint
+                    if self._speculator_hint
+                    else surprise_hint
                 )
                 logger.info("surprise: %.2f (high — exploring)", surprise)
             elif surprise > 0 and self._iteration > 1:
@@ -1702,16 +1896,21 @@ class AutoloopEngine:
                     # completion audit: surprise 收敛但探索不够 → 不停, 对抗快速收敛偏差
                     _blk, _why = self._metacog_check_completion()
                     if _blk:
-                        logger.info("metacog completion audit blocked convergence stop: %s", _why)
+                        logger.info(
+                            "metacog completion audit blocked convergence stop: %s",
+                            _why,
+                        )
                         _why_msg = f"[completion audit] 不能停: {_why}"
                         self._speculator_hint = (
                             (self._speculator_hint + "\n" + _why_msg).strip()
-                            if self._speculator_hint else _why_msg
+                            if self._speculator_hint
+                            else _why_msg
                         )
                     else:
                         logger.info(
                             "converged: surprise < %.2f (noise=%.2f) for 3 consecutive iterations",
-                            threshold, avg_noise,
+                            threshold,
+                            avg_noise,
                         )
                         self._should_stop = True
 
@@ -1722,8 +1921,14 @@ class AutoloopEngine:
 
         # 7. Report + finalize
         return await self._finalize_run(
-            objective, phases, run_id, provenance_record,
-            run_collector, tracker, progress_task_id, completed_steps,
+            objective,
+            phases,
+            run_id,
+            provenance_record,
+            run_collector,
+            tracker,
+            progress_task_id,
+            completed_steps,
         )
 
     def _darwin_ratchet_check(self) -> None:
@@ -1759,8 +1964,7 @@ class AutoloopEngine:
         supported_ratio = len(supported) / n
 
         testable = sum(
-            1 for nd in all_nodes
-            if getattr(nd, "testable_prediction", None)
+            1 for nd in all_nodes if getattr(nd, "testable_prediction", None)
         )
         testable_ratio = testable / n
 
@@ -1773,6 +1977,7 @@ class AutoloopEngine:
         topology_richness = 0.0
         try:
             from huginn.metacog.topology_lens import hodge_signature
+
             node_ids = [nd.id for nd in all_nodes]
             edge_pairs = []
             for e in graph.edges():
@@ -1786,8 +1991,10 @@ class AutoloopEngine:
 
         # 0-10 分制, 对齐 darwin-skill 原版
         score = (
-            supported_ratio + testable_ratio + graph_diversity + topology_richness
-        ) / 4.0 * 10.0
+            (supported_ratio + testable_ratio + graph_diversity + topology_richness)
+            / 4.0
+            * 10.0
+        )
 
         delta = score - self._darwin_last_score
         if delta < 0.5:
@@ -1805,7 +2012,8 @@ class AutoloopEngine:
         if self._darwin_stagnation >= 2 and self._iteration > 2:
             logger.info(
                 "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
-                self._darwin_stagnation, self._darwin_best_score,
+                self._darwin_stagnation,
+                self._darwin_best_score,
             )
             self._should_stop = True
 
@@ -1819,13 +2027,17 @@ class AutoloopEngine:
         try:
             from huginn.events.integration import _publish
             from huginn.utils.concurrency import track_task
+
             asyncio.get_running_loop()  # 检测在 event loop 里
-            track_task(_publish(event_type, data, source="autoloop"), name="campaign-emit")
+            track_task(
+                _publish(event_type, data, source="autoloop"), name="campaign-emit"
+            )
         except Exception:
             logger.debug("campaign EventBus emit failed", exc_info=True)
         # SSE 推送到 /tasks/stream 的 'campaign' event, 前端结构化消费
         try:
             from huginn.interaction.progress import get_progress_tracker
+
             get_progress_tracker().emit_campaign_event(
                 getattr(self, "_progress_task_id", ""), event_type, data
             )
@@ -1841,6 +2053,7 @@ class AutoloopEngine:
         self._objective = objective
 
         from huginn.provenance import ProvenanceLogger, ProvenanceRecord
+
         provenance_logger = ProvenanceLogger(
             self.workspace / ".huginn" / "provenance.jsonl"
         )
@@ -1853,6 +2066,7 @@ class AutoloopEngine:
         self._provenance_logger = provenance_logger
 
         from huginn.telemetry import TelemetryCollector, set_telemetry_collector
+
         run_collector = TelemetryCollector()
         set_telemetry_collector(run_collector)
 
@@ -1870,10 +2084,12 @@ class AutoloopEngine:
         self._budget_degraded = False
         # plan_check 状态随 run 重置 — 跨 run 的历史成功率没意义, 会误导自适应.
         # patterns 例外: 跨 run 保留 (失败模式记忆), 加载 workspace 里的历史.
+        # extra_keywords 也跨 run 保留 (自动发现的 scene_tag 关键词).
         self._plan_check_history = []
         self._plan_check_last_result = None
         self._plan_check_warnings = []
         self._plan_check_patterns = []
+        self._scene_tag_extra_keywords = {}
         self._load_plan_check_patterns()
 
         self._speculator_hint = ""
@@ -1883,19 +2099,25 @@ class AutoloopEngine:
         self._last_raw_hypothesis = ""  # 完整 LLM 输出, 含 LUCID review
         try:
             from huginn.agents.speculator import on_turn_start
+
             spec_result = on_turn_start(objective)
             self._speculator_hint = spec_result.get("hint", "")
             if spec_result.get("predictions"):
                 logger.info("autoloop speculator: %s", self._speculator_hint)
-        except Exception as exc:
+        except Exception:
             logger.warning("autoloop speculator skipped", exc_info=True)
 
         return run_id, provenance_record, run_collector
 
     async def _finalize_run(
-        self, objective: str, phases: list[LoopPhase],
-        run_id: str, provenance_record: Any,
-        run_collector: Any, tracker: Any, progress_task_id: str,
+        self,
+        objective: str,
+        phases: list[LoopPhase],
+        run_id: str,
+        provenance_record: Any,
+        run_collector: Any,
+        tracker: Any,
+        progress_task_id: str,
         completed_steps: int,
     ) -> AutoloopResult:
         """Report, save trajectory, judge goal, write provenance + FAIR metadata."""
@@ -1905,11 +2127,16 @@ class AutoloopEngine:
         )
         phases.append(report_phase)
         completed_steps += 1
-        tracker.update(progress_task_id, current_step=completed_steps,
-                       current_label=f"report ({report_phase.status})")
+        tracker.update(
+            progress_task_id,
+            current_step=completed_steps,
+            current_label=f"report ({report_phase.status})",
+        )
 
         if report_phase.status == "completed":
-            tracker.complete(progress_task_id, result={"report_path": report_phase.result})
+            tracker.complete(
+                progress_task_id, result={"report_path": report_phase.result}
+            )
         else:
             tracker.fail(progress_task_id, f"report phase failed: {report_phase.error}")
 
@@ -1923,13 +2150,20 @@ class AutoloopEngine:
         trajectory_path = None
         trajectory_data = None
         try:
-            from huginn.telemetry import save_trajectory, load_trajectory
+            from huginn.telemetry import load_trajectory, save_trajectory
+
             traj_dir = self.workspace / ".huginn" / "trajectories"
             trajectory_path = traj_dir / f"{run_id}.json"
-            save_trajectory(run_collector, trajectory_path, metadata={
-                "run_id": run_id, "objective": objective[:200],
-                "phases": [p.name for p in phases], "total_time": total_time,
-            })
+            save_trajectory(
+                run_collector,
+                trajectory_path,
+                metadata={
+                    "run_id": run_id,
+                    "objective": objective[:200],
+                    "phases": [p.name for p in phases],
+                    "total_time": total_time,
+                },
+            )
             trajectory_data = load_trajectory(trajectory_path)
         except Exception:
             trajectory_path = None
@@ -1939,14 +2173,16 @@ class AutoloopEngine:
         goal_judgment = None
         try:
             from huginn.evaluation.goal_judge import GoalJudge
+
             final_output = str(report_phase.result or "")
             judge = GoalJudge(llm=self.verification_model or self.model)
             goal_judgment = judge.judge(
-                objective=objective, trajectory=trajectory_data,
+                objective=objective,
+                trajectory=trajectory_data,
                 final_output=final_output,
             )
             goal_achieved = goal_judgment.get("achieved")
-        except Exception as e:
+        except Exception:
             logger.warning("autoloop goal judge skipped", exc_info=True)
 
         # provenance
@@ -1960,16 +2196,26 @@ class AutoloopEngine:
 
         # FAIR metadata
         try:
-            from huginn.export.fair_metadata import generate_dataset_metadata, write_fair_jsonld
+            from huginn.export.fair_metadata import (
+                generate_dataset_metadata,
+                write_fair_jsonld,
+            )
+
             run_results: dict[str, Any] = {}
             for ph in phases:
                 if ph.result and isinstance(ph.result, dict):
                     run_results.update(ph.result)
             fair_metadata = generate_dataset_metadata(
-                run_id=run_id, objective=objective, results=run_results,
+                run_id=run_id,
+                objective=objective,
+                results=run_results,
                 provenance={
-                    "report_path": str(report_phase.result) if report_phase.result else None,
-                    "trajectory_path": str(trajectory_path) if trajectory_path else None,
+                    "report_path": (
+                        str(report_phase.result) if report_phase.result else None
+                    ),
+                    "trajectory_path": (
+                        str(trajectory_path) if trajectory_path else None
+                    ),
                     "provenance_path": provenance_path,
                     "start_time": provenance_record.timestamps.get("start"),
                     "end_time": provenance_record.timestamps.get("end"),
@@ -2046,18 +2292,29 @@ class AutoloopEngine:
         git_diff = ""
         try:
             import subprocess
+
             result = subprocess.run(
                 ["git", "status", "--short"],
-                cwd=self.workspace, capture_output=True, text=True, timeout=5,
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
-                changed_files = [line.strip() for line in result.stdout.strip().split("\n")]
+                changed_files = [
+                    line.strip() for line in result.stdout.strip().split("\n")
+                ]
                 git_diff = subprocess.run(
                     ["git", "diff", "--stat"],
-                    cwd=self.workspace, capture_output=True, text=True, timeout=10,
+                    cwd=self.workspace,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 ).stdout
         except Exception:
-            logger.warning("error in _perceive_legacy: git diff collection failed", exc_info=True)
+            logger.warning(
+                "error in _perceive_legacy: git diff collection failed", exc_info=True
+            )
         error_patterns = []
         for log_file in self.workspace.rglob("*.log"):
             if log_file.stat().st_mtime > time.time() - 3600:
@@ -2066,7 +2323,10 @@ class AutoloopEngine:
                     if "ERROR" in content or "FAIL" in content:
                         error_patterns.append(f"{log_file.name}: {content[:200]}")
                 except Exception:
-                    logger.warning("error in _perceive_legacy: log file error-pattern scan failed", exc_info=True)
+                    logger.warning(
+                        "error in _perceive_legacy: log file error-pattern scan failed",
+                        exc_info=True,
+                    )
         if not changed_files and not error_patterns:
             return None
         return {
@@ -2104,10 +2364,17 @@ class AutoloopEngine:
                 hot_model = self.model.bind(temperature=1.0)
             except Exception:
                 pass  # not all model wrappers support bind
-            coros = [self._llm_chat(prompt, persona_name=persona_name, task="reasoning")]
+            coros = [
+                self._llm_chat(prompt, persona_name=persona_name, task="reasoning")
+            ]
             if hot_model is not None:
                 coros.append(
-                    self._llm_chat(prompt, persona_name=persona_name, model=hot_model, task="reasoning")
+                    self._llm_chat(
+                        prompt,
+                        persona_name=persona_name,
+                        model=hot_model,
+                        task="reasoning",
+                    )
                 )
             results = await asyncio.gather(*coros, return_exceptions=True)
             # Extract SELECTED: from results — main call first (priority)
@@ -2142,12 +2409,14 @@ class AutoloopEngine:
     def _get_metacog_auditor(self):
         if self._metacog_auditor is None:
             from huginn.metacog.equivalence_auditor import EquivalenceAuditor
+
             self._metacog_auditor = EquivalenceAuditor(model=self.model)
         return self._metacog_auditor
 
     def _get_metacog_block_registry(self):
         if self._metacog_block_registry is None:
             from huginn.metacog.block_registry import BlockRegistry
+
             self._metacog_block_registry = BlockRegistry(
                 auditor=self._get_metacog_auditor()
             )
@@ -2156,18 +2425,21 @@ class AutoloopEngine:
     def _get_metacog_method_registry(self):
         if self._metacog_method_registry is None:
             from huginn.metacog.method_registry import MethodRegistry
+
             self._metacog_method_registry = MethodRegistry()
         return self._metacog_method_registry
 
     def _get_metacog_convergence_detector(self):
         if self._metacog_convergence_detector is None:
             from huginn.metacog.depth_search import PrematureConvergenceDetector
+
             self._metacog_convergence_detector = PrematureConvergenceDetector()
         return self._metacog_convergence_detector
 
     def _get_metacog_completion_auditor(self):
         if self._metacog_completion_auditor is None:
             from huginn.metacog.completion_auditor import CompletionAuditor
+
             self._metacog_completion_auditor = CompletionAuditor(
                 convergence_detector=self._get_metacog_convergence_detector(),
                 equivalence_auditor=self._get_metacog_auditor(),
@@ -2196,20 +2468,23 @@ class AutoloopEngine:
         """
         try:
             auditor = self._get_metacog_completion_auditor()
-            families_explored = len([
-                f for f in self._get_metacog_method_registry().all()
-                if f.member_agent_ids
-            ])
+            families_explored = len(
+                [
+                    f
+                    for f in self._get_metacog_method_registry().all()
+                    if f.member_agent_ids
+                ]
+            )
             live_components = self.hypothesis_graph.component_count()
 
             # 从最近一次 LLM 原始输出提取 UNEXPLORED: 块
             # ponytail: 字符串切片, 不上正则. 升级路径: 结构化 schema.
             unexplored = ""
-            raw = getattr(self, '_last_raw_hypothesis', '') or ''
-            if 'UNEXPLORED:' in raw:
-                unexplored = raw.split('UNEXPLORED:', 1)[1].strip()
+            raw = getattr(self, "_last_raw_hypothesis", "") or ""
+            if "UNEXPLORED:" in raw:
+                unexplored = raw.split("UNEXPLORED:", 1)[1].strip()
                 # 截到下一个大写标记或结尾, 避免把后续块都吞进来
-                for marker in ['\n\nHYPOTHESIS', '\n\nSELECTED', '\n\nRATIONALE']:
+                for marker in ["\n\nHYPOTHESIS", "\n\nSELECTED", "\n\nRATIONALE"]:
                     if marker in unexplored:
                         unexplored = unexplored.split(marker)[0].strip()
                         break
@@ -2218,9 +2493,11 @@ class AutoloopEngine:
                 iteration=self._iteration,
                 families_explored=families_explored,
                 live_components=live_components,
-                total_iterations=self._max_iterations if hasattr(self, '_max_iterations') else 10,
-                candidate_finding=getattr(self, '_last_hypothesis', '') or '',
-                original_problem=str(getattr(self, '_objective', '') or ''),
+                total_iterations=(
+                    self._max_iterations if hasattr(self, "_max_iterations") else 10
+                ),
+                candidate_finding=getattr(self, "_last_hypothesis", "") or "",
+                original_problem=str(getattr(self, "_objective", "") or ""),
                 unexplored_declaration=unexplored,
             )
 
@@ -2240,6 +2517,7 @@ class AutoloopEngine:
         """
         try:
             from huginn.metacog.depth_search import DynamicComponentFloor
+
             # 动态下限: 早期 4, 中期 2, 后期 1. 实例化成本可忽略.
             floor = DynamicComponentFloor().current_floor(
                 self._iteration, self._max_iterations
@@ -2289,7 +2567,15 @@ class AutoloopEngine:
         text = (hypothesis or "").lower()
         # ponytail: 关键词表, 不上 embedding. 升级路径: LLM 分类.
         rules = [
-            ("ml-potential", ["mlp", "ml potential", "machine learning potential", "neural potential"]),
+            (
+                "ml-potential",
+                [
+                    "mlp",
+                    "ml potential",
+                    "machine learning potential",
+                    "neural potential",
+                ],
+            ),
             ("symbolic-regression", ["symbolic", "symreg", "siprend", "解析式"]),
             ("gaussian-process", ["gp ", "gaussian process", "gpr", "核函数"]),
             ("calphad-thermo", ["calphad", "相图", "phase diagram", "thermodynamic"]),
@@ -2317,7 +2603,9 @@ class AutoloopEngine:
             return
         try:
             auditor = self._get_metacog_auditor()
-            original_problem = str(context.get("summary", "")) or str(self._objective or "")
+            original_problem = str(context.get("summary", "")) or str(
+                self._objective or ""
+            )
             verdict = auditor.audit(
                 candidate_finding=hypothesis,
                 original_problem=original_problem,
@@ -2336,7 +2624,8 @@ class AutoloopEngine:
             if verdict.is_equivalent_renaming:
                 logger.warning(
                     "metacog: 假设可能为换名归约 (trap=%s, target=%s): %s",
-                    verdict.trap_category, verdict.reduction_target,
+                    verdict.trap_category,
+                    verdict.reduction_target,
                     hypothesis[:100],
                 )
 
@@ -2345,7 +2634,8 @@ class AutoloopEngine:
             if redirect is not None:
                 logger.info(
                     "metacog: 方法族收敛度告警 — %s (建议下轮重定向到 %s)",
-                    redirect.reason, redirect.target_family,
+                    redirect.reason,
+                    redirect.target_family,
                 )
         except Exception:
             logger.debug("metacog audit failed", exc_info=True)
@@ -2407,9 +2697,19 @@ class AutoloopEngine:
         text = (errors + " " + result).lower()
         # 工具失败: 超时/崩溃/连接/OOM — 不是假设错, 重试即可
         tool_markers = (
-            "timeout", "timed out", "connection", "crash", "segfault",
-            "oom", "out of memory", "exception", "subprocess",
-            "slurm", "queue", "killed", "abort",
+            "timeout",
+            "timed out",
+            "connection",
+            "crash",
+            "segfault",
+            "oom",
+            "out of memory",
+            "exception",
+            "subprocess",
+            "slurm",
+            "queue",
+            "killed",
+            "abort",
         )
         if any(m in text for m in tool_markers):
             return "tool_error"
@@ -2434,15 +2734,26 @@ class AutoloopEngine:
                     return _RT_MAP[cat]
         # 参数错: 输入无效/类型错/值错
         param_markers = (
-            "invalid", "argument", "parameter", "value error",
-            "type error", "dimension", "shape mismatch", "key error",
+            "invalid",
+            "argument",
+            "parameter",
+            "value error",
+            "type error",
+            "dimension",
+            "shape mismatch",
+            "key error",
         )
         if any(m in text for m in param_markers):
             return "param_error"
         # 数据噪声: 不确定/模糊/噪声大
         noise_markers = (
-            "noise", "uncertain", "ambiguous", "inconclusive",
-            "not converge", "did not converge", "no clear",
+            "noise",
+            "uncertain",
+            "ambiguous",
+            "inconclusive",
+            "not converge",
+            "did not converge",
+            "no clear",
         )
         if any(m in text for m in noise_markers):
             return "data_noise"
@@ -2461,10 +2772,7 @@ class AutoloopEngine:
             report = getattr(reviewer, "_last_report", None)
             if not report:
                 return []
-            return [
-                f.category for f in report.findings
-                if f.severity == "high"
-            ]
+            return [f.category for f in report.findings if f.severity == "high"]
         except Exception:
             return []
 
@@ -2510,7 +2818,8 @@ class AutoloopEngine:
         try:
             nodes = getattr(self.hypothesis_graph, "_nodes", {})
             failed = [
-                n.statement for n in nodes.values()
+                n.statement
+                for n in nodes.values()
                 if n.status in ("refuted", "superseded")
             ]
             return failed[-limit:] if failed else []
@@ -2641,7 +2950,9 @@ class AutoloopEngine:
         symreg 先验. 失败/空都返回空串."""
         try:
             target = data.get("target_column") or data.get("target") or "y"
-            feature_keys = [k for k in data.keys() if k != target and isinstance(data[k], list)]
+            feature_keys = [
+                k for k in data if k != target and isinstance(data[k], list)
+            ]
             query = f"symbolic expression formula {target} {' '.join(feature_keys[:3])}"
             kb = self._get_kb()
             if kb is None or kb.count() == 0:
@@ -2682,11 +2993,14 @@ class AutoloopEngine:
         # 查 memory: 上次 reviewer persona 效果如何?
         try:
             if self.memory:
-                recall = self.memory.recall_for_prompt("reviewer persona autoloop", max_entries=3)
+                recall = self.memory.recall_for_prompt(
+                    "reviewer persona autoloop", max_entries=3
+                )
                 if recall and "r_phys" in recall.lower():
                     # 如果 memory 里记录 reviewer 找到了问题, 倾向继续用
                     import re
-                    scores = re.findall(r'r_phys[:\s]+([\d.]+)', recall)
+
+                    scores = re.findall(r"r_phys[:\s]+([\d.]+)", recall)
                     if scores:
                         avg_score = sum(float(s) for s in scores) / len(scores)
                         if avg_score > 0.6:
@@ -2700,7 +3014,9 @@ class AutoloopEngine:
             return "md_expert"
         return "dft_expert"
 
-    async def _plan(self, hypothesis: str, context: dict[str, Any]) -> dict[str, Any] | None:
+    async def _plan(
+        self, hypothesis: str, context: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Generate a plan from hypothesis and persist it to PlanStore.
 
         以前只返回一个临时 dict, turn 结束就丢了. 现在往 PlanStore 落一份,
@@ -2710,7 +3026,9 @@ class AutoloopEngine:
         try:
             # OAK 启发: 三阶段角色分工 — hypothesize 用 reasoning (强模型发散),
             # plan 用 planning (中档模型收敛), execute 不调 LLM 直接跑工具
-            response = await self._llm_chat(prompt, persona_name="default", task="planning")
+            response = await self._llm_chat(
+                prompt, persona_name="default", task="planning"
+            )
             plan = self._parse_plan(response)
         except Exception:
             return None
@@ -2756,7 +3074,13 @@ class AutoloopEngine:
                 should_confirm = answer
             elif isinstance(answer, str):
                 should_confirm = answer.lower().strip() not in (
-                    "no", "n", "cancel", "reject", "decline", "stop", "abort",
+                    "no",
+                    "n",
+                    "cancel",
+                    "reject",
+                    "decline",
+                    "stop",
+                    "abort",
                 )
             else:
                 should_confirm = bool(answer)
@@ -2788,7 +3112,9 @@ class AutoloopEngine:
             result = await self._execute_workflow(description, context)
             # On failure, try applying a learned heuristic fix before giving up
             if isinstance(result, dict) and not result.get("success", True):
-                result = await self._try_evolved_fix(mode, description, result) or result
+                result = (
+                    await self._try_evolved_fix(mode, description, result) or result
+                )
         elif mode == "dynamic_workflow":
             # A5: agent 写的并行 subtask 脚本, orchestrator 并发跑
             result = await self._execute_dynamic_workflow(plan, context)
@@ -2808,9 +3134,11 @@ class AutoloopEngine:
         self._record_provenance(mode, plan, result)
         # 缓存给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result = {
-            '_tool_name': mode,
-            '_tool_input': plan,
-            'result': result if isinstance(result, dict) else {'value': str(result)[:500]},
+            "_tool_name": mode,
+            "_tool_input": plan,
+            "result": (
+                result if isinstance(result, dict) else {"value": str(result)[:500]}
+            ),
         }
         return result
 
@@ -2828,9 +3156,12 @@ class AutoloopEngine:
             return
         try:
             from huginn.provenance import capture
+
             record.add_snapshot(capture(tool_name, input_params, output=output))
         except Exception:
-            logger.warning("error in _record_provenance: capture snapshot failed", exc_info=True)
+            logger.warning(
+                "error in _record_provenance: capture snapshot failed", exc_info=True
+            )
 
     async def _try_evolved_fix(
         self, tool_name: str, tool_input: dict[str, Any], error_result: dict[str, Any]
@@ -2851,7 +3182,9 @@ class AutoloopEngine:
                     patched_desc, {"_evolved_fix": True}
                 )
         except Exception:
-            logger.warning("error in _try_evolved_fix: apply_heuristic_fix failed", exc_info=True)
+            logger.warning(
+                "error in _try_evolved_fix: apply_heuristic_fix failed", exc_info=True
+            )
         return None
 
     async def _execute_dynamic_workflow(
@@ -2873,6 +3206,7 @@ class AutoloopEngine:
         if isinstance(raw_script, str):
             # agent 可能传 JSON 字符串
             import json
+
             try:
                 raw_script = json.loads(raw_script)
             except json.JSONDecodeError:
@@ -2922,19 +3256,21 @@ class AutoloopEngine:
 
             # 比较性视觉原语: 把本轮结果和上轮做差分, 突出变化.
             # 峰值位移/新异常/趋势反转 — 这些是 agent 最关心的信号.
-            prev_exec = getattr(self, '_last_execution_result', None)
-            if prev_exec and isinstance(prev_exec.get('result'), dict):
+            prev_exec = getattr(self, "_last_execution_result", None)
+            if prev_exec and isinstance(prev_exec.get("result"), dict):
                 try:
                     from huginn.tools.visual_hook import extract_comparative_primitives
+
                     comp = extract_comparative_primitives(
-                        prev_exec.get('result', {}), execution_result
+                        prev_exec.get("result", {}), execution_result
                     )
                     if comp:
                         results["comparative_primitives"] = comp
                         # 也拼进 visual_context, 下轮 hypothesis 能看到
                         self._last_visual_context = (
                             f"{self._last_visual_context}\n{comp}".strip()
-                            if self._last_visual_context else comp
+                            if self._last_visual_context
+                            else comp
                         )
                 except Exception:
                     pass
@@ -3040,15 +3376,22 @@ class AutoloopEngine:
                 results["reviewer_critique_error"] = str(e)
 
         # emergent complexity + literature + grader + eval — independent
-        ec_task = asyncio.create_task(self._safe_emergent_complexity(execution_result, results))
-        lit_task = asyncio.create_task(self._safe_literature_comparison(execution_result, results))
+        ec_task = asyncio.create_task(
+            self._safe_emergent_complexity(execution_result, results)
+        )
+        lit_task = asyncio.create_task(
+            self._safe_literature_comparison(execution_result, results)
+        )
         await asyncio.gather(ec_task, lit_task)
 
         try:
             from huginn.validation.grader import default_registry
+
             # ValidityJudge 需要 model + 对话日志/代码做 post-hoc 审查
             # NatureBench judge.py 启发: r_phys 高不代表真算, 可能 gaming grader
-            reg = default_registry(model=getattr(self, "verification_model", None) or self.model)
+            reg = default_registry(
+                model=getattr(self, "verification_model", None) or self.model
+            )
             merged: dict[str, Any] = {}
             if isinstance(execution_result, dict):
                 merged.update(execution_result)
@@ -3093,12 +3436,20 @@ class AutoloopEngine:
                 try:
                     from huginn.events.integration import _publish
                     from huginn.utils.concurrency import track_task
+
                     asyncio.get_running_loop()
-                    track_task(_publish("quality.check", {
-                        "iteration": self._iteration,
-                        "graders": results["grader_scores"],
-                        "reward": results.get("grader_reward", 0),
-                    }, source="autoloop"), name="quality-check-emit")
+                    track_task(
+                        _publish(
+                            "quality.check",
+                            {
+                                "iteration": self._iteration,
+                                "graders": results["grader_scores"],
+                                "reward": results.get("grader_reward", 0),
+                            },
+                            source="autoloop",
+                        ),
+                        name="quality-check-emit",
+                    )
                 except Exception:
                     logger.debug("quality.check emit failed", exc_info=True)
         except Exception as e:
@@ -3106,6 +3457,7 @@ class AutoloopEngine:
 
         try:
             from huginn.evaluation.matworld_bench import MatWorldBench
+
             bench = MatWorldBench()
             exec_data = execution_result if isinstance(execution_result, dict) else {}
             eval_scores: list[dict] = []
@@ -3113,12 +3465,14 @@ class AutoloopEngine:
                 if task.category in ("structure", "thermo", "electronic"):
                     try:
                         br = bench.evaluate(task.id, exec_data)
-                        eval_scores.append({
-                            "task_id": task.id,
-                            "category": task.category,
-                            "passed": br.passed,
-                            "score": br.score,
-                        })
+                        eval_scores.append(
+                            {
+                                "task_id": task.id,
+                                "category": task.category,
+                                "passed": br.passed,
+                                "score": br.score,
+                            }
+                        )
                     except Exception:
                         pass
             if eval_scores:
@@ -3151,7 +3505,9 @@ class AutoloopEngine:
             self._last_surprise = surprise
             self._surprise_history.append((surprise, robust["std"]))
 
-        self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[:1000]
+        self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[
+            :1000
+        ]
         # Store failure_mode for next hypothesis loop (Dream Layer: crash = discovery)
         _gv = results.get("generative_verify", {})
         if isinstance(_gv, dict):
@@ -3161,6 +3517,7 @@ class AutoloopEngine:
     async def _run_pytest(self) -> dict[str, Any]:
         """Run pytest in workspace, return results dict."""
         import subprocess
+
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -3181,10 +3538,9 @@ class AutoloopEngine:
         """Run BenchmarkRunner, return results dict."""
         try:
             from huginn.validation.benchmarks import BenchmarkRunner
+
             runner = BenchmarkRunner()
-            report = await asyncio.to_thread(
-                runner.run, categories=["math", "coding"]
-            )
+            report = await asyncio.to_thread(runner.run, categories=["math", "coding"])
             return {
                 "passed": report.passed,
                 "failed": report.failed,
@@ -3200,13 +3556,15 @@ class AutoloopEngine:
         """Compute emergent complexity, mutate results in place."""
         try:
             from huginn.validation.emergent_complexity import compute_ec
+
             results["emergent_complexity"] = compute_ec(execution_result, results)
             ec_score = results["emergent_complexity"].get("ec_score", 0)
             if ec_score < 0.2 and self._iteration > 0:
                 ec_hint = f"EC={ec_score:.2f}: low emergent complexity, try diverse tools or cross-domain reasoning"
                 self._speculator_hint = (
                     (self._speculator_hint + "\n" + ec_hint).strip()
-                    if self._speculator_hint else ec_hint
+                    if self._speculator_hint
+                    else ec_hint
                 )
         except Exception as e:
             results["emergent_complexity_error"] = str(e)
@@ -3238,9 +3596,7 @@ class AutoloopEngine:
             return {}
 
         result_data = (
-            execution_result.get("result_data")
-            or execution_result.get("parsed")
-            or {}
+            execution_result.get("result_data") or execution_result.get("parsed") or {}
         )
         if not isinstance(result_data, dict):
             return {}
@@ -3263,7 +3619,10 @@ class AutoloopEngine:
                 try:
                     numerics[key] = float(val)
                 except (TypeError, ValueError):
-                    logger.warning("error in _literature_comparison: numeric property cast failed", exc_info=True)
+                    logger.warning(
+                        "error in _literature_comparison: numeric property cast failed",
+                        exc_info=True,
+                    )
         lattice = result_data.get("lattice_params") or {}
         if isinstance(lattice, dict):
             for param in ("a", "b", "c"):
@@ -3272,7 +3631,10 @@ class AutoloopEngine:
                     try:
                         numerics[f"lattice_{param}"] = float(val)
                     except (TypeError, ValueError):
-                        logger.warning("error in _literature_comparison: lattice param cast failed", exc_info=True)
+                        logger.warning(
+                            "error in _literature_comparison: lattice param cast failed",
+                            exc_info=True,
+                        )
 
         if not numerics:
             return {}
@@ -3334,7 +3696,10 @@ class AutoloopEngine:
                 if high_claims:
                     comparison["high_confidence_claims"] = high_claims
         except Exception:
-            logger.debug("multi_review in _literature_comparison failed (non-fatal)", exc_info=True)
+            logger.debug(
+                "multi_review in _literature_comparison failed (non-fatal)",
+                exc_info=True,
+            )
 
         return comparison
 
@@ -3380,10 +3745,7 @@ class AutoloopEngine:
         # Rule 1: 重复短语 — 5 词 n-gram 出现 3+ 次
         words = text.lower().split()
         if len(words) >= 10:
-            ngrams = [
-                " ".join(words[i : i + 5])
-                for i in range(len(words) - 4)
-            ]
+            ngrams = [" ".join(words[i : i + 5]) for i in range(len(words) - 4)]
             counts = Counter(ngrams)
             repeated = [(p, c) for p, c in counts.items() if c >= 3]
             if repeated:
@@ -3441,11 +3803,7 @@ class AutoloopEngine:
             key = hashlib.sha256(payload.encode()).hexdigest()[:12]
             seen[key] = seen.get(key, 0) + 1
 
-        return [
-            {"call_hash": k, "count": c}
-            for k, c in seen.items()
-            if c >= 2
-        ]
+        return [{"call_hash": k, "count": c} for k, c in seen.items() if c >= 2]
 
     @staticmethod
     def _extract_text(execution_result: Any) -> str:
@@ -3458,8 +3816,16 @@ class AutoloopEngine:
             return str(execution_result)
 
         parts: list[str] = []
-        for key in ("summary", "description", "result_data", "output",
-                     "error", "reasoning", "plan", "hypothesis"):
+        for key in (
+            "summary",
+            "description",
+            "result_data",
+            "output",
+            "error",
+            "reasoning",
+            "plan",
+            "hypothesis",
+        ):
             v = execution_result.get(key)
             if v:
                 parts.append(str(v))
@@ -3506,22 +3872,65 @@ class AutoloopEngine:
         import statistics
 
         # 扰动 1: 标准停用词集
-        stop1 = {"the", "a", "an", "is", "are", "was", "were", "be", "to", "of",
-                 "in", "on", "at", "for", "and", "or", "not", "this", "that",
-                 "it", "with", "from", "by", "as", "will", "can", "may"}
+        stop1 = {
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "to",
+            "of",
+            "in",
+            "on",
+            "at",
+            "for",
+            "and",
+            "or",
+            "not",
+            "this",
+            "that",
+            "it",
+            "with",
+            "from",
+            "by",
+            "as",
+            "will",
+            "can",
+            "may",
+        }
         # 扰动 2: 更激进的停用词集 (去掉更多常见词)
-        stop2 = stop1 | {"energy", "result", "value", "system", "model",
-                         "data", "using", "shown", "show", "also", "which",
-                         "has", "have", "had", "been", "were", "more", "than"}
+        stop2 = stop1 | {
+            "energy",
+            "result",
+            "value",
+            "system",
+            "model",
+            "data",
+            "using",
+            "shown",
+            "show",
+            "also",
+            "which",
+            "has",
+            "have",
+            "had",
+            "been",
+            "were",
+            "more",
+            "than",
+        }
         # 扰动 3: 只保留长关键词 (>=5 chars)
         # 扰动 4: bigram Jaccard
 
         def keywords(text: str, stop: set[str], min_len: int = 3) -> set[str]:
-            words = __import__("re").findall(r'[a-zA-Z_]\w{2,}', text.lower())
+            words = __import__("re").findall(r"[a-zA-Z_]\w{2,}", text.lower())
             return {w for w in words if w not in stop and len(w) >= min_len}
 
         def bigrams(text: str) -> set[str]:
-            words = __import__("re").findall(r'[a-zA-Z_]\w{2,}', text.lower())
+            words = __import__("re").findall(r"[a-zA-Z_]\w{2,}", text.lower())
             return {f"{words[i]}_{words[i+1]}" for i in range(len(words) - 1)}
 
         def jaccard(a: set, b: set) -> float:
@@ -3575,9 +3984,7 @@ class AutoloopEngine:
         collapse = results.get("thinking_collapse", {})
         collapse_hint = ""
         if collapse:
-            collapse_hint = (
-                f"\nNote: automated checks detected: {json.dumps(collapse, default=str)[:300]}"
-            )
+            collapse_hint = f"\nNote: automated checks detected: {json.dumps(collapse, default=str)[:300]}"
 
         # 注入历史记忆, 检查本次结果是否与历史迭代结果矛盾
         memory_hint = ""
@@ -3590,7 +3997,10 @@ class AutoloopEngine:
                     "If yes, note the contradiction in 'reason'.\n"
                 )
         except Exception:
-            logger.debug("_build_memory_text failed — validate prompt missing cross-check", exc_info=True)
+            logger.debug(
+                "_build_memory_text failed — validate prompt missing cross-check",
+                exc_info=True,
+            )
 
         prompt = (
             "You are a verification model. Score the quality of this agent output "
@@ -3614,7 +4024,9 @@ class AutoloopEngine:
         )
 
         resp = await self._llm_chat(prompt, model=self.verification_model)
-        score, reason, evidence_score, evidence_gap, failure_mode = self._parse_verify_score(resp)
+        score, reason, evidence_score, evidence_gap, failure_mode = (
+            self._parse_verify_score(resp)
+        )
 
         return {
             "score": score,
@@ -3643,7 +4055,10 @@ class AutoloopEngine:
             fail_mode = str(data.get("failure_mode", ""))
             return score, reason, ev_score, ev_gap, fail_mode
         except (json.JSONDecodeError, ValueError):
-            logger.warning("error in _parse_verify_score: JSON parse failed, falling back to regex", exc_info=True)
+            logger.warning(
+                "error in _parse_verify_score: JSON parse failed, falling back to regex",
+                exc_info=True,
+            )
 
         # fallback: regex for first float
         m = re.search(r"([01]\.\d+|[01])\b", resp)
@@ -3788,6 +4203,7 @@ class AutoloopEngine:
 
         try:
             import numpy as np
+
             from huginn.tools.sci.gp_tool import GPTool
 
             tool = GPTool()
@@ -3797,11 +4213,14 @@ class AutoloopEngine:
             pred_X = X_test if X_test is not None else X
             pred_y_ref = y_test if y_test is not None else y
 
-            predict_res = tool.call({
-                "action": "predict",
-                "X": X, "y": y,
-                "X_new": pred_X,
-            })
+            predict_res = tool.call(
+                {
+                    "action": "predict",
+                    "X": X,
+                    "y": y,
+                    "X_new": pred_X,
+                }
+            )
             if not getattr(predict_res, "success", False):
                 return {
                     "agrees": False,
@@ -3818,8 +4237,11 @@ class AutoloopEngine:
             # sigma=0 时退化为 |y - mu| < eps (GP 完全过拟合)
             n = min(len(mu), len(y_ref))
             if n == 0:
-                return {"agrees": True, "gp_fit": data,
-                        "reason": "GP fit ok, no comparable points"}
+                return {
+                    "agrees": True,
+                    "gp_fit": data,
+                    "reason": "GP fit ok, no comparable points",
+                }
             mu, sigma, y_ref = mu[:n], sigma[:n], y_ref[:n]
             eps = 1e-8
             deviation = np.abs(y_ref - mu)
@@ -3883,9 +4305,7 @@ class AutoloopEngine:
 
         # 2. dimensional_consistent — 跑量纲分析, 所有 quantity 都能解析 → True
         equation = (
-            execution_result.get("equation")
-            or execution_result.get("equations")
-            or ""
+            execution_result.get("equation") or execution_result.get("equations") or ""
         )
         if equation:
             try:
@@ -3908,7 +4328,10 @@ class AutoloopEngine:
                         len(quantities) > 0 and not has_error
                     )
             except Exception:
-                logger.warning("error in _collect_math_evidence: dimensional_analysis failed", exc_info=True)
+                logger.warning(
+                    "error in _collect_math_evidence: dimensional_analysis failed",
+                    exc_info=True,
+                )
 
         # 3. pde_classification — 跑 pde_classify, 比对 expected vs actual
         pde_coeffs = execution_result.get("pde_coefficients")
@@ -3934,7 +4357,10 @@ class AutoloopEngine:
                         "actual": actual,
                     }
             except Exception:
-                logger.warning("error in _collect_math_evidence: pde_classify failed", exc_info=True)
+                logger.warning(
+                    "error in _collect_math_evidence: pde_classify failed",
+                    exc_info=True,
+                )
 
         # 4. sobol_top_features — 跑 sobol_indices, top features (S_i>0.1) 必须
         # 被 hypothesis_features 覆盖
@@ -3972,7 +4398,10 @@ class AutoloopEngine:
                             "hypothesis_features": list(hypothesis_features),
                         }
             except Exception:
-                logger.warning("error in _collect_math_evidence: sobol_indices failed", exc_info=True)
+                logger.warning(
+                    "error in _collect_math_evidence: sobol_indices failed",
+                    exc_info=True,
+                )
 
         # 5. constraint_check — 跑 constraint_check, 所有先验通过 → all_passed
         expr = execution_result.get("expression")
@@ -3997,7 +4426,10 @@ class AutoloopEngine:
                         "violations": vr.data.get("violations", []),
                     }
             except Exception:
-                logger.warning("error in _collect_math_evidence: constraint_check failed", exc_info=True)
+                logger.warning(
+                    "error in _collect_math_evidence: constraint_check failed",
+                    exc_info=True,
+                )
 
         return evidence
 
@@ -4030,7 +4462,9 @@ class AutoloopEngine:
     ) -> str:
         """构造让 reviewer persona 点评执行结果的 prompt."""
         try:
-            exec_blob = json.dumps(execution_result, ensure_ascii=False, default=str)[:1500]
+            exec_blob = json.dumps(execution_result, ensure_ascii=False, default=str)[
+                :1500
+            ]
         except Exception:
             exec_blob = str(execution_result)[:1500]
         try:
@@ -4053,7 +4487,9 @@ class AutoloopEngine:
             "Be concise and direct."
         )
 
-    async def _learn(self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]) -> None:
+    async def _learn(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
+    ) -> None:
         """Learn from iteration results — update memory, knowledge graph, evolution rules."""
         r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
 
@@ -4075,11 +4511,19 @@ class AutoloopEngine:
             persona_name = getattr(self, "_last_persona", "unknown")
             mem_content = f"iter {self._iteration}: {hypothesis[:120]}"
             # Visual primitives 入 memory, 下次 recall_for_prompt 能检索到数据形状
-            visual_ctx = validation.get("visual_primitives") if isinstance(validation, dict) else None
+            visual_ctx = (
+                validation.get("visual_primitives")
+                if isinstance(validation, dict)
+                else None
+            )
             if visual_ctx:
                 mem_content += f"\nVisual: {visual_ctx[:200]}"
             # Surprise 入 memory, 下次能检索到"这类任务预测准不准"
-            pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
+            pred_err = (
+                validation.get("prediction_error", {})
+                if isinstance(validation, dict)
+                else {}
+            )
             if pred_err:
                 mem_content += f"\nSurprise: {pred_err.get('surprise', 0)} (worst: {pred_err.get('surprise_worst', pred_err.get('surprise', 0))}, std: {pred_err.get('surprise_std', 0)}) (predicted: {pred_err.get('predicted', '')[:80]})"
             # Persona 入 memory, 下次 _pick_hypothesis_persona 能查到历史效果
@@ -4089,7 +4533,11 @@ class AutoloopEngine:
                 "autoloop",
                 f"persona:{persona_name}",
                 f"r_phys:{r_phys}" if r_phys is not None else "r_phys:none",
-                f"surprise:{pred_err.get('surprise', 0):.2f}" if pred_err else "surprise:0",
+                (
+                    f"surprise:{pred_err.get('surprise', 0):.2f}"
+                    if pred_err
+                    else "surprise:0"
+                ),
             ]
             self.memory.remember(
                 content=mem_content,
@@ -4099,7 +4547,9 @@ class AutoloopEngine:
                 tags=_tags,
             )
         except Exception:
-            logger.warning("error in _learn: memory.remember iteration failed", exc_info=True)
+            logger.warning(
+                "error in _learn: memory.remember iteration failed", exc_info=True
+            )
 
         # 奖励回流: 把 R_phys 喂给 evolution engine, 驱动基于奖励的进化
         # 这是阶段4 单轨的核心闭环——物理校验分数真正影响 agent 后续行为
@@ -4120,7 +4570,9 @@ class AutoloopEngine:
                 if n_skills or n_patches:
                     logger.info(
                         "reward evolution: +%d skills, +%d patches (R_phys=%.2f)",
-                        n_skills, n_patches, r_phys,
+                        n_skills,
+                        n_patches,
+                        r_phys,
                     )
             except Exception as e:
                 logger.warning("reward evolution failed: %s", e)
@@ -4132,29 +4584,42 @@ class AutoloopEngine:
                 # 合并到本地 hypothesis_graph
                 for node_id in self._merged_graph.nodes:
                     node = self._merged_graph.nodes.get(node_id)
-                    if node and hasattr(node, 'statement'):
+                    if node and hasattr(node, "statement"):
                         # 跳过已存在的节点
-                        if not any(existing.statement == node.statement 
-                                   for existing in self.hypothesis_graph.nodes.values()):
+                        if not any(
+                            existing.statement == node.statement
+                            for existing in self.hypothesis_graph.nodes.values()
+                        ):
                             nid = self.hypothesis_graph.add_hypothesis(
                                 statement=node.statement,
-                                rationale=getattr(node, 'rationale', ''),
-                                testable_prediction=getattr(node, 'testable_prediction', ''),
+                                rationale=getattr(node, "rationale", ""),
+                                testable_prediction=getattr(
+                                    node, "testable_prediction", ""
+                                ),
                             )
                             if nid is not None:
-                                if getattr(node, 'status', '') == 'supported':
-                                    self.hypothesis_graph.support(nid, getattr(node, 'evidence', {}))
-                                elif getattr(node, 'status', '') == 'refuted':
-                                    self.hypothesis_graph.refute(nid, getattr(node, 'evidence', {}))
+                                if getattr(node, "status", "") == "supported":
+                                    self.hypothesis_graph.support(
+                                        nid, getattr(node, "evidence", {})
+                                    )
+                                elif getattr(node, "status", "") == "refuted":
+                                    self.hypothesis_graph.refute(
+                                        nid, getattr(node, "evidence", {})
+                                    )
                 # 写入 memory
                 graph_summary = f"Forest merged: {len(self._merged_graph.nodes)} nodes"
-                self.memory.add_message("system", {
-                    "iteration": self._iteration,
-                    "type": "forest_merge",
-                    "graph_summary": graph_summary,
-                })
-                logger.info("Forest merged %d nodes into hypothesis_graph", 
-                           len(self._merged_graph.nodes))
+                self.memory.add_message(
+                    "system",
+                    {
+                        "iteration": self._iteration,
+                        "type": "forest_merge",
+                        "graph_summary": graph_summary,
+                    },
+                )
+                logger.info(
+                    "Forest merged %d nodes into hypothesis_graph",
+                    len(self._merged_graph.nodes),
+                )
             except Exception:
                 logger.warning("Forest merge failed", exc_info=True)
 
@@ -4204,12 +4669,20 @@ class AutoloopEngine:
                 "iteration": self._iteration,
                 "r_phys": r_phys,
             }
-            visual_ctx = validation.get("visual_primitives") if isinstance(validation, dict) else None
+            visual_ctx = (
+                validation.get("visual_primitives")
+                if isinstance(validation, dict)
+                else None
+            )
             if visual_ctx:
                 kg_attrs["visual_primitives"] = visual_ctx[:500]
             # JEPA: surprise 分数存入 KG, 下次查同类实验能看到"这类任务
             # agent 预测准不准", 帮助判断是否值得继续探索.
-            pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
+            pred_err = (
+                validation.get("prediction_error", {})
+                if isinstance(validation, dict)
+                else {}
+            )
             if pred_err:
                 kg_attrs["surprise"] = pred_err.get("surprise", 0)
                 kg_attrs["predicted"] = pred_err.get("predicted", "")[:200]
@@ -4224,8 +4697,12 @@ class AutoloopEngine:
             )
             # KG confidence 衰减: validation 失败时降低实验实体置信度.
             # 之前 confidence 只增不减, 被refute的假设在 KG 里永远高置信.
-            tests_passed = validation.get("tests_passed") if isinstance(validation, dict) else False
-            if not tests_passed and exp_id and hasattr(self.kg, '_graph'):
+            tests_passed = (
+                validation.get("tests_passed")
+                if isinstance(validation, dict)
+                else False
+            )
+            if not tests_passed and exp_id and hasattr(self.kg, "_graph"):
                 try:
                     if exp_id in self.kg._graph:
                         old_conf = self.kg._graph.nodes[exp_id].get("confidence", 0.5)
@@ -4239,7 +4716,15 @@ class AutoloopEngine:
                 entity_type="Method",
                 source="autoloop",
             )
-            result_label = "pass" if (validation.get("tests_passed") if isinstance(validation, dict) else False) else "fail"
+            result_label = (
+                "pass"
+                if (
+                    validation.get("tests_passed")
+                    if isinstance(validation, dict)
+                    else False
+                )
+                else "fail"
+            )
             result_id = self.kg.add_entity(
                 label=f"{result_label}_iter{self._iteration}",
                 entity_type="Fact",
@@ -4271,7 +4756,10 @@ class AutoloopEngine:
                     tier="mid",
                 )
             except Exception:
-                logger.warning("error in _learn: benchmark_failure memory writeback failed", exc_info=True)
+                logger.warning(
+                    "error in _learn: benchmark_failure memory writeback failed",
+                    exc_info=True,
+                )
 
         # Feynman learning: 高 surprise 或高奖励时, 让 agent 用通俗语言重新解释本轮发现.
         # 解释不出来的部分就是知识缺口, 写入 GoalStore 作为下轮子目标.
@@ -4285,13 +4773,18 @@ class AutoloopEngine:
             if _surprise_val > 0.5 or (r_phys is not None and r_phys > 0.7):
                 _should_feynman = True
         except Exception:
-            logger.debug("surprise detection failed — _feynman_learn trigger may silently skip", exc_info=True)
+            logger.debug(
+                "surprise detection failed — _feynman_learn trigger may silently skip",
+                exc_info=True,
+            )
 
         if _should_feynman:
             try:
                 await self._feynman_learn(hypothesis, plan, validation, r_phys, context)
             except Exception:
-                logger.warning("error in _learn: feynman note generation failed", exc_info=True)
+                logger.warning(
+                    "error in _learn: feynman note generation failed", exc_info=True
+                )
 
         # 把 plan 进度存进 long-term memory, 下次会话能接续
         _plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
@@ -4311,9 +4804,14 @@ class AutoloopEngine:
                             l1_coordinates=f"autoloop: {persisted.objective[:100]}",
                         )
             except Exception:
-                logger.warning("error in _learn: store_plan_progress writeback failed", exc_info=True)
+                logger.warning(
+                    "error in _learn: store_plan_progress writeback failed",
+                    exc_info=True,
+                )
 
-    async def _report(self, objective: str, phases: list[LoopPhase], total_time: float) -> str | None:
+    async def _report(
+        self, objective: str, phases: list[LoopPhase], total_time: float
+    ) -> str | None:
         """Generate a structured scientific research report.
 
         RCBench expects y=(π, o, r) where r is a research report with
@@ -4328,7 +4826,11 @@ class AutoloopEngine:
                 {
                     "name": p.name,
                     "status": p.status,
-                    "duration": (p.end_time or 0) - (p.start_time or 0) if p.start_time and p.end_time else 0,
+                    "duration": (
+                        (p.end_time or 0) - (p.start_time or 0)
+                        if p.start_time and p.end_time
+                        else 0
+                    ),
                     "error": p.error,
                 }
                 for p in phases
@@ -4355,8 +4857,13 @@ class AutoloopEngine:
         try:
             report_narrative = await self._llm_chat(
                 self._build_science_report_prompt(
-                    report_data, kb_text, exec_summary, visual_ctx,
-                    last_validation, last_hypothesis, last_surprise,
+                    report_data,
+                    kb_text,
+                    exec_summary,
+                    visual_ctx,
+                    last_validation,
+                    last_hypothesis,
+                    last_surprise,
                 ),
                 persona_name="tutor",
                 task="summarize",
@@ -4365,7 +4872,9 @@ class AutoloopEngine:
         except Exception:
             report_narrative = ""
 
-        report_path = self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
+        report_path = (
+            self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
+        )
         report_content = self._render_report(report_data)
         if kb_text:
             report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
@@ -4429,7 +4938,11 @@ Output format (Markdown, no code blocks):
         生成的教学笔记存入蒸馏知识库 (feynman_note 类型, KB 检索优先).
         知识缺口写入 GoalStore 作为下轮子目标.
         """
-        pred_err = validation.get("prediction_error", {}) if isinstance(validation, dict) else {}
+        pred_err = (
+            validation.get("prediction_error", {})
+            if isinstance(validation, dict)
+            else {}
+        )
         surprise_val = pred_err.get("surprise", 0) if isinstance(pred_err, dict) else 0
 
         # 收集 deviation log, 让 Feynman 解释也覆盖 "为什么偏移了计划"
@@ -4478,9 +4991,20 @@ Output format (Markdown, no code blocks):
                 else:
                     # 无标记时用启发式分类
                     gap_lower = line.lower()
-                    is_uu = any(kw in gap_lower for kw in
-                                ["didn't", "never", "wasn't aware", "didn't think",
-                                 "hadn't", "overlooked", "完全没", "之前没", "没想到"])
+                    is_uu = any(
+                        kw in gap_lower
+                        for kw in [
+                            "didn't",
+                            "never",
+                            "wasn't aware",
+                            "didn't think",
+                            "hadn't",
+                            "overlooked",
+                            "完全没",
+                            "之前没",
+                            "没想到",
+                        ]
+                    )
                     gaps.append((line, "unknown_unknown" if is_uu else "known_unknown"))
 
         if not explanation_part:
@@ -4492,6 +5016,7 @@ Output format (Markdown, no code blocks):
         _feynman_conf = min(0.9, 0.5 + (r_phys or 0) * 0.3)
         try:
             from huginn.evolution.knowledge_distiller import KnowledgeDistiller
+
             distiller = KnowledgeDistiller()
             tags = ["feynman", "autoloop", f"iter_{self._iteration}"]
             if surprise_val > 0.5:
@@ -4516,6 +5041,7 @@ Output format (Markdown, no code blocks):
         if gaps:
             try:
                 from huginn.autoloop.goal_store import get_goal_store
+
                 _gs = get_goal_store()
                 _active = _gs.get_active()
                 if _active:
@@ -4608,17 +5134,19 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
                 end = content.find("]")
                 if end > 0:
                     btype = content[1:end].strip()
-                    content = content[end + 1:].strip()
+                    content = content[end + 1 :].strip()
             if content and content != "NONE":
                 results.append({"type": btype, "text": content})
                 # 写入 GoalStore
                 try:
                     from huginn.autoloop.goal_store import get_goal_store
+
                     _gs = get_goal_store()
                     _active = _gs.get_active()
                     if _active:
                         _gs.add_unknown(
-                            _active.id, content,
+                            _active.id,
+                            content,
                             unknown_type="blind_spot",
                         )
                 except Exception:
@@ -4653,36 +5181,42 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
 
         # 检查 1: 有 error
         if isinstance(result, dict) and result.get("error"):
-            deviations.append({
-                "iteration": str(self._iteration),
-                "type": "execution_error",
-                "plan_mode": plan_mode,
-                "plan_desc": plan_desc,
-                "deviation": f"Execution failed: {str(result['error'])[:200]}",
-                "expected": expected[:100] if expected else "(none)",
-            })
+            deviations.append(
+                {
+                    "iteration": str(self._iteration),
+                    "type": "execution_error",
+                    "plan_mode": plan_mode,
+                    "plan_desc": plan_desc,
+                    "deviation": f"Execution failed: {str(result['error'])[:200]}",
+                    "expected": expected[:100] if expected else "(none)",
+                }
+            )
 
         # 检查 2: evolved fix 被使用
         if isinstance(context, dict) and context.get("_evolved_fix"):
-            deviations.append({
-                "iteration": str(self._iteration),
-                "type": "heuristic_fix",
-                "plan_mode": plan_mode,
-                "plan_desc": plan_desc,
-                "deviation": "Applied evolved heuristic fix instead of following original plan",
-                "expected": expected[:100] if expected else "(none)",
-            })
+            deviations.append(
+                {
+                    "iteration": str(self._iteration),
+                    "type": "heuristic_fix",
+                    "plan_mode": plan_mode,
+                    "plan_desc": plan_desc,
+                    "deviation": "Applied evolved heuristic fix instead of following original plan",
+                    "expected": expected[:100] if expected else "(none)",
+                }
+            )
 
         # 检查 3: result success=False
         if isinstance(result, dict) and result.get("success") is False:
-            deviations.append({
-                "iteration": str(self._iteration),
-                "type": "plan_mismatch",
-                "plan_mode": plan_mode,
-                "plan_desc": plan_desc,
-                "deviation": "Plan produced unsuccessful result, will need refinement",
-                "expected": expected[:100] if expected else "(none)",
-            })
+            deviations.append(
+                {
+                    "iteration": str(self._iteration),
+                    "type": "plan_mismatch",
+                    "plan_mode": plan_mode,
+                    "plan_desc": plan_desc,
+                    "deviation": "Plan produced unsuccessful result, will need refinement",
+                    "expected": expected[:100] if expected else "(none)",
+                }
+            )
 
     @staticmethod
     def _build_science_report_prompt(
@@ -4707,7 +5241,9 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
         kb_section = f"\n## Domain Knowledge\n{kb_text}\n" if kb_text else ""
         exec_section = f"\n## Execution Data\n{exec_summary}\n" if exec_summary else ""
         visual_section = f"\n## Visual Primitives\n{visual_ctx}\n" if visual_ctx else ""
-        val_section = f"\n## Validation\n{validation_summary}\n" if validation_summary else ""
+        val_section = (
+            f"\n## Validation\n{validation_summary}\n" if validation_summary else ""
+        )
         hyp_section = f"\n## Hypothesis Tested\n{hypothesis}\n" if hypothesis else ""
 
         return (
@@ -4737,7 +5273,9 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
     # Execution helpers
     # ──────────────────────────────────────────────────────────────
 
-    async def _execute_coder(self, description: str, context: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_coder(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """Run the coder loop on the description, reusing self.coder."""
         task = f"""Task: {description}
 
@@ -4750,9 +5288,7 @@ Please modify the code to address this task."""
             # CoderRunner.run 是同步的, 丢线程里避免阻塞事件循环
             result = await asyncio.to_thread(self.coder.run, task)
             messages = result.get("messages", [])
-            tool_calls = sum(
-                1 for m in messages if getattr(m, "tool_calls", None)
-            )
+            tool_calls = sum(1 for m in messages if getattr(m, "tool_calls", None))
             return {
                 "mode": "coder",
                 "status": "completed",
@@ -4762,7 +5298,12 @@ Please modify the code to address this task."""
             }
         except Exception as e:
             logger.exception("coder execution failed")
-            return {"mode": "coder", "status": "failed", "success": False, "error": str(e)}
+            return {
+                "mode": "coder",
+                "status": "failed",
+                "success": False,
+                "error": str(e),
+            }
 
     # domain → 默认模板名; get_template 拿不到就 fallback standard_dft
     # ponytail: 硬编码映射表, 新模板加一行即可; 想自动发现就扫 WORKFLOW_TEMPLATES
@@ -4787,7 +5328,9 @@ Please modify the code to address this task."""
             return "symbolic"
         return "dft"
 
-    async def _execute_workflow(self, description: str, context: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_workflow(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """Execute a workflow task, picking template by domain when possible."""
         try:
             domain = self._classify_workflow_domain(description)
@@ -4806,11 +5349,12 @@ Please modify the code to address this task."""
                 + list(self.workspace.rglob("*.msh"))
                 + list(self.workspace.rglob("*.inp"))
             )
-            xyz_files = (
-                list(self.workspace.rglob("*.xyz"))
-                + list(self.workspace.rglob("*.pdb"))
+            xyz_files = list(self.workspace.rglob("*.xyz")) + list(
+                self.workspace.rglob("*.pdb")
             )
-            structure_path = str(structure_files[0]) if structure_files else "structure.cif"
+            structure_path = (
+                str(structure_files[0]) if structure_files else "structure.cif"
+            )
 
             # 不同域模板参数不一样, 廉价 try 一组; 失败就 fallback DFT
             try:
@@ -4831,7 +5375,9 @@ Please modify the code to address this task."""
             except Exception as tmpl_err:
                 logger.warning(
                     "workflow template %s (%s) failed: %s, fallback to standard_dft",
-                    template_name, domain, tmpl_err,
+                    template_name,
+                    domain,
+                    tmpl_err,
                 )
                 stages = standard_dft_workflow(structure_path, engine="vasp")
 
@@ -4849,14 +5395,20 @@ Please modify the code to address this task."""
                 "outputs": result.outputs,
                 "error": result.error,
                 "stage_results": [
-                    {"name": s.stage_name, "success": s.success, "output": s.output_data}
+                    {
+                        "name": s.stage_name,
+                        "success": s.success,
+                        "output": s.output_data,
+                    }
                     for s in result.stages
                 ],
             }
         except Exception as e:
             return {"mode": "workflow", "success": False, "error": str(e)}
 
-    async def _execute_explore(self, description: str, context: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_explore(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """Execute an exploration task."""
         try:
             result = await self.explorer.explore(
@@ -4875,26 +5427,35 @@ Please modify the code to address this task."""
         except Exception as e:
             return {"mode": "explore", "success": False, "error": str(e)}
 
-    async def _execute_skill(self, plan: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_skill(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
         """Run a pre-built composite skill pipeline."""
         try:
-            from huginn.skills.registry import SkillRegistry
             from huginn.skills.base import DeclarativeSkillExecutor
             from huginn.skills.composite import _ensure_registered
+            from huginn.skills.registry import SkillRegistry
+
             _ensure_registered()
 
             skill_name = plan.get("skill", "")
             skill = SkillRegistry.get(skill_name)
             if not skill:
                 # Fuzzy match if exact name missing
-                matches = SkillRegistry.search(skill_name or plan.get("description", ""))
+                matches = SkillRegistry.search(
+                    skill_name or plan.get("description", "")
+                )
                 skill = matches[0] if matches else None
             if not skill:
-                return {"mode": "skill", "success": False,
-                        "error": f"no matching skill for '{skill_name}'"}
+                return {
+                    "mode": "skill",
+                    "success": False,
+                    "error": f"no matching skill for '{skill_name}'",
+                }
 
             # Reuse the same tool registry as the rest of the engine
             from huginn.tools.registry import ToolRegistry
+
             executor = DeclarativeSkillExecutor(ToolRegistry)
             result = await executor.execute(skill, {}, context)
             return {"mode": "skill", "skill": skill.name, **result}
@@ -4938,7 +5499,7 @@ Please modify the code to address this task."""
         # 动作 1: zoom — 放大某区域
         if "zoom" in desc_lower:
             # 提取坐标 [x1,y1,x2,y2] 或 [x,y]
-            coords = re.findall(r'\[?(\d+)\s*,\s*(\d+)\]?', description)
+            coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
             if len(coords) >= 2:
                 x1, y1 = int(coords[0][0]), int(coords[0][1])
                 x2, y2 = int(coords[1][0]), int(coords[1][1])
@@ -4952,13 +5513,16 @@ Please modify the code to address this task."""
                 if visual_base64:
                     try:
                         from huginn.tools.registry import ToolRegistry
+
                         img_tool = ToolRegistry.get("image_analysis_tool")
                         if img_tool:
                             # 裁剪 base64 图片到指定区域并分析
                             import base64 as b64
                             import io as _io
+
                             try:
                                 from PIL import Image
+
                                 img_data = b64.b64decode(visual_base64)
                                 img = Image.open(_io.BytesIO(img_data))
                                 w, h = img.size
@@ -4971,10 +5535,14 @@ Please modify the code to address this task."""
                                 buf = _io.BytesIO()
                                 cropped.save(buf, format="PNG")
                                 cropped_b64 = b64.b64encode(buf.getvalue()).decode()
-                                action_result["cropped_image"] = cropped_b64[:10000]  # limit size
+                                action_result["cropped_image"] = cropped_b64[
+                                    :10000
+                                ]  # limit size
                                 action_result["crop_size"] = [px2 - px1, py2 - py1]
                             except ImportError:
-                                action_result["note"] += " (PIL not available, coordinates only)"
+                                action_result[
+                                    "note"
+                                ] += " (PIL not available, coordinates only)"
                             except Exception as e:
                                 action_result["note"] += f" (crop failed: {e})"
                     except Exception:
@@ -4983,42 +5551,52 @@ Please modify the code to address this task."""
 
         # 动作 2: measure — 测量某点或区域的数据值
         elif "measure" in desc_lower:
-            coords = re.findall(r'\[?(\d+)\s*,\s*(\d+)\]?', description)
+            coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
             if coords:
                 x, y = int(coords[0][0]), int(coords[0][1])
                 # 从 visual_ctx 中查找最接近的基元
-                result["actions"].append({
-                    "action": "measure",
-                    "coordinate": [x, y],
-                    "note": f"Measured at <point>[{x},{y}]</point>",
-                    "visual_context_snippet": visual_ctx[:300] if visual_ctx else "",
-                })
+                result["actions"].append(
+                    {
+                        "action": "measure",
+                        "coordinate": [x, y],
+                        "note": f"Measured at <point>[{x},{y}]</point>",
+                        "visual_context_snippet": (
+                            visual_ctx[:300] if visual_ctx else ""
+                        ),
+                    }
+                )
 
         # 动作 3: annotate — 标注结构特征
         elif "annotate" in desc_lower:
-            result["actions"].append({
-                "action": "annotate",
-                "description": description,
-                "note": "Annotation recorded for visual reasoning",
-                "visual_context": visual_ctx[:500] if visual_ctx else "",
-            })
+            result["actions"].append(
+                {
+                    "action": "annotate",
+                    "description": description,
+                    "note": "Annotation recorded for visual reasoning",
+                    "visual_context": visual_ctx[:500] if visual_ctx else "",
+                }
+            )
 
         # 动作 4: compare — 比较两组数据
         elif "compare" in desc_lower:
-            result["actions"].append({
-                "action": "compare",
-                "description": description,
-                "visual_context": visual_ctx[:500] if visual_ctx else "",
-                "note": "Comparison analysis requested",
-            })
+            result["actions"].append(
+                {
+                    "action": "compare",
+                    "description": description,
+                    "visual_context": visual_ctx[:500] if visual_ctx else "",
+                    "note": "Comparison analysis requested",
+                }
+            )
 
         # 默认: 记录检查请求
         else:
-            result["actions"].append({
-                "action": "inspect",
-                "description": description,
-                "visual_context": visual_ctx[:500] if visual_ctx else "",
-            })
+            result["actions"].append(
+                {
+                    "action": "inspect",
+                    "description": description,
+                    "visual_context": visual_ctx[:500] if visual_ctx else "",
+                }
+            )
 
         # 生成新的视觉基元 (基于检查动作的输出)
         new_primitives = []
@@ -5031,6 +5609,7 @@ Please modify the code to address this task."""
         # 用 enrich_with_visual 给这次检查也生成视觉基元
         try:
             from huginn.tools.visual_hook import enrich_with_visual
+
             enriched = enrich_with_visual("visual_inspect", {"result": result})
             if "_visual_hint" in enriched:
                 result["_visual_hint"] = enriched["_visual_hint"]
@@ -5069,14 +5648,22 @@ Please modify the code to address this task."""
 
         # Team 模式: task 路由优先, 但显式 model 不被覆盖
         if model is None and task is not None:
-            router = getattr(self, 'model_router', None)
+            router = getattr(self, "model_router", None)
             if router is not None:
                 try:
-                    routed = router.select(task, prefer_cheap=(task in ("summarize", "format", "archival", "planning")))
+                    routed = router.select(
+                        task,
+                        prefer_cheap=(
+                            task in ("summarize", "format", "archival", "planning")
+                        ),
+                    )
                     if routed is not None:
                         model = routed
                 except Exception:
-                    logger.debug("model router select failed — using fallback model", exc_info=True)
+                    logger.debug(
+                        "model router select failed — using fallback model",
+                        exc_info=True,
+                    )
 
         llm = model or self.model
         messages: list[Any] = []
@@ -5086,7 +5673,9 @@ Please modify the code to address this task."""
                 sys_msg = SystemMessage(content=sys_prompt)
                 # 静态 system prompt 跨调用不变, 给 Anthropic/Kimi 打 cache 标记
                 _ident = f"{type(llm).__name__}{getattr(llm, 'model', '')}".lower()
-                if any(k in _ident for k in ("anthropic", "claude", "kimi", "moonshot")):
+                if any(
+                    k in _ident for k in ("anthropic", "claude", "kimi", "moonshot")
+                ):
                     sys_msg.additional_kwargs["cache_control"] = {"type": "ephemeral"}
                 messages.append(sys_msg)
         messages.append(HumanMessage(content=prompt))
@@ -5123,23 +5712,29 @@ Please modify the code to address this task."""
         # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
         # 给 LLM 具体坐标锚定推理 — Thinking with Visual Primitives 的
         # "point while it reasons" 原则, Mirage 效应的文本路径
-        visual_block = getattr(self, '_last_visual_context', '')
+        visual_block = getattr(self, "_last_visual_context", "")
         if visual_block:
-            visual_block = f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
+            visual_block = (
+                f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
+            )
         # 数学深度引导: 提醒 agent 优先识别 PDE / 变分原理 / 微分几何结构,
         # 并用符号回归 + Sobol 灵敏度 + 物理约束先验 反复试探.
         # 条件化: 只在 context 含数学信号时注入, coder-only 任务不需要.
         # 节省 ~150 tokens × 2 calls/iter × 20 iters = 6K tokens/run.
         ctx_blob = json.dumps(context, ensure_ascii=False).lower()
-        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in ctx_blob for s in _MATH_SIGNALS) else ""
+        math_block = (
+            self._MATH_DEPTH_PROMPT_BLOCK
+            if any(s in ctx_blob for s in _MATH_SIGNALS)
+            else ""
+        )
         # MatterChat 启发: 把上轮 execution 结果摘要注入 hypothesis prompt,
         # 让假设建立在"上轮实际发生了什么"之上, 不只看 workspace 变化.
         # _last_execution_result 在 _execute 里写入, 之前只 _build_plan_prompt 用.
         exec_block = ""
-        last_exec = getattr(self, '_last_execution_result', None)
+        last_exec = getattr(self, "_last_execution_result", None)
         if last_exec and isinstance(last_exec, dict):
-            _tool = last_exec.get('_tool_name', 'unknown')
-            _res = last_exec.get('result', last_exec)
+            _tool = last_exec.get("_tool_name", "unknown")
+            _res = last_exec.get("result", last_exec)
             _summary = json.dumps(_res, ensure_ascii=False, default=str)[:500]
             exec_block = f"\n### Last Execution Result ({_tool})\n{_summary}\n"
         # 想象力引导: 高 surprise 或连续 refine 时, 要求 LLM 跳出分析思维,
@@ -5160,12 +5755,18 @@ Please modify the code to address this task."""
         git_log_block = ""
         try:
             import subprocess as _sp
+
             _r = _sp.run(
                 ["git", "log", "--oneline", "-10"],
-                cwd=self.workspace, capture_output=True, text=True, timeout=10,
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if _r.returncode == 0 and _r.stdout.strip():
-                git_log_block = f"\n### Recent Experiments (git log)\n{_r.stdout.strip()}\n"
+                git_log_block = (
+                    f"\n### Recent Experiments (git log)\n{_r.stdout.strip()}\n"
+                )
         except Exception:
             pass
 
@@ -5185,15 +5786,19 @@ Please modify the code to address this task."""
                 topology_block = (
                     f"\n### Topology (advisory)\n"
                     f"当前有 {len(reps)} 条独立探索路线, 代表假设分别是:\n"
-                    + "\n".join(lines) + "\n"
+                    + "\n".join(lines)
+                    + "\n"
                     "综合判断时不要让某条路线靠节点数主导, 注意挑战和重定向.\n"
                 )
         except Exception:
             pass
 
         # 按优先级拼接, 超预算自动裁剪低优先级 block
-        return self._trim_to_budget([
-            ("body", f"""You are an autonomous material science research agent.
+        return self._trim_to_budget(
+            [
+                (
+                    "body",
+                    f"""You are an autonomous material science research agent.
 
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
@@ -5206,19 +5811,21 @@ Prefer hypotheses that can be expressed as governing PDEs, variational
 principles, or conservation laws; identify the mathematical structure
 before proposing numerical experiments.
 
-Hypothesis:"""),
-            ("git_log", git_log_block),
-            ("fail", fail_block),
-            ("imagination", imagination_block),
-            ("exec", exec_block),
-            ("math", math_block),
-            ("kg", kg_block),
-            ("visual", visual_block),
-            ("kb", kb_block),
-            ("mem", mem_block),
-            ("topology", topology_block),
-            ("hint", hint_block),
-        ])
+Hypothesis:""",
+                ),
+                ("git_log", git_log_block),
+                ("fail", fail_block),
+                ("imagination", imagination_block),
+                ("exec", exec_block),
+                ("math", math_block),
+                ("kg", kg_block),
+                ("visual", visual_block),
+                ("kb", kb_block),
+                ("mem", mem_block),
+                ("topology", topology_block),
+                ("hint", hint_block),
+            ]
+        )
 
     _IMAGINATION_PROMPT_BLOCK = """
 Imagination directive (speculative mode activated):
@@ -5280,12 +5887,20 @@ Math depth guidance (treat physics/chemistry as mathematics):
         if mem_block:
             mem_block = f"\n{mem_block}\n"
         # 视觉基元注入 (同 hypothesize)
-        visual_block = getattr(self, '_last_visual_context', '')
+        visual_block = getattr(self, "_last_visual_context", "")
         if visual_block:
-            visual_block = f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
+            visual_block = (
+                f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
+            )
         # 条件化 math_block (同 hypothesize)
-        hyp_blob = hypothesis.lower() + json.dumps(context, ensure_ascii=False).lower()[:500]
-        math_block = self._MATH_DEPTH_PROMPT_BLOCK if any(s in hyp_blob for s in _MATH_SIGNALS) else ""
+        hyp_blob = (
+            hypothesis.lower() + json.dumps(context, ensure_ascii=False).lower()[:500]
+        )
+        math_block = (
+            self._MATH_DEPTH_PROMPT_BLOCK
+            if any(s in hyp_blob for s in _MATH_SIGNALS)
+            else ""
+        )
 
         # Inject learned skills + prompt patches from evolution engine.
         # This is the "use what you learned" half of the Learn→Plan loop.
@@ -5296,12 +5911,23 @@ Math depth guidance (treat physics/chemistry as mathematics):
             skills = evolution.get_relevant_skills(hypothesis)
             if skills:
                 skill_lines = [f"  - {s.name}: {s.description}" for s in skills[:3]]
-                skill_hints = "\nLearned skills (from past iterations):\n" + "\n".join(skill_lines) + "\n"
+                skill_hints = (
+                    "\nLearned skills (from past iterations):\n"
+                    + "\n".join(skill_lines)
+                    + "\n"
+                )
             patches = evolution.get_prompt_patches()
             if patches:
-                patch_hints = "\nLearned patches:\n" + "\n".join(f"  - {p}" for p in patches[:3]) + "\n"
+                patch_hints = (
+                    "\nLearned patches:\n"
+                    + "\n".join(f"  - {p}" for p in patches[:3])
+                    + "\n"
+                )
         except Exception:
-            logger.warning("error in _build_plan_prompt: evolution skill/patch fetch failed", exc_info=True)
+            logger.warning(
+                "error in _build_plan_prompt: evolution skill/patch fetch failed",
+                exc_info=True,
+            )
 
         # Inject matching composite skills — lets the LLM pick a pre-built
         # multi-tool pipeline instead of improvising from scratch.
@@ -5309,21 +5935,42 @@ Math depth guidance (treat physics/chemistry as mathematics):
         # 任务不需要 composite skill 列表. 节省 ~500 tokens.
         composite_block = ""
         hyp_lower = hypothesis.lower()
-        _workflow_signals = ("workflow", "simulation", "band", "dos", "phonon",
-                              "mechanical", "thermal", "optical", "dft", "vasp",
-                              "lammps", "md ", "structure", "property", "energy",
-                              "convergence", "optimize", "calc")
+        _workflow_signals = (
+            "workflow",
+            "simulation",
+            "band",
+            "dos",
+            "phonon",
+            "mechanical",
+            "thermal",
+            "optical",
+            "dft",
+            "vasp",
+            "lammps",
+            "md ",
+            "structure",
+            "property",
+            "energy",
+            "convergence",
+            "optimize",
+            "calc",
+        )
         if any(s in hyp_lower for s in _workflow_signals):
             try:
-                from huginn.skills.registry import SkillRegistry
                 from huginn.skills.composite import _ensure_registered
+                from huginn.skills.registry import SkillRegistry
+
                 _ensure_registered()
                 matches = SkillRegistry.search(hypothesis)
                 if not matches:
                     matches = SkillRegistry.get_all_definitions()
                 if matches:
                     lines = [s.to_prompt() for s in matches[:4]]
-                    composite_block = "\nAvailable composite skills (prefer these over manual workflow):\n" + "\n\n".join(lines) + "\n"
+                    composite_block = (
+                        "\nAvailable composite skills (prefer these over manual workflow):\n"
+                        + "\n\n".join(lines)
+                        + "\n"
+                    )
             except Exception:
                 logger.debug("composite skill lookup failed", exc_info=True)
 
@@ -5332,24 +5979,36 @@ Math depth guidance (treat physics/chemistry as mathematics):
         pipeline_block = ""
         try:
             from huginn.provenance.pipeline import SimulationPipeline
-            pipeline = SimulationPipeline(self.kg.root if hasattr(self.kg, 'root') else None)
+
+            pipeline = SimulationPipeline(
+                self.kg.root if hasattr(self.kg, "root") else None
+            )
             # 用上一轮的 execution_result 触发 suggest_next
-            last_result = getattr(self, '_last_execution_result', None)
+            last_result = getattr(self, "_last_execution_result", None)
             if last_result and isinstance(last_result, dict):
-                tool_name = last_result.get('_tool_name', '')
+                tool_name = last_result.get("_tool_name", "")
                 suggestions = pipeline.suggest_next(
                     tool_name=tool_name,
-                    tool_input=last_result.get('_tool_input', {}),
-                    tool_output=last_result.get('result', last_result),
+                    tool_input=last_result.get("_tool_input", {}),
+                    tool_output=last_result.get("result", last_result),
                 )
                 if suggestions:
-                    s_lines = [f"  - {s.tool_hint}: {s.description}" for s in suggestions[:3]]
-                    pipeline_block = "\nPipeline suggestions (based on provenance):\n" + "\n".join(s_lines) + "\n"
+                    s_lines = [
+                        f"  - {s.tool_hint}: {s.description}" for s in suggestions[:3]
+                    ]
+                    pipeline_block = (
+                        "\nPipeline suggestions (based on provenance):\n"
+                        + "\n".join(s_lines)
+                        + "\n"
+                    )
         except Exception:
             pass  # pipeline 是 advisory, 失败不阻塞
 
-        return self._trim_to_budget([
-            ("body", f"""Given the hypothesis: "{hypothesis}"
+        return self._trim_to_budget(
+            [
+                (
+                    "body",
+                    f"""Given the hypothesis: "{hypothesis}"
 
 Context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:1000]}
@@ -5379,18 +6038,20 @@ MODE: <coder|workflow|explore|skill>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
-"""),
-            ("math", math_block),
-            ("kg", kg_block),
-            ("visual", visual_block),
-            ("kb", kb_block),
-            ("mem", mem_block),
-            ("skill", skill_hints + patch_hints),
-            ("composite", composite_block),
-            ("pipeline", pipeline_block),
-            ("subgoal", self._build_subgoal_block()),
-            ("ctx_hint", self._plan_context_hint()),
-        ])
+""",
+                ),
+                ("math", math_block),
+                ("kg", kg_block),
+                ("visual", visual_block),
+                ("kb", kb_block),
+                ("mem", mem_block),
+                ("skill", skill_hints + patch_hints),
+                ("composite", composite_block),
+                ("pipeline", pipeline_block),
+                ("subgoal", self._build_subgoal_block()),
+                ("ctx_hint", self._plan_context_hint()),
+            ]
+        )
 
     def _plan_context_hint(self) -> str:
         """B: 把上下文信号转成 plan prompt 提示文本 (软路由).
@@ -5419,9 +6080,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         # refine 次数多 → 假设可能方向错
         rc = getattr(self, "_refine_count", 0)
         if rc >= 3:
-            hints.append(
-                f"NOTE: 已 refine {rc} 次. 如果再失败可能需要 pivot 换方向."
-            )
+            hints.append(f"NOTE: 已 refine {rc} 次. 如果再失败可能需要 pivot 换方向.")
         # surprise 高 → 预测误差大, 倾向 explore 重新假设
         surprise = getattr(self, "_last_surprise", 0.0)
         if surprise > 0.5:
@@ -5451,18 +6110,22 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         # 割点节点: 强制非 coder mode
         try:
             current_hyp = getattr(self, "_current_hyp_id_for_plan", None)
-            if (current_hyp
-                    and self.hypothesis_graph.needs_dual_coverage(current_hyp)
-                    and current_mode == "coder"):
+            if (
+                current_hyp
+                and self.hypothesis_graph.needs_dual_coverage(current_hyp)
+                and current_mode == "coder"
+            ):
                 plan["mode"] = "workflow"
                 plan["override_reason"] = "cut_vertex_dual_coverage"
                 plan["description"] = (
                     f"[auto-routed: 割点需双覆盖] {plan.get('description', '')}"
                 )
-                logger.info("override mode coder→workflow for cut vertex %s",
-                            current_hyp)
+                logger.info(
+                    "override mode coder→workflow for cut vertex %s", current_hyp
+                )
                 self._log_plan_override(
-                    "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖")
+                    "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖"
+                )
         except Exception:
             pass
         # 连败/surprise 强制 explore (合并条件, 共享覆盖路径)
@@ -5493,15 +6156,20 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         """
         try:
             from huginn.autoloop.phase_gate import (
-                get_shared_phase_gate_state, PhaseGate,
+                PhaseGate,
+                get_shared_phase_gate_state,
             )
+
             state = get_shared_phase_gate_state()
-            state.history.append(PhaseGate(
-                from_phase="plan", to_phase="plan",
-                status="approved",
-                feedback=f"[auto-routed] {reason_code}: {reason_text}",
-                reviewer="auto_router",
-            ))
+            state.history.append(
+                PhaseGate(
+                    from_phase="plan",
+                    to_phase="plan",
+                    status="approved",
+                    feedback=f"[auto-routed] {reason_code}: {reason_text}",
+                    reviewer="auto_router",
+                )
+            )
         except Exception:
             logger.debug("log plan override failed", exc_info=True)
 
@@ -5535,7 +6203,10 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
     # ceiling: LLM 自校验有同模型盲点, 不如 KRCL 的符号识别器硬.
     # 升级路径: 接 BourbakiTool.check_conservation 做符号反推 (需 Lean 成熟).
     async def _plan_check_and_refine(
-        self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
     ) -> dict[str, Any]:
         """KRCL 闭环: 反向校验 plan, 失败反馈 LLM 重生成, 超限不阻塞.
 
@@ -5563,7 +6234,9 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         tier = self._plan_check_tier(plan)
         if tier in ("open", "skip"):
             logger.debug(
-                "plan_check skipped (tier=%s, iter=%d)", tier, self._iteration,
+                "plan_check skipped (tier=%s, iter=%d)",
+                tier,
+                self._iteration,
             )
             return plan
         scene = self._plan_check_scene_tag(plan)
@@ -5574,42 +6247,92 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
             except Exception as e:
                 logger.debug("plan_check LLM call failed: %s", e)
                 return plan
-            # 给 check 打 scene_tag, 喂分桶自适应; 不暴露: 存引擎状态
+            # 给 check 打 scene_tag, 喂分桶自适应; 不暴露: 存引擎状态.
+            # 成功时存 plan_snapshot, 喂 _refine_plan few-shot.
             check["scene_tag"] = scene
+            if check.get("is_valid", True):
+                check["plan_snapshot"] = {
+                    "mode": plan.get("mode", ""),
+                    "description": plan.get("description", "")[:200],
+                }
             self._plan_check_last_result = check
             self._plan_check_history.append(check)
             # 历史窗口截断, 保留最近 20 条防无限增长
             if len(self._plan_check_history) > 20:
                 del self._plan_check_history[: len(self._plan_check_history) - 20]
             if check.get("is_valid", True):
+                # confidence 分级: 低置信通过 (<0.5) 强制 refine 一次, 防 LLM
+                # 没看懂就放行; 高置信直接通过.
+                confidence = float(check.get("confidence", 0.8))
+                if confidence >= 0.5 or attempt >= max_refines or max_refines == 0:
+                    logger.info(
+                        "plan_check passed (attempt %d, tier=%s, scene=%s, conf=%.2f)",
+                        attempt,
+                        tier,
+                        scene,
+                        confidence,
+                    )
+                    # 每 5 次校验触发一次 scene_tag 自动发现 (低成本, 不阻塞)
+                    if len(self._plan_check_history) % 5 == 0:
+                        self._discover_scene_tags()
+                    return plan
                 logger.info(
-                    "plan_check passed (attempt %d, tier=%s, scene=%s)",
-                    attempt, tier, scene,
+                    "plan_check passed but low confidence (conf=%.2f), refining",
+                    confidence,
                 )
-                return plan
-            # 失败: 记到 patterns (跨 run 持久化, 喂下次 prompt)
-            self._record_plan_check_failure(plan, check, scene)
-            if attempt >= max_refines:
-                reason = check.get("reason", "unknown")
-                self._plan_check_warnings.append(f"[{scene}] {reason}")
-                logger.warning(
-                    "plan_check failed (tier=%s, scene=%s, max_refines=%d): %s",
-                    tier, scene, max_refines, reason,
-                )
-                # 连续失败触发主动澄清 (不阻塞, 用户可 force_proceed)
-                await self._maybe_trigger_plan_check_clarify(
-                    scene, reason, plan,
-                )
-                return plan
+            else:
+                # 失败: 记到 patterns (跨 run 持久化, 喂下次 prompt)
+                self._record_plan_check_failure(plan, check, scene)
+                # confidence 分级: 低置信失败 (<0.3) 跳过 refine, LLM 都没把握
+                # 判断, refine 可能也是瞎改, 直接 warning + 触发澄清更靠谱.
+                confidence = float(check.get("confidence", 0.8))
+                if confidence < 0.3:
+                    reason = check.get("reason", "unknown")
+                    self._plan_check_warnings.append(
+                        f"[{scene}] {reason} (low_conf={confidence:.2f})"
+                    )
+                    logger.warning(
+                        "plan_check failed low-conf (tier=%s, scene=%s, conf=%.2f): %s",
+                        tier,
+                        scene,
+                        confidence,
+                        reason,
+                    )
+                    await self._maybe_trigger_plan_check_clarify(scene, reason, plan)
+                    return plan
+                if attempt >= max_refines:
+                    reason = check.get("reason", "unknown")
+                    self._plan_check_warnings.append(f"[{scene}] {reason}")
+                    logger.warning(
+                        "plan_check failed (tier=%s, scene=%s, max_refines=%d): %s",
+                        tier,
+                        scene,
+                        max_refines,
+                        reason,
+                    )
+                    # 连续失败触发主动澄清 (不阻塞, 用户可 force_proceed)
+                    await self._maybe_trigger_plan_check_clarify(
+                        scene,
+                        reason,
+                        plan,
+                    )
+                    return plan
             logger.info(
-                "plan_check failed (attempt %d, tier=%s, scene=%s), refining: %s",
-                attempt, tier, scene, check.get("reason"),
+                "plan_check refining (attempt %d, tier=%s, scene=%s, conf=%.2f): %s",
+                attempt,
+                tier,
+                scene,
+                float(check.get("confidence", 0.8)),
+                check.get("reason"),
             )
             plan = await self._refine_plan(plan, check, hypothesis, context)
         return plan
 
     async def _maybe_trigger_plan_check_clarify(
-        self, scene: str, reason: str, plan: dict[str, Any],
+        self,
+        scene: str,
+        reason: str,
+        plan: dict[str, Any],
     ) -> None:
         """连续 N 次同场景失败 + 场景已知 -> 问用户方向.
 
@@ -5647,12 +6370,14 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         跟 ProgressiveBudget.default() 边界对齐, 但解耦 — budget 关了
         plan_check 仍按 iteration 判 phase.
         plan 复杂度修正 (plan 传入时):
-          - 复杂 plan (score >= 0.7) 即使 open tier 也升级到 medium (要校验)
-          - 简单 plan (score < 0.2) 即使 light tier 也降级到 skip
-        ponytail: 阈值写死, 跟 complexity score 同源.
-        ceiling: 阈值靠拍, 没数据校准; 边界跟 ProgressiveBudget 重复一份.
+          - 复杂 plan (score >= upgrade_threshold) 即使 open tier 也升级到 medium
+          - 简单 plan (score < downgrade_threshold) 即使 light tier 也降级到 skip
+        阈值分场景校准: DFT/MD/workflow 各有自己的 success rate, 不会互相带偏.
+        ponytail: 阈值从 _plan_check_complexity_thresholds(scene) 取, 不是写死.
+        ceiling: 校准靠历史 success rate, 样本不足走默认 0.7/0.25;
+          边界跟 ProgressiveBudget 重复一份.
         升级路径: ProgressiveBudget 暴露 tier_of(n) -> label, 这里复用;
-                  阈值用历史 success rate 自动校准.
+                  阈值用 Bayesian 更新而非简单 success rate.
         """
         n = getattr(self, "_iteration", 0)
         if n <= 10:
@@ -5664,35 +6389,169 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         if plan is None:
             return base
         complexity = self._plan_check_complexity(plan)
-        if complexity >= 0.7 and base == "open":
+        scene = self._plan_check_scene_tag(plan)
+        upgrade_t, downgrade_t = self._plan_check_complexity_thresholds(scene)
+        if complexity >= upgrade_t and base == "open":
             return "medium"
-        if complexity < 0.25 and base == "light":
+        if complexity < downgrade_t and base == "light":
             return "skip"
         return base
+
+    def _plan_check_complexity_thresholds(self, scene: str = "") -> tuple[float, float]:
+        """用历史 success rate 自动校准复杂度阈值, 分场景.
+
+        默认: upgrade=0.7 (复杂 plan 升级到 medium), downgrade=0.25 (简单
+        plan 降级到 skip).
+        分场景校准: 同 scene_tag 的最近 10 条 plan_check 的 success rate
+          >=0.8 (一直成功) -> upgrade 放宽到 0.8, downgrade 收紧到 0.15
+            (成功率高, 只拦最复杂的, 简单的不轻易跳过)
+          <=0.2 (一直失败) -> upgrade 收紧到 0.6, downgrade 放宽到 0.35
+            (失败率高, 多拦一些, 简单的也更容易跳过不浪费 LLM)
+          样本 <5 走默认, 早期不误判. 未知场景 (scene 无历史) 走全局.
+        ponytail: 线性插值, 不上 Bayesian; 阈值钳制在 [0.4, 0.9] / [0.1, 0.4].
+        ceiling: 线性插值过于简单; 场景样本不足时回退全局.
+        升级路径: 上 Bayesian 更新带先验; 场景用 embedding 聚类而非关键词.
+        """
+        history = getattr(self, "_plan_check_history", [])
+        if scene:
+            bucket = [c for c in history if c.get("scene_tag") == scene]
+        else:
+            bucket = history
+        if len(bucket) < 5:
+            # 场景样本不足, 回退全局; 全局也不足, 走默认
+            if scene and len(history) >= 5:
+                bucket = history
+            else:
+                return (0.7, 0.25)
+        recent = bucket[-10:]
+        success_rate = sum(1 for c in recent if c.get("is_valid", True)) / len(recent)
+        if success_rate >= 0.8:
+            return (0.8, 0.15)
+        if success_rate <= 0.2:
+            return (0.6, 0.35)
+        return (0.7, 0.25)
 
     def _plan_check_scene_tag(self, plan: dict[str, Any]) -> str:
         """从 plan 抽场景标签, 给失败模式记忆和分桶自适应用.
 
+        写死的关键词表 + 自动发现的关键词 (_scene_tag_extra_keywords) 互补.
         ponytail: 关键词匹配, 不上 embedding.
-        ceiling: 关键词表写死, 新仿真器要手动加; 描述里没关键词的落到 other.
-        升级路径: 用 plan_check_history 聚类自动发现 scene_tag.
+        ceiling: 写死的关键词表要手动加新仿真器; 自动发现靠高频词统计,
+          新场景需要 >=3 次出现才会被识别.
+        升级路径: 用 plan_check_history 聚类自动发现 scene_tag (无监督).
         """
         desc = (plan.get("description", "") + " " + plan.get("mode", "")).lower()
-        if any(kw in desc for kw in
-               ["vasp", "scf", "band", "dos", "dft", "qe", "cp2k", "gaussian", "orca"]):
+        # 写死的关键词表 (快路径)
+        if any(
+            kw in desc
+            for kw in [
+                "vasp",
+                "scf",
+                "band",
+                "dos",
+                "dft",
+                "qe",
+                "cp2k",
+                "gaussian",
+                "orca",
+            ]
+        ):
             return "dft"
-        if any(kw in desc for kw in
-               ["lammps", "molecular dynamics", "minimize", "nvt", "npt", "md ",
-                "gromacs", "openmm"]):
+        if any(
+            kw in desc
+            for kw in [
+                "lammps",
+                "molecular dynamics",
+                "minimize",
+                "nvt",
+                "npt",
+                "md ",
+                "gromacs",
+                "openmm",
+            ]
+        ):
             return "md"
         if any(kw in desc for kw in ["workflow", "pipeline", "orchestrat"]):
             return "workflow"
         if plan.get("mode") == "skill":
             return "skill"
-        if any(kw in desc for kw in
-               ["fenics", "abaqus", "comsol", "openfoam", "fem", "elmer"]):
+        if any(
+            kw in desc
+            for kw in ["fenics", "abaqus", "comsol", "openfoam", "fem", "elmer"]
+        ):
             return "fem"
+        # 自动发现的关键词 (慢路径, 跨 run 积累)
+        for label, keywords in getattr(self, "_scene_tag_extra_keywords", {}).items():
+            if any(kw in desc for kw in keywords):
+                return label
         return "other"
+
+    def _discover_scene_tags(self) -> None:
+        """从 _plan_check_history 里 scene='other' 的 plans 做关键词统计,
+        发现高频词 (>=3 次) 自动加到 _scene_tag_extra_keywords.
+
+        命中未知场景 — 新仿真器/新任务类型不用手动改关键词表, 跑几次
+        plan_check 后自动归类.
+        双重识别: unigram (>=4 chars) + bigram (两词短语, 如 "phase diagram",
+        "neb chain"), 更准地捕获多词术语.
+        ponytail: 简单词频统计, 不上 TF-IDF/embedding.
+        ceiling: 只统计 scene='other' 的 plans, 已归类的不参与; 阈值 3 靠拍;
+          只取英文, 中文/数字不参与; bigram 不去介词/停用词组合.
+        升级路径: 上 TF-IDF 或 embedding 聚类, 识别任意长度 n-gram.
+        """
+        import re
+        from collections import Counter
+
+        # 收集 scene='other' 的 plan descriptions
+        other_descs: list[str] = []
+        for c in getattr(self, "_plan_check_history", []):
+            snapshot = c.get("plan_snapshot") or {}
+            if c.get("scene_tag") == "other" and snapshot.get("description"):
+                other_descs.append(snapshot["description"].lower())
+        if len(other_descs) < 3:
+            return  # 样本不足, 不触发发现
+        # 统计英文单词词频 (>=4 chars, 过滤停用词)
+        stop = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "this",
+            "from",
+            "run",
+            "then",
+            "calc",
+            "calculate",
+            "using",
+            "use",
+            "plan",
+            "step",
+        }
+        word_counts: Counter[str] = Counter()
+        # bigram 词频 (两词短语, 用空格连接)
+        bigram_counts: Counter[str] = Counter()
+        for desc in other_descs:
+            words = [
+                w for w in re.findall(r"[a-z][a-z0-9_]{3,}", desc) if w not in stop
+            ]
+            for word in words:
+                word_counts[word] += 1
+            # bigram: 相邻两词组合
+            for i in range(len(words) - 1):
+                bigram = f"{words[i]} {words[i+1]}"
+                bigram_counts[bigram] += 1
+        # 高频词 (>=3 次) 加到 extra_keywords, 用 word 本身做 label
+        for word, count in word_counts.most_common(10):
+            if count >= 3:
+                label = f"auto_{word}"
+                self._scene_tag_extra_keywords.setdefault(label, set()).add(word)
+        # 高频 bigram (>=3 次) 加到 extra_keywords, 用下划线连接做 label
+        # (如 "phase diagram" -> auto_phase_diagram, 关键词 "phase diagram")
+        for bigram, count in bigram_counts.most_common(5):
+            if count >= 3:
+                label = f"auto_{bigram.replace(' ', '_')}"
+                self._scene_tag_extra_keywords.setdefault(label, set()).add(bigram)
 
     def _plan_check_complexity(self, plan: dict[str, Any]) -> float:
         """plan 复杂度评分 [0, 1], 跟 tier 一起决定是否校验.
@@ -5707,43 +6566,68 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         desc = plan.get("description", "")
         score += min(len(desc), 50) / 50 * 0.3
         mode = plan.get("mode", "coder")
-        score += {"workflow": 0.4, "skill": 0.3, "coder": 0.2, "explore": 0.1}.get(mode, 0.2)
+        score += {"workflow": 0.4, "skill": 0.3, "coder": 0.2, "explore": 0.1}.get(
+            mode, 0.2
+        )
         if plan.get("expected_prediction"):
             score += 0.15
         scene = self._plan_check_scene_tag(plan)
         similar_fails = sum(
-            1 for p in getattr(self, "_plan_check_patterns", [])
+            1
+            for p in getattr(self, "_plan_check_patterns", [])
             if p.get("scene_tag") == scene
         )
         score += min(similar_fails, 3) / 3 * 0.15
         return min(score, 1.0)
 
     def _plan_check_max_refines(self, tier: str, scene: str = "") -> int:
-        """自适应: 按场景分桶的 success rate 微调 max_refines.
+        """自适应: 按场景分桶的 EWMA success rate 微调 max_refines.
 
         baseline: medium=0 (只校验不 refine), light=1 (完整闭环).
-        分桶: 最近 5 次同 scene_tag 的 success rate
+        分桶: 同 scene_tag 的最近 5 次, EWMA 加权 (alpha 根据桶大小自适应)
           >=80% 放宽 (baseline-1, 最低 0), <=20% 收紧 (baseline+1, 最高 2).
+        alpha 自适应: 桶 3-4 条用 alpha=0.3 (老样本权重大, 样本少要稳),
+          桶 5 条用 alpha=0.4 (近期权重大, 样本足要敏感).
         样本 <3 走 baseline, 早期不误判. 未知场景 (scene 无历史) 走全局.
-        ponytail: 桶小, 不上 decay; 5 条窗口跟全局版一致.
-        ceiling: 桶太小 (<5 条) 统计不稳, 但样本不足走 baseline 兜底.
-        升级路径: 引入 EWMA 给近期样本更高权重.
+        ponytail: EWMA 简单指数加权; alpha 分两档, 不上 decay schedule.
+        ceiling: 桶太小 (<5 条) EWMA 不稳, 但样本不足走 baseline 兜底;
+          alpha 分档靠拍, 没数据校准.
+        升级路径: alpha 用 cross-validation 自动选; 或上 Bayesian 更新.
         """
         baseline = {"medium": 0, "light": 1}.get(tier, 1)
         history = getattr(self, "_plan_check_history", [])
-        bucket = [c for c in history if c.get("scene_tag") == scene] if scene else history
+        bucket = (
+            [c for c in history if c.get("scene_tag") == scene] if scene else history
+        )
         if len(bucket) < 3:
             return baseline
         recent = bucket[-5:]
-        success_rate = sum(1 for c in recent if c.get("is_valid", True)) / len(recent)
-        if success_rate >= 0.8:
+        # alpha 自适应: 桶小用低 alpha (稳), 桶大用高 alpha (敏感)
+        alpha = 0.3 if len(recent) < 5 else 0.4
+        weights = [
+            alpha * (1 - alpha) ** (len(recent) - 1 - i) for i in range(len(recent))
+        ]
+        total_w = sum(weights)
+        if total_w == 0:
+            return baseline
+        ewma_success = (
+            sum(
+                w * (1.0 if c.get("is_valid", True) else 0.0)
+                for w, c in zip(weights, recent)
+            )
+            / total_w
+        )
+        if ewma_success >= 0.8:
             return max(0, baseline - 1)
-        if success_rate <= 0.2:
+        if ewma_success <= 0.2:
             return min(2, baseline + 1)
         return baseline
 
     async def _plan_check(
-        self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
     ) -> dict[str, Any]:
         """单次反向校验: 让 LLM 判断 plan 执行后能否达成 hypothesis.
 
@@ -5752,12 +6636,17 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         """
         prompt = self._build_plan_check_prompt(plan, hypothesis, context)
         response = await self._llm_chat(
-            prompt, persona_name="default", task="verification",
+            prompt,
+            persona_name="default",
+            task="verification",
         )
         return self._parse_plan_check(response)
 
     def _build_plan_check_prompt(
-        self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
     ) -> str:
         """反向规划识别器 prompt: 判断 plan 能否达成 hypothesis."""
         # 从 context 抽最近失败模式, 帮 LLM 避开已知坑
@@ -5767,7 +6656,8 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         # 同场景历史失败模式 (跨 run 积累, 最近 3 条) — 让 LLM 重点避开
         scene = self._plan_check_scene_tag(plan)
         similar = [
-            p for p in getattr(self, "_plan_check_patterns", [])
+            p
+            for p in getattr(self, "_plan_check_patterns", [])
             if p.get("scene_tag") == scene
         ][-3:]
         if similar:
@@ -5804,13 +6694,17 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
 输出 JSON (不要其他文本):
 {{
   "is_valid": true 或 false,
+  "confidence": 0.0 到 1.0 (对判断的置信度, 1.0=非常确定, 0.5=模棱两可, 0.0=完全没把握),
   "reason": "为什么 valid / invalid",
   "missing_steps": ["如果 invalid, 缺少哪些步骤"],
   "risks": ["潜在风险"]
 }}"""
 
     def _record_plan_check_failure(
-        self, plan: dict[str, Any], check: dict[str, Any], scene: str,
+        self,
+        plan: dict[str, Any],
+        check: dict[str, Any],
+        scene: str,
     ) -> None:
         """失败模式记到 patterns, 跨 run 持久化给下次注入 prompt.
 
@@ -5818,13 +6712,15 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         ceiling: 同步写盘, 高频失败时可能拖慢; description 截断 200 chars.
         升级路径: 后台 async flush, 或上 SQLite.
         """
-        self._plan_check_patterns.append({
-            "scene_tag": scene,
-            "reason": check.get("reason", "unknown"),
-            "missing_steps": check.get("missing_steps", []),
-            "mode": plan.get("mode", ""),
-            "description": plan.get("description", "")[:200],
-        })
+        self._plan_check_patterns.append(
+            {
+                "scene_tag": scene,
+                "reason": check.get("reason", "unknown"),
+                "missing_steps": check.get("missing_steps", []),
+                "mode": plan.get("mode", ""),
+                "description": plan.get("description", "")[:200],
+            }
+        )
         if len(self._plan_check_patterns) > 50:
             del self._plan_check_patterns[: len(self._plan_check_patterns) - 50]
         self._save_plan_check_patterns()
@@ -5840,12 +6736,14 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
             return
         try:
             import json
+
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 self._plan_check_patterns = data[-50:]
                 logger.info(
                     "loaded %d plan_check patterns from %s",
-                    len(self._plan_check_patterns), path,
+                    len(self._plan_check_patterns),
+                    path,
                 )
         except Exception as e:
             logger.debug("load plan_check_patterns failed: %s", e)
@@ -5859,8 +6757,11 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             import json
+
             path.write_text(
-                json.dumps(self._plan_check_patterns[-50:], ensure_ascii=False, indent=2),
+                json.dumps(
+                    self._plan_check_patterns[-50:], ensure_ascii=False, indent=2
+                ),
                 encoding="utf-8",
             )
         except Exception as e:
@@ -5872,6 +6773,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         解析失败返回 is_valid=True (跳过校验, 不阻塞).
         """
         import json
+
         start = response.find("{")
         if start < 0:
             return {"is_valid": True, "reason": "no json, skip"}
@@ -5883,9 +6785,10 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
                 depth -= 1
                 if depth == 0:
                     try:
-                        obj = json.loads(response[start:i + 1])
+                        obj = json.loads(response[start : i + 1])
                         # 字段补全, 保证下游一致
                         obj.setdefault("is_valid", True)
+                        obj.setdefault("confidence", 0.8)  # 默认高置信, 不误触发 refine
                         obj.setdefault("reason", "")
                         obj.setdefault("missing_steps", [])
                         obj.setdefault("risks", [])
@@ -5901,7 +6804,29 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         hypothesis: str,
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        """根据反向校验反馈, 让 LLM 重新生成 plan (保留 plan_id)."""
+        """根据反向校验反馈, 让 LLM 重新生成 plan (保留 plan_id).
+
+        few-shot: 从 _plan_check_history 抽同场景最近 1 条成功 plan 塞进
+        prompt, 让 LLM 知道'上次同场景怎么成功的'. 命中长程任务 — 跨 iteration
+        积累的成功经验不再丢失.
+        """
+        # 抽同场景最近 1 条成功 plan (is_valid=True, scene_tag 相同)
+        scene = self._plan_check_scene_tag(plan)
+        success_example = None
+        for c in reversed(getattr(self, "_plan_check_history", [])):
+            if (
+                c.get("is_valid")
+                and c.get("scene_tag") == scene
+                and c.get("plan_snapshot")
+            ):
+                success_example = c["plan_snapshot"]
+                break
+        few_shot_block = "N/A"
+        if success_example:
+            few_shot_block = (
+                f"MODE: {success_example.get('mode', 'coder')}\n"
+                f"DESCRIPTION: {success_example.get('description', '')[:200]}"
+            )
         prompt = f"""之前的 plan 未通过反向校验. 根据反馈重新生成.
 
 # 目标
@@ -5916,15 +6841,20 @@ reason: {check.get('reason', '')}
 missing_steps: {check.get('missing_steps', [])}
 risks: {check.get('risks', [])}
 
+# 同场景成功示例 (scene={scene}, 跨 iteration 积累, 仅供参考结构)
+{few_shot_block}
+
 # 任务
-根据反馈重新生成 plan. 严格按格式输出:
+根据反馈重新生成 plan. 参考成功示例的结构 (不要照抄内容). 严格按格式输出:
 MODE: <coder|workflow|explore|skill|visual_inspect>
 DESCRIPTION: <brief description>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <预期结果, 用于后续 validate 对比>"""
         try:
             response = await self._llm_chat(
-                prompt, persona_name="default", task="planning",
+                prompt,
+                persona_name="default",
+                task="planning",
             )
             new_plan = self._parse_plan(response)
             new_plan = self._override_plan_mode(new_plan)
@@ -5950,14 +6880,16 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
-                self._dispatch_stage_event(
-                    EventType.ON_WORKFLOW_STAGE_START, name
-                )
+                self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
             )
         except RuntimeError:
-            logger.warning("error in _run_phase: stage-start event dispatch skipped (no running loop)", exc_info=True)
+            logger.warning(
+                "error in _run_phase: stage-start event dispatch skipped (no running loop)",
+                exc_info=True,
+            )
         # 包 telemetry span: 把 phase 级决策也记进轨迹, 回放时不止看 tool_call
         from huginn.telemetry import get_telemetry_collector
+
         span_cm = get_telemetry_collector().span(f"phase:{name}")
         try:
             with span_cm as phase_span:
@@ -5971,7 +6903,9 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
             except Exception:
-                logger.warning("error in _run_phase: span metadata update failed", exc_info=True)
+                logger.warning(
+                    "error in _run_phase: span metadata update failed", exc_info=True
+                )
         phase.end_time = time.time()
         # fire-and-forget 发结束/失败事件
         try:
@@ -5990,7 +6924,10 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
                 )
             )
         except RuntimeError:
-            logger.warning("error in _run_phase: stage-done event dispatch skipped (no running loop)", exc_info=True)
+            logger.warning(
+                "error in _run_phase: stage-done event dispatch skipped (no running loop)",
+                exc_info=True,
+            )
         return phase
 
     async def _run_phase_async(self, name: str, fn, *args) -> LoopPhase:
@@ -5998,10 +6935,9 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
         phase = LoopPhase(name=name)
         phase.start_time = time.time()
         phase.status = "running"
-        await self._dispatch_stage_event(
-            EventType.ON_WORKFLOW_STAGE_START, name
-        )
+        await self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
         from huginn.telemetry import get_telemetry_collector
+
         span_cm = get_telemetry_collector().span(f"phase:{name}")
         try:
             with span_cm as phase_span:
@@ -6015,7 +6951,10 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
             except Exception:
-                logger.warning("error in _run_phase_async: span metadata update failed", exc_info=True)
+                logger.warning(
+                    "error in _run_phase_async: span metadata update failed",
+                    exc_info=True,
+                )
         phase.end_time = time.time()
         if phase.status == "completed":
             await self._dispatch_stage_event(
@@ -6039,19 +6978,21 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
     def _render_report(self, data: dict[str, Any]) -> str:
         """Render a markdown report."""
         lines = [
-            f"# Huginn Autoloop Report",
-            f"",
+            "# Huginn Autoloop Report",
+            "",
             f"**Objective:** {data['objective']}",
             f"**Run ID:** {data['run_id']}",
             f"**Total Time:** {data['total_time_seconds']:.1f}s",
-            f"",
-            f"## Phases",
-            f"",
-            f"| Phase | Status | Duration (s) | Error |",
-            f"|-------|--------|--------------|-------|",
+            "",
+            "## Phases",
+            "",
+            "| Phase | Status | Duration (s) | Error |",
+            "|-------|--------|--------------|-------|",
         ]
         for p in data["phases"]:
-            lines.append(f"| {p['name']} | {p['status']} | {p['duration']:.1f} | {p['error'] or ''} |")
+            lines.append(
+                f"| {p['name']} | {p['status']} | {p['duration']:.1f} | {p['error'] or ''} |"
+            )
         lines.append("")
         lines.append("---")
         lines.append("Generated by Huginn Autoloop Engine")
