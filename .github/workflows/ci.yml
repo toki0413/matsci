@@ -53,10 +53,22 @@ jobs:
 
       - name: Expose failures to step summary
         if: failure()
+        working-directory: ${{ github.workspace }}
         run: |
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat agent/pytest_output.txt | tail -200 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          if [ -f agent/pytest_output.txt ]; then
+            {
+              echo '## pytest failures (last 150 lines)'
+              echo '```'
+              tail -150 agent/pytest_output.txt
+              echo '```'
+            } >> $GITHUB_STEP_SUMMARY
+            # also emit as error annotations (public via API)
+            grep -E '^FAILED' agent/pytest_output.txt | head -20 | while IFS= read -r line; do
+              echo "::error file=pytest::${line}"
+            done
+          else
+            echo "::error::pytest_output.txt not found"
+          fi
 
       - name: Upload test output
         if: always()
