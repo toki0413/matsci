@@ -58,7 +58,8 @@ import { toast } from "./components/Toast";
 import { LogsPanel } from "./components/panels/LogsPanel";
 import { TerminalPanel } from "./components/panels/TerminalPanel";
 import { PanelHeader } from "./components/settings-shared";
-import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo } from "./types/domain";
+import { GlobalSearch } from "./components/GlobalSearch";
+import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo, GlobalSearchResult } from "./types/domain";
 import {
   MessageSquare, Wrench, FolderTree, Terminal, Settings,
   Users, Code2, BookOpen,
@@ -171,6 +172,7 @@ export default function App() {
   const [toolPaletteOpen, setToolPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
   const [dragOverTab, setDragOverTab] = useState<string | null>(null);
   const [customTabOrder, setCustomTabOrder] = useState<any[]>(() => {
@@ -286,7 +288,7 @@ export default function App() {
   })();
   const [provenanceExpanded, setProvenanceExpanded] = useState<number | null>(null);
 
-  const TAB_SHORTCUTS: Record<string, string> = {
+  const TAB_SHORTCUTS: Record<string, typeof activeTab> = {
     '1': 'chat',
     '2': 'files',
     '3': 'tools',
@@ -445,6 +447,22 @@ export default function App() {
   const [diagnoseSoftware, setDiagnoseSoftware] = useState("");
   const [diagnoseCalcType, setDiagnoseCalcType] = useState("");
   const [diagnoseContext, setDiagnoseContext] = useState("");
+
+  const handleGlobalSearchSelect = (result: GlobalSearchResult) => {
+    if (result.type === "thread") {
+      switchThread(result.id);
+      setActiveTab("chat");
+    } else if (result.type === "memory") {
+      setActiveTab("memory");
+      setMemorySearch(result.title);
+    } else if (result.type === "knowledge") {
+      setActiveTab("knowledge");
+      setKbQuery(result.title);
+    } else if (result.type === "provenance") {
+      setActiveTab("provenance");
+    }
+  };
+
   const diagnose = useToolRunner<any>({
     endpoint: "/diagnose",
     buildPayload: () => ({
@@ -762,6 +780,13 @@ export default function App() {
       handler: () => setActiveTab("settings"),
       group: "nav",
     },
+    {
+      id: "global-search",
+      label: t('cmd.globalSearch') || "Global Search",
+      icon: <Search size={16} />,
+      handler: () => { setToolPaletteOpen(false); setGlobalSearchOpen(true); },
+      group: "search",
+    },
   ];
 
   // Apply custom tab order if saved
@@ -886,6 +911,10 @@ export default function App() {
       if (isMod && e.key === "f" && activeTab === "chat") {
         e.preventDefault();
         setChatSearchOpen((prev) => !prev);
+      }
+      if (isMod && e.shiftKey && e.key === "F") {
+        e.preventDefault();
+        setGlobalSearchOpen(true);
       }
       if (isMod && e.key === "n" && activeTab === "chat") {
         e.preventDefault();
@@ -1211,6 +1240,15 @@ export default function App() {
               </button>
             )}
             <button
+              onClick={() => setGlobalSearchOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary px-2.5 py-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+              title="Global search (Ctrl+Shift+F)"
+              aria-label="Open global search"
+            >
+              <Search size={14} aria-hidden="true" />
+              <kbd className="text-[10px] font-bold">⌘⇧F</kbd>
+            </button>
+            <button
               onClick={() => {
                 if (!isConnected && !status.includes("starting")) startBackend();
                 else if (isConnected) toast("后端运行中");
@@ -1518,6 +1556,12 @@ export default function App() {
               </Suspense>
             </ErrorBoundary>
           )}
+
+          <GlobalSearch
+            isOpen={globalSearchOpen}
+            onClose={() => setGlobalSearchOpen(false)}
+            onSelect={handleGlobalSearchSelect}
+          />
 
           <div hidden={activeTab !== "memory"}>
             <MemoryPanel

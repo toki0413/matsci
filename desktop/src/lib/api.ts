@@ -164,4 +164,11 @@ export const api = {
       xhr.send(form);
     });
   },
+
+  search: <T = unknown>(query: string, limit?: number, sources?: string) => {
+    const params = new URLSearchParams({ query });
+    if (limit) params.set("limit", String(limit));
+    if (sources) params.set("sources", sources);
+    return request<T>(`/search/global?${params}`);
+  },
 };

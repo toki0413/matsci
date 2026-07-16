@@ -285,6 +285,13 @@ class AutoloopEngine:
         # 否则 pivot→fail→refine→pivot→fail 无限循环, 烧 token 不出结果.
         self._pivot_count = 0
         self._max_pivots = 3
+        # plan_check 状态走引擎级, 不塞 plan dict — plan 会序列化进 prompt,
+        # 塞进去等于把校验元信息喂给 LLM 污染上下文. history 喂自适应, last_result
+        # 给 _validate 取, warnings 留痕. patterns 跨 run 持久化 (失败模式记忆).
+        self._plan_check_history: list[dict[str, Any]] = []
+        self._plan_check_last_result: dict[str, Any] | None = None
+        self._plan_check_warnings: list[str] = []
+        self._plan_check_patterns: list[dict[str, Any]] = []
         # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
         self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
@@ -1072,6 +1079,25 @@ class AutoloopEngine:
                 "summary": str(phase_result)[:300],
                 "consecutive_failures": self._consecutive_failures,
             }
+        elif checkpoint == "plan_check_fail":
+            # plan_check 连续失败 + 场景已知 -> 问用户方向.
+            # 跟 validation_fail 同款: 不阻塞, 用户可以选 force_proceed.
+            info = phase_result or {}
+            consecutive = info.get("consecutive_fails", 0)
+            if consecutive < 3 or info.get("scene") == "other":
+                return None
+            ctx = {
+                "thread_id": thread_id,
+                "question_type": "plan_check_fail",
+                "phase": "plan",
+                "summary": (
+                    f"plan_check 连续 {consecutive} 次失败 "
+                    f"(scene={info.get('scene', '?')}): "
+                    f"{info.get('reason', '')[:200]}"
+                ),
+                "consecutive_fails": consecutive,
+                "scene": info.get("scene", ""),
+            }
         else:
             return None
 
@@ -1842,6 +1868,13 @@ class AutoloopEngine:
         self._budget = ProgressiveBudget.default() if progressive_budget else None
         self._budget_rejects: dict[str, int] = {}
         self._budget_degraded = False
+        # plan_check 状态随 run 重置 — 跨 run 的历史成功率没意义, 会误导自适应.
+        # patterns 例外: 跨 run 保留 (失败模式记忆), 加载 workspace 里的历史.
+        self._plan_check_history = []
+        self._plan_check_last_result = None
+        self._plan_check_warnings = []
+        self._plan_check_patterns = []
+        self._load_plan_check_patterns()
 
         self._speculator_hint = ""
         self._last_visual_context = ""  # reset per run, stale data shapes mislead
@@ -5501,45 +5534,213 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
     # → 失败反馈重生成. ponytail: 单 LLM 反向校验, 不上 PDDL solver.
     # ceiling: LLM 自校验有同模型盲点, 不如 KRCL 的符号识别器硬.
     # 升级路径: 接 BourbakiTool.check_conservation 做符号反推 (需 Lean 成熟).
-    _PLAN_CHECK_MAX_REFINES = 1
-
     async def _plan_check_and_refine(
         self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
     ) -> dict[str, Any]:
         """KRCL 闭环: 反向校验 plan, 失败反馈 LLM 重生成, 超限不阻塞.
 
-        失败时保留 warning 但继续返回 plan (physical_precheck 同款设计 —
-        警告不拦截, 让用户决定). 重试次数耗尽就把 reason 塞进 plan 让
-        后续 _validate 能看到.
+        phase-aware: iteration tier (open/medium/light) + plan 复杂度综合
+          判定. open 或 skip 跳过校验, medium 只校验不 refine, light 完整闭环.
+          复杂 plan 即使 open tier 也升级到 medium (要校验), 简单 plan 即使
+          light tier 也降级到 skip (阈值 0.25: explore+20chars desc 能触发,
+          coder 的简单任务仍校验因为涉及代码改动).
+        自适应: 按 scene_tag 分桶的最近 5 次 success rate 微调 max_refines —
+          >=80% 放宽 (-1), <=20% 收紧 (+1), 样本不足走 baseline.
+        不暴露: check 结果只存 self._plan_check_last_result / _warnings /
+          _plan_check_patterns, 不塞回 plan dict (plan 会进 prompt, 塞了
+          等于喂 LLM 元信息).
+        失败模式记忆: 失败记到 _plan_check_patterns, 跨 run JSON 持久化,
+          下次同场景 plan 来了注入 prompt 让 LLM 重点避开.
+        连续失败澄清: 同 scene 连续 3 次失败 + scene != "other" -> 触发
+          _maybe_clarify 问用户 (physical_precheck 同款, 不阻塞).
+
+        失败不拦截 (physical_precheck 同款), warning 留痕给 _validate.
         """
-        # 自我控制: trivial plan (description 太短) 跳过, 不浪费 LLM 调用
+        # trivial plan (description 太短) 跳过, 不浪费 LLM 调用
         desc = plan.get("description", "")
         if len(desc) < 20:
             return plan
-        for attempt in range(self._PLAN_CHECK_MAX_REFINES + 1):
+        tier = self._plan_check_tier(plan)
+        if tier in ("open", "skip"):
+            logger.debug(
+                "plan_check skipped (tier=%s, iter=%d)", tier, self._iteration,
+            )
+            return plan
+        scene = self._plan_check_scene_tag(plan)
+        max_refines = self._plan_check_max_refines(tier, scene)
+        for attempt in range(max_refines + 1):
             try:
                 check = await self._plan_check(plan, hypothesis, context)
             except Exception as e:
                 logger.debug("plan_check LLM call failed: %s", e)
                 return plan
+            # 给 check 打 scene_tag, 喂分桶自适应; 不暴露: 存引擎状态
+            check["scene_tag"] = scene
+            self._plan_check_last_result = check
+            self._plan_check_history.append(check)
+            # 历史窗口截断, 保留最近 20 条防无限增长
+            if len(self._plan_check_history) > 20:
+                del self._plan_check_history[: len(self._plan_check_history) - 20]
             if check.get("is_valid", True):
-                plan["plan_check"] = check
-                logger.info("plan_check passed (attempt %d)", attempt)
+                logger.info(
+                    "plan_check passed (attempt %d, tier=%s, scene=%s)",
+                    attempt, tier, scene,
+                )
                 return plan
-            if attempt >= self._PLAN_CHECK_MAX_REFINES:
-                plan["plan_check"] = check
-                plan["plan_check_warning"] = check.get("reason", "unknown")
+            # 失败: 记到 patterns (跨 run 持久化, 喂下次 prompt)
+            self._record_plan_check_failure(plan, check, scene)
+            if attempt >= max_refines:
+                reason = check.get("reason", "unknown")
+                self._plan_check_warnings.append(f"[{scene}] {reason}")
                 logger.warning(
-                    "plan_check failed after %d refines: %s",
-                    self._PLAN_CHECK_MAX_REFINES, check.get("reason"),
+                    "plan_check failed (tier=%s, scene=%s, max_refines=%d): %s",
+                    tier, scene, max_refines, reason,
+                )
+                # 连续失败触发主动澄清 (不阻塞, 用户可 force_proceed)
+                await self._maybe_trigger_plan_check_clarify(
+                    scene, reason, plan,
                 )
                 return plan
             logger.info(
-                "plan_check failed (attempt %d), refining: %s",
-                attempt, check.get("reason"),
+                "plan_check failed (attempt %d, tier=%s, scene=%s), refining: %s",
+                attempt, tier, scene, check.get("reason"),
             )
             plan = await self._refine_plan(plan, check, hypothesis, context)
         return plan
+
+    async def _maybe_trigger_plan_check_clarify(
+        self, scene: str, reason: str, plan: dict[str, Any],
+    ) -> None:
+        """连续 N 次同场景失败 + 场景已知 -> 问用户方向.
+
+        ponytail: 阈值 3 写死, 跟 validation_fail 同款; 不阻塞, 异常吞掉.
+        ceiling: 阈值靠拍; "other" 场景没上下文给用户, 直接跳过.
+        """
+        if scene == "other":
+            return
+        # 数最近连续失败 (同 scene, 遇到第一条成功就断)
+        recent_fails = 0
+        for c in reversed(self._plan_check_history):
+            if c.get("scene_tag") == scene and not c.get("is_valid", True):
+                recent_fails += 1
+            else:
+                break
+        if recent_fails < 3:
+            return
+        try:
+            await self._maybe_clarify(
+                "plan_check_fail",
+                {
+                    "scene": scene,
+                    "reason": reason,
+                    "consecutive_fails": recent_fails,
+                    "plan": plan,
+                },
+            )
+        except Exception as e:
+            logger.debug("plan_check clarify failed: %s", e)
+
+    def _plan_check_tier(self, plan: dict[str, Any] | None = None) -> str:
+        """phase-aware tier: iteration + plan 复杂度综合判定.
+
+        iteration baseline: open (1-10) / medium (11-30) / light (31+).
+        跟 ProgressiveBudget.default() 边界对齐, 但解耦 — budget 关了
+        plan_check 仍按 iteration 判 phase.
+        plan 复杂度修正 (plan 传入时):
+          - 复杂 plan (score >= 0.7) 即使 open tier 也升级到 medium (要校验)
+          - 简单 plan (score < 0.2) 即使 light tier 也降级到 skip
+        ponytail: 阈值写死, 跟 complexity score 同源.
+        ceiling: 阈值靠拍, 没数据校准; 边界跟 ProgressiveBudget 重复一份.
+        升级路径: ProgressiveBudget 暴露 tier_of(n) -> label, 这里复用;
+                  阈值用历史 success rate 自动校准.
+        """
+        n = getattr(self, "_iteration", 0)
+        if n <= 10:
+            base = "open"
+        elif n <= 30:
+            base = "medium"
+        else:
+            base = "light"
+        if plan is None:
+            return base
+        complexity = self._plan_check_complexity(plan)
+        if complexity >= 0.7 and base == "open":
+            return "medium"
+        if complexity < 0.25 and base == "light":
+            return "skip"
+        return base
+
+    def _plan_check_scene_tag(self, plan: dict[str, Any]) -> str:
+        """从 plan 抽场景标签, 给失败模式记忆和分桶自适应用.
+
+        ponytail: 关键词匹配, 不上 embedding.
+        ceiling: 关键词表写死, 新仿真器要手动加; 描述里没关键词的落到 other.
+        升级路径: 用 plan_check_history 聚类自动发现 scene_tag.
+        """
+        desc = (plan.get("description", "") + " " + plan.get("mode", "")).lower()
+        if any(kw in desc for kw in
+               ["vasp", "scf", "band", "dos", "dft", "qe", "cp2k", "gaussian", "orca"]):
+            return "dft"
+        if any(kw in desc for kw in
+               ["lammps", "molecular dynamics", "minimize", "nvt", "npt", "md ",
+                "gromacs", "openmm"]):
+            return "md"
+        if any(kw in desc for kw in ["workflow", "pipeline", "orchestrat"]):
+            return "workflow"
+        if plan.get("mode") == "skill":
+            return "skill"
+        if any(kw in desc for kw in
+               ["fenics", "abaqus", "comsol", "openfoam", "fem", "elmer"]):
+            return "fem"
+        return "other"
+
+    def _plan_check_complexity(self, plan: dict[str, Any]) -> float:
+        """plan 复杂度评分 [0, 1], 跟 tier 一起决定是否校验.
+
+        维度: description 长度 (0.3) + mode 复杂度 (0.4) + 有无 prediction
+        (0.15) + 同场景历史失败数 (0.15, 踩过坑的要复查).
+        ponytail: 启发式打分, 不上结构化解析.
+        ceiling: description 长度不代表真复杂度, 长描述可能是废话.
+        升级路径: 解析 plan 的 step 数 (需要结构化 plan schema).
+        """
+        score = 0.0
+        desc = plan.get("description", "")
+        score += min(len(desc), 50) / 50 * 0.3
+        mode = plan.get("mode", "coder")
+        score += {"workflow": 0.4, "skill": 0.3, "coder": 0.2, "explore": 0.1}.get(mode, 0.2)
+        if plan.get("expected_prediction"):
+            score += 0.15
+        scene = self._plan_check_scene_tag(plan)
+        similar_fails = sum(
+            1 for p in getattr(self, "_plan_check_patterns", [])
+            if p.get("scene_tag") == scene
+        )
+        score += min(similar_fails, 3) / 3 * 0.15
+        return min(score, 1.0)
+
+    def _plan_check_max_refines(self, tier: str, scene: str = "") -> int:
+        """自适应: 按场景分桶的 success rate 微调 max_refines.
+
+        baseline: medium=0 (只校验不 refine), light=1 (完整闭环).
+        分桶: 最近 5 次同 scene_tag 的 success rate
+          >=80% 放宽 (baseline-1, 最低 0), <=20% 收紧 (baseline+1, 最高 2).
+        样本 <3 走 baseline, 早期不误判. 未知场景 (scene 无历史) 走全局.
+        ponytail: 桶小, 不上 decay; 5 条窗口跟全局版一致.
+        ceiling: 桶太小 (<5 条) 统计不稳, 但样本不足走 baseline 兜底.
+        升级路径: 引入 EWMA 给近期样本更高权重.
+        """
+        baseline = {"medium": 0, "light": 1}.get(tier, 1)
+        history = getattr(self, "_plan_check_history", [])
+        bucket = [c for c in history if c.get("scene_tag") == scene] if scene else history
+        if len(bucket) < 3:
+            return baseline
+        recent = bucket[-5:]
+        success_rate = sum(1 for c in recent if c.get("is_valid", True)) / len(recent)
+        if success_rate >= 0.8:
+            return max(0, baseline - 1)
+        if success_rate <= 0.2:
+            return min(2, baseline + 1)
+        return baseline
 
     async def _plan_check(
         self, plan: dict[str, Any], hypothesis: str, context: dict[str, Any],
@@ -5563,6 +5764,19 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         failure_modes = context.get("failure_modes", "")
         if not failure_modes and self._speculator_hint:
             failure_modes = self._speculator_hint[-500:]
+        # 同场景历史失败模式 (跨 run 积累, 最近 3 条) — 让 LLM 重点避开
+        scene = self._plan_check_scene_tag(plan)
+        similar = [
+            p for p in getattr(self, "_plan_check_patterns", [])
+            if p.get("scene_tag") == scene
+        ][-3:]
+        if similar:
+            similar_text = "\n".join(
+                f"- {p['reason']} (缺: {', '.join(p.get('missing_steps', [])) or 'N/A'})"
+                for p in similar
+            )
+        else:
+            similar_text = "N/A"
         return f"""你是反向规划识别器 (KRCL 启发). 判断以下 plan 执行后能否达成 hypothesis.
 
 # 目标 (hypothesis)
@@ -5576,12 +5790,16 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
 # 已知失败模式 (避免重蹈覆辙)
 {failure_modes or 'N/A'}
 
+# 同场景历史失败 (scene={scene}, 跨 run 积累)
+{similar_text}
+
 # 任务
 判断这个 plan 执行后能否达成 hypothesis. 严格检查:
 - MODE 是否匹配任务类型 (coder 写代码 / workflow 跑流程 / explore 探索 / skill 复合技能)
 - DESCRIPTION 是否覆盖 hypothesis 的关键要求
 - PREDICTION 是否可验证 (能跑出数值/结构/代码对比)
 - 是否遗漏必要前置步骤 (如 band 前需 SCF / MD 前需 minimize / elastic 前需 relax)
+- 是否重复了"同场景历史失败"里列出的坑
 
 输出 JSON (不要其他文本):
 {{
@@ -5590,6 +5808,63 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
   "missing_steps": ["如果 invalid, 缺少哪些步骤"],
   "risks": ["潜在风险"]
 }}"""
+
+    def _record_plan_check_failure(
+        self, plan: dict[str, Any], check: dict[str, Any], scene: str,
+    ) -> None:
+        """失败模式记到 patterns, 跨 run 持久化给下次注入 prompt.
+
+        ponytail: 内存 append + 同步 dump JSON, 量小 (<=50 条) 写快.
+        ceiling: 同步写盘, 高频失败时可能拖慢; description 截断 200 chars.
+        升级路径: 后台 async flush, 或上 SQLite.
+        """
+        self._plan_check_patterns.append({
+            "scene_tag": scene,
+            "reason": check.get("reason", "unknown"),
+            "missing_steps": check.get("missing_steps", []),
+            "mode": plan.get("mode", ""),
+            "description": plan.get("description", "")[:200],
+        })
+        if len(self._plan_check_patterns) > 50:
+            del self._plan_check_patterns[: len(self._plan_check_patterns) - 50]
+        self._save_plan_check_patterns()
+
+    def _load_plan_check_patterns(self) -> None:
+        """跨 run 加载历史失败模式.
+
+        ponytail: JSON 文件, 不上 DB; 只在 _prepare_run 调一次.
+        ceiling: 文件可能被外部篡改, 解析失败静默回退.
+        """
+        path = self.workspace / ".huginn" / "plan_check_patterns.json"
+        if not path.exists():
+            return
+        try:
+            import json
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                self._plan_check_patterns = data[-50:]
+                logger.info(
+                    "loaded %d plan_check patterns from %s",
+                    len(self._plan_check_patterns), path,
+                )
+        except Exception as e:
+            logger.debug("load plan_check_patterns failed: %s", e)
+
+    def _save_plan_check_patterns(self) -> None:
+        """dump 失败模式到 workspace, 跨 run 积累.
+
+        ponytail: 同步写, 量小 (<=50 条); 跟 skill_evolver 历史持久化同款.
+        """
+        path = self.workspace / ".huginn" / "plan_check_patterns.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            path.write_text(
+                json.dumps(self._plan_check_patterns[-50:], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.debug("save plan_check_patterns failed: %s", e)
 
     def _parse_plan_check(self, response: str) -> dict[str, Any]:
         """解析反向校验 JSON — 括号配平法 (ValidityJudge._parse_verdict 同款).
