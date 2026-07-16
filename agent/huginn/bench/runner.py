@@ -540,6 +540,16 @@ class BenchmarkRunner:
         )
         agent.register_tools_from_registry()
 
+        # Inkling 启发: 打乱工具顺序, 防 agent 对工具位置过拟合.
+        # 每 task 用不同 seed, 保证顺序不同但可复现.
+        # ponytail: 只在 bench 层做, 生产 run() 不受影响.
+        from .tool_randomization import randomize_tool_order
+
+        agent.langchain_tools = randomize_tool_order(
+            agent.langchain_tools, seed=hash(task.id) & 0xFFFFFFFF
+        )
+        agent._invalidate_tool_description_cache()
+
         final = ""
         # ponytail: asyncio.timeout (3.11+) 取消协程, 避免 agent 工具循环卡死时
         # ThreadPoolExecutor.shutdown(wait=True) 阻塞主线程. 超时后 agent.chat 的
