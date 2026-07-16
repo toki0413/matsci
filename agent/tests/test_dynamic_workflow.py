@@ -599,8 +599,8 @@ class TestEngineDynamicWorkflow:
         engine._budget_degraded = False
         engine._budget_rejects = {}
         engine._speculator_hint = ""
-        # iter 10 = medium tier
-        assert engine._check_budget(10, {"mode": "dynamic_workflow"}) is False
+        # iter 15 = medium tier (open is 1-10, medium is 11-30)
+        assert engine._check_budget(15, {"mode": "dynamic_workflow"}) is False
         assert "medium" in engine._speculator_hint
 
     def test_budget_rejects_dynamic_workflow_in_light_tier(self, engine):
@@ -610,8 +610,8 @@ class TestEngineDynamicWorkflow:
         engine._budget_degraded = False
         engine._budget_rejects = {}
         engine._speculator_hint = ""
-        # iter 18 = light tier
-        assert engine._check_budget(18, {"mode": "dynamic_workflow"}) is False
+        # iter 35 = light tier (light is 31-50)
+        assert engine._check_budget(35, {"mode": "dynamic_workflow"}) is False
         assert "light" in engine._speculator_hint
 
     def test_budget_allows_dynamic_workflow_in_open_tier(self, engine):
