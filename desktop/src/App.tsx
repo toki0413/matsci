@@ -32,6 +32,8 @@ import DecisionTracePanel from "./components/DecisionTracePanel";
 import { ContextBar } from "./components/ContextBar";
 import { ChatPanel } from "./components/panels/ChatPanel";
 import { MetricsBar } from "./components/MetricsBar";
+import { StatusBar } from "./components/StatusBar";
+import { Modal } from "./components/Modal";
 import { MemoryPanel } from "./components/panels/MemoryPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
@@ -128,6 +130,7 @@ export default function App() {
     | "persona" | "result" | "code" | "git"
   >("chat");
   const [sidebarHidden, setSidebarHidden] = useState(false);
+  const [isNarrowScreen, setIsNarrowScreen] = useState(false);
   // Result panel state: content + toolName for the expanded view
   const [resultContent, setResultContent] = useState("");
   const [resultToolName, setResultToolName] = useState<string | undefined>(undefined);
@@ -282,6 +285,18 @@ export default function App() {
     return provSortDir === 'asc' ? sorted : sorted.reverse();
   })();
   const [provenanceExpanded, setProvenanceExpanded] = useState<number | null>(null);
+
+  const TAB_SHORTCUTS: Record<string, string> = {
+    '1': 'chat',
+    '2': 'files',
+    '3': 'tools',
+    '4': 'memory',
+    '5': 'knowledge',
+    '6': 'terminal',
+    '7': 'settings',
+    '8': 'review',
+    '9': 'logs',
+  };
 
   const loadProvenance = async () => {
     try {
@@ -861,10 +876,29 @@ export default function App() {
       if (e.key === "Escape" && shortcutHelpOpen) {
         setShortcutHelpOpen(false);
       }
+      if (e.altKey && TAB_SHORTCUTS[e.key]) {
+        e.preventDefault();
+        setActiveTab(TAB_SHORTCUTS[e.key]);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toolPaletteOpen, activeTab, setChatSearchOpen, setSidebarHidden, setActiveTab, setMessages, t, shortcutHelpOpen]);
+
+  useEffect(() => {
+    const checkWidth = () => {
+      setIsNarrowScreen(window.innerWidth < 768);
+    };
+    checkWidth();
+    window.addEventListener("resize", checkWidth);
+    return () => window.removeEventListener("resize", checkWidth);
+  }, []);
+
+  useEffect(() => {
+    if (isNarrowScreen) {
+      setSidebarHidden(true);
+    }
+  }, [isNarrowScreen]);
 
   // ── Derived constants ────────────────────────────────────────
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
@@ -1137,19 +1171,29 @@ export default function App() {
                 <Search size={16} />
               </button>
             )}
-            {!isConnected && !status.includes("starting") && (
-              <button
-                onClick={startBackend}
-                className="badge bg-error/10 text-error border border-error/20 hover:bg-error/20"
-              >
-                ▶ {t('app.startBackend')}
-              </button>
-            )}
-            {status.includes("starting") && (
-              <span className="badge bg-warning/10 text-warning border border-warning/20">
-                {t('app.startingBackend')}
+            <button
+              onClick={() => {
+                if (!isConnected && !status.includes("starting")) startBackend();
+                else if (isConnected) toast("后端运行中");
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-bg-tertiary text-sm"
+              title={
+                isConnected ? "Backend connected" :
+                status.includes("starting") ? "Backend starting…" :
+                "Backend offline — 点击启动"
+              }
+            >
+              <span className={`w-2 h-2 rounded-full ${
+                isConnected ? "bg-green-500" :
+                status.includes("starting") ? "bg-yellow-500" :
+                "bg-red-500"
+              }`} />
+              <span>
+                {isConnected ? "Online" :
+                 status.includes("starting") ? "Starting" :
+                 "Offline"}
               </span>
-            )}
+            </button>
           </div>
         </header>
 
@@ -1283,6 +1327,10 @@ export default function App() {
                 setResultToolName(toolName);
                 setActiveTab("result");
               }}
+              onOpenFiles={() => setActiveTab("files")}
+              personas={personaList.map(p => ({ name: p.label, description: p.description }))}
+              currentPersona={config.persona}
+              setCurrentPersona={switchPersona}
             />
           </div>
 
@@ -1985,6 +2033,14 @@ export default function App() {
           )}
           </ErrorBoundary>
         </div>
+
+        <StatusBar
+          isConnected={isConnected}
+          status={status}
+          wsReconnecting={wsReconnecting}
+          wsFailed={wsFailed}
+          cwd={cwd}
+        />
       </main>
 
       {/* Tool palette — command palette style, all tools searchable */}
@@ -2126,8 +2182,8 @@ export default function App() {
             <h2 className="mb-4 text-lg font-bold">Keyboard Shortcuts</h2>
             <div className="space-y-2">
               {[
-                { key: "Ctrl+K", desc: "Open tool palette" },
-                { key: "Ctrl+F", desc: "Search in chat" },
+                { key: "Ctrl+K", desc: "Open tool palette / Search" },
+                { key: "Alt+1-9", desc: "Switch to tab 1-9" },
                 { key: "Ctrl+N", desc: "New conversation thread" },
                 { key: "Ctrl+B", desc: "Toggle sidebar" },
                 { key: "Ctrl+,", desc: "Open settings" },

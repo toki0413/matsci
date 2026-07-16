@@ -25,6 +25,7 @@ import { isWSMessage, type WSMessage } from "../types/ws";
 import type { AppConfig, PersonaSeed, PersonaEmotionResponse } from "../types/domain";
 import type { PetStatusState } from "../components/PetStatusWidget";
 import i18n from "../i18n";
+import { toast } from "../components/Toast";
 
 // ── Types ──────────────────────────────────────────────────────
 export interface PipelineStage {
@@ -63,6 +64,8 @@ export interface Message {
   pipelineTopic?: string;
   pipelineStages?: PipelineStage[];
   pipelineProgressPct?: number;
+  // multi-agent persona
+  persona?: string;
 }
 
 export interface Thread {
@@ -382,9 +385,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const wsClientRef = useRef<ReconnectingWebSocket | null>(null);
 
   // ── Notification ─────────────────────────────────────────────
-  const notify = useCallback((title: string, body: string) => {
+  // alwaysShow=true 时即使窗口在前台也弹通知，用于权限/澄清等需要用户立刻注意的事件
+  const notify = useCallback((title: string, body: string, alwaysShow: boolean = false) => {
     try {
-      if (document.hidden) {
+      if (alwaysShow || document.hidden) {
         sendNotification({ title, body });
       }
     } catch {
@@ -670,6 +674,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         setIsStreaming(false);
         if (soundEnabled) playTaskComplete();
         if (document.hidden) notify("Huginn", pendingResponseRef.current.slice(0, 120) || "Agent finished");
+        else toast.success("Agent 已完成");
         break;
       case "error":
         if (streamingTimeoutRef.current) {
@@ -831,6 +836,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           options: q.options || [],
           thread_id: data.thread_id,
         })));
+        // 澄清请求需要用户立刻注意，即使窗口在前台也弹通知
+        notify("Huginn 需要澄清", "Agent 有问题需要你回答", true);
         break;
       }
       case "mode_banner": {
@@ -1034,6 +1041,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
             reason: data.reason,
             dangerous: data.dangerous,
           });
+          // 权限请求需要用户立刻注意，即使窗口在前台也弹通知
+          notify("Huginn 需要权限", `工具 ${data.tool_name} 请求审批`, true);
         }
         break;
       }
