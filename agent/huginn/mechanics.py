@@ -123,9 +123,18 @@ class BornStabilityChecker:
 
         checker = getattr(cls, f"_check_{crystal_system}", None)
         if checker is None:
+            # 未知晶系不能默认判 unstable — 这会让真实存在的 tetragonal/
+            # trigonal/monoclinic 材料被错误拒绝. 改为 None + warning,
+            # 让调用方知道"未实现"而非"不稳定". 升级路径是补 _check_tetragonal
+            # 等方法 (Mouhat & Coudert PRB 2014 给出了所有晶系的判据).
             return {
-                "stable": False,
-                "error": f"Unknown crystal system: {crystal_system}",
+                "stable": None,
+                "error": (
+                    f"Born criteria for {crystal_system} not implemented; "
+                    f"cannot judge stability. "
+                    f"Implemented: cubic, hexagonal, orthorhombic, triclinic. "
+                    f"See Mouhat & Coudert PRB 90, 224104 (2014) for full table."
+                ),
                 "crystal_system": crystal_system,
             }
 
@@ -190,7 +199,17 @@ class BornStabilityChecker:
 
     @classmethod
     def _check_hexagonal(cls, C: np.ndarray) -> dict:
-        """Born criteria for hexagonal crystals."""
+        """Born criteria for hexagonal crystals.
+
+        Ref: Mouhat & Coudert, PRB 90, 224104 (2014), Eq. (60).
+        Necessary and sufficient conditions for hexagonal/trigonal (with 6-fold
+        along c-axis):
+            C11 > |C12|,  C44 > 0,  C66 > 0,  C11 + C12 > 0,  C33 > 0,
+            (C11 + C12) * C33 > 2 * C13^2
+
+        旧实现 `C11*C33 > C13^2` 是错误形式 (近似/早期文献), 会漏判部分
+        不稳定六方结构. 正确判据含 (C11+C12) 因子, 阈值 2*C13^2.
+        """
         C11, C12, C13, C33, C44, C66 = (
             C[0, 0],
             C[0, 1],
@@ -202,9 +221,16 @@ class BornStabilityChecker:
 
         criteria = [
             ("C11 > |C12|", C11, abs(C12), abs(C12) < C11),
+            ("C11 + C12 > 0", C11 + C12, 0, (C11 + C12) > 0),
             ("C44 > 0", C44, 0, C44 > 0),
-            ("C11*C33 > C13^2", C11 * C33, C13**2, C11 * C33 > C13**2),
             ("C66 > 0", C66, 0, C66 > 0),
+            ("C33 > 0", C33, 0, C33 > 0),
+            (
+                "(C11+C12)*C33 > 2*C13^2",
+                (C11 + C12) * C33,
+                2 * C13**2,
+                (C11 + C12) * C33 > 2 * C13**2,
+            ),
         ]
 
         stable = all(passed for _, _, _, passed in criteria)
