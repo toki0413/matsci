@@ -19,7 +19,7 @@ from websockets.asyncio.client import connect
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from huginn.benchmark.core import BenchmarkSuite
+from huginn.self_improvement.core import BenchmarkSuite
 
 WS_URL = "ws://127.0.0.1:8000/ws/agent?token=dev"
 MAX_SIZE = 2**24

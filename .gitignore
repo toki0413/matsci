@@ -105,6 +105,58 @@ desktop/test-results/
 # Local runtime data
 agent/.huginn_kb/
 agent/.huginn_memory/
+/.huginn_cache/
+
+# CI / debug scratch scripts (root level _*.py)
+/_ci_*.py
+/.ci_fb.py
+/check_ci.py
+/_syntax_check.py
+/_s7_selfcheck.py
+/_test_code_tool_selfcheck.py
+/_v4_integration_selfcheck.py
+/_gen*.py
+/_patch.py
+/_analyze_*.py
+/_dl_artifact.py
+/_rescore_*.py
+/_sab_download.py
+/_t.json
+/diag_agent_*
+/_commit_msg*.txt
+
+# Local pytest output dumps (CI generates pytest_output.txt)
+agent/pytest_*.txt
+agent/_bench_repro_report.json
+agent/_run_repro_bench.py
+agent/_test_code_tool.py
+agent/project_kg.json
+
+# Desktop build cache
+desktop/.vite/
+
+# Local experiment artifacts
+double_slit_interference.png
+reproduce_quantum_waves.py
+
+# Third-party benchmark repos (kept local, not part of source)
+/ResearchClawBench/
+/ScienceAgentBench/
+/mle-bench/
+/preparedness/
+
+# Benchmark adapter scripts (local-only runners for external benches)
+/hle_huginn.py
+/mlebench_huginn.py
+/paperbench_huginn.py
+/rcb_huginn.py
+/rcb_score.py
+/sab_huginn.py
+
+# Benchmark run workspaces (runtime outputs, models, data)
+/workspaces/
+/_benchmarks/
+/docs/superpowers/
 
 # Unified framework test plots
 unified_solution.png

@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from huginn.agent import HuginnAgent
-from huginn.benchmark import BenchmarkCase, BenchmarkSuite
+from huginn.self_improvement import BenchmarkCase, BenchmarkSuite
 from huginn.memory.manager import MemoryManager
 from huginn.security import SandboxConfig, SandboxExecutor, SandboxResult
 from huginn.tools.base import HuginnTool
