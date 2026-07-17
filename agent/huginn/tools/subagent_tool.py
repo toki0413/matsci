@@ -114,6 +114,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         dispatch_ctx.setdefault("agent_factory", context.agent_factory)
         dispatch_ctx.setdefault("session_id", context.session_id)
         dispatch_ctx.setdefault("workspace", context.workspace)
+        # v7: 透传父 agent 的 approval_callback, 子 agent 调 ASK 工具 (vasp_tool 等) 才能拿到批准.
+        dispatch_ctx.setdefault("approval_callback", context.approval_callback)
 
         # forward subagent intermediate states to the WS via progress_cb
         from huginn.types import progress_cb

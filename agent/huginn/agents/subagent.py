@@ -179,6 +179,10 @@ class SubagentDispatch:
                 spec_name=spec_name,
             )
 
+        # v7: 从 context 拿父 agent 的 approval_callback, 透传给子 agent.
+        # 之前不传, 子 agent 调 vasp_tool 等 ASK 工具会被静默拒绝.
+        approval_callback = ctx.get("approval_callback")
+
         # 独立 thread_id, 跟主对话完全隔离
         thread_id = f"subagent_{spec_name}_{uuid.uuid4().hex[:8]}"
 
@@ -188,6 +192,7 @@ class SubagentDispatch:
                 profile_id=profile_id,
                 thread_id=thread_id,
                 system_prompt_override=spec.system_prompt,
+                approval_callback=approval_callback,
             )
         except Exception as exc:
             logger.debug("subagent creation failed", exc_info=True)

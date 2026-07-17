@@ -99,14 +99,43 @@ class HookManager:
             ev: [] for ev in ALL_EVENTS
         }
 
-    def register(self, event: str, callback: HookCallback) -> None:
-        """注册钩子. event 必须是 ALL_EVENTS 里的一个."""
+    def register(
+        self,
+        event: str,
+        callback: HookCallback,
+        *,
+        before: HookCallback | None = None,
+        after: HookCallback | None = None,
+    ) -> None:
+        """注册钩子. event 必须是 ALL_EVENTS 里的一个.
+
+        默认追加到末尾 (FIFO). 可通过 before/after 指定相对位置:
+        - before=X: 插到 X 之前 (本回调会比 X 先执行)
+        - after=X:  插到 X 之后 (X 比本回调先执行)
+        before 和 after 不能同时指定. X 必须已注册, 否则 ValueError.
+        """
         if event not in self._callbacks:
             raise ValueError(
                 f"Unknown hook event: {event!r}. "
                 f"Supported: {', '.join(ALL_EVENTS)}"
             )
-        self._callbacks[event].append(callback)
+        callbacks = self._callbacks[event]
+        if before is not None and after is not None:
+            raise ValueError("before 和 after 不能同时指定, 选一个")
+        if before is not None:
+            try:
+                idx = callbacks.index(before)
+            except ValueError as exc:
+                raise ValueError(f"before 指定的 callback 未注册于 {event}") from exc
+            callbacks.insert(idx, callback)
+        elif after is not None:
+            try:
+                idx = callbacks.index(after)
+            except ValueError as exc:
+                raise ValueError(f"after 指定的 callback 未注册于 {event}") from exc
+            callbacks.insert(idx + 1, callback)
+        else:
+            callbacks.append(callback)
 
     def clear(self, event: str | None = None) -> None:
         """清空钩子. event=None 清所有事件."""

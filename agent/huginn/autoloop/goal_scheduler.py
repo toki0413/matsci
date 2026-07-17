@@ -110,5 +110,31 @@ class GoalScheduler(GoalStore):
             for criterion in goal.success_criteria
         )
 
+    # ── budget & continuation (v7) ───────────────────────────────
+
+    @staticmethod
+    def is_budget_exhausted(goal: Goal) -> bool:
+        """goal.max_iterations 是否已耗尽. 0 或负数视为无限制."""
+        if goal.max_iterations <= 0:
+            return False
+        return goal.iteration >= goal.max_iterations
+
+    @staticmethod
+    def build_continuation_prompt(goal: Goal) -> str:
+        """生成续跑提示: 给 LLM 看的目标 + 当前进度 + 剩余预算 + 验收标准.
+
+        engine.py 每轮开头把返回值拼进 _speculator_hint, 让 LLM 知道
+        自己是在续跑而不是从头开始. 不依赖外部 summary, 只用 goal 字段.
+        """
+        remaining = goal.max_iterations - goal.iteration if goal.max_iterations > 0 else -1
+        rem_str = f"{remaining} 轮" if remaining >= 0 else "无限"
+        crit_str = "\n".join(f"  - {c}" for c in goal.success_criteria) or "  (无显式标准)"
+        return (
+            f"[continuation] 目标: {goal.objective}\n"
+            f"已迭代 {goal.iteration} 轮, 剩余预算 {rem_str}.\n"
+            f"验收标准:\n{crit_str}\n"
+            f"继续从上一轮的发现推进, 不要重复已完成的步骤."
+        )
+
 
 __all__ = ["Goal", "GoalScheduler"]

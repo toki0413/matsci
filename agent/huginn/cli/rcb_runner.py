@@ -509,7 +509,7 @@ def format_critique_for_agent(critique: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def run(workspace: str) -> int:
+async def run(workspace: str, extreme: bool = False) -> int:
     ws = Path(workspace).resolve()
     instructions = ws / "INSTRUCTIONS.md"
     if not instructions.exists():
@@ -535,6 +535,13 @@ async def run(workspace: str) -> int:
     _fs._SNAPSHOT_ROOT = rcb_cache / "snapshots"
 
     cfg = HuginnConfig.from_env()
+    # v6 极限模式: 解除一切限制, 性能优先. 更高思考强度 + 更长任务轨迹.
+    # ponytail: 不改默认值, 只在 --extreme 时 override. 升级路径是加 profile 系统.
+    if extreme:
+        os.environ.setdefault("HUGINN_THINKING", "high")
+        cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
+        print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K", flush=True)
+
     registry = ModelRegistry.from_config(cfg)
     alias = registry.default_alias()
     if alias:
@@ -578,16 +585,20 @@ async def run(workspace: str) -> int:
     # 先注册工具到 ToolRegistry, 再让 agent 从 registry 拉取
     register_all_tools()
 
+    # v6 极限模式: max_tool_calls 300 + context_budget 200K + 每 tool 上限 100
+    # 默认 150 / 0 / 50. 极限模式拉满, 让 agent 能跑更长任务轨迹.
+    _max_calls = 300 if extreme else 150
+    _max_per_tool = 100 if extreme else 50
+    _ctx_budget = 200000 if extreme else cfg.context_budget_tokens
+
     agent = HuginnAgent(
         model=model,
         system_prompt=system_prompt,
         memory_manager=None,
         max_tool_output_tokens=cfg.max_tool_output_tokens,
-        context_budget_tokens=cfg.context_budget_tokens,
-        # RCB 完整论文复现: EDA + 建模 + 反向设计 + 报告 + 验证, 80 步不够.
-        # ponytail: 提高 code_tool 预算治 "budget exhausted 写不了 report" 短板.
-        max_tool_calls=150,
-        max_tool_calls_per_tool=50,
+        context_budget_tokens=_ctx_budget,
+        max_tool_calls=_max_calls,
+        max_tool_calls_per_tool=_max_per_tool,
         # file_write_tool 写文本文件 (report.md, code/*.py);
         # code_tool 的 sandbox 禁 open(), 只能跑分析/画图 (savefig 库代码不受限).
         # 不给 file_edit_tool: 它要求文件已存在, agent 误用 edit 写新文件会失败.
@@ -851,9 +862,13 @@ async def run(workspace: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Huginn RCB runner")
     parser.add_argument("--workspace", required=True, help="RCB workspace path")
+    parser.add_argument(
+        "--extreme", action="store_true",
+        help="v6 极限模式: thinking=high, max_tool_calls=300, context_budget=200K",
+    )
     args = parser.parse_args()
 
-    rc = asyncio.run(run(args.workspace))
+    rc = asyncio.run(run(args.workspace, extreme=args.extreme))
     sys.exit(rc)
 
 
