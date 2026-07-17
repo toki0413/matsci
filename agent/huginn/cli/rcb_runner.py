@@ -707,6 +707,64 @@ async def run(workspace: str, extreme: bool = False) -> int:
         except Exception as e:
             print(f"[G29: checklist store skipped: {e}]", flush=True)
 
+    # Step 1.5: Intuitive Gamer fast-flat scan (arXiv:2510.11503 启发)
+    # 人类面对新游戏先用 fast (少采样) + flat (depth-limited) 模拟判断哪些
+    # 子目标值得深挖. 当前架构缺这一层 — agent 一上来就深挖 PDF + 跑贝叶斯,
+    # iter 0 撞 tool call budget, report.md 没写.
+    #
+    # Step 1.5 让 agent 快速过一遍 checklist, 给每项打 easy/medium/hard 标签.
+    # 输出 priority list 影响 Step 2 iter prompt: 先做 easy 攒分, 中难按顺序,
+    # hard 留最后. 不深挖 — 1 tool call max (或 0), 纯 flat scan.
+    #
+    # ponytail: 不做 k=5-20 并行采样 (v8), 不做 should_imaginate 完整实现 (v8),
+    #   不做 ν 黏度动态调节 (v8). 只做 scan → priority → 影响 Step 2 prompt.
+    #   升级路径: 接 cognitive_heat_engine 的 should_imaginate gate,
+    #   should_imaginate=True 的 item 才分配深挖预算.
+    print("\n=== Step 1.5: Intuitive Gamer fast-flat scan ===\n", flush=True)
+    scan_prompt = (
+        "FAST FLAT SCAN (no deep search). Goal: identify which checklist items "
+        "are cheap to answer vs which need full implementation.\n\n"
+        "For EACH checklist item, output ONE line:\n"
+        "  [item N] easy | medium | hard — one-sentence reason\n\n"
+        "Definitions:\n"
+        "- easy: answer is in data file / paper excerpt / simple formula. ≤2 tool calls.\n"
+        "- medium: needs 1 short script run (fit/plot/compute). 3-8 tool calls.\n"
+        "- hard: needs multi-step pipeline (train model / MCMC / simulation). 10+ calls.\n\n"
+        "Constraints:\n"
+        "- 1 tool call MAX (file_read or code_tool for quick check). Prefer 0.\n"
+        "- Do NOT execute the analysis. Do NOT write report.md.\n"
+        "- Output ONLY the priority list, then a one-line strategy:\n"
+        "  STRATEGY: do easy first / medium in checklist order / hard last with remaining budget.\n"
+        f"\nChecklist:\n{checklist[:4000]}"
+    )
+    scan_text = await _stream_chat(scan_prompt, "step1.5_flat_scan")
+    print(f"\n[flat scan done: {len(scan_text)} chars]\n", flush=True)
+
+    # 写 Meta-Trace entry — role="intuitive_gamer", 下一轮 build_meta_trace_text 会读到.
+    try:
+        import json as _ig_json
+        import time as _ig_time
+        _ig_entry = {
+            "iteration": 0,
+            "ts": _ig_time.time(),
+            "role": "intuitive_gamer",
+            "attempted": "fast flat scan of checklist items",
+            "found": (scan_text or "")[:400],
+            "evidence": [],
+            "limitations": ["single-sample, no k-sampling (v8 upgrade)"],
+            "artifacts": [],
+            "next_hint": "execute easy items first per scan priority",
+            "darwin_score": 0.0,
+            "supported_ratio": 0.0,
+        }
+        _ig_trace_path = ws / ".huginn" / "meta_trace.jsonl"
+        _ig_trace_path.parent.mkdir(parents=True, exist_ok=True)
+        with _ig_trace_path.open("a", encoding="utf-8") as f:
+            f.write(_ig_json.dumps(_ig_entry, ensure_ascii=False) + "\n")
+        print("[intuitive_gamer trace entry written]", flush=True)
+    except Exception as _e:
+        print(f"[intuitive_gamer trace skipped: {_e}]", flush=True)
+
     # Step 2: 执行任务 (v7 P3: 迭代执行 + Meta-Trace 蒸馏)
     # checklist 已在 thread_id 的对话历史里, agent 能看到. 不需要显式注入.
     #
@@ -721,12 +779,19 @@ async def run(workspace: str, extreme: bool = False) -> int:
     #   升级路径: full AutoloopEngine.run() + 自定义 report writer.
     print("\n=== Step 2: Execution (iterative) ===\n", flush=True)
     _rcb_csm_advance("user_confirmed", {"plan": "execute methodology checklist"})
+    _scan_hint = (
+        f"\n\n## Intuitive Gamer Scan (Step 1.5 result)\n{scan_text}\n\n"
+        f"Follow the STRATEGY line above for budget allocation: "
+        f"easy items first, medium in checklist order, hard last with remaining budget. "
+        f"Do NOT start with hard items — that risks exhausting tool budget before easy points are banked."
+    ) if scan_text and scan_text.strip() else ""
     step2_prompt = (
         "Now execute the task following your methodology checklist. "
         "Implement each [EXACT] component as-specified in the paper. "
         "If a component fails, debug and push through — do NOT silently substitute a simpler model. "
         "Write report/report.md with your results, referencing the checklist items you covered. "
         "Use file_write_tool for report.md, code_tool for analysis/plotting, bash_tool for running scripts."
+        + _scan_hint
     )
 
     import hashlib as _hashlib
