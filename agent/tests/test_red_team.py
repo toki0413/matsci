@@ -349,9 +349,13 @@ class TestPhaseGateIntegration:
         assert gate.status == "approved"
 
     def test_hook_missing_evidence_blocks_before_reviewer(self):
-        """If required evidence is missing, hook blocks WITHOUT calling reviewer."""
+        """If required evidence is missing, hook blocks WITHOUT calling reviewer.
+        R6 advisory: 默认不阻断, 测 block 路径要显式开 human_checkpoint."""
         reviewer = RedTeamReviewer()
-        hook = PhaseGateHook(reviewer_fn=reviewer)
+        hook = PhaseGateHook(
+            reviewer_fn=reviewer,
+            human_checkpoint_phases={("validate", "learn")},
+        )
         gate = hook.evaluate("validate", "learn", {})
         assert gate.is_blocked
         assert gate.status == "blocked"  # not "rejected"
@@ -412,8 +416,10 @@ class TestEngineIntegration:
         assert ok is True
 
     def test_engine_gate_blocks_on_missing_evidence(self, engine):
-        """validate→learn without tests_passed should block (hard check)."""
+        """validate→learn without tests_passed should block (hard check).
+        R6 advisory: 默认不阻断, 测 block 路径要显式开 human_checkpoint."""
         get_shared_phase_gate_state().reset()
+        get_shared_phase_gate_state().human_checkpoint_phases.add(("validate", "learn"))
         ok = engine._check_gate("validate", "learn", {})
         assert ok is False
 

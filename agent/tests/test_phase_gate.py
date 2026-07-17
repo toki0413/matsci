@@ -55,22 +55,33 @@ class TestPhaseGateHook:
         assert gate.is_blocked is False
         assert gate.missing_evidence == []
 
-    def test_blocked_when_evidence_missing(self):
+    def test_advisory_when_evidence_missing(self):
+        # R6 advisory: 缺证据不阻断, 只 warning + feedback (非 checkpoint)
         hook = PhaseGateHook()
         gate = hook.evaluate("plan", "execute", {"mode": "coder"})
         # description 缺失
+        assert gate.status == "approved"  # advisory 放行
+        assert gate.is_blocked is False
+        assert "description" in gate.missing_evidence
+        assert gate.feedback  # 有反馈文本
+        assert "advisory" in gate.feedback.lower()
+
+    def test_blocked_when_human_checkpoint_evidence_missing(self):
+        # R6 保留: human_checkpoint 缺证据仍硬阻断
+        hook = PhaseGateHook(human_checkpoint_phases={("plan", "execute")})
+        gate = hook.evaluate("plan", "execute", {"mode": "coder"})
         assert gate.status == "blocked"
         assert gate.is_blocked is True
         assert "description" in gate.missing_evidence
-        assert gate.feedback  # 有反馈文本
+        assert gate.feedback
 
-    def test_blocked_when_evidence_empty_string(self):
-        """空串视同缺失."""
+    def test_advisory_when_evidence_empty_string(self):
+        """空串视同缺失, 仍走 advisory 放行."""
         hook = PhaseGateHook()
         gate = hook.evaluate(
             "plan", "execute", {"mode": "", "description": ""}
         )
-        assert gate.status == "blocked"
+        assert gate.status == "approved"
         assert set(gate.missing_evidence) == {"mode", "description"}
 
     def test_reviewer_reject_returns_rejected(self):
@@ -95,11 +106,10 @@ class TestPhaseGateHook:
         assert gate.status == "approved"
 
     def test_non_dict_evidence_normalized(self):
-        """裸值 evidence 归一成 {"value": ...}, 再查 required.
-        plan→execute 要 mode+description, 裸值一定缺, 应 blocked."""
+        """裸值 evidence 归一成 {"value": ...}, 缺证据走 advisory 放行."""
         hook = PhaseGateHook()
         gate = hook.evaluate("plan", "execute", "just a hypothesis string")
-        assert gate.status == "blocked"
+        assert gate.status == "approved"  # advisory
 
     def test_no_requirement_always_approved(self):
         """learn→report 无证据要求, 总放行."""
@@ -115,7 +125,8 @@ class TestPhaseGateHook:
         gate = hook.evaluate(
             "hypothesize", "plan", {"hypothesis": "h"}
         )
-        assert gate.status == "blocked"
+        # advisory: 缺 rationale 不阻断
+        assert gate.status == "approved"
         assert "rationale" in gate.missing_evidence
 
 
@@ -287,7 +298,8 @@ class TestPhaseToolRequestReview:
         assert state.last_gate().status == "approved"
         assert state.pending_transition == ("plan", "execute")
 
-    def test_review_blocked_missing_evidence(self, tool, ctx):
+    def test_review_advisory_missing_evidence(self, tool, ctx):
+        # R6 advisory: 缺证据返回 approved + missing_evidence (非 checkpoint)
         r = _call(
             tool,
             {
@@ -298,8 +310,8 @@ class TestPhaseToolRequestReview:
             },
             ctx,
         )
-        assert r.success is True  # tool 调用成功, 只是门 blocked
-        assert r.data["gate"]["status"] == "blocked"
+        assert r.success is True  # tool 调用成功
+        assert r.data["gate"]["status"] == "approved"  # advisory
         assert "description" in r.data["gate"]["missing_evidence"]
 
     def test_review_uses_accumulated_evidence(self, tool, ctx):
@@ -526,6 +538,17 @@ def _patch_phases(engine, plan=None, validation=None):
     engine._report = AsyncMock(return_value=str(engine.workspace / "report.md"))  # type: ignore[assignment]
 
 
+def _enable_hard_block(*pairs):
+    """R6 advisory 默认不阻断; 测试要测阻断路径时, 把指定转移设为 human_checkpoint.
+
+    PhaseGateHook 在 _human_checkpoint_phases=None 时懒查 shared state,
+    所以直接 mutate shared state 即可生效.
+    """
+    state = get_shared_phase_gate_state()
+    for pair in pairs:
+        state.human_checkpoint_phases.add(pair)
+
+
 class TestEngineGateIntegration:
     def test_happy_path_all_gates_pass(self, engine):
         """完整证据时三个门都放行, 6 phase + report 跑完."""
@@ -539,7 +562,8 @@ class TestEngineGateIntegration:
         assert result.success is True
 
     def test_plan_to_execute_blocked_when_mode_empty(self, engine):
-        """plan 缺 mode/description → 门阻断, execute 不跑."""
+        """plan 缺 mode/description → 门阻断, execute 不跑 (走 human_checkpoint 路径)."""
+        _enable_hard_block(("plan", "execute"))
         _patch_phases(
             engine, plan={"mode": "", "description": ""}
         )
@@ -550,6 +574,7 @@ class TestEngineGateIntegration:
         assert "execute" in engine._speculator_hint
 
     def test_plan_to_execute_blocked_feedback_records_missing(self, engine):
+        _enable_hard_block(("plan", "execute"))
         _patch_phases(engine, plan={"mode": "", "description": ""})
         asyncio.run(engine.run(objective="o", max_iterations=1))
         state = get_shared_phase_gate_state()
@@ -568,7 +593,8 @@ class TestEngineGateIntegration:
         engine._execute.assert_called_once()
 
     def test_validate_to_learn_blocked_when_tests_failed(self, engine):
-        """validation tests_passed=False → learn 不跑."""
+        """validation tests_passed=False → learn 不跑 (走 human_checkpoint 路径)."""
+        _enable_hard_block(("validate", "learn"))
         _patch_phases(engine, validation={"tests_passed": False})
         asyncio.run(engine.run(objective="o", max_iterations=1))
         engine._learn.assert_not_called()
@@ -579,7 +605,8 @@ class TestEngineGateIntegration:
         engine._learn.assert_called_once()
 
     def test_gate_does_not_consume_extra_iterations(self, engine):
-        """门阻断在 max_iter=1 时, 仍只跑 1 轮 + report, 不会多跑."""
+        """门阻断在 max_iter=1 时, 仍只跑 1 轮 + report, 不会多跑 (走 human_checkpoint 路径)."""
+        _enable_hard_block(("plan", "execute"))
         _patch_phases(engine, plan={"mode": "", "description": ""})
         result = asyncio.run(engine.run(objective="o", max_iterations=1))
         # perceive + hypothesize + plan (block 后 continue → 出循环) + report
