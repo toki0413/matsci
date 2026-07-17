@@ -72,7 +72,7 @@ jobs:
 
       - name: Upload test output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-output-${{ matrix.python-version }}
           path: agent/pytest_output.txt
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload integration test output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-integration-${{ matrix.label }}
           path: agent/pytest_integration_output.txt
