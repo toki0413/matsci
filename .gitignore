@@ -301,3 +301,15 @@ python-embed.zip
 # Local audit reports + execution plans (one-off, not source)
 /audit_*/
 /plan.md
+
+# v6 R23: 防回潮 — 历史 16.5MB 死重 filter-repo 清理后, 阻止新大二进制回流.
+# 真正需要 commit 的二进制测试 fixture (e.g. POSCAR) 用 ! 规则显式放行.
+*.bin
+*.dat
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.pickle
+*.pkl
+*.parquet
