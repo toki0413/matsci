@@ -33,6 +33,20 @@ _HIGH_VALUE_MCP_TOOLS = {
     "extract_math",
 }
 
+# G38: ToolUniverse 白名单 — 350+ 生物医学工具里挑 7 个材料相关工具.
+# 之前 lifespan.py:123 引用此常量但本文件没定义, 启用 ToolUniverse 时
+# 直接 ImportError. 按文档 docs/tooluniverse-integration.md 的 7 个工具名
+# 补齐定义. 工具名随 ToolUniverse 版本变, 手动维护更稳.
+MATERIAL_SCIENCE_TOOL_WHITELIST: set[str] = {
+    "CrystalStructure_validate",
+    "PubChem_get_record",
+    "PubChem_search_compounds",
+    "PubChem_get_properties",
+    "ChEMBL_get_compound",
+    "RCSB_PDB_search",
+    "RCSB_PDB_get_entry",
+}
+
 
 def _schema_to_pydantic(
     schema: dict[str, Any], model_name: str = "DynamicInput"

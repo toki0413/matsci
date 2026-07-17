@@ -31,7 +31,7 @@ FAILED = 0
 SKIPPED = 0
 
 
-def report(name: str, success: bool, detail: str = "", skipped: bool = False) -> None:
+def report(name: str, success: bool, detail: str = "", skipped: bool = False, critical: bool = False) -> None:
     global PASSED, FAILED, SKIPPED
     if skipped:
         SKIPPED += 1
@@ -42,6 +42,10 @@ def report(name: str, success: bool, detail: str = "", skipped: bool = False) ->
     else:
         FAILED += 1
         print(f"  ✗ {name}: FAIL — {detail}")
+        # G36: 关键路径失败立即 raise, 防止级联错误掩盖根因.
+        # non-critical 失败收集到 main() 末尾统一 raise.
+        if critical:
+            raise AssertionError(f"{name}: {detail}")
 
 
 # ── Test 1: Structure → Symmetry → XRD → Validation chain ──────────
@@ -64,7 +68,8 @@ async def test_structure_symmetry_xrd_chain() -> None:
     sym_tool = SymmetryTool()
     r2 = await sym_tool.call({"action": "analyze", "file_path": str(si_poscar)}, ctx)
     report("symmetry analyze", r2.success,
-           f"spacegroup={r2.data.get('spacegroup', '?')}" if r2.data else r2.error)
+           f"spacegroup={r2.data.get('spacegroup', '?')}" if r2.data else r2.error,
+           critical=True)
 
     # XRD simulation (XrdSimTool.call expects a dict, not a model instance)
     xrd_tool = XrdSimTool()
@@ -101,7 +106,8 @@ async def test_vasp_mock_workflow() -> None:
         working_dir=str(tmpdir),
     ), ctx)
     report("VASP scf (mock)", r1.success,
-           f"energy={r1.data.get('energy', '?')}" if r1.data else r1.error)
+           f"energy={r1.data.get('energy', '?')}" if r1.data else r1.error,
+           critical=True)
 
 
 # ── Test 3: LAMMPS mock-mode workflow ───────────────────────────────
@@ -120,7 +126,8 @@ async def test_lammps_mock_workflow() -> None:
         output_prefix="cu_test",
     ), ctx)
     report("LAMMPS run (mock)", r1.success,
-           f"msg={(r1.data.get('message', '') or '')[:60]}" if r1.data else r1.error)
+           f"msg={(r1.data.get('message', '') or '')[:60]}" if r1.data else r1.error,
+           critical=True)
 
 
 # ── Test 4: AutoFix self-healing loop ───────────────────────────────
@@ -274,7 +281,10 @@ async def main() -> None:
     print(f"RESULTS: {PASSED} passed, {FAILED} failed, {SKIPPED} skipped")
     print(f"{'=' * 70}")
 
-    return FAILED == 0
+    # G36: 有失败就 raise, 不让 main() 静默返回 False
+    if FAILED > 0:
+        raise AssertionError(f"{FAILED} checks failed in sci_automation_test")
+    return True
 
 
 if __name__ == "__main__":

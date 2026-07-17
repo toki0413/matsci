@@ -514,6 +514,12 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
             """在线程里连 SSH, tail -f 输出文件, 每行塞进队列。"""
             import shlex
 
+            # G33: 之前 exec_command 的 channel 不显式 close, 三重泄漏:
+            #   1) 本地 channel 对象不释放
+            #   2) 远端 tail -f 进程不退出 (靠 channel close 发 SIGHUP)
+            #   3) 主协程 WebSocket 断开后线程还在阻塞 readline
+            # 现在 channel 拿到后用 try/finally 兜底关, 事件循环关了就 break.
+            chan = None
             try:
                 with HPCClient(cfg) as client:
                     # 先确认文件在不在, 不在就等它出现
@@ -541,6 +547,7 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                     client._ensure_connected()
                     cmd = f"tail -n +1 -f {shlex.quote(output_file)}"
                     _, stdout, _ = client._ssh.exec_command(cmd, get_pty=False)
+                    chan = stdout.channel if hasattr(stdout, "channel") else None
 
                     for raw_line in iter(stdout.readline, None):
                         if raw_line == "" or raw_line is None:
@@ -558,6 +565,13 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                     )
                 except RuntimeError:
                     pass
+            finally:
+                # G33: 显式关 channel, 触发远端 tail -f 收 SIGHUP 退出
+                if chan is not None:
+                    try:
+                        chan.close()
+                    except Exception:
+                        pass
 
         import threading
 

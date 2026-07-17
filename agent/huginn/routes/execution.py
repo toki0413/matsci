@@ -7,15 +7,21 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from huginn.security.auth import require_api_key, require_capability
 from huginn.server_core import get_agent_factory, get_context, get_memory_manager
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["execution"])
+# G32: /execute 跑工作流编排 = 特权操作, 既要鉴权也要 capability 校验.
+# 之前这层完全裸奔 (router 无 dependencies), 是 fail-secure 修复的最大漏洞.
+router = APIRouter(
+    tags=["execution"],
+    dependencies=[Depends(require_api_key), Depends(require_capability("execute"))],
+)
 
 
 def _validate_working_dir(raw_path: str) -> str:

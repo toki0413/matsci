@@ -116,6 +116,7 @@ agent/.huginn_memory/
 /_test_code_tool_selfcheck.py
 /_v4_integration_selfcheck.py
 /_v5_m2_selfcheck.py
+/_v5_m3_*_selfcheck.py
 /_gen*.py
 /_patch.py
 /_analyze_*.py

@@ -284,14 +284,18 @@ export HUGINN_VAULT_TOKEN="s.xxx"
 |----------|------|---------|
 | `GET /health` | Public | Basic health check |
 | `GET /health/rust` | Public | Rust extension health |
-| `GET /metrics` | Admin | Prometheus-compatible metrics |
+| `GET /metrics` | Public | Prometheus-compatible metrics (G38 校准: `_PUBLIC_PATHS` 在 `security/auth.py:55` 有意公开, 让 Prometheus 无鉴权抓取; 生产环境用反代加 IP 白名单或 Basic Auth 收紧) |
 | `GET /openapi.json` | Public | OpenAPI schema |
 | `GET /docs` | Public | Swagger UI |
 
 ### Prometheus Metrics
 
 ```bash
-curl -H "X-HUGINN-API-KEY: $HUGINN_API_KEY" http://localhost:8000/metrics
+# 默认公开 (Prometheus 无鉴权抓取)
+curl http://localhost:8000/metrics
+
+# 生产环境收紧 (反代层加 Basic Auth 或 IP 白名单)
+curl -u prom:secret http://localhost:8000/metrics
 ```
 
 Key metrics:

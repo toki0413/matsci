@@ -1,0 +1,64 @@
+# G37 回潮检测: cron weekly 跑 audit_20260717 关键断言.
+# 7 项历史修复: 六方 Born / BM3 EOS / DEM / MSD / SCF / RBAC / FTS5.
+# ponytail: 只跑选定测试文件, 全量 pytest 走主 ci.yml.
+name: Audit Regression Check
+
+on:
+  schedule:
+    # 每周一 03:00 UTC (周一上午北京 11:00)
+    - cron: '0 3 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  audit-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./agent[dev]"
+          pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
+          pip install pymatgen ase paramiko pypdf pint spglib
+          pip install toml croniter fastapi uvicorn nbformat
+          pip install langchain-openai langgraph-checkpoint-sqlite
+          pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
+          pip install pytest-timeout
+
+      - name: Run 7 historical-fix regression tests
+        env:
+          HUGINN_RATE_LIMIT_ENABLED: "false"
+          HUGINN_RATE_LIMIT_PER_MINUTE: "0"
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          cd agent
+          python -m pytest -v --no-cov --timeout=60 \
+            tests/test_mechanics.py::TestHexagonalBornCriteria \
+            tests/test_eos_fit.py::TestEosReferenceConsistency \
+            tests/test_audit14_p1_3_4_5.py::TestDemScriptSyntax \
+            tests/test_audit14_p1_3_4_5.py::TestMsdUnwrap \
+            tests/test_audit14_p1_3_4_5.py::TestScfConvergenceCriterion \
+            tests/test_context_and_jwt.py \
+            tests/test_fts5_consistency.py \
+            --tb=short
+
+      - name: Quickstart smoke test (G38)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          cd agent
+          python demo_comprehensive.py 2>&1 | tee demo_output.txt
+          # 期望输出含 "Results:" 且 "passed"
+          grep -E "Results:.*passed" demo_output.txt || {
+            echo "::error::quickstart demo_comprehensive.py did not report passed results"
+            exit 1
+          }

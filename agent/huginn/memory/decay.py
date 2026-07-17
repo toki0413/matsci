@@ -115,6 +115,10 @@ class MemoryDecayPolicy:
 
             conn.commit()
 
+        # G35: 上面的 per-row DELETE 绕过了 FTS5 'delete' 命令, 有删就重建
+        if pruned > 0:
+            memory._rebuild_fts_index()
+
         # Clean up expired entries via the existing helper.
         expired = memory.prune_expired()
 
@@ -166,4 +170,7 @@ class MemoryDeduplicator:
                     seen[normalized] = row["id"]
 
             conn.commit()
+        # G35: per-row DELETE 绕过 FTS5 'delete', 有删就重建
+        if removed > 0:
+            memory._rebuild_fts_index()
         return removed

@@ -25,12 +25,22 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# G32 fail-secure: governance 检查失败（policy engine 不可用/异常/未知动作）时的默认决策。
+# 默认 "deny" — 生产环境里 policy engine 挂了不能静默放行；测试或 legacy 部署可设
+# HUGINN_GOVERNANCE_DEFAULT_DECISION=allow 回到旧行为。
+_DEFAULT_DECISION = os.environ.get(
+    "HUGINN_GOVERNANCE_DEFAULT_DECISION", "deny"
+).lower().strip()
+if _DEFAULT_DECISION not in ("allow", "deny", "ask"):
+    _DEFAULT_DECISION = "deny"
 
 
 @dataclass
@@ -78,6 +88,8 @@ class GovernanceFacade:
         self._provenance = None
         self._snapshot_mgr = None
         self._rbac = None
+        # G32: fail-secure default — governance 自身出问题时按此决策收口
+        self.default_decision: str = _DEFAULT_DECISION
 
     def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -121,6 +133,10 @@ class GovernanceFacade:
         2. Policy engine rules (if available)
         3. RBAC permission check (if available)
         4. Predictability score (from PNAS-inspired decomposition)
+
+        G32 fail-secure: 若 policy engine 不可用或抛异常, 按 ``self.default_decision``
+        收口 (默认 ``deny``). 旧行为可设环境变量
+        ``HUGINN_GOVERNANCE_DEFAULT_DECISION=allow`` 恢复.
         """
         self._ensure_initialized()
         reasons: list[str] = []
@@ -132,8 +148,17 @@ class GovernanceFacade:
         from huginn.ontology.actions import get_action_type
         at = get_action_type(action_name)
         if at is None:
-            # Unknown action — allow but flag
+            # G32: 未知动作按 default_decision 收口 — fail-secure 默认 deny
             reasons.append(f"Unknown action type '{action_name}' — no preconditions checked")
+            if self.default_decision == "deny":
+                reasons.append("Denied by fail-secure default (unknown action)")
+                return GovernanceDecision(
+                    allowed=False, reasons=reasons, risk_level=risk,
+                    requires_approval=True, predictability=0.0,
+                )
+            # default_decision == "allow" / "ask": 旧 allow-but-flag 行为
+            if self.default_decision == "ask":
+                requires_approval = True
         else:
             risk = at.risk.value
             allowed, pre_reasons = at.can_execute(context)
@@ -149,8 +174,19 @@ class GovernanceFacade:
             if at.risk in (RiskLevel.HIGH, RiskLevel.CRITICAL):
                 requires_approval = True
 
-        # 2. Policy engine check
-        if self._policy_engine:
+        # 2. Policy engine check — G32: 引擎缺失/异常按 default_decision 收口
+        if self._policy_engine is None:
+            if self.default_decision == "deny":
+                reasons.append("Policy engine unavailable — denied by fail-secure default")
+                return GovernanceDecision(
+                    allowed=False, reasons=reasons, risk_level=risk,
+                    requires_approval=True, predictability=predictability,
+                )
+            # allow / ask: 旧行为, 只在 reasons 里记一笔
+            reasons.append("Policy engine unavailable — skipped (default_decision != deny)")
+            if self.default_decision == "ask":
+                requires_approval = True
+        else:
             try:
                 from huginn.security.policy_engine import evaluate_command_hook
                 # governance 的 action_name 是逻辑动作名, 不是 shell 命令;
@@ -166,7 +202,17 @@ class GovernanceFacade:
                     requires_approval = True
                     reasons.append(f"Policy requires approval: {decision.reason}")
             except Exception as e:
-                logger.debug(f"[gov] policy check failed: {e}")
+                # G32: policy 检查异常不再静默放行
+                logger.warning(f"[gov] policy check failed: {e}")
+                reasons.append(f"Policy check raised: {e}")
+                if self.default_decision == "deny":
+                    reasons.append("Denied by fail-secure default (policy exception)")
+                    return GovernanceDecision(
+                        allowed=False, reasons=reasons, risk_level=risk,
+                        requires_approval=True, predictability=predictability,
+                    )
+                if self.default_decision == "ask":
+                    requires_approval = True
 
         return GovernanceDecision(
             allowed=True, reasons=reasons, risk_level=risk,

@@ -1,0 +1,20 @@
+# G37 回潮检测: 7 项历史修复的回归测试断言.
+# local hook 避免要求开发者额外装 pre-commit 框架; pytest 已是 dev 依赖.
+# ponytail: 每次 commit 跑选定测试 < 30s, 比"全量 pytest"快两个量级.
+# 升级路径: 测试变多时改用 pytest --collect-only + 并行.
+repos:
+  - repo: local
+    hooks:
+      - id: audit-regression-7fixes
+        name: G37 audit-regression (7 historical fixes)
+        entry: bash -c 'cd agent && python -m pytest -x --no-cov --timeout=30 -q \
+          tests/test_mechanics.py::TestHexagonalBornCriteria \
+          tests/test_eos_fit.py::TestEosReferenceConsistency \
+          tests/test_audit14_p1_3_4_5.py::TestDemScriptSyntax \
+          tests/test_audit14_p1_3_4_5.py::TestMsdUnwrap \
+          tests/test_audit14_p1_3_4_5.py::TestScfConvergenceCriterion \
+          tests/test_context_and_jwt.py \
+          tests/test_fts5_consistency.py'
+        language: system
+        pass_filenames: false
+        files: ^agent/(huginn/(mechanics|tools/sci/numerical_tool|tools/sim/lammps_tool|tools/sim/vasp_tool|security/rbac|memory/longterm|memory/decay)\.py|tests/(test_mechanics|test_eos_fit|test_audit14_p1_3_4_5|test_context_and_jwt|test_fts5_consistency)\.py)$

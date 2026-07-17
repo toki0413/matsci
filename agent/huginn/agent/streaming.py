@@ -304,12 +304,20 @@ class StreamingMixin:
         final_state: dict[str, Any],
         turn_span: Any,
         thread_id: str,
+        *,
+        graph: Any = None,
+        config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Trigger PRE_COMPACT hook + promote session summary when context > 60%.
 
         50% = warning (log only), 60% = trigger compaction.
         Previous 70% was too late — a single large tool result could
         push from 60% to 95%+ in one turn, bypassing compaction.
+
+        G34: 当 ``HUGINN_COMPACT_STRATEGY`` 含 ``trim`` 且 graph + config +
+        checkpointer 都在时, 用 ``RemoveMessage`` 真修剪 checkpointer 持久化
+        状态. 之前 compact_messages 只修 inputs["messages"] 临时 list, 历史
+        在 checkpointer 里无限累积 → 1.30 GB checkpoint (报告 17 维度 3 差距 3).
 
         Returns ``{"before_pct": int, "after_pct": int}`` if compaction ran, else None.
         """
@@ -361,6 +369,34 @@ class StreamingMixin:
                 )
         except Exception:
             logger.warning("promote_session_summary failed", exc_info=True)
+
+        # G34: 真修剪 checkpointer 持久化状态. compact_messages 只修 inputs 临时
+        # list, checkpointer 里的历史从不被修 → checkpoint 文件无限膨胀. 用
+        # LangGraph 官方 RemoveMessage + update_state 删旧消息. 不引入新框架,
+        # 跟 lean "参考设计不引入编译器" 一个套路 — 用 langgraph 自带机制.
+        strategy = os.environ.get(
+            "HUGINN_COMPACT_STRATEGY", "trim,summarize"
+        ).lower().split(",")
+        strategy = [s.strip() for s in strategy if s.strip()]
+        if (
+            "trim" in strategy
+            and graph is not None
+            and config is not None
+            and self.checkpointer is not None
+        ):
+            try:
+                removed = await self._trim_checkpointer_messages(
+                    final_state, graph, config
+                )
+                if removed > 0:
+                    logger.info(
+                        "checkpointer trimmed %d old messages (G34)", removed
+                    )
+                    turn_span.metadata["checkpointer_trimmed"] = removed
+            except Exception:
+                logger.warning(
+                    "checkpointer trim failed (G34)", exc_info=True
+                )
 
         try:
             after_tokens = (
@@ -418,6 +454,87 @@ class StreamingMixin:
             {"thread_id": thread_id},
         )
         return {"before_pct": before["used"], "after_pct": after_pct}
+
+    async def _trim_checkpointer_messages(
+        self,
+        final_state: dict[str, Any],
+        graph: Any,
+        config: dict[str, Any],
+    ) -> int:
+        """G34: 真修剪 checkpointer 持久化的 messages state.
+
+        从 ``graph.get_state(config)`` 取 checkpointer 现有 messages (带 ID),
+        用与 ``compact_messages`` 同款的 drop-oldest 逻辑算要删几条, 再用
+        LangGraph 官方 ``RemoveMessage`` + ``update_state`` 批量删.
+
+        跟 lean "参考设计不引入编译器" 一个套路: 不引新框架, 只用 langgraph
+        自带机制. ponytail: keep_last_n / keep_root_n 默认值与 compact_messages
+        对齐, 升级路径是改成按消息 metadata 标记 root 而非按位置.
+
+        Returns 实际删除的消息数.
+        """
+        if self.context_budget_tokens <= 0:
+            return 0
+
+        # 取 checkpointer 现有 state (含 messages + IDs)
+        snapshot = await asyncio.to_thread(graph.get_state, config)
+        if snapshot is None or not snapshot.values:
+            return 0
+        msgs = snapshot.values.get("messages", [])
+        if len(msgs) <= 4:
+            return 0
+
+        # 单条 msg 的 token 估算 (复用 utils.context 的 helper)
+        from huginn.utils.context import _msg_content, _msg_role
+        from huginn.utils.tokens import count_message_tokens
+
+        per_msg_tokens = [
+            count_message_tokens(_msg_content(m), _msg_role(m)) for m in msgs
+        ]
+        total = sum(per_msg_tokens)
+        if total <= self.context_budget_tokens:
+            return 0
+
+        keep_last_n = 4
+        keep_root_n = int(os.environ.get("HUGINN_KEEP_ROOT_N", "0"))
+        body_start = keep_root_n
+        body_end = len(msgs) - keep_last_n
+        if body_end <= body_start:
+            return 0
+
+        # 算要 drop 几条才能到 budget
+        drop_count = 0
+        acc = total
+        for i in range(body_start, body_end):
+            if acc <= self.context_budget_tokens:
+                break
+            acc -= per_msg_tokens[i]
+            drop_count += 1
+
+        if drop_count == 0:
+            return 0
+
+        # 收集要 drop 的 message IDs — system 消息不删, 没 ID 的没法删
+        from langchain_core.messages import RemoveMessage, SystemMessage
+
+        drop_ids: list[str] = []
+        for i in range(body_start, body_start + drop_count):
+            m = msgs[i]
+            if isinstance(m, SystemMessage):
+                continue
+            mid = getattr(m, "id", None)
+            if mid:
+                drop_ids.append(mid)
+
+        if not drop_ids:
+            return 0
+
+        removals = [RemoveMessage(id=mid) for mid in drop_ids]
+        # update_state 是同步方法, 走 to_thread 不卡 event loop (G33 一致性)
+        await asyncio.to_thread(
+            graph.update_state, config, {"messages": removals}
+        )
+        return len(drop_ids)
 
     async def _maybe_inject_synthetic_continue(
         self,
@@ -809,8 +926,10 @@ class StreamingMixin:
 
             prompt_guidance = prompt_ctx.metadata.get("prompt_guidance")
 
-            memory_text = self._build_memory_text(query=message)
-            kb_text = self._build_kb_text(query=message)
+            # G33: 同步检索 (memory.recall + kb.search) 之前直接在协程里跑,
+            # 长查询会卡住整个 event loop 几百毫秒. 用 to_thread 丢线程池, 不再阻塞.
+            memory_text = await asyncio.to_thread(self._build_memory_text, query=message)
+            kb_text = await asyncio.to_thread(self._build_kb_text, query=message)
             messages = self._build_input_messages(
                 message,
                 memory_text=memory_text,
@@ -1192,7 +1311,8 @@ class StreamingMixin:
 
                     # Auto-compact when context > 60% (50% = warning)
                     compact_info = await self._maybe_auto_compact(
-                        final_state, turn_span, thread_id
+                        final_state, turn_span, thread_id,
+                        graph=graph, config=config,
                     )
                     if compact_info:
                         yield {"_compacted": compact_info}

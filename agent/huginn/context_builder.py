@@ -250,24 +250,30 @@ class ContextBuilder:
             if node is None:
                 continue
             meta = node.metadata or {}
+            # G34: 给每条消息加 stable ID (ct_<node_id>), 让 langgraph
+            # add_messages reducer 按 ID 去重替换. include_history=True 时
+            # inputs["messages"] 每轮都带完整历史, 没 ID 会被 langgraph
+            # 当新消息追加 → 历史翻倍. 有 ID 后是替换, 不重复.
+            msg_id = f"ct_{node_id}"
             if node.role == "user":
-                messages.append(HumanMessage(content=node.content))
+                messages.append(HumanMessage(content=node.content, id=msg_id))
             elif node.role == "assistant":
                 tool_calls = meta.get("tool_calls")
                 if tool_calls:
                     messages.append(
-                        AIMessage(content=node.content, tool_calls=tool_calls)
+                        AIMessage(content=node.content, tool_calls=tool_calls, id=msg_id)
                     )
                 else:
-                    messages.append(AIMessage(content=node.content))
+                    messages.append(AIMessage(content=node.content, id=msg_id))
             elif node.role == "system":
-                messages.append(SystemMessage(content=node.content))
+                messages.append(SystemMessage(content=node.content, id=msg_id))
             elif node.role == "tool":
                 messages.append(
                     ToolMessage(
                         content=node.content,
                         tool_call_id=meta.get("tool_call_id", ""),
                         name=meta.get("name"),
+                        id=msg_id,
                     )
                 )
         return messages
@@ -463,8 +469,12 @@ class ContextBuilder:
         if kb_text is None:
             kb_text = self.build_kb_text(query=message)
 
+        # G34: 之前 checkpointer 在时 include_history=False, 历史 langgraph 自己加,
+        # compact_messages 只能修本轮新消息 → checkpoint 持久化历史从不被修剪,
+        # 膨胀到 1.30 GB (报告 17 维度 3 差距 3). 改成 True 让 inputs["messages"]
+        # 带完整历史, 配合 conversation_tree_to_messages 的 stable ID 防重复.
         if include_history is None:
-            include_history = self.checkpointer is None
+            include_history = True
 
         history_messages: list[Any] | None = None
         if include_history:

@@ -205,6 +205,89 @@ class LongTermMemory:
             """)
             conn.commit()
 
+        # G35: 启动时校验 FTS5 索引一致性. 多处 DELETE 路径 (decay/dedup/
+        # prune/export 覆盖导入) 历史上绕过 FTS5 'delete' 命令, 留孤儿索引行
+        # 导致 retrieve 命中已删记忆. 校验行数不一致就全量重建.
+        self._validate_fts_consistency()
+
+    def _rebuild_fts_index(self) -> int:
+        """G35: 全量重建 FTS5 索引.
+
+        用 FTS5 'delete-all' 清空再从 memories 表批量回灌. tags 在主表是
+        JSON 数组, FTS5 要空格分隔, formula 也拼进 tags 让搜化学式能命中
+        (与 store/update 的 fts_tags 构造对齐).
+
+        Returns 重建后的索引行数.
+        """
+        with self._connect() as conn:
+            # FTS5 外部内容表清空用 'delete-all' 命令, 不能用 DELETE FROM
+            conn.execute("INSERT INTO memory_fts(memory_fts) VALUES('delete-all')")
+            rows = conn.execute(
+                "SELECT rowid, content, tags, formula, source FROM memories"
+            ).fetchall()
+            batch: list[tuple] = []
+            for r in rows:
+                try:
+                    tags_list = json.loads(r["tags"] or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    tags_list = []
+                formula = r["formula"] if r["formula"] else None
+                fts_tags = " ".join(tags_list + ([formula] if formula else []))
+                batch.append((r["rowid"], r["content"], fts_tags, r["source"]))
+            if batch:
+                conn.executemany(
+                    "INSERT INTO memory_fts (rowid, content, tags, source) VALUES (?, ?, ?, ?)",
+                    batch,
+                )
+            conn.commit()
+            return len(batch)
+
+    def _validate_fts_consistency(self) -> bool:
+        """G35: 校验 FTS5 索引能查到主表数据, 不一致触发重建.
+
+        外部内容表的 SELECT count(*) 会优化成查源表 memories, 永远相等,
+        检测不了真正的索引损坏 (delete-all 清空 token 后 count 不变).
+        改用 MATCH 抽查: 取前几条记忆的搜索词, 查不到说明 FTS5 token 丢了.
+
+        HUGINN_FTS_AUTO_REBUILD=0 关闭自动重建 (测试/基准用), 只告警不修.
+
+        Returns True if consistent or rebuild succeeded.
+        """
+        import re
+        with self._connect() as conn:
+            mem_count = conn.execute("SELECT count(*) FROM memories").fetchone()[0]
+            if mem_count == 0:
+                return True
+            rows = conn.execute(
+                "SELECT content FROM memories ORDER BY rowid LIMIT 3"
+            ).fetchall()
+            for row in rows:
+                content = row["content"] or ""
+                words = content.split()
+                if not words:
+                    continue
+                # FTS5 tokenizer 按空格/符号分词, 只取字母数字防 MATCH 语法报错
+                clean = re.sub(r"[^a-zA-Z0-9]", "", words[0])
+                if not clean:
+                    continue
+                hit = conn.execute(
+                    "SELECT count(*) FROM memory_fts WHERE memory_fts MATCH ?",
+                    (clean,),
+                ).fetchone()[0]
+                if hit == 0:
+                    if os.environ.get("HUGINN_FTS_AUTO_REBUILD", "1") == "0":
+                        logger.warning(
+                            "FTS5 stale: MATCH '%s' = 0 but memory exists "
+                            "(auto-rebuild disabled)", clean,
+                        )
+                        return False
+                    logger.warning(
+                        "FTS5 stale: MATCH '%s' = 0, rebuilding index", clean
+                    )
+                    self._rebuild_fts_index()
+                    return True
+        return True
+
     def store(
         self,
         content: str,
@@ -283,6 +366,8 @@ class LongTermMemory:
                     # 紧急清理：删低重要度的非 long 记忆腾空间
                     conn.execute("DELETE FROM memories WHERE tier != 'long' ORDER BY importance ASC LIMIT 100")
                     conn.commit()
+                    # G35: bulk DELETE 绕过 FTS5 'delete' 命令, 重建索引兜底
+                    self._rebuild_fts_index()
                     raise
                 raise
 
@@ -774,7 +859,11 @@ class LongTermMemory:
                 (datetime.now().isoformat(),),
             )
             conn.commit()
-            return cursor.rowcount
+            deleted = cursor.rowcount
+        # G35: bulk DELETE 绕过 FTS5 'delete', 有删就重建索引
+        if deleted > 0:
+            self._rebuild_fts_index()
+        return deleted
 
     def prune_low_importance(
         self, threshold: float = 0.2, older_than_days: int = 30
@@ -791,7 +880,11 @@ class LongTermMemory:
                 (threshold, older_than_days),
             )
             conn.commit()
-            return cursor.rowcount
+            deleted = cursor.rowcount
+        # G35: bulk DELETE 绕过 FTS5 'delete', 有删就重建索引
+        if deleted > 0:
+            self._rebuild_fts_index()
+        return deleted
 
     def export(self, path: str | Path) -> None:
         """Export all memories to JSON."""

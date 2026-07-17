@@ -22,7 +22,7 @@ FAILED = 0
 SKIPPED = 0
 
 
-def report(name: str, success: bool, detail: str = "", skipped: bool = False) -> None:
+def report(name: str, success: bool, detail: str = "", skipped: bool = False, critical: bool = False) -> None:
     global PASSED, FAILED, SKIPPED
     if skipped:
         SKIPPED += 1
@@ -33,6 +33,9 @@ def report(name: str, success: bool, detail: str = "", skipped: bool = False) ->
     else:
         FAILED += 1
         print(f"  ✗ {name}: FAIL — {detail}")
+        # G36: 关键路径失败立即 raise
+        if critical:
+            raise AssertionError(f"{name}: {detail}")
 
 
 def get_rss_mb() -> float:
@@ -355,7 +358,10 @@ async def main() -> None:
     print(f"RESULTS: {PASSED} passed, {FAILED} failed, {SKIPPED} skipped")
     print(f"{'=' * 70}")
 
-    return FAILED == 0
+    # G36: 有失败就 raise, 不让 main() 静默返回 False
+    if FAILED > 0:
+        raise AssertionError(f"{FAILED} checks failed in ultra_long_benchmark")
+    return True
 
 
 if __name__ == "__main__":
