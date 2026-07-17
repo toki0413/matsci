@@ -1,0 +1,54 @@
+version: 2
+updates:
+  # Python 依赖: 扫 agent/pyproject.toml, 周一开 PR
+  - package-ecosystem: "pip"
+    directory: "/agent"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    # 安全更新自动合并, 减少人工负担
+    # ponytail: 升级路径是加 automerged_updates 配置 (需 GitHub 商业版)
+    # 当前靠 CI 绿灯后人工 merge
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+    groups:
+      # 开发依赖一起升, 减少 PR 噪音
+      dev-deps:
+        dependency-type: "development"
+      # 生产依赖按生态分组
+      runtime-core:
+        patterns:
+          - "pydantic"
+          - "langchain*"
+          - "langgraph*"
+          - "mcp"
+          - "fastapi"
+          - "uvicorn"
+          - "httpx"
+      runtime-data:
+        patterns:
+          - "numpy"
+          - "scipy"
+          - "pandas"
+          - "matplotlib"
+          - "pymatgen"
+          - "ase"
+
+  # GitHub Actions 版本: 扫 .github/workflows, 周一开 PR
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
