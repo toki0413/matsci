@@ -25,6 +25,10 @@ _SOURCE_TO_SIGNAL_TYPE: dict[str, str] = {
     "belief_high": "belief_high",
     "skill_failure": "tool_failure",
     "evolution_rule": "evolution_rule_learned",
+    # v6 G50: 结构主义信号 — validate_structure_preservation 失败 / sorry 填充 / sorry 不可实现
+    "structure_violation": "gap_found",
+    "sorry_filled": "belief_high",
+    "sorry_impossible": "gap_found",
 }
 
 
@@ -87,6 +91,13 @@ def _selfcheck() -> None:
     # register 生效
     hub.register("custom_signal", "gap_found")
     assert hub.route("custom_signal") is not None
+    # v6 G50: 结构主义信号
+    assert hub.route("structure_violation") is not None
+    assert hub.route("structure_violation").signal_type == "gap_found"
+    assert hub.route("sorry_filled") is not None
+    assert hub.route("sorry_filled").signal_type == "belief_high"
+    assert hub.route("sorry_impossible") is not None
+    assert hub.route("sorry_impossible").signal_type == "gap_found"
     print("signal_hub selfcheck OK")
 
 
