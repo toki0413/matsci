@@ -58,7 +58,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         "Each subagent runs in its own session with a restricted tool set. "
         "Use 'list_types' to see available subagent types, 'dispatch' to run one. "
         "Types: explore (read-only search), coder (write/modify code), "
-        "analyst (analyze data/results)."
+        "analyst (analyze data/results), support (heavy lifting in isolation, "
+        "returns structured JSON findings — Oxelra Core+Support pattern)."
     )
     destructive = False
     read_only = False  # coder subagent can modify files
