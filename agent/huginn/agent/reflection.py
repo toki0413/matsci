@@ -456,10 +456,12 @@ class ReflectionMixin:
         recent_rejections = self._load_recent_rejections(limit=10)
         sys_prompt_summary = self._get_system_prompt_summary()
 
-        # 4. 调 meta critique (model/llm_client 都传 None, 让函数内部兜底, 失败默认 reject)
+        # 4. 调 meta critique. 之前传 model=None 导致 client=None,
+        # await client.ainvoke() 必报 AttributeError, S7 退化成全 reject 死循环.
+        # 修: 传 self.model (agent 自己的 LLM), 失败仍走 except 默认 reject.
         try:
             verdict = await adversarial_critique(
-                model=None,
+                model=getattr(self, "model", None),
                 mode="meta",
                 proposal=proposal,
                 system_prompt_summary=sys_prompt_summary,
