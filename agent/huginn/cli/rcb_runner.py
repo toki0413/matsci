@@ -758,7 +758,28 @@ async def run(workspace: str, extreme: bool = False) -> int:
         "    then soft_check (asymptotic/symmetry/topological), then empirical/none last>\n"
         f"\nChecklist:\n{checklist[:4000]}"
     )
-    scan_text = await _stream_chat(scan_prompt, "step1.5_structure_scan")
+    # Step 1.5 用单次 LLM 调用, 绕过 agent.chat 的 ReAct loop.
+    # 原因: ReAct agent 拿到 prompt 后会直接调 tool 执行, 不给文本规划输出.
+    # Step 1.5 要的是纯文本 structure scan, 不允许 tool call.
+    # ponytail: 不另建 agent 实例 (省 memory), 直接调 model.ainvoke.
+    #   升级路径: 建专用 "planner" agent (无 tools), 复用 thread_id 上下文.
+    scan_text = ""
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+        _scan_msgs = [
+            SystemMessage(content=(
+                "You are a mathematical structure scanner. Output ONLY text, "
+                "no tool calls. Identify the mathematical structure of each "
+                "checklist item and the invariant it must satisfy."
+            )),
+            HumanMessage(content=scan_prompt),
+        ]
+        _scan_resp = await asyncio.to_thread(model.invoke, _scan_msgs)
+        scan_text = _scan_resp.content if hasattr(_scan_resp, "content") else str(_scan_resp)
+        print(scan_text, flush=True)
+    except Exception as _e:
+        print(f"[Step 1.5 LLM call failed: {_e}]", flush=True)
+        scan_text = ""
     print(f"\n[structure scan done: {len(scan_text)} chars]\n", flush=True)
 
     # 写 Meta-Trace entry — role="intuitive_gamer", 带 structure 信息
