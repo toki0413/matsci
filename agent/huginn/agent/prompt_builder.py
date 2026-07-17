@@ -51,12 +51,24 @@ def mode_segment(mode: str) -> str:
 
 
 # ponytail: phase 引导为最小版, 升级路径是从 cognitive_engine.py 迁移完整 PHASE_PROMPTS
+# v6 G51: hypothesize / validate 加结构关系语义对齐 — 先识别物理结构, 再断言同构保持
 _PHASE_GUIDE = {
     "perceive": "Perceive: gather observations; read the problem and existing data.",
-    "hypothesize": "Hypothesize: propose falsifiable hypotheses grounded in theory.",
+    "hypothesize": (
+        "Hypothesize: propose falsifiable hypotheses grounded in theory. "
+        "v6 G51: before proposing, identify the physical structure "
+        "(relation_type + implementor_slots) of the target problem; "
+        "if a source-domain analogue exists, assert structure preservation "
+        "via validate_structure_preservation."
+    ),
     "plan": "Plan: design an experiment or simulation protocol with checkpoints.",
     "execute": "Execute: run the plan step by step, capturing raw outputs.",
-    "validate": "Validate: cross-check results against physics, references, sanity bounds.",
+    "validate": (
+        "Validate: cross-check results against physics, references, sanity bounds. "
+        "v6 G51: if the hypothesis carried a PhysicalStructure, re-assert "
+        "isomorphism on the observed results; emit structure_violation signal "
+        "via SignalHub when preservation breaks."
+    ),
     "learn": "Learn: extract transferable principles; write to memory/knowledge base.",
     "report": "Report: summarize methods, results, uncertainty, and open questions.",
 }
@@ -78,6 +90,13 @@ def metacog_segment(metacog_state: str) -> str:
         "You are in S7 self-modify. Call self_observe to read recent failure "
         "patterns before proposing any change. Propose one concrete modification "
         "(a new stable principle, a prompt patch, or a tool preference change).",
+        # v6 G52: 结构主义反思 — 若近期失败携带 structure_relation_type,
+        # 用 enumerate_implementors 看是否有未试过的 implementor 替换,
+        # 再决定是否更新 recall_strategy 表的 structure_relation_type 条目.
+        "v6 G52: if recent failures carry a structure_relation_type, run "
+        "enumerate_implementors on the affected PhysicalStructure to see "
+        "whether an untried implementor substitution exists; consider "
+        "updating recall_strategy entries tagged with that relation_type.",
     ]
     try:
         from huginn.memory import load_stable_principles

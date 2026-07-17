@@ -73,14 +73,21 @@ import os as _os
 from pathlib import Path as _Path
 
 # 默认策略 — 覆盖 7 phase × 关键 metacog_state. S7 可在此基础上扩展.
+# v6 G52: 加 structure_relation_type 字段 (可选), 让策略表能按结构关系过滤 recall.
 _DEFAULT_RECALL_STRATEGIES: list[dict] = [
-    {"phase": "perceive", "metacog_state": "S1_DISCOVER", "category": "autoloop_summary", "top_k": 2, "query_template": "", "reason": "perceive 阶段需要历史任务上下文"},
-    {"phase": "hypothesize", "metacog_state": "S2_HYPOTHESIZE", "category": "hypothesis", "top_k": 3, "query_template": "", "reason": "hypothesize 阶段需要历史假设做对照"},
-    {"phase": "plan", "metacog_state": "S3_PLAN", "category": "stable_principles", "top_k": 5, "query_template": "", "reason": "plan 阶段必须遵守 stable_principles"},
-    {"phase": "execute", "metacog_state": "S4_ACT", "category": "skill_invocation", "top_k": 3, "query_template": "", "reason": "execute 阶段需要工具调用历史"},
-    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 3, "query_template": "", "reason": "validate 阶段需要历史失败模式"},
-    {"phase": "learn", "metacog_state": "S6_RESOLVE", "category": "knowledge_seed", "top_k": 5, "query_template": "", "reason": "learn 阶段需要知识种子做归纳"},
-    {"phase": "report", "metacog_state": "S6_RESOLVE", "category": "benchmark_run_summary", "top_k": 2, "query_template": "", "reason": "report 阶段需要过往 benchmark 结果对照"},
+    {"phase": "perceive", "metacog_state": "S1_DISCOVER", "category": "autoloop_summary", "top_k": 2, "query_template": "", "reason": "perceive 阶段需要历史任务上下文", "structure_relation_type": ""},
+    {"phase": "hypothesize", "metacog_state": "S2_HYPOTHESIZE", "category": "hypothesis", "top_k": 3, "query_template": "", "reason": "hypothesize 阶段需要历史假设做对照", "structure_relation_type": ""},
+    {"phase": "plan", "metacog_state": "S3_PLAN", "category": "stable_principles", "top_k": 5, "query_template": "", "reason": "plan 阶段必须遵守 stable_principles", "structure_relation_type": ""},
+    {"phase": "execute", "metacog_state": "S4_ACT", "category": "skill_invocation", "top_k": 3, "query_template": "", "reason": "execute 阶段需要工具调用历史", "structure_relation_type": ""},
+    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 3, "query_template": "", "reason": "validate 阶段需要历史失败模式", "structure_relation_type": ""},
+    {"phase": "learn", "metacog_state": "S6_RESOLVE", "category": "knowledge_seed", "top_k": 5, "query_template": "", "reason": "learn 阶段需要知识种子做归纳", "structure_relation_type": ""},
+    {"phase": "report", "metacog_state": "S6_RESOLVE", "category": "benchmark_run_summary", "top_k": 2, "query_template": "", "reason": "report 阶段需要过往 benchmark 结果对照", "structure_relation_type": ""},
+    # v6 G52: 结构关系专用策略 — validate 阶段遇到结构违反时, recall 同结构的历史失败
+    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 5, "query_template": "structure:{structure_relation_type}", "reason": "结构违反时 recall 同类结构历史失败", "structure_relation_type": "catalytic_geometry"},
+    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 5, "query_template": "structure:{structure_relation_type}", "reason": "结构违反时 recall 同类结构历史失败", "structure_relation_type": "interface_binding"},
+    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 5, "query_template": "structure:{structure_relation_type}", "reason": "结构违反时 recall 同类结构历史失败", "structure_relation_type": "percolation_topology"},
+    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 5, "query_template": "structure:{structure_relation_type}", "reason": "结构违反时 recall 同类结构历史失败", "structure_relation_type": "band_symmetry"},
+    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 5, "query_template": "structure:{structure_relation_type}", "reason": "结构违反时 recall 同类结构历史失败", "structure_relation_type": "defect_chemistry"},
 ]
 
 
@@ -127,24 +134,39 @@ def match_recall_strategy(
     metacog_state: str = "",
     strategies: list[dict] | None = None,
     workspace: str | _Path | None = None,
+    structure_relation_type: str = "",
 ) -> dict | None:
-    """匹配策略: 精确 (phase, metacog_state) 优先, 退到只匹配 phase.
+    """匹配策略: 结构关系专用 > 精确 (phase, metacog_state) > 只 phase.
+
+    v6 G52: structure_relation_type 非空时, 优先匹配同结构关系的策略
+    (用于 validate 阶段结构违反时 recall 同类结构历史失败).
+
     metacog_state 可空 (未传时只按 phase 匹配).
     """
     if strategies is None:
         strategies = load_recall_strategy(workspace)
-    # 精确匹配
+    # v6 G52: 结构关系专用策略优先
+    if structure_relation_type:
+        for s in strategies:
+            if (
+                s.get("phase") == phase
+                and s.get("structure_relation_type") == structure_relation_type
+            ):
+                return s
+    # 精确匹配 (phase, metacog_state)
     if metacog_state:
         for s in strategies:
             if s.get("phase") == phase and s.get("metacog_state") == metacog_state:
-                return s
+                # 跳过结构关系专用策略 (没传 structure_relation_type 时不该命中)
+                if not s.get("structure_relation_type"):
+                    return s
     # 退到只匹配 phase
     for s in strategies:
         if s.get("phase") == phase and not s.get("metacog_state"):
             return s
     # 最后退到 phase 任意 metacog_state
     for s in strategies:
-        if s.get("phase") == phase:
+        if s.get("phase") == phase and not s.get("structure_relation_type"):
             return s
     return None
 
@@ -154,13 +176,18 @@ def recall_context_with_strategy(
     metacog_state: str = "",
     query: str = "",
     workspace: str | _Path | None = None,
+    structure_relation_type: str = "",
 ) -> list[dict]:
-    """按学到的策略 recall — 匹配 (phase, metacog_state) 拿 category+top_k.
+    """按学到的策略 recall — 匹配 (phase, metacog_state, structure_relation_type).
 
     无策略命中时返回空 list (调用方自行决定降级路径).
     ponytail: 这是 recall_context 的策略版本, 不替代原 recall_context.
+    v6 G52: structure_relation_type 非空时优先匹配结构关系专用策略.
     """
-    strategy = match_recall_strategy(phase, metacog_state, workspace=workspace)
+    strategy = match_recall_strategy(
+        phase, metacog_state, workspace=workspace,
+        structure_relation_type=structure_relation_type,
+    )
     if strategy is None:
         return []
     # query_template 可扩展为模板替换, 当前直接用 query
