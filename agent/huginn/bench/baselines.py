@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -87,3 +88,43 @@ def format_baseline_table(suite: str, our_score: float, our_score_type: str = "p
         unit = "%" if b.score_type == "percent" else "分"
         lines.append(f"  {b.agent:<25} {b.score:.1f}{unit}  {b.notes}")
     return "\n".join(lines)
+
+
+# v6 G55: no-agent baseline — 对照组, LLM 直接答 suite, 无工具 / 无 autoloop.
+# 用来证明 agent loop 的增益不是 LLM 本身的能力.
+# ponytail: 真执行需要 suite runner; 这里只暴露入口 + 结果落 BASELINES.
+# 升级路径: 接 RCBench suite runner, 真跑 zero-shot.
+def run_no_agent_baseline(
+    suite: str,
+    model: Any = None,
+    n_tasks: int = 0,
+) -> BaselineScore:
+    """跑 no-agent (LLM zero-shot) baseline.
+
+    suite: SUITE_TO_BENCHMARK 键 (general/physics/lineage/repro/optim/research).
+    model: 可选 LLM 客户端; 不传则返回 placeholder (待跑).
+    n_tasks: 跑多少题; 0 表示尚未执行.
+
+    ponytail: 真执行需要 suite runner 接口, 当前只产出 BaselineScore 占位.
+    ceiling: 占位 score=-1.0 表示未跑; 真跑时由 suite runner 填回.
+    """
+    bench = SUITE_TO_BENCHMARK.get(suite, suite)
+    if model is None or n_tasks == 0:
+        score = BaselineScore(
+            agent="LLM zero-shot (no-agent)",
+            benchmark=bench,
+            score=-1.0,
+            score_type="percent",
+            notes=f"no-agent baseline for {suite}; not yet executed (model={model is not None}, n_tasks={n_tasks})",
+        )
+    else:
+        # 真执行路径 — 留给 suite runner 实现. 当前不阻塞, 直接占位.
+        score = BaselineScore(
+            agent="LLM zero-shot (no-agent)",
+            benchmark=bench,
+            score=-1.0,
+            score_type="percent",
+            notes=f"no-agent baseline for {suite}; runner not wired (n_tasks={n_tasks})",
+        )
+    BASELINES.append(score)
+    return score

@@ -382,6 +382,11 @@ class AutoloopEngine:
         self._darwin_best_score: float = 0.0
         self._darwin_stagnation: int = 0  # 连续低增益轮数
         self._darwin_last_score: float = 0.0
+        # v6 G54: 假设的 confidence + evidence_strength, 供 _plan / _validate 读取
+        # confidence = darwin score / 10 (0-1); evidence_strength = supported_ratio (代理)
+        # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
+        self._last_hypothesis_confidence: float = 0.0
+        self._last_hypothesis_evidence_strength: float = 0.0
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
@@ -2058,6 +2063,12 @@ class AutoloopEngine:
         # else: 保留 best_score, preferred_hypothesis 不更新 (棘轮)
 
         self._darwin_last_score = score
+
+        # v6 G54: 把 darwin 分数 / supported_ratio 暴露给 _plan / _validate
+        # ponytail: evidence_strength 用 supported_ratio 做代理, 已在算分时拿到,
+        # 不重复调 RAG. 升级路径: 真 RAG recall 命中数 / provenance 引用数.
+        self._last_hypothesis_confidence = score / 10.0
+        self._last_hypothesis_evidence_strength = float(supported_ratio)
 
         if self._darwin_stagnation >= 2 and self._iteration > 2:
             logger.info(
@@ -6843,14 +6854,87 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
 
         用 task='verification' 让 model_router 路由到独立验证模型,
         避免正向/反向用同一个模型 (同模型有同盲点).
+
+        v6 G57: DeepMind 三层 validation — L1 LLM plan_check (本方法) +
+        L2 dimensional pre-check (_dimensional_pre_check) +
+        L3 physical_precheck (PRE_TOOL_USE hook).
+        量纲不一致不直接淘汰 plan, 只追加到 risks + dimensional_warnings,
+        让 LLM judge 看到后决定.
         """
+        # L2: dimensional pre-check — 先跑, 把 warnings 拼进 prompt 上下文
+        dim_warnings = self._dimensional_pre_check(plan, hypothesis)
+        if dim_warnings:
+            context = dict(context)
+            context["dimensional_warnings"] = "\n".join(dim_warnings)
+
         prompt = self._build_plan_check_prompt(plan, hypothesis, context)
         response = await self._llm_chat(
             prompt,
             persona_name="default",
             task="verification",
         )
-        return self._parse_plan_check(response)
+        result = self._parse_plan_check(response)
+        if dim_warnings:
+            result["dimensional_warnings"] = dim_warnings
+            existing = result.get("risks") or []
+            existing.extend(dim_warnings)
+            result["risks"] = existing
+            self._plan_check_warnings.extend(dim_warnings)
+        return result
+
+    def _dimensional_pre_check(
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+    ) -> list[str]:
+        """L2 dimensional pre-check — 扫 plan + hypothesis 里的等式, 验量纲.
+
+        ponytail: regex 抓 "<number> <unit>" 量 + "=" 等式, 调 DimensionalValidator.
+        只在能解析出两侧都带量纲的等式时跑; 否则跳过 (不误报).
+        ceiling: 简单 regex 抓不住复杂表达式 (函数调用 / 多行推导);
+        升级路径: sympy 解析 + 单位推断.
+        """
+        warnings: list[str] = []
+        try:
+            from huginn.validation.dimensional import DimensionalValidator
+        except Exception:
+            return warnings
+
+        # 拼 plan + hypothesis 文本
+        text_parts = [hypothesis or ""]
+        for k in ("description", "expected_prediction", "prediction"):
+            v = plan.get(k) if isinstance(plan, dict) else None
+            if isinstance(v, str) and v:
+                text_parts.append(v)
+        text = "\n".join(text_parts)
+        if "=" not in text:
+            return warnings
+
+        validator = DimensionalValidator()
+        # 抓 "<number> <unit>" 量, e.g. "210 GPa" / "1.5e3 kg/m3"
+        qty_re = re.compile(
+            r"([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s+([A-Za-z][A-Za-z0-9/\^\-\*\.\(\)]+)"
+        )
+        # 按行 + 按 "=" 切等式
+        for line in text.splitlines():
+            if "=" not in line:
+                continue
+            lhs, rhs = line.split("=", 1)
+            lhs_qs = [f"{m[0]} {m[1]}" for m in qty_re.findall(lhs)]
+            rhs_qs = [f"{m[0]} {m[1]}" for m in qty_re.findall(rhs)]
+            if not lhs_qs or not rhs_qs:
+                continue
+            try:
+                result = validator.check_equation(lhs_qs, rhs_qs, equation_name=line.strip()[:80])
+                if not result.consistent:
+                    warnings.append(
+                        f"dimensional inconsistency: '{line.strip()[:80]}' "
+                        f"LHS={result.lhs_dimensions} RHS={result.rhs_dimensions}"
+                    )
+            except Exception:
+                # 解析失败静默跳过 — 量纲库不全不该阻塞 plan_check
+                continue
+        return warnings
 
     def _build_plan_check_prompt(
         self,
@@ -6877,6 +6961,8 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
             )
         else:
             similar_text = "N/A"
+        # v6 G57: L2 dimensional pre-check 警告 (若 context 带了)
+        dim_warnings_text = context.get("dimensional_warnings", "") or "N/A"
         return f"""你是反向规划识别器 (KRCL 启发). 判断以下 plan 执行后能否达成 hypothesis.
 
 # 目标 (hypothesis)
@@ -6893,6 +6979,9 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
 # 同场景历史失败 (scene={scene}, 跨 run 积累)
 {similar_text}
 
+# 量纲预检查警告 (L2 dimensional pre-check, v6 G57)
+{dim_warnings_text}
+
 # 任务
 判断这个 plan 执行后能否达成 hypothesis. 严格检查:
 - MODE 是否匹配任务类型 (coder 写代码 / workflow 跑流程 / explore 探索 / skill 复合技能)
@@ -6900,6 +6989,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
 - PREDICTION 是否可验证 (能跑出数值/结构/代码对比)
 - 是否遗漏必要前置步骤 (如 band 前需 SCF / MD 前需 minimize / elastic 前需 relax)
 - 是否重复了"同场景历史失败"里列出的坑
+- 量纲预检查有警告时, 把它列入 risks
 
 输出 JSON (不要其他文本):
 {{
