@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -1208,23 +1209,92 @@ def _inherit_enabled() -> bool:
     return os.environ.get("HUGINN_RCB_INHERIT_PRINCIPLES", "1") not in ("0", "false", "False")
 
 
+# === G44: multi-agent metacog — stable_principles 跨 agent 共享文件锁 ===
+# HUGINN_MULTI_AGENT=True 时开启, 否则单 agent 无锁开销.
+# Linux/Mac: fcntl.fLOCK_EX / LOCK_SH
+# Windows: msvcrt.locking LK_LOCK / LK_NBLCK
+# ponytail: 只做同 workspace 内共享, 不引入跨机通信. 升级路径是文件锁 + 跨机
+# 文件系统 (NFS/SMB), 但 NFS lock 语义弱, 真正升级是换成 SQLite + WAL.
+def _multi_agent_enabled() -> bool:
+    return os.environ.get("HUGINN_MULTI_AGENT", "0") in ("1", "true", "True")
+
+
+try:
+    if sys.platform == "win32":
+        import msvcrt as _msvcrt
+        _LOCK_PLATFORM = "windows"
+    else:
+        import fcntl as _fcntl
+        _LOCK_PLATFORM = "posix"
+except ImportError:
+    _LOCK_PLATFORM = "none"
+
+
+@contextmanager
+def _stable_principles_lock(path: Path, exclusive: bool = True):
+    """文件锁上下文管理器. exclusive=True 排他锁 (写), False 共享锁 (读).
+
+    HUGINN_MULTI_AGENT=False 时直接 yield (无锁). 失败不阻断 — 锁是 best-effort,
+    拿不到锁也比卡死强 (ponytail: 跨 agent 竞态是低频事件).
+    """
+    if not _multi_agent_enabled() or _LOCK_PLATFORM == "none":
+        yield
+        return
+    # 锁文件用 .lock 后缀, 不污染数据文件
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lock_path, "a+b")
+    try:
+        if _LOCK_PLATFORM == "windows":
+            # msvcrt: LK_LOCK = 阻塞式排他锁, LK_NBLCK = 非阻塞共享锁
+            # ponytail: Windows msvcrt 只有 1-byte 锁, 写 1 byte 即可
+            try:
+                _msvcrt.locking(f.fileno(), _msvcrt.LK_LOCK, 1) if exclusive else _msvcrt.locking(f.fileno(), _msvcrt.LK_NBLCK, 1)
+            except OSError:
+                # 锁失败不阻断, 让调用方继续 (best-effort)
+                pass
+        else:
+            try:
+                lock_type = _fcntl.LOCK_EX if exclusive else _fcntl.LOCK_SH
+                _fcntl.flock(f.fileno(), lock_type)
+            except OSError:
+                pass
+        yield
+    finally:
+        if _LOCK_PLATFORM == "windows":
+            try:
+                f.seek(0)
+                _msvcrt.locking(f.fileno(), _msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+        else:
+            try:
+                _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
+            except OSError:
+                pass
+        f.close()
+
+
 def store_stable_principle(principle: str, source: str = "S7_self_modify") -> None:
     """追加一条 stable_principle. 每行 {principle, source, timestamp}.
 
     G30: 同时写到本地 STABLE_PRINCIPLES_PATH 和全局 _GLOBAL_PRINCIPLES_PATH,
     让下一任务 init 时能 load 到本任务的修正.
+    G44: HUGINN_MULTI_AGENT=True 时加排他锁, 防止多 agent 并发写损坏文件.
     """
     STABLE_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
     record = {"principle": principle, "source": source, "timestamp": time.time()}
     line = json.dumps(record, ensure_ascii=False) + "\n"
-    with STABLE_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
-        f.write(line)
+    with _stable_principles_lock(STABLE_PRINCIPLES_PATH, exclusive=True):
+        with STABLE_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
+            f.write(line)
     # G30: 双写到全局路径, 供下一任务继承
     if _inherit_enabled():
         try:
             _GLOBAL_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with _GLOBAL_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
-                f.write(line)
+            with _stable_principles_lock(_GLOBAL_PRINCIPLES_PATH, exclusive=True):
+                with _GLOBAL_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
+                    f.write(line)
         except Exception:
             # 全局路径不可写不阻断本地写入
             pass
@@ -1234,6 +1304,7 @@ def load_stable_principles() -> list[str]:
     """读全部 stable_principles, 返回 principle 字符串列表. 文件不存在算空.
 
     G30: 合并读本地 + 全局, 去重保序. 全局让上一任务的 S7 修正对本任务可见.
+    G44: HUGINN_MULTI_AGENT=True 时加共享锁, 防止读到写一半的内容.
     """
     seen: set[str] = set()
     principles: list[str] = []
@@ -1244,7 +1315,9 @@ def load_stable_principles() -> list[str]:
     for path in paths:
         if not path.exists():
             continue
-        for line in path.read_text(encoding="utf-8").splitlines():
+        with _stable_principles_lock(path, exclusive=False):
+            content = path.read_text(encoding="utf-8")
+        for line in content.splitlines():
             if not line.strip():
                 continue
             try:
