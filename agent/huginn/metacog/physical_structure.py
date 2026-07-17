@@ -39,12 +39,17 @@ class PhysicalStructure:
         结构主义核心: 槽位是结构位置, 实现者可替换
     constraints: 物理约束列表 (量纲 / 守恒 / 对称性), sympy 表达式
     provenance_id: 来源 provenance 记录 id (可追溯)
+    relative_anchors: v6 G58 — 槽位 → anchor 实现者名列表. 空表示不做 relative
+        验证 (回到 G46 sympy 验证). 论文 Moschella ICLR 2023: anchor 用于
+        构造相对表示 (cosine similarity 向量), 对角度保持变换不变.
+        e.g. {"active_site": ["Pt", "Pd", "Ni", "Cu"]}
     """
     relation_type: str
     relation_expr: str
     implementor_slots: dict[str, str] = field(default_factory=dict)
     constraints: list[str] = field(default_factory=list)
     provenance_id: str | None = None
+    relative_anchors: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -89,6 +94,11 @@ CATALYTIC_GEOMETRY = PhysicalStructure(
         "epsilon_d > -5*eV",
         "epsilon_d < 2*eV",
     ],
+    # G58: anchor 实现者 — 过渡金属 d-band model 典型参考
+    relative_anchors={
+        "active_site": ["Pt", "Pd", "Ni", "Cu"],
+        "adsorbate": ["O", "H", "CO", "OH"],
+    },
 )
 
 INTERFACE_BINDING = PhysicalStructure(
@@ -109,6 +119,11 @@ INTERFACE_BINDING = PhysicalStructure(
         # 界面电荷密度物理上下界 (sympy 用 Abs)
         "Abs(rho_interface) < 1e3*coulomb/meter**2",
     ],
+    # G58: anchor 实现者 — 典型金属/陶瓷界面体系
+    relative_anchors={
+        "matrix": ["Al", "Cu", "Fe", "Ti"],
+        "precipitate": ["Al2O3", "SiC", "TiB2", "MgO"],
+    },
 )
 
 PERCOLATION_TOPOLOGY = PhysicalStructure(
@@ -134,6 +149,11 @@ PERCOLATION_TOPOLOGY = PhysicalStructure(
         "P_inf >= 0",
         "P_inf <= 1",
     ],
+    # G58: anchor 实现者 — 典型导电填料/绝缘基体组合
+    relative_anchors={
+        "conductor": ["CNT", "Graphene", "Ag", "CB"],
+        "matrix": ["PVDF", "Epoxy", "PDMS", "PE"],
+    },
 )
 
 BAND_SYMMETRY = PhysicalStructure(
@@ -157,6 +177,11 @@ BAND_SYMMETRY = PhysicalStructure(
         # 时间反演对称性二元 (sympy: Or(Eq(TR_sym,0), Eq(TR_sym,1)))
         "Or(Eq(TR_sym, 0), Eq(TR_sym, 1))",
     ],
+    # G58: anchor 实现者 — 典型晶系/基元组合
+    relative_anchors={
+        "lattice": ["cubic", "tetragonal", "hexagonal", "orthorhombic"],
+        "basis": ["Si", "GaAs", "MoS2", "Bi2Se3"],
+    },
 )
 
 DEFECT_CHEMISTRY = PhysicalStructure(
@@ -181,6 +206,11 @@ DEFECT_CHEMISTRY = PhysicalStructure(
         "E_Fermi >= E_vbm",
         "E_Fermi <= E_cbm",
     ],
+    # G58: anchor 实现者 — 典型宿主/缺陷组合
+    relative_anchors={
+        "host": ["Si", "GaAs", "ZnO", "TiO2"],
+        "defect": ["V_O", "V_M", "H_i", "M_sub"],
+    },
 )
 
 PREDEFINED_STRUCTURES: dict[str, PhysicalStructure] = {
@@ -192,7 +222,7 @@ PREDEFINED_STRUCTURES: dict[str, PhysicalStructure] = {
 }
 
 
-# ── 同构验证 — sympy + 物理约束库 ──────────────────────────────────
+# ── G46 同构验证 — sympy + 物理约束库 ──────────────────────────────
 
 def validate_structure_preservation(mapping: StructureMapping) -> bool:
     """验证结构关系在实现者替换后是否保持 (同构即等价).
@@ -272,10 +302,94 @@ def validate_structure_preservation(mapping: StructureMapping) -> bool:
     return True
 
 
+# ── G58 相对结构同构 — Moschella et al. ICLR 2023 ─────────────────
+# 论文: "Relative representations enable zero-shot latent space communication"
+# 核心: cosine similarity 对角度保持变换 (旋转/反射/缩放) 不变. 两个潜在空间
+# 差一个等距变换就是"同构"的, 相对表示把同构显式化.
+# 与用户哲学的对应: 角度保持 = 同构即等价; 相对关系先于绝对坐标 = 结构先于对象;
+# encoder 可替换 decoder 不变 = 锁定结构关系允许不同实现者填充.
+# G46 sympy 验证是符号层, G58 加几何层.
+
+def compute_relative_representation(
+    embeddings: "dict[str, Any]",
+    anchors: list[str],
+) -> "Any":
+    """计算相对表示 — 每个实现者 vs 每个 anchor 的 cosine similarity.
+
+    论文 eq.(3): r_x = (cos(e_x, e_a1), ..., cos(e_x, e_an))
+
+    embeddings: {实现者名: 向量} — 向量是 1D array-like
+    anchors: anchor 实现者名列表 (必须是 embeddings 的 key 子集)
+
+    返回 N×K cosine similarity 矩阵, N=len(embeddings), K=len(anchors).
+
+    ponytail: numpy 实现, 不依赖 LLM/embedding service.
+    embeddings 由调用方传入 (LLM / 物理 calculator / vasp_tool 升级路径).
+    """
+    import numpy as np
+
+    impl_names = list(embeddings.keys())
+    # anchor 必须在 embeddings 里 (anchor 自己也要有向量)
+    missing = [a for a in anchors if a not in embeddings]
+    if missing:
+        raise ValueError(f"anchors not in embeddings: {missing}")
+
+    E = np.array([embeddings[n] for n in impl_names], dtype=float)  # N×d
+    A = np.array([embeddings[a] for a in anchors], dtype=float)     # K×d
+    # cosine similarity: 单位化后内积
+    E_norm = E / (np.linalg.norm(E, axis=1, keepdims=True) + 1e-12)
+    A_norm = A / (np.linalg.norm(A, axis=1, keepdims=True) + 1e-12)
+    return E_norm @ A_norm.T  # N×K
+
+
+def validate_relative_isomorphism(
+    source_repr: "Any",
+    target_repr: "Any",
+    tol: float = 1e-3,
+) -> "tuple[bool, float]":
+    """验证两个相对表示是否同构 (论文 eq.(4)).
+
+    两个潜在空间差一个角度保持变换 T, 则它们的相对表示 (cosine similarity 矩阵)
+    相同. distance = ||source - target||_F / ||source||_F.
+
+    返回 (is_isomorphic, distance).
+    is_isomorphic = distance < tol.
+
+    ponytail: 用 Frobenius 范数归一化, 升级路径是 cosine distance +
+    Stiefel manifold 拟合 (论文用 Procrustes 对齐).
+    """
+    import numpy as np
+
+    source_arr = np.asarray(source_repr, dtype=float)
+    target_arr = np.asarray(target_repr, dtype=float)
+    if source_arr.shape != target_arr.shape:
+        return (False, float("inf"))
+    diff = float(np.linalg.norm(source_arr - target_arr, "fro"))
+    norm = float(np.linalg.norm(source_arr, "fro")) + 1e-12
+    distance = diff / norm
+    return (distance < tol, distance)
+
+
+def compute_and_validate_relative(
+    source_embeddings: "dict[str, Any]",
+    target_embeddings: "dict[str, Any]",
+    anchors: list[str],
+    tol: float = 1e-3,
+) -> "tuple[bool, float]":
+    """一站式: 计算 source/target 相对表示并验证同构.
+
+    source_embeddings 和 target_embeddings 必须有相同的 key 集合
+    (同一组实现者, 不同空间下的向量). anchors 是这组 key 的子集.
+    """
+    source_repr = compute_relative_representation(source_embeddings, anchors)
+    target_repr = compute_relative_representation(target_embeddings, anchors)
+    return validate_relative_isomorphism(source_repr, target_repr, tol=tol)
+
+
 # ── self-check ────────────────────────────────────────────────────
 
 def _self_check() -> int:
-    """assert-based demo: 验证 PhysicalStructure + validate_structure_preservation."""
+    """assert-based demo: 验证 PhysicalStructure + validate_structure_preservation + G58."""
     import tempfile
 
     # 1. 5 类预定义结构都存在
@@ -285,6 +399,8 @@ def _self_check() -> int:
         assert s.relation_expr
         assert s.implementor_slots
         assert s.constraints
+        # G58: 5 类预定义结构各有 relative_anchors
+        assert s.relative_anchors, f"{name} missing relative_anchors"
 
     # 2. 同构保持: 替换 CATALYTIC_GEOMETRY 的 active_site (Pt -> Pd)
     src = CATALYTIC_GEOMETRY
@@ -346,7 +462,62 @@ def _self_check() -> int:
     m5 = StructureMapping(source=src, target=bad_constraint, slot_replacements={})
     assert validate_structure_preservation(m5) is False
 
-    print("[PHYSTRUCT] self-check OK")
+    # ── G58: 相对结构同构测试 ──────────────────────────────────────
+    # 用 mock embedding 验证: 旋转保持角度 → 同构; 扰动破坏角度 → 非同构
+    import numpy as np
+
+    # 4 个实现者 + 4 个 anchor (anchor 是实现者子集)
+    rng = np.random.default_rng(42)
+    impl_names = ["Pt", "Pd", "Ni", "Cu"]
+    source_embeddings = {n: rng.standard_normal(8) for n in impl_names}
+    anchors = impl_names  # 全部当 anchor (最简情形)
+
+    # 7. 相对表示形状 N×K = 4×4
+    source_repr = compute_relative_representation(source_embeddings, anchors)
+    assert source_repr.shape == (4, 4), f"expected 4x4, got {source_repr.shape}"
+    # 对角线应是 1 (自己跟自己 cosine = 1)
+    assert np.allclose(np.diag(source_repr), 1.0, atol=1e-6)
+
+    # 8. 同构: source 旋转后作为 target — 角度保持, 相对表示不变
+    Q, _ = np.linalg.qr(rng.standard_normal((8, 8)))  # 正交矩阵 = 旋转/反射
+    target_embeddings = {n: Q @ source_embeddings[n] for n in impl_names}
+    is_iso, dist = compute_and_validate_relative(
+        source_embeddings, target_embeddings, anchors, tol=1e-6,
+    )
+    assert is_iso, f"rotation should preserve relative repr (dist={dist})"
+    assert dist < 1e-6, f"rotation distance too large: {dist}"
+
+    # 9. 非同构: target 加随机扰动 — 角度被破坏
+    perturbed_embeddings = {
+        n: source_embeddings[n] + 0.5 * rng.standard_normal(8)
+        for n in impl_names
+    }
+    is_iso2, dist2 = compute_and_validate_relative(
+        source_embeddings, perturbed_embeddings, anchors, tol=1e-3,
+    )
+    assert not is_iso2, f"perturbation should break isomorphism (dist={dist2})"
+    assert dist2 > 1e-3, f"perturbation distance too small: {dist2}"
+
+    # 10. anchor 不在 embeddings 里 → ValueError
+    try:
+        compute_relative_representation(
+            source_embeddings, ["Pt", "nonexistent"],
+        )
+        assert False, "should raise ValueError for missing anchor"
+    except ValueError:
+        pass
+
+    # 11. 形状不一致 → (False, inf)
+    is_iso3, dist3 = validate_relative_isomorphism(
+        np.zeros((4, 4)), np.zeros((3, 4)),
+    )
+    assert not is_iso3 and dist3 == float("inf")
+
+    # 12. G58 跟 G46 叠加: relative_anchors 非空时可做 relative 验证
+    assert CATALYTIC_GEOMETRY.relative_anchors["active_site"] == ["Pt", "Pd", "Ni", "Cu"]
+    assert len(CATALYTIC_GEOMETRY.relative_anchors["adsorbate"]) == 4
+
+    print("[PHYSTRUCT] self-check OK (incl G58 relative isomorphism)")
     return 0
 
 
