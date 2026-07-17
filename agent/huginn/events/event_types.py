@@ -40,6 +40,11 @@ SNAPSHOT_REVERT = "snapshot.revert"
 # ── Quality ────────────────────────────────────────────────────────
 QUALITY_CHECK = "quality.check"
 
+# ── Cognitive heat engine (v7 G59) ────────────────────────────────
+# 每轮 darwin_ratchet 后推送热机健康状态: Re_cog / η_cog / status / warnings.
+# 前端订阅 /tasks/stream 的 'heat_engine.health' event 实时展示.
+HEAT_ENGINE_HEALTH = "heat_engine.health"
+
 # ── Session ─────────────────────────────────────────────────────────
 SESSION_START = "session.start"
 SESSION_END = "session.end"
@@ -56,5 +61,6 @@ ALL_TYPES = frozenset({
     CAMPAIGN_ITERATION, CAMPAIGN_REFINE, CAMPAIGN_HYPOTHESIS,
     SNAPSHOT_TAKE, SNAPSHOT_REVERT,
     QUALITY_CHECK,
+    HEAT_ENGINE_HEALTH,
     SESSION_START, SESSION_END,
 })

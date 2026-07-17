@@ -181,3 +181,21 @@ export interface GlobalSearchResponse {
   sources: string[];
   error?: string;
 }
+
+// v7 G59: 认知热机健康状态. 后端 cognitive_heat_engine.health_check() 返回.
+// 每轮 darwin_ratchet 后通过 SSE campaign event 推送一次.
+export interface HeatEngineHealth {
+  eta_cog: number;
+  Re_cog: number;
+  Re_crit: number;
+  T_hot: number;
+  T_cold: number;
+  U: number;
+  L: number;
+  nu: number;
+  intermittency_kurtosis: number;
+  cumulative_work: number;
+  cumulative_entropy_produced: number;
+  status: "healthy" | "stagnant" | "chaotic" | "conservative";
+  warnings: string[];
+}
