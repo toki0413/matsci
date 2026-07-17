@@ -182,6 +182,133 @@ async def adversarial_critique(
         }
 
 
+# === G28: 数值重算 — report 中的数值 claim 对 outputs/ 实际数据交叉验证 ===
+# ponytail: 治 M_002 MAE=0.032eV 造假 — agent 写 report 时编个数, LLM critique 看
+# 文本看不出问题. 这里直接读 outputs/ 里的 metrics.json / predictions.csv 重算,
+# 对不上就记 red flag 喂给 LLM critique. 天花板是只认标准 metric 名 (MAE/RMSE/R²/
+# accuracy/loss), 不认 AUROC/KL divergence 这类; 升级路径是加 recompute 函数注册表.
+import re as _re
+
+_METRIC_CLAIM_PATTERNS: dict[str, str] = {
+    "MAE": r"\bMAE\b\s*[:=]\s*([0-9.]+)",
+    "RMSE": r"\bRMSE\b\s*[:=]\s*([0-9.]+)",
+    "R2": r"\bR[²2]\b\s*[:=]\s*([0-9.]+)",
+    "accuracy": r"\baccuracy\b\s*[:=]\s*([0-9.]+)",
+    "loss": r"\bloss\b\s*[:=]\s*([0-9.]+)",
+}
+
+
+def _parse_report_metric_claims(report: str) -> dict[str, float]:
+    """从 report 文本里抓 MAE=0.05 / R²=0.86 / accuracy=0.56 这类 claim."""
+    claims: dict[str, float] = {}
+    for name, pat in _METRIC_CLAIM_PATTERNS.items():
+        m = _re.search(pat, report, _re.IGNORECASE)
+        if m:
+            try:
+                claims[name] = float(m.group(1))
+            except ValueError:
+                pass
+    return claims
+
+
+def _recompute_report_metrics(report: str, workspace: Path) -> list[dict[str, Any]]:
+    """交叉验证 report 的数值 claim vs outputs/ 实际数据.
+
+    两条路:
+      1. JSON metric file — agent 写的 metrics.json/results.json 直接比对
+      2. predictions CSV — 有 true/pred 列就从原始数据重算 MAE/RMSE/R²
+
+    返回 red_flag 列表, 每项 {metric, claimed, recomputed, red_flag}.
+    空列表 = 无数据可验 / 全部一致.
+    """
+    red_flags: list[dict[str, Any]] = []
+    outputs = workspace / "outputs"
+    if not outputs.exists():
+        return red_flags
+
+    claims = _parse_report_metric_claims(report)
+    if not claims:
+        return red_flags
+
+    actual: dict[str, float] = {}
+
+    # Path 1: JSON metric files
+    for jf in outputs.glob("*.json"):
+        try:
+            data = json.loads(jf.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+            for k, v in data.items():
+                nk = _re.sub(r'[^a-zA-Z0-9]', '', k).lower()
+                if isinstance(v, (int, float)) and nk:
+                    actual[nk] = float(v)
+        except Exception:
+            pass
+
+    # Path 2: predictions CSV — recompute MAE/RMSE/R² from raw true/pred
+    try:
+        import csv as _csv
+        for cf in outputs.glob("*.csv"):
+            try:
+                with cf.open(encoding="utf-8") as f:
+                    rows = list(_csv.DictReader(f))
+                if not rows:
+                    continue
+                cols = {c.lower() for c in rows[0].keys()}
+                true_col = next((c for c in ("y_true", "true", "actual", "target") if c in cols), None)
+                pred_col = next((c for c in ("y_pred", "pred", "predicted", "prediction") if c in cols), None)
+                if not (true_col and pred_col):
+                    continue
+                trues: list[float] = []
+                preds: list[float] = []
+                for r in rows:
+                    try:
+                        # case-insensitive match against row keys
+                        t = next((r[k] for k in r if k.lower() == true_col), None)
+                        p = next((r[k] for k in r if k.lower() == pred_col), None)
+                        trues.append(float(t))
+                        preds.append(float(p))
+                    except (ValueError, TypeError):
+                        pass
+                if len(trues) < 2:
+                    continue
+                n = len(trues)
+                mae = sum(abs(t - p) for t, p in zip(trues, preds)) / n
+                rmse = (sum((t - p) ** 2 for t, p in zip(trues, preds)) / n) ** 0.5
+                mean_t = sum(trues) / n
+                ss_res = sum((t - p) ** 2 for t, p in zip(trues, preds))
+                ss_tot = sum((t - mean_t) ** 2 for t in trues)
+                r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
+                actual["mae"] = mae
+                actual["rmse"] = rmse
+                actual["r2"] = r2
+                break  # first usable CSV is enough
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Cross-check: report claim vs actual
+    # ponytail: 10% 相对容差 — 小浮点噪声 OK, 大谎报必抓. 极小值场景用 1e-4 绝对底.
+    for name, claimed in claims.items():
+        nk = _re.sub(r'[^a-zA-Z0-9]', '', name).lower()
+        recomputed = actual.get(nk)
+        if recomputed is None:
+            continue  # 没数据可验, 交给 LLM
+        diff = abs(claimed - recomputed)
+        scale = max(abs(claimed), abs(recomputed), 1e-4)
+        if diff / scale > 0.1:
+            red_flags.append({
+                "metric": name,
+                "claimed": claimed,
+                "recomputed": round(recomputed, 6),
+                "red_flag": f"report claims {name}={claimed}, recomputed from outputs/ is "
+                            f"{recomputed:.4f} ({diff/scale*100:.1f}% mismatch — investigate "
+                            f"data leakage, wrong split, or fabrication)",
+            })
+    return red_flags
+
+
 def format_critique_for_agent(critique: dict[str, Any]) -> str:
     """把 critique 结果格式化成 agent 可读的修复指令."""
     lines = ["ADVERSARIAL CRITIQUE RESULTS (from independent reviewer):\n"]
@@ -195,6 +322,17 @@ def format_critique_for_agent(critique: dict[str, Any]) -> str:
             lines.append(
                 f"  - {m.get('metric', '?')}: paper={m.get('paper', '?')}, "
                 f"yours={m.get('yours', '?')} — {m.get('red_flag', 'investigate')}"
+            )
+        lines.append("")
+
+    # G28: 数值重算出的 red flags — report 写的数 vs outputs/ 实际数据对不上
+    recomputed = critique.get("recomputed_red_flags", [])
+    if recomputed:
+        lines.append("## RED FLAG — Numeric Claim vs Recomputed Mismatch (fabrication suspect)")
+        for m in recomputed:
+            lines.append(
+                f"  - {m.get('metric', '?')}: report={m.get('claimed', '?')}, "
+                f"recomputed={m.get('recomputed', '?')} — {m.get('red_flag', 'investigate')}"
             )
         lines.append("")
 
@@ -312,6 +450,9 @@ async def run(workspace: str) -> int:
             "file_read_tool", "file_write_tool",
             "glob", "grep", "web_search_tool",
             "self_observe",
+            # G27: 数学工具解除 filter 屏蔽 — repro 数量级错误 (χ=1.0 vs 0.004) 的根因之一
+            # 是四个外部适配器 tool_filter 把数学工具整体摘除 (audit 13 F1).
+            "symbolic_math_tool", "lean_tool", "validate_tool",
         ],
         # RCB 是无人工 subprocess, 所有工具自动 approve
         auto_approve=True,
@@ -382,6 +523,26 @@ async def run(workspace: str) -> int:
     )
     checklist = await _stream_chat(step1_prompt, "step1")
     print(f"\n[checklist extracted: {len(checklist)} chars]\n", flush=True)
+
+    # G29: checklist 永驻 system_prompt — 写入 stable_principles (source="checklist"),
+    # context.py 的 STABLE_PRINCIPLES 段每轮 build_prompt 重读, 不进 compaction 范围.
+    # 修 audit 09: RCB 长任务 compaction 跳过后 checklist 丢失, Step 2/3 看不到方法论约束.
+    # ponytail: checklist 是 persona 级输入 (跨 step 不变), 走 stable_principles 通道
+    # 比改 prompt_builder 加新段更省代码. 任务结束不清除, 下一任务 init 时会被覆盖语义
+    # (新 checklist 会被 store 进来, 旧的仍在文件里但 LLM 会以新为准).
+    if checklist and checklist.strip():
+        try:
+            from huginn.memory import store_stable_principle
+            # 截断到 2000 字符防 persona 膨胀, 完整 checklist 在 ws/checklist.md
+            store_stable_principle(
+                f"[METHODOLOGY CHECKLIST]\n{checklist[:2000]}",
+                source="rcb_step1_checklist",
+            )
+            # 同时写到 ws/checklist.md 让 agent 能 file_read_tool 读完整版
+            (ws / "checklist.md").write_text(checklist, encoding="utf-8")
+            print(f"[G29: checklist stored as stable_principle + ws/checklist.md]", flush=True)
+        except Exception as e:
+            print(f"[G29: checklist store skipped: {e}]", flush=True)
 
     # Step 2: 执行任务
     # checklist 已在 thread_id 的对话历史里, agent 能看到. 不需要显式注入.
@@ -459,6 +620,21 @@ async def run(workspace: str) -> int:
             object_verdict = await adversarial_critique(
                 model, report_text, checklist, mode="object",
             )
+            # G28: 数值重算 — report 写的 MAE=0.05 vs outputs/ 实际 MAE 对不上就记 red flag
+            # ponytail: 不调 validate_tool/numerical_tool (agent-side 工具), 直接 Python 重算.
+            # 天花板同 _recompute_report_metrics 注释. 不破坏 object/meta 双层 critique:
+            # 走 object verdict 的额外字段 recomputed_red_flags, format_critique_for_agent 已处理.
+            try:
+                recomputed = _recompute_report_metrics(report_text, ws)
+                if recomputed:
+                    object_verdict.setdefault("recomputed_red_flags", []).extend(recomputed)
+                    # 有 fabrication 嫌疑就强制 fail, 不让 LLM critique 放过
+                    if object_verdict.get("overall_verdict") == "pass":
+                        object_verdict["overall_verdict"] = "fix_needed"
+                    print(f"[G28: {len(recomputed)} metric claim(s) mismatch recomputed values]", flush=True)
+                    external_critique_block = format_critique_for_agent(object_verdict)
+            except Exception as e:
+                print(f"[G28: recompute skipped: {e}]", flush=True)
             external_critique_block = format_critique_for_agent(object_verdict)
             print(f"[adversarial_critique: verdict={object_verdict.get('overall_verdict', '?')}]", flush=True)
         except Exception as e:

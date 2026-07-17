@@ -1103,28 +1103,65 @@ class LongTermMemory:
 # RCB/benchmark 也要保留 (memory_manager 在 bench 里是 None).
 STABLE_PRINCIPLES_PATH = Path(".huginn/stable_principles.jsonl")
 
+# G30: 全局 stable_principles 路径 — 跨任务/跨 RCB workspace 复用.
+# RCB runner 把 HUGINN_CACHE_DIR 重定向到 ws/.huginn_cache, STABLE_PRINCIPLES_PATH
+# 是相对路径跟着 cwd 走, 每个任务独立. 全局路径固定在 ~/.huginn/, 任务间共享.
+# HUGINN_RCB_INHERIT_PRINCIPLES=True (default) 时, store 双写, load 合并读.
+_GLOBAL_PRINCIPLES_PATH = Path.home() / ".huginn" / "stable_principles.jsonl"
+
+
+def _inherit_enabled() -> bool:
+    """G30: 是否跨任务继承 stable_principles. 默认开."""
+    return os.environ.get("HUGINN_RCB_INHERIT_PRINCIPLES", "1") not in ("0", "false", "False")
+
 
 def store_stable_principle(principle: str, source: str = "S7_self_modify") -> None:
-    """追加一条 stable_principle. 每行 {principle, source, timestamp}."""
+    """追加一条 stable_principle. 每行 {principle, source, timestamp}.
+
+    G30: 同时写到本地 STABLE_PRINCIPLES_PATH 和全局 _GLOBAL_PRINCIPLES_PATH,
+    让下一任务 init 时能 load 到本任务的修正.
+    """
     STABLE_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
     record = {"principle": principle, "source": source, "timestamp": time.time()}
+    line = json.dumps(record, ensure_ascii=False) + "\n"
     with STABLE_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.write(line)
+    # G30: 双写到全局路径, 供下一任务继承
+    if _inherit_enabled():
+        try:
+            _GLOBAL_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with _GLOBAL_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            # 全局路径不可写不阻断本地写入
+            pass
 
 
 def load_stable_principles() -> list[str]:
-    """读全部 stable_principles, 返回 principle 字符串列表. 文件不存在算空."""
-    if not STABLE_PRINCIPLES_PATH.exists():
-        return []
+    """读全部 stable_principles, 返回 principle 字符串列表. 文件不存在算空.
+
+    G30: 合并读本地 + 全局, 去重保序. 全局让上一任务的 S7 修正对本任务可见.
+    """
+    seen: set[str] = set()
     principles: list[str] = []
-    for line in STABLE_PRINCIPLES_PATH.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
+    paths = [STABLE_PRINCIPLES_PATH]
+    # G30: 全局路径在继承开关开时一起读
+    if _inherit_enabled():
+        paths.append(_GLOBAL_PRINCIPLES_PATH)
+    for path in paths:
+        if not path.exists():
             continue
-        try:
-            principles.append(json.loads(line)["principle"])
-        except (json.JSONDecodeError, KeyError):
-            # 损坏行直接跳过, 别让一条坏数据把整个 persona 干废
-            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                p = json.loads(line)["principle"]
+            except (json.JSONDecodeError, KeyError):
+                # 损坏行直接跳过, 别让一条坏数据把整个 persona 干废
+                continue
+            if p not in seen:
+                seen.add(p)
+                principles.append(p)
     return principles
 
 

@@ -1356,12 +1356,27 @@ class AutoloopEngine:
                     logger.warning("perceive failed: %s", phase.error)
                 else:
                     logger.info("no changes detected, waiting...")
-                # 轮空时 drain 侧边对话: 有 pending 问题就顺手答掉, 不白等.
-                await self._drain_side_questions()
-                await asyncio.sleep(0.5)  # reduced from 2s for faster response
-                continue
-
-            context = phase.result
+                # G31: autoloop 装置激活 — 首轮 + objective 存在时不轮空 continue,
+                # 强制进 hypothesize. 修 audit 06 F1: 18/18 轨迹 perceive+report 两阶段,
+                # 0 工具调用. _perceive_legacy 以 git 变更为触发源, 干净 workspace 永远 None.
+                # ponytail: 仅首轮 bypass, 后续轮仍走原逻辑避免空转放大.
+                if self._iteration == 1 and self._objective:
+                    logger.info(
+                        "G31: perceive empty on iter 1 with objective set, "
+                        "forcing hypothesize with minimal context"
+                    )
+                    context = {
+                        "forced": True,
+                        "objective": self._objective,
+                        "note": "perceive returned empty, G31 forces hypothesize",
+                    }
+                else:
+                    # 轮空时 drain 侧边对话: 有 pending 问题就顺手答掉, 不白等.
+                    await self._drain_side_questions()
+                    await asyncio.sleep(0.5)  # reduced from 2s for faster response
+                    continue
+            else:
+                context = phase.result
 
             # 1b. Blind spot pass — 在 hypothesize 之前扫描盲区
             # 借鉴 "Finding Your Unknowns" 文章: 事前发现 unknown unknowns
@@ -2200,6 +2215,18 @@ class AutoloopEngine:
                 },
             )
             trajectory_data = load_trajectory(trajectory_path)
+            # G31: trajectory tool_calls 断言 — 修 audit 06 F1
+            # (18/18 轨迹 0 工具调用, perceive+report 两阶段空转).
+            # 非查询 objective + 0 工具调用 = autoloop 装置未激活, 记 warning.
+            _tc = trajectory_data.get("tool_calls", []) if trajectory_data else []
+            _obj_lower = (objective or "").strip().lower()
+            _is_query = _obj_lower.startswith("query") or _obj_lower.startswith("read")
+            if not _tc and objective and not _is_query:
+                logger.warning(
+                    "G31: trajectory has 0 tool_calls for non-query objective "
+                    "'%s' — autoloop may be空转 (audit 06 F1)",
+                    objective[:100],
+                )
         except Exception:
             trajectory_path = None
 
