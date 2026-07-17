@@ -332,6 +332,15 @@ class AutoloopEngine:
         # 否则 pivot→fail→refine→pivot→fail 无限循环, 烧 token 不出结果.
         self._pivot_count = 0
         self._max_pivots = 3
+        # v7 phase 解耦: refute/pivot 后下一轮的起点 phase.
+        # Oxelra 求是引擎 role-phase 解耦启示: 7-phase 线性太死, 失败应能回退到
+        # 合适的 phase 而不是只 refine. hint 在 refute 时设, 下一轮 perceive 前查.
+        # 值: None (默认从头) | "plan" (跳过 perceive+hypothesize) | "execute" (只重跑实验)
+        self._next_phase_hint: str | None = None
+        # v7 phase 解耦: refine 生成的新 hypothesis 文本, hint="execute" 时复用,
+        # 跳过 hypothesize 直接进 plan/execute. ponytail: 只存文本不存 id,
+        # graph 操作仍走 _current_hyp_id 流程.
+        self._refined_hypothesis: str | None = None
         # plan_check 状态走引擎级, 不塞 plan dict — plan 会序列化进 prompt,
         # 塞进去等于把校验元信息喂给 LLM 污染上下文. history 喂自适应, last_result
         # 给 _validate 取, warnings 留痕. patterns 跨 run 持久化 (失败模式记忆).
@@ -1381,17 +1390,35 @@ class AutoloopEngine:
 
             # 1. Perceive — _perceive 里的 _perceive_legacy 会跑 git subprocess + rglob,
             # 阻塞事件循环 5-15s, 用 to_thread 丢到线程池
-            phase = await self._run_phase_async(
-                "perceive", lambda: asyncio.to_thread(self._perceive)
-            )
-            phases.append(phase)
-            completed_steps += 1
-            tracker.update(
-                progress_task_id,
-                current_step=completed_steps,
-                current_label=f"iter {self._iteration}: perceive ({phase.status})",
-            )
-            if not phase.result:
+            #
+            # v7 phase 解耦: hint 设置时跳过 perceive. refute 后环境没变,
+            # 重跑 git diff 是浪费. hint 在用过之后清空 (只影响下一轮).
+            _skip_perceive = self._next_phase_hint in ("plan", "execute")
+            if _skip_perceive:
+                logger.info(
+                    "v7 phase 解耦: 跳过 perceive (hint=%s)",
+                    self._next_phase_hint,
+                )
+                phase = None
+            else:
+                phase = await self._run_phase_async(
+                    "perceive", lambda: asyncio.to_thread(self._perceive)
+                )
+                phases.append(phase)
+                completed_steps += 1
+                tracker.update(
+                    progress_task_id,
+                    current_step=completed_steps,
+                    current_label=f"iter {self._iteration}: perceive ({phase.status})",
+                )
+            if _skip_perceive:
+                # v7 phase 解耦: hint 跳过 perceive, 用 forced context 进 hypothesize
+                context = {
+                    "forced": True,
+                    "objective": self._objective,
+                    "note": f"phase skip (hint={self._next_phase_hint})",
+                }
+            elif not phase.result:
                 if phase.error:
                     self._speculator_hint += f"\n[failed: perceive] {phase.error}\n"
                     logger.warning("perceive failed: %s", phase.error)
@@ -1435,24 +1462,33 @@ class AutoloopEngine:
                     logger.warning("blind spot pass failed", exc_info=True)
 
             # 2. Hypothesize
-            phase = await self._run_phase_async(
-                "hypothesize", self._hypothesize, context
-            )
-            phases.append(phase)
-            completed_steps += 1
-            tracker.update(
-                progress_task_id,
-                current_step=completed_steps,
-                current_label=f"iter {self._iteration}: hypothesize ({phase.status})",
-            )
-            hypothesis = phase.result
+            # v7 phase 解耦: hint="execute" 时跳过 hypothesize, 复用 refine 生成的新 hypothesis.
+            # 这样 refute→refine 后能直接重跑实验, 不浪费一轮重新生成假设.
+            _skip_hypothesize = self._next_phase_hint == "execute" and self._refined_hypothesis
+            if _skip_hypothesize:
+                logger.info(
+                    "v7 phase 解耦: 跳过 hypothesize, 复用 refined hypothesis"
+                )
+                hypothesis = self._refined_hypothesis
+                phase = None
+            else:
+                phase = await self._run_phase_async(
+                    "hypothesize", self._hypothesize, context
+                )
+                phases.append(phase)
+                completed_steps += 1
+                tracker.update(
+                    progress_task_id,
+                    current_step=completed_steps,
+                    current_label=f"iter {self._iteration}: hypothesize ({phase.status})",
+                )
+                hypothesis = phase.result
             if not hypothesis:
                 # propagate error to speculator hint so next iteration knows why
-                if phase.error:
+                if phase is not None and phase.error:
                     self._speculator_hint += f"\n[failed: hypothesize] {phase.error}\n"
-                logger.info(
-                    "no hypothesis generated (%s), skipping", phase.error or "unknown"
-                )
+                _err = phase.error if phase is not None else "unknown"
+                logger.info("no hypothesis generated (%s), skipping", _err)
                 continue
             logger.info("hypothesis: %s", hypothesis)
             # 发布 campaign.hypothesis 事件
@@ -1735,6 +1771,19 @@ class AutoloopEngine:
                                         _current_hyp_id,
                                         new_hyp,
                                     )
+                                    # v7 phase 解耦: 设 hint 让下轮跳到合适 phase,
+                                    # 同时存 refined hypothesis 文本供 execute 路径复用
+                                    self._next_phase_hint = self._choose_recovery_phase(
+                                        failure_type, validation
+                                    )
+                                    try:
+                                        self._refined_hypothesis = (
+                                            self.hypothesis_graph._nodes[new_hyp].statement
+                                            if new_hyp in self.hypothesis_graph._nodes
+                                            else None
+                                        )
+                                    except Exception:
+                                        self._refined_hypothesis = None
                                     # 发布 campaign.refine 事件
                                     self._emit_campaign(
                                         "campaign.refine",
@@ -1782,6 +1831,8 @@ class AutoloopEngine:
                                         _current_hyp_id,
                                         new_hyp,
                                     )
+                                    # v7 phase 解耦: pivot 后从头走 (新假设需要全流程)
+                                    self._next_phase_hint = "perceive"
                                     self._emit_campaign(
                                         "campaign.refine",
                                         {
@@ -2010,6 +2061,10 @@ class AutoloopEngine:
             if not self._should_stop:
                 self._darwin_ratchet_check()
 
+            # v7 phase 解耦: hint 只影响下一轮, 用完清空. refined_hypothesis 同理.
+            self._next_phase_hint = None
+            self._refined_hypothesis = None
+
         # 7. Report + finalize
         return await self._finalize_run(
             objective,
@@ -2142,6 +2197,82 @@ class AutoloopEngine:
                 self._darwin_best_score,
             )
             self._should_stop = True
+
+        # v7 Meta-Trace: 每轮蒸馏成结构化科研要点, 对标 Oxelra Meta-Trace.
+        # 目标: 长任务不靠完整 transcript, 用结构化要点保持 context 密度.
+        # ponytail: 从已有 self.* 字段抽, 不调 LLM (省 token). ceiling 是 LLM 蒸馏.
+        try:
+            self._distill_meta_trace(score, supported_ratio)
+        except Exception:
+            logger.debug("meta_trace distill failed (non-fatal)", exc_info=True)
+
+    def _distill_meta_trace(self, darwin_score: float, supported_ratio: float) -> None:
+        """把本轮蒸馏成结构化科研要点, 追加到 .huginn/meta_trace.jsonl.
+
+        Oxelra Meta-Trace 启示: 每步边界蒸馏 what attempted/found/evidence/
+        limitation/artifact/next_hint. 不存 raw trace, 只存结构化要点.
+
+        ponytail: 字段从 self.* 现有状态抽, 不调 LLM. ceiling 是 LLM 蒸馏.
+                  文件路径跟 stable_principles 同目录 (.huginn/), 一行一个 JSON.
+        """
+        import json
+        import time
+        from pathlib import Path
+
+        # 从 self.* 抽本轮关键信息 (都是上一轮 phase 写进去的)
+        attempted = ""
+        if getattr(self, "_last_hypothesis", None):
+            attempted = str(self._last_hypothesis)[:300]
+
+        found = ""
+        limitations: list[str] = []
+        if getattr(self, "_last_validation", None) and isinstance(self._last_validation, dict):
+            v = self._last_validation
+            found = str(v.get("result", ""))[:300]
+            if v.get("errors"):
+                limitations.append(str(v["errors"])[:200])
+
+        evidence: list[str] = []
+        try:
+            for nd in self.hypothesis_graph.supported()[:3]:
+                evidence.append(str(nd.statement)[:150])
+        except Exception:
+            pass
+
+        artifacts: list[str] = []
+        if getattr(self, "_last_execution_result", None) and isinstance(self._last_execution_result, dict):
+            outs = self._last_execution_result.get("outputs") or self._last_execution_result.get("files")
+            if isinstance(outs, list):
+                artifacts = [str(f)[:150] for f in outs[:5]]
+            elif isinstance(outs, str):
+                artifacts = [outs[:150]]
+
+        next_hint = (getattr(self, "_speculator_hint", "") or "")[-300:]
+
+        entry = {
+            "iteration": self._iteration,
+            "ts": time.time(),
+            "role": "autoloop",  # ponytail: 单 agent, role 固定; 升级多 agent 后填实际 role
+            "attempted": attempted,
+            "found": found,
+            "evidence": evidence,
+            "limitations": limitations,
+            "artifacts": artifacts,
+            "next_hint": next_hint,
+            "darwin_score": round(darwin_score, 2),
+            "supported_ratio": round(supported_ratio, 3),
+        }
+
+        # 写到 workspace 的 .huginn/meta_trace.jsonl (不存在就建)
+        # ponytail: 不走 memory_manager, 直接写文件. 跟 directive_rejections 同模式.
+        ws = getattr(self, "workspace_root", None) or Path.cwd()
+        trace_path = Path(ws) / ".huginn" / "meta_trace.jsonl"
+        try:
+            trace_path.parent.mkdir(parents=True, exist_ok=True)
+            with trace_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.debug("meta_trace write failed (non-fatal)", exc_info=True)
 
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         """发布 campaign.* 事件到 EventBus + SSE 流, fire-and-forget.
@@ -2830,7 +2961,25 @@ class AutoloopEngine:
                 result[key] = val[:300]  # 长度限制, 防异常输入
         return result
 
-    @staticmethod
+    def _choose_recovery_phase(self, failure_type: str, validation: dict[str, Any]) -> str:
+        """v7 phase 解耦: 根据失败类型选下一轮起点 phase.
+
+        Oxelra 启示: 失败应能回退到合适 phase, 而不是只 refine.
+        - tool_error / data_noise: 实验层问题, 跳 perceive+hypothesize, 复用 refined hypothesis
+          (plan 仍走, 因 execute 强依赖 plan 的结构化输出)
+        - param_error: 参数错, 跳 perceive (hypothesize 仍走, 生成新假设)
+        - hypothesis_error: 假设错, 从头走
+        - prompt_injection_suspect: 从头走 (保守, 重走全流程)
+
+        ponytail: 简单 failure_type → phase 映射, ceiling 是 LLM 根据错误
+                  语义动态选 phase + 保存上轮 plan 跳过 plan. 当前静态规则够用.
+        """
+        if failure_type in ("tool_error", "data_noise"):
+            return "execute"
+        if failure_type == "param_error":
+            return "plan"
+        return "perceive"
+
     def _classify_failure(
         validation: dict[str, Any],
         redteam_cats: list[str] | None = None,
