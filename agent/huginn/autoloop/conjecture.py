@@ -1015,4 +1015,180 @@ def get_kg() -> Any:
     return _kg_singleton
 
 
-__all__ = ["ConjectureGenerator", "get_conjecture_generator"]
+# ── v6 G49: Moonshine 三步结构主义重构 ──────────────────────────────
+# 用户思想: 结构先于对象. extract_pattern 抽取的是文字模式, 升级为
+# extract_physical_structure 抽取 PhysicalStructure (形式化结构关系).
+# transfer_domain 接受 PhysicalStructure, 锁定 relation_type 不变, 允许不同
+# 实现者填充槽位. generate_conjecture 断言同构保持 (validate_structure_preservation).
+
+# 旧 6 类文字结构 → 5 类预定义结构的映射
+_TEXT_TO_STRUCTURE_TYPE: dict[str, str] = {
+    "pde": "band_symmetry",
+    "variational": "interface_binding",
+    "conservation": "defect_chemistry",
+    "geometric": "catalytic_geometry",
+    "statistical": "percolation_topology",
+    # 默认兜底
+    "unknown": "catalytic_geometry",
+}
+
+
+def extract_physical_structure(
+    source_problem: str,
+    source_domain: str,
+    model: Any = None,
+    domain_context: str | None = None,
+) -> "tuple[Any, dict[str, Any]]":
+    """G49: 从已知问题抽取 PhysicalStructure (替代纯文字 extract_pattern).
+
+    返回 (physical_structure, pattern_dict).
+    pattern_dict 跟旧 extract_pattern 兼容 (含 abstract_pattern/action/property/
+    direction/mechanism/method), physical_structure 是新增的形式化结构.
+
+    ponytail: 文字 pattern 用旧 extract_pattern (已有, 关键词模板+LLM),
+    再用关键词映射到预定义 PhysicalStructure. 升级路径是 LLM 直接产
+    PhysicalStructure (relation_expr + constraints).
+    """
+    gen = ConjectureGenerator()
+    pattern = gen.extract_pattern(
+        source_problem, source_domain, model=model, domain_context=domain_context,
+    )
+
+    # 从 pattern 关键词推断 relation_type
+    text = (
+        pattern.get("abstract_pattern", "") + " " +
+        pattern.get("action", "") + " " +
+        pattern.get("property", "") + " " +
+        source_problem
+    ).lower()
+    relation_type = _infer_relation_type(text)
+
+    # 用预定义结构作模板, implementor_slots 用 pattern 的 action/property 填
+    from huginn.metacog.physical_structure import PREDEFINED_STRUCTURES
+    template = PREDEFINED_STRUCTURES.get(relation_type)
+    if template is None:
+        # 兜底: catalytic_geometry
+        template = PREDEFINED_STRUCTURES["catalytic_geometry"]
+
+    # 构造 PhysicalStructure — 复用 template 的 relation_expr/constraints,
+    # implementor_slots 填 pattern 的抽象 action/property
+    from huginn.metacog.physical_structure import PhysicalStructure
+    physical = PhysicalStructure(
+        relation_type=template.relation_type,
+        relation_expr=template.relation_expr,
+        implementor_slots=dict(template.implementor_slots),
+        constraints=list(template.constraints),
+        relative_anchors=dict(template.relative_anchors),
+    )
+    # action/property 进 metadata (pattern 里已有, 不重复存)
+    pattern["physical_structure_type"] = relation_type
+    return physical, pattern
+
+
+def transfer_with_structure(
+    physical_structure: "Any",
+    pattern: dict[str, Any],
+    target_domain: str,
+    model: Any = None,
+) -> "tuple[Any, dict[str, Any]]":
+    """G49: 把 PhysicalStructure 迁移到目标领域 — 锁定结构关系, 允许不同实现者.
+
+    返回 (target_physical_structure, transfer_result_dict).
+    target_physical_structure 跟 source 同 relation_type (结构不变),
+    implementor_slots 用目标领域的实现者填充.
+
+    ponytail: 当前直接复用 source 的 implementor_slots (不真替换), 因为
+    目标领域实现者识别需要 LLM + 领域知识. 升级路径是 LLM 给目标领域候选
+    实现者, 再调 enumerate_implementors 枚举.
+    """
+    gen = ConjectureGenerator()
+    transfer = gen.transfer_domain(pattern, target_domain, model=model)
+
+    # target PhysicalStructure: 同 relation_type, implementor_slots 暂时复用
+    # (真实迁移需要 LLM 识别目标领域实现者)
+    from huginn.metacog.physical_structure import PhysicalStructure
+    target_physical = PhysicalStructure(
+        relation_type=physical_structure.relation_type,
+        relation_expr=physical_structure.relation_expr,
+        implementor_slots=dict(physical_structure.implementor_slots),
+        constraints=list(physical_structure.constraints),
+        relative_anchors=dict(physical_structure.relative_anchors),
+    )
+    transfer["target_physical_structure_type"] = target_physical.relation_type
+    return target_physical, transfer
+
+
+def generate_conjecture_with_structure(
+    source_physical: "Any",
+    target_physical: "Any",
+    transfer_result: dict[str, Any],
+    model: Any = None,
+    prompt_level: int = 1,
+    known_solutions: list[str] | None = None,
+) -> "tuple[bool, dict[str, Any]]":
+    """G49: 生成猜想并断言同构保持 (validate_structure_preservation).
+
+    返回 (is_isomorphic, conjecture_result_dict).
+    is_isomorphic = True 表示 source/target 结构保持, 猜想可作为同构保持的
+    跨域迁移; False 表示结构破坏, 猜想需重新生成.
+
+    ponytail: 当前 source/target implementor_slots 相同 (transfer_with_structure
+    没真替换), 必然 trivial mapping. 升级路径是 transfer_with_structure 真做
+    实现者替换, 这里才能真验证同构.
+    """
+    from huginn.metacog.physical_structure import StructureMapping, validate_structure_preservation
+    gen = ConjectureGenerator()
+    conjecture = gen.generate_conjecture(
+        transfer_result, model=model,
+        prompt_level=prompt_level, known_solutions=known_solutions,
+    )
+
+    # 断言同构保持
+    mapping = StructureMapping(
+        source=source_physical,
+        target=target_physical,
+        slot_replacements={},
+    )
+    is_isomorphic = validate_structure_preservation(mapping)
+    conjecture["is_structure_preserved"] = is_isomorphic
+    conjecture["structure_violations"] = mapping.violation_detail
+    return is_isomorphic, conjecture
+
+
+def _infer_relation_type(text: str) -> str:
+    """从 pattern 文字推断 5 类预定义 relation_type."""
+    text_lower = text.lower()
+    # band_symmetry: 电子结构/能带/带隙
+    if any(k in text_lower for k in (
+        "band", "能带", "带隙", "symmetry", "对称", "topolog", "电子结构",
+    )):
+        return "band_symmetry"
+    # interface_binding: 界面/结合/异质
+    if any(k in text_lower for k in (
+        "interface", "界面", "binding", "结合", "hetero", "异质", "adhesion",
+    )):
+        return "interface_binding"
+    # percolation_topology: 逾渗/网络/连通
+    if any(k in text_lower for k in (
+        "percolat", "逾渗", "network", "网络", "connect", "连通", "transport",
+    )):
+        return "percolation_topology"
+    # defect_chemistry: 缺陷/掺杂/电荷
+    if any(k in text_lower for k in (
+        "defect", "缺陷", "dop", "掺杂", "charge", "电荷", "vacanc", "空位",
+    )):
+        return "defect_chemistry"
+    # catalytic_geometry: 催化/吸附/活性位
+    if any(k in text_lower for k in (
+        "catal", "催化", "adsorp", "吸附", "active site", "活性位",
+    )):
+        return "catalytic_geometry"
+    # 默认
+    return "catalytic_geometry"
+
+
+__all__ = [
+    "ConjectureGenerator", "get_conjecture_generator",
+    "extract_physical_structure", "transfer_with_structure",
+    "generate_conjecture_with_structure",
+]
