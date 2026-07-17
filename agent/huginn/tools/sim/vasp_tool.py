@@ -300,7 +300,7 @@ class VaspTool(HuginnTool):
                 else:
                     # returncode=0 不代表收敛了, 先查 OUTCAR 的 SCF 状态
                     parsed_now = (
-                        self._parse_outcar(work_dir / "OUTCAR")
+                        self._parse_outcar(work_dir / "OUTCAR", action=args.action)
                         if (work_dir / "OUTCAR").exists()
                         else {}
                     )
@@ -360,7 +360,10 @@ class VaspTool(HuginnTool):
 
             # Parse OUTCAR for comprehensive results
             outcar = work_dir / "OUTCAR"
-            parsed = self._parse_outcar(outcar) if outcar.exists() else {}
+            parsed = (
+                self._parse_outcar(outcar, action=args.action)
+                if outcar.exists() else {}
+            )
 
             # Also try vasprun.xml for structured data
             vasprun = work_dir / "vasprun.xml"
@@ -699,12 +702,28 @@ class VaspTool(HuginnTool):
             error=eos_result.error,
         )
 
-    def _parse_outcar(self, outcar_path: Path) -> dict[str, Any]:
+    def _parse_outcar(
+        self, outcar_path: Path, action: str | None = None
+    ) -> dict[str, Any]:
         """Parse OUTCAR for key physical quantities.
 
         Uses the Rust accelerator when available and falls back to pure Python.
+
+        action controls the convergence criterion (audit_20260717/14 P1-5):
+        - "relax" (or None / md / phonon): ionic convergence ("reached
+          required accuracy" — VASP's ionic-step marker)
+        - "scf": electronic convergence — last SCF reached EDIFF before NELM
+        - "band" / "dos": non-self-consistent, no SCF loop — converged if
+          any output exists (initial CHGCAR read counts as success)
+
+        The previous code applied the ionic marker to scf/band/dos, which
+        never have that marker → all healthy SCF/band/dos were misjudged as
+        "not converged" → AutoFixLoop wasted 2× compute re-running them.
         """
-        if _HAS_HUGINN_EXT:
+        # For scf/band/dos we can't trust the Rust parser's converged field
+        # (it uses the ionic marker). Fall through to Python which is
+        # action-aware. For relax/md/phonon, Rust is fine for perf.
+        if _HAS_HUGINN_EXT and action not in ("scf", "band", "dos"):
             try:
                 result = huginn_ext.parse_outcar(str(outcar_path))
                 if "error" not in result:
@@ -716,9 +735,11 @@ class VaspTool(HuginnTool):
             except Exception:
                 logger.debug("suppressed in _parse_outcar", exc_info=True)
 
-        return self._parse_outcar_python(outcar_path)
+        return self._parse_outcar_python(outcar_path, action=action)
 
-    def _parse_outcar_python(self, outcar_path: Path) -> dict[str, Any]:
+    def _parse_outcar_python(
+        self, outcar_path: Path, action: str | None = None
+    ) -> dict[str, Any]:
         """Pure-Python OUTCAR parser (baseline/fallback)."""
         import re
 
@@ -737,7 +758,9 @@ class VaspTool(HuginnTool):
             "ispin": None,
         }
 
-        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底
+        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底.
+        # 注意 pymatgen 的 Outcar.converged 也是用离子收敛标记,
+        # 对 scf/band/dos 同样误判 — 下面 action-aware 检查会覆盖它.
         try:
             from pymatgen.io.vasp import Outcar
 
@@ -765,10 +788,31 @@ class VaspTool(HuginnTool):
                 if energy_matches:
                     result["energy"] = float(energy_matches[-1])
 
-            # Convergence — pymatgen 的更可靠, 但对简化 mock OUTCAR 会误判
-            # "reached required accuracy" 是 VASP 的标准收敛标记, 值得信任
-            if not result["converged"] or "reached required accuracy" in content:
-                result["converged"] = "reached required accuracy" in content
+            # Convergence — action-aware (audit_20260717/14 P1-5):
+            # - relax/md/phonon: "reached required accuracy" 是 VASP 的
+            #   离子步收敛标记 (NSW>1 时出现).
+            # - scf: NSW=0, OUTCAR 永远不会有 "reached required accuracy";
+            #   应当检查电子步是否达到 EDIFF. VASP 在 SCF 收敛时打印
+            #   "EDIFF is reached" 串, 撑满 NELM 时不打印.
+            # - band/dos: 非自洽 (ICHARG=11), 完全没有 SCF 循环, OUTCAR 里
+            #   只有 Kohn-Sham 本征值; 输出存在就算成功.
+            if action in ("scf", "band", "dos"):
+                if "EDIFF is reached" in content:
+                    result["converged"] = True
+                elif action in ("band", "dos") and (
+                    "E-fermi" in content or "free  energy" in content
+                ):
+                    # 非自洽计算无 SCF, 输出存在即可
+                    result["converged"] = True
+                else:
+                    # NELM 撑满 = 未收敛
+                    result["converged"] = False
+                result["convergence_criterion"] = f"electronic (action={action})"
+            else:
+                # relax/md/phonon: 离子收敛标记
+                if not result["converged"] or "reached required accuracy" in content:
+                    result["converged"] = "reached required accuracy" in content
+                result["convergence_criterion"] = "ionic (reached required accuracy)"
 
             # ENCUT
             encut_match = re.search(r"ENCUT\s*=\s*([\d.]+)", content)
