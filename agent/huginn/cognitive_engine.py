@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,46 @@ CONSTRUCTION_STATES = {
     CognitiveState.S4_CONSTRUCT,
     CognitiveState.S5_UNIFY,
 }
+
+
+# v6 R22: CSM 为 canonical 状态机, 其他 phase 枚举 (ResearchPhase / SessionPhase /
+# autoloop AUTOLOOP_PHASES) 通过 CSMListener observer 模式同步.
+# ponytail: 不删旧 phase 枚举 (向后兼容); 升级路径是各 phase manager 注册为 listener,
+# transition() 末尾广播, 各 listener 自行映射.
+# 映射表: CSM 状态 → autoloop phase 字符串 (perceive/hypothesize/plan/execute/validate/learn/report)
+# 用于 listener 实现 on_csm_transition 时做状态映射. 不强制 1:1 — S3/S6/S7 是元状态.
+STATE_TO_PHASE: dict[CognitiveState, str] = {
+    CognitiveState.S0_BLANK: "perceive",
+    CognitiveState.S1_DISCOVER: "hypothesize",
+    CognitiveState.S2_VALIDATE: "validate",
+    CognitiveState.S3_SWITCH: "plan",
+    CognitiveState.S4_CONSTRUCT: "execute",
+    CognitiveState.S5_UNIFY: "learn",
+    CognitiveState.S6_FEEDBACK: "validate",
+    CognitiveState.S7_SELF_MODIFY: "learn",
+}
+
+
+class CSMListener(Protocol):
+    """v6 R22: CSM 状态转移观察者协议.
+
+    任何想跟 CSM 同步的 phase manager / session state 实现此协议即可.
+    CognitiveStateMachine.transition() 末尾会调 on_csm_transition.
+    ponytail: Protocol 不强制继承, 鸭子类型即可 — 老代码不破.
+    """
+
+    def on_csm_transition(
+        self,
+        old: CognitiveState,
+        new: CognitiveState,
+        signal: "TransitionSignal",
+    ) -> None:
+        """CSM 状态转移通知. listener 自行决定是否同步本地状态.
+
+        实现不应抛异常 — CognitiveStateMachine 会 catch 并记 debug 日志,
+        避免一个 listener 失败影响其他 listener 和主流程.
+        """
+        ...
 
 
 # ── Transition signals ────────────────────────────────────────────────
@@ -405,6 +445,33 @@ class CognitiveStateMachine:
         # Track whether we've had a confirmation gate this cycle
         self._awaiting_confirmation: bool = False
         self._confirmation_type: str = ""
+        # v6 R22: CSMListener 列表 — transition() 末尾广播
+        self._listeners: list[CSMListener] = []
+
+    def register_listener(self, listener: CSMListener) -> None:
+        """v6 R22: 注册 CSM 状态转移观察者.
+
+        listener 需实现 on_csm_transition(old, new, signal) 方法.
+        ponytail: 鸭子类型, 不强校验 Protocol — 调用时 try/except 兜底.
+        """
+        self._listeners.append(listener)
+
+    def _notify_listeners(
+        self,
+        old: CognitiveState,
+        new: CognitiveState,
+        signal: TransitionSignal,
+    ) -> None:
+        """广播转移给所有 listener. 单个 listener 抛异常不影响其他."""
+        for listener in self._listeners:
+            try:
+                listener.on_csm_transition(old, new, signal)
+            except Exception:
+                logger.debug(
+                    "CSMListener %s.on_csm_transition failed (non-fatal)",
+                    type(listener).__name__,
+                    exc_info=True,
+                )
 
     @property
     def state(self) -> CognitiveState:
@@ -483,6 +550,10 @@ class CognitiveStateMachine:
             elif next_state in (CognitiveState.S4_CONSTRUCT,):
                 self._awaiting_confirmation = False
 
+            # v6 R22: 广播转移给注册的 listener (PhaseManager / UnifiedSessionState / etc.)
+            # 放在状态更新之后, 让 listener 读 self.state 时拿到新状态.
+            self._notify_listeners(old, next_state, signal)
+
         # Also update L1 coordinates on non-transition events (tool results etc.)
         ctx = context or signal.data
         if ctx and signal.signal_type in (
@@ -545,4 +616,7 @@ __all__ = [
     "ALLOWED_TRANSITIONS",
     "DISCOVERY_STATES",
     "CONSTRUCTION_STATES",
+    # v6 R22: CSM observer 协议 + 状态映射
+    "CSMListener",
+    "STATE_TO_PHASE",
 ]
