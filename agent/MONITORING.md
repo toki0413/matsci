@@ -8,7 +8,7 @@
 
 ### 1. Application Metrics (Prometheus)
 
-Exposed at `GET /metrics` (requires admin API key).
+Exposed at `GET /metrics` (G38 校准: `_PUBLIC_PATHS` 在 `security/auth.py` 有意公开, 让 Prometheus 无鉴权抓取; 生产环境用反代加 IP 白名单或 Basic Auth 收紧).
 
 ```python
 # Example scrape configuration
@@ -17,7 +17,8 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:8000']
     metrics_path: '/metrics'
-    bearer_token: '<admin-api-key>'
+    # 本地默认无鉴权; 生产用反代加 Basic Auth:
+    #   bearer_token: '<admin-api-key>'  # 如果反代加了 auth
 ```
 
 ### 2. Audit Logs (Structured JSONL)

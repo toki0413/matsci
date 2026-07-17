@@ -145,16 +145,16 @@ class BenchmarkOrchestrator:
         print(f"[{self.tag}] {msg}", flush=True)
 
     def _is_done(self, calls: int) -> bool:
-        """机械式完成判据: deliverable 全齐 + 用够 budget OR 超 max_total_calls.
+        """机械式完成判据: deliverable 全齐 OR 超 max_total_calls.
 
-        ponytail: 旧版 deliverable 全齐就退出, agent 写完 smoke test (5 .py + dummy
-        outputs/*.json) 就停, 530 calls 只用 50. 加 min_calls 下限 = 50% budget,
-        强制 agent 继续优化训练质量 / Section 4 实验. Task 20 cost 一次 failed run.
+        R17: 删 50% budget 下限补丁. 原补丁强制 agent 至少用一半 budget,
+        是 SCALECUA task_synthesizer 上线前的临时占位 — 现难度由 task_synthesizer
+        按 (paper, complexity_tier) 合成时给定, 不再用 budget 下限强迫消耗.
         """
         if calls >= self.max_total_calls:
             return True
-        # deliverable 全齐 + 至少用了一半 budget 才算完成
-        if calls >= self.max_total_calls * 0.5 and not self.deliverable_spec.missing(self.workspace):
+        # deliverable 全齐即完成
+        if not self.deliverable_spec.missing(self.workspace):
             return True
         return False
 

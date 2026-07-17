@@ -134,19 +134,19 @@ class TestTransferDomain:
     def test_battery_cathodes_mapping(
         self, gen: ConjectureGenerator, semiconductor_pattern: dict
     ):
+        # R14: 硬编码 _DOMAIN_KNOWLEDGE 表已删, 改走 RAG recall.
+        # 测试环境无 RAG 数据, target_action 降级到抽象概念本身 (跟 unknown domain 一致).
         result = gen.transfer_domain(semiconductor_pattern, "battery cathodes")
 
         mapping = result["domain_mapping"]
-        # 杂质引入 should land on aliovalent substitution for cathodes
         assert mapping["source_action"] == "杂质引入"
-        assert "aliovalent substitution" in mapping["target_action"]
-        # property mapping: 电子输运性质 -> electronic conductivity
+        # RAG 无数据 -> 抽象概念本身
+        assert mapping["target_action"] == "杂质引入"
         assert mapping["source_property"] == "电子输运性质"
-        assert "electronic conductivity" in mapping["target_property"]
+        assert mapping["target_property"] == "电子输运性质"
         assert mapping["direction"] == "increases"
         assert result["method"] == "template"
-        # the transferred pattern should mention the target action
-        assert "aliovalent substitution" in result["transferred_pattern"]
+        assert result["transferred_pattern"]
 
     def test_analogy_notes_mention_both_domains(
         self, gen: ConjectureGenerator, semiconductor_pattern: dict
@@ -157,9 +157,9 @@ class TestTransferDomain:
         assert "battery cathodes" in notes
 
     def test_perovskites_target(self, gen: ConjectureGenerator, semiconductor_pattern: dict):
+        # R14: RAG 模式下, perovskites 也降级到抽象概念
         result = gen.transfer_domain(semiconductor_pattern, "perovskites")
-        # perovskites map 杂质引入 to A/B-site substitution
-        assert "A/B-site substitution" in result["domain_mapping"]["target_action"]
+        assert result["domain_mapping"]["target_action"] == "杂质引入"
 
     def test_caches_last_transfer(
         self, gen: ConjectureGenerator, semiconductor_pattern: dict
@@ -317,7 +317,8 @@ class TestTemplateFallback:
         )
         result = gen.transfer_domain(pattern, "battery cathodes", model=_ExplodingModel())
         assert result["method"] == "template"
-        assert "aliovalent substitution" in result["domain_mapping"]["target_action"]
+        # R14: RAG 无数据时降级到抽象概念
+        assert result["domain_mapping"]["target_action"] == "杂质引入"
 
     def test_generate_falls_back_on_llm_exception(
         self, gen: ConjectureGenerator, semiconductor_pattern: dict
@@ -369,22 +370,22 @@ class TestUnknownDomain:
         assert result["conjecture"]["prediction"]
 
     def test_case_insensitive_domain_lookup(self, gen: ConjectureGenerator):
+        # R14: _lookup_domain 走 RAG recall, RAG 自己负责大小写/模糊匹配.
+        # 测试环境无 RAG 数据, 任何 domain 都降级到抽象概念. 此测试验证不抛异常.
         pattern = gen.extract_pattern(
             "doping increases conductivity in semiconductors", "semiconductors"
         )
-        # _lookup_domain lowercases + strips, so casing shouldn't matter
         result = gen.transfer_domain(pattern, "Battery Cathodes")
-        assert "aliovalent substitution" in result["domain_mapping"]["target_action"]
+        assert result["domain_mapping"]["target_action"] == "杂质引入"
 
     def test_fuzzy_domain_match(self, gen: ConjectureGenerator):
-        # _lookup_domain does substring matching: an input that contains a known
-        # key (or is contained by one) should resolve. "battery cathodes" is a
-        # substring of "layered battery cathodes", so the latter resolves too.
+        # R14: RAG 模式下模糊匹配由 RAG recall 负责 (query="layered battery cathodes").
+        # 测试环境无 RAG 数据, 验证不抛异常 + 返回结构完整.
         pattern = gen.extract_pattern(
             "doping increases conductivity in semiconductors", "semiconductors"
         )
         result = gen.transfer_domain(pattern, "layered battery cathodes")
-        assert "aliovalent substitution" in result["domain_mapping"]["target_action"]
+        assert result["domain_mapping"]["target_action"] == "杂质引入"
 
 
 # ── 8. log_id chaining ──────────────────────────────────────────────

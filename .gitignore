@@ -117,6 +117,13 @@ agent/.huginn_memory/
 /_v4_integration_selfcheck.py
 /_v5_m2_selfcheck.py
 /_v5_m3_*_selfcheck.py
+/_v5_m4_selfcheck.py
+/_v5_m5_selfcheck.py
+/_m*_validate.py
+/_m*_selfcheck.py
+/_critique_decision_selfcheck.py
+/_recall_strategy_selfcheck.py
+/_multi_agent_lock_selfcheck.py
 /_gen*.py
 /_patch.py
 /_analyze_*.py
