@@ -707,40 +707,61 @@ async def run(workspace: str, extreme: bool = False) -> int:
         except Exception as e:
             print(f"[G29: checklist store skipped: {e}]", flush=True)
 
-    # Step 1.5: Intuitive Gamer fast-flat scan (arXiv:2510.11503 启发)
-    # 人类面对新游戏先用 fast (少采样) + flat (depth-limited) 模拟判断哪些
-    # 子目标值得深挖. 当前架构缺这一层 — agent 一上来就深挖 PDF + 跑贝叶斯,
-    # iter 0 撞 tool call budget, report.md 没写.
+    # Step 1.5: Intuitive Gamer + 数学直觉结构识别
+    # 两层结合 (arXiv:2510.11503 fast-flat scan + 数学结构识别):
+    # - fast flat scan: 不深挖, 快速过一遍 checklist
+    # - 数学直觉: 识别每个 item 的数学结构 + invariant, 而非只标难度
     #
-    # Step 1.5 让 agent 快速过一遍 checklist, 给每项打 easy/medium/hard 标签.
-    # 输出 priority list 影响 Step 2 iter prompt: 先做 easy 攒分, 中难按顺序,
-    # hard 留最后. 不深挖 — 1 tool call max (或 0), 纯 flat scan.
+    # 平衡点 (advisory + audited, not enforced):
+    # - 保守默认: 每个 item 默认 structure=empirical, invariant=none
+    # - verifiable_via 枚举 gate: 拿不出验证方法的退回 empirical
+    # - 分档处理: hard check (dimensional/exact_formula/conservation_law)
+    #            vs soft check (asymptotic/symmetry/topological) vs none
+    # - exploratory 合法: 不强制每个 item 都有数学结构
     #
-    # ponytail: 不做 k=5-20 并行采样 (v8), 不做 should_imaginate 完整实现 (v8),
-    #   不做 ν 黏度动态调节 (v8). 只做 scan → priority → 影响 Step 2 prompt.
-    #   升级路径: 接 cognitive_heat_engine 的 should_imaginate gate,
-    #   should_imaginate=True 的 item 才分配深挖预算.
-    print("\n=== Step 1.5: Intuitive Gamer fast-flat scan ===\n", flush=True)
+    # ponytail: v7 只做 prompt + 枚举约束, 不写 Lean, 不写 pydantic schema.
+    #   v8 升级: 接 cognitive_heat_engine should_imaginate, hard check 失败
+    #   触发 imagination; 接 LeanInterface 做形式化验证.
+    print("\n=== Step 1.5: Intuitive Gamer + math structure scan ===\n", flush=True)
     scan_prompt = (
-        "FAST FLAT SCAN (no deep search). Goal: identify which checklist items "
-        "are cheap to answer vs which need full implementation.\n\n"
-        "For EACH checklist item, output ONE line:\n"
-        "  [item N] easy | medium | hard — one-sentence reason\n\n"
-        "Definitions:\n"
-        "- easy: answer is in data file / paper excerpt / simple formula. ≤2 tool calls.\n"
-        "- medium: needs 1 short script run (fit/plot/compute). 3-8 tool calls.\n"
-        "- hard: needs multi-step pipeline (train model / MCMC / simulation). 10+ calls.\n\n"
+        "FAST FLAT SCAN with mathematical structure identification.\n"
+        "Goal: identify structure + invariants for each checklist item, not just difficulty.\n\n"
+        "For EACH checklist item, output a block:\n"
+        "  [item N] structure: <type>\n"
+        "    invariant: <one-line statement, or 'none'>\n"
+        "    verifiable_via: <method, or 'none'>\n"
+        "    anchor: <first-principles reference, or 'exploratory'>\n\n"
+        "structure types (enum, pick one):\n"
+        "  empirical | symmetry | asymptotic | dimensional | topological | probabilistic | algebraic\n"
+        "  - empirical: pure data/observation, no known mathematical structure\n"
+        "  - symmetry: invariant under transformation group (rotation, gauge, etc)\n"
+        "  - asymptotic: limit behavior (t->inf, x->0) constrains the answer\n"
+        "  - dimensional: Buckingham Pi / dimensional homogeneity must hold\n"
+        "  - topological: invariant under continuous deformation (winding number, etc)\n"
+        "  - probabilistic: distributional constraint (normalization, Bayes consistency)\n"
+        "  - algebraic: equation/identity must hold exactly (eigenvalue eq, etc)\n\n"
+        "verifiable_via (enum, pick one):\n"
+        "  none | dimensional | asymptotic_limit | exact_formula | conservation_law | symmetry_argument | topological_invariant\n"
+        "  - 'none' if you cannot specify a concrete verification method (item stays empirical)\n"
+        "  - must correspond to the structure type (e.g. structure=dimensional → verifiable_via=dimensional)\n\n"
+        "anchor:\n"
+        "  - cite first-principles reference (e.g. 'black hole thermodynamics', 'Noether theorem')\n"
+        "  - 'exploratory' is valid — accept that structure may be uncertain at this stage\n\n"
         "Constraints:\n"
         "- 1 tool call MAX (file_read or code_tool for quick check). Prefer 0.\n"
-        "- Do NOT execute the analysis. Do NOT write report.md.\n"
-        "- Output ONLY the priority list, then a one-line strategy:\n"
-        "  STRATEGY: do easy first / medium in checklist order / hard last with remaining budget.\n"
+        "- Do NOT execute analysis. Do NOT write report.md.\n"
+        "- Conservative default: if unsure, structure=empirical, invariant=none, verifiable_via=none.\n"
+        "- Do NOT fabricate invariants — unverifiable claims hurt more than they help.\n\n"
+        "After all items, output a STRATEGY line:\n"
+        "  STRATEGY: <one-line plan — order items by verifiable_via priority:\n"
+        "    hard_check (dimensional/exact_formula/conservation_law) first to bank structural wins,\n"
+        "    then soft_check (asymptotic/symmetry/topological), then empirical/none last>\n"
         f"\nChecklist:\n{checklist[:4000]}"
     )
-    scan_text = await _stream_chat(scan_prompt, "step1.5_flat_scan")
-    print(f"\n[flat scan done: {len(scan_text)} chars]\n", flush=True)
+    scan_text = await _stream_chat(scan_prompt, "step1.5_structure_scan")
+    print(f"\n[structure scan done: {len(scan_text)} chars]\n", flush=True)
 
-    # 写 Meta-Trace entry — role="intuitive_gamer", 下一轮 build_meta_trace_text 会读到.
+    # 写 Meta-Trace entry — role="intuitive_gamer", 带 structure 信息
     try:
         import json as _ig_json
         import time as _ig_time
@@ -748,12 +769,15 @@ async def run(workspace: str, extreme: bool = False) -> int:
             "iteration": 0,
             "ts": _ig_time.time(),
             "role": "intuitive_gamer",
-            "attempted": "fast flat scan of checklist items",
-            "found": (scan_text or "")[:400],
+            "attempted": "fast flat scan with mathematical structure identification",
+            "found": (scan_text or "")[:500],
             "evidence": [],
-            "limitations": ["single-sample, no k-sampling (v8 upgrade)"],
+            "limitations": [
+                "single-sample, no k-sampling (v8 upgrade)",
+                "structure labels not schema-validated (v8: pydantic + Lean)",
+            ],
             "artifacts": [],
-            "next_hint": "execute easy items first per scan priority",
+            "next_hint": "execute hard_check items first to bank structural wins",
             "darwin_score": 0.0,
             "supported_ratio": 0.0,
         }
@@ -761,7 +785,7 @@ async def run(workspace: str, extreme: bool = False) -> int:
         _ig_trace_path.parent.mkdir(parents=True, exist_ok=True)
         with _ig_trace_path.open("a", encoding="utf-8") as f:
             f.write(_ig_json.dumps(_ig_entry, ensure_ascii=False) + "\n")
-        print("[intuitive_gamer trace entry written]", flush=True)
+        print("[intuitive_gamer + math structure trace entry written]", flush=True)
     except Exception as _e:
         print(f"[intuitive_gamer trace skipped: {_e}]", flush=True)
 
@@ -779,12 +803,29 @@ async def run(workspace: str, extreme: bool = False) -> int:
     #   升级路径: full AutoloopEngine.run() + 自定义 report writer.
     print("\n=== Step 2: Execution (iterative) ===\n", flush=True)
     _rcb_csm_advance("user_confirmed", {"plan": "execute methodology checklist"})
-    _scan_hint = (
-        f"\n\n## Intuitive Gamer Scan (Step 1.5 result)\n{scan_text}\n\n"
-        f"Follow the STRATEGY line above for budget allocation: "
-        f"easy items first, medium in checklist order, hard last with remaining budget. "
-        f"Do NOT start with hard items — that risks exhausting tool budget before easy points are banked."
-    ) if scan_text and scan_text.strip() else ""
+    # _scan_hint 按 verifiable_via 分档:
+    # - hard_check (dimensional/exact_formula/conservation_law): 必须验证, 违反则 debug
+    # - soft_check (asymptotic/symmetry/topological): 建议验证, 违反 warn 不 block
+    # - none/empirical: 不约束, 按数值精度处理
+    # 这呼应物理 precheck "警告 + force_proceed" 偏好 — 结构违反先 warn, 不强制拦截.
+    if scan_text and scan_text.strip():
+        _scan_hint = (
+            f"\n\n## Intuitive Gamer + Math Structure Scan (Step 1.5 result)\n{scan_text}\n\n"
+            f"## Execution Guidance\n"
+            f"Follow the STRATEGY line above: hard_check items first (bank structural wins),\n"
+            f"then soft_check, then empirical/none last.\n\n"
+            f"## Invariant Self-Check (per item)\n"
+            f"- hard_check (dimensional/exact_formula/conservation_law): result MUST satisfy the invariant.\n"
+            f"  Violation → debug and fix, do NOT silent-substitute. This is non-negotiable.\n"
+            f"- soft_check (asymptotic/symmetry/topological): result SHOULD satisfy. Violation →\n"
+            f"  warn in report.md under 'Limitations' section, continue if fix is expensive.\n"
+            f"- none/empirical: no structural constraint, focus on numerical accuracy.\n\n"
+            f"## Anti-Fabrication\n"
+            f"Do NOT report metrics that violate hard_check invariants. Self-check before writing report.md:\n"
+            f"  for each hard_check item, verify result respects invariant. Violations must be fixed, not hidden."
+        )
+    else:
+        _scan_hint = ""
     step2_prompt = (
         "Now execute the task following your methodology checklist. "
         "Implement each [EXACT] component as-specified in the paper. "
