@@ -386,6 +386,103 @@ def compute_and_validate_relative(
     return validate_relative_isomorphism(source_repr, target_repr, tol=tol)
 
 
+# ── G47 解耦搜索 — 锁定结构关系, 枚举非同源实现者 ──────────────────
+# 用户思想: 优化目标从 "对象-结构捆绑" 解耦为 "纯结构关系保持". 锁定关键功能
+# 位置的结构关系不变, 允许完全不同的实现者 (原子种类/合金成分/电场参数/晶格
+# 类型) 填充这些位置. AI 进入的 "自然界未探索的解空间" 实质上是同一抽象物理
+# 结构的非同源实现空间.
+
+def enumerate_implementors(
+    structure: PhysicalStructure,
+    candidate_pools: "dict[str, list[str]] | None" = None,
+    max_per_slot: int = 10,
+) -> "list[dict[str, str]]":
+    """枚举非同源实现者组合 — 锁定结构关系, 允许不同实现者填充槽位.
+
+    structure: 锁定结构关系的 PhysicalStructure (relation_type/relation_expr/
+        constraints 不变, implementor_slots 是当前实现者)
+    candidate_pools: {槽位名: 候选实现者列表}. 不传则用 structure.relative_anchors
+        (G58 anchor 实现者作为候选池). 某槽位没候选则保留当前实现者.
+    max_per_slot: 每个槽位最多枚举多少候选 (防止笛卡尔积爆炸)
+
+    返回 list[dict[str, str]], 每个 dict 是一组实现者组合.
+    当前实现者组合 (source) 不包含在结果里 (平凡映射, G46 已检查).
+
+    ponytail: 笛卡尔积枚举, O(Π|candidates_i|). 升级路径是约束求解
+    (sympy + 物理约束库) 剪枝 + LLM 引导采样.
+    ponytail 上限: max_per_slot=10 + 5 槽位 = 10^5 = 100k 组合,
+    实际跑要靠 LLM/约束剪枝, 这里只给骨架.
+    """
+    import itertools
+
+    slots = list(structure.implementor_slots.keys())
+    if not slots:
+        return []
+
+    # 候选池: 优先用 caller 传的, 否则用 relative_anchors
+    pools: dict[str, list[str]] = candidate_pools or {}
+    for slot in slots:
+        if slot not in pools or not pools[slot]:
+            # 用 relative_anchors 作候选池
+            anchor_list = structure.relative_anchors.get(slot, [])
+            # 当前实现者不算候选 (平凡映射)
+            current = structure.implementor_slots[slot]
+            pools[slot] = [a for a in anchor_list if a != current][:max_per_slot]
+            # 没候选就保留当前 (该槽位不替换)
+            if not pools[slot]:
+                pools[slot] = [current]
+        else:
+            current = structure.implementor_slots[slot]
+            pools[slot] = [c for c in pools[slot] if c != current][:max_per_slot]
+            if not pools[slot]:
+                pools[slot] = [current]
+
+    # 笛卡尔积 — 每个组合是一组实现者替换
+    keys = slots
+    value_lists = [pools[k] for k in keys]
+    combinations: list[dict[str, str]] = []
+    for combo in itertools.product(*value_lists):
+        combo_dict = dict(zip(keys, combo))
+        # 至少一个槽位替换了才算非平凡
+        if any(
+            combo_dict[k] != structure.implementor_slots[k] for k in keys
+        ):
+            combinations.append(combo_dict)
+    return combinations
+
+
+def classify_implementation_gap(
+    structure: PhysicalStructure,
+    implementation: "dict[str, str]",
+    known_implementations: "list[dict[str, str]] | None" = None,
+) -> str:
+    """判定某结构关系在物理上是 "未被选择" 还是 "根本不可实现".
+
+    返回:
+    - "selected":   已被自然演化/工程传统选择 (在 known_implementations 里)
+    - "unselected": 未被选择但物理上可实现 (不在 known, 但不违反 constraints)
+    - "impossible": 物理上不可实现 (违反 constraints)
+
+    ponytail: known_implementations 由 caller 传入 (RAG recall / literature
+    survey / Materials Project 查询). 升级路径接 vasp_tool 做实际形成能验证.
+    """
+    # 1. selected: 完全匹配已知实现
+    if known_implementations:
+        for known in known_implementations:
+            if all(implementation.get(k) == v for k, v in known.items()):
+                return "selected"
+
+    # 2. impossible: 违反 constraints (sympy 数值代入)
+    #    ponytail: 当前 constraints 含 Symbol, 数值代入需要 caller 提供 values.
+    #    v6 只做结构检查 (实现者类型合法), 不做数值验证. 升级路径接 vasp_tool.
+    for slot, impl in implementation.items():
+        if not isinstance(impl, str) or not impl:
+            return "impossible"
+
+    # 3. unselected: 默认
+    return "unselected"
+
+
 # ── self-check ────────────────────────────────────────────────────
 
 def _self_check() -> int:
@@ -517,7 +614,61 @@ def _self_check() -> int:
     assert CATALYTIC_GEOMETRY.relative_anchors["active_site"] == ["Pt", "Pd", "Ni", "Cu"]
     assert len(CATALYTIC_GEOMETRY.relative_anchors["adsorbate"]) == 4
 
-    print("[PHYSTRUCT] self-check OK (incl G58 relative isomorphism)")
+    # ── G47: 解耦搜索测试 ──────────────────────────────────────────
+    # 13. enumerate_implementors: CATALYTIC_GEOMETRY 当前 active_site="M",
+    #     候选池用 relative_anchors (Pt/Pd/Ni/Cu), 应枚举非平凡组合
+    impls = enumerate_implementors(CATALYTIC_GEOMETRY)
+    assert len(impls) > 0, "should enumerate non-trivial combinations"
+    # 当前 active_site="M", adsorbate="X" 都不在 anchor 里, 全部组合非平凡
+    # anchor: active_site 4个 (Pt/Pd/Ni/Cu) × adsorbate 4个 (O/H/CO/OH) = 16
+    assert len(impls) == 16, f"expected 16 combinations, got {len(impls)}"
+    # 每个组合至少一个槽位替换了
+    for combo in impls:
+        assert any(
+            combo[k] != CATALYTIC_GEOMETRY.implementor_slots[k]
+            for k in combo
+        )
+    # 结果是 dict[str, str]
+    assert all(isinstance(c, dict) for c in impls)
+    assert all(set(c.keys()) == {"active_site", "adsorbate"} for c in impls)
+
+    # 14. enumerate_implementors: 自定义候选池
+    custom_pools = {
+        "active_site": ["Pt", "Pd"],  # 只用 2 个
+        "adsorbate": ["O"],            # 只用 1 个
+    }
+    impls2 = enumerate_implementors(CATALYTIC_GEOMETRY, candidate_pools=custom_pools)
+    # 2 × 1 = 2 组合 (都非平凡, 因为当前是 M/X)
+    assert len(impls2) == 2, f"expected 2, got {len(impls2)}"
+
+    # 15. classify_implementation_gap: selected / unselected / impossible
+    known = [{"active_site": "Pt", "adsorbate": "O"}]
+    # selected: 匹配已知
+    assert classify_implementation_gap(
+        CATALYTIC_GEOMETRY, {"active_site": "Pt", "adsorbate": "O"}, known,
+    ) == "selected"
+    # unselected: 不匹配但合法
+    assert classify_implementation_gap(
+        CATALYTIC_GEOMETRY, {"active_site": "Pd", "adsorbate": "H"}, known,
+    ) == "unselected"
+    # impossible: 空字符串
+    assert classify_implementation_gap(
+        CATALYTIC_GEOMETRY, {"active_site": "", "adsorbate": "O"}, known,
+    ) == "impossible"
+    # impossible: 非字符串
+    assert classify_implementation_gap(
+        CATALYTIC_GEOMETRY, {"active_site": 123, "adsorbate": "O"}, known,
+    ) == "impossible"
+
+    # 16. enumerate_implementors: 无槽位 → 空
+    empty_struct = PhysicalStructure(
+        relation_type="custom",
+        relation_expr="And(Eq(x, Symbol('x')))",
+        implementor_slots={},
+    )
+    assert enumerate_implementors(empty_struct) == []
+
+    print("[PHYSTRUCT] self-check OK (incl G47 decoupled search + G58)")
     return 0
 
 
