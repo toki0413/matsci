@@ -390,6 +390,115 @@ class ContextBuilder:
         parts.append("### End Tool Preference Hint")
         return "\n".join(parts)
 
+    # ── Meta-Trace (Oxelra 启发) ───────────────────────────────────
+    # autoloop engine 每轮把 attempted/found/evidence/limitations 蒸馏成
+    # 一条结构化 entry 写到 .huginn/meta_trace.jsonl. 这里读回来拼成 prompt
+    # 段, 让 agent 在长轨迹里看到结构化历史, 不靠 raw messages 携带.
+    # ponytail: 文件不存在/空/读失败都返回空串, 不影响主流程.
+    #   升级路径: 按 role 分文件 + 按 darwin_score 排序取 top-K.
+    _meta_trace_cache: str | None = None
+    _meta_trace_mtime: float = 0.0
+    _meta_trace_count: int = 0
+
+    def build_meta_trace_text(self, last_n: int = 5) -> str:
+        """读 .huginn/meta_trace.jsonl, 取最近 last_n 条拼成结构化摘要.
+
+        ponytail: mtime cache, 文件没变直接返回上次结果. 单次最多 last_n 条,
+        每字段截 200 字符, 总量上限约 2K tokens. 升级: 流式 read + role 过滤.
+        """
+        from pathlib import Path
+        import json
+        import os
+
+        trace_path = Path(self.workspace) / ".huginn" / "meta_trace.jsonl"
+        if not trace_path.exists():
+            return ""
+
+        try:
+            mtime = trace_path.stat().st_mtime
+            size = trace_path.stat().st_size
+        except OSError:
+            return ""
+
+        # mtime + size 双重缓存键 — mtime 秒级粒度, 加 size 防同秒多次写漏读
+        cache_key = (mtime, size)
+        if (
+            self._meta_trace_cache is not None
+            and (self._meta_trace_mtime, self._meta_trace_count) == cache_key
+        ):
+            return self._meta_trace_cache
+        self._meta_trace_mtime = mtime
+        self._meta_trace_count = size
+
+        try:
+            with trace_path.open("r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return ""
+
+        if not lines:
+            self._meta_trace_cache = ""
+            return ""
+
+        # 取最后 last_n 条, 倒序展示 (最新在前, agent 先看到最近做了啥)
+        recent = lines[-last_n:][::-1]
+        entries: list[dict] = []
+        for line in recent:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+        if not entries:
+            self._meta_trace_cache = ""
+            return ""
+
+        def _short(s: Any, n: int = 200) -> str:
+            s = str(s or "").strip().replace("\n", " ")
+            return s[:n] + ("…" if len(s) > n else "")
+
+        out = ["### Research Trace (recent iterations, newest first)"]
+        for e in entries:
+            it = e.get("iteration", "?")
+            ds = e.get("darwin_score", "?")
+            sr = e.get("supported_ratio", "?")
+            out.append(
+                f"[iter {it}] darwin={ds} supported={sr}"
+            )
+            att = _short(e.get("attempted", ""))
+            if att:
+                out.append(f"  attempted: {att}")
+            fnd = _short(e.get("found", ""))
+            if fnd:
+                out.append(f"  found: {fnd}")
+            ev = e.get("evidence") or []
+            if isinstance(ev, list) and ev:
+                ev_text = "; ".join(_short(x, 100) for x in ev[:3])
+                out.append(f"  evidence: {ev_text}")
+            lim = e.get("limitations") or []
+            if isinstance(lim, list) and lim:
+                lim_text = "; ".join(_short(x, 150) for x in lim[:2])
+                out.append(f"  limitations: {lim_text}")
+            art = e.get("artifacts") or []
+            if isinstance(art, list) and art:
+                art_text = ", ".join(_short(x, 80) for x in art[:5])
+                out.append(f"  artifacts: {art_text}")
+            hint = _short(e.get("next_hint", ""), 250)
+            if hint:
+                out.append(f"  next_hint: {hint}")
+        out.append("### End Research Trace")
+        text = "\n".join(out)
+        self._meta_trace_cache = text
+        return text
+
+    def meta_trace_available(self) -> bool:
+        """快速检查 trace 文件是否存在 — streaming.py 用它决定 compaction 强度."""
+        from pathlib import Path
+        return (Path(self.workspace) / ".huginn" / "meta_trace.jsonl").exists()
+
     _evolution_rules_cache: str | None = None
     _evolution_rules_mtime: float = 0.0
 
@@ -490,8 +599,15 @@ class ContextBuilder:
 
         # Merge all context injections into one SystemMessage to reduce
         # message overhead (each role tag costs tokens in the prompt).
-        # Order: emotion → plan → cognitive → tool_hint → evolution → continuity
+        # Order: meta_trace → emotion → plan → cognitive → tool_hint → evolution → continuity
+        # Meta-Trace 放最前: 长轨迹里它是 token 密度最高的历史信息, agent
+        # 读 ctx_parts 顺序就是它看到上下文的顺序, trace 必须先看到.
         ctx_parts: list[str] = []
+
+        meta_trace_text = self.build_meta_trace_text()
+        if meta_trace_text:
+            ctx_parts.append(meta_trace_text)
+
         emotion_text = self.build_emotion_text(message)
         if emotion_text:
             ctx_parts.append(emotion_text)

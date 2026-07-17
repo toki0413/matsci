@@ -539,8 +539,14 @@ async def run(workspace: str, extreme: bool = False) -> int:
     # ponytail: 不改默认值, 只在 --extreme 时 override. 升级路径是加 profile 系统.
     if extreme:
         os.environ.setdefault("HUGINN_THINKING", "high")
+        # v7 长任务: extreme 模式同时放宽 autoloop stop 阈值, 允许 200+ 步轨迹.
+        # 对标 Oxelra 206 步. 默认值已放宽 (20/20/10/5), extreme 再翻倍.
+        os.environ.setdefault("HUGINN_MAX_CONSECUTIVE_FAILURES", "50")
+        os.environ.setdefault("HUGINN_MAX_REFINES", "50")
+        os.environ.setdefault("HUGINN_MAX_PIVOTS", "20")
+        os.environ.setdefault("HUGINN_DARWIN_STAGNATION_LIMIT", "15")
         cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
-        print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K", flush=True)
+        print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K, autoloop thresholds 50/50/20/15", flush=True)
 
     registry = ModelRegistry.from_config(cfg)
     alias = registry.default_alias()

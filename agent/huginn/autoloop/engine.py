@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -323,15 +324,19 @@ class AutoloopEngine:
         self._iteration = 0
         # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户;
         # 超过 _max_consecutive_failures 时强制停止 autoloop, 避免无限重试坏方向.
+        # v7 长任务: 5→20 默认. Oxelra 206 步允许大量失败回退, huginn 5 太保守.
+        # 环境变量覆盖: 极限模式可设更高 (e.g. HUGINN_MAX_CONSECUTIVE_FAILURES=50).
         self._consecutive_failures = 0
-        self._max_consecutive_failures = 5
+        self._max_consecutive_failures = int(os.environ.get("HUGINN_MAX_CONSECUTIVE_FAILURES", "20"))
         # refine 循环计数: 防止 refute→refine 无限循环
+        # v7 长任务: 8→20 默认. Oxelra 失败回退不计数, 这里仍保留上限防失控.
         self._refine_count = 0
-        self._max_refines = 8
+        self._max_refines = int(os.environ.get("HUGINN_MAX_REFINES", "20"))
         # pivot 计数: refine 耗尽后换方向, 但 pivot 本身也要有上限 —
         # 否则 pivot→fail→refine→pivot→fail 无限循环, 烧 token 不出结果.
+        # v7 长任务: 3→10 默认. 3 太保守, Oxelra 开放式探索允许频繁换方向.
         self._pivot_count = 0
-        self._max_pivots = 3
+        self._max_pivots = int(os.environ.get("HUGINN_MAX_PIVOTS", "10"))
         # v7 phase 解耦: refute/pivot 后下一轮的起点 phase.
         # Oxelra 求是引擎 role-phase 解耦启示: 7-phase 线性太死, 失败应能回退到
         # 合适的 phase 而不是只 refine. hint 在 refute 时设, 下一轮 perceive 前查.
@@ -2190,7 +2195,10 @@ class AutoloopEngine:
         except Exception:
             logger.debug("heat_engine.update_T_cold failed (non-fatal)", exc_info=True)
 
-        if self._darwin_stagnation >= 2 and self._iteration > 2:
+        # v7 长任务: stagnation 阈值 2→5. Oxelra 206 步允许长期低增益,
+        # 2 轮就 early stop 太激进, 真正突破常在 10+ 轮停滞之后.
+        _stag_limit = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
+        if self._darwin_stagnation >= _stag_limit and self._iteration > 2:
             logger.info(
                 "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
                 self._darwin_stagnation,
