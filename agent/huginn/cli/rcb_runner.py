@@ -707,9 +707,19 @@ async def run(workspace: str, extreme: bool = False) -> int:
         except Exception as e:
             print(f"[G29: checklist store skipped: {e}]", flush=True)
 
-    # Step 2: 执行任务
+    # Step 2: 执行任务 (v7 P3: 迭代执行 + Meta-Trace 蒸馏)
     # checklist 已在 thread_id 的对话历史里, agent 能看到. 不需要显式注入.
-    print("\n=== Step 2: Execution ===\n", flush=True)
+    #
+    # 对标 Oxelra 206 步: 单次 chat() 已能跑 150-300 tool calls (langgraph 内部循环),
+    # 但单次 chat() 会因 context 溢出或 agent 主动 emit text-only 提前终止.
+    # 迭代执行让 agent 在多次 chat() 间累积进展, 每轮间写 Meta-Trace entry,
+    # 下一轮 chat() 的 build_meta_trace_text (P1) 会读回来注入 prompt,
+    # 同时 compaction 因 trace 存在会更激进 drop raw messages.
+    #
+    # ponytail: 不接 AutoloopEngine (它用 CoderRunner/WorkflowEngine, 不写
+    #   report/report.md, 会破坏 RCBench 评分). 用 mini-loop + 手写 trace.
+    #   升级路径: full AutoloopEngine.run() + 自定义 report writer.
+    print("\n=== Step 2: Execution (iterative) ===\n", flush=True)
     _rcb_csm_advance("user_confirmed", {"plan": "execute methodology checklist"})
     step2_prompt = (
         "Now execute the task following your methodology checklist. "
@@ -718,7 +728,82 @@ async def run(workspace: str, extreme: bool = False) -> int:
         "Write report/report.md with your results, referencing the checklist items you covered. "
         "Use file_write_tool for report.md, code_tool for analysis/plotting, bash_tool for running scripts."
     )
-    await _stream_chat(step2_prompt, "step2")
+
+    import hashlib as _hashlib
+    import json as _json
+    import time as _time
+    _trace_path = ws / ".huginn" / "meta_trace.jsonl"
+    _trace_path.parent.mkdir(parents=True, exist_ok=True)
+    _max_exec_iters = int(os.environ.get(
+        "HUGINN_RCB_EXEC_ITERS",
+        "4" if extreme else "2",
+    ))
+    _prev_report_hash: str | None = None
+    _stagnation_count = 0
+
+    for _iter_n in range(_max_exec_iters):
+        if _iter_n == 0:
+            _iter_prompt = step2_prompt
+        else:
+            _iter_prompt = (
+                f"Continue execution. Iteration {_iter_n + 1}/{_max_exec_iters}.\n"
+                f"Review the Research Trace section above for what you've already tried.\n"
+                f"Identify the NEXT gap from your checklist (missing component, weak metric, "
+                f"untested claim) and address it.\n"
+                f"OVERWRITE report/report.md with updated results as you make progress.\n"
+                f"If the report is complete and covers ALL checklist items, respond with "
+                f"'TASK COMPLETE' followed by a one-paragraph summary. No tool call needed."
+            )
+        print(f"\n--- Step 2 iter {_iter_n + 1}/{_max_exec_iters} ---\n", flush=True)
+        _ai_text = await _stream_chat(_iter_prompt, f"step2_iter{_iter_n + 1}")
+
+        # 写 Meta-Trace entry — P1 的 build_meta_trace_text 下一轮会读到.
+        # ponytail: 字段从 self/agent 状态抽, 不调 LLM. RCB mini-loop 不跑 darwin
+        #   ratchet, darwin_score/supported_ratio 留 0 (trace 段仍显示 iteration).
+        try:
+            _report_text = ""
+            _report_path_iter = ws / "report" / "report.md"
+            if _report_path_iter.exists():
+                _report_text = _report_path_iter.read_text(encoding="utf-8")
+            _entry = {
+                "iteration": _iter_n + 1,
+                "ts": _time.time(),
+                "role": "rcb_exec",
+                "attempted": (_iter_prompt[:200]).replace("\n", " "),
+                "found": (_ai_text or "")[:300],
+                "evidence": [_report_text[:150]] if _report_text else [],
+                "limitations": [],
+                "artifacts": ["report/report.md"] if _report_path_iter.exists() else [],
+                "next_hint": "continue execution" if _iter_n < _max_exec_iters - 1 else "step3 critique",
+                "darwin_score": 0.0,
+                "supported_ratio": 0.0,
+            }
+            with _trace_path.open("a", encoding="utf-8") as f:
+                f.write(_json.dumps(_entry, ensure_ascii=False) + "\n")
+        except Exception as _e:
+            print(f"[meta_trace write skipped: {_e}]", flush=True)
+
+        # 停滞检测: report.md 内容 hash 不变 → 可能卡住, 早停
+        _curr_hash = (
+            _hashlib.md5(_report_text.encode()).hexdigest()
+            if _report_text else None
+        )
+        if _curr_hash == _prev_report_hash and _curr_hash is not None:
+            _stagnation_count += 1
+            if _stagnation_count >= 2:
+                print(
+                    f"[stagnation: report.md unchanged for {_stagnation_count} iters, breaking]",
+                    flush=True,
+                )
+                break
+        else:
+            _stagnation_count = 0
+        _prev_report_hash = _curr_hash
+
+        # 早停: agent 明确说完成
+        if _ai_text and "TASK COMPLETE" in _ai_text.upper():
+            print("[agent signalled TASK COMPLETE, breaking]", flush=True)
+            break
 
     # Step 2.5: report.md 兜底 (σ₆ 修复)
     # 减 CSM (σ₃) 后失去 completion guidance, 加 lightweight gate 补 harmonic.
