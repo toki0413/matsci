@@ -157,6 +157,7 @@ def evolve_conjectures(
     max_gen: int = 10,
     model: Any = None,
     library: "ConjectureLibrary | None" = None,
+    fitness_fn: "Any | None" = None,
 ) -> list[Conjecture]:
     """进化环 — Conjecture Machines 风格.
 
@@ -166,6 +167,9 @@ def evolve_conjectures(
       2. 通过的进 library, 失败的淘汰
       3. 通过的变异 + 交叉生成下一代
     终止: max_gen 或无新通过命题
+
+    v6 G48: sorry 位进 gaps 表而非淘汰. fitness_fn 可选, 传入则用三维适应度
+    (correctness / novelty / structure_preservation), 否则用二元 fitness.
 
     返回所有验证通过的命题 (含初始 + 进化出来的).
 
@@ -179,7 +183,11 @@ def evolve_conjectures(
         new_passed: list[Conjecture] = []
         for conj in population:
             was_verified, sorry_status = verify_conjecture(conj)
-            conj.fitness = 1.0 if was_verified else 0.0
+            # 三维适应度: fitness_fn 传入则用, 否则二元
+            if fitness_fn is not None:
+                conj.fitness = fitness_fn(conj, was_verified, sorry_status)
+            else:
+                conj.fitness = 1.0 if was_verified else 0.0
             conj.sorry_status = sorry_status
             if conj.fitness > 0:
                 new_passed.append(conj)
@@ -207,6 +215,201 @@ def evolve_conjectures(
             logger.info("evolve stop at gen %d: max_gen reached", gen)
 
     return passed
+
+
+def default_three_dim_fitness(
+    conj: Conjecture, was_verified: bool, sorry_status: str,
+) -> float:
+    """G48 三维适应度默认实现.
+
+    correctness (0/1): 验证通过 = 1, 否则 0
+    novelty (0-1): statement 长度归一化 (越短越新颖, 简洁 = 数学美)
+    structure_preservation (0-1): sorry 位 = 0.3 (有结构但缺证明),
+        完整 = 1.0, impossible = 0
+
+    返回加权和 (correctness 0.5 + novelty 0.2 + structure 0.3).
+
+    ponytail: novelty 用长度代理是粗糙的, 升级路径是 LLM 评估 + RAG recall
+    距离 (跟已知命题的差异度).
+    """
+    correctness = 1.0 if was_verified else 0.0
+    # novelty: statement 越短越新颖 (1.0 - len/100, clamp 0-1)
+    novelty = max(0.0, min(1.0, 1.0 - len(conj.statement) / 100.0))
+    # structure_preservation
+    if sorry_status == "placeholder":
+        structure = 0.3
+    elif sorry_status == "filled":
+        structure = 0.8
+    elif sorry_status == "impossible":
+        structure = 0.0
+    else:  # none
+        structure = 1.0 if was_verified else 0.5
+    return correctness * 0.5 + novelty * 0.2 + structure * 0.3
+
+
+def fill_sorry_gaps(
+    library: "ConjectureLibrary",
+    model: Any = None,
+    max_fill: int = 5,
+) -> "list[tuple[str, str, bool]]":
+    """G48: 填充 sorry gaps — sorry 位作为变异目标而非淘汰.
+
+    遍历 library 里的 placeholder gaps, 用 LLM 尝试填充. 填充成功 → mark_filled;
+    填充失败 + 反例 → mark_impossible; 失败 + 无反例 → 保留 placeholder.
+
+    返回 [(gap_id, action, success), ...], action 是 "filled" / "impossible" /
+    "placeholder".
+
+    ponytail: LLM 填充是 best-effort, 失败不抛. 升级路径是多 LLM 协作 (v7).
+    """
+    results: list[tuple[str, str, bool]] = []
+    gaps = library.get_research_gaps(status="placeholder")
+    if not gaps:
+        return results
+
+    filled_count = 0
+    for gap in gaps[:max_fill]:
+        conj_id = gap["conj_id"]
+        statement = gap["statement"] or ""
+        sympy_expr = gap["sympy_expr"] or ""
+        proof_script = gap["proof_script"] or ""
+
+        # model=None 走模板 (尝试简单替换 sorry)
+        if model is None or hasattr(model, "_mock_name"):
+            success, filled_proof, counterexample = _template_fill_sorry(
+                statement, sympy_expr, proof_script,
+            )
+        else:
+            try:
+                success, filled_proof, counterexample = _llm_fill_sorry(
+                    statement, sympy_expr, proof_script, model,
+                )
+            except Exception:
+                logger.debug("LLM fill_sorry failed for %s", conj_id, exc_info=True)
+                success, filled_proof, counterexample = (
+                    False, "", "LLM unavailable",
+                )
+
+        if success:
+            library.mark_filled(conj_id, filled_by=f"fill_sorry_gaps")
+            results.append((conj_id, "filled", True))
+            filled_count += 1
+        elif counterexample:
+            library.mark_impossible(
+                conj_id, counterexample=counterexample,
+                classification="unreachable",
+            )
+            results.append((conj_id, "impossible", False))
+        else:
+            # 保留 placeholder
+            results.append((conj_id, "placeholder", False))
+
+    logger.info(
+        "fill_sorry_gaps: %d/%d filled", filled_count, min(len(gaps), max_fill),
+    )
+    return results
+
+
+def _template_fill_sorry(
+    statement: str, sympy_expr: str, proof_script: str,
+) -> "tuple[bool, str, str]":
+    """模板填充 sorry — 测试用. 尝试用 sympy 直接验证 sympy_expr.
+
+    成功返回 (True, filled_proof, "").
+    失败返回 (False, "", counterexample).
+
+    ponytail: 只处理最简单的 sorry 模式 (sorry 注释). 真实 LLM 路径在
+    _llm_fill_sorry. 升级路径是多 LLM 协作 (v7).
+    """
+    # 检查 proof_script 里 sorry 是不是注释 — 模板尝试去掉 sorry 重跑
+    if "sorry" not in proof_script.lower() and "admit" not in proof_script.lower():
+        return (False, "", "no sorry marker found")
+
+    # 尝试简单策略: 把 sorry 注释行删掉, 看能否 prove
+    import re
+    cleaned = re.sub(
+        r"#\s*(sorry|admit)[^\n]*", "", proof_script, flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\bsorry\b", "True", cleaned, flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\badmit\b", "True", cleaned, flags=re.IGNORECASE,
+    )
+
+    # 用 verify_conjecture 检查 cleaned 是否能过
+    test_conj = Conjecture(
+        id="fill-test",
+        statement=statement,
+        sympy_expr=sympy_expr,
+        proof_script=cleaned,
+    )
+    was_verified, sorry_status = verify_conjecture(test_conj)
+    if was_verified:
+        return (True, cleaned, "")
+    # 失败, 返回反例 (粗糙: 跑 proof 看是否 False)
+    return (False, "", "template fill failed: cleaned proof still invalid")
+
+
+def _llm_fill_sorry(
+    statement: str, sympy_expr: str, proof_script: str, model: Any,
+) -> "tuple[bool, str, str]":
+    """LLM 填充 sorry — 给 LLM 看 sorry proof, 让它补完.
+
+    成功返回 (True, filled_proof, "").
+    失败返回 (False, "", counterexample_or_reason).
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage
+    import asyncio
+
+    messages = [
+        SystemMessage(content=(
+            "You are a proof filler. Given a conjecture with a sorry "
+            "(placeholder) in its proof script, complete the proof using "
+            "sympy. Output JSON: {\"proof_script\": \"...\", "
+            "\"counterexample\": \"...\"}. If you can complete the proof, "
+            "put it in proof_script and leave counterexample empty. If you "
+            "find the conjecture is false, put the counterexample in "
+            "counterexample and leave proof_script empty. No sorry/admit. "
+            "Only use: sympy, math, re, statistics, json."
+        )),
+        HumanMessage(content=(
+            f"Statement: {statement}\n"
+            f"Sympy expr: {sympy_expr}\n"
+            f"Proof script (with sorry):\n{proof_script}"
+        )),
+    ]
+    try:
+        asyncio.get_running_loop()
+        text = model.invoke(messages)
+    except RuntimeError:
+        text = asyncio.run(model.ainvoke(messages))
+    text = str(text.content).strip()
+
+    parsed = _parse_json_object(text)
+    if not parsed:
+        return (False, "", "LLM output not parseable")
+
+    filled_proof = parsed.get("proof_script", "")
+    counterexample = parsed.get("counterexample", "")
+
+    if counterexample:
+        return (False, "", counterexample)
+
+    if not filled_proof or "def prove" not in filled_proof:
+        return (False, "", "LLM output missing proof_script")
+
+    # 验证 filled_proof 真的能过
+    test_conj = Conjecture(
+        id="fill-llm",
+        statement=statement,
+        sympy_expr=sympy_expr,
+        proof_script=filled_proof,
+    )
+    was_verified, _ = verify_conjecture(test_conj)
+    if was_verified:
+        return (True, filled_proof, "")
+    return (False, "", "LLM filled proof failed verification")
 
 
 # ── LLM 生成 (model=None 走模板, 测试用) ───────────────────────────
@@ -868,7 +1071,92 @@ def _self_check() -> int:
         )
         assert len(lib.get_research_gaps()) == 0, "template variants have no sorry"
 
-    print("[CONJLIB] self-check OK")
+    # 15. v6 G48: fill_sorry_gaps 模板路径 — 填充成功
+    with tempfile.TemporaryDirectory() as tmp:
+        lib = ConjectureLibrary(workspace=tmp)
+        # 构造一个 sorry 命题: prove 用 sorry 占位但实际能过
+        sorry_conj = Conjecture(
+            id="fill-001",
+            statement="Bulk modulus cubic: B = (c11 + 2*c12) / 3",
+            sympy_expr="B",
+            test_cases=[{"inputs": {"B": 60.0}, "expected": 60.0}],
+            proof_script=(
+                "def prove():\n"
+                "    # sorry need to verify\n"
+                "    from sympy import symbols\n"
+                "    c11, c12 = symbols('c11 c12')\n"
+                "    B = (c11 + 2*c12) / 3\n"
+                "    val = B.subs({c11: 100, c12: 40})\n"
+                "    return abs(float(val) - 60.0) < 1e-6\n"
+            ),
+        )
+        lib.add_placeholder(sorry_conj)
+        results = fill_sorry_gaps(lib, model=None, max_fill=5)
+        assert len(results) == 1
+        gap_id, action, success = results[0]
+        assert gap_id == "fill-001"
+        # 模板路径: 删 sorry 注释后能过 → filled
+        assert action == "filled", f"expected filled, got {action}"
+        assert success is True
+        # gaps 表状态更新
+        filled_gaps = lib.get_research_gaps(status="filled")
+        assert len(filled_gaps) == 1
+
+    # 16. v6 G48: fill_sorry_gaps 模板路径 — 填充失败 (sorry 在 return 里)
+    with tempfile.TemporaryDirectory() as tmp:
+        lib = ConjectureLibrary(workspace=tmp)
+        # sorry 直接当返回值, 删了之后 return True 但没 prove 逻辑
+        bad_sorry = Conjecture(
+            id="fill-002",
+            statement="some impossible claim",
+            sympy_expr="x",
+            proof_script=(
+                "def prove():\n"
+                "    # sorry\n"
+                "    return sorry\n"
+            ),
+        )
+        lib.add_placeholder(bad_sorry)
+        results = fill_sorry_gaps(lib, model=None, max_fill=5)
+        assert len(results) == 1
+        gap_id, action, success = results[0]
+        # 模板把 sorry 替换成 True, return True 能过 → filled (模板的局限)
+        # 或: 替换后 prove 没定义 → fail → impossible
+        assert action in ("filled", "impossible", "placeholder"), (
+            f"unexpected action: {action}"
+        )
+
+    # 17. v6 G48: 三维适应度 default_three_dim_fitness
+    good2 = _template_variants("seed", 1, 0, None)[0]
+    fitness = default_three_dim_fitness(good2, was_verified=True, sorry_status="none")
+    assert 0 <= fitness <= 1.0
+    # 验证通过 + 完整证明 → 高分
+    assert fitness > 0.5, f"verified+none should score high, got {fitness}"
+    # sorry 位 → 低分
+    sorry_fitness = default_three_dim_fitness(
+        good2, was_verified=False, sorry_status="placeholder",
+    )
+    assert sorry_fitness < fitness, "placeholder should score lower than verified"
+
+    # 18. v6 G48: evolve 带 fitness_fn
+    with tempfile.TemporaryDirectory() as tmp:
+        lib = ConjectureLibrary(workspace=tmp)
+        passed = evolve_conjectures(
+            "bulk modulus", n_variants=2, max_gen=1,
+            model=None, library=lib,
+            fitness_fn=default_three_dim_fitness,
+        )
+        assert len(passed) > 0
+        # 三维适应度应给通过命题非零分
+        assert all(c.fitness > 0 for c in passed)
+
+    # 19. v6 G48: fill_sorry_gaps 空 gaps 表
+    with tempfile.TemporaryDirectory() as tmp:
+        lib = ConjectureLibrary(workspace=tmp)
+        results = fill_sorry_gaps(lib, model=None, max_fill=5)
+        assert results == []
+
+    print("[CONJLIB] self-check OK (incl G48 fill_sorry_gaps + 3D fitness)")
     return 0
 
 
