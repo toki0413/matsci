@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 
 from huginn.perception.semantic_alignment import SemanticAligner, SemanticConflict
-from huginn.perception.cognitive_integration import CognitiveIntegrator, CognitiveState
+from huginn.perception.cognitive_integration import CognitiveIntegrator, PerceptionSnapshot
 
 
 class TestSemanticAligner:
@@ -76,7 +76,7 @@ class TestCognitiveIntegrator:
             "to_context": lambda self: {},
         })()
         state = cog.integrate(snapshot)
-        assert isinstance(state, CognitiveState)
+        assert isinstance(state, PerceptionSnapshot)
         assert state.workspace == "."
         assert not state.suggests_action()  # No activity
 

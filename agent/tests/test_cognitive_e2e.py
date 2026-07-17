@@ -156,7 +156,7 @@ def test_context_builder_l1_coords_without_plan():
 
 def test_reflection_has_transition_signal_method():
     """ReflectionResult must have to_transition_signal method."""
-    from huginn.reflection import ReflectionResult
+    from huginn.task_reflector import ReflectionResult
 
     r = ReflectionResult(tool_succeeded=True)
     assert hasattr(r, "to_transition_signal")

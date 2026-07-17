@@ -64,7 +64,7 @@ def test_cognitive_prompt_changes_after_mode_switch():
 
 def test_reflection_to_transition_signal():
     """ReflectionResult.to_transition_signal() must produce correct signal types."""
-    from huginn.reflection import ReflectionResult
+    from huginn.task_reflector import ReflectionResult
 
     # Success → tool_success
     r = ReflectionResult(tool_succeeded=True)

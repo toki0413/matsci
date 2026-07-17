@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from huginn.agent import HuginnAgent
-from huginn.benchmark import (
+from huginn.self_improvement import (
     BenchmarkCase,
     BenchmarkSuite,
     keyword_evaluator,
     numeric_evaluator,
 )
-from huginn.benchmark.core import SelfImprovementLoop, llm_judge_evaluator
+from huginn.self_improvement.core import SelfImprovementLoop, llm_judge_evaluator
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryManager
 

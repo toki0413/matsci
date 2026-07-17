@@ -19,7 +19,7 @@ from huginn.utils.tokens import (
     rough_token_count,
     rough_token_count_for_text,
 )
-from huginn.benchmark.core import (
+from huginn.self_improvement.core import (
     BenchmarkCase,
     BenchmarkSuite,
     keyword_evaluator,
@@ -184,7 +184,7 @@ class TestBenchmarkCore:
         suite = BenchmarkSuite()
         suite.add(BenchmarkCase(task="t1", expected_keywords=["yes"]))
         # summary() takes a list of BenchmarkResult
-        from huginn.benchmark.core import BenchmarkResult
+        from huginn.self_improvement.core import BenchmarkResult
         results = [
             BenchmarkResult(case_id="c1", task="t1", success=True, score=1.0, response="yes", duration_ms=100.0),
         ]
