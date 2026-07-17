@@ -35,6 +35,13 @@ class SubagentSpec:
     allowed_tools 是白名单, 填了就只给子 agent 这些工具. 空列表 = 所有
     已注册工具都可用. 白名单里不存在的工具名会被静默跳过 (跟
     HuginnAgent.tool_filter 行为一致).
+
+    summary_format 控制 _summarize 用哪种 prompt 压缩:
+    - "free" (默认): 散文摘要, <500 词, 适合 explore/coder/analyst
+    - "json": 结构化 JSON, 保留 findings/evidence/limitations 字段,
+      适合 support spec (Oxelra Core+Support 模式)
+    ponytail: 不引入 schema validator, 让 LLM 自律输出 JSON.
+      升级路径: pydantic schema validate + retry on parse fail.
     """
     name: str
     description: str
@@ -48,6 +55,7 @@ class SubagentSpec:
     # 动 agent 的代码. 升级路径: 给 chat() 加 recursion_limit 参数.
     max_iterations: int = 5
     summarize_result: bool = True
+    summary_format: str = "free"
 
 
 @dataclass
@@ -136,6 +144,28 @@ class SubagentDispatch:
             ],
             max_tool_calls=20,
             max_iterations=5,
+        ),
+        # v7 P2: Oxelra Core+Support 模式 — Support 子代理在隔离上下文里做重活,
+        # 只把结构化 finding 喂回 Core, raw trace 不污染 Core context.
+        # ponytail: 不引入新隔离机制, 复用现有 thread_id + 工具白名单 + LLM 摘要.
+        # 升级路径: pydantic schema 校验 JSON summary, 失败重试.
+        "support": SubagentSpec(
+            name="support",
+            description="Oxelra-style Support 子代理: 隔离上下文做重活, 返回结构化 finding",
+            system_prompt=(
+                "You are a Support research agent. Do the heavy lifting in isolation "
+                "(run experiments, analyze data, read papers). "
+                "Return ONLY structured findings: key results, evidence, limitations, artifacts. "
+                "Do not include reasoning process or intermediate steps in your final output."
+            ),
+            allowed_tools=[
+                "code_tool", "bash_tool",
+                "file_read_tool", "glob", "grep",
+                "web_search_tool", "numerical_tool",
+            ],
+            max_tool_calls=30,
+            max_iterations=8,
+            summary_format="json",
         ),
     }
 
@@ -228,7 +258,9 @@ class SubagentDispatch:
             tokens = self._estimate_tokens(final_state)
 
             if spec.summarize_result and len(output) > _SUMMARIZE_THRESHOLD:
-                summary = await self._summarize(factory, output, task)
+                summary = await self._summarize(
+                    factory, output, task, summary_format=spec.summary_format,
+                )
             else:
                 summary = output
 
@@ -333,9 +365,16 @@ class SubagentDispatch:
 
     @staticmethod
     async def _summarize(
-        factory: Any, output: str, task: str
+        factory: Any, output: str, task: str, *, summary_format: str = "free",
     ) -> str:
-        """用 LLM 压缩子 agent 输出, 拿不到模型就截断兜底."""
+        """用 LLM 压缩子 agent 输出, 拿不到模型就截断兜底.
+
+        summary_format:
+        - "free": 散文摘要 <500 词 (默认, explore/coder/analyst 用)
+        - "json": 结构化 JSON {findings, evidence, limitations, artifacts}
+                  (support spec 用, Oxelra Core+Support 模式)
+        ponytail: json 模式不校验 schema, LLM 自律输出. 升级路径 pydantic + retry.
+        """
         try:
             alias = factory.model_registry.default_alias()
             if not alias:
@@ -345,17 +384,27 @@ class SubagentDispatch:
             logger.debug("resolve model for summarize failed", exc_info=True)
             return output[:_SUMMARIZE_THRESHOLD] + "..."
 
+        if summary_format == "json":
+            system_content = (
+                "Extract structured findings from the subagent output as JSON. "
+                "Schema: {\"findings\": str, \"evidence\": [str], "
+                "\"limitations\": [str], \"artifacts\": [str]}. "
+                "findings = 主要结论一句话; evidence = 支撑证据/数据来源列表; "
+                "limitations = 适用边界/未验证项; artifacts = 产出文件路径列表. "
+                "Output ONLY the JSON object, no prose, no markdown fences."
+            )
+        else:
+            system_content = (
+                "Summarize the following subagent output concisely. "
+                "Focus on key findings, results, and any errors. "
+                "Keep it under 500 words."
+            )
+
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
             messages = [
-                SystemMessage(
-                    content=(
-                        "Summarize the following subagent output concisely. "
-                        "Focus on key findings, results, and any errors. "
-                        "Keep it under 500 words."
-                    )
-                ),
+                SystemMessage(content=system_content),
                 HumanMessage(
                     content=(
                         f"Task: {task}\n\n"
@@ -380,11 +429,22 @@ if __name__ == "__main__":
 
     d = SubagentDispatch()
 
-    # 1. 内置 spec 存在
+    # 1. 内置 spec 存在 (含 v7 P2 新增 support)
     specs = d.list_specs()
     names = [s["name"] for s in specs]
     assert "explore" in names and "coder" in names and "analyst" in names, names
+    assert "support" in names, f"support spec missing: {names}"
     print(f"[ok] builtin specs: {names}")
+
+    # 1b. v7 P2: support spec 配置正确
+    support_spec = d._specs["support"]
+    assert support_spec.summary_format == "json", support_spec.summary_format
+    assert support_spec.max_tool_calls == 30
+    assert "code_tool" in support_spec.allowed_tools
+    # 其他 spec 默认 free
+    assert d._specs["explore"].summary_format == "free"
+    assert d._specs["coder"].summary_format == "free"
+    print("[ok] support spec summary_format=json, others free")
 
     # 2. 自定义 spec 注册
     custom = SubagentSpec(
