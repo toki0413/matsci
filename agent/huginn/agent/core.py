@@ -683,7 +683,7 @@ class HuginnAgent(
                 if csm is not None:
                     task = STATE_TO_MODEL_TASK.get(csm.state, task)
             except Exception:
-                pass
+                logger.debug("CSM state → model task mapping failed, fallback to original task", exc_info=True)
             return self.model_router.select(task)
         if self.model is None:
             raise RuntimeError("HuginnAgent has no model or model_router configured")

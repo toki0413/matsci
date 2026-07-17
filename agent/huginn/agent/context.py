@@ -122,29 +122,23 @@ class ContextMixin:
         except Exception:
             logger.debug("stable_principles injection skipped", exc_info=True)
 
-        # ponytail: 委托 prompt_builder 但保留原逻辑 fallback；
-        # 升级路径是逐步迁移 persona/tools 段到 prompt_builder 后删 fallback
-        try:
-            from huginn.agent.prompt_builder import build_prompt as _build_prompt
+        # ponytail: prompt_builder 当前只对 S7 自修改态有独特价值 (metacog_segment);
+        # 其他状态走原 base 路径, 保留 "RESEARCH MODE" / system_prompt 行为.
+        # 升级路径: 迁完 persona/tools 段到 prompt_builder 后, 所有状态都委托.
+        _csm = getattr(self, "_csm", None)
+        _metacog = getattr(getattr(_csm, "state", None), "value", None) or "s0_blank"
+        if _metacog == "s7_self_modify":
+            try:
+                from huginn.agent.prompt_builder import build_prompt as _build_prompt
 
-            _mode = getattr(self, "_mode", "chat")
-            _pm = getattr(self, "_phase_manager", None)
-            _phase = "execute"
-            try:
-                _phase = _pm.phase.value  # type: ignore[union-attr]
+                _mode = getattr(self, "_mode", "chat")
+                _pm = getattr(self, "_phase_manager", None)
+                _phase = getattr(getattr(_pm, "phase", None), "value", None) or "execute"
+                built = _build_prompt(_mode, _phase, _metacog)
+                if built and len(built) > len(base) * 0.5:
+                    return built
             except Exception:
-                pass
-            _csm = getattr(self, "_csm", None)
-            _metacog = "s0_blank"
-            try:
-                _metacog = _csm.state.value or "s0_blank"  # type: ignore[union-attr]
-            except Exception:
-                pass
-            built = _build_prompt(_mode, _phase, _metacog)
-            if built and len(built) > len(base) * 0.5:
-                return built
-        except Exception:
-            logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
+                logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
 
         return base
 

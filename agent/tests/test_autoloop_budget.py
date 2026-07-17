@@ -320,6 +320,8 @@ class TestEngineRunBudgetIntegration:
         """Budget runs before the phase-gate. A plan that passes the budget
         still has to clear the gate (mode+description evidence). Verify both
         checks fire independently in one run."""
+        # R6 advisory: 默认不阻断, 测 budget×gate 阻断路径要显式开 human_checkpoint
+        engine.phase_gate_hook._human_checkpoint_phases = {("plan", "execute")}
         _patch_phases(engine, plan_mode="coder")
         engine._perceive = _fast_forward_perceive(skip_until=11)  # type: ignore[assignment]
         # coder passes medium budget, but empty description fails the gate
@@ -352,6 +354,8 @@ class TestGateDoesNotBurnBudgetQuota:
     def test_gate_block_keeps_reject_counter_at_zero(
         self, engine: AutoloopEngine, no_sleep
     ):
+        # R6 advisory: 默认不阻断, 测 gate block 路径要显式开 human_checkpoint
+        engine.phase_gate_hook._human_checkpoint_phases = {("plan", "execute")}
         _patch_phases(engine, plan_mode="coder")
         engine._perceive = _fast_forward_perceive(skip_until=31)  # type: ignore[assignment]
         # coder passes budget, but empty description fails the gate

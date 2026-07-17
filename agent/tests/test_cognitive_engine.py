@@ -17,8 +17,9 @@ from huginn.cognitive_engine import (
 
 
 class TestCognitiveStateEnum:
-    def test_all_seven_states(self):
-        assert len(CognitiveState) == 7
+    def test_all_eight_states(self):
+        # v3 加 S7_SELF_MODIFY (哥德尔机闭环), 状态数 7→8
+        assert len(CognitiveState) == 8
 
     def test_state_values(self):
         assert CognitiveState.S0_BLANK.value == "s0_blank"

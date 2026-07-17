@@ -158,7 +158,11 @@ class TestPhaseGateHookWithMathChecker:
 
     def test_hard_evidence_missing_blocks_before_math(self):
         # 硬证据 (tests_passed) 缺失 → 直接 block, 不跑 math_checker
-        hook = PhaseGateHook(math_checker=self.math_checker)
+        # R6 advisory: 默认 advisory 不阻断, 测 block 路径要显式开 human_checkpoint
+        hook = PhaseGateHook(
+            math_checker=self.math_checker,
+            human_checkpoint_phases={("validate", "learn")},
+        )
         gate = hook.evaluate("validate", "learn", {})
         assert gate.is_blocked
         assert "tests_passed" in gate.missing_evidence
@@ -250,9 +254,14 @@ class TestPhaseGateConfigExtensions:
 
     def test_config_can_add_new_requirements(self):
         # 现有 add_requirement 仍然工作
+        # R6 advisory: 默认不阻断, 测 block 路径要显式开 human_checkpoint
         config = PhaseGateConfig()
         config.add_requirement("validate", "learn", ["tests_passed", "reviewer_critique"])
-        hook = PhaseGateHook(config=config, math_checker=MathEvidenceChecker())
+        hook = PhaseGateHook(
+            config=config,
+            math_checker=MathEvidenceChecker(),
+            human_checkpoint_phases={("validate", "learn")},
+        )
         gate = hook.evaluate("validate", "learn", {"tests_passed": True})
         assert gate.is_blocked
         assert "reviewer_critique" in gate.missing_evidence
