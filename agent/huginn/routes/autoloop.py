@@ -15,10 +15,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from huginn.interaction.progress import get_progress_tracker
-from huginn.security.auth import require_api_key
+from huginn.security.auth import require_api_key, require_capability
 from huginn.server_core import get_context
 
-router = APIRouter(tags=["autoloop"])
+# G32: autoloop 在后台跑自主循环 (调工具/写文件), 走 execute capability.
+router = APIRouter(
+    tags=["autoloop"],
+    dependencies=[Depends(require_api_key), Depends(require_capability("execute"))],
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +75,7 @@ def _make_done_callback(progress_task_id: str, run_key: str):
     return _cb
 
 
-@router.post("/autoloop/start", dependencies=[Depends(require_api_key)])
+@router.post("/autoloop/start")
 async def start_autoloop(req: AutoloopStartRequest) -> dict[str, Any]:
     """Start an autonomous research loop and return immediately.
 
@@ -122,7 +126,7 @@ async def start_autoloop(req: AutoloopStartRequest) -> dict[str, Any]:
     }
 
 
-@router.get("/autoloop/status", dependencies=[Depends(require_api_key)])
+@router.get("/autoloop/status")
 async def autoloop_status() -> dict[str, Any]:
     """Return the status of any running autoloop tasks."""
     runs = []

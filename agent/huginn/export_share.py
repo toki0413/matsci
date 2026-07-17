@@ -608,6 +608,9 @@ class ExportShareManager:
                 with longterm._connect() as conn:
                     conn.execute("DELETE FROM memories")
                     conn.commit()
+                # G35: bulk clear 绕过 FTS5, 重建索引 (import_ 会重新灌 FTS5,
+                # 但先清掉孤儿索引行防止 import_ 失败时留下脏状态)
+                longterm._rebuild_fts_index()
                 imported = longterm.import_(str(mem_json)) if mem_json.exists() else 0
                 result["imported"]["memory_entries"] = imported
             except Exception as e:
@@ -846,6 +849,8 @@ class ExportShareManager:
                         with longterm._connect() as conn:
                             conn.execute("DELETE FROM memories")
                             conn.commit()
+                        # G35: bulk clear 绕过 FTS5, 重建索引
+                        longterm._rebuild_fts_index()
                     except Exception:
                         logger.debug("connect failed", exc_info=True)
                 # 写到临时文件再用 import_ 方法

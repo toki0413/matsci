@@ -873,7 +873,14 @@ class ToolAdapter:
                             tool.call(payload, context), timeout=timeout
                         )
                     else:
-                        result = tool.call(payload, context)
+                        # G33: 同步工具调到_thread里, 不再卡死 event loop.
+                        # 之前 result = tool.call(...) 直接在协程里跑, 14 个同步
+                        # 工具 (file_read/vasp/qe/lammps/...) 任何一个慢调用都会
+                        # 堵塞所有 WS/SSE 心跳. 现在统一走 wait_for + to_thread.
+                        result = await asyncio.wait_for(
+                            asyncio.to_thread(tool.call, payload, context),
+                            timeout=timeout,
+                        )
                 except asyncio.TimeoutError:
                     result = ToolResult(
                         data=None,

@@ -15,11 +15,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from huginn.execution.kernel_session import KernelSessionManager
-from huginn.security.auth import require_api_key
+from huginn.security.auth import require_api_key, require_capability
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/kernel", tags=["kernel"], dependencies=[Depends(require_api_key)])
+# G32: kernel 跑任意 Python = 特权操作, 加 execute capability
+router = APIRouter(
+    prefix="/kernel",
+    tags=["kernel"],
+    dependencies=[Depends(require_api_key), Depends(require_capability("execute"))],
+)
 
 # 模块级单例管理器, 懒加载
 _manager: KernelSessionManager | None = None

@@ -1240,16 +1240,24 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
     return {"added": added, "skipped": skipped, "failed": failed}
 
 
-_knowledge_base: KnowledgeBase | None = None
+# G39: 单例 + workspace 是矛盾的 — 同一进程跑多 workspace 时, 第一个 workspace
+# 初始化后, 后续传不同 workspace 拿到的还是第一个的 KB. 改按 workspace 路径缓存.
+# ponytail: dict[Path, KB] 是最小的多实例缓存, 升级路径是 LRU 限上限.
+_kb_instances: dict[Path, KnowledgeBase] = {}
 _kb_lock = __import__("threading").Lock()
 
 
-def get_knowledge_base(workspace: str = ".") -> KnowledgeBase:
-    """Thread-safe singleton accessor for the knowledge base."""
-    global _knowledge_base
-    if _knowledge_base is None:
+def get_knowledge_base(workspace: str | Path = ".") -> KnowledgeBase:
+    """Thread-safe workspace-keyed KB factory.
+
+    按 workspace 路径缓存实例; 同一 workspace 返回同实例, 不同 workspace
+    各自独立. 替代旧的单例模式 (单例忽略后续 workspace 参数).
+    """
+    key = Path(workspace).resolve() / ".huginn_kb"
+    if key not in _kb_instances:
         with _kb_lock:
-            if _knowledge_base is None:  # double-checked locking
-                _knowledge_base = KnowledgeBase(Path(workspace) / ".huginn_kb")
-                seed_knowledge_base(_knowledge_base, force=False)
-    return _knowledge_base
+            if key not in _kb_instances:  # double-checked locking
+                kb = KnowledgeBase(key)
+                seed_knowledge_base(kb, force=False)
+                _kb_instances[key] = kb
+    return _kb_instances[key]
