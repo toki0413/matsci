@@ -1027,6 +1027,18 @@ class StreamingMixin:
             # Compact initial messages if a context budget is configured.
             # mode 切换 flag: CSM 进入 S3_SWITCH/S6_FEEDBACK 时标记需要 compaction.
             # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
+            #
+            # Meta-Trace (Oxelra 启发): 当 .huginn/meta_trace.jsonl 存在时,
+            # 结构化历史已经蒸馏进 prompt, raw messages 可以更激进地 drop.
+            # ponytail: keep_last_n 减半 (min 1), 让 trace 替代 raw 携带信息.
+            #   升级路径: 按 trace entry 数动态调, trace 长 → keep_last_n 更小.
+            _trace_avail = False
+            try:
+                _trace_avail = self._ctx_builder.meta_trace_available()
+            except Exception:
+                pass
+            _trace_kln_divisor = 2 if _trace_avail else 1
+
             if getattr(self, "_needs_compaction", False) and self.context_budget_tokens > 0:
                 summarizer = self._make_summarizer()
                 if summarizer is not None:
@@ -1036,7 +1048,7 @@ class StreamingMixin:
                         await summarize_compact_messages(
                             inputs["messages"],
                             self.context_budget_tokens,
-                            keep_last_n=4,
+                            keep_last_n=max(1, 4 // _trace_kln_divisor),
                             summarizer=summarizer,
                             existing_summary=self._build_compact_summary(),
                         )
@@ -1064,6 +1076,9 @@ class StreamingMixin:
                     except Exception:
                         logger.debug("belief_entropy adaptive read failed", exc_info=True)
                     adaptive_kln = getattr(self, "_adaptive_keep_last_n", 4)
+                    # Meta-Trace: trace 存在时 keep_last_n 减半, trace 携带历史
+                    if _trace_avail and adaptive_kln > 1:
+                        adaptive_kln = max(1, adaptive_kln // 2)
                     adaptive_budget = int(
                         self.context_budget_tokens
                         * getattr(self, "_adaptive_budget_ratio", 1.0)
