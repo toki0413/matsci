@@ -416,6 +416,8 @@ class ToolAdapter:
                 # 把 permission_config 透传给工具, 这样工具内部也能复用同一份配置
                 # 做细粒度检查 (e.g. file_edit_tool 的 diff 预览强制化)
                 config=permission_config,
+                # v7: 透传父 agent 的 approval_callback, subagent_tool 用它给子 agent.
+                approval_callback=approval_callback,
             )
             payload = input_data.model_dump() if wants_dict else input_data
             return payload, context

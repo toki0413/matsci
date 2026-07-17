@@ -162,6 +162,8 @@ reproduce_quantum_waves.py
 /paperbench_huginn.py
 /rcb_huginn.py
 /rcb_score.py
+/rcb_batch.py
+/rcb_batch_results.json
 /sab_huginn.py
 
 # Benchmark run workspaces (runtime outputs, models, data)

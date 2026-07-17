@@ -143,6 +143,9 @@ class ToolContext:
     audit_logger: Any | None = None
     boundary_state: Any | None = None
     config: Any | None = None
+    # v7: 父 agent 的 approval_callback, 让 subagent_tool 能透传给子 agent.
+    # 之前子 agent 拿到 None, 调 vasp_tool 等 ASK 工具会被静默拒绝.
+    approval_callback: Any | None = None
 
 
 @dataclass
