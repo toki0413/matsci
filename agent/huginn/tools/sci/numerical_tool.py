@@ -934,13 +934,24 @@ class NumericalTool(HuginnTool):
         B0 is in eV/Å³ internally; V in Å³; E in eV.
         """
         if eos_type == "birch_murnaghan":
-            # 3rd-order BM: x = η²-1, η = (V/V0)^(1/3)
-            # E = E0 + 9*B0*V0/16 * [x³*(B0'-4) + 2x²]
+            # 3rd-order Birch-Murnaghan EOS.
+            # Ref: Birch (1947); Poirier "Introduction to the Physics of the
+            # Earth's Interior"; Mouhat & Coudert PRB 2014 也用此形式.
+            # 标准定义 (Wikipedia / pymatgen / ase 一致):
+            #   η = (V0/V)^(1/3),   x = η² - 1
+            #   E = E0 + (9/16) * B0 * V0 * [B0' * x³ + 6 * x²]
+            #
+            # 旧实现三处错误 (审计 14号报告):
+            #   1. η 取反: (V/V0) → 应为 (V0/V), 物理意义相反
+            #   2. x³ 系数 (B0'-4) → 应为 B0', 把 B0'=4 时三次项消成 0
+            #   3. x² 系数 2 → 应为 6, 偏小 3 倍
+            # 旧测试通过的唯一原因是 test_eos_fit.py 用同一错误公式生成数据
+            # (循环论证), 且 B0P_TRUE=4.0 恰好消掉三次项.
             def eos(V, E0, V0, B0, B0p):
-                eta = (V / V0) ** (1.0 / 3.0)
+                eta = (V0 / V) ** (1.0 / 3.0)
                 x = eta ** 2 - 1.0
                 return E0 + (9.0 / 16.0) * B0 * V0 * (
-                    x ** 3 * (B0p - 4.0) + 2.0 * x ** 2
+                    B0p * x ** 3 + 6.0 * x ** 2
                 )
             return eos
 
