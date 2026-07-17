@@ -1120,8 +1120,8 @@ class LammpsTool(HuginnTool):
     def parse_trajectory(self, traj_path: str | Path) -> dict[str, Any]:
         """Parse LAMMPS trajectory file and compute basic analyses.
 
-        Supports .lammpstrj and .dump formats.
-        Uses a Rust accelerator if available, falling back to pure Python.
+        Supports .lammpstrj and .dump formats. Always uses pure-Python path
+        (see inline comment for why Rust fast-path is disabled).
         """
         from pathlib import Path
 
@@ -1129,22 +1129,15 @@ class LammpsTool(HuginnTool):
         if not traj_path.exists():
             return {"error": "Trajectory file not found"}
 
-        # Try Rust-accelerated parser first.
-        if _HAS_HUGINN_EXT:
-            try:
-                result = huginn_ext.parse_lammps_dump(
-                    str(traj_path),
-                    compute_msd=True,
-                    compute_rdf=True,
-                    rdf_bins=100,
-                    rdf_r_max=None,
-                    include_frames=False,
-                )
-                if "error" not in result:
-                    return result
-            except Exception:
-                logger.debug("suppressed in parse_trajectory", exc_info=True)
-
+        # ponytail: skip Rust fast-path (huginn_ext.parse_lammps_dump with
+        # compute_msd=True) — it applies MIC to displacement-from-ref which
+        # saturates at L²/6 for long-time diffusion (audit_20260717/14 P1-4,
+        # pyext/src/analysis.rs:14-15 self-documents this). Python path
+        # handles xu/yu/zu, ix/iy/iz, and wrapped-only incremental unwrap
+        # correctly. Rust RDF is single-frame MIC (correct) but we lose that
+        # perf here for simplicity.
+        # TODO: re-enable Rust fast path once it detects xu/yu/zu columns and
+        # skips MIC clamping on unwrapped coordinates.
         return self._parse_trajectory_python(traj_path)
 
     def _parse_trajectory_python(self, traj_path: str | Path) -> dict[str, Any]:
@@ -1224,6 +1217,11 @@ class LammpsTool(HuginnTool):
                 msd = self._compute_msd(frames)
                 if msd:
                     result["msd"] = msd
+                # _compute_msd sets self._msd_warnings — surface to caller so
+                # downstream agents don't trust a saturated diffusion coeff.
+                if getattr(self, "_msd_warnings", None):
+                    result["msd_warnings"] = list(self._msd_warnings)
+                    self._msd_warnings = []
 
             # Compute RDF if 2+ frames
             if (
@@ -1241,30 +1239,149 @@ class LammpsTool(HuginnTool):
         return result
 
     def _compute_msd(self, frames: list[dict]) -> list[dict] | None:
-        """Compute mean squared displacement across frames."""
-        try:
-            msd_data = []
-            ref_positions = []
-            for atom in frames[0]["atoms"]:
-                ref_positions.append([atom["x"], atom["y"], atom["z"]])
+        """Compute mean squared displacement across frames.
 
-            for frame in frames[1:]:
-                displacements = []
-                for i, atom in enumerate(frame["atoms"]):
-                    dx = atom["x"] - ref_positions[i][0]
-                    dy = atom["y"] - ref_positions[i][1]
-                    dz = atom["z"] - ref_positions[i][2]
-                    displacements.append(dx * dx + dy * dy + dz * dz)
-                msd = sum(displacements) / len(displacements)
-                msd_data.append(
-                    {
-                        "timestep": frame.get("timestep", 0),
-                        "msd": msd,
-                    }
-                )
-            return msd_data
-        except Exception:
+        Unwrap strategy (priority):
+        1. xu/yu/zu (LAMMPS unwrapped coords) — direct diff from frame[0]
+        2. ix/iy/iz image flags — reconstruct xu = x + ix*Lx etc.
+        3. wrapped x/y/z only — frame-by-frame MIC incremental unwrap
+
+        Old impl: diff wrapped coords from frame[0] directly → cross-boundary
+        jumps of ~L² produce huge MSD spikes. Rust impl (analysis.rs:14-15)
+        applies MIC clamp on displacement-from-ref → saturates at L²/6 for
+        long-time diffusion. Both wrong for the cases they're wrong for.
+
+        Returns list of {"timestep", "msd"} dicts (backward-compatible shape).
+        Saturation warnings are surfaced via self._msd_warnings (set during
+        this call) so callers can attach them to the outer result dict.
+        """
+        self._msd_warnings = []
+        if not frames or len(frames) < 2:
             return None
+        n_atoms = len(frames[0]["atoms"])
+        if n_atoms == 0:
+            return None
+
+        atom0 = frames[0]["atoms"][0]
+        has_unwrapped = all(k in atom0 for k in ("xu", "yu", "zu"))
+        has_image = all(k in atom0 for k in ("ix", "iy", "iz"))
+        has_wrapped = all(k in atom0 for k in ("x", "y", "z"))
+        if not (has_unwrapped or has_image or has_wrapped):
+            return None
+
+        # ponytail: assume orthorhombic constant box — NPT variable-box not
+        # handled; for that case recompute L per frame (upgrade path).
+        box = frames[0].get("box", [[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]])
+        lx = box[0][1] - box[0][0]
+        ly = box[1][1] - box[1][0]
+        lz = box[2][1] - box[2][0]
+
+        coord_mode = (
+            "unwrapped" if has_unwrapped
+            else "image" if has_image
+            else "wrapped"
+        )
+        if coord_mode == "wrapped":
+            self._msd_warnings.append(
+                "Trajectory has only wrapped coords (no xu/yu/zu or ix/iy/iz). "
+                "MSD computed via frame-by-frame MIC incremental unwrap. If a "
+                "particle moved > L/2 between consecutive frames, the unwrap "
+                "will miss wrapping events and MSD will be underestimated. "
+                "For reliable long-time diffusion coefficients, re-dump with "
+                "xu yu zu columns."
+            )
+
+        # Reference (unwrapped) positions at frame 0
+        ref_pos: list[tuple[float, float, float]] = []
+        for atom in frames[0]["atoms"]:
+            if coord_mode == "unwrapped":
+                ref_pos.append((atom["xu"], atom["yu"], atom["zu"]))
+            elif coord_mode == "image":
+                ref_pos.append((
+                    atom["x"] + atom["ix"] * lx,
+                    atom["y"] + atom["iy"] * ly,
+                    atom["z"] + atom["iz"] * lz,
+                ))
+            else:
+                ref_pos.append((atom["x"], atom["y"], atom["z"]))
+
+        # For wrapped-only path: track running unwrapped position per atom
+        # AND previous wrapped position (for computing per-frame wrapped
+        # displacement, which is what MIC operates on).
+        running_pos: list[list[float]] | None = None
+        prev_wrapped: list[tuple[float, float, float]] | None = None
+        if coord_mode == "wrapped":
+            running_pos = [list(p) for p in ref_pos]
+            prev_wrapped = [tuple(p) for p in ref_pos]
+
+        msd_data: list[dict] = []
+        warned_saturation = False
+
+        for fi, frame in enumerate(frames[1:], start=1):
+            sum_sq = 0.0
+            max_pre_mic = 0.0  # max |pre-MIC per-frame displacement| / L
+            atoms = frame["atoms"]
+            for i in range(n_atoms):
+                atom = atoms[i]
+                rx, ry, rz = ref_pos[i]
+                if coord_mode == "unwrapped":
+                    cx, cy, cz = atom["xu"], atom["yu"], atom["zu"]
+                elif coord_mode == "image":
+                    cx = atom["x"] + atom["ix"] * lx
+                    cy = atom["y"] + atom["iy"] * ly
+                    cz = atom["z"] + atom["iz"] * lz
+                else:
+                    # wrapped-only: incremental MIC unwrap from previous frame.
+                    # dx_wrapped = x[t] - x[t-1] (using previous wrapped position,
+                    # NOT running_pos which is accumulated unwrapped).
+                    px, py, pz = prev_wrapped[i]  # type: ignore[index]
+                    dx = atom["x"] - px
+                    dy = atom["y"] - py
+                    dz = atom["z"] - pz
+                    # Track pre-MIC displacement normalized by box length —
+                    # if it exceeds L/2 in any dimension, MIC is ambiguous
+                    # (can't distinguish "+0.51L" from "-0.49L" true
+                    # displacement) and we may miss a wrap event.
+                    pre_mic_max = max(abs(dx) / lx, abs(dy) / ly, abs(dz) / lz)
+                    if pre_mic_max > max_pre_mic:
+                        max_pre_mic = pre_mic_max
+                    dx -= lx * round(dx / lx)
+                    dy -= ly * round(dy / ly)
+                    dz -= lz * round(dz / lz)
+                    # Accumulate into running unwrapped position
+                    cx = running_pos[i][0] + dx  # type: ignore[index]
+                    cy = running_pos[i][1] + dy  # type: ignore[index]
+                    cz = running_pos[i][2] + dz  # type: ignore[index]
+                    running_pos[i] = [cx, cy, cz]  # type: ignore[index]
+                    prev_wrapped[i] = (atom["x"], atom["y"], atom["z"])  # type: ignore[index]
+                dx = cx - rx
+                dy = cy - ry
+                dz = cz - rz
+                disp_sq = dx * dx + dy * dy + dz * dz
+                sum_sq += disp_sq
+
+            msd = sum_sq / n_atoms
+            msd_data.append({
+                "timestep": frame.get("timestep", fi),
+                "msd": msd,
+            })
+
+            # Saturation guard: in wrapped-only mode, if any per-frame
+            # pre-MIC displacement exceeds L/2, MIC is ambiguous and we may
+            # have missed a wrap event. The post-MIC displacement is always
+            # ≤ L/2 by construction, so we check pre-MIC instead.
+            if coord_mode == "wrapped" and not warned_saturation \
+                    and max_pre_mic > 0.5:
+                self._msd_warnings.append(
+                    f"Frame {fi}: per-frame pre-MIC displacement reached "
+                    f"{max_pre_mic:.3f}×L (>0.5×L). Incremental MIC unwrap is "
+                    f"ambiguous at this scale — a wrap event may have been "
+                    f"missed and MSD underestimated for this and later frames. "
+                    f"Diffusion coefficient D derived from this MSD is NOT reliable."
+                )
+                warned_saturation = True
+
+        return msd_data
 
     def _compute_rdf(
         self, frame: dict, bins: int = 100, r_max: float | None = None
@@ -1385,7 +1502,7 @@ class LammpsTool(HuginnTool):
             return ToolResult(
                 data=data,
                 success=ok,
-                error=None if ok else f"LAMMPS exited with code {proc.returncode}",
+                error=None if ok else f"LAMMPS exited with code {result.returncode}",
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -1401,12 +1518,13 @@ class LammpsTool(HuginnTool):
         """生成 LAMMPS DEM (Discrete Element Method) 颗粒碰撞脚本.
 
         用 Hertz-Mindlin 接触模型 (LAMMPS pair_style granular):
-        - 法向: Hertzian (k_n ∝ E* / R*)
-        - 切向: Mindlin (k_t = (2-v)/(2(1-v)) * k_n)
-        - 摩擦: 库仑摩擦 (μ)
-        - 恢复: 非线性阻尼 (由 restitution coefficient 反算)
+        - 法向: Hertzian (hertz/material, E+v 输入, LAMMPS 内部算 k_n)
+        - 切向: Mindlin (mindlin_rescale, G+μ+x_t)
+        - 阻尼: Tsuji (由 restitution coefficient 反算 γ_n)
+        - 摩擦: Coulomb (μ)
 
-        LAMMPS GRANULAR pair style 需要编译 GRANULAR package.
+        LAMMPS GRANULAR package required (compile with -pgk GRANULAR).
+        语法依据: https://docs.lammps.org/pair_granular.html
         """
         bx, by, bz = args.dem_box
         r = args.dem_radius
@@ -1422,18 +1540,42 @@ class LammpsTool(HuginnTool):
         # 颗粒质量: m = ρ * (4/3)πr³
         mass = rho * (4.0 / 3.0) * 3.14159265358979 * r ** 3
 
-        # Hertzian 法向刚度: k_n = (4/3) * E* * sqrt(R*)
-        # ponytail: LAMMPS 的 granular pair style 内部自己算, 这里只给 E 和 v
-        # G = E / (2(1+v)) — shear modulus for Mindlin
+        # 剪切模量 G = E / (2(1+v)), Mindlin 切向模型用
         G = E / (2 * (1 + nu))
 
-        # 用 SI 单位, 因为 DEM 颗粒通常在 mm~cm 尺度
-        # 如果用户用 real 单位, 数值需要自己换算
+        # Rayleigh 接触时间 t_R = π·r·sqrt(ρ/G) / (0.1631ν + 0.8766)
+        # 物理意义: 表面波在颗粒上转一圈的时间, 是 DEM 时间步的上限.
+        # 取 10% t_R 是 DEM 业界标准稳定裕度 (Li et al., Pow.Tech. 2005).
+        # 旧实现硬编码 1e-6/1e-7, 量级偏小 ~10³, 稳定但浪费算力.
+        import math
+
+        rayleigh_t = math.pi * r * math.sqrt(rho / G) / (0.1631 * nu + 0.8766)
+        dt = 0.1 * rayleigh_t
+
+        # Tsuji 阻尼系数: 由恢复系数 e 反算
+        # α = -ln(e) / sqrt(π² + ln²(e))  (Tsuji 1992)
+        # ponytail: e→1 时 α→0 (完全弹性, 无阻尼), e→0 时 α→∞ (完全塑性)
+        if e >= 1.0:
+            alpha = 0.0
+        elif e <= 0.0:
+            alpha = 1e9  # 完全塑性, 极大阻尼
+        else:
+            alpha = -math.log(e) / math.sqrt(math.pi ** 2 + math.log(e) ** 2)
+
+        # 多分散粒径 set 语句
+        polydispersion_block = (
+            f"# 多分散粒径 r~N({r}, {r_std})\n"
+            f"variable       r_var normal {r} {r_std}\n"
+            f"set             type 1 diameter v_r_var"
+            if r_std > 0
+            else "# 单分散粒径"
+        )
 
         return f"""# LAMMPS DEM (Discrete Element Method) — Granular Packing Simulation
-# 碰撞模型: Hertz-Mindlin with Coulomb friction
+# 接触模型: Hertz-Mindlin with Tsuji damping (restitution e={e})
 # 生成方式: lammps_tool action=dem_packing
 # 粒子数: {args.dem_n_particles}, 粒径: {r} ± {r_std}
+# 时间步 dt = 0.1 * t_R = {dt:.6e} s  (t_R = πr·sqrt(ρ/G)/(0.1631ν+0.8766) = {rayleigh_t:.6e} s)
 
 # ── Units & Atom Style ──────────────────────────────────────────
 # si: meters/seconds/kg; real: Angstroms/fs/g (需按比例换算)
@@ -1445,36 +1587,36 @@ boundary        f f f
 region          box block 0 {bx} 0 {by} 0 {bz}
 create_box      1 box
 
-# ── Particle Properties ─────────────────────────────────────────
-# 每个粒子: position + diameter + density (LAMMPS 算 mass)
-set             type 1 diameter {2*r} density {rho}
-
 # ── Create Particles ────────────────────────────────────────────
-# random distribution in box, 上下留点空给重力沉降
+# 必须先 create_atoms 再 set diameter/density:
+# LAMMPS set 只作用于已存在原子, create_box 后无原子时 set 静默无效.
 create_atoms    1 random {args.dem_n_particles} 12345 box \\
                 overlap {2*r} maxtry 10000
 
-# 多分散: 按 r ± r_std 调整粒径
-{"variable       r_var normal " + str(r) + " " + str(r_std) if r_std > 0 else ""}
-{"set             type 1 diameter v_r_var" if r_std > 0 else ""}
+# ── Particle Properties ─────────────────────────────────────────
+# 每个粒子: position + diameter + density (LAMMPS 内部按 sphere 算 mass)
+set             type 1 diameter {2*r} density {rho}
+{polydispersion_block}
 
 # ── Neighbor & Communication ───────────────────────────────────
 neighbor        {r * 2} bin
 neigh_modify    delay 0
 
 # ── Pair Style: Hertz-Mindlin Granular Contact ──────────────────
-# LAMMPS GRANULAR package: 非线性 Hertz 接触 + Mindlin 切向 + 阻尼
+# LAMMPS GRANULAR package, 官方语法 (https://docs.lammps.org/pair_granular.html):
+#   pair_coeff * * hertz/material E v gamma_n tangential mindlin_rescale G_t mu_t x_t damping tsuji gamma_n
+# 注意: tangential 关键字必须前置 (旧脚本把 normal/tangential/rolling/twisting
+# 当 pair_coeff 末尾位置参数, 是非法语法). damping_coeff 是臆造关键字,
+# 正确是 "damping tsuji gamma_n".
 pair_style      granular
-pair_coeff      * * hertz/material {E} {nu} {mu} {e} 0 normal \\
-                mindlin/force {G} {mu} 0 tangential \\
-                damping_coeff {e} 0.5 0.5 0 rolling \\
-                tsudi 1.0 0.5 0 twisting
+pair_coeff      * * hertz/material {E:.6e} {nu} {alpha:.6e} \\
+                tangential mindlin_rescale {G:.6e} {mu} 1.0 \\
+                damping tsuji {alpha:.6e}
 
 # ── Physics: Gravity (optional) ─────────────────────────────────
-{"fix            gravity all gravity {g} vector 0 0 -1" if g > 0 else "# no gravity"}
+{"fix            gravity all gravity " + str(g) + " vector 0 0 -1" if g > 0 else "# no gravity"}
 
 # ── Integration: NVE + Granular Temperature ────────────────────
-# velocity limit 防止穿透时爆飞
 fix             integrate all nve/sphere
 fix             freeze_property all setforce 0 0 0
 
@@ -1483,25 +1625,23 @@ thermo          1000
 thermo_style    custom step atoms ke pe etotal press
 thermo_modify   lost warn
 
-# 每 10000 步 dump 一次粒子位置和速度
 dump            particles all custom 10000 dump.particles id type x y z vx vy vz \\
                 radius mass
 dump_modify     particles sort id
 
 # ── Run ─────────────────────────────────────────────────────────
-# 初始能量最小化 (消除重叠)
+# 初始能量最小化 (消除 create_atoms overlap 残留)
 minimize        1e-6 1e-8 1000 10000
 
-# 释放 freeze, 跑 DEM
+# 释放 freeze, 跑 DEM. dt 取 10% Rayleigh 接触时间保证稳定.
 unfix           freeze_property
-
-timestep        {1e-6 if g > 0 else 1e-7}
+timestep        {dt:.6e}
 run             {n_steps}
 
 # ── Post: Compute Coordination Number & Packing Fraction ───────
 compute         cn all contact/atom
 compute         cn_avg all reduce ave c_cn
-variable        phi equal count(all) * {mass} / (vol * {rho})
+variable        phi equal count(all) * {mass:.6e} / (vol * {rho})
 variable        mean_cn equal c_cn_avg
 
 print           "Packing fraction (phi): ${{phi}}"

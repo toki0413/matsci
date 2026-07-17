@@ -220,13 +220,34 @@ class PhysicsAuditor:
                     )
                 )
 
-        # 4. Not converged but action expects converged result
-        if not converged and action in ("relax", "scf", "band", "dos"):
+        # 4. Not converged but action expects converged result.
+        # Only flag as error for relax (ionic convergence) — scf/band/dos use
+        # electronic convergence (audit_20260717/14 P1-5). The tool's parser
+        # already applies the right criterion; if it reports converged=False
+        # here, that's a real failure. But for scf/band/dos the criterion is
+        # softer — demote to warning so agent sees the issue without
+        # triggering AutoFixLoop's "soft failure" 2× retry.
+        if not converged and action == "relax":
             report.findings.append(
                 PhysicsFinding(
                     severity="error",
                     category="convergence_suspicious",
-                    message=f"Calculation did not converge for action={action}, results unreliable",
+                    message=f"Ionic relaxation did not converge for action={action}, results unreliable",
+                    field="converged",
+                    value=converged,
+                    expected_range="True for reliable results",
+                )
+            )
+        elif not converged and action in ("scf", "band", "dos"):
+            report.findings.append(
+                PhysicsFinding(
+                    severity="warning",
+                    category="convergence_suspicious",
+                    message=(
+                        f"Electronic convergence not reached for action={action} "
+                        f"(NELM hit or no EDIFF marker). Results may be usable "
+                        f"for qualitative inspection but not for quantitative claims."
+                    ),
                     field="converged",
                     value=converged,
                     expected_range="True for reliable results",
