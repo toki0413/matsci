@@ -11,6 +11,7 @@ import { SaveToMemoryButton } from '../SaveToMemoryButton';
 import { PipelineProgressCard } from '../PipelineProgressCard';
 import MessageContent from '../MessageContent';
 import type { Message } from '../../hooks/useChatAndConnection';
+import type { HeatEngineHealth } from '../../types/domain';
 import type { ReconnectingWebSocket } from '../../lib/ws-client';
 
 const INLINE_COMMANDS = [
@@ -228,6 +229,8 @@ interface ChatPanelProps {
   toggleSuggestMode?: (enabled: boolean) => void;
   respondToSuggestCode?: (action: "approve" | "edit" | "deny", editedCode?: string) => void;
   riskThreshold?: number;
+  // v7 G59: 认知热机健康 (从 SSE /tasks/stream 'campaign' 推送)
+  heatEngineHealth?: HeatEngineHealth | null;
   // 跳到 files tab — FilesPanel 自己管 cwd/editor 那堆状态, 不在这里重做
   onOpenFiles?: () => void;
   // multi-agent persona
@@ -255,6 +258,7 @@ export function ChatPanel(props: ChatPanelProps) {
     toggleSuggestMode,
     respondToSuggestCode,
     riskThreshold,
+    heatEngineHealth,
     onOpenFiles,
     personas = [],
     currentPersona,
@@ -817,6 +821,26 @@ export function ChatPanel(props: ChatPanelProps) {
               }>
                 ⚖{riskThreshold.toFixed(2)}
               </span>
+            </div>
+          )}
+          {heatEngineHealth && (
+            <div
+              className="flex items-center gap-1"
+              title={`Cognitive heat engine (v7 G59)
+Re=${heatEngineHealth.Re_cog.toFixed(1)} (crit ${heatEngineHealth.Re_crit.toFixed(1)})  U=${heatEngineHealth.U.toFixed(1)} L=${heatEngineHealth.L.toFixed(1)} nu=${heatEngineHealth.nu.toFixed(2)}
+eta=${heatEngineHealth.eta_cog.toFixed(3)}  T_hot=${heatEngineHealth.T_hot.toFixed(2)} T_cold=${heatEngineHealth.T_cold.toFixed(2)}
+intermittency(kurt)=${heatEngineHealth.intermittency_kurtosis.toFixed(2)}  cum_work=${heatEngineHealth.cumulative_work.toFixed(1)}  cum_entropy=${heatEngineHealth.cumulative_entropy_produced.toFixed(1)}
+status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnings:\n- ' + heatEngineHealth.warnings.join('\n- ') : '\nno warnings'}`}
+            >
+              <span className={
+                heatEngineHealth.status === 'healthy' ? 'text-green-400'
+                  : heatEngineHealth.status === 'chaotic' ? 'text-red-400'
+                  : heatEngineHealth.status === 'stagnant' ? 'text-yellow-400'
+                  : 'text-orange-400'
+              }>
+                🜂{heatEngineHealth.Re_cog.toFixed(0)}
+              </span>
+              <span className="text-text-muted">η{heatEngineHealth.eta_cog.toFixed(2)}</span>
             </div>
           )}
           {suggestMode && (

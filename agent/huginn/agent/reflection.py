@@ -48,9 +48,29 @@ class ReflectionMixin:
 
         Prefers the model router's cheap/summarize model to avoid burning
         expensive main-model tokens on compaction.
+
+        ponytail: HUGINN_COMPACT_KIND 分流 local/remote/remote_v2 三条路径.
+        升级路径是注册 PRE_COMPACT 钩子动态改 kind, 现在用环境变量静态配置.
         """
+        import os
+
+        kind = os.environ.get("HUGINN_COMPACT_KIND", "remote").lower()
         model = None
-        if self.model_router is not None:
+        if kind == "local":
+            # 本地模型 (ollama/vllm), 隐私优先
+            local = getattr(self, "_find_local_model", lambda: None)()
+            if local is not None:
+                model = local
+            else:
+                logger.warning("HUGINN_COMPACT_KIND=local but no local model found, fallback to remote")
+        elif kind == "remote_v2":
+            # 升级版远程 summarizer (例如更大的 summarization 模型)
+            if self.model_router is not None:
+                try:
+                    model = self.model_router.select("summarize_v2", prefer_cheap=True)
+                except Exception:
+                    logger.warning("summarize_v2 unavailable, fallback to remote", exc_info=True)
+        if model is None and self.model_router is not None:
             try:
                 model = self.model_router.select("summarize", prefer_cheap=True)
             except Exception:
@@ -531,6 +551,7 @@ class ReflectionMixin:
 
         h_belief > 0.7 说明压缩丢信息太多, agent 迷糊了, 让 CSM 进 feedback.
         v4 G17 续: 信号构造优先走 SignalHub, 失败 fallback 到 v3 直构.
+        v7 G59: 同步更新认知热机 T_hot (idea 池熵代理).
         """
         # ponytail: 阈值 0.7 硬编码, 跟 BeliefEntropyConfig.threshold_high 默认对齐.
         # 升级: 读 be.config.threshold_high, 别硬编码. 单次检查不看趋势.
@@ -544,6 +565,14 @@ class ReflectionMixin:
             if not history:
                 return
             h_belief = history[-1]
+
+            # v7 G59: 更新认知热机 T_hot (belief_entropy → idea 池熵)
+            try:
+                from huginn.metacog.cognitive_heat_engine import get_heat_engine
+                get_heat_engine().update_T_hot(float(h_belief))
+            except Exception:
+                logger.debug("heat_engine.update_T_hot failed (non-fatal)", exc_info=True)
+
             if h_belief > 0.7:
                 payload = {"h_belief": h_belief}
                 # 优先走 Hub

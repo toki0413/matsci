@@ -125,12 +125,15 @@ class EventBus:
 
         # Push to SSE queues. None sentinel means "stream closed" to consumers.
         dead: list[asyncio.Queue] = []
+        dropped_count = 0
         for q in self._sse_queues:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 # Consumer is too slow. Drop oldest and push — better to
                 # lose an old event than block the whole bus.
+                # v6: 计数丢弃, 后面发 event_dropped 通知, 不再静默.
+                dropped_count += 1
                 try:
                     q.get_nowait()
                     q.put_nowait(event)
@@ -141,6 +144,23 @@ class EventBus:
 
         if dead:
             self._sse_queues = [q for q in self._sse_queues if q not in dead]
+
+        # v6: 丢事件后发 event_dropped 通知, 让 SSE consumer 知道有事件被丢.
+        # ponytail: 通知本身也可能被丢 (queue 满), 这是 best-effort. 升级路径是
+        # 加 per-consumer drop counter + /events/stats 端点查询.
+        if dropped_count > 0:
+            drop_event = AgentEvent(
+                type="event_bus.dropped",
+                timestamp=time.time(),
+                data={"dropped_count": dropped_count, "victim_type": event.type},
+                source="event_bus",
+            )
+            self._history.append(drop_event)
+            for q in self._sse_queues:
+                try:
+                    q.put_nowait(drop_event)
+                except asyncio.QueueFull:
+                    pass  # 通知也满了就算了, best-effort
 
     def subscribe(self, event_type: str, callback: Callable) -> Callable:
         """Subscribe to events of a specific type (or "*" for all).

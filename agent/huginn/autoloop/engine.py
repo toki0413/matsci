@@ -1325,6 +1325,30 @@ class AutoloopEngine:
                 _active_goal = _gs.get_active()
                 if _active_goal:
                     _gs.increment_iteration(_active_goal.id)
+                    # v7: goal 级预算硬停. goal.max_iterations 之前是死字段, 现在生效.
+                    if GoalScheduler.is_budget_exhausted(_active_goal):
+                        logger.info(
+                            "goal budget exhausted: iter=%d max=%d, failing goal %s",
+                            _active_goal.iteration, _active_goal.max_iterations, _active_goal.id,
+                        )
+                        try:
+                            _gs.fail_goal(
+                                _active_goal.id,
+                                reason=f"budget exhausted: {_active_goal.iteration}/{_active_goal.max_iterations} iterations",
+                            )
+                        except Exception:
+                            logger.debug("fail_goal failed (non-fatal)", exc_info=True)
+                        self._emit_campaign(
+                            "campaign.iteration",
+                            {
+                                "iteration": self._iteration,
+                                "max": max_iterations,
+                                "objective": objective[:200],
+                                "goal_status": "budget_exhausted",
+                            },
+                        )
+                        self._should_stop = True
+                        break
             except Exception:
                 logger.debug("goal_store.increment_iteration failed", exc_info=True)
 
@@ -1342,6 +1366,18 @@ class AutoloopEngine:
             # ponytail: keep last 2000 chars, earlier feedback is stale anyway
             if len(self._speculator_hint) > 2000:
                 self._speculator_hint = self._speculator_hint[-2000:]
+
+            # v7: 续跑提示 — 让 LLM 看到自己在续跑而非从头开始.
+            # 不依赖外部 summary, 只用 goal 字段拼. 第 1 轮不拼 (算首次).
+            if goal is not None and self._iteration > 1:
+                try:
+                    cont = GoalScheduler.build_continuation_prompt(goal)
+                    self._speculator_hint = (
+                        (self._speculator_hint + "\n" + cont).strip()
+                        if self._speculator_hint else cont
+                    )
+                except Exception:
+                    logger.debug("build_continuation_prompt failed (non-fatal)", exc_info=True)
 
             # 1. Perceive — _perceive 里的 _perceive_legacy 会跑 git subprocess + rglob,
             # 阻塞事件循环 5-15s, 用 to_thread 丢到线程池
@@ -2069,6 +2105,35 @@ class AutoloopEngine:
         # 不重复调 RAG. 升级路径: 真 RAG recall 命中数 / provenance 引用数.
         self._last_hypothesis_confidence = score / 10.0
         self._last_hypothesis_evidence_strength = float(supported_ratio)
+
+        # v7 G59: 更新认知热机 T_cold (paradigm 秩序代理)
+        # supported_ratio 高 = validation 提取有序能力强 = 冷源温度低
+        try:
+            from huginn.metacog.cognitive_heat_engine import get_heat_engine
+            eng = get_heat_engine()
+            eng.update_T_cold(float(supported_ratio), float(score))
+
+            # 推送 health 到 EventBus + SSE. 每轮 darwin 后推一次, 让前端实时看
+            # Re_cog / η_cog / status. _should_imaginate 已 update_kinematics,
+            # 但若本轮没触发 imaginate, 这里强制 update 保证 health 反映当前状态.
+            n_ideas = len(all_nodes)
+            n_principles = 0
+            try:
+                sp = getattr(self, "stable_principles", None)
+                n_principles = len(sp) if sp else 0
+            except Exception:
+                pass
+            sys_prompt_len = 0
+            try:
+                sys_prompt_len = len(getattr(self, "system_prompt", "") or "")
+            except Exception:
+                pass
+            eng.update_kinematics(n_ideas, n_principles + 1, sys_prompt_len)
+
+            health = eng.health_check()
+            self._emit_campaign("heat_engine.health", health)
+        except Exception:
+            logger.debug("heat_engine.update_T_cold failed (non-fatal)", exc_info=True)
 
         if self._darwin_stagnation >= 2 and self._iteration > 2:
             logger.info(
@@ -2899,11 +2964,42 @@ class AutoloopEngine:
             logger.debug("attach lucid prereqs failed", exc_info=True)
 
     def _should_imaginate(self) -> bool:
-        """是否触发想象力模式. 高 surprise 或连续 refine 时返回 True.
+        """是否触发想象力模式. v7 G59: 认知热机转捩判据.
+
+        优先调 CognitiveHeatEngine.should_imaginate (Re_cog > Re_crit 或 T_hot > 0.7).
+        回落: 旧的 surprise + refine_count 触发, 向后兼容.
 
         MToM P4 (hybrid ST+TT): 心智模型预测错误时, 从 Theory Theory
         切到 Simulation Theory 重新建模. 这里就是那个切换信号.
         """
+        try:
+            from huginn.metacog.cognitive_heat_engine import get_heat_engine
+            eng = get_heat_engine()
+            # 更新运动学量 (U/L/ν), 让 Re_cog 反映当前状态
+            n_ideas = 0
+            try:
+                n_ideas = len(self.hypothesis_graph.all_nodes())
+            except Exception:
+                pass
+            n_principles = 0
+            try:
+                # stable_principles 是 reflection mixin 的 list
+                sp = getattr(self, "stable_principles", None)
+                n_principles = len(sp) if sp else 0
+            except Exception:
+                pass
+            sys_prompt_len = 0
+            try:
+                sys_prompt_len = len(getattr(self, "system_prompt", "") or "")
+            except Exception:
+                pass
+            eng.update_kinematics(n_ideas, n_principles + 1, sys_prompt_len)
+            if eng.should_imaginate(getattr(self, "_iteration", 0)):
+                return True
+        except Exception:
+            logger.debug("heat_engine.should_imaginate failed, fallback to legacy", exc_info=True)
+
+        # 回落: 旧触发逻辑 (surprise + refine_count)
         return (
             getattr(self, "_last_surprise", 0.0) > 0.5
             or getattr(self, "_refine_count", 0) >= 2
