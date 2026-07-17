@@ -62,6 +62,154 @@ def recall_audit_context(category: str, query: str = "", limit: int = 20) -> lis
     return recall_context(category=category, query=query, top_k=limit)
 
 
+# === G43: recall 策略学习 — v4 预留接口第 2 项 ===
+# 策略表: (phase, metacog_state) → (category, top_k, query_template)
+# 由 S7 self-modification 学习更新, 下次 recall 用学到的策略.
+# ponytail: 策略学习是 S7 闭环的自然延伸, 不需要新组件. 升级路径是
+# 让策略表走 RAG + embedding 相似度匹配, 当前精确字符串匹配够用.
+
+import json as _json
+import os as _os
+from pathlib import Path as _Path
+
+# 默认策略 — 覆盖 7 phase × 关键 metacog_state. S7 可在此基础上扩展.
+_DEFAULT_RECALL_STRATEGIES: list[dict] = [
+    {"phase": "perceive", "metacog_state": "S1_DISCOVER", "category": "autoloop_summary", "top_k": 2, "query_template": "", "reason": "perceive 阶段需要历史任务上下文"},
+    {"phase": "hypothesize", "metacog_state": "S2_HYPOTHESIZE", "category": "hypothesis", "top_k": 3, "query_template": "", "reason": "hypothesize 阶段需要历史假设做对照"},
+    {"phase": "plan", "metacog_state": "S3_PLAN", "category": "stable_principles", "top_k": 5, "query_template": "", "reason": "plan 阶段必须遵守 stable_principles"},
+    {"phase": "execute", "metacog_state": "S4_ACT", "category": "skill_invocation", "top_k": 3, "query_template": "", "reason": "execute 阶段需要工具调用历史"},
+    {"phase": "validate", "metacog_state": "S5_VERIFY", "category": "failure", "top_k": 3, "query_template": "", "reason": "validate 阶段需要历史失败模式"},
+    {"phase": "learn", "metacog_state": "S6_RESOLVE", "category": "knowledge_seed", "top_k": 5, "query_template": "", "reason": "learn 阶段需要知识种子做归纳"},
+    {"phase": "report", "metacog_state": "S6_RESOLVE", "category": "benchmark_run_summary", "top_k": 2, "query_template": "", "reason": "report 阶段需要过往 benchmark 结果对照"},
+]
+
+
+def _strategy_file(workspace: str | _Path | None = None) -> _Path:
+    """策略表路径: workspace/.huginn/recall_strategy.jsonl
+    workspace=None 时用 HUGINN_CACHE_DIR 或 ~/.huginn.
+    ponytail: 跟 stable_principles 同位置, 跨任务复用.
+    """
+    if workspace is not None:
+        base = _Path(workspace)
+    else:
+        cache = _os.environ.get("HUGINN_CACHE_DIR")
+        base = _Path(cache) if cache else _Path.home() / ".huginn"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "recall_strategy.jsonl"
+
+
+def load_recall_strategy(workspace: str | _Path | None = None) -> list[dict]:
+    """加载策略表. 文件不存在时写默认策略, 然后返回.
+    ponytail: 文件不存在不抛异常, 写默认 — 第一次调用自动初始化.
+    """
+    path = _strategy_file(workspace)
+    if not path.exists():
+        # 首次调用 — 写默认策略
+        path.write_text(
+            "\n".join(_json.dumps(s, ensure_ascii=False) for s in _DEFAULT_RECALL_STRATEGIES) + "\n",
+            encoding="utf-8",
+        )
+        return list(_DEFAULT_RECALL_STRATEGIES)
+    try:
+        strategies: list[dict] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                strategies.append(_json.loads(line))
+        return strategies if strategies else list(_DEFAULT_RECALL_STRATEGIES)
+    except Exception:
+        logger.debug("recall_strategy.jsonl corrupted, using defaults")
+        return list(_DEFAULT_RECALL_STRATEGIES)
+
+
+def match_recall_strategy(
+    phase: str,
+    metacog_state: str = "",
+    strategies: list[dict] | None = None,
+    workspace: str | _Path | None = None,
+) -> dict | None:
+    """匹配策略: 精确 (phase, metacog_state) 优先, 退到只匹配 phase.
+    metacog_state 可空 (未传时只按 phase 匹配).
+    """
+    if strategies is None:
+        strategies = load_recall_strategy(workspace)
+    # 精确匹配
+    if metacog_state:
+        for s in strategies:
+            if s.get("phase") == phase and s.get("metacog_state") == metacog_state:
+                return s
+    # 退到只匹配 phase
+    for s in strategies:
+        if s.get("phase") == phase and not s.get("metacog_state"):
+            return s
+    # 最后退到 phase 任意 metacog_state
+    for s in strategies:
+        if s.get("phase") == phase:
+            return s
+    return None
+
+
+def recall_context_with_strategy(
+    phase: str,
+    metacog_state: str = "",
+    query: str = "",
+    workspace: str | _Path | None = None,
+) -> list[dict]:
+    """按学到的策略 recall — 匹配 (phase, metacog_state) 拿 category+top_k.
+
+    无策略命中时返回空 list (调用方自行决定降级路径).
+    ponytail: 这是 recall_context 的策略版本, 不替代原 recall_context.
+    """
+    strategy = match_recall_strategy(phase, metacog_state, workspace=workspace)
+    if strategy is None:
+        return []
+    # query_template 可扩展为模板替换, 当前直接用 query
+    return recall_context(
+        category=strategy.get("category", ""),
+        query=query or strategy.get("query_template", ""),
+        top_k=int(strategy.get("top_k", 3)),
+    )
+
+
+def update_recall_strategy(
+    entry: dict,
+    workspace: str | _Path | None = None,
+) -> bool:
+    """S7 self-modification 调用: 更新/新增策略条目.
+
+    entry 必须含 phase + category + top_k. metacog_state 可选.
+    已有 (phase, metacog_state) 匹配的条目会被替换, 否则追加.
+    返回 True=更新成功, False=entry 不合法.
+    ponytail: 这是 S7 闭环的写入端, 不引入新组件.
+    """
+    if not entry.get("phase") or not entry.get("category"):
+        return False
+    if not isinstance(entry.get("top_k"), int) or entry["top_k"] <= 0:
+        return False
+
+    path = _strategy_file(workspace)
+    strategies = load_recall_strategy(workspace)
+    # 替换匹配的旧条目, 否则追加
+    replaced = False
+    key_phase = entry["phase"]
+    key_state = entry.get("metacog_state", "")
+    for i, s in enumerate(strategies):
+        if s.get("phase") == key_phase and s.get("metacog_state", "") == key_state:
+            strategies[i] = entry
+            replaced = True
+            break
+    if not replaced:
+        strategies.append(entry)
+    # 原子写 — 先写 tmp 再 rename, 防止写一半被读到
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        "\n".join(_json.dumps(s, ensure_ascii=False) for s in strategies) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+    return True
+
+
 from huginn.metacog.failure_modes import FailureMode, FailureModeRegistry, DEFAULT_REGISTRY
 from huginn.metacog.context_isolation import ContextBundle, IsolationPolicy, isolate
 from huginn.metacog.method_registry import MethodFamily, MethodRegistry
@@ -98,6 +246,11 @@ from huginn.metacog.signal_hub import SignalHub
 __all__ = [
     "recall_context",
     "recall_audit_context",
+    # G43: recall 策略学习
+    "load_recall_strategy",
+    "match_recall_strategy",
+    "recall_context_with_strategy",
+    "update_recall_strategy",
     "FailureMode",
     "FailureModeRegistry",
     "DEFAULT_REGISTRY",

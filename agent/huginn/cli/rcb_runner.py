@@ -182,6 +182,152 @@ async def adversarial_critique(
         }
 
 
+# === G42: critique_decision — v4 预留接口第 1 项 ===
+# 扩展 adversarial_critique 到 mode/phase/tool 决策层. 不破坏 object/meta 双层.
+# ponytail: 用同样的独立 LLM 调用模式, 不引入新组件. 升级路径是接 LeanInterface
+# 对决策做形式化验证 (mode/phase 转移是可形式化的有限状态机).
+from dataclasses import dataclass, field as _dc_field
+
+
+@dataclass
+class Decision:
+    """可 critique 的决策 — mode 切换 / phase 转移 / tool 选择.
+
+    frm/to 用字符串而非 enum, 因为 mode/phase/tool 名字都是有限字符串集合,
+    不必为每种决策维护单独 enum. 调用方负责传合法值.
+    """
+    kind: str  # "mode_switch" | "phase_transition" | "tool_select"
+    frm: str
+    to: str
+    rationale: str = ""
+    metadata: dict[str, Any] = _dc_field(default_factory=dict)
+
+
+@dataclass
+class CritiqueResult:
+    """critique_decision 的返回 — 含 red_flags + suggestions + 总体 verdict."""
+    verdict: str  # "accept" | "reject" | "fix_needed"
+    red_flags: list[str] = _dc_field(default_factory=list)
+    suggestions: list[str] = _dc_field(default_factory=list)
+    reason: str = ""
+
+
+# 决策类型的合法 from/to 集合 — 模板 critique 用, LLM 路径不依赖
+_VALID_MODES = frozenset({"chat", "plan", "research"})
+_VALID_PHASES = frozenset({
+    "perceive", "hypothesize", "plan", "execute", "validate", "learn", "report",
+})
+
+
+def _template_critique_decision(decision: Decision, context: dict[str, Any]) -> CritiqueResult:
+    """模板 critique — 无 LLM 时走规则. 三层检查:
+    1. kind 合法
+    2. frm/to 在对应合法集合里
+    3. rationale 非空 (无理由的决策不可 critique)
+    ponytail: 这是廉价兜底, 真正的 critique 走 LLM 路径.
+    """
+    red_flags: list[str] = []
+    suggestions: list[str] = []
+
+    if decision.kind not in ("mode_switch", "phase_transition", "tool_select"):
+        return CritiqueResult(
+            verdict="reject",
+            red_flags=[f"unknown decision kind: {decision.kind}"],
+            reason="invalid kind",
+        )
+
+    if decision.kind == "mode_switch":
+        if decision.frm and decision.frm not in _VALID_MODES:
+            red_flags.append(f"frm mode '{decision.frm}' not in {_VALID_MODES}")
+        if decision.to not in _VALID_MODES:
+            red_flags.append(f"to mode '{decision.to}' not in {_VALID_MODES}")
+    elif decision.kind == "phase_transition":
+        if decision.frm and decision.frm not in _VALID_PHASES:
+            red_flags.append(f"frm phase '{decision.frm}' not in _VALID_PHASES")
+        if decision.to not in _VALID_PHASES:
+            red_flags.append(f"to phase '{decision.to}' not in _VALID_PHASES")
+        # 7-phase pipeline: 只能向前走或回 perceive, 不能跳过 execute → report
+        if decision.frm in _VALID_PHASES and decision.to in _VALID_PHASES:
+            phases_order = list(_VALID_PHASES)
+            # report 不能跳回 execute (除非显式 force)
+            if decision.frm == "report" and decision.to == "execute" and not context.get("force"):
+                red_flags.append("report → execute backtrack without force=True")
+                suggestions.append("if refining after report, pass context['force']=True")
+
+    if not decision.rationale.strip():
+        red_flags.append("empty rationale — decision without justification")
+        suggestions.append("provide rationale explaining why this decision is needed")
+
+    if red_flags:
+        return CritiqueResult(
+            verdict="fix_needed",
+            red_flags=red_flags,
+            suggestions=suggestions,
+            reason="template rules failed",
+        )
+    return CritiqueResult(verdict="accept", reason="template rules passed")
+
+
+async def critique_decision(
+    decision: Decision,
+    context: dict[str, Any] | None = None,
+    *,
+    model: Any = None,
+    llm_client: Any = None,
+) -> CritiqueResult:
+    """L3 decision critique — 扩展 adversarial_critique 到 mode/phase/tool.
+
+    不破坏现有 object/meta 双层 critique. 这是 v4 预留的第 1 项接口实现.
+    复用同样独立 LLM 调用模式: 新 system prompt, 无对话历史, 输出结构化 JSON.
+
+    model=None 时走模板规则 (测试用); model 传入时优先调 LLM, 失败降级到模板.
+    """
+    context = context or {}
+
+    # 先走模板兜底 — 模板都过不了的不必浪费 LLM 调用
+    template_result = _template_critique_decision(decision, context)
+    if template_result.verdict == "reject":
+        return template_result
+
+    client = llm_client if llm_client is not None else model
+    if client is None or not hasattr(client, "ainvoke"):
+        return template_result
+
+    # LLM 路径 — 让 skeptical reviewer 看决策是否合理
+    from langchain_core.messages import HumanMessage, SystemMessage
+    system = SystemMessage(content=(
+        "你是 DECISION AUDITOR 评估 agent 的 mode/phase/tool 决策.\n"
+        "你的工作是找 FLAWS — 不合理的转移、跳阶段、tool 选择错误.\n"
+        "输出严格 JSON: "
+        '{"verdict": "accept"|"reject"|"fix_needed", '
+        '"red_flags": [string], "suggestions": [string], "reason": string}'
+    ))
+    ctx_str = json.dumps(context, ensure_ascii=False, default=str)[:2000]
+    human = HumanMessage(content=(
+        f"## Decision\n"
+        f"kind: {decision.kind}\n"
+        f"from: {decision.frm}\n"
+        f"to: {decision.to}\n"
+        f"rationale: {decision.rationale}\n\n"
+        f"## Context\n{ctx_str}\n\n"
+        "Output ONLY the JSON object."
+    ))
+    try:
+        resp = await client.ainvoke([system, human])
+        text = resp.content if hasattr(resp, "content") else str(resp)
+        text = _strip_code_fences(text)
+        data = json.loads(text)
+        return CritiqueResult(
+            verdict=data.get("verdict", "fix_needed"),
+            red_flags=list(data.get("red_flags", [])),
+            suggestions=list(data.get("suggestions", [])),
+            reason=data.get("reason", ""),
+        )
+    except Exception as e:
+        logger.warning("critique_decision LLM failed: %s — fallback to template", e)
+        return template_result
+
+
 # === G28: 数值重算 — report 中的数值 claim 对 outputs/ 实际数据交叉验证 ===
 # ponytail: 治 M_002 MAE=0.032eV 造假 — agent 写 report 时编个数, LLM critique 看
 # 文本看不出问题. 这里直接读 outputs/ 里的 metrics.json / predictions.csv 重算,
