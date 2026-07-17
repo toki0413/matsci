@@ -110,6 +110,11 @@ class ResearchState:
 
     # 数学结构识别 (gap → PDE/变分/守恒律/几何)
     math_structures: list[dict[str, Any]] = field(default_factory=list)
+    # v6 G53: 结构主义衔接 — gap → PhysicalStructure (relation_type + implementor_slots)
+    # 跟 math_structures 并行存在; math_structures 是文字分类 (advisory),
+    # physical_structures 是结构化形式化 (供 G46 同构验证 + G47 解耦搜索用).
+    # 用 Any 避免 academic ↔ metacog 循环 import (实际是 PhysicalStructure dataclass).
+    physical_structures: list[Any] = field(default_factory=list)
     # 数学验证结果
     math_verification: dict[str, Any] = field(default_factory=dict)
 
@@ -1104,6 +1109,109 @@ class DeliAutoResearch:
                 + ", ".join(s.get("structure", "?") for s in structures)
             )
 
+    # v6 G53: 结构主义衔接 — 把 _identify_math_structures 的文字分类映射到
+    # PhysicalStructure 5 类预定义结构. 失败降级到文字分类 (v5 路径).
+    # 映射表 (spec G53):
+    #   pde → band_symmetry (能带/PDE 描述电子结构)
+    #   variational → interface_binding (变分原理描述界面结合)
+    #   conservation → defect_chemistry (守恒律约束缺陷化学)
+    #   geometric → catalytic_geometry (几何描述催化位)
+    #   statistical → percolation_topology (统计力学描述逾渗)
+    #   exploratory / none → 跳过 (结构未定)
+    _MATH_TO_PHYSICAL_STRUCTURE: dict[str, str] = {
+        "pde": "band_symmetry",
+        "variational": "interface_binding",
+        "conservation": "defect_chemistry",
+        "geometric": "catalytic_geometry",
+        "statistical": "percolation_topology",
+    }
+
+    async def _extract_physical_structures(self, state: ResearchState) -> None:
+        """把 math_structures 文字分类映射到 PhysicalStructure 预定义结构.
+
+        依赖 _identify_math_structures 先跑 (写 state.math_structures).
+        失败 (import 错 / 无匹配) 静默降级 — physical_structures 留空,
+        下游仍可用 math_structures 文字分类.
+        ponytail: 不调 LLM, 纯查表; 升级路径是 LLM 直接产 PhysicalStructure.
+        """
+        if not state.math_structures:
+            return
+        try:
+            from huginn.metacog.physical_structure import PREDEFINED_STRUCTURES
+        except Exception:
+            state.integrity_log.append(
+                "[struct] physical_structure module unavailable, skip"
+            )
+            return
+
+        mapped: list[Any] = []
+        for s in state.math_structures:
+            cat = str(s.get("structure", "")).lower()
+            key = self._MATH_TO_PHYSICAL_STRUCTURE.get(cat)
+            if not key or key not in PREDEFINED_STRUCTURES:
+                continue
+            # 拷贝预定义结构, 注入 gap 来源信息 (不污染常量)
+            base = PREDEFINED_STRUCTURES[key]
+            try:
+                from dataclasses import replace as _replace
+                # constraints 是 list[str], 拷一份避免共享引用
+                ps = _replace(base, constraints=list(base.constraints or []))
+                ps._gap_ref = s.get("gap", "")  # type: ignore[attr-defined]
+                ps._math_category = cat  # type: ignore[attr-defined]
+                mapped.append(ps)
+            except Exception:
+                continue
+        state.physical_structures = mapped
+        if mapped:
+            state.integrity_log.append(
+                f"[struct] mapped {len(mapped)}/{len(state.math_structures)} "
+                f"math structures → PhysicalStructure: "
+                + ", ".join(p.relation_type for p in mapped)
+            )
+
+    async def _fill_sorry_gaps(
+        self,
+        state: ResearchState,
+        workspace: str | None = None,
+    ) -> None:
+        """v6 G53: 把 _run_computational_loop 包成 sorry-driven 语义.
+
+        每个 gap 视为 Conjecture 的 sorry placeholder:
+        - 跑前: gap['sorry_status'] = 'placeholder'
+        - 跑成功 (进 gaps_filled): gap['sorry_status'] = 'filled'
+        - 跑失败 (异常或未填): 保留 'placeholder' (无反例)
+        - 显式反例 (验证不通过): 'impossible' (当前 loop 不产出反例, 留接口)
+
+        ponytail: 不重命名 _run_computational_loop (向后兼容), 加包装层.
+        ceiling: 当前 loop 不区分"填充失败"和"找到反例", 都留 placeholder.
+        升级路径: 让 AutoloopEngine 在 result 里返回 counterexample, 这里映射 impossible.
+        """
+        # 初始化每个 gap 的 sorry_status
+        for gap in state.gaps:
+            if isinstance(gap, dict):
+                gap.setdefault("sorry_status", "placeholder")
+
+        filled_before = set(state.gaps_filled)
+
+        try:
+            await self._run_computational_loop(state, workspace=workspace)
+        except Exception as e:
+            state.integrity_log.append(
+                f"[sorry] computational loop raised: {e}; gaps remain placeholder"
+            )
+            return
+
+        filled_after = set(state.gaps_filled)
+        newly_filled = filled_after - filled_before
+        # 标记成功填充的 gap
+        for gap in state.gaps:
+            if not isinstance(gap, dict):
+                continue
+            gap_text = gap.get("gap", "")
+            if gap_text and gap_text in newly_filled:
+                gap["sorry_status"] = "filled"
+            # 未填充的 gap 保留 placeholder (loop 没产出反例)
+
     async def _collect_gap_data(
         self, state: ResearchState, gap: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -1638,21 +1746,26 @@ class DeliAutoResearch:
             "Identifying mathematical structures behind research gaps...",
         )
         await self._identify_math_structures(state)
+        # v6 G53: 把文字分类映射到 PhysicalStructure (失败降级, 不阻塞)
+        await self._extract_physical_structures(state)
         await self._emit_progress(
             state, ResearchStage.GAP_ANALYSIS, "done",
-            f"Identified {len(state.math_structures)} mathematical structures",
+            f"Identified {len(state.math_structures)} mathematical structures, "
+            f"{len(state.physical_structures)} physical structures",
         )
 
         # 1.5 内层循环: 对需要计算数据的 gap 跑 AutoloopEngine
+        # v6 G53: 改走 _fill_sorry_gaps 包装, 给每个 gap 加 sorry_status
         if state.gaps:
             await self._emit_progress(
                 state, ResearchStage.GAP_ANALYSIS, "running",
                 "Filling computational gaps via AutoloopEngine...",
             )
-            await self._run_computational_loop(state)
+            await self._fill_sorry_gaps(state)
             await self._emit_progress(
                 state, ResearchStage.GAP_ANALYSIS, "done",
-                f"Computational loop: {len(state.gaps_filled)} gaps filled",
+                f"Sorry-driven gap fill: {len(state.gaps_filled)} filled, "
+                f"{sum(1 for g in state.gaps if isinstance(g, dict) and g.get('sorry_status') == 'placeholder')} placeholder",
             )
 
         # 1.8 SR+GP 数据驱动发现 — 对 statistical/none/exploratory 类型 gap

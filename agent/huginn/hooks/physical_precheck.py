@@ -20,11 +20,37 @@ This follows the user's explicit requirement:
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 from typing import Any
 
 from huginn.hooks import PRE_TOOL_USE, HookContext, HookManager
 
 logger = logging.getLogger(__name__)
+
+
+# v6 G56: SafetyMode 四档替换二元 force_proceed
+# - safe:        警告即停, 不允许 force_proceed (生产/受控环境)
+# - guided:      警告 + 问用户 (默认), 用户确认才放行
+# - autonomous:  警告 + 自动 force_proceed (agent 自主决策)
+# - yolo:        不检查 (调试/快速迭代)
+# ponytail: 老 force_proceed=True 调用点不动, 行为等同 autonomous;
+# force_proceed=False 调用点不动, 行为等同 guided. 向后兼容.
+class SafetyMode(StrEnum):
+    SAFE = "safe"
+    GUIDED = "guided"
+    AUTONOMOUS = "autonomous"
+    YOLO = "yolo"
+
+
+def mode_allows_force_proceed(mode: str | SafetyMode) -> bool:
+    """safe → False (拒绝强行推进); guided/autonomous/yolo → True.
+
+    guided 语义上仍允许 force_proceed, 但调用方应先问用户;
+    本函数只判"是否技术上允许", 不替调用方做交互决策.
+    ponytail: 不抛异常, 未知 mode 默认 True (不阻塞, 跟 v5 行为一致).
+    """
+    m = SafetyMode(mode) if mode else SafetyMode.GUIDED
+    return m != SafetyMode.SAFE
 
 
 def _get_args(ctx: HookContext) -> dict[str, Any]:
@@ -34,8 +60,37 @@ def _get_args(ctx: HookContext) -> dict[str, Any]:
     return {}
 
 
+def _resolve_safety_mode(ctx: HookContext) -> SafetyMode:
+    """读 ctx.metadata['safety_mode'] / ctx.args['safety_mode'].
+
+    未设置默认 GUIDED (跟 v5 force_proceed=False 等同).
+    ponytail: 不从全局 config 读, 让调用方 (engine / CLI) 在 metadata 注入.
+    """
+    raw = ctx.metadata.get("safety_mode") or _get_args(ctx).get("safety_mode")
+    if not raw:
+        return SafetyMode.GUIDED
+    try:
+        return SafetyMode(raw)
+    except ValueError:
+        return SafetyMode.GUIDED
+
+
 def _is_force_proceed(ctx: HookContext) -> bool:
-    """Check if user explicitly requested to bypass physical pre-checks."""
+    """Check if user explicitly requested to bypass physical pre-checks.
+
+    v6 G56: 优先看 safety_mode; force_proceed 字段保留向后兼容.
+    - safety_mode=safe → 永远 False (即使 force_proceed=True)
+    - safety_mode=yolo → 永远 True (跳过所有 precheck)
+    - safety_mode=autonomous → True (自动放行)
+    - safety_mode=guided → 看 force_proceed 字段 (v5 行为)
+    - 未设 safety_mode → 看 force_proceed 字段 (v5 行为)
+    """
+    mode = _resolve_safety_mode(ctx)
+    if mode == SafetyMode.SAFE:
+        return False
+    if mode in (SafetyMode.AUTONOMOUS, SafetyMode.YOLO):
+        return True
+    # guided 或未设置 — 回退到老 force_proceed 字段
     return _get_args(ctx).get("force_proceed") is True
 
 
