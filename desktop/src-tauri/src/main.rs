@@ -61,6 +61,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .setup(|app| {
+            // webview 鉴权层 (G21):
+            // 1. CSP (tauri.conf.json) 限制 script/connect/img 来源, 阻止注入
+            // 2. capabilities (default.json) 限制只有 main/pet 窗口能调 IPC 命令
+            // 3. Tauri v2 默认只允许 tauri://localhost (prod) / devUrl (dev) 调 IPC
+            // 4. shell:allow-spawn 已收紧 args 白名单 (python + sidecars)
+            // ponytail: --disable-remote-modules 需 WebviewWindowBuilder 重建窗口,
+            // CSP 已覆盖远程模块加载威胁, 重构成本高, 标记为未来加固项
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();
@@ -257,10 +264,10 @@ async fn start_backend(
     state.backend_port.store(port, std::sync::atomic::Ordering::Relaxed);
     eprintln!("[start_backend] allocated port {}", port);
 
-    // Always use dev mode — the sidecar binary has frozen old code that
-    // lacks our recent fixes (config loading, thread_id, reasoning, etc.).
-    // System Python from PATH runs the latest source directly.
-    let is_dev = true;
+    // dev mode 通过环境变量开启, default=false 走 sidecar 路径
+    // sidecar 失败会 fallback 到 system Python (见下方 L353+)
+    // 设 HUGINN_DEV_MODE=1 强制走 Python 直跑源码 (绕过过期 sidecar)
+    let is_dev = std::env::var("HUGINN_DEV_MODE").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
 
     // Deterministic config file path under AppData.
     // Without this, the backend writes huginn.toml to the CWD, which is

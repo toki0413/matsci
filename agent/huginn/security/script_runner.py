@@ -69,30 +69,24 @@ _SAFE_BUILTINS = {
     "None",
 }
 
-# Blocked modules (security)
-_BLOCKED_IMPORTS = {
-    "os",
-    "sys",
-    "subprocess",
-    "shutil",
-    "pathlib",
-    "socket",
-    "ctypes",
-    "multiprocessing",
-    "threading",
-    "signal",
-    "importlib",
-    "code",
-    "codeop",
-    "compileall",
-    "py_compile",
-    "pickle",
-    "shelve",
-    "marshal",
+# 白名单 import (迁移自 CodeAct, G22): 只允许这些模块
+# 任何不在白名单的 import 直接拒绝, 比黑名单更安全
+_ALLOWED_IMPORTS = {
+    "math",
+    "statistics",
+    "json",
+    "re",
+    "numpy",
+    "pandas",
+    "sympy",
+    "scipy",
+    "matplotlib",
+    "ase",
+    "pymatgen",
 }
 
-# Blocked submodules — these can be imported indirectly through allowed
-# parent packages (e.g. numpy.ctypeslib) and provide dangerous capabilities.
+# Blocked submodules — 白名单内的包也可能有危险子模块
+# (e.g. numpy.ctypeslib 暴露 ctypes 能力), 单独拦截
 _BLOCKED_SUBMODULES = {
     "numpy.ctypeslib",
     "numpy.testing",
@@ -128,23 +122,16 @@ class ScriptRunner:
 
         def safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
             base = name.split(".")[0]
-            if base in _BLOCKED_IMPORTS:
+            if base not in _ALLOWED_IMPORTS:
                 raise ImportError(
-                    f"Import of '{name}' is not allowed in live scripts"
+                    f"Import of '{name}' is not allowed (whitelist: math/statistics/json/re/numpy/pandas/sympy/scipy/matplotlib/ase/pymatgen)"
                 )
-            # Block dangerous submodules of otherwise-allowed packages
+            # 白名单内的包也可能有危险子模块, 单独拦截
             if name in _BLOCKED_SUBMODULES:
                 raise ImportError(
                     f"Import of '{name}' is not allowed in live scripts"
                 )
-            mod = real_import(name, *args, **kwargs)
-            # Strip dangerous attributes from numpy after import
-            if base == "numpy" and hasattr(mod, "ctypeslib"):
-                try:
-                    delattr(mod, "ctypeslib")
-                except AttributeError:
-                    pass
-            return mod
+            return real_import(name, *args, **kwargs)
 
         safe_builtins_dict["__import__"] = safe_import
         safe_builtins_dict["__builtins__"] = safe_builtins_dict

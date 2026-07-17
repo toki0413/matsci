@@ -438,3 +438,38 @@ def get_secret_backend(name: str | None = None) -> SecretBackend:
             f"Available: {sorted(_BACKEND_REGISTRY)}"
         )
     return cls()
+
+
+# ---------------------------------------------------------------------------
+# 便捷函数 (G24): 集中 API key 读取入口
+# 新代码优先用 get() / get_or_none() 而非散落 os.environ.get(), 方便审计
+# ---------------------------------------------------------------------------
+
+class SecretsError(RuntimeError):
+    """缺失必需 secret 时抛出."""
+
+
+def get(name: str) -> str:
+    """读 secret, 缺失 raise SecretsError. 用于必需 key."""
+    val = get_secret_backend().get(name)
+    if not val:
+        raise SecretsError(f"Missing required secret: {name}")
+    return val
+
+
+def get_or_none(name: str) -> str | None:
+    """读 secret, 缺失返回 None. 用于可选 key."""
+    return get_secret_backend().get(name)
+
+
+def validate_required(*names: str) -> None:
+    """启动时校验一组 key 非空, 缺失任一 raise SecretsError.
+
+    调用方按 provider 决定校验哪些:
+        validate_required("DEEPSEEK_API_KEY")  # deepseek
+        validate_required("OPENAI_API_KEY")    # openai
+    """
+    backend = get_secret_backend()
+    missing = [n for n in names if not backend.get(n)]
+    if missing:
+        raise SecretsError(f"Missing required secrets: {missing}")
