@@ -288,3 +288,7 @@ python-standalone-tmp/
 python-extract-tmp/
 python-standalone.tar.gz
 python-embed.zip
+
+# Local audit reports + execution plans (one-off, not source)
+/audit_*/
+/plan.md
