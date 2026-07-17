@@ -47,6 +47,9 @@ class Conjecture:
     fitness: 适应度 (验证通过=1.0, 失败=0.0)
     generation: 进化代数
     parent_ids: 父命题 id (用于追踪进化树)
+    sorry_status: v6 G45 — none/placeholder/filled/impossible
+        none = 完整证明; placeholder = 含 sorry 待填充;
+        filled = 原 sorry 已被后续证明填充; impossible = 判定不可实现
     """
     id: str
     statement: str
@@ -56,12 +59,19 @@ class Conjecture:
     fitness: float = 0.0
     generation: int = 0
     parent_ids: list[str] = field(default_factory=list)
+    sorry_status: str = "none"
 
 
-def verify_conjecture(conj: Conjecture) -> bool:
-    """替代 lean 验证. 四层检查:
+def verify_conjecture(conj: Conjecture) -> tuple[bool, str]:
+    """替代 lean 验证. 四层检查, 返回 (was_verified, sorry_status).
 
-    1. proof_script 不含 sorry/admit (字符串扫描, 跟 lean sorry 同义)
+    sorry 语义 (v6 G45): sorry 不再 reject, 而是标记 placeholder.
+      - 含 sorry → (False, "placeholder") — 进 conjecture_gaps 表
+      - 不含 sorry + 全部通过 → (True, "none")
+      - 不含 sorry + 失败 → (False, "none") — 真失败, 淘汰
+
+    四层检查:
+    1. proof_script 含 sorry/admit → 标记 placeholder (不 reject)
     2. proof_script AST 合法 + 白名单 import + 无危险内建
     3. proof_script 的 prove() 返回 True
     4. test_cases 全部通过 sympy_expr 数值验证
@@ -69,49 +79,50 @@ def verify_conjecture(conj: Conjecture) -> bool:
     ponytail: 这是 lean compiler 的廉价替代, 升级路径是接 lean_tool 当
     verifier service (LeanInterface 已存在, 但需要 lake 可执行文件).
     """
-    # 1. sorry 扫描 — proof script 不能含 sorry/admit
+    # 1. sorry 扫描 — 含 sorry 标记 placeholder, 不 reject
     proof_lower = conj.proof_script.lower()
-    if any(marker in proof_lower for marker in _SORRY_MARKERS):
-        logger.debug("conj %s rejected: sorry marker in proof", conj.id)
-        return False
+    has_sorry = any(marker in proof_lower for marker in _SORRY_MARKERS)
+    if has_sorry:
+        logger.debug("conj %s placeholder: sorry marker in proof", conj.id)
+        return (False, "placeholder")
 
     # 2. AST 合法 + 白名单 import + 无危险内建
     try:
         tree = ast.parse(conj.proof_script)
     except SyntaxError:
-        return False
+        return (False, "none")
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 top = alias.name.split(".")[0]
                 if top not in _PROOF_ALLOWED_MODULES:
-                    return False
+                    return (False, "none")
         elif isinstance(node, ast.ImportFrom):
             top = (node.module or "").split(".")[0]
             if top not in _PROOF_ALLOWED_MODULES:
-                return False
+                return (False, "none")
         if isinstance(node, ast.Call):
             fn = node.func
             if isinstance(fn, ast.Name) and fn.id in {
                 "__import__", "eval", "exec", "compile", "getattr",
             }:
-                return False
+                return (False, "none")
 
     # 3. exec proof_script, 调 prove() 应返回 True
     safe_globals: dict[str, Any] = {"__builtins__": __builtins__}
     try:
         exec(compile(tree, "<proof>", "exec"), safe_globals)
     except Exception:
-        return False
+        return (False, "none")
     prove_fn = safe_globals.get("prove")
     if not callable(prove_fn):
-        return False
+        return (False, "none")
     try:
         if prove_fn() is not True:
-            return False
+            return (False, "none")
     except Exception:
-        return False
+        return (False, "none")
 
     # 4. test_cases 数值验证 (sympy subs 后比对 expected)
     if conj.test_cases:
@@ -119,20 +130,25 @@ def verify_conjecture(conj: Conjecture) -> bool:
             from sympy import sympify
             expr = sympify(conj.sympy_expr)
         except Exception:
-            return False
+            return (False, "none")
         for case in conj.test_cases:
             try:
                 inputs = case.get("inputs", {})
                 expected = case.get("expected")
                 if expected is None:
-                    return False
+                    return (False, "none")
                 result = expr.subs(inputs)
                 if abs(float(result) - float(expected)) > 1e-6:
-                    return False
+                    return (False, "none")
             except Exception:
-                return False
+                return (False, "none")
 
-    return True
+    return (True, "none")
+
+
+def verify_conjecture_bool(conj: Conjecture) -> bool:
+    """兼容包装: 老调用方要 bool. 返回 was_verified."""
+    return verify_conjecture(conj)[0]
 
 
 def evolve_conjectures(
@@ -162,9 +178,14 @@ def evolve_conjectures(
     for gen in range(max_gen):
         new_passed: list[Conjecture] = []
         for conj in population:
-            conj.fitness = 1.0 if verify_conjecture(conj) else 0.0
+            was_verified, sorry_status = verify_conjecture(conj)
+            conj.fitness = 1.0 if was_verified else 0.0
+            conj.sorry_status = sorry_status
             if conj.fitness > 0:
                 new_passed.append(conj)
+            elif sorry_status == "placeholder" and library is not None:
+                # v6 G48: sorry 位进 gaps 表而非淘汰
+                library.add_placeholder(conj)
 
         if new_passed:
             passed.extend(new_passed)
@@ -370,6 +391,113 @@ def _validate_conjecture_payload(p: dict[str, Any]) -> bool:
     )
 
 
+# ── v6 G45: sorry 分类器 — sorry 是地图, 不是坟墓 ────────────────
+
+# 分类维度 (跟 add_placeholder 的 classification 字段对齐):
+# - novel_variant: 现有理论的变式应用, 原则上可证, 只是缺一步技巧
+# - unexplored:    新空白, 可能是理论创新的起点
+# - unreachable:   物理上不可实现 (违反守恒律 / 量纲不一致)
+# - known_limit:   已知理论的边界 (超出适用范围)
+_SORRY_CLASSIFICATION_PROMPT = (
+    "You are a research gap classifier. Given a mathematical conjecture whose "
+    "proof contains a sorry (placeholder), classify WHY the sorry exists:\n"
+    "- novel_variant: existing theory applies, just missing a technique\n"
+    "- unexplored: genuine new territory, possible innovation seed\n"
+    "- unreachable: physically impossible (conservation/dimensional violation)\n"
+    "- known_limit: hits known theory boundary (out of applicability)\n"
+    "Output JSON: {\"classification\": \"...\", \"reason\": \"...\"}"
+)
+
+
+def classify_sorry(conj: Conjecture, model: Any = None) -> str:
+    """分类 sorry 位的性质 — 用户思想: sorry = 研究盲区地图.
+
+    返回 novel_variant / unexplored / unreachable / known_limit.
+    走 RAG recall + LLM, 失败降级到规则匹配.
+
+    ponytail: 没传 model 或 RAG 没数据时走规则匹配 (statement 关键词),
+    升级路径是接 RAG recall 做语义匹配.
+    """
+    if model is not None and not hasattr(model, "_mock_name"):
+        try:
+            return _llm_classify_sorry(conj, model)
+        except Exception:
+            logger.debug("LLM classify_sorry failed, fallback to rules", exc_info=True)
+
+    return _rule_classify_sorry(conj)
+
+
+def _llm_classify_sorry(conj: Conjecture, model: Any) -> str:
+    """LLM 分类 sorry. 失败抛异常让上层降级."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    import asyncio
+
+    messages = [
+        SystemMessage(content=_SORRY_CLASSIFICATION_PROMPT),
+        HumanMessage(content=(
+            f"Statement: {conj.statement}\n"
+            f"Sympy expr: {conj.sympy_expr}\n"
+            f"Proof script (with sorry):\n{conj.proof_script}"
+        )),
+    ]
+    try:
+        asyncio.get_running_loop()
+        text = model.invoke(messages)
+    except RuntimeError:
+        text = asyncio.run(model.ainvoke(messages))
+    text = str(text.content).strip()
+
+    parsed = _parse_json_object(text)
+    cls = parsed.get("classification", "")
+    if cls in {"novel_variant", "unexplored", "unreachable", "known_limit"}:
+        return cls
+    return _rule_classify_sorry(conj)
+
+
+def _rule_classify_sorry(conj: Conjecture) -> str:
+    """规则匹配分类. 关键词粗判, 没数据时兜底."""
+    text = (conj.statement + " " + conj.proof_script).lower()
+    # unreachable: 守恒律 / 量纲 / 反例已显式提及
+    if any(k in text for k in (
+        "conservation", "守恒", "dimensional", "量纲", "violate", "违反",
+        "impossible", "contradiction", "矛盾",
+    )):
+        return "unreachable"
+    # known_limit: 适用范围 / 边界 / 极限
+    if any(k in text for k in (
+        "limit", "边界", "boundary", "applicability", "适用", "regime",
+        "asymptotic", "近似",
+    )):
+        return "known_limit"
+    # novel_variant: 已知定理名 / 标准方法名
+    if any(k in text for k in (
+        "theorem", "定律", "law", "formula", "公式", "variant", "变式",
+        "extension", "推广",
+    )):
+        return "novel_variant"
+    # 默认: 新空白
+    return "unexplored"
+
+
+def _parse_json_object(text: str) -> dict[str, Any]:
+    """解析单个 JSON 对象. 失败返回 {}."""
+    if not text:
+        return {}
+    if "```" in text:
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+    try:
+        result = json.loads(text.strip())
+        if isinstance(result, dict):
+            return result
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return {}
+
+
 # ── ConjectureLibrary: 累积验证通过的命题 ──────────────────────────
 
 class ConjectureLibrary:
@@ -400,6 +528,22 @@ class ConjectureLibrary:
                 "generation INTEGER DEFAULT 0,"
                 "parent_ids TEXT,"
                 "created_at TEXT DEFAULT (datetime('now'))"
+                ")"
+            )
+            # v6 G45: research gaps 表 — sorry 命题进这里当研究盲区
+            # status: placeholder (待填充) / filled (已填充) / impossible (判定不可实现)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS conjecture_gaps ("
+                "conj_id TEXT PRIMARY KEY,"
+                "statement TEXT NOT NULL,"
+                "sympy_expr TEXT,"
+                "proof_script TEXT,"
+                "status TEXT DEFAULT 'placeholder',"
+                "classification TEXT,"
+                "counterexample TEXT,"
+                "filled_by TEXT,"
+                "created_at TEXT DEFAULT (datetime('now')),"
+                "updated_at TEXT DEFAULT (datetime('now'))"
                 ")"
             )
             conn.commit()
@@ -458,51 +602,134 @@ class ConjectureLibrary:
         with self._connect() as conn:
             return conn.execute("SELECT count(*) FROM conjectures").fetchone()[0]
 
+    # ── v6 G45: research gaps ─────────────────────────────────────
+
+    def add_placeholder(self, conj: Conjecture, classification: str | None = None) -> bool:
+        """把含 sorry 的命题登记为研究盲区. True=新增, False=已存在.
+
+        classification 由 classify_sorry 给出 (novel_variant / unexplored /
+        unreachable / known_limit), 不传则稍后由 mark_impossible 补.
+        """
+        with self._lock:
+            with self._connect() as conn:
+                try:
+                    conn.execute(
+                        "INSERT INTO conjecture_gaps "
+                        "(conj_id, statement, sympy_expr, proof_script, "
+                        "status, classification) "
+                        "VALUES (?, ?, ?, ?, 'placeholder', ?)",
+                        (conj.id, conj.statement, conj.sympy_expr,
+                         conj.proof_script, classification),
+                    )
+                    conn.commit()
+                except sqlite3.IntegrityError:
+                    return False
+        return True
+
+    def get_research_gaps(self, status: str | None = None) -> list[dict[str, Any]]:
+        """返回研究盲区列表. status=None 返回全部, 否则按状态过滤.
+
+        状态: placeholder (待填充) / filled (已填充) / impossible (判定不可实现)
+        返回 dict: {conj_id, statement, sympy_expr, proof_script,
+                    status, classification, counterexample, filled_by}
+        """
+        with self._connect() as conn:
+            if status is None:
+                rows = conn.execute(
+                    "SELECT conj_id, statement, sympy_expr, proof_script, "
+                    "status, classification, counterexample, filled_by "
+                    "FROM conjecture_gaps ORDER BY created_at"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT conj_id, statement, sympy_expr, proof_script, "
+                    "status, classification, counterexample, filled_by "
+                    "FROM conjecture_gaps WHERE status = ? ORDER BY created_at",
+                    (status,),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_filled(self, conj_id: str, filled_by: str) -> bool:
+        """sorry 位被后续证明填充. filled_by 是填充命题 id. True=更新成功."""
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "UPDATE conjecture_gaps SET status='filled', "
+                    "filled_by=?, updated_at=datetime('now') "
+                    "WHERE conj_id=? AND status='placeholder'",
+                    (filled_by, conj_id),
+                )
+                conn.commit()
+                return cur.rowcount > 0
+
+    def mark_impossible(
+        self, conj_id: str, counterexample: str | None = None,
+        classification: str | None = None,
+    ) -> bool:
+        """判定 sorry 位不可实现. counterexample 是反例说明. True=更新成功."""
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "UPDATE conjecture_gaps SET status='impossible', "
+                    "counterexample=?, classification=?, "
+                    "updated_at=datetime('now') "
+                    "WHERE conj_id=? AND status='placeholder'",
+                    (counterexample, classification, conj_id),
+                )
+                conn.commit()
+                return cur.rowcount > 0
+
 
 # ── self-check ────────────────────────────────────────────────────
 
 def _self_check() -> int:
-    """assert-based demo: 验证 verify_conjecture + evolve + library."""
+    """assert-based demo: 验证 verify_conjecture + evolve + library + gaps + classify_sorry."""
     import tempfile
 
-    # 1. verify 通过正确命题
+    # 1. verify 通过正确命题 — 返回 (True, "none")
     good = _template_variants("seed", 1, 0, None)[0]
-    assert verify_conjecture(good) is True, "good conjecture should pass"
+    ok, status = verify_conjecture(good)
+    assert ok is True and status == "none", "good conjecture should pass with none"
 
-    # 2. verify 拒绝 sorry
+    # 2. verify 标记 sorry 为 placeholder (v6 G45: 不 reject, 标记)
     bad_sorry = Conjecture(
         id="bad-sorry", statement="bad", sympy_expr="x",
         proof_script="def prove():\n    # sorry\n    return True",
     )
-    assert verify_conjecture(bad_sorry) is False, "sorry should be rejected"
+    ok, status = verify_conjecture(bad_sorry)
+    assert ok is False and status == "placeholder", "sorry should be placeholder"
 
-    # 3. verify 拒绝 admit
+    # 3. verify 标记 admit 为 placeholder
     bad_admit = Conjecture(
         id="bad-admit", statement="bad", sympy_expr="x",
         proof_script="def prove():\n    # admit\n    return True",
     )
-    assert verify_conjecture(bad_admit) is False
+    ok, status = verify_conjecture(bad_admit)
+    assert ok is False and status == "placeholder"
 
-    # 4. verify 拒绝 import os
+    # 4. verify 拒绝 import os — 真失败 (none)
     bad_import = Conjecture(
         id="bad-import", statement="bad", sympy_expr="x",
         proof_script="import os\n\ndef prove():\n    return True",
     )
-    assert verify_conjecture(bad_import) is False
+    ok, status = verify_conjecture(bad_import)
+    assert ok is False and status == "none"
 
     # 5. verify 拒绝 prove() 返回 False
     bad_false = Conjecture(
         id="bad-false", statement="bad", sympy_expr="x",
         proof_script="def prove():\n    return False",
     )
-    assert verify_conjecture(bad_false) is False
+    ok, status = verify_conjecture(bad_false)
+    assert ok is False and status == "none"
 
     # 6. verify 拒绝无 prove 函数
     bad_nofn = Conjecture(
         id="bad-nofn", statement="bad", sympy_expr="x",
         proof_script="x = 1",
     )
-    assert verify_conjecture(bad_nofn) is False
+    ok, status = verify_conjecture(bad_nofn)
+    assert ok is False and status == "none"
 
     # 7. verify 拒绝 getattr 链 (跟 G23 一致)
     bad_getattr = Conjecture(
@@ -513,16 +740,22 @@ def _self_check() -> int:
             "    return True\n"
         ),
     )
-    assert verify_conjecture(bad_getattr) is False
+    ok, status = verify_conjecture(bad_getattr)
+    assert ok is False and status == "none"
 
-    # 8. evolve_conjectures 模板模式跑通
+    # 8. verify_conjecture_bool 兼容包装 — 老调用方要 bool
+    assert verify_conjecture_bool(good) is True
+    assert verify_conjecture_bool(bad_sorry) is False
+
+    # 9. evolve_conjectures 模板模式跑通
     passed = evolve_conjectures(
         "bulk modulus", n_variants=3, max_gen=2, model=None,
     )
     assert len(passed) > 0, "should have passed conjectures"
     assert all(c.fitness == 1.0 for c in passed)
+    assert all(c.sorry_status == "none" for c in passed)
 
-    # 9. ConjectureLibrary 累积
+    # 10. ConjectureLibrary 累积
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
         assert lib.count() == 0
@@ -543,7 +776,7 @@ def _self_check() -> int:
             lines = [l for l in f if l.strip()]
         assert len(lines) == len(passed)
 
-    # 10. evolve + library 联动 — 通过的进 library
+    # 11. evolve + library 联动 — 通过的进 library
     with tempfile.TemporaryDirectory() as tmp:
         lib = ConjectureLibrary(workspace=tmp)
         passed3 = evolve_conjectures(
@@ -553,6 +786,87 @@ def _self_check() -> int:
         assert lib.count() == len(passed3), (
             f"library {lib.count()} != passed {len(passed3)}"
         )
+
+    # 12. v6 G45: conjecture_gaps 表 — sorry 命题进 gaps 而非淘汰
+    with tempfile.TemporaryDirectory() as tmp:
+        lib = ConjectureLibrary(workspace=tmp)
+        # 加一个 sorry 命题作为 placeholder
+        sorry_conj = Conjecture(
+            id="sorry-001", statement="conservation law violates dimensional analysis",
+            sympy_expr="x",
+            proof_script="def prove():\n    # sorry need conservation\n    return True",
+        )
+        assert lib.add_placeholder(sorry_conj, classification="unreachable") is True
+        # 重复加返回 False
+        assert lib.add_placeholder(sorry_conj) is False
+        # get_research_gaps 返回
+        gaps = lib.get_research_gaps()
+        assert len(gaps) == 1
+        assert gaps[0]["conj_id"] == "sorry-001"
+        assert gaps[0]["status"] == "placeholder"
+        assert gaps[0]["classification"] == "unreachable"
+        # 按 status 过滤
+        placeholders = lib.get_research_gaps(status="placeholder")
+        assert len(placeholders) == 1
+        filled = lib.get_research_gaps(status="filled")
+        assert len(filled) == 0
+        # mark_filled
+        assert lib.mark_filled("sorry-001", "conj-gen00-000") is True
+        assert lib.mark_filled("sorry-001", "x") is False  # 已 filled
+        filled_gaps = lib.get_research_gaps(status="filled")
+        assert len(filled_gaps) == 1
+        assert filled_gaps[0]["filled_by"] == "conj-gen00-000"
+        # mark_impossible (新 placeholder)
+        sorry2 = Conjecture(
+            id="sorry-002", statement="percolation threshold boundary",
+            sympy_expr="y",
+            proof_script="def prove():\n    # sorry\n    return True",
+        )
+        lib.add_placeholder(sorry2)
+        assert lib.mark_impossible("sorry-002", counterexample="z<0 violates phi_c>0") is True
+        impossibles = lib.get_research_gaps(status="impossible")
+        assert len(impossibles) == 1
+        assert impossibles[0]["counterexample"] == "z<0 violates phi_c>0"
+
+    # 13. v6 G45: classify_sorry 规则分类
+    # unreachable: 含 conservation
+    c_unreachable = Conjecture(
+        id="c1", statement="this violates conservation law",
+        sympy_expr="x",
+        proof_script="def prove():\n    # sorry\n    return True",
+    )
+    assert classify_sorry(c_unreachable) == "unreachable"
+    # known_limit: 含 boundary
+    c_limit = Conjecture(
+        id="c2", statement="hits the boundary of applicability",
+        sympy_expr="x",
+        proof_script="def prove():\n    # sorry\n    return True",
+    )
+    assert classify_sorry(c_limit) == "known_limit"
+    # novel_variant: 含 theorem
+    c_variant = Conjecture(
+        id="c3", statement="extension of known theorem",
+        sympy_expr="x",
+        proof_script="def prove():\n    # sorry\n    return True",
+    )
+    assert classify_sorry(c_variant) == "novel_variant"
+    # unexplored: 默认
+    c_new = Conjecture(
+        id="c4", statement="some random new thing",
+        sympy_expr="x",
+        proof_script="def prove():\n    # sorry\n    return True",
+    )
+    assert classify_sorry(c_new) == "unexplored"
+
+    # 14. evolve + library + sorry: sorry 命题进 gaps 表
+    with tempfile.TemporaryDirectory() as tmp:
+        lib = ConjectureLibrary(workspace=tmp)
+        # 模板变体都是完整证明 (无 sorry), 所以 gaps 表为空
+        evolve_conjectures(
+            "bulk modulus", n_variants=2, max_gen=1,
+            model=None, library=lib,
+        )
+        assert len(lib.get_research_gaps()) == 0, "template variants have no sorry"
 
     print("[CONJLIB] self-check OK")
     return 0
