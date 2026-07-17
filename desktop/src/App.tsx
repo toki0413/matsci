@@ -611,6 +611,7 @@ export default function App() {
     toggleSuggestMode,
     respondToSuggestCode,
     riskThreshold,
+    heatEngineHealth,
   } = useChatAndConnection({
     config,
     activeTab,
@@ -1364,6 +1365,7 @@ export default function App() {
               toggleSuggestMode={toggleSuggestMode}
               respondToSuggestCode={respondToSuggestCode}
               riskThreshold={riskThreshold}
+              heatEngineHealth={heatEngineHealth}
               chatSearchOpen={chatSearchOpen}
               chatSearchQuery={chatSearchQuery}
               setChatSearchOpen={setChatSearchOpen}

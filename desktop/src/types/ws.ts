@@ -89,6 +89,13 @@ export type WSMessage =
       auto_approved: boolean;
       dangerous: boolean;
     }
+  | {
+      type: "tool_auto_approved";
+      request_id: string;
+      tool_name: string;
+      reason: string;
+      dangerous: boolean;
+    }
   | { type: "auto_approve_set"; enabled?: boolean; scope?: string }
   | {
       type: "hook_warning";

@@ -22,7 +22,7 @@ import {
   API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK, wsUrlVersion,
 } from "../lib/config-store";
 import { isWSMessage, type WSMessage } from "../types/ws";
-import type { AppConfig, PersonaSeed, PersonaEmotionResponse } from "../types/domain";
+import type { AppConfig, PersonaSeed, PersonaEmotionResponse, HeatEngineHealth } from "../types/domain";
 import type { PetStatusState } from "../components/PetStatusWidget";
 import i18n from "../i18n";
 import { toast } from "../components/Toast";
@@ -196,6 +196,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // plan 执行状态: plan_id -> "executing" | "done". 跟 plan 卡片绑定显示状态徽标.
   // 之前用户点 Confirm 后整个流式期间没任何指示, 只能盯着光标.
   const [planExecState, setPlanExecState] = useState<Record<string, "executing" | "done">>({});
+
+  // v7 G59: 认知热机健康状态 (从 /tasks/stream SSE 推送).
+  // 每轮 darwin_ratchet 后推一次: Re_cog / η_cog / status / warnings.
+  const [heatEngineHealth, setHeatEngineHealth] = useState<HeatEngineHealth | null>(null);
 
   // ── Decision trace: governance events + state transitions ──
   const [governanceEvents, setGovernanceEvents] = useState<any[]>([]);
@@ -1081,28 +1085,18 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         break;
       }
       case "approval_request": {
-        if (data.auto_approved) {
-          // Already approved by backend — just log it, no dialog needed
-          const icon = data.dangerous ? "🔴" : "⚠️";
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: `${icon} Auto-approved: **${data.tool_name}** — ${data.reason}`,
-              timestamp: formatTime(),
-            },
-          ]);
-        } else {
-          // Need explicit user approval
-          setPendingApproval({
-            request_id: data.request_id,
-            tool_name: data.tool_name,
-            reason: data.reason,
-            dangerous: data.dangerous,
-          });
-          // 权限请求需要用户立刻注意，即使窗口在前台也弹通知
-          notify("Huginn 需要权限", `工具 ${data.tool_name} 请求审批`, true);
-        }
+        // v6: 后端 auto_approve=True 时改发 tool_auto_approved, 这里只处理真正需要审批的
+        setPendingApproval({
+          request_id: data.request_id,
+          tool_name: data.tool_name,
+          reason: data.reason,
+          dangerous: data.dangerous,
+        });
+        notify("Huginn 需要权限", `工具 ${data.tool_name} 请求审批`, true);
+        break;
+      }
+      case "tool_auto_approved": {
+        // v6: 静默放行, 不污染对话. 危险工具的日志由后端 logger.warning 记录.
         break;
       }
       case "auto_approve_set":
@@ -1533,11 +1527,16 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         // ignore malformed frames
       }
     };
-    // campaign 事件: hypothesis / retry / suspect / refine, 结构化数据
+    // campaign 事件: hypothesis / retry / suspect / refine / heat_engine.health, 结构化数据
     const handleCampaign = (e: MessageEvent) => {
       try {
         const t = JSON.parse(e.data);
         if (t && t._kind === "campaign") {
+          // v7 G59: 热机健康走单独 state, 不混入 campaignEvents (避免污染 timeline)
+          if (t.event === "heat_engine.health") {
+            setHeatEngineHealth(t.data || null);
+            return;
+          }
           setCampaignEvents((prev) =>
             [...prev, {
               event: t.event,
@@ -1563,6 +1562,17 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     es.addEventListener("snapshot", handleProgress);
     es.addEventListener("update", handleProgress);
     es.addEventListener("campaign", handleCampaign);
+    // v6: event_bus 丢事件通知 — 不静默, 让用户知道有事件被丢
+    es.addEventListener("event_bus.dropped", (e: MessageEvent) => {
+      try {
+        const t = JSON.parse(e.data);
+        const n = t?.data?.dropped_count ?? 1;
+        const victim = t?.data?.victim_type ?? "unknown";
+        toast.error(`Event bus dropped ${n} event(s) [${victim}]`);
+      } catch {
+        // ignore
+      }
+    });
     return () => es.close();
   }, []);
 
@@ -1598,6 +1608,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     campaignEvents,
     threadTaskState,
     planExecState,
+    // v7 G59: 认知热机健康
+    heatEngineHealth,
     // Context window
     contextPct,
     // Thinking intensity
