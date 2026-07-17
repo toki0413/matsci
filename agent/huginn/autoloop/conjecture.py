@@ -47,6 +47,10 @@ logger = logging.getLogger(__name__)
 
 # ── 关键词表: 模板模式靠这些做模式提取 ────────────────────────────────────
 # 不全, 覆盖大部分常见场景够用, 后面遇到新的再补
+# R15 评估: spec 建议改走 SignalHub 信号驱动, 但 SignalHub 是系统信号路由
+# (events/tool_errors/context_overflow), 不做 NLP 关键词匹配 — 替代不适用.
+# 真正升级路径是 LLM extract_pattern + RAG recall, 当前 LLM 路径已不依赖这些表.
+# 保留模板表供无 LLM 场景 (测试/离线) 使用. ponytail: 删了反而破坏 test_conjecture_engine.
 
 
 # 因果触发词 → 方向分类. 遍历时先匹配到的优先, 所以常见词放前面
@@ -149,113 +153,10 @@ _DIR_ZH: dict[str, str] = {
 }
 
 
-# ── 领域知识表: 模板迁移时把抽象概念落到具体领域 ──────────────────────────
-# key 全用小写, _lookup_domain 做大小写不敏感匹配
-# 每个 entry: system=体系名称, 然后是 "抽象action/property" → "领域术语"
-_DOMAIN_KNOWLEDGE: dict[str, dict[str, str]] = {
-    "semiconductors": {
-        "system": "半导体晶格",
-        "杂质引入": "doping (掺杂)",
-        "热处理": "annealing (退火)",
-        "晶格畸变": "strain engineering (应变工程)",
-        "组分调制": "alloying (合金化)",
-        "缺陷工程": "defect passivation (缺陷钝化)",
-        "表面态调控": "surface passivation (表面钝化)",
-        "电子输运性质": "carrier concentration & conductivity (载流子浓度与导电率)",
-        "电子结构": "band gap & DOS (带隙与态密度)",
-    },
-    "battery cathodes": {
-        "system": "层状氧化物正极",
-        "杂质引入": "aliovalent substitution (异价取代)",
-        "热处理": "calcination (煅烧)",
-        "晶格畸变": "chemical pressure (化学压力)",
-        "组分调制": "solid-solution tuning (固溶调控)",
-        "缺陷工程": "oxygen vacancy engineering (氧空位工程)",
-        "表面态调控": "surface coating (表面包覆)",
-        "电子输运性质": "electronic conductivity (电子电导率)",
-        "离子输运性质": "Li-ion diffusivity (锂离子扩散率)",
-        "储能特性": "specific capacity & voltage (比容量与电压)",
-    },
-    "battery anodes": {
-        "system": "负极材料",
-        "杂质引入": "heteroatom doping (杂原子掺杂)",
-        "热处理": "carbonization (碳化)",
-        "晶格畸变": "interlayer spacing tuning (层间距调控)",
-        "组分调制": "composite engineering (复合工程)",
-        "缺陷工程": "defect generation (缺陷引入)",
-        "表面态调控": "SEI modification (SEI修饰)",
-        "电子输运性质": "electron transport (电子输运)",
-        "离子输运性质": "Li-ion diffusion (锂离子扩散)",
-        "储能特性": "specific capacity (比容量)",
-    },
-    "perovskites": {
-        "system": "ABX3 钙钛矿",
-        "杂质引入": "A/B-site substitution (A/B位取代)",
-        "热处理": "sintering (烧结)",
-        "晶格畸变": "tolerance factor tuning (容忍因子调控)",
-        "组分调制": "compositional engineering (组分工程)",
-        "缺陷工程": "oxygen vacancy (氧空位)",
-        "表面态调控": "surface termination (表面端接)",
-        "电子输运性质": "carrier mobility (载流子迁移率)",
-        "电子结构": "band structure (能带结构)",
-        "储能特性": "dielectric response (介电响应)",
-    },
-    "catalysts": {
-        "system": "催化材料",
-        "杂质引入": "single-atom modification (单原子修饰)",
-        "热处理": "calcination (煅烧)",
-        "晶格畸变": "lattice strain (晶格应变)",
-        "组分调制": "alloy catalyst (合金催化)",
-        "缺陷工程": "active defect sites (活性缺陷位点)",
-        "表面态调控": "surface functionalization (表面功能化)",
-        "电子输运性质": "electron transfer (电子转移)",
-        "表面反应活性": "adsorption energy (吸附能)",
-    },
-    "thermoelectrics": {
-        "system": "热电材料",
-        "杂质引入": "carrier optimization (载流子优化)",
-        "热处理": "sintering (烧结)",
-        "晶格畸变": "phonon scattering engineering (声子散射工程)",
-        "组分调制": "band convergence (能带收敛)",
-        "缺陷工程": "point defect scattering (点缺陷散射)",
-        "表面态调控": "grain boundary engineering (晶界工程)",
-        "电子输运性质": "Seebeck coefficient (塞贝克系数)",
-        "热输运性质": "lattice thermal conductivity (晶格热导率)",
-    },
-    "superconductors": {
-        "system": "超导材料",
-        "杂质引入": "chemical doping (化学掺杂)",
-        "热处理": "oxygen annealing (氧退火)",
-        "晶格畸变": "chemical pressure (化学压力)",
-        "组分调制": "compositional tuning (组分调控)",
-        "缺陷工程": "pinning centers (钉扎中心)",
-        "表面态调控": "surface doping (表面掺杂)",
-        "电子输运性质": "critical current density (临界电流密度)",
-        "超导特性": "Tc (临界温度)",
-    },
-    "magnetic materials": {
-        "system": "磁性材料",
-        "杂质引入": "magnetic ion doping (磁性离子掺杂)",
-        "热处理": "annealing (退火)",
-        "晶格畸变": "spin-lattice coupling (自旋-晶格耦合)",
-        "组分调制": "magnetic alloying (磁性合金化)",
-        "缺陷工程": "domain wall pinning (畴壁钉扎)",
-        "表面态调控": "surface anisotropy (表面各向异性)",
-        "电子输运性质": "spin transport (自旋输运)",
-        "磁学性质": "magnetization & coercivity (磁化与矫顽力)",
-    },
-    "2d materials": {
-        "system": "二维材料",
-        "杂质引入": "substitutional doping (取代掺杂)",
-        "热处理": "thermal annealing (热退火)",
-        "晶格畸变": "strain engineering (应变工程)",
-        "组分调制": "alloying (合金化)",
-        "缺陷工程": "vacancy engineering (空位工程)",
-        "表面态调控": "functionalization (功能化)",
-        "电子输运性质": "carrier mobility (载流子迁移率)",
-        "电子结构": "band gap (带隙)",
-    },
-}
+# ── 领域知识查表 (R14 已砍硬编码表, 改走 RAG recall) ───────────────────
+# 历史: 8 领域表 (~107 行硬编码) 是经验主义, 与 RAG recall 重复.
+# 现 _lookup_domain 走 recall_context(category="knowledge_seed", query=domain).
+# RAG 没数据时返回空 dict, 模板路径降级到抽象概念本身 (结构仍正确).
 
 
 class ConjectureGenerator:
@@ -1034,15 +935,42 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
 
 
 def _lookup_domain(domain: str) -> dict[str, str]:
-    """大小写不敏感地查领域知识表. 匹配不到返回空 dict."""
-    domain = domain.lower().strip()
-    if domain in _DOMAIN_KNOWLEDGE:
-        return _DOMAIN_KNOWLEDGE[domain]
-    # 模糊: 包含关系, 比如 "oxide cathodes" 能匹中 "battery cathodes"
-    for key, info in _DOMAIN_KNOWLEDGE.items():
-        if key in domain or domain in key:
-            return info
-    return {}
+    """R14: 改走 RAG recall (knowledge_seed) 查领域知识.
+    历史是查硬编码 _DOMAIN_KNOWLEDGE 表 (8 领域), 现表已删, 走 RAG.
+    RAG 返回的 content 若是合法 JSON dict 则直接用, 否则塞进 {"system": domain, "raw": content}.
+    RAG 失败/无数据返回空 dict — 模板路径降级到抽象概念本身.
+    ponytail: 升级路径是 RAG 召回时做 embedding 相似度排序, 当前精确 query 匹配.
+    """
+    try:
+        from huginn.metacog import recall_context
+        results = recall_context(
+            category="knowledge_seed",
+            query=domain,
+            top_k=3,
+        )
+    except Exception:
+        return {}
+    if not results:
+        return {}
+    # 合并多条 recall 结果. 每条 content 尝试解析成 dict, 合并到一起.
+    merged: dict[str, str] = {"system": domain}
+    for r in results:
+        content = r.get("content", "") if isinstance(r, dict) else ""
+        if not content:
+            continue
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    if isinstance(v, str):
+                        merged[k] = v
+        except (json.JSONDecodeError, ValueError):
+            # 非结构化内容, 留作 raw 注释
+            merged.setdefault("raw", "")
+            if merged["raw"]:
+                merged["raw"] += " | "
+            merged["raw"] += content[:200]
+    return merged
 
 
 # ── 模块级单例 ────────────────────────────────────────────────────────

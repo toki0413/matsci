@@ -214,6 +214,9 @@ agent 上下文有限, 过多引导挤占核心实现; 但太少引导让 agent 
   max_total_calls * 0.5 才算完成. 强制 agent 至少用 265 calls.
 - **教训**: deliverable 检查太宽松 = agent 写 smoke test 就停. min_calls 下限是必要的.
   530 calls budget 没用完 = 浪费. orchestrator self-check 通过.
+- **v5 R17 撤销**: min_calls 补丁是 SCALECUA task_synthesizer 上线前的临时占位.
+  v5 用 task_synthesizer 按 (paper, complexity_tier) 在合成时给定难度, 不再用
+  budget 下限强迫消耗. `_is_done` 回到 "deliverable 全齐即完成".
 
 ### Task 20 v2 (修复后 orchestrator, 530 calls, 14400s)
 - 修复后 _is_done: calls >= 265 + deliverable 全齐 才退出

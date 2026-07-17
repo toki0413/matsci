@@ -42,6 +42,8 @@ into the Huginn RAG knowledge base on first use.
 | `32_mechanical_properties.md` | Elasticity, strength, DFT prediction |
 | `33_computational_thermodynamics.md` | Phonons, free energy, phase diagrams |
 | `38_benchmark_evaluation_lessons.md` | Benchmark evaluation lessons: PaperBench/MLE-bench/SAB/HLE + noise-as-feature epistemology |
+| `39_orchestrator_unification_lessons.md` | Orchestrator 4-layer architecture + min_calls patch history (v5 R17 reverted) |
+| `40_security_hardening_and_bench_activation.md` | v5 spec: 25 additions (G20-G44) + 8 subtractions (R14-R21) + 5 milestones (M1-M5) |
 
 ## Updating seeds
 
