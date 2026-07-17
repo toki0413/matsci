@@ -178,14 +178,18 @@ def _make_ws_approval_callback(
             if pending_approval_contexts is not None and last_user_context:
                 pending_approval_contexts[request_id] = dict(last_user_context)
 
+        # v6: auto_approve=True 时改发静默事件, 不再发 approval_request.
+        # 之前发 approval_request (auto_approved=true) 让前端弹 "Auto-approved"
+        # 消息污染对话, UX 与可见性双错位. 现在: 静默放行只记日志, 前端不弹消息.
         try:
             loop = asyncio.get_running_loop()
 
             async def _safe_send():
                 try:
+                    msg_type = "tool_auto_approved" if approved else "approval_request"
                     await websocket.send_json(
                         {
-                            "type": "approval_request",
+                            "type": msg_type,
                             "request_id": request_id,
                             "tool_name": tool_name,
                             "reason": reason,
