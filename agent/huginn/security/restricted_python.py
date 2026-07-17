@@ -72,6 +72,7 @@ FORBIDDEN_ATTRIBUTES: set[str] = {
     "__class__",
     "__dict__",
     "__import__",
+    "__builtins__",
 }
 
 
@@ -107,6 +108,17 @@ class _PolicyChecker(ast.NodeVisitor):
             and node.func.attr in FORBIDDEN_BUILTINS
         ):
             self._report(node, f"Forbidden method call: {node.func.attr}()")
+        # G23: 拦截 getattr(obj, '__class__') 字符串参数逃逸
+        # visit_Attribute 已拦 obj.__class__ 直接访问, 但 getattr 用字符串绕过
+        # generic_visit 会递归访问内层 Call, 所以 getattr(getattr(...)) 也被覆盖
+        if isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                attr_name = node.args[1].value
+                if isinstance(attr_name, str) and attr_name in FORBIDDEN_ATTRIBUTES:
+                    self._report(
+                        node,
+                        f"Forbidden getattr access: .{attr_name}",
+                    )
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:  # noqa: N802

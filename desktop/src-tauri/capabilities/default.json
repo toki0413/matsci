@@ -17,17 +17,17 @@
         {
           "name": "sidecars/huginn",
           "sidecar": true,
-          "args": true
+          "args": ["serve", "--port", { "regex": "^[0-9]+$" }]
         },
         {
           "name": "sidecars/huginn-sidecar",
           "sidecar": true,
-          "args": true
+          "args": []
         },
         {
           "name": "python",
           "cmd": "python",
-          "args": true,
+          "args": ["-m", "huginn.server", "--port", { "regex": "^[0-9]+$" }],
           "sidecar": false
         }
       ]
