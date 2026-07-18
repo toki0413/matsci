@@ -46,7 +46,7 @@ def _suggest_fix(returncode: int, stderr: str, stdout: str, command: list[str]) 
     if "syntaxerror" in sl:
         return "SyntaxError: re-read the .py file, fix the syntax, re-run."
     if "filenotfounderror" in sl or "no such file" in sl:
-        return "FileNotFoundError: check path with glob/grep, or create the file first via code_tool."
+        return "FileNotFoundError: check path with glob/grep, or create the file first via file_write_tool (code_tool sandbox blocks open())."
     if "importerror" in sl:
         return "ImportError: check if the module exists in workspace, or pip install it."
     if "timed out" in sl or "timeout" in sl:

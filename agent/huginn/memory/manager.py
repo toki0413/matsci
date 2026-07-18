@@ -908,3 +908,224 @@ class MemoryManager:
         """拉回本会话的直觉信号, 给 hypothesis 阶段做 hint."""
         from huginn.memory.intuition import recall_intuitions
         return recall_intuitions(self, self.session.session_id, top_k=top_k)
+
+    # ── Prospective memory (第 5 类: 记未来要做的事) ───────────────
+    # 轻量代理到 huginn.memory.prospective.ProspectiveMemory. lazy import
+    # 避免启动期循环依赖. 失败一律返回空, 不阻塞主流程.
+
+    def _prospective_workspace(self) -> Path:
+        """从 _get_memory_dir 反推 workspace 根.
+
+        _get_memory_dir 典型返回 ws/.huginn/memory, 但 ProspectiveMemory
+        自己拼 workspace/.huginn/prospective.jsonl, 直接传 .parent 会得到
+        ws/.huginn → 写到 ws/.huginn/.huginn/prospective.jsonl (嵌套 .huginn).
+        检测到 .huginn/memory 尾巴就上溯两级. ponytail: 启发式判断, 升级
+        路径是 MemoryConfig 直接存 workspace 字段.
+        """
+        mem_dir = self._get_memory_dir()
+        if mem_dir.parent.name == ".huginn":
+            return mem_dir.parent.parent
+        return mem_dir.parent
+
+    def recall_prospective(self, current_state: dict) -> list:
+        """召回已触发的 Prospective Intentions.
+
+        current_state 含 current_step / events / variables. 返回
+        list[ProspectiveIntention], 空列表表示无触发或失败.
+        """
+        from huginn.memory.prospective import ProspectiveMemory
+        try:
+            _pm = ProspectiveMemory(workspace=self._prospective_workspace())
+            return _pm.scan_and_fire(current_state)
+        except Exception:
+            logger.debug("recall_prospective 失败", exc_info=True)
+            return []
+
+    def remember_prospective(self, intention) -> str:
+        """存储 Prospective Intention.
+
+        intention 是 ProspectiveIntention 或 dict. 返回 intention_id,
+        失败返回空串.
+        """
+        from huginn.memory.prospective import ProspectiveMemory, ProspectiveIntention
+        try:
+            _pm = ProspectiveMemory(workspace=self._prospective_workspace())
+            if isinstance(intention, dict):
+                intention = ProspectiveIntention(**intention)
+            return _pm.store(intention)
+        except Exception:
+            logger.debug("remember_prospective 失败", exc_info=True)
+            return ""
+
+    # ── Procedural memory (Episodic → Procedural 蒸馏, G65 / Task 19) ──
+    # 同一 skill 连续 3 次成功 → 模板化蒸馏为 stable_principle.
+    # ponytail: 前 20 字符归一化 + 模板 principle. 升级路径: 语义聚类 + LLM 改写.
+
+    def distill_episodic_to_procedural(
+        self, step_evaluations: list, workspace
+    ) -> str | None:
+        """检测连续 3 次同 skill 成功 → 蒸馏为 procedural memory.
+
+        触发条件 (全部满足才蒸馏):
+            1. step_evaluations >= 3 条
+            2. 最后 3 条 attempted 归一化后完全相同 (前 20 字符, strip+lower)
+            3. 最后 3 条 on_track == "true"
+
+        返回: 蒸馏后的 principle 文本 (load_stable_principles 用文本本身做去重 key,
+        所以文本即可当 id), 未触发或写入失败返回 None.
+        ponytail: 关键词归一化不做语义聚类; principle 模板化, LLM 升级路径.
+        """
+        if len(step_evaluations) < 3:
+            return None
+
+        recent = list(step_evaluations[-3:])
+
+        def _norm_skill(ev) -> str | None:
+            a = getattr(ev, "attempted", "") or ""
+            a = a.strip().lower()
+            return a[:20] if a else None
+
+        keys = [_norm_skill(ev) for ev in recent]
+        if any(k is None for k in keys):
+            return None
+        if len(set(keys)) != 1:
+            return None
+        if not all(getattr(ev, "on_track", "") == "true" for ev in recent):
+            return None
+
+        attempted = (getattr(recent[-1], "attempted", "") or "").strip()
+        found = (getattr(recent[-1], "found", "") or "").strip()
+        if not attempted or not found:
+            return None
+
+        principle = f"当遇到 {attempted} 时, 有效方法是 {found}"
+        try:
+            from huginn.memory.longterm import store_stable_principle
+
+            # source 标个来源, 方便 load_stable_principles 那边排查
+            store_stable_principle(
+                principle,
+                source=f"episodic_distill:{str(workspace)[:64]}",
+            )
+            return principle
+        except Exception:
+            logger.debug("distill_episodic_to_procedural 写入失败", exc_info=True)
+            return None
+
+    def recall_procedural(self, query: str, top_k: int = 3) -> list[str]:
+        """召回相关 procedural memory (stable_principles).
+
+        ponytail: 关键词包含匹配, 不分词不去停用词. 升级路径: embedding 召回.
+        """
+        try:
+            from huginn.memory.longterm import load_stable_principles
+
+            principles = load_stable_principles()
+        except Exception:
+            return []
+        if not principles or not query:
+            return []
+        # ponytail: query 子串整体命中权重高, 再叠加词级命中数. 够用.
+        query_lc = query.lower()
+        query_words = [w for w in query_lc.split() if len(w) > 1]
+        scored: list[tuple[int, str]] = []
+        for p in principles:
+            p_lc = p.lower()
+            hits = 2 if query_lc in p_lc else 0
+            for w in query_words:
+                if w in p_lc:
+                    hits += 1
+            if hits > 0:
+                scored.append((hits, p))
+        scored.sort(key=lambda x: -x[0])
+        return [p for _, p in scored[:top_k]]
+
+
+# === 自检 ===
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    # 把 agent/ 加到 sys.path, 让 huginn.* 可导入
+    _AGENT_ROOT = Path(__file__).resolve().parents[2]
+    if str(_AGENT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_AGENT_ROOT))
+
+    import huginn.memory.longterm as _ltmod
+
+    # Mock store_stable_principle, 自检不写盘
+    _stored: list[tuple[str, str]] = []
+    _orig_store = _ltmod.store_stable_principle
+
+    def _mock_store(principle, source="S7_self_modify"):
+        _stored.append((principle, source))
+
+    _ltmod.store_stable_principle = _mock_store
+    try:
+        mgr = MemoryManager()
+
+        def _mk_ev(attempted, found, on_track="true"):
+            # 不依赖 metacog.step_evaluator, SimpleNamespace 够用
+            return SimpleNamespace(
+                step_id=0,
+                attempted=attempted,
+                found=found,
+                target_chain_ref=None,
+                on_track=on_track,
+                structure_check="not_applicable",
+                evidence_quality="medium",
+                deviation="",
+                pmk_feedback="",
+            )
+
+        # 1) 3 次同 skill 成功 → 触发蒸馏
+        _stored.clear()
+        evs = [
+            _mk_ev("compute formation energy", "formation energy = -3.5 eV")
+            for _ in range(3)
+        ]
+        pid = mgr.distill_episodic_to_procedural(evs, workspace="ws")
+        assert pid is not None, "3x same skill success should trigger distillation"
+        assert len(_stored) == 1, f"expected 1 store, got {len(_stored)}"
+        assert "compute formation energy" in _stored[0][0]
+        assert "formation energy = -3.5 eV" in _stored[0][0]
+        assert pid.startswith("当遇到") and "有效方法是" in pid
+
+        # 2) 2 成功 1 失败 → 不触发
+        _stored.clear()
+        evs = [
+            _mk_ev("compute band gap", "gap = 1.5 eV"),
+            _mk_ev("compute band gap", "gap = 1.6 eV"),
+            _mk_ev("compute band gap", "no result", on_track="false"),
+        ]
+        pid = mgr.distill_episodic_to_procedural(evs, workspace="ws")
+        assert pid is None, "2 success + 1 fail should not trigger"
+        assert len(_stored) == 0, "no store on mixed success/fail"
+
+        # 3) 3 次不同 skill → 不触发
+        _stored.clear()
+        evs = [
+            _mk_ev("compute formation energy", "ok"),
+            _mk_ev("compute band gap", "ok"),
+            _mk_ev("run md simulation", "ok"),
+        ]
+        pid = mgr.distill_episodic_to_procedural(evs, workspace="ws")
+        assert pid is None, "3 different skills should not trigger"
+        assert len(_stored) == 0
+
+        # 4) 不足 3 条 → 不触发
+        _stored.clear()
+        evs = [_mk_ev("compute formation energy", "ok") for _ in range(2)]
+        pid = mgr.distill_episodic_to_procedural(evs, workspace="ws")
+        assert pid is None, "<3 evals should not trigger"
+
+        # 5) attempted 为空 → 归一化失败, 不触发
+        _stored.clear()
+        evs = [_mk_ev("", "ok") for _ in range(3)]
+        pid = mgr.distill_episodic_to_procedural(evs, workspace="ws")
+        assert pid is None, "empty attempted should not trigger"
+
+        print("all self-checks passed")
+    finally:
+        _ltmod.store_stable_principle = _orig_store

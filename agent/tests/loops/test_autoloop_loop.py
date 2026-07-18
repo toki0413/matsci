@@ -1,6 +1,6 @@
 """P0 integration tests for the autoloop engine (autoloop/engine.py).
 
-Drives the real AutoloopEngine.run() end-to-end with a FakeLLM in
+Drives the real AutoloopEngine.run_cognitive() end-to-end with a FakeLLM in
 callable mode. Heavy external calls (BenchmarkRunner, CoderRunner,
 PerceptionLayer) are stubbed — the LLM decision path is never mocked.
 
@@ -126,6 +126,8 @@ def _make_engine(tmp_path, fake_llm, monkeypatch):
         memory_manager=memory,
     )
     engine.progress_tracker = _DummyTracker()
+    # v10: 关 LLM decider, 走规则版 (FakeLLM 响应按规则版顺序设计)
+    engine._use_llm_decider = False
     engine._perceive = lambda: {
         "changed_files": ["diffusion_analysis.py"],
         "git_diff": "+def calc_diffusion(ca_si_ratio): ...",
@@ -150,21 +152,21 @@ class TestAutoloopFullCycle:
         )
         gate_state = _bypass_validate_gate()
         try:
-            result = await engine.run(
+            # v10: run_cognitive 1-action-per-iter, max_iter=8 跑完 6 phases + report
+            result = await engine.run_cognitive(
                 objective="Optimize C-S-H defect kinetics",
-                max_iterations=1,
+                max_iterations=8,
                 progressive_budget=False,
             )
         finally:
             _restore_gate(gate_state)
 
         assert isinstance(result, AutoloopResult)
-        assert len(result.phases) == 7
         names = [p.name for p in result.phases]
-        assert names == [
-            "perceive", "hypothesize", "plan", "execute",
-            "validate", "learn", "report",
-        ]
+        # 6 stages 全跑完 + report
+        for expected in ("hypothesize", "plan", "execute", "validate", "learn", "report"):
+            assert expected in names, f"缺 {expected}, 实际 {names}"
+        assert len(names) >= 7, f"phase 数 < 7, 实际 {names}"
         for phase in result.phases:
             assert phase.status == "completed", (
                 f"phase '{phase.name}' status={phase.status}"
@@ -200,9 +202,11 @@ class TestAutoloopPhaseGate:
         )
         gate_state = _bypass_validate_gate()
         try:
-            result = await engine.run(
+            # v10: run_cognitive 1-action-per-iter. max_iter=12 让 gate 阻断 +
+            # retry 都跑完 (hyp→plan(blocked)→plan(retry)→exec→val→learn + report)
+            result = await engine.run_cognitive(
                 objective="Optimize C-S-H defect kinetics",
-                max_iterations=3,
+                max_iterations=12,
                 progressive_budget=False,
             )
         finally:
@@ -238,7 +242,7 @@ class TestAutoloopPhaseGate:
 class TestAutoloopBudgetExhaustion:
     @pytest.mark.asyncio
     async def test_max_iterations_limits_loop(self, tmp_path, monkeypatch):
-        """max_iterations=1 → exactly one iteration, then stops."""
+        """max_iterations=2 → 2 actions + report, stops at max_iter."""
         fake_llm = _make_stage_llm()
         engine, _ = _make_engine(tmp_path, fake_llm, monkeypatch)
 
@@ -247,20 +251,20 @@ class TestAutoloopBudgetExhaustion:
         )
         gate_state = _bypass_validate_gate()
         try:
-            result = await engine.run(
+            # v10: run_cognitive 1-action-per-iter, max_iter=2 = 2 actions + report
+            result = await engine.run_cognitive(
                 objective="Optimize C-S-H defect kinetics",
-                max_iterations=1,
+                max_iterations=2,
                 progressive_budget=False,
             )
         finally:
             _restore_gate(gate_state)
 
-        # One iteration = 6 stages + 1 report = 7 phases
-        assert len(result.phases) == 7
-
-        # Exactly one perceive phase (one iteration)
-        perceive_count = sum(1 for p in result.phases if p.name == "perceive")
-        assert perceive_count == 1
+        # 2 actions (hypothesize + plan) + report = 3 phases
+        names = [p.name for p in result.phases]
+        assert "report" in names, f"缺 report, 实际 {names}"
+        actions = [n for n in names if n != "report"]
+        assert len(actions) == 2, f"max_iter=2 应该 2 actions, 实际 {names}"
 
     @pytest.mark.asyncio
     async def test_progressive_budget_rejects_expensive_mode(self, tmp_path, monkeypatch):

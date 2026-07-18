@@ -52,6 +52,7 @@ class KnowledgeDistiller:
         self,
         output_dir: str | None = None,
         sobkso_db_path: str | None = None,
+        kb: Any = None,
     ):
         self.output_dir = (
             Path(output_dir) if output_dir else Path.home() / ".huginn" / "distilled"
@@ -59,7 +60,14 @@ class KnowledgeDistiller:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.sobkso_db_path = Path(sobkso_db_path) if sobkso_db_path else None
         self.knowledge_base: list[DistilledKnowledge] = []
+        # F6: 蒸馏知识回写 KB — 之前蒸馏写 JSON 不进 KB, agent 检索不到结构化知识.
+        # 现在每次 _save 后把新条目 add_text 到 KB, 闭合蒸馏→检索环.
+        # kb=None 时 _save 里 lazy-load get_knowledge_base(), 失败只 warn.
+        self._kb = kb
+        self._kb_synced: set[str] = set()  # 已回写 KB 的 knowledge_id
         self._load_existing()
+        # 已存在的条目视为已同步 (避免重启后重复写入)
+        self._kb_synced.update(k.knowledge_id for k in self.knowledge_base)
 
     def _load_existing(self) -> None:
         kb_file = self.output_dir / "distilled_knowledge.json"
@@ -79,6 +87,43 @@ class KnowledgeDistiller:
                 ensure_ascii=False,
                 indent=2,
             )
+        # F6: 回写 KB — 把新增的蒸馏知识 add_text 进主 KB, 让 agent 检索得到.
+        # ponytail: lazy-load KB, 失败只 warn 不阻塞 _save 主路径.
+        #   升级路径: KnowledgeDistiller 构造时注入 workspace 路径, 避免 lazy-load.
+        try:
+            self._writeback_to_kb()
+        except Exception as exc:
+            logger.warning("F6 KB writeback failed: %s", exc)
+
+    def _writeback_to_kb(self) -> None:
+        """把 self.knowledge_base 中未同步的条目写入主 KB."""
+        if self._kb is None:
+            try:
+                from huginn.knowledge.store import get_knowledge_base
+                # 没有 workspace 上下文时用默认 cache 路径 (~/.huginn)
+                self._kb = get_knowledge_base()
+            except Exception:
+                return  # 无 KB 环境时静默跳过 (e.g. 离线 distill 命令)
+        new_entries = [
+            k for k in self.knowledge_base
+            if k.knowledge_id not in self._kb_synced
+        ]
+        if not new_entries:
+            return
+        for k in new_entries:
+            # filename 带 source_type + id 方便后续 cleanup_old_documents 按 source 追溯
+            self._kb.add_text(
+                text=k.content,
+                filename=f"distilled_{k.source_type}_{k.knowledge_id}.txt",
+                metadata={
+                    "source_type": k.source_type,
+                    "confidence": k.confidence,
+                    "category": k.category,
+                    "tags": ",".join(k.tags),
+                    "distilled": "1",  # 标记蒸馏来源, 区分 agent _learn 直接写入
+                },
+            )
+            self._kb_synced.add(k.knowledge_id)
 
     # ------------------------------------------------------------------
     # Distillation Methods

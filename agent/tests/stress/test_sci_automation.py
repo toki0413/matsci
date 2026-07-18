@@ -271,7 +271,7 @@ class TestAutoloopE2E:
         from huginn.autoloop.engine import AutoloopEngine
 
         engine = AutoloopEngine()
-        result = await engine.run(
+        result = await engine.run_cognitive(
             objective="Test the effect of strain on band gap",
             max_iterations=1,
         )
@@ -285,7 +285,7 @@ class TestAutoloopE2E:
         from huginn.autoloop.engine import AutoloopEngine
 
         engine = AutoloopEngine()
-        result = await engine.run(
+        result = await engine.run_cognitive(
             objective="Compute something that will fail",
             max_iterations=1,
         )

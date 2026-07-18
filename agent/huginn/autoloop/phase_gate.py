@@ -376,6 +376,25 @@ class MathEvidenceChecker:
         return None
 
     def __call__(self, evidence: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+        # v11: Hard-veto 短路 — 守恒律违反 / 量纲不一致直接 reject, 绕过 DS 合成.
+        # ponytail: 只对 verified == False 触发 (确定判负), verified == None / 缺失走原 DS.
+        # 不新建 SMT 组件, 只路由已有 BourbakiTool / symbolic_math_tool 输出.
+        # 升级路径: constraint_check.violations 非空也走 hard-veto (v12 候选).
+        _conservation = evidence.get("conservation_law")
+        if isinstance(_conservation, dict) and _conservation.get("verified") is False:
+            return (
+                False,
+                "hard-veto: conservation law violated (BourbakiTool verified=False)",
+                {"hard_veto": "conservation_law", "sources": ["conservation_law"]},
+            )
+        _dimensional = evidence.get("dimensional_consistent")
+        if _dimensional is False:
+            return (
+                False,
+                "hard-veto: dimensional inconsistency (symbolic_math_tool)",
+                {"hard_veto": "dimensional_inconsistent", "sources": ["dimensional_consistent"]},
+            )
+
         masses: list[tuple[float, float, float]] = []
         sources: list[str] = []
 
@@ -663,7 +682,7 @@ class PhaseGateState:
         """只清每轮瞬态 (history / pending / submitted_evidence),
         保留 caller 配置的 overrides 和 override_meta.
 
-        engine.run() 开头调这个, 不用 reset() — reset() 会清掉 caller
+        engine.run_cognitive() 开头调这个, 不用 reset() — reset() 会清掉 caller
         在 run 之前预设的 override, 破坏 "用户预先放行某转移" 的用法.
         """
         self.history.clear()

@@ -38,6 +38,12 @@ class HypothesisNode:
     created_at: str = ""
     # refine_failed 时记录 red-team findings, 方便回溯
     refinement_basis: list[dict[str, Any]] = field(default_factory=list)
+    # v11: 假设依赖的核心维度 (composition/temperature/defect/structure/transport).
+    # 关键词命中抽取, 非语义. ponytail: 升级路径接 LLM 判定.
+    dimension: str = ""
+    # v11: pivot 兄弟组 id — 同一失败假设 pivot 出的多个候选共享一个 group.
+    # ponytail: 字段驱动, 非 LLM 判定. None = 无兄弟.
+    sibling_group_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +56,8 @@ class HypothesisNode:
             "evidence": dict(self.evidence),
             "created_at": self.created_at,
             "refinement_basis": list(self.refinement_basis),
+            "dimension": self.dimension,
+            "sibling_group_id": self.sibling_group_id,
         }
 
     @classmethod
@@ -64,6 +72,8 @@ class HypothesisNode:
             evidence=d.get("evidence", {}),
             created_at=d.get("created_at", ""),
             refinement_basis=d.get("refinement_basis", []),
+            dimension=d.get("dimension", ""),
+            sibling_group_id=d.get("sibling_group_id"),
         )
 
 
@@ -90,6 +100,34 @@ class HypothesisEdge:
 
 class HypothesisGraphError(Exception):
     """图操作错误: 节点不存在 / 重复 / 非法状态转移."""
+
+
+# v11: 假设维度关键词表 — 中英文命中, 非语义. ponytail: 升级路径接 LLM 判定.
+# 不新建 DimensionDetector 组件, 只在 add_hypothesis 时命中.
+_DIMENSION_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "composition": ("ca/si", "ca_si", "al2o3", "掺杂", "doping", "alloy",
+                    "composition", "ratio", "化学计量", "stoichiometry"),
+    "temperature": ("温度", "temperature", "thermal", "退火", "annealing",
+                    "t-dependent", "phase transition", "相变"),
+    "defect": ("缺陷", "defect", "vacancy", "空位", "dislocation",
+               "位错", "interface", "界面", "itz"),
+    "structure": ("结构", "structure", "crystal", "晶体", "lattice",
+                  "晶格", "symmetry", "对称", "phase", "相"),
+    "transport": ("输运", "diffusion", "扩散", "conductivity",
+                  "电导", "mobility", "迁移率", "percolation"),
+}
+
+
+def _extract_dimension(statement: str) -> str:
+    """从假设陈述抽 dimension, 命中第一个返回. ponytail: 字符串 in 匹配, 非 embedding."""
+    if not statement:
+        return ""
+    low = statement.lower()
+    for dim, keywords in _DIMENSION_KEYWORDS.items():
+        for kw in keywords:
+            if kw in low:
+                return dim
+    return ""
 
 
 # ── graph ────────────────────────────────────────────────────────────────────
@@ -175,6 +213,7 @@ class HypothesisGraph:
             testable_prediction=testable_prediction,
             parent_id=parent_id,
             created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            dimension=_extract_dimension(statement),
         )
         self._nodes[node_id] = node
         if parent_id is not None:
@@ -210,6 +249,33 @@ class HypothesisGraph:
 
     def all_nodes(self) -> list[HypothesisNode]:
         return list(self._nodes.values())
+
+    def cluster_by_dimension(self) -> dict[str, list[HypothesisNode]]:
+        """按 dimension 二维分组, 返回 cluster_id -> nodes.
+
+        cluster_id = f"{dimension}" (空 dimension 归到 "unknown").
+        ponytail: 关键词命中 dimension, 非语义. 升级路径: LLM 判定 dimension (v8+).
+        跟 _metacog_classify_family (engine.py) 同范式, 不引入 embedding.
+        """
+        clusters: dict[str, list[HypothesisNode]] = {}
+        for node in self._nodes.values():
+            key = node.dimension or "unknown"
+            clusters.setdefault(key, []).append(node)
+        return clusters
+
+    def siblings(self, node_id: str) -> list[HypothesisNode]:
+        """返回同 sibling_group_id 的兄弟节点 (不含自身).
+
+        v11: pivot 时同一失败假设产出的多个候选共享 sibling_group_id.
+        ponytail: 字段驱动, 非 LLM 判定. None 视为无兄弟.
+        """
+        node = self.get(node_id)
+        if not node.sibling_group_id:
+            return []
+        return [
+            n for n in self._nodes.values()
+            if n.sibling_group_id == node.sibling_group_id and n.id != node_id
+        ]
 
     def frontier(self) -> list[HypothesisNode]:
         """未测试的假设 (campaign 该排队的)."""
@@ -303,17 +369,24 @@ class HypothesisGraph:
         evidence: dict[str, Any],
         model: Any | None = None,
         objective: str = "",
+        n_best: int = 2,
     ) -> str:
         """战略转向: 放弃当前假设方向, 生成全新假设.
+
+        v11: N-best speculative — n_best=2 并行采样, 主候选返回, 备候选进图
+        标 sibling_group_id 共享. 复用 _hypothesize 的 N=2 思路, 但 pivot 是
+        sync 方法, 这里用顺序调用 (LLM 调用是瓶颈, 顺序 vs 并行差异小).
+        ponytail: 不 async 化 pivot (会传染到调用方), 顺序 N-best 够用.
 
         与 refine_failed 的区别: refine 在原假设基础上修正参数或条件,
         pivot 彻底换一个方向. 在 refine 次数耗尽时触发.
 
         流程:
         1. 收集所有已反驳假设的失败模式, 避免重走老路
-        2. 调 LLM 生成一个与失败方向不同的新假设
+        2. 调 LLM 生成 N 个候选 (主温度 + 高温), 主候选返回, 备候选进图
            - 不可用时回退到模板: 换一个变量维度
         3. 新假设不继承 parent (不是 derive 关系, 是 pivot 关系)
+        4. v11: N 个候选共享 sibling_group_id, siblings() 可查
         """
         self._check_node(failed_node_id)
         failed_node = self._nodes[failed_node_id]
@@ -324,21 +397,58 @@ class HypothesisGraph:
             if n.status in ("refuted", "superseded")
         ]
 
-        # 调 LLM 生成战略转向
+        # v11: N-best 采样 — 主候选 (默认温度) + 备候选 (高温=1.0)
+        # ponytail: 顺序调用, 不 async. LLM invoke 是同步阻塞, 并行需 asyncio.
+        # 升级路径: async pivot + asyncio.gather (v12 候选, 要改调用方).
+        main_statement: str = ""
+        backup_statements: list[str] = []
         if model is not None and self._is_real_model(model):
-            new_statement = self._llm_pivot(
+            main_statement = self._llm_pivot(
                 failed_node.statement, failed_statements, evidence, objective, model,
             )
+            if n_best >= 2:
+                try:
+                    hot_model = model.bind(temperature=1.0)
+                    _backup = self._llm_pivot(
+                        failed_node.statement, failed_statements, evidence, objective, hot_model,
+                    )
+                    if _backup and _backup != main_statement:
+                        backup_statements.append(_backup)
+                except Exception:
+                    pass  # not all model wrappers support bind
         else:
-            new_statement = self._template_pivot(
+            main_statement = self._template_pivot(
                 failed_node.statement, failed_statements,
             )
 
+        # v11: 生成 sibling_group_id, N 个候选共享
+        _sibling_group = f"sg_{uuid.uuid4().hex[:8]}" if backup_statements else None
+
         # 加节点 + pivot 边 (不是 derive, 是独立的 pivot 关系)
         new_id = self.add_hypothesis(
-            statement=new_statement,
+            statement=main_statement,
             rationale=f"战略转向: refine 次数耗尽, 放弃 {failed_node_id} 方向",
         )
+        # v11: 主候选标 sibling_group_id
+        if _sibling_group:
+            self._nodes[new_id].sibling_group_id = _sibling_group
+
+        # v11: 备候选进图, 标 sibling_group_id + evidence={"candidate_role":"backup"}
+        for _backup_stmt in backup_statements:
+            try:
+                _backup_id = self.add_hypothesis(
+                    statement=_backup_stmt,
+                    rationale=f"backup pivot candidate (sibling of {new_id})",
+                )
+                if _backup_id:
+                    self._nodes[_backup_id].sibling_group_id = _sibling_group
+                    self._nodes[_backup_id].evidence = {
+                        **self._nodes[_backup_id].evidence,
+                        "candidate_role": "backup",
+                    }
+            except Exception:
+                pass  # backup 失败不阻塞主候选
+
         # 交叉授粉延迟: pivot 跨分量需两端分量都成熟.
         # new_id 是 singleton, _is_cross_component_edge 排除单节点 → 正常 pivot 不受影响.
         ok, reason = self._check_cross_pollination_readiness(
@@ -361,11 +471,12 @@ class HypothesisGraph:
             failed_count=len(failed_statements),
         )
         self._log_research(
-            "conjecture", f"PIVOT: {new_statement[:60]}",
+            "conjecture", f"PIVOT: {main_statement[:60]}",
             f"战略转向 — refine 次数耗尽后放弃原方向.\n\n"
-            f"新假设: {new_statement}\n"
+            f"新假设: {main_statement}\n"
             f"放弃方向: {failed_node.statement}\n"
-            f"已尝试的失败假设数: {len(failed_statements)}",
+            f"已尝试的失败假设数: {len(failed_statements)}\n"
+            f"backup 候选数: {len(backup_statements)}",
             parent_id=new_id, status="proposed",
             tags=["autoloop", "pivot"],
         )

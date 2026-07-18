@@ -112,8 +112,10 @@ def _default_audit_logger() -> AuditLogger:
     return AuditLogger(log_path)
 
 
-# 熔断器/仪表盘开关，跑测试或 benchmark 时可以关掉
-_HEALTH_MONITOR_ON = os.environ.get("HUGINN_HEALTH_MONITOR", "1") == "1"
+# 熔断器/仪表盘开关. AV5: 默认关 — file_read_tool 偶尔失败就触发 circuit_open,
+# 阻止 agent 读文件, 生产路径 (deli_research/cli/routes) 也踩同一个坑.
+# 升级路径: mode-aware breaker, 按 tool 配置不同阈值 (file_read 容忍度高, hpc 容忍度低).
+_HEALTH_MONITOR_ON = os.environ.get("HUGINN_HEALTH_MONITOR", "0") == "1"
 
 
 def _breaker_blocked(tool_name: str) -> dict[str, Any] | None:

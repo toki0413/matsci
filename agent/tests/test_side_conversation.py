@@ -447,7 +447,10 @@ class TestEngineDrainSideQuestions:
         engine.model.ainvoke = AsyncMock(return_value=canned)
 
         fresh_channel.submit("side q?")
-        asyncio.run(engine.run(objective="o", max_iterations=1))
+        # v10: run_cognitive 1-action-per-iter. iter 1 perceive=None 触发 G31
+        # (首轮 bypass) 设 context, F8 不跑. iter 2 perceive=None, 非首轮,
+        # G31 不触发, F8 drain_side_questions 跑.
+        asyncio.run(engine.run_cognitive(objective="o", max_iterations=2))
         # drain fired during idle → question answered
         assert fresh_channel.n_answered == 1
         assert fresh_channel.n_pending == 0

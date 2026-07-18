@@ -50,7 +50,62 @@ def should_visualize(tool_name: str, output: dict[str, Any]) -> bool:
         if key in result and isinstance(result[key], (list, dict)):
             return True
 
+    # F1: code_tool / bash_tool 输出也触发 — RCB 跑分路径里 agent 用 code_tool
+    # 算完打印 MAE/RMSE/R2 等数值, 没视觉反馈等于盲跑. 解 v8 视觉升级在 RCB 死路径.
+    # 检测策略: stdout 里 ≥3 个可解析数字 → 视为可视化的数值序列.
+    # ponytail: 启发式 regex, 不上 AST 解析. 升级路径: LLM 判是否适合可视化.
+    if tool_name in ("code_tool", "bash_tool", "shell_tool"):
+        stdout = result.get("stdout") or result.get("output") or ""
+        if isinstance(stdout, str):
+            nums = _NUMERIC_LINE_RE.findall(stdout)
+            if len(nums) >= 3:
+                return True
+
     return False
+
+
+# F1: 匹配 "key: value" / "key = value" / "key value" 形式的数值行.
+# 抓 MAE: 0.05 / RMSE=0.12 / R2 0.89 / loss 1.23e-4 等. 不抓纯叙述数字.
+import re as _re
+_NUMERIC_LINE_RE = _re.compile(
+    r"[\w\-]{1,30}\s*[:=]?\s*(-?\d+\.?\d*(?:[eE][+-]?\d+)?)",
+    _re.ASCII,
+)
+
+# F1: 解析 "metric: value" 对. 要求 key 是字母/下划线开头, value 是数字.
+# 用 findall 提取所有匹配, 同名 key 保留第一次出现 (避免 R2 多次出现画重叠).
+_METRIC_PAIR_RE = _re.compile(
+    r"(?P<key>[A-Za-z_][\w\-]{0,29})\s*[:=]\s*(?P<val>-?\d+\.?\d*(?:[eE][+-]?\d+)?)",
+    _re.ASCII,
+)
+
+
+def _extract_metric_pairs(stdout: str) -> list[tuple[str, float]]:
+    """从 stdout 抽 (key, value) 对. 同名只保留第一次."""
+    seen: set[str] = set()
+    pairs: list[tuple[str, float]] = []
+    # 文件扩展名 / 常见非指标 key — 出现在 "foo.py:10" 这类 file:line 模式里
+    _NON_METRIC_KEYS = {
+        "line", "file", "version", "pid", "size", "len", "count", "n",
+        "py", "js", "cpp", "c", "h", "json", "md", "txt", "log",
+        "error", "warning", "info", "debug",
+    }
+    for m in _METRIC_PAIR_RE.finditer(stdout):
+        key = m.group("key")
+        if key in seen:
+            continue
+        # 排除 "foo.py:10" 这种 file:line — key 前一个字符是 "." 表示是文件扩展名
+        if m.start() > 0 and stdout[m.start() - 1] == ".":
+            continue
+        try:
+            val = float(m.group("val"))
+        except ValueError:
+            continue
+        if key.lower() in _NON_METRIC_KEYS:
+            continue
+        seen.add(key)
+        pairs.append((key, val))
+    return pairs
 
 
 def render_tool_output(tool_name: str, output: dict[str, Any]) -> str | None:
@@ -119,6 +174,19 @@ def render_tool_output(tool_name: str, output: dict[str, Any]) -> str | None:
             ax.barh(names, values)
             ax.set_xlabel("Score")
             plotted = True
+
+    # F1: code_tool / bash_tool stdout → 解析 "key: value" 对画 bar chart
+    # 不画 line chart — RCB agent 的 stdout 通常是离散指标 (MAE/RMSE/R2), 不是时序.
+    if not plotted and tool_name in ("code_tool", "bash_tool", "shell_tool"):
+        stdout = result.get("stdout") or result.get("output") or ""
+        if isinstance(stdout, str):
+            pairs = _extract_metric_pairs(stdout)
+            if pairs:
+                labels, values = zip(*pairs[:10])
+                ax.bar(labels, values)
+                ax.set_ylabel("Value")
+                ax.tick_params(axis="x", rotation=30)
+                plotted = True
 
     if not plotted:
         plt.close(fig)
@@ -263,6 +331,24 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
     # 之前只处理 1D (bands/dos/energies), 2D 数据(相场/元素分布)没有坐标化 primitives,
     # text-only LLM 对 2D 形态"失明". 加 2D 分支让 LLM 通过质心/覆盖率坐标推理空间分布.
     lines.extend(_extract_2d_primitives(result))
+
+    # F1: code_tool / bash_tool stdout 指标 primitives — 让 text-only LLM
+    # 看到 "MAE=<point>[700]</point>=0.05" 这种坐标化锚点, 配合 v8 _measure_nearest_primitive
+    # 的变体 5 解析. 不画图也有结构化视觉锚点.
+    if tool_name in ("code_tool", "bash_tool", "shell_tool"):
+        stdout = result.get("stdout") or result.get("output") or ""
+        if isinstance(stdout, str):
+            pairs = _extract_metric_pairs(stdout)
+            if pairs:
+                vals = [v for _, v in pairs]
+                v_min, v_max = min(vals), max(vals)
+                v_range = v_max - v_min if v_max != v_min else 1.0
+                parts = []
+                for k, v in pairs[:8]:
+                    # 单坐标 (1D): x 归一化到 0-999, 让 LLM 指向指标值高度
+                    yi = int((v - v_min) / v_range * 999)
+                    parts.append(f"{k}=<point>[{yi}]</point>={v:.4f}")
+                lines.append("[metrics] " + ", ".join(parts))
 
     if not lines:
         return ""
