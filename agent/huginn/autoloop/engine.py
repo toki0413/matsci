@@ -2713,11 +2713,12 @@ Respond JSON only:
             return None
 
     def _record_backup_candidates(self, raw: str, selected: str) -> None:
-        """v11: 解析 [DIM: ...] 候选, backup 进图让 frontier 选优.
+        """v11/v12: 解析 [DIM: ...] 候选, backup 进图让 frontier 选优.
 
         ponytail: 正则解析, 失败不阻塞. SELECTED 的候选已在 _hypothesize 上游
         由 execute_fn 的 add_hypothesis 调用进图 (主路径), 这里只补 backup.
-        同 dimension 只留第一个, 避免同质化堆积.
+        v12: 同 dimension 第 2 个候选不再跳过, 改标 dim_conflict=True 留痕,
+        让 LLM decider 在选优时避开 (cluster_block 已含 dim 分布提示).
         """
         try:
             import re
@@ -2733,15 +2734,20 @@ Respond JSON only:
                 # 跳过 SELECTED 的那个 (它已进图)
                 if not _stmt or _stmt == selected:
                     continue
-                # 同 dimension 只留第一个
-                if _dim in _seen_dims:
-                    continue
+                # v12: 同 dim 不再跳过, 标 dim_conflict 让 decider 避开
+                _dim_conflict = _dim in _seen_dims
                 _seen_dims.add(_dim)
-                # backup 候选进图, 标 evidence={"candidate_role":"backup"}
-                self.hypothesis_graph.add_hypothesis(
+                # backup 候选进图, 标 evidence={"candidate_role":"backup", "dim_conflict":...}
+                _new_id = self.hypothesis_graph.add_hypothesis(
                     statement=_stmt,
                     rationale=f"backup candidate (dim={_dim})",
                 )
+                if _new_id:
+                    self.hypothesis_graph._nodes[_new_id].evidence = {
+                        **self.hypothesis_graph._nodes[_new_id].evidence,
+                        "candidate_role": "backup",
+                        "dim_conflict": _dim_conflict,
+                    }
         except Exception:
             logger.debug("v11 _record_backup_candidates failed (non-fatal)", exc_info=True)
 

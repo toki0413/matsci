@@ -379,7 +379,7 @@ class MathEvidenceChecker:
         # v11: Hard-veto 短路 — 守恒律违反 / 量纲不一致直接 reject, 绕过 DS 合成.
         # ponytail: 只对 verified == False 触发 (确定判负), verified == None / 缺失走原 DS.
         # 不新建 SMT 组件, 只路由已有 BourbakiTool / symbolic_math_tool 输出.
-        # 升级路径: constraint_check.violations 非空也走 hard-veto (v12 候选).
+        # v12: constraint_check.violations 非空也走 hard-veto (强信号, 误判风险低).
         _conservation = evidence.get("conservation_law")
         if isinstance(_conservation, dict) and _conservation.get("verified") is False:
             return (
@@ -394,6 +394,18 @@ class MathEvidenceChecker:
                 "hard-veto: dimensional inconsistency (symbolic_math_tool)",
                 {"hard_veto": "dimensional_inconsistent", "sources": ["dimensional_consistent"]},
             )
+        # v12: constraint_check.violations 非空 → hard-veto
+        # ponytail: truthy 判定 (空 list / 空字符串 / None 都不触发), 复用已有 symbolic_regression_tool 输出.
+        _constraint = evidence.get("constraint_check")
+        if isinstance(_constraint, dict):
+            _violations = _constraint.get("violations")
+            if _violations:
+                return (
+                    False,
+                    f"hard-veto: constraint violations ({len(_violations) if hasattr(_violations, '__len__') else '?'} 条): "
+                    f"{str(_violations)[:120]}",
+                    {"hard_veto": "constraint_violations", "sources": ["constraint_check"]},
+                )
 
         masses: list[tuple[float, float, float]] = []
         sources: list[str] = []
