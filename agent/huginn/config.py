@@ -384,6 +384,14 @@ class HuginnConfig:
     tooluniverse_mcp_command: str = "python"
     tooluniverse_mcp_args: str = "-m tooluniverse.smcp_server"
 
+    # Sobko MCP (思想家公社 + Multiwfn 手册知识库). 默认 off, 用户 clone
+    # WangGroupFDU/Sobko_MCP_project 后设 HUGINN_SOBKO_MCP_ENABLED=1 启用.
+    # 路径通过 HUGINN_SOBKO_MCP_ROOT 指定, 默认 ../Sobko_MCP_project.
+    sobko_mcp_enabled: bool = False
+    sobko_mcp_root: str = "../Sobko_MCP_project"
+    sobko_mcp_command: str = "python"
+    sobko_mcp_args: str = "scripts/run_server.py"
+
     # Workspace
     workspace: str = "."
 
