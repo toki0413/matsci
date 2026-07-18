@@ -83,7 +83,7 @@ class ReflectionMixin:
         async def _summarize(transcript: str):
             from langchain_core.messages import HumanMessage, SystemMessage
 
-            from huginn.llm_retry import FallbackTriggeredError, call_with_fallback
+            from huginn.llm_retry import FallbackTriggeredError, call_with_fallback, with_retry
 
             messages = [
                 SystemMessage(content=_SUMMARY_SYSTEM_PROMPT),

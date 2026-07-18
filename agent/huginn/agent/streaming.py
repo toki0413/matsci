@@ -50,6 +50,27 @@ logger = logging.getLogger(__name__)
 _PHASE_MARKER = re.compile(r"\[PHASE:\s*(\w+)\s*\]", re.IGNORECASE)
 
 
+# AV5: σ₂ 补丁默认值下沉 — 生产路径长对话也会丢 system checklist / winner plan.
+# 这些 marker 在普通对话里不匹配, 无副作用; RCB-style prompt 自动受益.
+_DEFAULT_ROOT_MARKERS = (
+    "## Methodology Checklist;## Selected Execution Plan;"
+    "## Report Coverage Compass;## Intuitive Gamer"
+)
+
+
+def _load_root_markers() -> list[str] | None:
+    """F3+AV5: 从 HUGINN_ROOT_MARKERS env 读内容 marker (分号分隔).
+
+    用于 compact_messages 的 root_content_markers 参数 — 标记 checklist prompt、
+    FCM winner_plan 等关键 early-turn message 永不被 drop.
+    ponytail: 模块级缓存, env 不变就只读一次.
+    """
+    raw = os.environ.get("HUGINN_ROOT_MARKERS", _DEFAULT_ROOT_MARKERS).strip()
+    if not raw:
+        return None
+    return [m.strip() for m in raw.split(";") if m.strip()]
+
+
 class StreamingMixin:
     """The chat() async generator and all streaming-adjacent logic."""
 
@@ -496,7 +517,9 @@ class StreamingMixin:
             return 0
 
         keep_last_n = 4
-        keep_root_n = int(os.environ.get("HUGINN_KEEP_ROOT_N", "0"))
+        # AV5: 默认保前 2 条 root (user 初始任务 + system checklist) — σ₂ compaction
+        # 丢 Step 1 checklist 不只影响 RCB, 生产路径长对话也会丢 system prompt.
+        keep_root_n = int(os.environ.get("HUGINN_KEEP_ROOT_N", "2"))
         body_start = keep_root_n
         body_end = len(msgs) - keep_last_n
         if body_end <= body_start:
@@ -1058,7 +1081,9 @@ class StreamingMixin:
                         inputs["messages"],
                         self.context_budget_tokens,
                         keep_last_n=1,
-                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "0")),
+                        # AV5: 默认 2 + markers, σ₂ 补丁下沉到生产路径
+                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")),
+                        root_content_markers=_load_root_markers(),
                     )
             elif self.context_budget_tokens > 0:
                 summarizer = self._make_summarizer()
@@ -1097,7 +1122,9 @@ class StreamingMixin:
                         inputs["messages"],
                         self.context_budget_tokens,
                         keep_last_n=1,
-                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "0")),
+                        # AV5: 默认 2 + markers, σ₂ 补丁下沉到生产路径
+                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")),
+                        root_content_markers=_load_root_markers(),
                     )
                 estimated = (
                     count_tokens(self.system_prompt)
@@ -1150,16 +1177,22 @@ class StreamingMixin:
             self._tool_adapter.set_budget(turn_budget)
             turn_router = ToolCallRouter(budget=turn_budget)
             self._tool_adapter.set_router(turn_router)
-            # ponytail: RCB 场景 skip loop detector — agent 反复跑分析脚本是正常行为,
-            # loop detector 误判为循环. 升级: mode-aware detector with semantic diff.
-            if os.environ.get("HUGINN_SKIP_LOOP_DETECTOR", "").lower() not in ("1", "true", "yes"):
+            # AV5: 默认 skip — ToolLoopDetector + ThoughtLoopDetector 在长任务 (RCB 或
+            # 真实研究) 都会误判: agent 反复跑 code_tool 是正常, 写报告反复用术语
+            # ("band gap"/"MAE") Jaccard > 0.85 也正常. 升级: mode-aware detector,
+            # 区分 "同 tool 同输入" (真死循环) vs "同 tool 不同输入" (正常迭代).
+            _skip_loop = os.environ.get("HUGINN_SKIP_LOOP_DETECTOR", "1").lower() in ("1", "true", "yes")
+            if not _skip_loop:
                 turn_loop_detector = LoopDetector()
             else:
                 turn_loop_detector = None
             self._tool_adapter.set_loop_detector(turn_loop_detector)
 
+            # F2: σ₈ 半修补全 — ThoughtLoopDetector 也要受同一个 env 控制.
+            # 之前只关 ToolLoopDetector, ThoughtLoopDetector 仍开, agent 写报告
+            # 反复用 "band gap"/"MAE" 术语时 Jaccard > 0.85 三次就误判死循环.
             from huginn.agents.loop_detector import ThoughtLoopDetector
-            self._thought_detector = ThoughtLoopDetector()
+            self._thought_detector = None if _skip_loop else ThoughtLoopDetector()
             self._thought_loop_terminated = False
 
             max_retries = 3

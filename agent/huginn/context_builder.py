@@ -29,6 +29,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _flatten_replay_content(content: Any) -> str:
+    """历史回放内容扁平化: block list → 纯文本.
+
+    file/image block (base64 PDF 等) 换文本占位 — OpenAI 兼容 API 不收
+    file variant (messages[i] 400), 且每轮重发几 MB base64 是纯 token 浪费.
+    ponytail: 树节点里的原始 base64 仍在内存 (天花板: 内存膨胀), 升级路径
+    是 ConversationTree.add_message 落节点时就 sanitize.
+    """
+    if not isinstance(content, list):
+        return content if isinstance(content, str) else str(content or "")
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            btype = block.get("type", "")
+            if btype == "text":
+                parts.append(str(block.get("text", "")))
+            else:
+                fname = block.get("filename") or block.get("name") or "unnamed"
+                parts.append(f"[{btype or 'attachment'} omitted: {fname}]")
+        else:
+            parts.append(str(block))
+    return "\n".join(p for p in parts if p)
+
+
 class ContextBuilder:
     """Builds the dynamic context (memory, KG, KB, emotion) for each turn.
 
@@ -152,6 +178,71 @@ class ContextBuilder:
         except Exception:
             return ""
 
+    def build_episode_history_text(
+        self, kg: Any, current_step: int, look_back: int = 3
+    ) -> str:
+        """格式化当前 step 的前驱 episode 路径为 context 文本.
+
+        kg 是 ProjectKnowledgeGraph 实例 (外部传入, 不走 self._kg — caller
+        可能想用不同 workspace 的 kg 或 mock). kg 为 None / 方法缺失 / 路径
+        空都返回 "".
+        ponytail: 简单切片取最近 look_back 条, 不做相关性排序 — 升级路径
+        是按 darwin_score / embedding 相似度排序后取 top-K.
+        """
+        if kg is None:
+            return ""
+        try:
+            fn = getattr(kg, "query_episode_path", None)
+            if not callable(fn):
+                return ""
+            episodes = fn(current_step, direction="backward")
+            if not episodes:
+                return ""
+            # ponytail: 简单切片 (天花板: 路径已按 step_id 升序, 切片只能拿到
+            # 最近 N 步, 不是最相关的 N 步). 升级路径见 docstring.
+            recent = episodes[-look_back:] if look_back and look_back > 0 else episodes
+            lines = ["历史相似步骤:"]
+            for ep in recent:
+                sid = ep.get("step_id", "?")
+                att = ep.get("attempted", "") or ""
+                fnd = ep.get("found", "") or ""
+                res = ep.get("result", "") or ""
+                lines.append(
+                    f"- step {sid}: attempted={att}, found={fnd}, result={res}"
+                )
+            return "\n".join(lines)
+        except Exception:
+            logger.debug("build_episode_history_text failed", exc_info=True)
+            return ""
+
+    def build_failure_cause_text(self, kg: Any, failed_step_id: int) -> str:
+        """格式化失败 episode 的因果链为 context 文本.
+
+        kg 为 None / 方法缺失 / 因果链空都返回 "". query_failure_cause 只在
+        目标 episode result=='failed' 时返回非空, 所以这里不用再判结果.
+        ponytail: 纯文本拼接, 不做 LLM 摘要 — 升级路径是 LLM 把因果链改写
+        成可读的根因分析建议.
+        """
+        if kg is None:
+            return ""
+        try:
+            fn = getattr(kg, "query_failure_cause", None)
+            if not callable(fn):
+                return ""
+            causes = fn(failed_step_id)
+            if not causes:
+                return ""
+            lines = ["失败原因链:"]
+            for ep in causes:
+                sid = ep.get("step_id", "?")
+                att = ep.get("attempted", "") or ""
+                fnd = ep.get("found", "") or ""
+                lines.append(f"- step {sid}: attempted={att}, found={fnd}")
+            return "\n".join(lines)
+        except Exception:
+            logger.debug("build_failure_cause_text failed", exc_info=True)
+            return ""
+
     # ── Domain knowledge base ──────────────────────────────────────
 
     def build_kb_text(self, query: str) -> str:
@@ -255,22 +346,23 @@ class ContextBuilder:
             # inputs["messages"] 每轮都带完整历史, 没 ID 会被 langgraph
             # 当新消息追加 → 历史翻倍. 有 ID 后是替换, 不重复.
             msg_id = f"ct_{node_id}"
+            flat = _flatten_replay_content(node.content)
             if node.role == "user":
-                messages.append(HumanMessage(content=node.content, id=msg_id))
+                messages.append(HumanMessage(content=flat, id=msg_id))
             elif node.role == "assistant":
                 tool_calls = meta.get("tool_calls")
                 if tool_calls:
                     messages.append(
-                        AIMessage(content=node.content, tool_calls=tool_calls, id=msg_id)
+                        AIMessage(content=flat, tool_calls=tool_calls, id=msg_id)
                     )
                 else:
-                    messages.append(AIMessage(content=node.content, id=msg_id))
+                    messages.append(AIMessage(content=flat, id=msg_id))
             elif node.role == "system":
-                messages.append(SystemMessage(content=node.content, id=msg_id))
+                messages.append(SystemMessage(content=flat, id=msg_id))
             elif node.role == "tool":
                 messages.append(
                     ToolMessage(
-                        content=node.content,
+                        content=flat,
                         tool_call_id=meta.get("tool_call_id", ""),
                         name=meta.get("name"),
                         id=msg_id,
@@ -553,6 +645,208 @@ class ContextBuilder:
         except Exception:
             return ""
 
+    # ── Prospective / target chain / step eval ─────────────────────
+    # 三个新 ctx 源: 前瞻意图 (第 5 类记忆), 目标链 (TargetChain), 上一步评估.
+    # 都用 lazy import — metacog 模块还在并行开发, 启动期不能硬依赖.
+    # 空输入一律返回空串, build_input_messages 自然跳过.
+
+    def build_prospective_text(self, fired_intentions: list) -> str:
+        """格式化已触发的 Prospective Intentions 为 context 文本.
+
+        fired_intentions 是 list[ProspectiveIntention]. 空列表返回 "".
+        """
+        if not fired_intentions:
+            return ""
+        lines = []
+        for it in fired_intentions:
+            desc = getattr(it, "description", str(it))
+            step = getattr(it, "source_step", "?")
+            lines.append(f"- 你之前计划了 {desc}（创建于 step {step}），现在是执行的时候")
+        return "## 待执行的前瞻意图\n" + "\n".join(lines)
+
+    def build_target_chain_text(self, target_chains: list, current_step: int) -> str:
+        """格式化目标链为 context 文本.
+
+        target_chains 是 list[TargetChain]. 复用
+        huginn.metacog.target_chain.format_target_chain_text.
+        """
+        if not target_chains:
+            return ""
+        from huginn.metacog.target_chain import format_target_chain_text as _fmt
+        return _fmt(target_chains, current_step)
+
+    def build_step_eval_text(self, last_evaluation) -> str:
+        """格式化上一步评估反馈为 context 文本.
+
+        last_evaluation 是 StepEvaluation 或 None. 复用
+        huginn.metacog.step_evaluator.format_step_eval_text.
+        """
+        if last_evaluation is None:
+            return ""
+        from huginn.metacog.step_evaluator import format_step_eval_text as _fmt
+        return _fmt(last_evaluation)
+
+    def build_meta_agent_text(
+        self,
+        target_chains: list | None = None,
+        last_step_evaluation: Any = None,
+        tool_call_health: Any = None,
+        drift_info: tuple | None = None,
+    ) -> str:
+        """元 Agent 视角重组 — Planner / Adviser / Reflector 三段.
+
+        不是新组件, 只是把 TargetChain / StepEvaluation / ToolCallHealth /
+        detect_drift 的输出按 PentAGI 三视角重新编排, 给 LLM 一个统一的
+        "我在哪 / 偏没偏 / 工具坏没坏" 视图. 全部输入为 None/空时返回空串,
+        不污染 context.
+
+        ponytail: 视角重组不是新组件, 不新增依赖、不 import 新模块.
+        升级路径: 真要独立 Reflector 组件时, 把第三段抽成
+        ReflectorComponent.observe().
+        """
+        sections: list[str] = []
+
+        # ── Planner: 目标链 → "拆解 N 步 / 当前位置 / 下一步该做什么" ──
+        if target_chains:
+            lines: list[str] = ["[Planner]"]
+            total = 0
+            done = 0
+            next_step = ""
+            for tc in target_chains:
+                results = getattr(tc, "required_results", []) or []
+                completed = getattr(tc, "completed_results", set()) or set()
+                tid = getattr(tc, "target_id", "?")
+                tgt = getattr(tc, "target", "")
+                prog = getattr(tc, "progress", 0.0)
+                total += len(results)
+                done += sum(1 for r in results if r in completed)
+                missing = [r for r in results if r not in completed]
+                if missing and not next_step:
+                    next_step = missing[0]
+                lines.append(
+                    f"- {tid}: {tgt} [{int(prog * 100)}%] missing={missing}"
+                )
+            if total > 0:
+                lines.insert(
+                    1,
+                    f"拆解 {total} 步, 当前 {done}/{total}, "
+                    f"下一步: {next_step or '(全部完成)'}",
+                )
+                sections.append("## 元 Agent 视角\n" + "\n".join(lines))
+
+        # ── Adviser: on_track=false 或 drift_info 非 None → 漂移/策略告警 ──
+        adviser: list[str] = []
+        if last_step_evaluation is not None:
+            on_track = getattr(last_step_evaluation, "on_track", "true")
+            if on_track == "false":
+                dev = getattr(last_step_evaluation, "deviation", "") or ""
+                adviser.append(
+                    "[Adviser] 上一步偏离目标链"
+                    + (f": {dev}" if dev else "")
+                    + " — 建议重审方法选择 / 补数据"
+                )
+        if drift_info is not None:
+            is_drift, drift_msg = drift_info
+            if is_drift:
+                adviser.append(f"[Adviser] 漂移告警: {drift_msg}")
+        if adviser:
+            sections.append("## 元 Agent 视角\n" + "\n".join(adviser))
+
+        # ── Reflector: tool_call_health.is_anomalous() → 介入建议 ──
+        if tool_call_health is not None:
+            is_anom = getattr(tool_call_health, "is_anomalous", None)
+            if callable(is_anom) and is_anom():
+                sr = getattr(tool_call_health, "success_rate", 1.0)
+                rc = getattr(tool_call_health, "retry_count", 0)
+                to = getattr(tool_call_health, "timeout_count", 0)
+                pe = getattr(tool_call_health, "param_error_count", 0)
+                sections.append(
+                    "## 元 Agent 视角\n"
+                    f"[Reflector] 工具调用异常: success_rate={sr:.2f}, "
+                    f"retry={rc}, timeout={to}, param_err={pe}\n"
+                    "介入建议: 检查工具参数 / 切换备选工具 / 暂停调用并人工介入"
+                )
+
+        return "\n\n".join(sections) if sections else ""
+
+    def build_pmk_text(
+        self,
+        persona: Any = None,
+        memory: Any = None,
+        kb: Any = None,
+        last_step_evaluation: Any = None,
+    ) -> str:
+        """PMK 三路立场显式呈现 — 给 LLM 看 persona/memory/knowledge 各自什么立场.
+
+        解决问题: 之前 PMK 是隐式拼接, LLM 看不到三路各自立场, 无法判断是否一致.
+        现在显式列出三路立场 + 一致性标签, 让 LLM 感知 "PMK 是否对齐".
+
+        高阶网络视角: 三路立场是三个局部模型, Čech H¹ 检查能否粘合成全局.
+        一致性标签用 _check_pmk_consistency (规则版 H¹ proxy), 不调 LLM.
+
+        ponytail: 不新建 PMK 组件, 只加 build 方法. 三路文本任一非空就输出,
+        全空返回空串. 升级路径: 一致性判定换 LLM 语义判断.
+        """
+        # 抽三路立场文本
+        persona_text = ""
+        if persona is not None:
+            persona_text = str(
+                getattr(persona, "description", None)
+                or (persona.get("description") if isinstance(persona, dict) else "")
+                or ""
+            )
+        memory_text = ""
+        if last_step_evaluation is not None:
+            pmk_fb = getattr(last_step_evaluation, "pmk_feedback", "") or ""
+            # pmk_feedback 格式 "Persona: ...; Memory: ...; KB: ..." — 抓 Memory 段
+            for seg in pmk_fb.split(";"):
+                seg = seg.strip()
+                if seg.lower().startswith("memory:"):
+                    memory_text = seg[len("memory:"):].strip()
+                    break
+        kb_text = ""
+        if kb is not None:
+            kb_text = "(available)"  # kb 召回内容走 build_kb_text, 这里只标记可用性
+        # 但如果 last_step_eval.pmk_feedback 有 KB 段, 优先用那个 (显式立场)
+        if last_step_evaluation is not None:
+            pmk_fb = getattr(last_step_evaluation, "pmk_feedback", "") or ""
+            for seg in pmk_fb.split(";"):
+                seg = seg.strip()
+                if seg.lower().startswith("kb:"):
+                    kb_text = seg[len("kb:"):].strip()
+                    break
+
+        if not (persona_text or memory_text or kb_text):
+            return ""
+
+        # 一致性标签 — 复用 task_lifecycle._check_pmk_consistency (H¹ proxy)
+        consistency_label = "consistent"
+        try:
+            from huginn.runtime.task_lifecycle import _check_pmk_consistency
+            pmk_state = {
+                "persona": persona_text,
+                "memory": memory_text,
+                "kb": kb_text,
+            }
+            inconsistent, reason = _check_pmk_consistency(pmk_state)
+            consistency_label = "INCONSISTENT" if inconsistent else "consistent"
+        except Exception:
+            pass  # import 失败或检查异常, 标 consistent 不阻塞
+
+        lines = [
+            "## PMK 循环状态",
+            f"一致性: {consistency_label}",
+            f"- Persona: {persona_text or '(无立场)'}",
+            f"- Memory: {memory_text or '(无立场)'}",
+            f"- Knowledge: {kb_text or '(无立场)'}",
+        ]
+        if consistency_label == "INCONSISTENT":
+            lines.append(
+                "- ⚠ 三路立场冲突 — 局部模型无法粘合成全局, "
+                "请显式选择遵从哪一路"
+            )
+        return "\n".join(lines)
+
     # ── Full input messages ────────────────────────────────────────
 
     def build_input_messages(
@@ -648,3 +942,53 @@ class ContextBuilder:
             ))
 
         return messages
+
+
+def _selfcheck() -> None:
+    """build_pmk_text selfcheck — 验证 PMK 三路立场显式呈现 + 一致性标签.
+
+    覆盖: consistent / INCONSISTENT / 全空 / dict 兼容 / pmk_feedback 解析.
+    ponytail: 用 __new__ 绕过 __init__ (避免依赖 workspace/model), 只测 build_pmk_text.
+    """
+    from types import SimpleNamespace
+
+    ctx = ContextBuilder.__new__(ContextBuilder)
+
+    # 1. 全空 → 空串
+    out = ctx.build_pmk_text()
+    assert out == "", f"empty pmk should return '', got: {out!r}"
+    print("1. empty PMK → '' OK")
+
+    # 2. 只有 persona → consistent
+    persona = SimpleNamespace(description="recommend DFT calculation")
+    out = ctx.build_pmk_text(persona=persona)
+    assert "consistent" in out, f"single persona should be consistent: {out}"
+    assert "Persona: recommend DFT calculation" in out, f"missing persona text: {out}"
+    print("2. single persona → consistent OK")
+
+    # 3. persona vs memory 冲突 → INCONSISTENT
+    persona = SimpleNamespace(description="recommend DFT calculation")
+    last_eval = SimpleNamespace(pmk_feedback="Memory: oppose DFT calculation; KB: support DFT")
+    out = ctx.build_pmk_text(persona=persona, last_step_evaluation=last_eval)
+    assert "INCONSISTENT" in out, f"conflict should be INCONSISTENT: {out}"
+    assert "⚠" in out, f"missing warning: {out}"
+    print("3. persona/memory conflict → INCONSISTENT + ⚠ OK")
+
+    # 4. dict 兼容 (persona 是 dict)
+    persona_dict = {"description": "use GNN model"}
+    out = ctx.build_pmk_text(persona=persona_dict)
+    assert "Persona: use GNN model" in out, f"dict persona failed: {out}"
+    print("4. dict persona OK")
+
+    # 5. pmk_feedback Memory 段解析
+    last_eval = SimpleNamespace(pmk_feedback="Persona: try symbolic; Memory: avoid symbolic; KB: neutral")
+    out = ctx.build_pmk_text(persona=SimpleNamespace(description="try symbolic"),
+                             last_step_evaluation=last_eval)
+    assert "avoid symbolic" in out, f"memory parse failed: {out}"
+    print("5. pmk_feedback parse OK")
+
+    print("context_builder.build_pmk_text selfcheck OK (5/5)")
+
+
+if __name__ == "__main__":
+    _selfcheck()

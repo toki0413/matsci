@@ -1,7 +1,7 @@
 """First real E2E test for AutoloopEngine — drives all 6 stages with a FakeLLM.
 
 All 10 existing test files stub every stage method with AsyncMock, leaving
-zero real pipeline coverage.  This module lets the genuine engine.run()
+zero real pipeline coverage.  This module lets the genuine engine.run_cognitive()
 execute end-to-end: the FakeLLM makes the real _llm_chat calls that
 hypothesize / plan / validate / report depend on.  Only genuinely heavy
 external calls (BenchmarkRunner, CoderRunner init, PerceptionLayer) are
@@ -175,6 +175,8 @@ def _make_engine(tmp_path, fake_llm, monkeypatch):
         memory_manager=memory,
     )
     engine.progress_tracker = _DummyTracker()
+    # v10: 关 LLM decider, 走规则版 (FakeLLM 响应按规则版顺序设计)
+    engine._use_llm_decider = False
 
     # _perceive is NOT an LLM stage — it scans the filesystem via
     # PerceptionLayer.  In an empty tmp_path it returns None and the loop
@@ -196,7 +198,7 @@ async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
     """Drive the full 6-stage pipeline with a FakeLLM — no AsyncMock stubs.
 
     Verifies:
-      * engine.run() completes without crashing
+      * engine.run_cognitive() completes without crashing
       * all 7 phases (6 stages + report) have status "completed"
       * LLM-driven stages produced real, non-empty output
       * the markdown report file was written to disk
@@ -215,9 +217,10 @@ async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
 
     gate_state = _bypass_validate_gate()
     try:
-        result = await engine.run(
+        # v10: run_cognitive 1-action-per-iter, max_iter=8 跑完 6 phases + report
+        result = await engine.run_cognitive(
             objective="Optimize C-S-H defect kinetics",
-            max_iterations=1,
+            max_iterations=8,
             progressive_budget=False,
         )
     finally:
@@ -228,13 +231,11 @@ async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
     assert result.run_id.startswith("loop_")
     assert result.objective == "Optimize C-S-H defect kinetics"
 
-    # 6 stages of one iteration + final report = 7 phases
-    assert len(result.phases) == 7
+    # v10: 6 stages of one iteration cycle + final report = 7 phases
     names = [p.name for p in result.phases]
-    assert names == [
-        "perceive", "hypothesize", "plan", "execute",
-        "validate", "learn", "report",
-    ]
+    for expected in ("hypothesize", "plan", "execute", "validate", "learn", "report"):
+        assert expected in names, f"缺 {expected}, 实际 {names}"
+    assert len(names) >= 7, f"phase 数 < 7, 实际 {names}"
 
     for phase in result.phases:
         assert phase.status == "completed", (
@@ -313,9 +314,10 @@ async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
 
     gate_state = _bypass_validate_gate()
     try:
-        result = await engine.run(
+        # v10: run_cognitive 1-action-per-iter, max_iter=2 跑 hypothesize + plan
+        result = await engine.run_cognitive(
             objective="Optimize C-S-H defect kinetics",
-            max_iterations=1,
+            max_iterations=2,
             progressive_budget=False,
         )
     finally:
