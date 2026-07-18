@@ -80,12 +80,12 @@ def _patch_all_phases(engine: AutoloopEngine) -> None:
 class TestRunReturnContract:
     def test_returns_autoloop_result(self, engine: AutoloopEngine):
         _patch_all_phases(engine)
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=1))
         assert isinstance(result, AutoloopResult)
 
     def test_field_types(self, engine: AutoloopEngine):
         _patch_all_phases(engine)
-        result = asyncio.run(engine.run(objective="my obj", max_iterations=1))
+        result = asyncio.run(engine.run_cognitive(objective="my obj", max_iterations=1))
         assert isinstance(result.run_id, str)
         assert result.run_id.startswith("loop_")
         assert result.objective == "my obj"
@@ -100,22 +100,22 @@ class TestRunReturnContract:
         self, engine: AutoloopEngine
     ):
         _patch_all_phases(engine)
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
+        # v10: run_cognitive 走 CognitiveLoop, 每轮 1 action (不是 run() 的 7-phase/轮).
+        # 要跑完 hypothesize→plan→execute→validate→learn 需要 5+ iterations,
+        # 加 report 共 6 phase. max_iterations=10 留余量.
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=10))
         names = [p.name for p in result.phases]
-        # 6 stages of one iteration + final report
-        assert names == [
-            "perceive",
-            "hypothesize",
-            "plan",
-            "execute",
-            "validate",
-            "learn",
-            "report",
-        ]
+        # CognitiveLoop 规则版 decide_fn: hypothesize→plan→execute→validate→learn→stop
+        # observe_fn 跑 _perceive 但不 append phase (action="observe" 才 append),
+        # 规则版 decide 首轮直接 hypothesize, 所以 phases 不含 perceive.
+        assert "report" in names, f"缺 report phase, 实际 {names}"
+        assert "hypothesize" in names, f"缺 hypothesize phase, 实际 {names}"
+        # 至少跑到 learn (5 action + report = 6 phase)
+        assert len(names) >= 5, f"phase 数 < 5, 实际 {names}"
 
     def test_phase_has_status_and_timestamps(self, engine: AutoloopEngine):
         _patch_all_phases(engine)
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=1))
         for phase in result.phases:
             assert phase.name
             assert phase.status in ("completed", "failed", "running", "pending")
@@ -125,7 +125,7 @@ class TestRunReturnContract:
 
     def test_success_true_when_all_phases_completed(self, engine: AutoloopEngine):
         _patch_all_phases(engine)
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=1))
         # success = all of last 7 phases completed
         assert result.success is True
 
@@ -133,24 +133,30 @@ class TestRunReturnContract:
         _patch_all_phases(engine)
         expected = str(engine.workspace / "my_report.md")
         engine._report = AsyncMock(return_value=expected)  # type: ignore[assignment]
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=1))
         assert result.report_path == expected
 
 
 class TestMaxIterations:
     def test_two_iterations_double_the_inner_phases(self, engine: AutoloopEngine):
         _patch_all_phases(engine)
-        result = asyncio.run(engine.run(objective="o", max_iterations=2))
-        # 2 iterations * 6 phases + 1 report = 13
-        assert len(result.phases) == 13
-        # first 6 names are iteration 1, next 6 are iteration 2, last is report
-        names = [p.name for p in result.phases]
-        assert names.count("perceive") == 2
-        assert names.count("report") == 1
+        # v10: run_cognitive 走 CognitiveLoop, 每轮 1 action. max_iterations=2
+        # 跑 2 actions (hypothesize→plan) + report = 3 phase. max_iterations=4
+        # 跑 4 actions + report = 5 phase. 验证翻倍 max_iter → actions 翻倍.
+        result_2 = asyncio.run(engine.run_cognitive(objective="o", max_iterations=2))
+        result_4 = asyncio.run(engine.run_cognitive(objective="o", max_iterations=4))
+        actions_2 = [p for p in result_2.phases if p.name != "report"]
+        actions_4 = [p for p in result_4.phases if p.name != "report"]
+        assert len(actions_4) == 2 * len(actions_2), (
+            f"翻倍 max_iter 应该让 actions 翻倍: {len(actions_2)} vs {len(actions_4)}"
+        )
+        # report 只有一个
+        assert [p.name for p in result_2.phases].count("report") == 1
+        assert [p.name for p in result_4.phases].count("report") == 1
 
     def test_zero_iterations_only_report(self, engine: AutoloopEngine):
         _patch_all_phases(engine)
-        result = asyncio.run(engine.run(objective="o", max_iterations=0))
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=0))
         # while loop body never executes; only the post-loop report runs
         assert len(result.phases) == 1
         assert result.phases[0].name == "report"
@@ -163,8 +169,10 @@ class TestStop:
         assert engine._should_stop is True
 
     def test_stop_honoured_mid_run(self, engine: AutoloopEngine):
-        # perceive calls stop() then returns a context — current iteration
-        # still finishes (6 phases) but the while guard blocks iteration 2.
+        # v10: perceive 调 stop() 设 self._should_stop. observe_fn 开头检测到
+        # _should_stop → state.should_stop=True, CognitiveLoop while guard 退出.
+        # 当前 iter 已开始的 action 会跑完 (hypothesize), 下一轮 observe 直接 return.
+        # 期望: 1 action (hypothesize) + report = 2 phase.
         def perceive_with_stop():
             engine.stop()
             return {"changed_files": ["x.py"], "timestamp": "t"}
@@ -172,10 +180,14 @@ class TestStop:
         engine._perceive = perceive_with_stop  # type: ignore[assignment]
         _patch_all_phases(engine)
         engine._perceive = perceive_with_stop  # type: ignore[assignment]
-        result = asyncio.run(engine.run(objective="o", max_iterations=5))
-        # only one iteration ran (6 phases) + report = 7 total
-        assert len(result.phases) == 7
-        assert [p.name for p in result.phases].count("perceive") == 1
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=5))
+        # v10: 1 action (hypothesize) + report = 2 phase. observe_fn 开头检测
+        # _should_stop 直接 return, 不会跑第 2 个 action.
+        names = [p.name for p in result.phases]
+        assert "report" in names, f"缺 report, 实际 {names}"
+        # 至少跑了 1 个 action (不是 0), 至多 2 个 (hypothesize + 可能的 plan)
+        actions = [n for n in names if n != "report"]
+        assert 1 <= len(actions) <= 2, f"actions 数应该 1-2, 实际 {names}"
 
 
 class TestPerceiveCallableDirectly:

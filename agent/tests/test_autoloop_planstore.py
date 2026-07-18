@@ -137,7 +137,8 @@ class TestPlanCompletedAfterExecute:
             return_value=str(engine.workspace / "r.md")
         )
 
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
+        # v10: run_cognitive 1-action-per-iter, max_iter=4 到 execute (hyp→plan→exec→val)
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=4))
 
         assert result.success is True
         plans = engine._plan_store.list_plans()

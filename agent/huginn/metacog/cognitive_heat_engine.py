@@ -113,7 +113,9 @@ class CognitiveHeatEngine:
     # 累计产熵 (T_hot 变化量), Carnot 循环的 Q_hot
     cumulative_entropy_produced: float = 0.0
 
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    # ponytail: RLock (reentrant) — health_check 持锁调 intermittency_kurtosis,
+    # 同线程再入不会死锁. ceiling: 拆 lock-free 读副本, 但 0 维代理量不需要.
+    _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def update_T_hot(self, belief_entropy: float) -> None:
         """belief_entropy 测后调. T_hot = belief_entropy."""

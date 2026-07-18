@@ -553,12 +553,16 @@ class TestEngineGateIntegration:
     def test_happy_path_all_gates_pass(self, engine):
         """完整证据时三个门都放行, 6 phase + report 跑完."""
         _patch_phases(engine)
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
+        # v10: run_cognitive 1-action-per-iter, max_iter=6 跑完 hyp→plan→exec→val→learn + report
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=6))
         names = [p.name for p in result.phases]
-        assert names == [
-            "perceive", "hypothesize", "plan",
-            "execute", "validate", "learn", "report",
-        ]
+        # 不含 perceive (observe_fn 跑 _perceive 但 action="observe" 才 append phase)
+        assert "hypothesize" in names
+        assert "plan" in names
+        assert "execute" in names
+        assert "validate" in names
+        assert "learn" in names
+        assert "report" in names
         assert result.success is True
 
     def test_plan_to_execute_blocked_when_mode_empty(self, engine):
@@ -567,7 +571,8 @@ class TestEngineGateIntegration:
         _patch_phases(
             engine, plan={"mode": "", "description": ""}
         )
-        asyncio.run(engine.run(objective="o", max_iterations=1))
+        # v10: max_iter=3 到 execute (hyp→plan→exec), gate 阻断 execute
+        asyncio.run(engine.run_cognitive(objective="o", max_iterations=3))
         engine._execute.assert_not_called()
         # feedback 进了 _speculator_hint
         assert "plan" in engine._speculator_hint
@@ -576,7 +581,7 @@ class TestEngineGateIntegration:
     def test_plan_to_execute_blocked_feedback_records_missing(self, engine):
         _enable_hard_block(("plan", "execute"))
         _patch_phases(engine, plan={"mode": "", "description": ""})
-        asyncio.run(engine.run(objective="o", max_iterations=1))
+        asyncio.run(engine.run_cognitive(objective="o", max_iterations=3))
         state = get_shared_phase_gate_state()
         # history 里至少一条 blocked
         blocked = [g for g in state.history if g.is_blocked]
@@ -589,27 +594,28 @@ class TestEngineGateIntegration:
         _patch_phases(engine, plan={"mode": "", "description": ""})
         state = get_shared_phase_gate_state()
         state.overrides.add(("plan", "execute"))
-        asyncio.run(engine.run(objective="o", max_iterations=1))
+        asyncio.run(engine.run_cognitive(objective="o", max_iterations=3))
         engine._execute.assert_called_once()
 
     def test_validate_to_learn_blocked_when_tests_failed(self, engine):
         """validation tests_passed=False → learn 不跑 (走 human_checkpoint 路径)."""
         _enable_hard_block(("validate", "learn"))
         _patch_phases(engine, validation={"tests_passed": False})
-        asyncio.run(engine.run(objective="o", max_iterations=1))
+        # v10: max_iter=5 到 learn (hyp→plan→exec→val→learn), gate 阻断 learn
+        asyncio.run(engine.run_cognitive(objective="o", max_iterations=5))
         engine._learn.assert_not_called()
 
     def test_validate_to_learn_passes_when_tests_passed(self, engine):
         _patch_phases(engine, validation={"tests_passed": True})
-        asyncio.run(engine.run(objective="o", max_iterations=1))
+        asyncio.run(engine.run_cognitive(objective="o", max_iterations=5))
         engine._learn.assert_called_once()
 
     def test_gate_does_not_consume_extra_iterations(self, engine):
         """门阻断在 max_iter=1 时, 仍只跑 1 轮 + report, 不会多跑 (走 human_checkpoint 路径)."""
         _enable_hard_block(("plan", "execute"))
         _patch_phases(engine, plan={"mode": "", "description": ""})
-        result = asyncio.run(engine.run(objective="o", max_iterations=1))
-        # perceive + hypothesize + plan (block 后 continue → 出循环) + report
+        # v10: max_iter=3 到 execute, gate 阻断
+        result = asyncio.run(engine.run_cognitive(objective="o", max_iterations=3))
         names = [p.name for p in result.phases]
         assert "execute" not in names
         assert "report" in names

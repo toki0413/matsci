@@ -61,6 +61,7 @@ def compact_messages(
     keep_last_n: int = 2,
     tool_result_ttl: int = 6,
     keep_root_n: int = 0,
+    root_content_markers: list[str] | None = None,
 ) -> list[Any]:
     """Drop oldest messages until the remaining list fits the token budget.
 
@@ -73,15 +74,32 @@ def compact_messages(
 
     keep_root_n: 保留前 N 条 root messages (task instructions + checklist).
     修同伦断裂 (σ₂) — Step 1 checklist 在对话早期, compaction 丢它 = 上下文断连续.
-    升级: 按消息 metadata 标记 root 而非按位置.
+
+    root_content_markers: F3 修复 — 按内容 marker 标 root 而非按位置.
+    σ₂ 半修补全: keep_root_n=2 假设 checklist 在 msgs[0:2], 但实际 Step 1
+    checklist prompt 在 msgs[2:4], 位置切片保不到. 改用 marker: 任何 content
+    含 marker 子串的 message 都算 root, 永不被 drop. 与 keep_root_n 取并集.
+    ponytail: 子串匹配, 不上 regex. marker 由调用方保证够独特 (用 ## 标题).
     """
     if budget_tokens <= 0:
         return messages
 
     # 分离 root messages — 这部分永不被 drop, 也不被 tool clearing 影响
+    # F3: 双路标 root — 位置 (keep_root_n) ∪ 内容 marker (root_content_markers)
+    root_indices: set[int] = set()
     if keep_root_n > 0 and len(messages) > keep_root_n:
-        root_messages = list(messages[:keep_root_n])
-        body_messages = list(messages[keep_root_n:])
+        root_indices.update(range(min(keep_root_n, len(messages))))
+    if root_content_markers:
+        for i, m in enumerate(messages):
+            if i in root_indices:
+                continue
+            content = _msg_content(m)
+            if any(marker in content for marker in root_content_markers):
+                root_indices.add(i)
+
+    if root_indices:
+        root_messages = [m for i, m in enumerate(messages) if i in root_indices]
+        body_messages = [m for i, m in enumerate(messages) if i not in root_indices]
     else:
         root_messages = []
         body_messages = list(messages)
@@ -115,6 +133,12 @@ def compact_messages(
     drop_count = 0
     while drop_count < max_droppable and total > budget_tokens:
         total -= per_msg_tokens[drop_count]
+        drop_count += 1
+
+    # tool_call 原子性: 保留区不能以孤儿 ToolMessage 开头 — 它的 AIMessage
+    # 刚被丢掉, 留着会让 DeepSeek/OpenAI 400 (tool response without call).
+    # 可能越过 keep_last_n, 但 API  correctness 优先.
+    while drop_count < len(body_messages) and _msg_role(body_messages[drop_count]) == "tool":
         drop_count += 1
 
     return root_messages + body_messages[drop_count:]
@@ -266,10 +290,19 @@ async def summarize_compact_messages(
     keep_zone = messages[-keep_last_n:] if len(messages) > keep_last_n else messages[:]
     summarize_zone = messages[:-keep_last_n] if len(messages) > keep_last_n else []
 
+    # keep_zone 不能以孤儿 ToolMessage 开头 — 它的 AIMessage 在 summarize_zone
+    # 里会被摘要掉, 孤儿留着会 API 400. 挪回 summarize_zone 一起摘要.
+    while keep_zone and _msg_role(keep_zone[0]) == "tool":
+        summarize_zone.append(keep_zone.pop(0))
+
     # Value-aware selection: within summarize_zone, find high-value messages
     # that should survive even if they're old. Keep what matters, drop the rest.
+    # ToolMessage 不提升 — 单独提升会脱离它的 AIMessage 变成孤儿.
     value_scores = [_message_value_score(m) for m in summarize_zone]
-    high_value_indices = [i for i, s in enumerate(value_scores) if s > 0]
+    high_value_indices = [
+        i for i, s in enumerate(value_scores)
+        if s > 0 and _msg_role(summarize_zone[i]) != "tool"
+    ]
     if high_value_indices:
         high_value_msgs = [summarize_zone[i] for i in high_value_indices]
         # Remove from summarize_zone in reverse to keep indices stable
@@ -474,3 +507,67 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
             lines.append(f"  - {a}")
 
     return "\n".join(lines) if len(lines) > 1 else ""
+
+
+if __name__ == "__main__":
+    # tool_call 原子性自检 — python -m huginn.utils.context
+    import asyncio
+
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    def _ai(text, tc_id=None):
+        m = AIMessage(content=text)
+        if tc_id:
+            m.tool_calls = [{"name": "bash_tool", "args": {}, "id": tc_id}]
+        return m
+
+    # 1. drop 边界切在 AIMessage(tool_calls) 和 ToolMessage 之间 → 孤儿必须一起丢
+    msgs = [
+        HumanMessage(content="task"),
+        _ai("call it", tc_id="c1"),
+        ToolMessage(content="x" * 900, tool_call_id="c1"),
+        _ai("done"),
+    ]
+    out = compact_messages(msgs, budget_tokens=50, keep_last_n=2, tool_result_ttl=0)
+    roles = [_msg_role(m) for m in out]
+    assert roles[0] != "tool" or "c1" in {
+        tc["id"] for m in out if isinstance(m, AIMessage) for tc in m.tool_calls
+    }, f"orphan ToolMessage survived: {roles}"
+    # 最后一对 AIMessage 必须还在 (keep_last_n)
+    assert out[-1].content == "done"
+
+    # 2. 不切边界时完整对子原样保留
+    msgs2 = [
+        HumanMessage(content="task"),
+        _ai("call", tc_id="c2"),
+        ToolMessage(content="ok", tool_call_id="c2"),
+        _ai("final"),
+    ]
+    out2 = compact_messages(msgs2, budget_tokens=10**6, keep_last_n=2)
+    assert out2 == msgs2, "intact list must pass through"
+
+    # 3. summarize 路径: keep_zone 以 ToolMessage 开头 → 挪去摘要, 不留孤儿
+    msgs3 = [
+        HumanMessage(content="t"),
+        _ai("a1", tc_id="c3"),
+        ToolMessage(content="big " * 500, tool_call_id="c3"),
+        _ai("a2"),
+        HumanMessage(content="q"),
+    ]
+
+    async def _fake_summarizer(transcript):
+        return AIMessage(content="summary of old stuff")
+
+    out3, _ = asyncio.run(
+        summarize_compact_messages(
+            msgs3, budget_tokens=100, keep_last_n=2, summarizer=_fake_summarizer
+        )
+    )
+    answered = {
+        getattr(m, "tool_call_id", None) for m in out3 if _msg_role(m) == "tool"
+    }
+    called = {
+        tc["id"] for m in out3 if isinstance(m, AIMessage) for tc in m.tool_calls
+    }
+    assert answered <= called, f"orphan tool ids {answered - called} in {[_msg_role(m) for m in out3]}"
+    print("context self-check OK (3 cases)")

@@ -714,12 +714,22 @@ class HuginnAgent(
 
             system_message = self._effective_system_prompt()
 
+            # deepagents 内置 fs 工具 (ls/read_file/write_file/edit_file) 默认走
+            # StateBackend — 虚拟内存 fs, write_file 返回成功但没落盘, agent 以为
+            # 写了 report.md 实际没有 (σ₁₀). 换 FilesystemBackend 落真盘;
+            # virtual_mode=True 把 "/report.md" 映射进 root 且禁止路径逃逸.
+            from deepagents.backends import FilesystemBackend
+
+            fs_root = str(self.workspace) if self.workspace else None
+            fs_backend = FilesystemBackend(root_dir=fs_root, virtual_mode=True)
+
             self._agent_graph = create_deep_agent(
                 name="HuginnAgent",
                 model=self.select_model("agent"),
                 tools=self._effective_tools(query=get_user_message()),
                 system_prompt=system_message,
                 checkpointer=self.checkpointer,
+                backend=fs_backend,
                 middleware=[
                     FixDanglingToolCallsMiddleware(),
                     RateLimitMiddleware(),

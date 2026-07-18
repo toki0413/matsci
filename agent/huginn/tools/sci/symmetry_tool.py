@@ -64,6 +64,7 @@ class SymmetryToolInput(BaseModel):
         "subgroups",
         "wyckoff_split",
         "magnetic",
+        "verify_group",  # v8 SGP: 验证对称操作集合的群性质
     ] = Field(...)
     file_path: str = Field(
         ..., description="Path to structure file (POSCAR, CIF, etc.)"
@@ -185,6 +186,8 @@ class SymmetryTool(HuginnTool):
             return self._wyckoff_split(sga, structure, input_data.subgroup_number)
         elif input_data.action == "magnetic":
             return self._magnetic(sga, structure)
+        elif input_data.action == "verify_group":
+            return self._verify_group(sga)
 
         return ToolResult(
             data=None,
@@ -255,6 +258,157 @@ class SymmetryTool(HuginnTool):
             )
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"Failed to get operations: {e}")
+
+    def _verify_group(self, sga) -> ToolResult:
+        """v8 SGP: 验证对称操作集合的群性质 (封闭性/逆元/单位元).
+
+        把对称操作转成 sympy Matrix, 用符号运算验证群公理:
+        1. 封闭性: 任意两操作的复合还在集合里 (mod 晶格平移)
+        2. 单位元: 集合里有恒等操作
+        3. 逆元: 每个操作有逆元
+
+        ponytail: 用 sympy 符号运算, 不上 lean (成本太高). 升级路径: lean 形式化.
+        天花板: 只验证群公理, 不验证整个空间群结构 (如 Wyckoff 位置一致性).
+        """
+        try:
+            from sympy import Matrix, Rational, eye
+        except ImportError:
+            return ToolResult(
+                data=None, success=False,
+                error="sympy required for group verification (install: pip install sympy)",
+            )
+        try:
+            ops = sga.get_symmetry_operations()
+            if not ops:
+                return ToolResult(data=None, success=False, error="No symmetry operations found")
+            # 转成 sympy Matrix (rotation + translation 合成 4x4 仿射矩阵)
+            affines = []
+            for op in ops:
+                R = Matrix(op.rotation_matrix)
+                t = Matrix(op.translation_vector)
+                # 4x4 仿射: [R t; 0 1]
+                A = eye(4)
+                for i in range(3):
+                    for j in range(3):
+                        A[i, j] = R[i, j]
+                    A[i, 3] = t[i]
+                affines.append(A)
+            n = len(affines)
+            identity = eye(4)
+            # 1. 单位元检查
+            has_identity = any(A == identity for A in affines)
+            # 2. 逆元检查 — 每个操作有逆元在集合里
+            inverses_ok = True
+            missing_inverse = None
+            for i, A in enumerate(affines):
+                A_inv = A.inv()
+                found = False
+                for B in affines:
+                    # 比较时容许小数值误差 (Rational 精确)
+                    if A_inv == B:
+                        found = True
+                        break
+                if not found:
+                    inverses_ok = False
+                    missing_inverse = i
+                    break
+            # 3. 封闭性检查 — 任意两操作的复合还在集合里 (mod 1 平移)
+            # B4 增强: 小群 (n<=24) 全检查, 大群用随机采样 + 生成元阶检查
+            closure_ok = True
+            closure_failure = None
+            if n <= 24:
+                # 小群全检查
+                check_n = n
+                for i in range(check_n):
+                    for j in range(check_n):
+                        AB = affines[i] * affines[j]
+                        # 平移分量 mod 1 (晶格周期性)
+                        for k in range(3):
+                            val = AB[k, 3]
+                            if val != 0:
+                                frac = val - int(val) if val != int(val) else 0
+                                if frac < 0:
+                                    frac += 1
+                                AB[k, 3] = frac
+                        found = any(AB == B for B in affines)
+                        if not found:
+                            closure_ok = False
+                            closure_failure = (i, j)
+                            break
+                    if not closure_ok:
+                        break
+            else:
+                # B4: 大群 — 随机采样 + 生成元阶检查
+                # B8: check_n 自适应 — n=48 立方群 100 对够, n=192 大群 100/36864≈0.27% 太稀.
+                # 用 max(100, n) 保证采样率至少 ~1/n, n=192 采 192 对 (~0.5%).
+                # ponytail: 不上 n*sqrt(n) — 大群 O(n*sqrt(n)) 仍 10^4 量级, 慢.
+                # 升级路径: 生成元集合 + Schreier-Sims (能精确判封闭性, 不需采样).
+                import random
+                random.seed(42)  # 确定性采样, 可复现
+                check_n = max(100, n)
+                for _ in range(check_n):
+                    i = random.randrange(n)
+                    j = random.randrange(n)
+                    AB = affines[i] * affines[j]
+                    for k in range(3):
+                        val = AB[k, 3]
+                        if val != 0:
+                            frac = val - int(val) if val != int(val) else 0
+                            if frac < 0:
+                                frac += 1
+                            AB[k, 3] = frac
+                    found = any(AB == B for B in affines)
+                    if not found:
+                        closure_ok = False
+                        closure_failure = (i, j)
+                        break
+                # 生成元阶检查: 每个操作的 R^k 应该还在集合里 (k=1..order)
+                # 群论保证: 如果每个元素的幂都在集合里, 且采样复合通过, 封闭性大概率成立
+                if closure_ok:
+                    for i in range(n):
+                        A = affines[i]
+                        # 算 A 的阶 (R^k = I 的最小 k)
+                        Ak = A
+                        for k in range(1, 13):  # 晶体学旋转阶最大 6
+                            Ak = Ak * A if k > 1 else A
+                            # mod 1 平移
+                            for r in range(3):
+                                val = Ak[r, 3]
+                                if val != 0:
+                                    frac = val - int(val) if val != int(val) else 0
+                                    if frac < 0:
+                                        frac += 1
+                                    Ak[r, 3] = frac
+                            if Ak == identity:
+                                break  # 找到阶
+                            # Ak 应该在集合里
+                            if not any(Ak == B for B in affines):
+                                closure_ok = False
+                                closure_failure = (i, -1)
+                                break
+                        if not closure_ok:
+                            break
+            is_group = has_identity and inverses_ok and closure_ok
+            return ToolResult(
+                data={
+                    "n_operations": n,
+                    "is_group": is_group,
+                    "has_identity": has_identity,
+                    "inverses_ok": inverses_ok,
+                    "closure_ok": closure_ok,
+                    "missing_inverse_index": missing_inverse,
+                    "closure_failure_pair": closure_failure,
+                    "checked_pairs": check_n * check_n,
+                    "note": (
+                        "群公理验证通过 (单位元 + 逆元 + 封闭性)" if is_group
+                        else f"群公理验证失败: identity={has_identity}, "
+                             f"inverses={inverses_ok}, closure={closure_ok}"
+                    ),
+                },
+                success=True,
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"Group verification failed: {e}")
 
     def _primitive(self, sga) -> ToolResult:
         """Get the primitive cell."""

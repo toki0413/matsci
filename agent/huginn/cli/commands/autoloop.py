@@ -161,7 +161,7 @@ def autoloop(
         ) as progress:
             task = progress.add_task("Running autonomous loop...", total=None)
             try:
-                result = asyncio.run(engine.run(
+                result = asyncio.run(engine.run_cognitive(
                     objective=objective,
                     max_iterations=iterations,
                     progressive_budget=not no_progressive_budget,
@@ -228,7 +228,7 @@ async def _watch_loop(
             objective = _infer_objective(context)
             console.print(f"[blue]Inferred objective:[/blue] {objective}")
 
-            result = await engine.run(
+            result = await engine.run_cognitive(
                 objective=objective,
                 max_iterations=max_iterations,
                 progressive_budget=progressive_budget,

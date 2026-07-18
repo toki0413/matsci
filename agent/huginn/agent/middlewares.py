@@ -51,9 +51,13 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                     f"Tool call {name} (id={tc_id}) was cancelled — "
                     f"summarization compaction removed its result."
                 )
-                patched.append(
-                    ToolMessage(content=content, name=name, tool_call_id=tc_id)
-                )
+                # 插到 AIMessage 后面紧跟的 ToolMessage 队列尾部, 不能 append
+                # 到消息列表末尾 — OpenAI/DeepSeek 要求 tool 响应紧跟其调用,
+                # 中间隔了别的消息会 400 (Step 3 序列错乱 σ₉).
+                insert_at = patched.index(msg) + 1
+                while insert_at < len(patched) and getattr(patched[insert_at], "type", None) == "tool":
+                    insert_at += 1
+                patched.insert(insert_at, ToolMessage(content=content, name=name, tool_call_id=tc_id))
                 answered_ids.add(tc_id)
         return patched
 

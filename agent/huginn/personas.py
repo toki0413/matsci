@@ -265,6 +265,60 @@ class PersonaManager:
         scored.sort(key=lambda x: -x[0])
         return [p for score, p in scored[:top_k] if score > 0]
 
+    # === 跨领域支持: domain pack 注册 ===
+    # 用户明确说"现在就有跨领域需求". 领域包 = persona + 工具集 + KB 语料的组合,
+    # 但这里只做 persona 层注册 (工具集/KB 走现有路径). 不引入新抽象.
+    # ponytail: domain_pack 就是带 domain_label 的 persona 集合, 不是新组件.
+    # 升级路径: 真有完整领域包 (含 KB/工具) 时再抽 DomainPack class.
+
+    def register_domain_pack(
+        self,
+        domain: str,
+        personas: list[Persona],
+    ) -> None:
+        """注册一个领域包 — 把 personas 标记为属于某领域并注册到 manager.
+
+        domain: 领域标签 (materials/physics/chemistry/medicine/math/...)
+        personas: 该领域的 persona 列表 (会被注册到 _personas, 带 domain tag)
+
+        ponytail: 不新建 DomainPack class, 只在 persona.variables['_domain'] 打标签.
+        升级路径: 真需要工具集/KB 绑定时, 升级为 DomainPack dataclass.
+        """
+        for p in personas:
+            if not p.variables:
+                p.variables = {}
+            p.variables["_domain"] = domain
+            self._personas[p.name] = p
+
+    def suggest_domain(self, query: str) -> str:
+        """根据 query 推荐领域标签 — 跨领域任务路由用.
+
+        返回 domain label (如 "materials"). 无匹配返回 "unknown".
+        ponytail: 用 keyword 匹配, 不上 classifier. 升级路径: 领域分类器.
+        """
+        _DOMAIN_KEYWORDS = {
+            "materials": {"material", "crystal", "alloy", "dft", "vasp", "lammps",
+                          "pymatgen", "ase", "md", "md_sim", "atomic", "lattice",
+                          "phonon", "band", "dos", "elastic", "材料"},
+            "physics": {"physics", "quantum", "mechanics", "relativity", "field",
+                        "particle", "hamiltonian", "lagrangian", "物理"},
+            "chemistry": {"chemistry", "reaction", "molecule", "catalyst", "synthesis",
+                          "molecular", "rdfkit", "化学"},
+            "medicine": {"medicine", "clinical", "patient", "disease", "drug",
+                         "protein", "gene", "medical", "医学"},
+            "math": {"theorem", "proof", "algebra", "topology", "geometry",
+                     "equation", "lemma", "数学"},
+        }
+        q_lower = query.lower()
+        best_domain = "unknown"
+        best_score = 0
+        for domain, kws in _DOMAIN_KEYWORDS.items():
+            score = sum(1 for kw in kws if kw in q_lower)
+            if score > best_score:
+                best_score = score
+                best_domain = domain
+        return best_domain
+
     def save(self) -> None:
         """Persist JSON-defined personas and default selection.
 

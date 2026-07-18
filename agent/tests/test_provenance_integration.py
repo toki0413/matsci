@@ -215,8 +215,9 @@ class TestEngineProvenanceWiring:
 
     def test_run_persists_provenance_with_tool_chain(self, engine: AutoloopEngine):
         _stub_phases_keep_execute(engine)
+        # v10: run_cognitive 1-action-per-iter, max_iter=3 到 execute (hyp→plan→exec)
         result = asyncio.run(
-            engine.run(objective="o", max_iterations=1, progressive_budget=False)
+            engine.run_cognitive(objective="o", max_iterations=3, progressive_budget=False)
         )
 
         # run() 结束得带上 provenance_path, 且文件真落盘了

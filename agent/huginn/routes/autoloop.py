@@ -94,7 +94,7 @@ async def start_autoloop(req: AutoloopStartRequest) -> dict[str, Any]:
     workspace = get_context().config.workspace or "."
     engine = AutoloopEngine(workspace=workspace)
 
-    task = asyncio.create_task(engine.run(objective, max_iterations=req.max_iterations))
+    task = asyncio.create_task(engine.run_cognitive(objective, max_iterations=req.max_iterations))
     _pending.add(task)
     task.add_done_callback(_pending.discard)
 

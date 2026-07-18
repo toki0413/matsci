@@ -11,6 +11,13 @@ import networkx as nx
 
 from huginn.kg.entities import node_id, normalize_props
 
+# Episodic memory node + dependency edge types (Graphiti-style DAG).
+# Reuses the existing `type`/`relation` attrs so stats/mermaid just work.
+NODE_TYPE_EPISODE = "episode"
+EDGE_TYPE_DATA_DEP = "data_dep"
+EDGE_TYPE_METHOD_DEP = "method_dep"
+EDGE_TYPE_CAUSAL_DEP = "causal_dep"
+
 
 class ProjectKnowledgeGraph:
     """A local, persistent knowledge graph for a workspace."""
@@ -390,3 +397,208 @@ class ProjectKnowledgeGraph:
             lines.append(f"  class {','.join(ids)} {cls}")
 
         return "\n".join(lines)
+
+    # ── Episodic memory DAG (Graphiti-style) ──
+
+    def add_episode_node(
+        self,
+        step_id: int,
+        attempted: str,
+        found: str,
+        result: str,
+        persona: str | None = None,
+        target_chain_ref: str | None = None,
+    ) -> str:
+        """Add an episode node and return its id (`episode_{step_id}`)."""
+        nid = f"episode_{step_id}"
+        now = datetime.now().isoformat()
+        with self._lock:
+            self._graph.add_node(
+                nid,
+                type=NODE_TYPE_EPISODE,
+                step_id=step_id,
+                attempted=attempted,
+                found=found,
+                result=result,
+                persona=persona,
+                target_chain_ref=target_chain_ref,
+                timestamp=now,
+                label=f"Episode {step_id}",
+            )
+        return nid
+
+    def add_dependency_edge(self, from_step: int, to_step: int, dep_type: str) -> None:
+        """Add a typed dependency edge between two episode nodes.
+
+        Edge direction: from_step → to_step (from is the source/cause,
+        to is the consumer/effect).
+        """
+        dep_map = {
+            "data": EDGE_TYPE_DATA_DEP,
+            "method": EDGE_TYPE_METHOD_DEP,
+            "causal": EDGE_TYPE_CAUSAL_DEP,
+        }
+        if dep_type not in dep_map:
+            raise KeyError(
+                f"unknown dep_type {dep_type!r}; expected one of {sorted(dep_map)}"
+            )
+        src = f"episode_{from_step}"
+        dst = f"episode_{to_step}"
+        with self._lock:
+            if src not in self._graph:
+                raise KeyError(f"episode node not found: {src}")
+            if dst not in self._graph:
+                raise KeyError(f"episode node not found: {dst}")
+            # ponytail: DiGraph holds one edge per pair, so a second dep_type
+            # between the same pair overwrites the first. Upgrade to MultiDiGraph
+            # if parallel dep edges ever become needed.
+            self._graph.add_edge(
+                src,
+                dst,
+                relation=dep_map[dep_type],
+                created_at=datetime.now().isoformat(),
+            )
+
+    def query_episode_path(
+        self, step_id: int, direction: str = "backward"
+    ) -> list[dict]:
+        """Walk the episode DAG backward (predecessors) or forward (successors).
+
+        Returns episode node attribute dicts sorted by step_id. The start
+        node is included. Missing start or invalid direction → empty list.
+        """
+        if direction not in ("backward", "forward"):
+            return []
+        start = f"episode_{step_id}"
+        with self._lock:
+            if start not in self._graph:
+                return []
+            # ponytail: manual DFS instead of nx.dfs_preorder_nodes — avoids
+            # building a reversed view for backward, and keeps the door open
+            # to filter by edge type without rewriting the loop.
+            visited: set[str] = set()
+            stack = [start]
+            while stack:
+                node = stack.pop()
+                if node in visited:
+                    continue
+                visited.add(node)
+                neighbors = (
+                    self._graph.predecessors(node)
+                    if direction == "backward"
+                    else self._graph.successors(node)
+                )
+                for nb in neighbors:
+                    if nb not in visited:
+                        stack.append(nb)
+            episodes = [
+                dict(self._graph.nodes[n])
+                for n in visited
+                if self._graph.nodes[n].get("type") == NODE_TYPE_EPISODE
+            ]
+        episodes.sort(key=lambda d: d.get("step_id", 0))
+        return episodes
+
+    def query_failure_cause(self, step_id: int) -> list[dict]:
+        """Return the causal chain leading to a failed episode.
+
+        Walks causal_dep edges backward from the failed episode, recursively.
+        Returns [] if the episode is not failed or doesn't exist. The failed
+        node itself is excluded — only its causes are returned.
+        """
+        start = f"episode_{step_id}"
+        with self._lock:
+            if start not in self._graph:
+                return []
+            if self._graph.nodes[start].get("result") != "failed":
+                return []
+            visited: set[str] = set()
+            stack = [start]
+            while stack:
+                node = stack.pop()
+                if node in visited:
+                    continue
+                visited.add(node)
+                for pred in self._graph.predecessors(node):
+                    if (
+                        self._graph.edges[pred, node].get("relation")
+                        == EDGE_TYPE_CAUSAL_DEP
+                    ):
+                        stack.append(pred)
+            # drop the failed node itself — we want causes only
+            visited.discard(start)
+            causes = [
+                dict(self._graph.nodes[n])
+                for n in visited
+                if self._graph.nodes[n].get("type") == NODE_TYPE_EPISODE
+            ]
+        causes.sort(key=lambda d: d.get("step_id", 0))
+        return causes
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        kg = ProjectKnowledgeGraph(tmp)
+
+        # add episodes: 1 success, 2 failed, 3 failed
+        e1 = kg.add_episode_node(1, "run VASP", "converged", "success", persona="dft")
+        e2 = kg.add_episode_node(2, "run MD", "crashed", "failed", persona="md")
+        e3 = kg.add_episode_node(3, "retry MD", "crashed again", "failed", persona="md")
+        assert e1 == "episode_1" and e2 == "episode_2" and e3 == "episode_3"
+        assert "episode_1" in kg._graph and "episode_2" in kg._graph
+        assert "episode_3" in kg._graph
+
+        # missing start → empty
+        assert kg.query_episode_path(99) == []
+        assert kg.query_failure_cause(99) == []
+        # invalid direction → empty
+        assert kg.query_episode_path(1, direction="sideways") == []
+
+        # bad dep_type → KeyError
+        try:
+            kg.add_dependency_edge(1, 2, "bogus")
+            raise AssertionError("expected KeyError for bad dep_type")
+        except KeyError:
+            pass
+        # missing episode → KeyError
+        try:
+            kg.add_dependency_edge(1, 99, "data")
+            raise AssertionError("expected KeyError for missing episode")
+        except KeyError:
+            pass
+
+        # edges: 1→2 causal, 2→3 causal, 1→3 data
+        kg.add_dependency_edge(1, 2, "causal")
+        kg.add_dependency_edge(2, 3, "causal")
+        kg.add_dependency_edge(1, 3, "data")
+
+        # backward path from 3 → [1, 2, 3]
+        path = kg.query_episode_path(3, direction="backward")
+        assert [p["step_id"] for p in path] == [1, 2, 3], path
+        # forward path from 1 → [1, 2, 3]
+        path = kg.query_episode_path(1, direction="forward")
+        assert [p["step_id"] for p in path] == [1, 2, 3], path
+        # backward path from 2 → [1, 2]
+        path = kg.query_episode_path(2, direction="backward")
+        assert [p["step_id"] for p in path] == [1, 2], path
+
+        # failure cause for episode 3 (failed): transitive causal walk
+        # 3 ← 2 (causal), 2 ← 1 (causal) → [1, 2]
+        causes = kg.query_failure_cause(3)
+        assert [c["step_id"] for c in causes] == [1, 2], causes
+        # failure cause for episode 2 (failed): 2 ← 1 (causal) → [1]
+        causes = kg.query_failure_cause(2)
+        assert [c["step_id"] for c in causes] == [1], causes
+        # episode 1 succeeded → []
+        assert kg.query_failure_cause(1) == []
+
+        # persistence round-trip: save + reload, episodes survive
+        kg.save()
+        kg2 = ProjectKnowledgeGraph(tmp)
+        assert "episode_2" in kg2._graph
+        causes = kg2.query_failure_cause(3)
+        assert [c["step_id"] for c in causes] == [1, 2], causes
+
+        print("all episode-graph checks passed")

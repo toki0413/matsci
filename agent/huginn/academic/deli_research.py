@@ -982,7 +982,7 @@ class DeliAutoResearch:
                 continue
 
             try:
-                result = await engine.run(
+                result = await engine.run_cognitive(
                     objective=objective,
                     max_iterations=5,
                 )
