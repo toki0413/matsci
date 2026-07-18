@@ -480,7 +480,96 @@ class HypothesisGraph:
             parent_id=new_id, status="proposed",
             tags=["autoloop", "pivot"],
         )
+
+        # v12: AlphaEvolve crossover — sibling_group 有主+备时, 尝试组合产生第 3 候选.
+        # ponytail: 复用 model.invoke, 失败 non-fatal. child 通过 derive 边连 parent_a.
+        # 升级路径: mutation (单候选局部扰动) — YAGNI, crossover 已够闭环, benchmark 驱动再加.
+        if _sibling_group and backup_statements and model is not None and self._is_real_model(model):
+            try:
+                _backup_id = next(
+                    (n.id for n in self._nodes.values()
+                     if n.sibling_group_id == _sibling_group
+                     and n.evidence.get("candidate_role") == "backup"),
+                    None,
+                )
+                if _backup_id:
+                    _child_id = self.crossover(
+                        new_id, _backup_id, model, objective,
+                    )
+                    if _child_id:
+                        self._nodes[_child_id].sibling_group_id = _sibling_group
+            except Exception:
+                logger.debug("v12 crossover after pivot failed (non-fatal)", exc_info=True)
+
         return new_id
+
+    def crossover(
+        self,
+        parent_a_id: str,
+        parent_b_id: str,
+        model: Any,
+        objective: str = "",
+    ) -> str | None:
+        """v12: AlphaEvolve crossover — 组合两个 parent 假设的优势产生 child.
+
+        sibling_group 里的两个候选 (主+备) 组合产生第 3 候选, 让 frontier 选优.
+        child 标 evidence={"crossover_parents": [a, b], "candidate_role": "crossover"},
+        通过 derive 边连 parent_a (crossover 是组合不是转向, derive 语义合适).
+
+        ponytail: 复用 _llm_pivot 的 model.invoke 模式, 不新建 EvolutionEngine.
+        失败 (无 model / LLM 异常 / child 同质) 返回 None, non-fatal.
+        """
+        if not self._is_real_model(model):
+            return None
+        self._check_node(parent_a_id)
+        self._check_node(parent_b_id)
+        a = self._nodes[parent_a_id]
+        b = self._nodes[parent_b_id]
+
+        prompt = (
+            f"研究目标: {objective}\n\n"
+            f"假设 A: {a.statement}\n  理由: {a.rationale}\n\n"
+            f"假设 B: {b.statement}\n  理由: {b.rationale}\n\n"
+            "组合 A 和 B 的优势, 生成一个新假设 — 继承 A 在某方面的优点和 "
+            "B 在另一方面的优点. 必须可测试且新颖 (非简单合并).\n"
+            "用一句话陈述新假设:"
+        )
+        try:
+            resp = model.invoke(prompt)
+            text = resp.content if hasattr(resp, "content") else str(resp)
+            stmt = text.strip().split("\n")[0].strip()
+            stmt = stmt.lstrip("- *•").strip().strip('"\'')
+        except Exception:
+            return None
+
+        if not stmt or stmt == a.statement or stmt == b.statement:
+            return None
+
+        child_id = self.add_hypothesis(
+            statement=stmt,
+            rationale=f"crossover of {parent_a_id} + {parent_b_id}",
+            parent_id=parent_a_id,  # derive 边
+        )
+        if child_id:
+            self._nodes[child_id].evidence = {
+                **self._nodes[child_id].evidence,
+                "crossover_parents": [parent_a_id, parent_b_id],
+                "candidate_role": "crossover",
+            }
+            self._record_event(
+                "crossover", child_id,
+                parents=[parent_a_id, parent_b_id],
+            )
+            self._log_research(
+                "conjecture", f"CROSSOVER: {stmt[:60]}",
+                f"AlphaEvolve crossover — 组合两个 parent 优势.\n\n"
+                f"child: {stmt}\n"
+                f"parent_a: {a.statement}\n"
+                f"parent_b: {b.statement}",
+                parent_id=child_id, status="proposed",
+                tags=["autoloop", "crossover"],
+            )
+        return child_id
 
     def _llm_pivot(
         self,
