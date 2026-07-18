@@ -68,16 +68,13 @@ class DiagnoseTool(HuginnTool):
         if path and Path(path).exists():
             kb_path = Path(path)
         else:
-            # Try to find Sobko troubleshooting data relative to repo root
-            repo_root = Path(__file__).resolve().parent.parent.parent.parent
-            kb_path = (
-                repo_root
-                / "Sobko_MCP_project"
-                / "advanced_optimization"
-                / "troubleshooting_by_software.json"
-            )
+            # ponytail: Sobko 仓库里没有 troubleshooting_by_software.json.
+            # 想用就设 HUGINN_SOBKO_TROUBLESHOOTING 指向自己的 troubleshooting JSON.
+            import os
+            env_path = os.environ.get("HUGINN_SOBKO_TROUBLESHOOTING", "")
+            kb_path = Path(env_path) if env_path else None
 
-        if kb_path.exists():
+        if kb_path and kb_path.exists():
             with kb_path.open("r", encoding="utf-8") as f:
                 self._kb = json.load(f)
 
