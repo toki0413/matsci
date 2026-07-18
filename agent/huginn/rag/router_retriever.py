@@ -116,16 +116,13 @@ class HierarchicalRetriever:
             with open(path, encoding="utf-8") as f:
                 self._index = json.load(f)
             return
-        # Try default location
-        repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        default = (
-            repo_root
-            / "Sobko_MCP_project"
-            / "advanced_optimization"
-            / "hierarchical_index.json"
-        )
-        if default.exists():
-            with open(default, encoding="utf-8") as f:
+        # ponytail: Sobko 仓库里没有 hierarchical_index.json,只有 normalized/*.jsonl
+        # 和 indexes/{bm25,dense}/. 这里的 fallback 只在用户显式提供路径时生效,
+        # 否则保持空索引 (router 退化为纯关键词匹配). 想启用就设 HUGINN_SOBKO_HIERARCHICAL_INDEX.
+        import os
+        env_path = os.environ.get("HUGINN_SOBKO_HIERARCHICAL_INDEX", "")
+        if env_path and Path(env_path).exists():
+            with open(env_path, encoding="utf-8") as f:
                 self._index = json.load(f)
 
     def _detect_route(self, query: str) -> tuple[str | None, str | None]:

@@ -375,6 +375,86 @@ def _get_ingester() -> CalculationToKnowledge:
     return _ingester
 
 
+# ── Sobko 知识库蒸馏 ─────────────────────────────────────────────
+# ponytail: 把 Sobko_MCP_project/normalized/chunks.jsonl 的 11304 chunk
+# 灌进 huginn KB. Sobko 自己有 BM25+dense 索引可用, 这层是给 huginn
+# 内部 RAG 用的 fallback, 不替代 Sobko MCP server.
+# ceiling: 11304 chunk 全量入库会很慢 (~5min), 且 Sobko 的 chunk 文本
+# 过 huginn 的 _section_aware_chunk 会二次分块. 升级路径是直接调底层
+# chromadb collection.add, 绕过 add_text 的二次分块.
+
+
+def ingest_sobko_chunks(
+    sobko_root: str,
+    *,
+    kb: Any = None,
+    limit: int | None = None,
+    batch_log_every: int = 500,
+) -> int:
+    """把 Sobko normalized/chunks.jsonl 灌进 huginn KB.
+
+    Args:
+        sobko_root: Sobko_MCP_project 仓库根目录
+        kb: 可选, 不传就用模块级懒加载单例
+        limit: 只灌前 N 条 (调试用)
+        batch_log_every: 每多少条 log 一次进度
+
+    Returns:
+        成功入库的 chunk 数.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    sobko_root_path = _Path(sobko_root)
+    chunks_file = sobko_root_path / "normalized" / "chunks.jsonl"
+    if not chunks_file.exists():
+        logger.warning("Sobko chunks.jsonl 不存在: %s", chunks_file)
+        return 0
+
+    if kb is None:
+        kb = _get_kb()
+    if kb is None:
+        logger.warning("KnowledgeBase 不可用, 无法蒸馏 Sobko chunks")
+        return 0
+
+    ingested = 0
+    with chunks_file.open("r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if limit is not None and i >= limit:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                chunk = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            # Sobko chunk 字段: chunk_id / source_id / text / section / page ...
+            text = chunk.get("text") or chunk.get("content") or ""
+            if not text.strip():
+                continue
+            source_id = chunk.get("source_id") or chunk.get("source") or f"sobko_{i}"
+            chunk_id = chunk.get("chunk_id") or chunk.get("id") or f"chunk_{i}"
+            try:
+                result = kb.add_text(
+                    text,
+                    filename=f"sobko_{source_id}_{chunk_id}",
+                    metadata={
+                        "source": "sobko_kb",
+                        "source_id": source_id,
+                        "chunk_id": chunk_id,
+                        "section": chunk.get("section", ""),
+                    },
+                )
+                if result.get("chunks", 0) > 0:
+                    ingested += 1
+            except Exception:
+                logger.debug("Sobko chunk %s 入库失败 (非致命)", chunk_id, exc_info=True)
+            if batch_log_every and (i + 1) % batch_log_every == 0:
+                logger.info("Sobko 蒸馏进度: %d chunks 处理, %d 成功", i + 1, ingested)
+    return ingested
+
+
 # ── POST_TOOL_USE hooks ─────────────────────────────────────────
 
 
@@ -487,5 +567,10 @@ if __name__ == "__main__":
     assert _infer_software("vasp_tool") == "vasp"
     assert _infer_software("lammps_tool") == "lammps"
     assert _infer_software("unknown_tool") == "general"
+
+    # Sobko 蒸馏: 不存在的路径应返回 0, 不崩
+    n = ingest_sobko_chunks("/nonexistent/sobko_root", limit=10)
+    assert n == 0, f"不存在的路径应返回 0, 实际 {n}"
+    print("Sobko ingest (missing path):", n)
 
     print("\nAll self-checks passed.")
