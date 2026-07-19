@@ -81,6 +81,13 @@ def _migrate_memories_v1(conn: sqlite3.Connection) -> None:
     # 默认 NULL 表示全局, 不参与路径排序.
     if not column_exists(conn, "memories", "path"):
         conn.execute("ALTER TABLE memories ADD COLUMN path TEXT")
+    # P5 Memory Cluster: archived 标记. cluster summary 写回后, 原条目标
+    # archived=1, _where_alive 自动过滤 (不删, 留档可 rollback).
+    # default 0 保持向后兼容, 老条目全部视为 active.
+    if not column_exists(conn, "memories", "archived"):
+        conn.execute(
+            "ALTER TABLE memories ADD COLUMN archived INTEGER DEFAULT 0"
+        )
 
 
 def _run_memory_migrations(db_path: str) -> None:
@@ -426,9 +433,12 @@ class LongTermMemory:
         )
 
     def _where_alive(self, alias: str = "m") -> tuple[str, tuple]:
-        """Return WHERE clause and params filtering out expired short/mid memories."""
+        """Return WHERE clause and params filtering out expired + archived memories."""
+        # P5: archived=1 的条目被 cluster summary 替代, 不参与 recall.
+        # 老库 migration 后 archived default 0, 全部视为 active, 行为不变.
         return (
-            f"({alias}.expires_at IS NULL OR {alias}.expires_at > ?)",
+            f"({alias}.expires_at IS NULL OR {alias}.expires_at > ?) "
+            f"AND {alias}.archived = 0",
             (datetime.now().isoformat(),),
         )
 
@@ -766,6 +776,20 @@ class LongTermMemory:
         """Promote a memory to a higher (or explicit) tier."""
         return self.update(entry_id, tier=target_tier)
 
+    def update_archived(self, entry_id: str, archived: bool = True) -> bool:
+        """P5: 标记条目为 archived. archived=1 的条目被 _where_alive 过滤,
+        不再参与 retrieve/recall, 但保留在表里可 rollback 或 audit.
+
+        cluster summary 写回后, 原条目用这个方法归档.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET archived = ? WHERE id = ?",
+                (1 if archived else 0, entry_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def delete(self, entry_id: str) -> bool:
         with self._connect() as conn:
             # FTS5 外部内容表删索引必须先取原值, 用 'delete' 命令
@@ -963,13 +987,42 @@ class LongTermMemory:
         decay_per_day: float = 0.97,
         prune_threshold: float = 0.15,
         deduplicate: bool = True,
+        cluster: bool = False,
+        llm_chat_fn: Any = None,
     ) -> dict[str, int]:
-        """Run a full maintenance pass: decay, prune, dedupe, expire."""
+        """Run a full maintenance pass: decay, prune, dedupe, expire, optional cluster.
+
+        P5: cluster=True + HUGINN_MEMORY_CLUSTER=1 时, dedupe 后跑 semantic cluster +
+        LLM summarize. cluster step 失败不 abort maintenance, 只记日志.
+        llm_chat_fn 为 None 时跳过 cluster (即使 cluster=True, 没 LLM 没法 summarize).
+        """
         summary = self.apply_decay_policy(
             decay_per_day=decay_per_day, prune_threshold=prune_threshold
         )
         if deduplicate:
             summary["deduplicated"] = self.deduplicate()
+
+        if (
+            cluster
+            and llm_chat_fn is not None
+            and os.environ.get("HUGINN_MEMORY_CLUSTER", "0") == "1"
+        ):
+            try:
+                from huginn.memory.cluster import (
+                    cluster_memories, compress_clusters,
+                )
+                clusters = cluster_memories(self)
+                if clusters:
+                    result = compress_clusters(self, clusters, llm_chat_fn)
+                    summary["clustered"] = result.get("summarized", 0)
+                    summary["archived"] = result.get("archived", 0)
+                    summary["cluster_skipped"] = result.get("skipped", 0)
+                    summary["cluster_failed"] = result.get("failed", 0)
+            except Exception:
+                logger.warning(
+                    "memory cluster step failed, decay/prune/dedupe still applied",
+                    exc_info=True,
+                )
         return summary
 
     def lint(self, limit: int = 100, auto_fix: bool = False) -> dict[str, Any]:
