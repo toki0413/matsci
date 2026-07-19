@@ -59,7 +59,11 @@ class GlobTool(HuginnTool):
                     error=f"Access denied: {base} is outside workspace",
                 )
 
-        matches = sorted(base.glob(input_data.pattern))
+        # strip leading slashes — pathlib.glob() doesn't accept absolute patterns,
+        # agent 有时传 '/code/*.py' 想表达 'workspace 内 code/*.py'
+        pattern = input_data.pattern.lstrip("/").lstrip("\\")
+
+        matches = sorted(base.glob(pattern))
         files = [str(m.relative_to(base)) for m in matches if m.is_file()]
 
         if len(files) > input_data.max_results:
