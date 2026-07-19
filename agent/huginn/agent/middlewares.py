@@ -245,6 +245,11 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
         "the", "a", "an", "of", "and", "or", "to", "in", "for", "by",
         "with", "from", "on", "at", "is", "are", "was", "were", "be",
         "been", "being", "this", "that", "these", "those", "as", "it",
+        # 代词/限定词 — 会让 keyword 误匹配 report 里无关行
+        "their", "its", "our", "your", "his", "her", "such", "other",
+        "some", "many", "most", "all", "both", "each", "every", "any",
+        "specific", "general", "overall", "main", "primary", "novel",
+        "new", "different", "similar", "certain", "particular",
     })
 
     # meta 语言黑名单 — 这些词出现在 quantity 里说明不是物理量
