@@ -39,6 +39,12 @@ os.environ.setdefault("HUGINN_ALLOW_UNRESTRICTED_READ", "1")
 # code_tool/bash_tool 需要本地执行后端, 否则 get_executor() 直接拒绝
 os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
 
+# Huginn 内部组件 (audit/snapshots/reflections/logs/completions) 默认写
+# ~/.huginn/, TRAE 沙箱拦截 → sqlite3/文件写入失败. 重定向到 workspace 内.
+# ponytail: 每个组件单独改路径要改 10+ 处, 用 HUGINN_CACHE_DIR 一刀切.
+# 升级路径: 给每个组件加 workspace 相对路径参数 (YAGNI, 当前一刀切够用).
+os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent / "ResearchClawBench" / "workspaces" / "_cache"))
+
 # RestrictedPython 禁了 os/pathlib/open/pickle/eval — 科学计算全要用.
 # 在 import huginn 前 monkey-patch validate_code 为空操作.
 # ponytail: RCBench workspace 是隔离的临时目录, 风险可控. 升级: 加白名单而非全禁.
