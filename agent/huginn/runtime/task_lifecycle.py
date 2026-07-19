@@ -382,16 +382,26 @@ def should_pause_for_decision(
     kb_recall_empty: bool = False,
     fired_intentions: list | None = None,
     pmk_state: dict | None = None,
+    grill_state: dict | None = None,
 ) -> tuple[bool, str, list[dict]]:
     """G71: 检查是否该暂停请求用户决策.
 
     触发条件 (按优先级):
+    0. grill 触发 (grill-me 风格开工前澄清): 歧义高 / tier=A/B + scene 歧义 /
+       plan 为空 → 进入 grill 模式, 一次一问, 摊开假设
     1. 连续 3 步 on_track=="false" → pause, options=[换方法, 补数据, 重定向目标链]
     2. TargetChain 验证失败 (required_results 全完成但结构检查 failed) → pause
     3. 连续 3 步 evidence_quality=="low" 且 kb_recall_empty → pause
     4. fired intentions description 含 "用户决策" / "user decision" → pause
     5. PMK 一致性障碍 (Čech H¹ proxy, G71+P0-A): persona/memory/knowledge 三路
        立场冲突且无法粘合成全局一致策略 → pause
+
+    grill_state 格式: {"has_grilled": bool, "ambiguity_score": float,
+    "tier": str, "scene_tag": str, "plan_is_empty": bool}.
+    详见 pre_plan_grill.should_start_grill. Engine 在 plan_check 之前
+    调本函数检查条件 0; 触发后 LLM system prompt 切到 GRILL_SYSTEM_PROMPT,
+    LLM 自己负责 "一次一题", 用户答完累计后说 "shared understanding reached"
+    退出 grill 模式.
 
     pmk_state 格式: {"persona": str, "memory": str, "kb": str, "deviation": str}
     三路立场文本. 缺失字段视为 "无立场" (不参与冲突判定).
@@ -403,6 +413,20 @@ def should_pause_for_decision(
     ponytail: 规则启发式, 不调 LLM 判断该不该 pause. 升级路径: LLM 评估决策价值,
     避免过度暂停. fired_intentions 当前只做文本匹配, 升级路径是 intention 分类.
     """
+    # 条件 0: grill-me 风格开工前澄清 — 优先级最高, 先于其他检查
+    # 详见 pre_plan_grill.should_start_grill. 触发后 Engine 切 LLM system prompt.
+    if grill_state:
+        from huginn.runtime.pre_plan_grill import (
+            grill_pause_options, should_start_grill,
+        )
+        should_grill, grill_reason = should_start_grill(**grill_state)
+        if should_grill:
+            return (
+                True,
+                f"GRILL 模式建议启动: {grill_reason}",
+                grill_pause_options(),
+            )
+
     # 条件 5: PMK 一致性障碍 — 三路立场冲突 → 局部模型无法粘合成全局
     # 高阶网络 H¹ proxy: sheaf gluing 失败的启发式判定, 非严格 Čech cohomology.
     if pmk_state:
@@ -664,6 +688,42 @@ if __name__ == "__main__":
     ev_dict = _MockEval(target_chain_ref="T2", structure_check="failed")
     pause, reason, _ = should_pause_for_decision([ev_dict], [tc_dict])
     assert pause and "T2" in reason, f"dict tc → pause, got {pause}/{reason}"
+
+    # 条件 0: grill 触发 (优先级最高, 先于 PMK / fired intentions / 等)
+    # 高歧义 → grill
+    pause, reason, opts = should_pause_for_decision(
+        [], [], grill_state={"ambiguity_score": 0.8})
+    assert pause, "grill_state ambiguity=0.8 → pause"
+    assert "GRILL" in reason, f"reason 应含 GRILL: {reason}"
+    assert len(opts) == 3 and opts[0]["id"] == "A"
+
+    # tier A + 歧义 scene → grill
+    pause, reason, _ = should_pause_for_decision(
+        [], [], grill_state={"tier": "A", "scene_tag": "ambiguous_req"})
+    assert pause and "GRILL" in reason
+
+    # plan 为空 → grill
+    pause, reason, _ = should_pause_for_decision(
+        [], [], grill_state={"plan_is_empty": True})
+    assert pause and "plan 为空" in reason
+
+    # has_grilled=True 不重复触发
+    pause, _, _ = should_pause_for_decision(
+        [], [], grill_state={"ambiguity_score": 0.9, "has_grilled": True})
+    assert not pause, "已 grill 过不应重复触发"
+
+    # grill_state=None 兼容旧调用
+    pause, _, _ = should_pause_for_decision([], [])
+    assert not pause, "grill_state=None 兼容旧调用"
+
+    # grill 优先级高于 PMK: 即使 PMK 冲突也先 grill (grill 期间不应有 PMK)
+    pause, reason, _ = should_pause_for_decision(
+        [], [],
+        pmk_state={"persona": "推荐用 GNN", "memory": "反对 GNN",
+                    "kb": "", "deviation": ""},
+        grill_state={"ambiguity_score": 0.7},
+    )
+    assert pause and "GRILL" in reason, "grill 优先级高于 PMK"
 
     print("All self-checks passed.")
 
