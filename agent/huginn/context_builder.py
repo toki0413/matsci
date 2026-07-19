@@ -898,40 +898,72 @@ class ContextBuilder:
         # 读 ctx_parts 顺序就是它看到上下文的顺序, trace 必须先看到.
         ctx_parts: list[str] = []
 
+        # P3: Context Router — 根据 phase + task 语义稀疏化 context 段
+        # 参考 "Diversity of information pathways drives sparsity in real-world
+        # networks" (Nature Physics 2023). 信息路径多样性 D_proxy 监控.
+        # 默认关, HUGINN_CONTEXT_ROUTER=1 开启 (零 LLM 成本, 纯规则).
+        _router_enabled = os.environ.get("HUGINN_CONTEXT_ROUTER", "0") == "1"
+        _selected: set[str] | None = None
+        if _router_enabled:
+            try:
+                from huginn.runtime.context_router import (
+                    route_context_segments, should_skip_segment,
+                    log_routing_decision,
+                )
+                _phase = ""
+                if session_state is not None:
+                    _phase = getattr(session_state, "current_phase", "") or \
+                             (session_state.get("current_phase", "")
+                              if isinstance(session_state, dict) else "")
+                _routing = route_context_segments(
+                    phase=_phase, task_message=message,
+                )
+                _selected = set(_routing.selected)
+                log_routing_decision(_routing, _phase, message)
+            except Exception:
+                logger.debug("ContextRouter disabled or failed, full ctx", exc_info=True)
+                _selected = None
+
+        def _keep(seg: str) -> bool:
+            """P3: 未启用 router → 全塞; 启用时只塞 selected."""
+            if _selected is None:
+                return True
+            return seg in _selected
+
         meta_trace_text = self.build_meta_trace_text()
-        if meta_trace_text:
+        if meta_trace_text and _keep("meta_trace"):
             ctx_parts.append(meta_trace_text)
 
         emotion_text = self.build_emotion_text(message)
-        if emotion_text:
+        if emotion_text and _keep("emotion"):
             ctx_parts.append(emotion_text)
 
         plan_text = self.build_plan_text(session_state)
-        if plan_text:
+        if plan_text and _keep("plan"):
             ctx_parts.append(plan_text)
 
         cognitive_text = self.build_cognitive_prompt(session_state)
-        if cognitive_text:
+        if cognitive_text and _keep("cognitive"):
             ctx_parts.append(cognitive_text)
 
         tool_hint = self.build_tool_preference_hint(session_state)
-        if tool_hint:
+        if tool_hint and _keep("tool_hint"):
             ctx_parts.append(tool_hint)
 
         evolution_text = self.build_evolution_rules()
-        if evolution_text:
+        if evolution_text and _keep("evolution"):
             ctx_parts.append(evolution_text)
 
         continuity_text = self.build_session_continuity(session_state)
-        if continuity_text:
+        if continuity_text and _keep("continuity"):
             ctx_parts.append(continuity_text)
 
         subgoal_text = self.build_subgoal_text(session_state)
-        if subgoal_text:
+        if subgoal_text and _keep("subgoal"):
             ctx_parts.append(subgoal_text)
 
         goal_text = self.build_goal_text(session_state)
-        if goal_text:
+        if goal_text and _keep("goal"):
             ctx_parts.append(goal_text)
 
         if ctx_parts:
