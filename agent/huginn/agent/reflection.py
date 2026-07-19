@@ -124,7 +124,7 @@ class ReflectionMixin:
         from datetime import datetime
         from pathlib import Path
         session_id = self._session_state.session_id or "default"
-        sidecar_dir = Path.home() / ".huginn" / "reflections"
+        sidecar_dir = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn")) / "reflections"
         sidecar_dir.mkdir(parents=True, exist_ok=True)
         sidecar_path = sidecar_dir / f"{session_id}.jsonl"
         entry = {
@@ -156,7 +156,7 @@ class ReflectionMixin:
         import json
         from pathlib import Path
         sid = session_id or self._session_state.session_id or "default"
-        sidecar_path = Path.home() / ".huginn" / "reflections" / f"{sid}.jsonl"
+        sidecar_path = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn")) / "reflections" / f"{sid}.jsonl"
         if not sidecar_path.exists():
             return []
         lines = sidecar_path.read_text(encoding="utf-8").strip().split("\n")
