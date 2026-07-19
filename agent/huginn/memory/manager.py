@@ -46,7 +46,14 @@ class MemoryManager:
         llm: Any = None,
     ):
         self.session = session or SessionContext()
-        self.longterm = longterm or LongTermMemory()
+        # LongTermMemory 优先用 config.memory_dir, 避免 ~/.huginn 在沙箱环境不可写
+        # 导致 sqlite3.OperationalError. ponytail: 之前 MemoryConfig.memory_dir 被无视.
+        if longterm:
+            self.longterm = longterm
+        elif config and config.memory_dir:
+            self.longterm = LongTermMemory(db_path=config.memory_dir / "memory.db")
+        else:
+            self.longterm = LongTermMemory()
         self.config = config or MemoryConfig()
         self._llm = llm  # optional LLM for insight extraction
 
