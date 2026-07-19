@@ -82,8 +82,8 @@ class ImageAnalysisTool(HuginnTool):
     async def validate_input(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
-        # routes/tools.py 传进来的是 model_dump() 后的 dict, 这里转回 model
-        input_data = ImageAnalysisInput(**args)
+        # adapter 可能传 ImageAnalysisInput 实例 (已解析) 或 dict (model_dump 后)
+        input_data = args if isinstance(args, ImageAnalysisInput) else ImageAnalysisInput(**args)
         if not Path(input_data.image_path).exists():
             return ValidationResult(
                 result=False, message=f"图片不存在: {input_data.image_path}"
@@ -93,7 +93,7 @@ class ImageAnalysisTool(HuginnTool):
     async def call(
         self, args: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        input_data = ImageAnalysisInput(**args)
+        input_data = args if isinstance(args, ImageAnalysisInput) else ImageAnalysisInput(**args)
         try:
             if input_data.action == "sem_analysis":
                 from huginn.tools.image_analysis.scenes_sem import sem_analysis
