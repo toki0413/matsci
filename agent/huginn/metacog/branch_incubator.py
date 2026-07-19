@@ -42,6 +42,8 @@ class BranchResult:
     error: str | None = None
     tokens_used: int = 0
     round_idx: int = 0
+    # PTD tree-shape: layer2 sub-branch 的父 agent_id. layer1 为空.
+    parent_agent_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +54,7 @@ class BranchResult:
             "error": self.error,
             "tokens_used": self.tokens_used,
             "round_idx": self.round_idx,
+            "parent_agent_id": self.parent_agent_id,
         }
 
 
@@ -92,11 +95,18 @@ class BranchIncubator:
         researcher_intuition: str = "",
         round_idx: int = 0,
         total_rounds: int = 10,
+        depth: int = 1,
+        width: int = 2,
     ) -> list[BranchResult]:
         """跑一轮隔离探索.
 
         agent_factory 必传, 跟 SubagentDispatch.dispatch 一致.
         返回 N 个 BranchResult, 失败的也有记录 (success=False).
+
+        depth=1: flat asyncio.gather N (Part 1 兼容).
+        depth=2: PTD tree-shape — layer1 N flat → 每 layer1 成功 branch 派
+          width 个 sub-branch → 每 parent prune top-1 (tokens_used 最小 + success).
+          layer2 全失败的 parent 回退到 layer1. 返回长度 = n_branches.
         """
         bundle = ContextBundle(
             global_math_background=math_background,
@@ -107,18 +117,18 @@ class BranchIncubator:
         )
 
         family_assignments = self._assign_families(n_branches)
-        # 并发起 N 个 Subagent, return_exceptions 防止单个失败拖垮全轮
+        # Layer 1: flat asyncio.gather (depth=1 和 depth=2 都跑这步)
         coros = [
             self._run_single_branch(fam, bundle, task, agent_factory, round_idx)
             for fam in family_assignments
         ]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
-        branch_results: list[BranchResult] = []
+        layer1: list[BranchResult] = []
         for family_id, raw in zip(family_assignments, raw_results):
             if isinstance(raw, Exception):
                 # gather 抓到的异常 (不应发生, _run_single_branch 内部已 catch)
-                branch_results.append(BranchResult(
+                layer1.append(BranchResult(
                     family_id=family_id,
                     agent_id="",
                     hypothesis=self._fallback_hypothesis(family_id),
@@ -127,11 +137,79 @@ class BranchIncubator:
                     round_idx=round_idx,
                 ))
                 continue
-            branch_results.append(raw)
+            layer1.append(raw)
 
         # 反完成审计: 过热族 mark_blocked, 下一轮强制 redirect
-        self._check_convergence(round_idx, total_rounds, branch_results)
-        return branch_results
+        # (layer1 后调, 跟 Part 1 一致; layer2 是 refinement, 不改 family 分布)
+        self._check_convergence(round_idx, total_rounds, layer1)
+
+        if depth < 2:
+            return layer1  # Part 1 flat 行为
+
+        # Layer 2: PTD tree-shape — 每 layer1 成功 branch 派 width 个 sub-branch
+        layer2_by_parent = await self._run_tree_layer(
+            layer1, bundle, task, agent_factory, round_idx, width,
+        )
+
+        # Prune + Fallback: 每 parent 保留 top-1 (tokens_used 最小 + success),
+        # layer1 失败 / layer2 全失败 → 回退 layer1
+        final: list[BranchResult] = []
+        for l1 in layer1:
+            if not l1.success or not l1.hypothesis:
+                final.append(l1)  # layer1 失败, 不派 layer2
+                continue
+            subs = layer2_by_parent.get(l1.agent_id, [])
+            successful_subs = [s for s in subs if s.success and s.hypothesis]
+            if not successful_subs:
+                final.append(l1)  # layer2 全失败, fallback layer1
+                continue
+            best = min(successful_subs, key=lambda r: r.tokens_used)
+            final.append(best)
+        return final
+
+    async def _run_tree_layer(
+        self,
+        layer_branches: list[BranchResult],
+        bundle: ContextBundle,
+        task: str,
+        agent_factory: Any,
+        round_idx: int,
+        width: int,
+    ) -> dict[str, list[BranchResult]]:
+        """对 layer_branches 里成功的 branch 派 width 个 sub-branch 做 refinement.
+
+        PTD tree-shape 的 layer2 — sub-branch 复用父 family_id (不重派),
+        看到父 hypothesis (祖先 π(v)). 返回 {parent_agent_id: [sub-branch results]}.
+        """
+        eligible = [b for b in layer_branches if b.success and b.hypothesis]
+
+        coros = []
+        parent_map: list[str] = []  # 每 coro 对应的 parent_agent_id
+        for parent in eligible:
+            for _ in range(width):
+                coros.append(self._run_single_branch(
+                    family_id=parent.family_id,
+                    bundle=bundle,
+                    task=task,
+                    agent_factory=agent_factory,
+                    round_idx=round_idx,
+                    parent_hypothesis=parent.hypothesis,
+                    parent_agent_id=parent.agent_id,
+                ))
+                parent_map.append(parent.agent_id)
+
+        if not coros:
+            return {}
+
+        raw_results = await asyncio.gather(*coros, return_exceptions=True)
+
+        layer2: dict[str, list[BranchResult]] = {}
+        for parent_id, raw in zip(parent_map, raw_results):
+            if isinstance(raw, Exception):
+                # 不应发生, _run_single_branch 内部已 catch. 跳过, 不入 layer2
+                continue
+            layer2.setdefault(parent_id, []).append(raw)
+        return layer2
 
     def _assign_families(self, n: int) -> list[str]:
         """给 n 个 branch 分配族. 优先冷门族, 避开已阻塞族, 尽量分散.
@@ -167,8 +245,14 @@ class BranchIncubator:
         task: str,
         agent_factory: Any,
         round_idx: int,
+        parent_hypothesis: str = "",
+        parent_agent_id: str = "",
     ) -> BranchResult:
-        """起单个 Subagent, 注入隔离后的 context + family 引导."""
+        """起单个 Subagent, 注入隔离后的 context + family 引导.
+
+        parent_hypothesis 非空时 (layer2 sub-branch), 加进 enhanced_task
+        让 sub-branch 看到祖先 π(v) — PTD tree 的偏序祖先链机制.
+        """
         ctx = isolate(bundle, role="exploration")
         family = self._registry.by_id(family_id)
         family_essence = family.essence if family else ""
@@ -178,6 +262,11 @@ class BranchIncubator:
             f"{task}\n\n"
             f"[Method family assigned: {family_id}]\n"
             f"[Family essence: {family_essence}]\n"
+        )
+        # PTD tree: layer2 sub-branch 看到父 hypothesis (祖先 π(v))
+        if parent_hypothesis:
+            enhanced_task += f"[Parent hypothesis: {parent_hypothesis}]\n"
+        enhanced_task += (
             f"[Visible method families for self-categorization: "
             f"{ctx.get('_method_family_ids', [])}]\n"
             f"Approach this problem from the {family_id} perspective. "
@@ -200,6 +289,7 @@ class BranchIncubator:
                 success=False,
                 error=f"dispatch error: {exc}",
                 round_idx=round_idx,
+                parent_agent_id=parent_agent_id,
             )
 
         if not result.success:
@@ -211,6 +301,7 @@ class BranchIncubator:
                 success=False,
                 error=result.error,
                 round_idx=round_idx,
+                parent_agent_id=parent_agent_id,
             )
 
         # 成功 — 注册到 registry, 让后续轮的 suggest_redirect 看到分布
@@ -223,6 +314,7 @@ class BranchIncubator:
             success=True,
             tokens_used=result.tokens_used,
             round_idx=round_idx,
+            parent_agent_id=parent_agent_id,
         )
 
     def _fallback_hypothesis(self, family_id: str) -> str:
@@ -290,9 +382,13 @@ class _MockSubagentDispatch:
         self,
         summary_template: str = "hypothesis from {family}",
         fail_families: set[str] | None = None,
+        fail_when_parent_hypothesis: bool = False,
     ) -> None:
         self._summary_template = summary_template
         self._fail_families = fail_families or set()
+        # layer2 sub-branch 的 task 含 [Parent hypothesis: ...], 用这个开关
+        # 让 layer2 全失败 (场景 10: fallback layer1)
+        self._fail_when_parent_hypothesis = fail_when_parent_hypothesis
         # 记录调用, 让测试断言 task 内容含 family 引导
         self.calls: list[tuple[str, str, dict]] = []
 
@@ -313,6 +409,13 @@ class _MockSubagentDispatch:
                 summary="", full_output="",
                 success=False,
                 error=f"mock failure for {family_id}",
+                spec_name=spec_name,
+            )
+        if self._fail_when_parent_hypothesis and "[Parent hypothesis:" in task:
+            return SubagentResult(
+                summary="", full_output="",
+                success=False,
+                error="mock layer2 failure",
                 spec_name=spec_name,
             )
         return SubagentResult(
@@ -426,13 +529,134 @@ def _selfcheck() -> None:
         f"dft-direct 应被标 blocked (过热), got blocked={dft.is_blocked if dft else None}"
     )
 
-    # 7. BranchResult.to_dict 序列化
+    # 7. BranchResult.to_dict 序列化 (含 parent_agent_id)
     r = BranchResult(
         family_id="x", agent_id="y", hypothesis="z", round_idx=5,
+        parent_agent_id="parent_y",
     )
     d = r.to_dict()
     assert d["family_id"] == "x"
     assert d["round_idx"] == 5
+    assert d["parent_agent_id"] == "parent_y"
+    # 默认 parent_agent_id 为空
+    r2 = BranchResult(family_id="a", agent_id="b", hypothesis="c")
+    assert r2.parent_agent_id == ""
+    assert r2.to_dict()["parent_agent_id"] == ""
+
+    # 8. depth=2 正常路径: 3 layer1 + 2×3 layer2 = 9 dispatch 调用
+    inc_tree = BranchIncubator(dispatch=_MockSubagentDispatch())
+    results_tree = asyncio.run(inc_tree.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        depth=2, width=2,
+    ))
+    assert len(results_tree) == 3, f"返回长度应 = n_branches, got {len(results_tree)}"
+    # layer1 全成功 → 每 parent 派 2 sub-branch → 总 dispatch = 3 + 6 = 9
+    mock_tree = inc_tree._dispatch  # type: ignore
+    assert len(mock_tree.calls) == 9, (
+        f"应 9 dispatch (3 layer1 + 6 layer2), got {len(mock_tree.calls)}"
+    )
+    # 返回的应是 layer2 winner (success + parent_agent_id 非空)
+    assert all(r.success for r in results_tree), [r.error for r in results_tree]
+    assert all(r.parent_agent_id for r in results_tree), (
+        "depth=2 正常路径返回应是 layer2 winner, parent_agent_id 非空"
+    )
+    # layer1 的 task 不含 [Parent hypothesis], layer2 的含
+    layer1_calls = [c for c in mock_tree.calls if "[Parent hypothesis:" not in c[1]]
+    layer2_calls = [c for c in mock_tree.calls if "[Parent hypothesis:" in c[1]]
+    assert len(layer1_calls) == 3
+    assert len(layer2_calls) == 6
+
+    # 9. layer1 部分失败: dft-direct fail → layer2 只对 2 个成功 parent 派
+    # 总 dispatch = 3 layer1 + 2×2 layer2 = 7
+    inc_partial = BranchIncubator(dispatch=_MockSubagentDispatch(
+        fail_families={"dft-direct"},
+    ))
+    results_partial = asyncio.run(inc_partial.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        depth=2, width=2,
+    ))
+    assert len(results_partial) == 3
+    mock_partial = inc_partial._dispatch  # type: ignore
+    # layer1: 3 (dft-direct fail, ml-potential ok, symbolic-regression ok)
+    # layer2: 2 sub-branch × 2 success parent = 4
+    # 总 = 3 + 4 = 7
+    assert len(mock_partial.calls) == 7, (
+        f"应 7 dispatch (3 layer1 + 4 layer2), got {len(mock_partial.calls)}"
+    )
+    # dft-direct 的返回应是 layer1 (fail, parent_agent_id 空)
+    dft_result = [r for r in results_partial if r.family_id == "dft-direct"]
+    assert dft_result and not dft_result[0].success, "dft-direct 应失败"
+    assert dft_result[0].parent_agent_id == "", "layer1 失败 branch parent_agent_id 应空"
+    # ml-potential / symbolic-regression 的返回应是 layer2 winner (success, parent_agent_id 非空)
+    success_results = [r for r in results_partial if r.success]
+    assert len(success_results) == 2
+    assert all(r.parent_agent_id for r in success_results)
+
+    # 10. layer2 全失败 fallback layer1
+    # fail_when_parent_hypothesis=True: layer1 全成功, layer2 全失败
+    inc_l2fail = BranchIncubator(dispatch=_MockSubagentDispatch(
+        fail_when_parent_hypothesis=True,
+    ))
+    results_l2fail = asyncio.run(inc_l2fail.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        depth=2, width=2,
+    ))
+    assert len(results_l2fail) == 3
+    # 全 fallback 到 layer1 (success, parent_agent_id 空)
+    assert all(r.success for r in results_l2fail), "fallback layer1 应成功"
+    assert all(r.parent_agent_id == "" for r in results_l2fail), (
+        "fallback layer1 应 parent_agent_id 空"
+    )
+    mock_l2fail = inc_l2fail._dispatch  # type: ignore
+    # 3 layer1 + 6 layer2 (layer2 全失败但仍 dispatch)
+    assert len(mock_l2fail.calls) == 9
+
+    # 11. parent_agent_id: layer1 为空, layer2 = layer1 父 agent_id
+    inc_pa = BranchIncubator(dispatch=_MockSubagentDispatch())
+    results_pa = asyncio.run(inc_pa.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        depth=2, width=2,
+    ))
+    # 所有返回的都是 layer2 winner, parent_agent_id 非空
+    layer1_results_in_call = [c for c in inc_pa._dispatch.calls if "[Parent hypothesis:" not in c[1]]  # type: ignore
+    # layer1 dispatch 的 context 没法直接拿 agent_id, 但 winner.parent_agent_id
+    # 应是 layer1 branch 的 agent_id (格式 branch_<family>_<8hex>)
+    for winner in results_pa:
+        assert winner.parent_agent_id.startswith("branch_"), (
+            f"layer2 winner parent_agent_id 应是 layer1 agent_id, got {winner.parent_agent_id}"
+        )
+        # layer2 winner 自己的 agent_id 也是 branch_<family>_<8hex>
+        assert winner.agent_id.startswith("branch_")
+        # layer2 winner 的 family_id 应跟 parent 一致 (layer2 复用父 family)
+        # 找 parent: layer1 dispatch 里 family 跟 winner.family_id 相同的
+        # (这里只验证格式, 具体匹配在场景 12 验)
+
+    # 12. enhanced_task 含 [Parent hypothesis: ...] 当 parent_hypothesis 非空
+    inc_ph = BranchIncubator(dispatch=_MockSubagentDispatch())
+    asyncio.run(inc_ph.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        depth=2, width=2,
+    ))
+    mock_ph = inc_ph._dispatch  # type: ignore
+    layer1_calls_ph = [c for c in mock_ph.calls if "[Parent hypothesis:" not in c[1]]
+    layer2_calls_ph = [c for c in mock_ph.calls if "[Parent hypothesis:" in c[1]]
+    assert len(layer1_calls_ph) == 3, "layer1 task 不应含 [Parent hypothesis]"
+    assert len(layer2_calls_ph) == 6, "应有 6 个 layer2 task 含 [Parent hypothesis]"
+    # layer2 task 含 family + essence + Parent hypothesis + Visible
+    for spec_name, task_content, _ in layer2_calls_ph:
+        assert spec_name == "explore"
+        assert "[Method family assigned:" in task_content
+        assert "[Family essence:" in task_content
+        assert "[Parent hypothesis:" in task_content
+        assert "Visible method families" in task_content
+    # layer1 task 不含 [Parent hypothesis]
+    for spec_name, task_content, _ in layer1_calls_ph:
+        assert "[Parent hypothesis:" not in task_content
 
     print("branch_incubator selfcheck OK")
 

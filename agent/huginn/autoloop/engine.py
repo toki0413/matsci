@@ -2729,6 +2729,8 @@ Respond JSON only:
                 researcher_intuition=context.get("researcher_intuition", ""),
                 round_idx=self._iteration,
                 total_rounds=max(self._max_pivots * 3, 10),
+                depth=int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "1")),
+                width=2,
             )
         except Exception:
             logger.warning(
