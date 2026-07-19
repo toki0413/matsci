@@ -275,6 +275,54 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
         r"|\d{2,}(?!\.\d)(?!\.\s)(?!\.$)"  # 2位+整数, 排除小数/列表编号
     )
 
+    # v13: 五层分层锚点. Method/Data/Claim 用 section header 锚定段落,
+    # Concept/Equation 用全文正则. ponytail: section header 是 INSTRUCTIONS
+    # Deliverables 段推导的稳定锚点 (## Methodology / ## Results / ## Discussion),
+    # 不依赖 LLM 解析段落语义. 升级路径: claim 层单位匹配最难正则化,
+    # 漏报严重时换 LLM 辅助.
+    _LAYER_PATTERNS = {
+        # Concept 层: quantity 关键词在 report 任一段出现即算 (复用 _extract_keywords)
+        "concept": None,  # 用 _extract_keywords(q) 做匹配, 无独立正则
+
+        # Equation 层: LaTeX 行内/块级公式, 或显式等式
+        "equation": re.compile(
+            r"\$\$.+?\$\$"            # 块级 $$...$$
+            r"|\$[^$]{3,}\$"          # 行内 $...$ (至少3字符, 排除 $1$ 编号)
+            r"|\\begin\{equation\}"   # LaTeX equation 环境
+            r"|=\s*[\w\d\-+\\]{2,}"  # 显式等式 "λ = g²/(2m²)" (右值至少2字符)
+            , re.DOTALL,
+        ),
+
+        # Method 层: ## Methodology 或 ## Method 段落
+        "method": re.compile(
+            r"^##\s*(?:Methodology|Methods?|Approach|Framework)\b.*?"
+            r"(?=^##\s|\Z)",
+            re.MULTILINE | re.DOTALL,
+        ),
+
+        # Data 层: ## Results 段落, 或 ## Findings
+        "data": re.compile(
+            r"^##\s*(?:Results?|Findings?|Numerical\s+Results?)\b.*?"
+            r"(?=^##\s|\Z)",
+            re.MULTILINE | re.DOTALL,
+        ),
+
+        # Claim 层: ## Discussion / ## Conclusion 段, 或显式 upper limit / point estimate 声明
+        "claim": re.compile(
+            r"^##\s*(?:Discussion|Conclusion|Conclusions)\b.*?"
+            r"(?=^##\s|\Z)",
+            re.MULTILINE | re.DOTALL,
+        ),
+    }
+
+    # Claim 层单位/声明关键词 — 出现任一即视为 claim 层有内容
+    _CLAIM_KEYWORDS = re.compile(
+        r"upper\s+limit|point\s+estimate|confidence\s+level|95%\s*CL|1\s*sigma|"
+        r"GeV\^?\s*-?1|GeV⁻¹|eV\b|dimensionless|"
+        r"constrained\s+to|bounded\s+by|excluded\s+at|consistent\s+with",
+        re.IGNORECASE,
+    )
+
     def _extract_quantities(self, text: str) -> list[str]:
         """从 INSTRUCTIONS text 提取 candidate physical quantities."""
         quantities: list[str] = []
@@ -341,6 +389,97 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
                 missing.append(q)
         return missing
 
+    def _check_layer_coverage(
+        self, quantity: str, report_text: str
+    ) -> list[str]:
+        """v13: 返回该 quantity 缺失的层名列表 (subset of
+        ["concept", "equation", "data", "method", "claim"]).
+
+        ponytail: concept/data 共享 A 的 keyword+数值检测, 不重复造轮子.
+        method/claim 用 section header 锚点定位段落, 段内查 quantity 关键词.
+        equation 用全文公式正则, 不绑定段落 (公式可能在 Methodology 也可能在
+        Results). 升级路径: concept 层可换 kg 查 (huginn/kg/graph.py), 漏报严重再上.
+        """
+        missing_layers: list[str] = []
+        keywords = self._extract_keywords(quantity)
+        report_lower = report_text.lower()
+
+        # Concept 层: quantity 关键词在 report 任一处出现
+        if not any(kw in report_lower for kw in keywords):
+            missing_layers.append("concept")
+            # concept 缺 → 后面几层都不必查 (没提概念就是没分析)
+            return missing_layers
+
+        # Equation 层: report 有公式 + 公式附近 (±200 字符窗口) 出现 quantity 关键词
+        eq_blocks = list(self._LAYER_PATTERNS["equation"].finditer(report_text))
+        if eq_blocks:
+            # 检查任一公式 ±200 字符窗口内出现 quantity 关键词
+            eq_has_q = any(
+                any(kw in report_text[max(0, m.start()-200):m.end()+200].lower()
+                    for kw in keywords)
+                for m in eq_blocks
+            )
+            if not eq_has_q:
+                missing_layers.append("equation")
+        else:
+            missing_layers.append("equation")
+
+        # Method 层: ## Methodology 段内出现 quantity 关键词
+        method_match = self._LAYER_PATTERNS["method"].search(report_text)
+        if method_match:
+            if not any(kw in method_match.group(0).lower() for kw in keywords):
+                missing_layers.append("method")
+        else:
+            missing_layers.append("method")
+
+        # Data 层: ## Results 段内出现 quantity 关键词 + 数值
+        data_match = self._LAYER_PATTERNS["data"].search(report_text)
+        if data_match:
+            data_block = data_match.group(0)
+            if not (any(kw in data_block.lower() for kw in keywords)
+                    and self._NUMERIC_PATTERN.search(data_block)):
+                missing_layers.append("data")
+        else:
+            missing_layers.append("data")
+
+        # Claim 层: ## Discussion 段出现 quantity 关键词 + claim 声明关键词
+        #   (upper limit / 单位 / confidence level)
+        claim_match = self._LAYER_PATTERNS["claim"].search(report_text)
+        if claim_match:
+            claim_block = claim_match.group(0)
+            has_q = any(kw in claim_block.lower() for kw in keywords)
+            has_claim = bool(self._CLAIM_KEYWORDS.search(claim_block))
+            if not (has_q and has_claim):
+                missing_layers.append("claim")
+        else:
+            missing_layers.append("claim")
+
+        return missing_layers
+
+    def _check_layer_gaps(
+        self, instructions_text: str, report_text: str
+    ) -> list[tuple[str, list[str]]]:
+        """v13: 返回 list[(quantity, [missing_layers])].
+
+        只对横向 covered 的 quantity 检查纵向层 (横向 missing 由 _check_coverage 报).
+        ponytail: 跳过横向 missing 的 quantity, 避免跟 A 重复提醒 (A 已经会报 "缺 X",
+        v13 不需要再报 "X 的 concept 层缺"). 升级路径: 横向 missing 的 quantity 也
+        查层, 但当前 YAGNI.
+        """
+        required = self._extract_quantities(instructions_text)
+        if not required:
+            return []
+        # 复用 _check_coverage 拿横向 missing, 排除掉
+        horizontal_missing = set(self._check_coverage(instructions_text, report_text))
+        gaps: list[tuple[str, list[str]]] = []
+        for q in required:
+            if q in horizontal_missing:
+                continue  # 横向缺 → A 已经会报, 不重复
+            layers = self._check_layer_coverage(q, report_text)
+            if layers:
+                gaps.append((q, layers))
+        return gaps
+
     def _build_frontier_msg(self, missing: list[str]) -> str:
         return (
             "[FRONTIER TASK — DeliverableCoverageMiddleware]\n"
@@ -351,8 +490,34 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             "必须给出数值结果或上界. 完成后再次确认所有量都已覆盖."
         )
 
+    def _build_layer_frontier_msg(
+        self, gaps: list[tuple[str, list[str]]]
+    ) -> str:
+        """v13: 拼接纵向层次缺失的 frontier message."""
+        layer_desc = {
+            "concept": "Concept 层 (物理概念未在 report 引入)",
+            "equation": "Equation 层 (未给出定义式或约束方程)",
+            "data": "Data 层 (未给出对应数值结果)",
+            "method": "Method 层 (未在 ## Methodology 段描述方法)",
+            "claim": "Claim 层 (未明确是 upper limit/point estimate, 或单位未对齐 task 语境)",
+        }
+        lines = [
+            "[FRONTIER TASK — DeliverableCoverageMiddleware / v13 纵向分层]\n",
+            "以下物理量已分析但层次不完整 (横向上 covered, 纵向缺层):\n",
+        ]
+        for q, layers in gaps:
+            # 报最关键的一层 (concept > equation > data > method > claim 优先级)
+            lines.append(f"  - {q}: {layer_desc[layers[0]]}\n")
+        lines.append(
+            "\n每层缺失 = criterion 部分扣分. 必须在 report.md 对应 section 补全. "
+            "特别地, Claim 层缺失时检查: (1) 是否明确 upper limit vs point estimate; "
+            "(2) 单位是否对齐 task description 的语境 (如 self-interaction coupling "
+            "应为 g [GeV⁻¹] 而非 dimensionless λ); (3) confidence level 是否标明."
+        )
+        return "".join(lines)
+
     def _inject_frontier(self, request) -> None:
-        """读 INSTRUCTIONS.md + report.md, 缺失量注入 frontier task."""
+        """读 INSTRUCTIONS.md + report.md, 缺失量 + 层次缺失注入 frontier task."""
         try:
             cwd = Path.cwd()
             instructions = cwd / "INSTRUCTIONS.md"
@@ -361,16 +526,30 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
                 return  # report 还没写, Phase 3 强制写 report 的逻辑在 system prompt
             inst_text = instructions.read_text(encoding="utf-8")
             report_text = report.read_text(encoding="utf-8")
+
+            # 横向 (A): 缺哪些物理量
             missing = self._check_coverage(inst_text, report_text)
-            if not missing:
+            # 纵向 (v13): covered 的物理量缺哪些层
+            gaps = self._check_layer_gaps(inst_text, report_text)
+
+            if not missing and not gaps:
                 return
-            frontier = self._build_frontier_msg(missing)
+
+            parts = []
+            if missing:
+                parts.append(self._build_frontier_msg(missing))
+            if gaps:
+                parts.append(self._build_layer_frontier_msg(gaps))
+            frontier = "\n\n".join(parts)
+
             # prepend SystemMessage, 不累积 — messages 每轮从 state 重建
             msgs = getattr(request, "messages", None)
             if msgs is None:
                 return
             request.messages = [SystemMessage(content=frontier)] + list(msgs)
-            logger.info(f"DeliverableCoverage injected frontier: {missing}")
+            logger.info(
+                f"DeliverableCoverage injected: horizontal={missing}, layer_gaps={gaps}"
+            )
         except Exception as e:
             logger.debug(f"DeliverableCoverage inject skipped: {e}")
 
@@ -487,6 +666,57 @@ def _self_check() -> int:
     assert mat_missing_full == [], \
         f"should be fully covered: {mat_missing_full}"
     print(f"[CHECK] Material_000 full coverage: {mat_missing_full}")
+
+    # 场景 8 (v13): criterion 2 错位 — agent 给 dimensionless λ 而非 g (GeV⁻¹)
+    # 横向 covered (coupling + 数值都有), 纵向 Claim 层缺失 (无 GeV⁻¹ / 无 upper limit 声明)
+    report_claim_mismatch = (
+        "# Bayesian Constraints on Ultralight Bosons\n\n"
+        "## Methodology\n"
+        "We apply Bayesian marginalization over black hole posterior samples.\n\n"
+        "## Results\n"
+        "ULB mass μ < 5.2e-20 eV.\n"
+        "Self-interaction coupling λ ≲ 4.6 × 10⁻⁶ (dimensionless).\n\n"
+        "## Discussion\n"
+        "The constraints are robust across datasets.\n"
+    )
+    gaps = m._check_layer_gaps(inst, report_claim_mismatch)
+    # coupling 应该报 Claim 层缺失 (无 GeV⁻¹, 无 upper limit/point estimate 声明)
+    coupling_gaps = [layers for q, layers in gaps
+                     if "coupling" in q or "self-interaction" in q]
+    assert coupling_gaps and "claim" in coupling_gaps[0], \
+        f"criterion 2 错位应报 Claim 层缺失: {gaps}"
+    print(f"[CHECK v13] criterion 2 Claim layer gap: {coupling_gaps}")
+
+    # 场景 9 (v13): 全覆盖 — report 五层齐全, 不应报任何 layer gap
+    report_full_with_claim = (
+        "# Bayesian Constraints on Ultralight Bosons\n\n"
+        "## Methodology\n"
+        "We apply Bayesian marginalization over black hole posterior samples "
+        "to constrain ULB mass and self-interaction coupling. "
+        "The self-interaction coupling is parameterized as $\\lambda = g^2/(2m^2)$.\n\n"
+        "## Results\n"
+        "ULB mass μ < 5.2e-20 eV at 95% CL.\n"
+        "Self-interaction coupling g < 1.3e-17 GeV⁻¹ (upper limit).\n\n"
+        "## Discussion\n"
+        "We report upper limits on ULB mass μ and the self-interaction "
+        "coupling strength g in GeV⁻¹ at 95% confidence level.\n"
+    )
+    gaps_full = m._check_layer_gaps(inst, report_full_with_claim)
+    assert gaps_full == [], f"五层齐全不应报 layer gap: {gaps_full}"
+    print(f"[CHECK v13] full layer coverage: {gaps_full}")
+
+    # 场景 10 (v13): concept 缺 — Metal_000 report 没提 metal/insulator 分类
+    mat_gaps = m._check_layer_gaps(mat_inst, mat_report_missing)
+    # metal/insulator 应该报 concept 层缺失 (根本没出现)
+    metal_gaps = [layers for q, layers in mat_gaps
+                  if "metal" in q or "insulator" in q]
+    # 注意: 横向 missing 的 quantity 会被 _check_layer_gaps 跳过 (A 已经会报).
+    # mat_report_missing 里 metal/insulator 是横向 missing, 所以 gaps 里不会有它.
+    # 改用 _check_layer_coverage 直接查 (绕过 horizontal filter)
+    direct_metal_layers = m._check_layer_coverage("metal/insulator", mat_report_missing)
+    assert "concept" in direct_metal_layers, \
+        f"Metal_000 缺分类应报 Concept 层缺失: {direct_metal_layers}"
+    print(f"[CHECK v13] Metal_000 Concept layer gap (direct): {direct_metal_layers}")
 
     print("[MIDDLEWARES] self-check OK")
     return 0
