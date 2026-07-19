@@ -279,6 +279,12 @@ def score_run(workspace: Path) -> dict:
     # score.py 直接 os.environ.get 不 load .env, rcb_huginn 入口得自己 load
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent / "ResearchClawBench" / "evaluation" / ".env")
+    # .env 里 JUDGE_API_KEY 可能过期/无效, 优先用环境变量里的 DEEPSEEK_API_KEY
+    # (shell 里 $env:DEEPSEEK_API_KEY 是用户当前有效 key)
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        os.environ["JUDGE_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+        os.environ.setdefault("JUDGE_API_BASE", "https://api.deepseek.com/v1")
+        os.environ.setdefault("JUDGE_MODEL_NAME", "deepseek-chat")
     from evaluation.score import score_workspace
     return score_workspace(workspace)
 
