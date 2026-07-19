@@ -37,7 +37,11 @@ from huginn.utils.session_context import get_user_message
 
 from .callbacks import CallbackMixin
 from .context import ContextMixin
-from .middlewares import FixDanglingToolCallsMiddleware, RateLimitMiddleware
+from .middlewares import (
+    DeliverableCoverageMiddleware,
+    FixDanglingToolCallsMiddleware,
+    RateLimitMiddleware,
+)
 from .reflection import ReflectionMixin
 from .session import SessionMixin
 from .streaming import StreamingMixin
@@ -732,6 +736,7 @@ class HuginnAgent(
                 backend=fs_backend,
                 middleware=[
                     FixDanglingToolCallsMiddleware(),
+                    DeliverableCoverageMiddleware(),
                     RateLimitMiddleware(),
                 ],
             ).with_config({
