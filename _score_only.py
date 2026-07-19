@@ -2,11 +2,12 @@
 import os, sys
 from pathlib import Path
 
-# 用 DeepSeek 作 judge
-os.environ["JUDGE_API_KEY"] = os.environ.get("DEEPSEEK_API_KEY", "")
-os.environ["JUDGE_API_BASE"] = "https://api.deepseek.com"
-os.environ["JUDGE_MODEL_NAME"] = "deepseek-chat"
-os.environ["JUDGE_SKIP_VISION"] = "1"
+# .env 里 JUDGE_API_KEY/BASE/MODEL_NAME 已配 (deepseek-chat), load 进来
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / "ResearchClawBench" / "evaluation" / ".env")
+
+# deepseek-chat 不支持 image_url, 跳视觉评分走 text prompt
+os.environ.setdefault("JUDGE_SKIP_VISION", "1")
 
 sys.path.insert(0, str(Path(__file__).parent / "ResearchClawBench"))
 
@@ -26,7 +27,7 @@ _score_mod._score_single_item = _patched_score_single
 
 from evaluation.score import score_workspace
 
-ws = sys.argv[1] if len(sys.argv) > 1 else r"c:/Users/wanzh/Desktop/matsci-agent/ResearchClawBench/workspaces/Astronomy_000_20260718_221927"
+ws = sys.argv[1] if len(sys.argv) > 1 else r"c:/Users/wanzh/Desktop/matsci-agent/ResearchClawBench/workspaces/Astronomy_000_20260720_005416"
 result = score_workspace(ws)
 import json
 print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
