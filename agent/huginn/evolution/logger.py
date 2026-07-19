@@ -4,6 +4,7 @@ for later evolutionary analysis."""
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +54,8 @@ class ExecutionLogger:
 
     def __init__(self, persist_dir: str | None = None):
         self.persist_dir = (
-            Path(persist_dir) if persist_dir else Path.home() / ".huginn" / "logs"
+            Path(persist_dir) if persist_dir
+            else Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn")) / "logs"
         )
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         self._tool_calls: list[ToolCallRecord] = []
