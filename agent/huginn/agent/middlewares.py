@@ -493,26 +493,40 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
     def _build_layer_frontier_msg(
         self, gaps: list[tuple[str, list[str]]]
     ) -> str:
-        """v13: 拼接纵向层次缺失的 frontier message."""
-        layer_desc = {
-            "concept": "Concept 层 (物理概念未在 report 引入)",
-            "equation": "Equation 层 (未给出定义式或约束方程)",
-            "data": "Data 层 (未给出对应数值结果)",
-            "method": "Method 层 (未在 ## Methodology 段描述方法)",
-            "claim": "Claim 层 (未明确是 upper limit/point estimate, 或单位未对齐 task 语境)",
+        """v13: 拼接纵向层次缺失的 frontier message.
+
+        改进 (Astronomy_000 验证后):
+        - 报所有缺失层, 不只 layers[0] — agent 之前只看到 "Method 层缺失" 就以为
+          补一段 Discussion 就够了, 实际 Method/Data/Claim 三层都缺.
+        - 每层给具体可操作提示, 不是模糊的 "层次不完整".
+        - Claim 层特别强调 upper limit + 单位 + CL 的数值形式, 因 judge 按
+          "具体数值 + 单位 + 置信水平" 评分, 定性描述 = 0 分.
+        """
+        layer_action = {
+            "concept": "在 report 任意位置引入该物理概念 (定义 + 物理含义)",
+            "equation": "在 report 给出该量的定义式或约束方程 (LaTeX 公式)",
+            "data": "在 ## Results 段给出该量的具体数值 (不是定性描述, 必须有数字 + 单位)",
+            "method": "在 ## Methodology 段描述该量的推导/计算方法",
+            "claim": "在 ## Discussion 或 ## Conclusion 段给出 upper limit/point estimate 的具体数值 + 单位 + 置信水平 (如 'g < X GeV⁻¹ at 95% CL')",
         }
         lines = [
             "[FRONTIER TASK — DeliverableCoverageMiddleware / v13 纵向分层]\n",
-            "以下物理量已分析但层次不完整 (横向上 covered, 纵向缺层):\n",
+            "以下物理量已提及但层次不完整 (横向上 covered, 纵向缺层).\n",
+            "必须在 report.md 对应 section 补全每一层, 不是补一段就够了:\n\n",
         ]
         for q, layers in gaps:
-            # 报最关键的一层 (concept > equation > data > method > claim 优先级)
-            lines.append(f"  - {q}: {layer_desc[layers[0]]}\n")
+            lines.append(f"  ■ {q}:\n")
+            for layer in layers:
+                lines.append(f"    - [{layer}] {layer_action[layer]}\n")
+            lines.append("\n")
         lines.append(
-            "\n每层缺失 = criterion 部分扣分. 必须在 report.md 对应 section 补全. "
-            "特别地, Claim 层缺失时检查: (1) 是否明确 upper limit vs point estimate; "
-            "(2) 单位是否对齐 task description 的语境 (如 self-interaction coupling "
-            "应为 g [GeV⁻¹] 而非 dimensionless λ); (3) confidence level 是否标明."
+            "特别提醒:\n"
+            "- coupling strength 类量 (self-interaction/interaction/decay) 要明确给出"
+            " 耦合常数符号 + 单位 (如 g [GeV⁻¹]), 不要用 decay constant f_a 或 "
+            "dimensionless λ 替代 — judge 按 task description 期望的单位评分.\n"
+            "- 'upper limit' 必须是 'X < Y unit at Z% CL' 这种数值形式, "
+            "不是 'we constrain' / 'we limit' 这种定性描述.\n"
+            "- 每补一层后, 重新检查 report 是否真的在对应 section 出现了该量的数值."
         )
         return "".join(lines)
 
