@@ -536,11 +536,10 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             "(c) 置信水平, (d) 对应物理量. 缺任一 = 0 分. 不是 'we constrain' / "
             "'consistent with' 这种定性描述.\n\n"
             "4. **单位与 task description 一致**: coupling strength 类量用标准 "
-            "物理单位 (不是 decay constant 或 dimensionless ratio), judge 按 "
-            "task 期望的单位评分, 替代表述 = 0 分.\n\n"
-            "5. **数值从分析中推出**: 不要凭空造数, 也不要在数值明显不合理时 "
-            "承认 'weaker than existing bounds' 然后接受 flaw — 如果数量级 "
-            "明显不对, 换方法重算. judge 按方法论的合理性评分.\n\n"
+            "物理单位 (不是 dimensionless ratio 或替代表述), judge 按 task "
+            "期望的单位评分, 替代表述 = 0 分.\n\n"
+            "5. **数值从分析中推出**: 不要凭空造数, 也不要在数量级明显不合理时 "
+            "接受 flaw 了事 — 换方法重算. judge 按方法论的合理性评分.\n\n"
             "6. **数据源**: related_work/ 里已有相关公式, 用 read_file 读 "
             "paper 找定义和计算方法, 在 code/ 写脚本算数值上限.\n"
         )
@@ -577,12 +576,10 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             "(c) 置信水平, (d) 对应物理量. 缺任一 = 0 分. 定性描述 'we "
             "constrain' / 'consistent with' 不接受.\n\n"
             "5. **单位与 task description 一致**: coupling strength 类量用标准 "
-            "物理单位 (不是 decay constant 或 dimensionless ratio). judge 按 "
-            "task 期望的单位评分, 替代表述 = 0 分. 公式查 related_work/ "
-            "(用 read_file).\n\n"
-            "6. **数值从分析中推出**: 不要凭空造数, 也不要在数量级明显不对时 "
-            "承认 'weaker than existing bounds' 然后接受 flaw — 换方法重算. "
-            "judge 按方法论的合理性评分.\n\n"
+            "物理单位 (不是 dimensionless ratio 或替代表述). judge 按 task "
+            "期望的单位评分, 替代表述 = 0 分. 公式查 related_work/ (用 read_file).\n\n"
+            "6. **数值从分析中推出**: 不要凭空造数, 也不要在数量级明显不合理时 "
+            "接受 flaw 了事 — 换方法重算. judge 按方法论的合理性评分.\n\n"
         )
         return "".join(lines)
 
