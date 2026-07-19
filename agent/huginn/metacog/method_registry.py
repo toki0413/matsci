@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 
@@ -80,8 +80,16 @@ class MethodRegistry:
     COLD_FAMILY_THRESHOLD = 0.1
 
     def __init__(self, families: list[MethodFamily] | None = None) -> None:
+        # 深拷贝默认族, 避免 mark_blocked 和 member_agent_ids 跨实例污染
+        # (_DEFAULT_FAMILIES 是模块级共享). replace 只浅拷贝, member_agent_ids
+        # 是 list 会被共享 → register_agent 会污染 _DEFAULT_FAMILIES.
+        if families is None:
+            families = [
+                replace(f, member_agent_ids=list(f.member_agent_ids))
+                for f in _DEFAULT_FAMILIES
+            ]
         self._families: dict[str, MethodFamily] = {
-            f.id: f for f in (families or _DEFAULT_FAMILIES)
+            f.id: f for f in families
         }
 
     def all(self) -> list[MethodFamily]:
@@ -127,11 +135,17 @@ class MethodRegistry:
             return None
 
         total = self.total_agents()
-        # 没有 agent 时, 默认分到 dft-direct
+        # 没有 agent 时, 默认分到 dft-direct; 阻塞则选第一个活跃族
         if total == 0:
+            default = self._families.get("dft-direct")
+            if default is not None and not default.is_blocked:
+                return _RedirectSuggestion(
+                    target_family="dft-direct",
+                    reason="no agents yet, default to first-principles baseline",
+                )
             return _RedirectSuggestion(
-                target_family="dft-direct",
-                reason="no agents yet, default to first-principles baseline",
+                target_family=active[0].id,
+                reason=f"no agents yet, default {active[0].id} (dft-direct blocked or absent)",
             )
 
         # 找最热和最冷
