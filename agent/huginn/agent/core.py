@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import ExitStack
 from typing import Any
@@ -238,6 +239,14 @@ class HuginnAgent(
 
         # 当前用户消息, 用于 query-aware tool retrieval
         self._current_user_message: str | None = None
+
+        # P4 Task-Dynamic Tool Router: 当前 task 描述, 由 set_current_task 设.
+        # 跟 _current_user_message 分开, 避免并发覆盖 (session_context.py 警告).
+        # HUGINN_TASK_TOOL_ROUTER=1 时 register_tools_from_registry 会用它过滤工具子集.
+        self._current_task: str | None = None
+        # 上次 routing 用的 task, 跟 _current_task 不同才 refresh, 避免每次 chat
+        # 都重建 graph. ponytail: 字符串比较, 假设相同 task 字符串路由结果一致.
+        self._last_routed_task: str | None = None
 
         self.prompt_cache_control = m.prompt_cache_control
 
@@ -634,12 +643,43 @@ class HuginnAgent(
 
         denied = collect_denied_tool_names(self._permission_config.rules)
 
+        # P4 Task-Dynamic Tool Router: 根据 task 语义动态过滤工具子集.
+        # 默认关 (HUGINN_TASK_TOOL_ROUTER=1 开启). 失败或返回空 → fallback 到
+        # 原 self.tool_filter, 不破坏现有行为. 升级路径: LLM 版小模型打分.
+        #
+        # 跟 self.tool_filter 取交集而非覆盖: caller (如 RCB runner) 显式设的
+        # tool_filter 是硬约束 (限制 agent 只能用 code_tool/bash_tool), 不能被
+        # task router 冲掉. 交集为空 → 保留原 tool_filter (task router 误判时不破坏).
+        effective_filter: set[str] | None = self.tool_filter
+        if (
+            os.environ.get("HUGINN_TASK_TOOL_ROUTER", "0") == "1"
+            and self._current_task
+        ):
+            try:
+                from huginn.runtime.task_tool_router import route_tools
+                available = ToolRegistry.list_tools()
+                routed = route_tools(self._current_task, available)
+                if routed:
+                    routed_set = set(routed)
+                    if self.tool_filter is not None:
+                        candidate = routed_set & self.tool_filter
+                        if candidate:
+                            effective_filter = candidate
+                        # else: 交集空 → task router 误判, 保留原 tool_filter
+                    else:
+                        effective_filter = routed_set
+            except Exception:
+                logger.debug(
+                    "task_tool_router failed, fallback to tool_filter",
+                    exc_info=True,
+                )
+
         tools = []
         for name in ToolRegistry.list_tools():
             tool = ToolRegistry.get(name)
             if tool is None:
                 continue
-            if self.tool_filter is not None and name not in self.tool_filter:
+            if effective_filter is not None and name not in effective_filter:
                 continue
             if name in denied:
                 continue
@@ -661,6 +701,18 @@ class HuginnAgent(
         # ponytail: 直接覆盖, 假设所有工具都来自 registry. 升级: 保留非 registry 来源工具.
         self.langchain_tools = tools
         self._invalidate_tool_description_cache()
+
+    def set_current_task(self, message: str | None) -> None:
+        """记录当前 task 描述, 供 task-dynamic tool router (P4) 使用.
+
+        HUGINN_TASK_TOOL_ROUTER=1 时, 下次 register_tools_from_registry
+        会根据这个 message 路由工具子集. message 为 None 清空路由.
+
+        ponytail: 跟 _current_user_message 分开存, 避免并发覆盖
+        (session_context.py 警告的多 chat() 并发场景).
+        升级路径: 直接读 session_state.current_objective, 不依赖 caller 显式 set.
+        """
+        self._current_task = message
 
     def refresh_tools_from_registry(self) -> None:
         """重连 MCP / 改了 tool_filter / mock fallback 后调一次.
