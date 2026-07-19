@@ -211,6 +211,20 @@ class AgentFactory:
             from huginn.hooks.anomaly_llm_hook import AnomalyLLMHook
             agent.register_hook(POST_TOOL_USE, AnomalyLLMHook(self._anomaly_store))
 
+        # PRM step verifier (P1): 重步工具调完打 0-1 分, 累计低分由 Engine
+        # 自己走 should_pause_for_decision. 默认关, HUGINN_PRM_VERIFIER=1 开启.
+        # 跟 PRT Level 1 一样每次重步都打一次 deepseek-chat, 有成本.
+        if os.environ.get("HUGINN_PRM_VERIFIER", "0") == "1":
+            from huginn.runtime.step_verifier import (
+                StepVerifierHook, make_default_llm_chat_fn,
+            )
+            prm_llm = make_default_llm_chat_fn()
+            if prm_llm is not None:
+                agent.register_hook(POST_TOOL_USE, StepVerifierHook(prm_llm))
+            else:
+                # 没 deepseek key 时静默跳过, debug log 已经记了
+                pass
+
         # Prompt 引导钩子: 用户提问里命中"验证/计算/求解"等关键词时,
         # 强制要求走工具. 纯规则匹配零成本, 默认开, 不需要环境变量.
         from huginn.hooks import USER_PROMPT_SUBMIT

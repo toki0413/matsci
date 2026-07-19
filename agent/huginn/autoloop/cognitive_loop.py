@@ -390,12 +390,17 @@ def check_pause_decision(
     kb: Any,
     fired_intentions: list | None,
     pmk_state: dict[str, str] | None,
+    grill_state: dict | None = None,
 ) -> tuple[bool, str, list]:
     """AV4: should_pause_for_decision 共享包装.
 
     返回 (pause, reason, opts). 失败时 (False, "", []).
     rcb_runner (G71) 和 autoloop reflect_fn (AV2) 都调这个.
     ponytail: 只调判定, 不做 lifecycle/resume — 那些动作两条路径不同, 留在 caller.
+
+    grill_state (P0 grill-me) 由 caller 在 plan_check 阶段构造:
+    {"has_grilled": bool, "ambiguity_score": float, "tier": str,
+     "scene_tag": str, "plan_is_empty": bool}.
     """
     try:
         from huginn.runtime.task_lifecycle import (
@@ -406,6 +411,7 @@ def check_pause_decision(
             kb_recall_empty=(kb is None),
             fired_intentions=fired_intentions or [],
             pmk_state=pmk_state,
+            grill_state=grill_state,
         )
         return bool(_pause), str(_reason or ""), list(_opts or [])
     except Exception as exc:
