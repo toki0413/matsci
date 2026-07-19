@@ -530,13 +530,14 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             "interacting ULBs' 或 'the framework can incorporate additional "
             "physics (self-interactions)' — 这是 acknowledge 而非 deliver, "
             "judge 直接判 0. 必须在 ## Results / ## Discussion 给出实际数值.\n\n"
-            "2. **coupling strength 类量必须给出耦合常数符号 + 单位**: "
-            "self-interaction/interaction/decay 量的正确形式是 g [GeV⁻¹], "
-            "不要用 decay constant f_a 或 dimensionless λ 替代 — "
-            "judge 按 task description 期望的单位评分. 关系一般是 "
-            "g² ~ m_a²/f_a² (具体定义查 related_work/paper_*.pdf).\n\n"
-            "3. **'upper limit' 必须是数值形式**: 'X < Y unit at Z% CL' "
-            "(如 'g < 1.3e-17 GeV⁻¹ at 95% CL'), 不是 'we constrain' / "
+            "2. **coupling strength 类量必须给出 g [GeV⁻¹], 不接受 dimensionless "
+            "g 或 f_a**: 关键换算 g [GeV⁻¹] = 1/f_a [GeV] — 如果你已算出 "
+            "f_a > X GeV, 必须改写为 g < 1/X GeV⁻¹. 不要写 dimensionless "
+            "g = μ/f_a. judge 按 task description 期望的 GeV⁻¹ 单位评分, "
+            "用 f_a 或 dimensionless 都 = 0 分.\n\n"
+            "3. **'upper limit' 必须是数值形式**: 'g < Y GeV⁻¹ at 95% CL for "
+            "μ = X eV' — 必须包含 (a) 数值 Y, (b) 单位 GeV⁻¹, (c) 置信水平, "
+            "(d) 对应的 boson mass X. 缺任一 = 0 分. 不是 'we constrain' / "
             "'we limit' / 'consistent with' 这种定性描述.\n\n"
             "4. **数据来源**: related_work/ 里的 PDF 已有相关公式 (superradiance + "
             "self-interaction quenching), 用 read_file 工具读 paper_*.pdf 找 "
@@ -568,14 +569,17 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             "脚本 → 数值结果 + 单位.\n\n"
             "2. **coupling strength 类量**: self-interaction/interaction/decay "
             "coupling 的正确单位是 g [GeV⁻¹], 不是 f_a (decay constant) 或 "
-            "dimensionless λ. 关系 g² ~ m_a²/f_a², 具体公式查 related_work/"
-            "paper_*.pdf (用 read_file).\n\n"
+            "dimensionless λ. **关键换算**: g [GeV⁻¹] = 1/f_a [GeV] — "
+            "如果你算出了 f_a > X GeV, 必须写成 g < 1/X GeV⁻¹. "
+            "不要写 dimensionless g = μ/f_a, judge 不接受. "
+            "公式查 related_work/paper_*.pdf (用 read_file).\n\n"
             "3. **禁止放入 Future Work / Limitations**: 把量写成 'our "
             "constraints apply to weakly interacting ULBs' 或 'the framework "
             "can incorporate X' = acknowledge 而非 deliver, judge 判 0 分. "
             "必须在 ## Results / ## Discussion 给数值.\n\n"
-            "4. **upper limit 格式**: 'X < Y unit at Z% CL' (如 "
-            "'g < 1.3e-17 GeV⁻¹ at 95% CL'), 不是 'we constrain' 这种定性描述.\n\n"
+            "4. **upper limit 格式**: 'g < Y GeV⁻¹ at 95% CL for μ = X eV' "
+            "— 必须包含: (a) 具体数值 Y, (b) 单位 GeV⁻¹, (c) 置信水平, "
+            "(d) 对应的 boson mass X. 缺任一 = 0 分.\n\n"
         )
         return "".join(lines)
 
@@ -814,6 +818,7 @@ def _self_check() -> int:
                                         ["method", "data", "claim"])])
     assert "Future Work" in msg, "frontier msg 必须明确禁止 Future Work 模式"
     assert "GeV⁻¹" in msg, "frontier msg 必须给出单位提示 GeV⁻¹"
+    assert "1/f_a" in msg, "frontier msg 必须给出 g=1/f_a 换算公式"
     assert "related_work" in msg, "frontier msg 必须指向 related_work 数据源"
     assert "0 分" in msg, "frontier msg 必须明确 0 分后果"
     print(f"[CHECK v13] layer frontier msg wording OK")
@@ -824,7 +829,8 @@ def _self_check() -> int:
     assert "ulb masses" in planning
     assert "self-interaction coupling strengths" in planning
     assert "Future Work" in planning, "planning hint 必须禁止 future work"
-    assert "g²" in planning or "g^2" in planning or "GeV⁻¹" in planning
+    assert "1/f_a" in planning, "planning hint 必须给出 g=1/f_a 换算"
+    assert "GeV⁻¹" in planning
     print(f"[CHECK v13] planning hint wording OK")
 
     print("[MIDDLEWARES] self-check OK")
