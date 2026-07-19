@@ -694,12 +694,16 @@ class MemoryManager:
         decay_per_day: float = 0.97,
         prune_threshold: float = 0.15,
         deduplicate: bool = True,
+        cluster: bool = False,
+        llm_chat_fn: Any = None,
     ) -> dict[str, int]:
-        """Run long-term memory maintenance (decay, prune, dedupe, expire)."""
+        """Run long-term memory maintenance (decay, prune, dedupe, expire, optional cluster)."""
         return self.longterm.maintenance(
             decay_per_day=decay_per_day,
             prune_threshold=prune_threshold,
             deduplicate=deduplicate,
+            cluster=cluster,
+            llm_chat_fn=llm_chat_fn,
         )
 
     def sync_memory_md(self) -> Path | None:
