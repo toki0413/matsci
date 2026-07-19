@@ -546,20 +546,72 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
         )
         return "".join(lines)
 
+    def _build_planning_msg(self, quantities: list[str]) -> str:
+        """v13: report.md 还没写时, 基于 INSTRUCTIONS 注入 planning hint.
+
+        时机问题修复 (Astronomy_000 第5轮验证): 之前 middleware 在 report.md
+        写完后才注入 frontier msg, agent 已经在 'finish' 模式不会重写.
+        改成在 report 写之前就注入 planning hint, 让 agent 知道必须算哪些量.
+        ponytail: 不读 report_text, 只读 INSTRUCTIONS 提取 quantities, 复用
+        _extract_quantities. 升级路径: 加 task-type 检测给更具体的 hint.
+        """
+        lines = [
+            "[PLANNING HINT — DeliverableCoverageMiddleware / v13]\n",
+            "INSTRUCTIONS.md 明确要求以下物理量必须给出数值结果 (不是 future work):\n\n",
+        ]
+        for q in quantities:
+            lines.append(f"  ■ {q}\n")
+        lines.append(
+            "\n## 规划要求 (违反 = 对应 criterion 0 分)\n\n"
+            "1. **分析阶段就必须计算所有量**: 不要先写 report 再补, "
+            "code/ 阶段就要把每个量都算出数值. 每个量都需要: 定义式 → 计算 "
+            "脚本 → 数值结果 + 单位.\n\n"
+            "2. **coupling strength 类量**: self-interaction/interaction/decay "
+            "coupling 的正确单位是 g [GeV⁻¹], 不是 f_a (decay constant) 或 "
+            "dimensionless λ. 关系 g² ~ m_a²/f_a², 具体公式查 related_work/"
+            "paper_*.pdf (用 read_file).\n\n"
+            "3. **禁止放入 Future Work / Limitations**: 把量写成 'our "
+            "constraints apply to weakly interacting ULBs' 或 'the framework "
+            "can incorporate X' = acknowledge 而非 deliver, judge 判 0 分. "
+            "必须在 ## Results / ## Discussion 给数值.\n\n"
+            "4. **upper limit 格式**: 'X < Y unit at Z% CL' (如 "
+            "'g < 1.3e-17 GeV⁻¹ at 95% CL'), 不是 'we constrain' 这种定性描述.\n\n"
+        )
+        return "".join(lines)
+
     def _inject_frontier(self, request) -> None:
-        """读 INSTRUCTIONS.md + report.md, 缺失量 + 层次缺失注入 frontier task."""
+        """读 INSTRUCTIONS.md + report.md, 缺失量 + 层次缺失注入 frontier task.
+
+        时机: report.md 不存在时注入 planning hint (写 report 前), 存在时
+        注入 frontier task (写 report 后补漏). 两段都用同一份 quantities 列表.
+        """
         try:
             cwd = Path.cwd()
             instructions = cwd / "INSTRUCTIONS.md"
             report = cwd / "report" / "report.md"
-            if not instructions.exists() or not report.exists():
-                return  # report 还没写, Phase 3 强制写 report 的逻辑在 system prompt
+            if not instructions.exists():
+                return
             inst_text = instructions.read_text(encoding="utf-8")
-            report_text = report.read_text(encoding="utf-8")
+            quantities = self._extract_quantities(inst_text)
+            if not quantities:
+                return
 
-            # 横向 (A): 缺哪些物理量
+            msgs = getattr(request, "messages", None)
+            if msgs is None:
+                return
+
+            # report 还没写 → 注入 planning hint, 让 agent 在 code/ 阶段就算全
+            if not report.exists():
+                planning = self._build_planning_msg(quantities)
+                request.messages = [SystemMessage(content=planning)] + list(msgs)
+                logger.info(
+                    f"DeliverableCoverage planning hint injected: quantities={quantities}"
+                )
+                return
+
+            # report 已写 → 横向 + 纵向检查, 缺啥补啥
+            report_text = report.read_text(encoding="utf-8")
             missing = self._check_coverage(inst_text, report_text)
-            # 纵向 (v13): covered 的物理量缺哪些层
             gaps = self._check_layer_gaps(inst_text, report_text)
 
             if not missing and not gaps:
@@ -573,9 +625,6 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             frontier = "\n\n".join(parts)
 
             # prepend SystemMessage, 不累积 — messages 每轮从 state 重建
-            msgs = getattr(request, "messages", None)
-            if msgs is None:
-                return
             request.messages = [SystemMessage(content=frontier)] + list(msgs)
             logger.info(
                 f"DeliverableCoverage injected: horizontal={missing}, layer_gaps={gaps}"
@@ -768,6 +817,15 @@ def _self_check() -> int:
     assert "related_work" in msg, "frontier msg 必须指向 related_work 数据源"
     assert "0 分" in msg, "frontier msg 必须明确 0 分后果"
     print(f"[CHECK v13] layer frontier msg wording OK")
+
+    # 场景 12 (v13 planning): planning hint 必须包含所有 required quantities
+    planning = m._build_planning_msg(["ulb masses", "self-interaction coupling strengths"])
+    assert "PLANNING HINT" in planning
+    assert "ulb masses" in planning
+    assert "self-interaction coupling strengths" in planning
+    assert "Future Work" in planning, "planning hint 必须禁止 future work"
+    assert "g²" in planning or "g^2" in planning or "GeV⁻¹" in planning
+    print(f"[CHECK v13] planning hint wording OK")
 
     print("[MIDDLEWARES] self-check OK")
     return 0
