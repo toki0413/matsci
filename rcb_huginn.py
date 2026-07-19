@@ -276,6 +276,9 @@ async def run_agent(prompt: str, workspace: Path, timeout: int, max_tool_calls: 
 
 def score_run(workspace: Path) -> dict:
     """调 RCBench score.py 对 workspace 评分."""
+    # score.py 直接 os.environ.get 不 load .env, rcb_huginn 入口得自己 load
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / "ResearchClawBench" / "evaluation" / ".env")
     from evaluation.score import score_workspace
     return score_workspace(workspace)
 
