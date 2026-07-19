@@ -200,9 +200,15 @@ class AutoloopEngine:
         goal_scheduler: GoalScheduler | None = None,
         verification_model: Any = None,
         memory_manager: MemoryManager | None = None,
+        agent_factory: Any = None,
     ):
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
+        # BranchIncubator 用的 agent_factory, None 时 incubator 路径跳过.
+        # 由 RCBench runner / CLI 在需要 N=3 隔离采样时注入.
+        self._agent_factory = agent_factory
+        # lazy init, 第一次 _hypothesize_via_branch_incubator 才构造
+        self._branch_incubator: Any = None
         self.model = get_model(self.settings)
         # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
         # 默认 None 时退回 self.model, 保持向后兼容.
@@ -2680,8 +2686,91 @@ Respond JSON only:
             "timestamp": datetime.now().isoformat(),
         }
 
+    async def _hypothesize_via_branch_incubator(
+        self, context: dict[str, Any]
+    ) -> str | None:
+        """走 BranchIncubator 的 N 路隔离采样, 替代 main+hot_model 2 路.
+
+        HUGINN_USE_BRANCH_INCUBATOR=1 + agent_factory 注入时由 _hypothesize 调用.
+        内部构造 prompt (复用 _build_hypothesis_prompt + symreg + conjecture hint),
+        让每个 Subagent 看到完整 task. 返回最优 hypothesis (tokens_used 最小且 success);
+        全失败时返回 None 让 caller fallback 到原 2 路. 异常吞掉 + log, 不 raise.
+        """
+        if self._agent_factory is None:
+            return None
+        try:
+            from huginn.metacog.branch_incubator import BranchIncubator
+        except Exception:
+            logger.warning(
+                "BranchIncubator import failed, fallback to main+hot_model",
+                exc_info=True,
+            )
+            return None
+
+        # 复用原 prompt 构造流程, 让 Subagent 看到相同 task
+        symreg_task = asyncio.create_task(self._symreg_hint(context))
+        conjecture_hint = self._conjecture_hint(context)
+        symreg_hint = await symreg_task
+        prompt = self._build_hypothesis_prompt(context)
+        if symreg_hint:
+            prompt = f"{symreg_hint}\n{prompt}"
+        if conjecture_hint:
+            prompt = f"{conjecture_hint}\n{prompt}"
+
+        if self._branch_incubator is None:
+            self._branch_incubator = BranchIncubator()
+
+        try:
+            results = await self._branch_incubator.run_round(
+                task=prompt,
+                agent_factory=self._agent_factory,
+                n_branches=3,
+                math_background=context.get("math_background", ""),
+                researcher_intuition=context.get("researcher_intuition", ""),
+                round_idx=self._iteration,
+                total_rounds=max(self._max_pivots * 3, 10),
+            )
+        except Exception:
+            logger.warning(
+                "branch incubator run_round failed, fallback to main+hot_model",
+                exc_info=True,
+            )
+            return None
+
+        # 选 success + hypothesis 非空 + tokens_used 最小 (省 token)
+        candidates = [
+            r for r in results if r.success and r.hypothesis
+        ]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda r: r.tokens_used)
+        return best.hypothesis
+
     async def _hypothesize(self, context: dict[str, Any]) -> str | None:
         """Generate a hypothesis from perceived context."""
+        # BranchIncubator gating: flag on + factory 注入时走 N=3 隔离采样,
+        # 失败/None 时 fallback 到下面 main+hot_model 2 路.
+        if (
+            os.environ.get("HUGINN_USE_BRANCH_INCUBATOR", "0") == "1"
+            and self._agent_factory is not None
+        ):
+            try:
+                inc_hyp = await self._hypothesize_via_branch_incubator(context)
+            except Exception:
+                logger.warning(
+                    "branch incubator unexpected error, fallback",
+                    exc_info=True,
+                )
+                inc_hyp = None
+            if inc_hyp:
+                self._last_hypothesis = inc_hyp
+                self._last_raw_hypothesis = inc_hyp
+                self._record_backup_candidates(inc_hyp, inc_hyp)
+                self._metacog_audit_hypothesis(inc_hyp, context)
+                return inc_hyp
+            logger.warning(
+                "branch incubator returned None, fallback to main+hot_model"
+            )
         # Use knowledge graph + LLM to generate hypothesis
         # symreg (async, up to 60s) and conjecture (sync, fast) are independent
         symreg_task = asyncio.create_task(self._symreg_hint(context))
