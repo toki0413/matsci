@@ -216,19 +216,29 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
     LLM 解析 task description. 当前接受一定 noise (误报比漏报好).
     """
 
-    # "upper limits on X and Y" / "derive X and Y" / "constrain X and Y" 等
-    # X/Y 限制最多 5 个词 ([\w\-]+(?:\s+[\w\-]+){0,4}?) 避免匹配整个从句
-    # [\w\-] 让 "self-interaction" 这种带连字符的词被当成一个词
+    # 两条 pattern 抓 "X and Y" 物理量对:
+    #   (1) 动词触发: "derive/constrain/estimate/predict/classify X and Y"
+    #   (2) 列举触发: "classifications such as X and Y" (Material_000 模式)
+    # X/Y 限制最多 5 个词避免匹配整个从句; [\w\-/] 让 "self-interaction"
+    # 和 "metal/insulator" 这种带连字符/斜杠的复合词被当成一个词.
     _QUANTITY_PATTERNS = [
         re.compile(
             r'(?:upper limits? on|limits? on|derive|constrain|estimate|'
             r'calculate|determine|measure|compute|obtain|provide|report|'
             r'analyze|investigate|study|explore|examine|fit|infer|extract|'
-            r'bound|restrict)\s+([\w\-]+(?:\s+[\w\-]+){0,4}?)\s+and\s+'
-            r'([\w\-]+(?:\s+[\w\-]+){0,4}?)'
-            r'(?=[.,;]|\s+(?:to|in|for|by|using|via|with|from|thereby|thus|hence)\s|$)',
+            r'bound|restrict|classify|categorize|predict|identify|characterize)'
+            r'\s+([\w\-/]+(?:\s+[\w\-/]+){0,4}?)\s+and\s+'
+            r'([\w\-/]+(?:\s+[\w\-/]+){0,4}?)'
+            r'(?=[.,;)]|\s+(?:to|in|for|by|using|via|with|from|thereby|thus|hence)\s|$)',
             re.IGNORECASE,
-        )
+        ),
+        re.compile(
+            r'(?:classifications?|categories?|properties|predictions?|types?|labels?)'
+            r'\s+such\s+as\s+([\w\-/]+(?:\s+[\w\-/]+){0,4}?)\s+and\s+'
+            r'([\w\-/]+(?:\s+[\w\-/]+){0,4}?)'
+            r'(?=[.,;)]|\s+(?:to|in|for|by|using|via|with|from|thereby|thus|hence)\s|$)',
+            re.IGNORECASE,
+        ),
     ]
 
     _STOPWORDS = frozenset({
@@ -247,13 +257,17 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
     })
 
     # 数值模式 — 行里有真实数值才算 "真的分析了", future work / caveat 无数值 = missing
-    # 要求小数点后有数字 (排除列表编号 "1." "2.") 或 科学计数法 或 数字+单位/比较符
+    # 优先匹配小数/科学计数法/单位/比较符; 最后兜底纯整数 (2位+), 排除列表编号 "1. " / "1."
+    # ponytail: 纯整数兜底会放过 "Figure 28" 这类 false positive, 但 ±1 窗口 + keyword
+    # 过滤已经把风险压到可接受范围. 漏报 (agent 分析了但 middleware 仍提醒, 浪费 token)
+    # 比误报 (agent 没分析但 middleware 不提醒, 丢分) 好 — 前者浪费 token, 后者丢分.
     _NUMERIC_PATTERN = re.compile(
         r"\d+\.\d+"  # 小数 5.2 / 1.20 (排除 "1." 列表编号)
         r"|\d+e[\-+]?\d+"  # 科学计数法 1e-20
         r"|\d+\s*[×x*]\s*10"  # 1.2 × 10^...
         r"|\d+\s*(?:<|≤|>|≥|±)"  # 比较符 μ < 5 / ± 0.02
         r"|\d+\s*(?:ev|gev|mev|kev|m☉|msun|myr|gyr|yr|kg|hz)\b"  # 数字+单位
+        r"|\d{2,}(?!\.\d)(?!\.\s)(?!\.$)"  # 2位+整数, 排除小数/列表编号
     )
 
     def _extract_quantities(self, text: str) -> list[str]:
@@ -275,10 +289,12 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
 
         ponytail: 取所有实词而非前 N 个, 这样 "statistically rigorous upper
         limits on ulb masses" 里的 "ulb" / "masses" 都能匹配 report 里的
-        "ULB mass". 升级路径: 加 stemmer (masses→mass) 或 synonym dict.
+        "ULB mass". 按空白/连字符/斜杠拆分让 "metal/insulator" 拆成 metal +
+        insulator, "d/g/i-wave" 拆出 wave (d/g/i 太短被过滤, 但 wave/anisotropy
+        足以匹配). 升级路径: 加 stemmer (masses→mass) 或 synonym dict.
         """
         words = [
-            w for w in re.split(r"[\s\-]+", phrase)
+            w for w in re.split(r"[\s\-/]+", phrase)
             if w.lower() not in self._STOPWORDS and len(w) > 2
         ]
         if not words:
@@ -424,6 +440,48 @@ def _self_check() -> int:
     assert "self-interaction coupling strengths" in msg
     assert "0 分" in msg
     print(f"[CHECK] frontier msg OK")
+
+    # 场景 5: Material_000 INSTRUCTIONS — "classifications such as X and Y" 模式
+    # X = metal/insulator (斜杠复合词), Y = d/g/i-wave anisotropy (连字符+斜杠)
+    mat_inst = (
+        "The output is a list of candidate materials predicted to be "
+        "altermagnets with high probability, along with their electronic "
+        "structure properties confirmed by first-principles calculations "
+        "(e.g. 50 newly discovered altermagnets with classifications such "
+        "as metal/insulator and d/g/i-wave anisotropy)."
+    )
+    mat_q = m._extract_quantities(mat_inst)
+    assert any("metal" in q or "insulator" in q for q in mat_q), \
+        f"metal/insulator not extracted: {mat_q}"
+    assert any("anisotropy" in q or "wave" in q for q in mat_q), \
+        f"d/g/i-wave anisotropy not extracted: {mat_q}"
+    print(f"[CHECK] Material_000 extracted: {mat_q}")
+
+    # 场景 6: Material_000 report 缺分类 — 应报 missing
+    mat_report_missing = (
+        "# Altermagnetic Materials Discovery\n\n"
+        "## Results\n"
+        "The GNN model achieves ROC-AUC = 0.486 on the candidate set.\n"
+        "Top-50 precision is 0.080 with 4 true positives identified.\n\n"
+        "## Discussion\n"
+        "The model struggles due to extreme class imbalance.\n"
+    )
+    mat_missing = m._check_coverage(mat_inst, mat_report_missing)
+    assert len(mat_missing) >= 1, \
+        f"should report missing classifications: {mat_missing}"
+    print(f"[CHECK] Material_000 missing (no classification): {mat_missing}")
+
+    # 场景 7: Material_000 report 有分类数值 — 应 covered
+    mat_report_full = (
+        "# Altermagnetic Materials Discovery\n\n"
+        "## Classification Results\n"
+        "Of 50 discovered altermagnets, 32 are metals and 18 are insulators.\n"
+        "Anisotropy analysis: 12 d-wave, 8 g-wave, 10 i-wave patterns.\n"
+    )
+    mat_missing_full = m._check_coverage(mat_inst, mat_report_full)
+    assert mat_missing_full == [], \
+        f"should be fully covered: {mat_missing_full}"
+    print(f"[CHECK] Material_000 full coverage: {mat_missing_full}")
 
     print("[MIDDLEWARES] self-check OK")
     return 0
