@@ -716,6 +716,16 @@ class StreamingMixin:
         # 并发 chat() 调用会互相覆盖. contextvars 已隔离每协程副本, core.py
         # 的 _build_graph 用 get_user_message() 读, 无竞争.
 
+        # P4 Task-Dynamic Tool Router: task 变化时 refresh tool_filter.
+        # env=0 时 set_current_task 内部直接 return (无 op). ponytail: 只在
+        # task 变化时 refresh, 避免每次 chat 都重建 graph cache.
+        if os.environ.get("HUGINN_TASK_TOOL_ROUTER", "0") == "1":
+            prev_task = self._last_routed_task
+            self.set_current_task(message)
+            if message != prev_task:
+                self.refresh_tools_from_registry()
+                self._last_routed_task = message
+
         # OAK 启发: ConversationTree 通电 — 把每条 user/ai 消息写进树
         # phase 转移时 fork 出新分支, 让研究历史成为树而非线性序列
         try:
