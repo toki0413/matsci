@@ -1,0 +1,406 @@
+"""Trajectory success pattern extractor (P2).
+
+不新建 skill_library 组件. 复用 KB (ChromaDB) + auto_ingest 路径, 在
+trajectory 成功结束时调一次 LLM 抽 "可复用 pattern", 写入 KB. 下次任务
+开始时 RAG 自然召回, LLM 自己决定何时复用.
+
+参考:
+- Voyager (Wang et al. 2023): skill library, 但我们要的是 in-context 复用,
+  不是可执行 skill 缓存.
+- Alita (AutoGPT-style): 抽 task-solving pattern.
+- Awesome-Long-Horizon-Agents survey Pillar II Self-Evolution 章节.
+
+设计原则 (ponytail):
+- 不抽可执行 skill (要 sandbox 验证, 成本高)
+- 不建专门 skill 索引 (ChromaDB 已是索引)
+- 不建 skill dispatcher (LLM 自己决定何时复用)
+- 只在 trajectory 成功时抽一次 (失败 trajectory 不抽, 避免污染)
+- 单次 LLM 调用 (deepseek-chat, 跟 PRT Level 1 / PRM verifier 同款)
+
+接入:
+  from huginn.knowledge.trajectory_pattern import (
+      extract_and_store_pattern,
+  )
+  if goal_achieved:
+      extract_and_store_pattern(
+          objective=objective,
+          trajectory=trajectory_data,
+          final_output=final_output,
+          llm_chat_fn=llm_chat_fn,
+      )
+
+升级路径:
+- 失败 trajectory 也抽 (但标 failure_lesson, 不混入 success pattern)
+- 多次 trajectory 抽出来的 pattern 做 dedup + 合并
+- pattern 加 confidence 字段, 被复用且成功时 +ε, 失败时 -ε
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Awaitable, Callable
+
+logger = logging.getLogger(__name__)
+
+
+_PATTERN_PROMPT_TEMPLATE = """You are extracting a reusable problem-solving pattern from a successful agent trajectory.
+
+The user's objective was:
+{objective}
+
+The agent achieved the goal. Extract a CONCISE reusable pattern that would help
+a future agent solve similar problems. Output JSON only, no markdown fences:
+
+{{
+  "task_pattern": "1-line description of the problem type this pattern solves",
+  "key_steps": ["step1 in 1 line", "step2 in 1 line", "..."],
+  "key_decisions": ["decision1: why X not Y (1 line)", "decision2: ..."],
+  "pitfalls": ["pitfall1 + how to avoid (1 line)"],
+  "applicability": "when to use this pattern (1 line)"
+}}
+
+Rules:
+- Keep each field under 200 chars.
+- 3-7 key_steps, 2-5 key_decisions, 1-4 pitfalls.
+- Focus on what's REUSABLE, not what's unique to this run.
+- If trajectory is too short / no clear pattern, return {{"task_pattern": "", "key_steps": [], "key_decisions": [], "pitfalls": [], "applicability": ""}}.
+
+Trajectory summary (tool_calls, phases, results):
+{trajectory_summary}
+"""
+
+
+def _summarize_trajectory(trajectory: dict | None, final_output: str) -> str:
+    """把 trajectory 压成 prompt 能塞的摘要.
+
+    ponytail: 只抽 tool_calls + phases 名字, 不塞完整 args/result.
+    升级路径: trajectory 长 (H3) 时换 LLM 摘要再喂.
+    """
+    if not trajectory:
+        return f"(no trajectory data)\nFinal output: {final_output[:500]}"
+    parts = []
+    # phases
+    phases = trajectory.get("phases") or trajectory.get("phase_history") or []
+    if phases:
+        phase_names = [p.get("name", str(p)) if isinstance(p, dict) else str(p)
+                       for p in phases[:20]]
+        parts.append(f"Phases: {', '.join(phase_names)}")
+    # tool calls
+    tc = trajectory.get("tool_calls") or []
+    if tc:
+        tool_names = []
+        for c in tc[:30]:
+            if isinstance(c, dict):
+                tool_names.append(c.get("tool", c.get("name", "?")))
+            else:
+                tool_names.append(str(c))
+        parts.append(f"Tool calls ({len(tc)} total): {', '.join(tool_names)}")
+    # final output 截断
+    parts.append(f"Final output: {final_output[:500]}")
+    return "\n".join(parts)
+
+
+def _build_pattern_text(parsed: dict, objective: str) -> str:
+    """把 LLM 抽出来的 pattern dict 拼成可检索的文本."""
+    if not parsed.get("task_pattern"):
+        return ""
+    parts = [f"REUSABLE PATTERN (from successful task: {objective[:120]})"]
+    parts.append(f"Task type: {parsed.get('task_pattern', '')}")
+    steps = parsed.get("key_steps") or []
+    if steps:
+        parts.append("Key steps:")
+        for i, s in enumerate(steps, 1):
+            parts.append(f"  {i}. {s}")
+    decisions = parsed.get("key_decisions") or []
+    if decisions:
+        parts.append("Key decisions:")
+        for d in decisions:
+            parts.append(f"  - {d}")
+    pitfalls = parsed.get("pitfalls") or []
+    if pitfalls:
+        parts.append("Pitfalls:")
+        for p in pitfalls:
+            parts.append(f"  - {p}")
+    appl = parsed.get("applicability", "")
+    if appl:
+        parts.append(f"When to use: {appl}")
+    return "\n".join(parts)
+
+
+def _parse_pattern_response(resp: str) -> dict | None:
+    """解析 LLM 返回的 pattern JSON. 失败返回 None."""
+    if not resp:
+        return None
+    resp = resp.strip()
+    if resp.startswith("```"):
+        resp = resp.strip("`")
+        if resp.lower().startswith("json"):
+            resp = resp[4:]
+    start = resp.find("{")
+    end = resp.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(resp[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    # 空 pattern (LLM 判定无可复用内容) → 返回空 dict 标记
+    if not data.get("task_pattern"):
+        return {}
+    # 字段类型清洗
+    cleaned = {
+        "task_pattern": str(data.get("task_pattern", ""))[:200],
+        "key_steps": [str(s)[:200] for s in (data.get("key_steps") or [])][:7],
+        "key_decisions": [str(d)[:200] for d in (data.get("key_decisions") or [])][:5],
+        "pitfalls": [str(p)[:200] for p in (data.get("pitfalls") or [])][:4],
+        "applicability": str(data.get("applicability", ""))[:200],
+    }
+    return cleaned
+
+
+async def extract_and_store_pattern(
+    *,
+    objective: str,
+    trajectory: dict | None,
+    final_output: str,
+    llm_chat_fn: Callable[[str], Awaitable[str]] | None,
+    kb: Any = None,
+    run_id: str = "",
+) -> str | None:
+    """从成功 trajectory 抽可复用 pattern, 写入 KB.
+
+    Args:
+        objective: 原始任务描述
+        trajectory: save_trajectory 的 dict (含 phases/tool_calls)
+        final_output: report phase 的最终输出
+        llm_chat_fn: async callable, 接 prompt 返回 str. None 时跳过.
+        kb: 可选 KB 实例, 不传用模块级懒加载 (auto_ingest._get_kb)
+        run_id: 用于 metadata 追溯
+
+    Returns:
+        doc_id 或 None (无 LLM / 无 pattern / KB 不可用时返回 None)
+    """
+    if llm_chat_fn is None:
+        logger.debug("trajectory pattern: no llm_chat_fn, skip")
+        return None
+
+    traj_summary = _summarize_trajectory(trajectory, final_output)
+    prompt = _PATTERN_PROMPT_TEMPLATE.format(
+        objective=objective[:500],
+        trajectory_summary=traj_summary[:3000],
+    )
+
+    try:
+        resp = await llm_chat_fn(prompt)
+    except Exception:
+        logger.debug("trajectory pattern LLM call failed (non-fatal)", exc_info=True)
+        return None
+
+    parsed = _parse_pattern_response(resp)
+    if parsed is None:
+        logger.debug("trajectory pattern: parse failed")
+        return None
+    if not parsed:  # 空 dict = LLM 判定无可复用内容
+        logger.debug("trajectory pattern: LLM marked empty, skip")
+        return None
+
+    pattern_text = _build_pattern_text(parsed, objective)
+    if not pattern_text.strip():
+        return None
+
+    # 写入 KB (复用 auto_ingest 的懒加载单例)
+    if kb is None:
+        try:
+            from huginn.knowledge.auto_ingest import _get_kb
+            kb = _get_kb()
+        except Exception:
+            kb = None
+    if kb is None:
+        logger.debug("trajectory pattern: KB unavailable, skip")
+        return None
+
+    try:
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result = kb.add_text(
+            pattern_text,
+            filename=f"pattern_{run_id or ts}",
+            metadata={
+                "source": "trajectory_pattern",
+                "objective": objective[:200],
+                "run_id": run_id,
+                "task_pattern": parsed.get("task_pattern", ""),
+            },
+        )
+        doc_id = result.get("doc_id") or None
+        if doc_id:
+            logger.info(
+                "trajectory pattern stored: doc_id=%s, task_pattern=%s",
+                doc_id, parsed.get("task_pattern", "")[:80],
+            )
+        return doc_id
+    except Exception:
+        logger.debug("trajectory pattern KB write failed (non-fatal)", exc_info=True)
+        return None
+
+
+# === 自检 ===
+
+if __name__ == "__main__":
+    import asyncio
+
+    # 1. _summarize_trajectory
+    traj = {
+        "phases": [{"name": "perceive"}, {"name": "hypothesize"}, {"name": "execute"}],
+        "tool_calls": [
+            {"tool": "vasp_run"}, {"tool": "band_structure"}, {"tool": "analysis"},
+        ],
+    }
+    summary = _summarize_trajectory(traj, "final result text")
+    assert "perceive" in summary and "hypothesize" in summary
+    assert "vasp_run" in summary and "band_structure" in summary
+    assert "3 total" in summary
+    assert "final result text" in summary
+
+    # 1b. trajectory None
+    summary = _summarize_trajectory(None, "output")
+    assert "no trajectory data" in summary and "output" in summary
+
+    # 1c. 长 final_output 截断
+    summary = _summarize_trajectory(None, "x" * 1000)
+    assert len(summary) < 700  # 500 截断 + label
+
+    # 2. _build_pattern_text
+    parsed = {
+        "task_pattern": "DFT band structure calculation",
+        "key_steps": ["Relax structure", "SCF", "Band structure"],
+        "key_decisions": ["PBE over HSE (cheaper, similar gap)"],
+        "pitfalls": ["Don't forget KPOINTS path"],
+        "applicability": "When user asks band gap",
+    }
+    text = _build_pattern_text(parsed, "compute band gap of Si")
+    assert "REUSABLE PATTERN" in text
+    assert "DFT band structure" in text
+    assert "Relax structure" in text
+    assert "PBE over HSE" in text
+    assert "Don't forget KPOINTS" in text
+    assert "When user asks band gap" in text
+
+    # 2b. 空 task_pattern → 空文本
+    text = _build_pattern_text({"task_pattern": ""}, "obj")
+    assert text == ""
+
+    # 3. _parse_pattern_response
+    resp = '{"task_pattern": "X", "key_steps": ["a", "b"], "key_decisions": ["c"], "pitfalls": ["d"], "applicability": "e"}'
+    p = _parse_pattern_response(resp)
+    assert p is not None
+    assert p["task_pattern"] == "X"
+    assert p["key_steps"] == ["a", "b"]
+    assert p["key_decisions"] == ["c"]
+
+    # 3b. markdown fence
+    p = _parse_pattern_response('```json\n{"task_pattern": "Y"}\n```')
+    assert p is not None and p["task_pattern"] == "Y"
+
+    # 3c. 空 pattern (LLM 判定无可复用) → 空 dict
+    p = _parse_pattern_response('{"task_pattern": ""}')
+    assert p == {}
+
+    # 3d. 非 JSON → None
+    assert _parse_pattern_response("not json") is None
+    assert _parse_pattern_response("") is None
+    assert _parse_pattern_response(None) is None
+
+    # 3e. 字段长度截断
+    long_str = "x" * 500
+    p = _parse_pattern_response(
+        f'{{"task_pattern": "{long_str}", "key_steps": ["{long_str}"]}}')
+    assert len(p["task_pattern"]) <= 200
+    assert len(p["key_steps"][0]) <= 200
+
+    # 3f. 字段数量截断
+    many_steps = [f"s{i}" for i in range(20)]
+    p = _parse_pattern_response(
+        json.dumps({"task_pattern": "X", "key_steps": many_steps}))
+    assert len(p["key_steps"]) <= 7
+
+    # 4. extract_and_store_pattern — 无 LLM 时跳过
+    async def _run_no_llm():
+        doc_id = await extract_and_store_pattern(
+            objective="test", trajectory=traj, final_output="out",
+            llm_chat_fn=None)
+        assert doc_id is None, "no llm → None"
+
+    asyncio.run(_run_no_llm())
+
+    # 5. extract_and_store_pattern — LLM 给空 pattern 时跳过
+    async def _empty_llm(prompt: str) -> str:
+        return '{"task_pattern": ""}'
+
+    async def _run_empty_pattern():
+        doc_id = await extract_and_store_pattern(
+            objective="test", trajectory=traj, final_output="out",
+            llm_chat_fn=_empty_llm, kb=object())  # kb 不被调用
+        assert doc_id is None, "empty pattern → None"
+
+    asyncio.run(_run_empty_pattern())
+
+    # 6. extract_and_store_pattern — mock LLM + mock KB
+    async def _good_llm(prompt: str) -> str:
+        return ('{"task_pattern": "X", "key_steps": ["a"], "key_decisions": [], '
+                '"pitfalls": [], "applicability": "when X"}')
+
+    class _MockKB:
+        def __init__(self):
+            self.calls = []
+        def add_text(self, text, filename="", metadata=None):
+            self.calls.append({"text": text, "filename": filename, "metadata": metadata})
+            return {"doc_id": "doc_123", "chunks": 2}
+
+    async def _run_good():
+        mock_kb = _MockKB()
+        doc_id = await extract_and_store_pattern(
+            objective="compute band gap", trajectory=traj,
+            final_output="gap=1.1eV", llm_chat_fn=_good_llm, kb=mock_kb,
+            run_id="r1")
+        assert doc_id == "doc_123"
+        assert len(mock_kb.calls) == 1
+        call = mock_kb.calls[0]
+        assert "REUSABLE PATTERN" in call["text"]
+        assert call["metadata"]["source"] == "trajectory_pattern"
+        assert call["metadata"]["run_id"] == "r1"
+        assert call["metadata"]["task_pattern"] == "X"
+
+    asyncio.run(_run_good())
+
+    # 7. extract_and_store_pattern — LLM 抛异常时返回 None
+    async def _raise_llm(prompt: str) -> str:
+        raise RuntimeError("LLM offline")
+
+    async def _run_llm_raise():
+        mock_kb = _MockKB()
+        doc_id = await extract_and_store_pattern(
+            objective="test", trajectory=traj, final_output="out",
+            llm_chat_fn=_raise_llm, kb=mock_kb)
+        assert doc_id is None
+        assert len(mock_kb.calls) == 0, "LLM 失败不应写 KB"
+
+    asyncio.run(_run_llm_raise())
+
+    # 8. extract_and_store_pattern — KB 不可用时返回 None
+    async def _run_no_kb():
+        # kb=None 且 auto_ingest._get_kb 也拿不到 (无 chromadb 环境)
+        # 直接传一个 mock None
+        doc_id = await extract_and_store_pattern(
+            objective="test", trajectory=traj, final_output="out",
+            llm_chat_fn=_good_llm, kb=None)
+        # 没有 chromadb 环境时 _get_kb 返回 None, 结果 None
+        # 如果有 chromadb, 会真的写入 — 这里不强断言, 只看是否崩
+        assert doc_id is None or isinstance(doc_id, str)
+
+    asyncio.run(_run_no_kb())
+
+    print("trajectory_pattern selfcheck All passed")

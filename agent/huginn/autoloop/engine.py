@@ -2511,6 +2511,43 @@ Respond JSON only:
         except Exception:
             logger.debug("FAIR metadata generation failed", exc_info=True)
 
+        # P2: trajectory success pattern 抽取 — 复用 KB + auto_ingest 路径
+        # 不新建 skill_library 组件. 仅在 goal_achieved=True 时调一次 LLM 抽
+        # 可复用 pattern, 写入 KB. 下次任务开始时 RAG 自然召回.
+        # 默认关, HUGINN_TRAJECTORY_PATTERN=1 开启 (跟 PRT Level 1 / PRM verifier
+        # 同款策略: 有 LLM 成本).
+        if goal_achieved and os.environ.get("HUGINN_TRAJECTORY_PATTERN", "0") == "1":
+            try:
+                from huginn.knowledge.trajectory_pattern import (
+                    extract_and_store_pattern,
+                )
+
+                async def _pattern_chat(prompt: str) -> str:
+                    # 复用 verification_model (默认 fallback 到 self.model)
+                    from langchain_core.messages import HumanMessage
+                    resp = await self.verification_model.ainvoke(
+                        [HumanMessage(content=prompt)]
+                    )
+                    return getattr(resp, "content", str(resp))
+
+                pattern_doc_id = await extract_and_store_pattern(
+                    objective=objective,
+                    trajectory=trajectory_data,
+                    final_output=str(report_phase.result or ""),
+                    llm_chat_fn=_pattern_chat,
+                    run_id=run_id,
+                )
+                if pattern_doc_id:
+                    logger.info(
+                        "trajectory pattern stored: doc_id=%s (run %s)",
+                        pattern_doc_id, run_id,
+                    )
+            except Exception:
+                logger.debug(
+                    "trajectory pattern extraction failed (non-fatal)",
+                    exc_info=True,
+                )
+
         return AutoloopResult(
             run_id=run_id,
             objective=objective,
