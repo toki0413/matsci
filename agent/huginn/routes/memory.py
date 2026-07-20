@@ -221,6 +221,8 @@ async def memory_layers() -> dict[str, Any]:
 
     # ── SM: KB chunks + KG 节点 + 最近写入的 trajectory_pattern ──
     # KB 走 ServerContext, KG 临时实例化 (YAGNI — 只此端点用)
+    # top_patterns_by_confidence 在 try 外初始化, 让 PM 块即使 SM 提前失败也能安全引用.
+    top_patterns_by_confidence: list[dict[str, Any]] = []
     try:
         ctx = get_context()
         kb = getattr(ctx, "kb", None)

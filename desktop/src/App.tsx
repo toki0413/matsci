@@ -224,9 +224,10 @@ export default function App() {
   const memory = useMemory();
   const {
     memories, memoriesLoading, memoryHasMore, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
+    memoryLayers, memoryLayersLoading,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
-    updateMemory, promoteMemory, pruneMemory, syncMemoryMd,
+    updateMemory, promoteMemory, pruneMemory, syncMemoryMd, loadMemoryLayers,
   } = memory;
 
   const {
@@ -1576,6 +1577,8 @@ export default function App() {
               memoryForm={memoryForm}
               memoryMsg={memoryMsg}
               memoryView={memoryView}
+              memoryLayers={memoryLayers}
+              memoryLayersLoading={memoryLayersLoading}
               setMemorySearch={setMemorySearch}
               setMemoryFilter={setMemoryFilter}
               setMemoryForm={setMemoryForm}
@@ -1589,6 +1592,7 @@ export default function App() {
               promoteMemory={promoteMemory}
               pruneMemory={pruneMemory}
               syncMemoryMd={syncMemoryMd}
+              loadMemoryLayers={loadMemoryLayers}
             />
           </div>
 

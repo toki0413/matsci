@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { toast } from '../components/Toast';
-import type { MemoryEntry, MemoryStats } from '../types/domain';
+import type { MemoryEntry, MemoryLayers, MemoryStats } from '../types/domain';
 
 export function useMemory() {
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
@@ -23,8 +23,10 @@ export function useMemory() {
     tier: 'mid',
   });
   const [memoryMsg, setMemoryMsg] = useState('');
-  const [memoryView, setMemoryView] = useState<'browse' | 'add'>('browse');
+  const [memoryView, setMemoryView] = useState<'browse' | 'add' | 'layers'>('browse');
   const [memoryHasMore, setMemoryHasMore] = useState(false);
+  const [memoryLayers, setMemoryLayers] = useState<MemoryLayers | null>(null);
+  const [memoryLayersLoading, setMemoryLayersLoading] = useState(false);
 
   const loadMemory = async (loadMore = false) => {
     try {
@@ -174,10 +176,24 @@ export function useMemory() {
     }
   };
 
+  // 拉 4 层 memory 聚合状态. 后端每层独立 try/except, 单层失败返回 available=false.
+  const loadMemoryLayers = async () => {
+    setMemoryLayersLoading(true);
+    try {
+      const data = await api.get<MemoryLayers>('/memory/layers');
+      setMemoryLayers(data);
+    } catch (e: any) {
+      setMemoryMsg(`Layers load error: ${e.message}`);
+    } finally {
+      setMemoryLayersLoading(false);
+    }
+  };
+
   return {
     memories, memoriesLoading, memoryHasMore, memoryStats, memorySearch, memoryFilter, memoryForm, memoryMsg, memoryView,
+    memoryLayers, memoryLayersLoading,
     setMemorySearch, setMemoryFilter, setMemoryForm, setMemoryView, setMemoryMsg,
     loadMemory, loadMemoryStats, searchMemory, createMemory, deleteMemory,
-    updateMemory, promoteMemory, pruneMemory, syncMemoryMd,
+    updateMemory, promoteMemory, pruneMemory, syncMemoryMd, loadMemoryLayers,
   };
 }
