@@ -14,9 +14,13 @@ summarized back to the main conversation.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -419,6 +423,111 @@ class SubagentDispatch:
             return output[:_SUMMARIZE_THRESHOLD] + "..."
 
 
+# ── v14 Task 10: Čech H¹ finding 一致性检查 ────────────────────────────────
+
+# ponytail: 真正 sheaf cohomology 算不动 (O(n^ω) 级), 用"语义相似度 + 数值冲突"
+# 做 obstruction 代理. spec 诚实边界 §3 明说这是工程近似.
+# 升级路径: 在 simplicial complex 上算真实 H¹, 需要 persistent homology 库.
+
+# H¹ 检查的相似度阈值 — spec SubTask 10.2 规定
+_H1_HIGH_OVERLAP = 0.8   # > 此值 + 数值不同 → obstruction
+_H1_LOW_OVERLAP = 0.5    # ≤ 此值视为新信息, 无 obstruction
+# 中间区 (0.5, 0.8] 保守不 reject
+
+# 数值相近判据: 相对误差 < 10% 视为一致
+_H1_NUM_REL_TOL = 0.1
+
+
+def _is_close(a: float, b: float, rel_tol: float = _H1_NUM_REL_TOL) -> bool:
+    """相对误差 < rel_tol 视为相近.
+
+    ponytail: math.isclose 默认 abs_tol=1e-9 + rel_tol=1e-5 太严, 不适合工程近似.
+    这里用纯相对误差, 分母 max(|a|,|b|,1e-9) 防 0 除. 升级: 跟着数值量级动态调 tol.
+    """
+    denom = max(abs(a), abs(b), 1e-9)
+    return abs(a - b) / denom < rel_tol
+
+
+def _check_finding_consistency(
+    finding: dict | str,
+    core_context: str,
+) -> tuple[bool, str]:
+    """v14 Task 10: Čech H¹ 一致性代理 — finding vs Core context claim.
+
+    返回 (h1_zero, reason):
+    - h1_zero=True  → 无 obstruction, finding 可拼入 Core context
+    - h1_zero=False → obstruction, finding 应被 reject 写入 support_rejections.jsonl
+
+    判据 (spec §"Support finding Čech H¹ 一致性检查"):
+    - overlap ≤ 0.5         → 新信息, H¹=0
+    - 0.5 < overlap ≤ 0.8   → 中等重叠, 保守不 reject, H¹=0
+    - overlap > 0.8         → 高重叠, 必须数值一致:
+        * finding 每个数值在 core_context 找不到相近的 (差 ≥ 10%) → H¹≠0
+        * 否则 H¹=0
+    """
+    if isinstance(finding, dict):
+        finding_str = json.dumps(finding, ensure_ascii=False, sort_keys=True)
+    else:
+        finding_str = str(finding) if finding else ""
+
+    if not finding_str or not core_context:
+        return True, "empty input, no obstruction"
+
+    from huginn.context_builder import _compute_semantic_overlap
+    overlap = _compute_semantic_overlap(finding_str, core_context)
+
+    if overlap <= _H1_LOW_OVERLAP:
+        return True, f"new info, no overlap (sim={overlap:.2f})"
+
+    if overlap <= _H1_HIGH_OVERLAP:
+        # ponytail: 中等重叠保守不 reject. 真正 obstruction 检测要算 sheaf H¹,
+        # 成本太高. 升级: 加 LLM judge 做语义一致性判定.
+        return True, f"moderate overlap, assuming consistent (sim={overlap:.2f})"
+
+    # 高重叠: 数值必须一致, 否则 obstruction
+    finding_nums = [float(x) for x in re.findall(r"\d+\.?\d*", finding_str)]
+    core_nums = [float(x) for x in re.findall(r"\d+\.?\d*", core_context)]
+
+    if not finding_nums:
+        return True, f"high overlap, no numbers to conflict (sim={overlap:.2f})"
+
+    for n in finding_nums:
+        if not any(_is_close(n, m) for m in core_nums):
+            closest = min(core_nums, key=lambda m: abs(n - m)) if core_nums else None
+            return False, (
+                f"numeric conflict: finding has {n}, core has {closest} "
+                f"(sim={overlap:.2f})"
+            )
+
+    return True, f"high overlap, numbers consistent (sim={overlap:.2f})"
+
+
+def _write_support_rejection(
+    workspace: str | Path,
+    finding: dict | str,
+    reason: str,
+    core_context: str,
+) -> Path | None:
+    """H¹≠0 时把 finding 落盘到 .huginn/support_rejections.jsonl 供后续 review.
+
+    返回写入的 Path, workspace 无效时返回 None 静默跳过.
+    """
+    if not workspace:
+        return None
+    ws = Path(workspace)
+    rejection_path = ws / ".huginn" / "support_rejections.jsonl"
+    rejection_path.parent.mkdir(parents=True, exist_ok=True)
+    snippet = core_context[:500] if isinstance(core_context, str) else str(core_context)[:500]
+    with rejection_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "ts": datetime.now().isoformat(),
+            "finding": finding,
+            "reason": reason,
+            "core_context_snippet": snippet,
+        }, ensure_ascii=False, default=str) + "\n")
+    return rejection_path
+
+
 # ── self-check ────────────────────────────────────────────────────────────
 # 最小验证: spec 注册 / 查询 / 未知 spec 报错. 不依赖 LLM 和 agent factory,
 # 只验数据结构和控制流. 放在 __main__ 里, `python -m huginn.agents.subagent`
@@ -479,6 +588,45 @@ if __name__ == "__main__":
     assert SubagentDispatch._extract_tool_calls(None) == []
     assert SubagentDispatch._estimate_tokens(None) == 0
     print("[ok] empty state handled")
+
+    # ── v14 Task 10: H¹ 一致性检查 self-check ────────────────────────────
+    # 3 cases: numeric conflict / numbers consistent / new info
+    import tempfile
+
+    # case 1: 高重叠 + 数值冲突 (0.05 vs 0.5 差 ≥ 10%) → H¹≠0
+    # 用长共现文本撑高 TF-IDF cosine 到 >0.8 阈值
+    f1 = "the model achieved MAE=0.05 on test set with high confidence"
+    c1 = "the model achieved MAE=0.5 on test set with high confidence"
+    h1_zero, reason1 = _check_finding_consistency(f1, c1)
+    print(f"[case1] h1_zero={h1_zero}, reason={reason1}")
+    assert not h1_zero, f"0.05 vs 0.5 应触发 obstruction, got h1_zero={h1_zero}"
+    assert "numeric conflict" in reason1, f"reason 应含 numeric conflict: {reason1}"
+
+    # 验证 rejection 文件会被写入
+    with tempfile.TemporaryDirectory() as tmp_ws:
+        rej_path = _write_support_rejection(tmp_ws, f1, reason1, c1)
+        assert rej_path is not None and rej_path.exists(), "rejection 文件应被写入"
+        content = rej_path.read_text(encoding="utf-8").strip()
+        assert "numeric conflict" in content, f"rejection 内容应含 reason: {content}"
+        print(f"[case1] rejection written to {rej_path.name}")
+
+    # case 2: 高重叠 + 数值一致 → H¹=0
+    f2 = "the model achieved MAE=0.5 on test set with high confidence"
+    c2 = "the model achieved MAE=0.5 on test set with high confidence"
+    h1_zero, reason2 = _check_finding_consistency(f2, c2)
+    print(f"[case2] h1_zero={h1_zero}, reason={reason2}")
+    assert h1_zero, f"数值一致应 H¹=0, got h1_zero={h1_zero}, reason={reason2}"
+    assert "consistent" in reason2, f"reason 应含 consistent: {reason2}"
+
+    # case 3: 低重叠, 新信息 → H¹=0
+    f3 = "quantum tunneling effect observed in semiconductor"
+    c3 = "chemical reaction kinetics analysis"
+    h1_zero, reason3 = _check_finding_consistency(f3, c3)
+    print(f"[case3] h1_zero={h1_zero}, reason={reason3}")
+    assert h1_zero, f"新信息应 H¹=0, got h1_zero={h1_zero}"
+    assert "new info" in reason3, f"reason 应含 new info: {reason3}"
+
+    print("\nv14 Task 10 self-check PASSED")
 
     print("\nAll self-checks passed.")
     sys.exit(0)

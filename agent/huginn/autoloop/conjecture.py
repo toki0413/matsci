@@ -1191,4 +1191,671 @@ __all__ = [
     "ConjectureGenerator", "get_conjecture_generator",
     "extract_physical_structure", "transfer_with_structure",
     "generate_conjecture_with_structure",
+    "reframe_problem", "should_reframe",
 ]
+
+
+# ── v6 G60: reframe_problem — 第一类问题重构操作符 ──────────────────
+# 用户思想: agent 缺"重新定义问题"的能力. 现有 pivot/crossover/enumerate_implementors
+# 都是"换维度/杂交/枚举", 没有"把问题抬到更高数学结构"或"翻到对偶面"的操作.
+# 三种 reframe 模式:
+# 1. abstract_lift  — 把具体问题抬到更高抽象层 (e.g. "找 Si 带隙" → "找 sp³ 半导体的拓扑不变量")
+# 2. dual_flip      — 翻到对偶问题 (e.g. "最大化稳定性" → "最小化失稳路径")
+# 3. analogy_map    — 用 transfer_registry 找同构域, 翻译问题到那个域求解再翻回来
+#
+# 触发条件: detect_drift 连续触发 + block_registry.try_reopen 失败 +
+#           equivalence_auditor 确认非换名归约 — 三条都满足才 reframe,
+#           否则 reframe 会变成漂移的合法化.
+
+
+# 关键词 → MathConcept 概念映射, 给 abstract_lift 模板路径用
+# ponytail: 不全, 覆盖常见材料问题对应数学结构. LLM 路径不依赖此表.
+_PROBLEM_TO_MATH_CONCEPT: dict[str, str] = {
+    "带隙": "band_symmetry",
+    "band gap": "band_symmetry",
+    "能带": "band_symmetry",
+    "导电": "percolation_topology",
+    "conductivity": "percolation_topology",
+    "扩散": "stochastic_process",
+    "diffusion": "stochastic_process",
+    "稳定性": "maximize_stability",
+    "stability": "maximize_stability",
+    "催化": "catalytic_geometry",
+    "catalys": "catalytic_geometry",
+    "吸附": "catalytic_geometry",
+    "吸附能": "catalytic_geometry",
+    "磁": "lie_group",
+    "magnet": "lie_group",
+    "超导": "lie_group",
+    "superconduct": "lie_group",
+    "铁电": "variational_formulation",
+    "ferroelectric": "variational_formulation",
+    "界面": "interface_binding",
+    "interface": "interface_binding",
+    "缺陷": "defect_chemistry",
+    "defect": "defect_chemistry",
+    "掺杂": "defect_chemistry",
+    "dop": "defect_chemistry",
+    "应力": "riemannian_manifold",
+    "strain": "riemannian_manifold",
+    "振动": "hilbert_space",
+    "vibration": "hilbert_space",
+    "phonon": "hilbert_space",
+    "声子": "hilbert_space",
+    "弱解": "sobolev_space",
+    "weak form": "sobolev_space",
+    "有限元": "fem",
+    "fem": "fem",
+    "偏微分": "pde",
+    "pde": "pde",
+    "ode": "ode",
+    "演化": "dynamical_system",
+    "dynamics": "dynamical_system",
+    "动力学": "dynamical_system",
+    "概率": "probability_measure",
+    "probability": "probability_measure",
+    "分布": "measure",
+    "distribution": "measure",
+}
+
+# 对偶关系映射: 原问题形式 → 对偶问题形式
+# ponytail: 不全, 覆盖材料科学常见对偶. LLM 路径不依赖此表.
+_DUAL_PAIRS: list[tuple[str, str]] = [
+    ("最大化稳定性", "最小化失稳路径"),
+    ("maximize stability", "minimize instability path"),
+    ("最大化催化活性", "最小化反应能垒"),
+    ("maximize activity", "minimize barrier"),
+    ("最大化电导率", "最小化散射截面"),
+    ("maximize conductivity", "minimize scattering"),
+    ("最大化强度", "最小化缺陷密度"),
+    ("maximize strength", "minimize defect density"),
+    ("最大化容量", "最小化体积膨胀"),
+    ("maximize capacity", "minimize volume expansion"),
+    ("primal problem", "dual problem"),
+    ("position space", "momentum space"),
+    ("covariant", "contravariant"),
+]
+
+
+def should_reframe(
+    evaluations: list,
+    block_registry_state: dict[str, Any] | None = None,
+    equivalence_audit_passed: bool = True,
+    window: int = 3,
+) -> tuple[bool, str]:
+    """判断是否应该触发 reframe.
+
+    三条都满足才 reframe:
+    1. detect_drift 连续 window 步触发
+    2. block_registry 处于 blocked 或 abandoned 状态 (换名归约重启失败)
+    3. equivalence_audit_passed=True (不是换名归约)
+
+    返回 (should_reframe, reason).
+    Ponytail: 复用 target_chain.detect_drift, 不重写漂移检测.
+    """
+    from huginn.metacog.target_chain import detect_drift
+
+    is_drift, drift_msg = detect_drift(evaluations, window=window)
+    if not is_drift:
+        return (False, "no drift")
+
+    # block_registry 状态检查 — 兼容 dict / 对象
+    block_status = None
+    if block_registry_state is not None:
+        if isinstance(block_registry_state, dict):
+            block_status = block_registry_state.get("status") or block_registry_state.get("route_status")
+        else:
+            block_status = getattr(block_registry_state, "status", None) or \
+                           getattr(block_registry_state, "route_status", None)
+    if block_status not in {"blocked", "abandoned"}:
+        return (False, f"block_registry not blocked (status={block_status})")
+
+    if not equivalence_audit_passed:
+        # 换名归约嫌疑 — reframe 会变成漂移合法化
+        return (False, "equivalence audit flagged renaming — reframe would legitimize drift")
+
+    return (True, f"drift + blocked + non-renaming: {drift_msg}")
+
+
+def reframe_problem(
+    problem: str,
+    mode: str = "auto",
+    model: Any = None,
+    domain: str = "",
+    target_domain: str | None = None,
+) -> dict[str, Any]:
+    """第一类问题重构操作符 — 重新定义问题, 不是换维度而是换框架.
+
+    三种模式:
+    - abstract_lift: 把问题抬到更高数学结构 (e.g. "找 Si 带隙" → "找 sp³ 半导体的拓扑不变量")
+    - dual_flip:     翻到对偶问题 (e.g. "最大化稳定性" → "最小化失稳路径")
+    - analogy_map:   找同构域, 翻译问题到那个域求解再翻回来
+
+    mode="auto" 时按以下优先级选:
+    1. problem 命中 _DUAL_PAIRS → dual_flip
+    2. problem 命中 _PROBLEM_TO_MATH_CONCEPT → abstract_lift
+    3. target_domain 传入 → analogy_map
+    4. 都不命中 → abstract_lift 兜底 (拿 problem 文本去 MathConceptGraph 找抽象)
+
+    返回: {reframed_problem, mode, rationale, mapping, log_id, kg_node_id}
+
+    Ponytail: 无 LLM 时走模板表, LLM 传入时调 LLM 做更丰富的 reframe.
+    模板表不全, LLM 路径降级到模板. 失败不抛异常, 返回 reframed=problem 原样.
+    """
+    problem_lower = problem.lower()
+
+    # auto 模式: 选最合适的 reframe 模式
+    if mode == "auto":
+        mode = _auto_select_mode(problem_lower, target_domain)
+
+    # 调对应模式
+    if mode == "dual_flip":
+        result = _reframe_dual_flip(problem, problem_lower, model)
+    elif mode == "analogy_map":
+        result = _reframe_analogy_map(problem, domain, target_domain, model)
+    else:
+        # abstract_lift 兜底
+        result = _reframe_abstract_lift(problem, problem_lower, model)
+
+    result["mode"] = mode
+    result["original_problem"] = problem
+
+    # 写 research_log (用 OPEN_QUESTION type, tags 区分 reframe)
+    result["log_id"] = _log_reframe_to_research_log(problem, result)
+
+    # 写回 KG: reframe 出的问题作为 FACT 节点, DERIVED_FROM 边连原问题
+    result["kg_node_id"] = _write_reframe_to_kg(problem, result)
+
+    return result
+
+
+def _auto_select_mode(problem_lower: str, target_domain: str | None) -> str:
+    """auto 模式: 按命中优先级选 reframe 模式."""
+    # 1. dual_pairs 优先 — 对偶关系最易机械化
+    for orig, _ in _DUAL_PAIRS:
+        if orig.lower() in problem_lower:
+            return "dual_flip"
+    # 2. math_concept 关键词命中
+    for key in _PROBLEM_TO_MATH_CONCEPT:
+        if key in problem_lower:
+            return "abstract_lift"
+    # 3. target_domain 传入
+    if target_domain:
+        return "analogy_map"
+    # 4. 兜底
+    return "abstract_lift"
+
+
+def _reframe_abstract_lift(
+    problem: str, problem_lower: str, model: Any
+) -> dict[str, Any]:
+    """抽象升级: 把具体问题抬到更高数学结构.
+
+    模板路径: 关键词命中 _PROBLEM_TO_MATH_CONCEPT → MathConceptGraph 找祖先链
+    LLM 路径: 调 LLM 做更丰富的抽象化
+    """
+    # 找命中概念
+    math_concept = None
+    matched_key = None
+    for key, concept in _PROBLEM_TO_MATH_CONCEPT.items():
+        if key in problem_lower:
+            math_concept = concept
+            matched_key = key
+            break
+
+    if math_concept is None:
+        # 兜底: 没命中也调 LLM
+        if model is not None and ConjectureGenerator()._is_real_model(model):
+            return _llm_reframe_abstract_lift(problem, model)
+        return {
+            "reframed_problem": problem,
+            "rationale": "no math concept match; no LLM; reframed as-is",
+            "mapping": {},
+            "method": "template_noop",
+        }
+
+    # 模板路径: 用 MathConceptGraph 找祖先链
+    try:
+        from huginn.kg.graph import get_math_concept_graph
+        mcg = get_math_concept_graph()
+        nb = mcg.query_concept_neighborhood(math_concept, depth=2)
+        ancestors = nb.get("ancestors", []) if nb.get("found") else []
+    except Exception:
+        ancestors = []
+
+    if not ancestors:
+        # MathConceptGraph 没找到, 至少把 matched_key 抽象成 math_concept
+        reframed = problem.replace(matched_key, math_concept) if matched_key else problem
+        return {
+            "reframed_problem": reframed,
+            "rationale": f"将 '{matched_key}' 抽象为 '{math_concept}' (无祖先链)",
+            "mapping": {"original_term": matched_key, "abstract_concept": math_concept},
+            "method": "template",
+        }
+
+    # 取最远祖先 (depth=2 的最深一层)
+    deepest_ancestor = ancestors[-1] if ancestors else math_concept
+    reframed = (
+        f"在 {deepest_ancestor} 的数学结构下, "
+        f"分析原问题的不变量与守恒律: {problem}"
+    )
+    return {
+        "reframed_problem": reframed,
+        "rationale": (
+            f"将 '{matched_key}' (→ '{math_concept}') 抬升到更高抽象层 "
+            f"'{deepest_ancestor}', 在该层问题可能获得更通用的解. "
+            f"祖先链: {math_concept} → {' → '.join(ancestors)}"
+        ),
+        "mapping": {
+            "original_term": matched_key,
+            "abstract_concept": math_concept,
+            "ancestor_chain": [math_concept] + ancestors,
+            "deepest_abstraction": deepest_ancestor,
+        },
+        "method": "template",
+    }
+
+
+def _reframe_dual_flip(
+    problem: str, problem_lower: str, model: Any
+) -> dict[str, Any]:
+    """对偶翻转: 把原问题翻到对偶面.
+
+    模板路径: 命中 _DUAL_PAIRS → 替换
+    LLM 路径: 调 LLM 做更复杂的对偶识别 (e.g. Legendre 变换, Fourier 对偶)
+    """
+    for orig, dual in _DUAL_PAIRS:
+        if orig.lower() in problem_lower:
+            reframed = problem.replace(orig, dual)
+            # 同时查 MathConceptGraph 是否有 dual_to 关系
+            dual_concepts = _find_dual_concepts(orig)
+            return {
+                "reframed_problem": reframed,
+                "rationale": (
+                    f"将 '{orig}' 翻转到对偶面 '{dual}'. "
+                    f"对偶问题与原问题等价但求解路径不同, "
+                    f"可能避开原问题的局部最优. "
+                    f"对偶概念: {dual_concepts or '无'}"
+                ),
+                "mapping": {
+                    "original_form": orig,
+                    "dual_form": dual,
+                    "math_dual_concepts": dual_concepts,
+                },
+                "method": "template",
+            }
+
+    # 模板没命中, 走 LLM
+    if model is not None and ConjectureGenerator()._is_real_model(model):
+        return _llm_reframe_dual_flip(problem, model)
+
+    return {
+        "reframed_problem": problem,
+        "rationale": "no dual pair match; no LLM; reframed as-is",
+        "mapping": {},
+        "method": "template_noop",
+    }
+
+
+def _reframe_analogy_map(
+    problem: str,
+    domain: str,
+    target_domain: str | None,
+    model: Any,
+) -> dict[str, Any]:
+    """类比映射: 用 transfer_registry 找同构域, 翻译问题到那个域.
+
+    Ponytail: 复用 transfer_registry.find_transfer_domain — 它的相似度
+    已经能识别结构同构 (Landau phi⁴ 共享, symmetry shared). 不重写.
+    """
+    if not target_domain:
+        # 没指定 target_domain, 让 LLM 或 transfer_registry 自己找
+        if model is not None and ConjectureGenerator()._is_real_model(model):
+            return _llm_reframe_analogy_map(problem, domain, model)
+        return {
+            "reframed_problem": problem,
+            "rationale": "no target_domain; no LLM; reframed as-is",
+            "mapping": {},
+            "method": "template_noop",
+        }
+
+    try:
+        from huginn.ml.transfer_registry import find_transfer_domain, shared_structure
+        # 查 domain → target_domain 是否结构同构
+        transfer = find_transfer_domain(domain, target_domain) if domain else None
+        shared = []
+        if domain and target_domain:
+            try:
+                # find_transfer_domain 返回 DomainProfile, shared_structure 需要 DomainProfile 对
+                from huginn.ml.transfer_registry import _REGISTRY
+                src = next((d for d in _REGISTRY if d.name == domain), None)
+                tgt = next((d for d in _REGISTRY if d.name == target_domain), None)
+                if src and tgt:
+                    shared = shared_structure(src, tgt)
+            except Exception:
+                pass
+    except Exception:
+        transfer = None
+        shared = []
+
+    if not shared:
+        # 无结构同构, 退到 LLM 或 as-is
+        if model is not None and ConjectureGenerator()._is_real_model(model):
+            return _llm_reframe_analogy_map(problem, domain, model, target_domain)
+        return {
+            "reframed_problem": (
+                f"将问题翻译到 {target_domain} 域求解: {problem} "
+                f"(注: 未检测到结构同构, 类比可能不成立)"
+            ),
+            "rationale": (
+                f"target_domain={target_domain} 与 source={domain} 未检测到 "
+                f"结构同构. 类比映射可能不成立, 建议先做小范围验证."
+            ),
+            "mapping": {
+                "source_domain": domain,
+                "target_domain": target_domain,
+                "shared_structure": [],
+            },
+            "method": "template_no_isomorphism",
+        }
+
+    reframed = (
+        f"将原问题 ({domain} 域) 翻译到 {target_domain} 域求解, "
+        f"利用共享结构 {shared}. 原问题: {problem}"
+    )
+    return {
+        "reframed_problem": reframed,
+        "rationale": (
+            f"通过 transfer_registry 检测到 {domain} 与 {target_domain} "
+            f"共享结构 {shared}. 把问题翻译到 {target_domain} 域求解, "
+            f"求解后翻译回来. 该路径合法性由 shared_structure 保证."
+        ),
+        "mapping": {
+            "source_domain": domain,
+            "target_domain": target_domain,
+            "shared_structure": shared,
+            "transfer_profile": transfer.__dict__ if transfer and hasattr(transfer, "__dict__") else None,
+        },
+        "method": "template",
+    }
+
+
+def _find_dual_concepts(text: str) -> list[str]:
+    """从 MathConceptGraph 找 dual_to 关系, 给 dual_flip 模板路径增强."""
+    try:
+        from huginn.kg.graph import get_math_concept_graph
+        mcg = get_math_concept_graph()
+        # 遍历图找 dual_to 边
+        duals = []
+        for u, v, d in mcg._graph.edges(data=True):
+            if d.get("relation") == "dual_to":
+                duals.append(f"{u} ↔ {v}")
+        return duals
+    except Exception:
+        return []
+
+
+# ── LLM 路径 (失败降级到模板) ──
+
+
+def _llm_reframe_abstract_lift(problem: str, model: Any) -> dict[str, Any]:
+    """调 LLM 把问题抬到更高数学结构."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    try:
+        messages = [
+            SystemMessage(content=(
+                "You are a mathematical abstraction specialist. "
+                "Given a concrete materials science problem, reframe it at a "
+                "higher level of mathematical structure (e.g. group theory, "
+                "topology, functional analysis). Output ONLY a JSON object with "
+                "keys: reframed_problem, rationale, mapping (object with "
+                "original_concept, abstract_concept, ancestor_chain). No markdown."
+            )),
+            HumanMessage(content=f"Problem: {problem}\n\nReframe at higher abstraction."),
+        ]
+        text = ConjectureGenerator()._invoke_model(model, messages)
+        parsed = ConjectureGenerator()._parse_json(text)
+        if parsed:
+            return {
+                "reframed_problem": parsed.get("reframed_problem", problem),
+                "rationale": parsed.get("rationale", ""),
+                "mapping": parsed.get("mapping", {}),
+                "method": "llm",
+            }
+    except Exception:
+        logger.debug("LLM abstract_lift failed, fallback to template", exc_info=True)
+    # 降级
+    return _reframe_abstract_lift(problem, problem.lower(), None)
+
+
+def _llm_reframe_dual_flip(problem: str, model: Any) -> dict[str, Any]:
+    """调 LLM 识别对偶问题 (Legendre / Fourier / primal-dual / max-min)."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    try:
+        messages = [
+            SystemMessage(content=(
+                "You are a mathematical duality specialist. "
+                "Given an optimization or analysis problem, identify its dual. "
+                "Common dualities: max-min, primal-dual, position-momentum "
+                "(Fourier), covariant-contravariant, Lagrangian-Hamiltonian "
+                "(Legendre). Output ONLY a JSON object with keys: "
+                "reframed_problem, rationale, mapping (object with "
+                "original_form, dual_form, duality_type). No markdown."
+            )),
+            HumanMessage(content=f"Problem: {problem}\n\nIdentify the dual problem."),
+        ]
+        text = ConjectureGenerator()._invoke_model(model, messages)
+        parsed = ConjectureGenerator()._parse_json(text)
+        if parsed:
+            return {
+                "reframed_problem": parsed.get("reframed_problem", problem),
+                "rationale": parsed.get("rationale", ""),
+                "mapping": parsed.get("mapping", {}),
+                "method": "llm",
+            }
+    except Exception:
+        logger.debug("LLM dual_flip failed, fallback to template", exc_info=True)
+    return _reframe_dual_flip(problem, problem.lower(), None)
+
+
+def _llm_reframe_analogy_map(
+    problem: str, domain: str, model: Any, target_domain: str | None = None,
+) -> dict[str, Any]:
+    """调 LLM 找同构域并翻译问题."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    try:
+        target_hint = f"Target domain hint: {target_domain}\n" if target_domain else ""
+        messages = [
+            SystemMessage(content=(
+                "You are a cross-domain analogy specialist. "
+                "Given a problem in one domain, find a structurally isomorphic "
+                "domain and translate the problem there. Use known mathematical "
+                "isomorphisms (e.g. Landau phi⁴ for ferroelectric/ferromagnetic, "
+                "percolation for transport, group theory for symmetry). "
+                "Output ONLY a JSON object with keys: reframed_problem, rationale, "
+                "mapping (object with source_domain, target_domain, "
+                "shared_structure, isomorphism_type). No markdown."
+            )),
+            HumanMessage(content=(
+                f"Problem: {problem}\nSource domain: {domain}\n{target_hint}\n"
+                f"Find an isomorphic domain and translate the problem."
+            )),
+        ]
+        text = ConjectureGenerator()._invoke_model(model, messages)
+        parsed = ConjectureGenerator()._parse_json(text)
+        if parsed:
+            return {
+                "reframed_problem": parsed.get("reframed_problem", problem),
+                "rationale": parsed.get("rationale", ""),
+                "mapping": parsed.get("mapping", {}),
+                "method": "llm",
+            }
+    except Exception:
+        logger.debug("LLM analogy_map failed, fallback to template", exc_info=True)
+    # 降级到模板 (target_domain 传入时走模板, 否则 as-is)
+    return _reframe_analogy_map(problem, domain, target_domain, None)
+
+
+# ── 写回 research_log + KG ──
+
+
+def _log_reframe_to_research_log(
+    original: str, result: dict[str, Any]
+) -> str | None:
+    """把 reframe 结果写回 research_log (用 OPEN_QUESTION type, tags 区分)."""
+    try:
+        from huginn.research_log import RecordType, get_research_log
+        log = get_research_log()
+        record = log.add(
+            record_type=RecordType.OPEN_QUESTION,
+            title=f"reframe [{result.get('mode', '?')}]: {original[:60]}",
+            content=(
+                f"原问题: {original}\n\n"
+                f"reframe 模式: {result.get('mode', '?')}\n"
+                f"重构后问题: {result.get('reframed_problem', '')}\n\n"
+                f"依据: {result.get('rationale', '')}\n\n"
+                f"映射: {json.dumps(result.get('mapping', {}), ensure_ascii=False, indent=2)}\n"
+                f"方法: {result.get('method', 'template')}"
+            ),
+            status="proposed",
+            tags=["autoloop", "conjecture", "reframe", result.get("mode", "auto")],
+            metadata={
+                "reframe_mode": result.get("mode"),
+                "method": result.get("method"),
+            },
+        )
+        return record.id
+    except Exception:
+        logger.debug("reframe research_log write failed", exc_info=True)
+        return None
+
+
+def _write_reframe_to_kg(
+    original: str, result: dict[str, Any]
+) -> str | None:
+    """把 reframe 写回 KG: 新 FACT 节点 + DERIVED_FROM 边连原问题."""
+    try:
+        from huginn.kg.entities import EntityType, Relation
+        kg = get_kg()
+        if kg is None:
+            return None
+
+        reframed = result.get("reframed_problem", "") or original
+        reframed_id = kg.add_entity(
+            label=reframed[:80] or "reframed problem",
+            entity_type=EntityType.FACT,
+            source=f"reframe_{result.get('mode', 'auto')}",
+            confidence=0.7,
+            reframe_mode=result.get("mode"),
+            rationale=result.get("rationale", ""),
+        )
+
+        original_id = kg.add_entity(
+            original[:80], EntityType.FACT, source="reframe_original"
+        )
+        # reframed DERIVED_FROM original
+        kg.add_relation(
+            reframed_id, Relation.DERIVED_FROM, original_id,
+            source=f"reframe_{result.get('mode', 'auto')}",
+        )
+
+        # 如果 mapping 含 math_concept / ancestor_chain, 也加进 KG 并连边
+        mapping = result.get("mapping", {})
+        ancestor_chain = mapping.get("ancestor_chain") if isinstance(mapping, dict) else None
+        if ancestor_chain:
+            # 调 attach_math_concept_graph 把数学概念层 merge 进来
+            try:
+                deepest = ancestor_chain[-1] if ancestor_chain else None
+                if deepest:
+                    kg.attach_math_concept_graph(deepest, depth=1)
+            except Exception:
+                logger.debug("attach_math_concept_graph in reframe failed", exc_info=True)
+
+        kg.save()
+        return reframed_id
+    except Exception:
+        logger.debug("reframe KG write-back failed", exc_info=True)
+        return None
+
+
+# ── reframe self-check ──
+
+def _reframe_selfcheck() -> None:
+    """assert-based 自检, 不调真实 LLM. 模板路径覆盖三种模式."""
+    # 1. abstract_lift 模板路径: 关键词命中
+    r1 = reframe_problem("找 Si 的带隙", mode="abstract_lift")
+    assert r1["mode"] == "abstract_lift", f"mode 应为 abstract_lift, got {r1['mode']}"
+    assert "band_symmetry" in r1.get("mapping", {}).get("abstract_concept", "") or \
+           "band_symmetry" in str(r1.get("mapping", {})), \
+           f"应命中 band_symmetry, mapping={r1.get('mapping')}"
+    assert r1["reframed_problem"] != "找 Si 的带隙" or r1.get("method") == "template_noop", \
+        "应产生不同的问题文本 (或 noop)"
+
+    # 2. dual_flip 模板路径: 命中 _DUAL_PAIRS
+    r2 = reframe_problem("最大化稳定性", mode="dual_flip")
+    assert r2["mode"] == "dual_flip"
+    assert "最小化失稳路径" in r2["reframed_problem"], \
+        f"应翻转到对偶问题, got {r2['reframed_problem']}"
+    assert r2["mapping"]["original_form"] == "最大化稳定性"
+    assert r2["mapping"]["dual_form"] == "最小化失稳路径"
+
+    # 3. analogy_map 模板路径: 无结构同构时降级
+    r3 = reframe_problem(
+        "找最优催化剂", mode="analogy_map",
+        domain="oxide_catalyst", target_domain="nonexistent_domain",
+    )
+    assert r3["mode"] == "analogy_map"
+    # 不存在的 target_domain 应降级 (template_no_isomorphism 或 noop)
+    assert r3.get("method") in {"template_no_isomorphism", "template_noop", "template"}, \
+        f"无结构同构应降级, got method={r3.get('method')}"
+
+    # 4. auto 模式: 选最合适的 mode
+    r4 = reframe_problem("最大化电导率", mode="auto")
+    # "最大化电导率" 命中 _DUAL_PAIRS → dual_flip
+    assert r4["mode"] == "dual_flip", f"auto 应选 dual_flip, got {r4['mode']}"
+
+    r5 = reframe_problem("找 Si 的带隙", mode="auto")
+    # "带隙" 命中 _PROBLEM_TO_MATH_CONCEPT → abstract_lift
+    assert r5["mode"] == "abstract_lift", f"auto 应选 abstract_lift, got {r5['mode']}"
+
+    # 5. should_reframe: 三条都满足才触发
+    # 全满足 (drift + blocked + non-renaming)
+    evals_off = [{"on_track": False}, {"on_track": False}, {"on_track": False}]
+    ok, reason = should_reframe(
+        evals_off,
+        block_registry_state={"status": "blocked"},
+        equivalence_audit_passed=True,
+    )
+    assert ok, f"全满足应触发 reframe, reason={reason}"
+
+    # drift 但 block_registry 没 blocked
+    no_ok, _ = should_reframe(
+        evals_off,
+        block_registry_state={"status": "incubating"},
+        equivalence_audit_passed=True,
+    )
+    assert not no_ok, "block_registry 非 blocked 不应触发"
+
+    # drift + blocked 但 equivalence_audit 没过 (换名归约嫌疑)
+    no_ok2, _ = should_reframe(
+        evals_off,
+        block_registry_state={"status": "blocked"},
+        equivalence_audit_passed=False,
+    )
+    assert not no_ok2, "换名归约嫌疑不应触发"
+
+    # 没 drift
+    evals_ok = [{"on_track": True}, {"on_track": True}, {"on_track": True}]
+    no_ok3, _ = should_reframe(
+        evals_ok,
+        block_registry_state={"status": "blocked"},
+        equivalence_audit_passed=True,
+    )
+    assert not no_ok3, "无 drift 不应触发"
+
+    # 6. 不命中的问题: 模板兜底
+    r6 = reframe_problem("xxx yyy zzz", mode="abstract_lift")
+    assert r6["reframed_problem"] == "xxx yyy zzz" or "math structure" in r6["reframed_problem"].lower() \
+           or r6.get("method") == "template_noop"
+
+    print("reframe selfcheck OK")

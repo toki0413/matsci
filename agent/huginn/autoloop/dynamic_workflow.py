@@ -24,18 +24,14 @@ import asyncio
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext
+from huginn.utils.common import now_iso
 import logging
 logger = logging.getLogger(__name__)
 
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ── dataclasses ──────────────────────────────────────────────────────────────
@@ -249,7 +245,7 @@ class WorkflowOrchestrator:
             id=script.id,
             objective=script.objective,
             status="running",
-            started_at=_now_iso(),
+            started_at=now_iso(),
         )
         # pre-register all subtask results as pending
         for st in script.subtasks:
@@ -259,7 +255,7 @@ class WorkflowOrchestrator:
 
         if not script.subtasks:
             result.status = "completed"
-            result.completed_at = _now_iso()
+            result.completed_at = now_iso()
             return result
 
         sem = asyncio.Semaphore(min(script.max_concurrent, self.max_concurrent))
@@ -284,7 +280,7 @@ class WorkflowOrchestrator:
             if result.status == "running":
                 # all subtasks settled → mark completed (even if some failed)
                 result.status = "completed"
-                result.completed_at = _now_iso()
+                result.completed_at = now_iso()
         return result
 
     async def _run_subtask(
@@ -298,12 +294,12 @@ class WorkflowOrchestrator:
         sr = result.subtask_results[subtask.id]
         async with sem:
             sr.status = "running"
-            sr.started_at = _now_iso()
+            sr.started_at = now_iso()
             tool = self._registry.get(subtask.tool_name)
             if tool is None:
                 sr.status = "failed"
                 sr.error = f"tool '{subtask.tool_name}' not registered"
-                sr.completed_at = _now_iso()
+                sr.completed_at = now_iso()
                 return
             try:
                 tool_result = await tool.call(subtask.args, ctx)
@@ -313,7 +309,7 @@ class WorkflowOrchestrator:
                 sr.status = "failed"
                 sr.error = f"{type(exc).__name__}: {exc}"
             finally:
-                sr.completed_at = _now_iso()
+                sr.completed_at = now_iso()
 
 
 # ── shared registry (for the tool / HTTP layer) ──────────────────────────────

@@ -19,7 +19,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huginn.autoloop.plan_store import _file_lock, _now_iso
+from huginn.autoloop.plan_store import _file_lock
+from huginn.utils.common import now_iso
 
 
 @dataclass
@@ -55,7 +56,7 @@ class Goal:
 
     def __post_init__(self) -> None:
         if not self.created_at:
-            self.created_at = _now_iso()
+            self.created_at = now_iso()
         if not self.updated_at:
             self.updated_at = self.created_at
         # text ↔ objective sync: whichever was set, mirror to the other
@@ -180,7 +181,7 @@ class GoalStore:
             for key, value in fields.items():
                 if hasattr(goal, key):
                     setattr(goal, key, value)
-            goal.updated_at = _now_iso()
+            goal.updated_at = now_iso()
             self._save()
             return goal
 
@@ -190,7 +191,7 @@ class GoalStore:
             if goal is None:
                 raise KeyError(f"goal not found: {goal_id}")
             goal.sub_goals.append(text)
-            goal.updated_at = _now_iso()
+            goal.updated_at = now_iso()
             self._save()
             return goal
 
@@ -200,7 +201,7 @@ class GoalStore:
             if goal is None:
                 raise KeyError(f"goal not found: {goal_id}")
             goal.iteration += 1
-            goal.updated_at = _now_iso()
+            goal.updated_at = now_iso()
             self._save()
             return goal
 
@@ -227,12 +228,12 @@ class GoalStore:
                 "id": uid,
                 "text": text,
                 "type": unknown_type,
-                "discovered_at": _now_iso(),
+                "discovered_at": now_iso(),
                 "resolved_at": None,
                 "iteration": goal.iteration,
             })
             goal.unknowns_discovered += 1
-            goal.updated_at = _now_iso()
+            goal.updated_at = now_iso()
             self._save()
             return uid
 
@@ -244,9 +245,9 @@ class GoalStore:
                 return False
             for u in goal.unknowns:
                 if u["id"] == unknown_id and u["resolved_at"] is None:
-                    u["resolved_at"] = _now_iso()
+                    u["resolved_at"] = now_iso()
                     goal.unknowns_resolved += 1
-                    goal.updated_at = _now_iso()
+                    goal.updated_at = now_iso()
                     self._save()
                     return True
             return False

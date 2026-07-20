@@ -20,7 +20,10 @@ on the agent that previously built context now forward here.
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +31,16 @@ if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
 
 logger = logging.getLogger(__name__)
+
+
+# v14 Task 3: semantic overlap 用 TF-IDF + cosine. sklearn 已装就用, 没装 stdlib 兜.
+# ponytail: 不引新依赖. sklearn 在 pyproject 是 optional (rag/all), env 装了就用.
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity as _sklearn_cosine
+    _SKLEARN_OK = True
+except ImportError:  # pragma: no cover
+    _SKLEARN_OK = False
 
 
 def _flatten_replay_content(content: Any) -> str:
@@ -54,6 +67,61 @@ def _flatten_replay_content(content: Any) -> str:
         else:
             parts.append(str(block))
     return "\n".join(p for p in parts if p)
+
+
+def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
+    """TF-IDF + cosine similarity between two free-form texts.
+
+    v14 Task 3 supported_ratio 的核心算子: 算当前 entry.attempted 跟历史
+    entry.evidence 的语义重叠. >0.7 视为支持 (spec v14 supported_ratio 阈值).
+
+    实现选择 (按 spec SubTask 3.1):
+    - sklearn 已装 → TfidfVectorizer + cosine_similarity (默认 word-level, 2+ char token)
+    - sklearn 缺 → stdlib Counter (TF) + math.sqrt (cosine), 无 IDF
+
+    空字符串 / 无有效 token → 0.0. 返回 float ∈ [0, 1].
+
+    ponytail: 短文本 TF-IDF cosine 天然偏低 — 两段文本只共享 1-2 个 token 时
+      cosine 常 < 0.3, >0.7 阈值要求文本共享大部分 content token. 升级路径:
+      加 stemmer (Porter / Snowball) 或 char n-gram 提升短文本召回, 但需新依赖
+      或自定义 tokenizer, 当前先按 spec 严格走 word-level TF-IDF.
+    """
+    if not text_a or not text_b:
+        return 0.0
+    a = text_a.strip()
+    b = text_b.strip()
+    if not a or not b:
+        return 0.0
+
+    if _SKLEARN_OK:
+        try:
+            vec = TfidfVectorizer()
+            X = vec.fit_transform([a, b])
+            # 矩阵只有 2 行, [0,1] 是 a vs b 的 cosine.
+            return float(_sklearn_cosine(X)[0, 1])
+        except ValueError:
+            # TfidfVectorizer 在空 vocab (全 stop word / 全 1-char) 时抛 ValueError,
+            # 走 stdlib 兜底.
+            pass
+        except Exception:
+            logger.debug("sklearn tfidf cosine failed, fallback to stdlib", exc_info=True)
+
+    # stdlib fallback: Counter (TF, 无 IDF) + math.sqrt 算 cosine.
+    # token_pattern 跟 sklearn 默认一致: 2+ char word token.
+    ta = re.findall(r"\b\w\w+\b", a.lower())
+    tb = re.findall(r"\b\w\w+\b", b.lower())
+    if not ta or not tb:
+        return 0.0
+    ca = Counter(ta)
+    cb = Counter(tb)
+    dot = sum(ca[t] * cb[t] for t in ca.keys() & cb.keys())
+    if dot == 0:
+        return 0.0
+    na = math.sqrt(sum(v * v for v in ca.values()))
+    nb = math.sqrt(sum(v * v for v in cb.values()))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
 
 
 class ContextBuilder:
@@ -536,14 +604,33 @@ class ContextBuilder:
         # 取最后 last_n 条, 倒序展示 (最新在前, agent 先看到最近做了啥)
         recent = lines[-last_n:][::-1]
         entries: list[dict] = []
+        _legacy_count = 0  # v14 Task 1: 统计 legacy entry, 出 warning
         for line in recent:
             line = line.strip()
             if not line:
                 continue
             try:
-                entries.append(json.loads(line))
+                e = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            # v14 Task 1: 旧 entry 缺 simplicial complex 字段, 补默认值不阻塞读取.
+            # ponytail: 不做 schema 校验, 只补缺字段. 升级路径 pydantic model + version tag.
+            if not {"simplex_id", "cochain_type", "domain", "task_id"}.issubset(e.keys()):
+                _legacy_count += 1
+                e.setdefault("darwin_score", 0.0)
+                e.setdefault("supported_ratio", 0.0)
+                e.setdefault("simplex_id", None)
+                e.setdefault("cochain_type", "legacy")
+                e.setdefault("domain", "unknown")
+                e.setdefault("task_id", "legacy")
+            entries.append(e)
+
+        if _legacy_count > 0:
+            logger.warning(
+                "meta_trace legacy entries detected: %d (backfilled with "
+                "cochain_type=legacy, domain=unknown, task_id=legacy)",
+                _legacy_count,
+            )
 
         if not entries:
             self._meta_trace_cache = ""

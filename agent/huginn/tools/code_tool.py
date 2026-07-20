@@ -13,6 +13,7 @@ returned to the agent.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -33,6 +34,33 @@ from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 import logging
 logger = logging.getLogger(__name__)
+
+
+# v14 Task 9: 重活识别 heuristic
+# ponytail: 启发式规则, 不做 AST 解析. 升级路径: ast.walk 精确判定 + LLM 估时.
+_HEAVY_CSV_LIBS = ("pdfplumber", "PyPDF2", "fitz")
+
+
+def _is_heavy_task(input_data) -> tuple[bool, str]:
+    """识别重活: 返回 (is_heavy, reason).
+
+    判据 (满足任一):
+      - 代码 > 200 行
+      - timeout > 60s
+      - 含 PDF 解析库 (pdfplumber/PyPDF2/fitz)
+      - pd.read_csv 且没用 chunksize (粗略认为会一把加载大表)
+    """
+    code = getattr(input_data, "code", "") or ""
+    if len(code.splitlines()) > 200:
+        return True, f"code length {len(code.splitlines())} > 200 lines"
+    timeout = getattr(input_data, "timeout", 0) or 0
+    if timeout > 60:
+        return True, f"timeout {timeout}s > 60s"
+    if any(lib in code for lib in _HEAVY_CSV_LIBS):
+        return True, "PDF parsing detected"
+    if "pd.read_csv" in code and "chunksize" not in code:
+        return True, "large CSV load without chunksize"
+    return False, ""
 
 
 
@@ -88,6 +116,27 @@ class CodeTool(HuginnTool):
             Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
         )
         work_dir.mkdir(parents=True, exist_ok=True)
+
+        # v14 Task 9: 重活识别 + 自动 dispatch 给 Support subagent
+        # ponytail: 失败时降级到原行为 (直接执行), 不阻塞主流程.
+        # 升级路径: dispatch 失败计数 → 熔断 Support 路径, 强制本地执行.
+        if input_data.action == "execute":
+            is_heavy, reason = _is_heavy_task(input_data)
+            if is_heavy and os.environ.get("HUGINN_CORE_SUPPORT_PROTOCOL", "1") == "1":
+                # v14 Task 13: PersistentTerminal 路径优先 — 长任务不被枪毙.
+                from huginn.tools.persistent_terminal import (
+                    resolve_persistent_terminal_flag,
+                )
+                if resolve_persistent_terminal_flag(None):
+                    dispatched = _dispatch_to_support_persistent(
+                        input_data.code, context, reason,
+                    )
+                    if dispatched is not None:
+                        return dispatched
+                else:
+                    dispatched = _dispatch_to_support(input_data.code, context, reason)
+                    if dispatched is not None:
+                        return dispatched
 
         try:
             if input_data.action == "generate":
@@ -360,3 +409,185 @@ class CodeTool(HuginnTool):
             if line.startswith("__CODE_TOOL_RESULT_ERROR__:"):
                 return {"error": line[len("__CODE_TOOL_RESULT_ERROR__:") :]}
         return None
+
+
+def _dispatch_to_support(
+    code: str,
+    context: ToolContext | None,
+    reason: str,
+) -> ToolResult | None:
+    """把 code_tool 重活 rewrite 为 subagent_tool dispatch.
+
+    CodeTool.call 是 sync, SubagentTool.call 是 async — 用 run_async 桥接.
+    返回 None 表示 dispatch 没成立 (context 缺 agent_factory 等), 调用方应降级.
+
+    返回的 ToolResult 带 metadata={"dispatched_to_support": True, ...},
+    rcb_runner 主循环看到后写 cochain_type="curl" trace entry.
+    """
+    # context 必须有 agent_factory 才能起子 agent, 没有就降级
+    if context is None or getattr(context, "agent_factory", None) is None:
+        logger.debug(
+            "support dispatch skipped: no agent_factory in context (reason=%s)", reason
+        )
+        return None
+
+    try:
+        from huginn.tools.subagent_tool import SubagentTool
+        from huginn.utils.async_bridge import run_async
+
+        support_input = {
+            "action": "dispatch",
+            "spec_name": "support",
+            "task": (
+                "Execute this code in isolation and return a JSON finding "
+                "with key results / evidence / limitations / artifacts.\n\n"
+                f"{code}"
+            ),
+        }
+        result = run_async(SubagentTool().call(support_input, context))
+    except Exception as exc:
+        logger.warning(
+            "support dispatch failed, falling back to local execution: %s", exc
+        )
+        return None
+
+    # v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context (原 code 作为 proxy).
+    # ponytail: 真正 Core context 拿不到, 用触发 dispatch 的 code 当 claim proxy.
+    # 升级路径: 从 ToolContext.memory_manager 取最近 N 条 Core message 做 core_context.
+    if result.success and isinstance(result.data, dict):
+        finding = result.data.get("summary")
+        if finding:
+            from huginn.agents.subagent import (
+                _check_finding_consistency,
+                _write_support_rejection,
+            )
+            h1_zero, h1_reason = _check_finding_consistency(finding, code)
+            result.metadata["h1_status"] = "zero" if h1_zero else "nonzero"
+            result.metadata["h1_reason"] = h1_reason
+            if not h1_zero:
+                _write_support_rejection(context.workspace, finding, h1_reason, code)
+                result.data = {
+                    "summary": None,
+                    "message": (
+                        f"Support finding rejected: {h1_reason}. "
+                        "Finding written to .huginn/support_rejections.jsonl for later review."
+                    ),
+                }
+                result.metadata["h1_obstruction"] = True
+                result.metadata["rejection_reason"] = h1_reason
+
+    # 给结果打标, 让 rcb_runner 主循环写 curl trace entry
+    result.metadata["dispatched_to_support"] = True
+    result.metadata["dispatch_reason"] = reason
+    return result
+
+
+def _dispatch_to_support_persistent(
+    code: str,
+    context: ToolContext | None,
+    reason: str,
+) -> ToolResult | None:
+    """v14 Task 13: PersistentTerminal 路径 — 启 session 跑原 code, 立即返回.
+
+    不等 Support 完成就返回 session_id, Core 通过 poll_support_session 续轮.
+    返回 None 表示没法启动 session (workspace 解析失败等), 调用方降级.
+
+    ponytail: cmd 用 [python, -u, -c, code] 强制 unbuffered, 否则 Windows
+    pipe 模式下 print 会 block-buffer, read 拿不到 incremental output.
+    升级路径: 跑 SubagentDispatch dispatch 而非裸 code, 让 Support subagent
+    生成结构化 finding. 当前先跑裸 code, code 自己负责 print finding JSON.
+    """
+    workspace = None
+    if context is not None and getattr(context, "workspace", None):
+        workspace = str(context.workspace)
+    elif context is not None and getattr(context, "session_id", None):
+        # session_id 通常映射到 workspace/<session_id>/, 兜底用 cwd
+        workspace = str(Path.cwd())
+
+    try:
+        from huginn.tools.persistent_terminal import get_default_terminal
+
+        terminal = get_default_terminal()
+        # -u 强制 stdout/stderr unbuffered, 非 PTY 模式下也能读到 print 输出
+        cmd = [sys.executable, "-u", "-c", code]
+        session_id = terminal.start(cmd, cwd=workspace)
+    except Exception as exc:
+        logger.warning(
+            "PersistentTerminal dispatch failed, falling back: %s", exc
+        )
+        return None
+
+    result = ToolResult(
+        data={
+            "session_id": session_id,
+            "status": "started",
+            "summary": None,
+            "message": (
+                f"Support task started in persistent session {session_id}. "
+                "Use poll_support_session(session_id) to read incremental output."
+            ),
+        },
+        success=True,
+    )
+    result.metadata["dispatched_to_support"] = True
+    result.metadata["dispatched_via_persistent_terminal"] = True
+    result.metadata["session_id"] = session_id
+    result.metadata["dispatch_reason"] = reason
+    return result
+
+
+def self_check_v14_task9() -> None:
+    """v14 Task 9: 重活识别 self-check.
+
+    不调真实 SubagentTool (要 agent_factory), 只验 _is_heavy_task 判据.
+    """
+    # 250 行代码 → 重活
+    long_code = "\n".join(f"x{i} = {i}" for i in range(250))
+    inp = type("In", (), {"code": long_code, "timeout": 30})()
+    is_heavy, reason = _is_heavy_task(inp)
+    assert is_heavy, "250 行代码应识别为重活"
+    assert "200 lines" in reason, f"reason 不对: {reason}"
+
+    # PDF 解析 → 重活
+    inp = type(
+        "In",
+        (),
+        {
+            "code": "import pdfplumber\nwith pdfplumber.open('a.pdf') as pdf:\n  pass",
+            "timeout": 30,
+        },
+    )()
+    is_heavy, reason = _is_heavy_task(inp)
+    assert is_heavy and "PDF" in reason, f"PDF 解析应识别为重活, got {reason}"
+
+    # 大 CSV 无 chunksize → 重活
+    inp = type(
+        "In", (), {"code": "import pandas as pd\ndf = pd.read_csv('big.csv')", "timeout": 30}
+    )()
+    is_heavy, reason = _is_heavy_task(inp)
+    assert is_heavy and "CSV" in reason, f"大 CSV 应识别为重活, got {reason}"
+
+    # 大 CSV 有 chunksize → 不是重活
+    inp = type(
+        "In",
+        (),
+        {"code": "import pandas as pd\nfor c in pd.read_csv('big.csv', chunksize=1000):\n  pass", "timeout": 30},
+    )()
+    is_heavy, _ = _is_heavy_task(inp)
+    assert not is_heavy, "chunksize 不应识别为重活"
+
+    # timeout > 60 → 重活
+    inp = type("In", (), {"code": "print('hi')", "timeout": 120})()
+    is_heavy, reason = _is_heavy_task(inp)
+    assert is_heavy and "timeout" in reason, f"长 timeout 应识别为重活, got {reason}"
+
+    # 短代码 + 短 timeout → 不是重活
+    inp = type("In", (), {"code": "print('hello')", "timeout": 30})()
+    is_heavy, _ = _is_heavy_task(inp)
+    assert not is_heavy, "短代码不应识别为重活"
+
+    print("[CHECK v14 Task 9] heavy task detection OK")
+
+
+if __name__ == "__main__":
+    self_check_v14_task9()
