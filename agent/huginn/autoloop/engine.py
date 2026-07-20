@@ -3382,6 +3382,10 @@ Respond JSON only:
 
         想象力模式: _should_imaginate() 为 True 时改调 forget_then_generate,
         把已 refuted 的假设当 known_solutions 遗忘掉, 强制从第一性原理重来.
+
+        P13: HUGINN_USE_CROSS_DOMAIN=1 时先查 transfer 历史, 3 条都 failed
+        跳过本次猜想, 有 succeeded 时把成功 transfer 引用进 hint 前缀.
+        flag off 时行为跟现状完全一致.
         """
         try:
             from huginn.autoloop.conjecture import get_conjecture_generator
@@ -3391,6 +3395,41 @@ Respond JSON only:
                 return ""
             source_domain = context.get("domain") or "materials science"
             target_domain = context.get("target_domain") or "battery cathodes"
+
+            # P13: flag on 时查 CrossDomain 历史, 决定是否跳过 / 引用
+            hint_prefix = ""
+            if os.environ.get("HUGINN_USE_CROSS_DOMAIN", "0") in ("1", "true", "True"):
+                try:
+                    kg = getattr(self, "kg", None)
+                    if kg is not None:
+                        history = kg.query_transfer_history(
+                            target_domain=target_domain, limit=3
+                        )
+                        # isinstance 兜底: 测试里 kg 可能是 MagicMock,
+                        # query_transfer_history 返 MagicMock 不是 list
+                        if isinstance(history, list):
+                            if history and all(
+                                h.get("status") == "failed" for h in history
+                            ):
+                                logger.info(
+                                    "CrossDomain skipped (3 recent failed transfers)"
+                                )
+                                return ""  # 3 条都失败, 不重复猜想
+                            successful = [
+                                h for h in history
+                                if h.get("status") == "succeeded"
+                            ]
+                            if successful:
+                                hint_prefix = (
+                                    f"Previous successful transfer: "
+                                    f"{successful[0].get('original_problem')} -> "
+                                    f"{successful[0].get('target_domain')}\n"
+                                )
+                except Exception:
+                    logger.warning(
+                        "query_transfer_history failed, proceed without history",
+                        exc_info=True,
+                    )
 
             gen = get_conjecture_generator()
 
@@ -3418,7 +3457,7 @@ Respond JSON only:
             # Prerequisite Inversion: 跨域类比不是直接用, 而是问"什么条件必须暗中获得满足"
             # 4 维反转防止结构错配 (Dream Layer v1.1 核心贡献)
             return (
-                f"[Cross-domain analogy hint]\n"
+                f"{hint_prefix}[Cross-domain analogy hint]\n"
                 f"Conjecture: {statement}\n"
                 f"Prediction: {prediction}\n"
                 f"Before using this analogy, perform Prerequisite Inversion:\n"
@@ -5520,6 +5559,27 @@ Respond JSON only:
                 "autoloop_summary writeback failed — loop continues",
                 exc_info=True,
             )
+
+        # P14: EvolutionManager.record_outcome — flag on 时把 outcome 统一记到
+        # FailedDirectionStore + SkillEvolutionLayer. flag off (默认) 不调,
+        # 走原分散路径 (P12 record_failed_direction + evolution.logger.log_tool_call).
+        if os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "0") == "1":
+            try:
+                from huginn.evolution.manager import EvolutionManager
+
+                em = EvolutionManager.shared(self.memory)
+                em.record_outcome(
+                    hypothesis=hypothesis,
+                    plan=plan if isinstance(plan, dict) else None,
+                    validation=validation if isinstance(validation, dict) else None,
+                    persona_id=getattr(self, "_last_persona", None),
+                    run_id=getattr(self, "_run_id", "") or "",
+                    math_concept="",
+                )
+            except Exception:
+                logger.warning(
+                    "EvolutionManager.record_outcome failed", exc_info=True
+                )
 
     async def _generate_next_loop_directive(
         self,

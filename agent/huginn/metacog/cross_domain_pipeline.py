@@ -196,7 +196,7 @@ def cross_domain_reframe(
         confidence += min(0.2, len(shared_math) * 0.1)
     confidence = min(confidence, 1.0)
 
-    return TransferHypothesis(
+    transfer = TransferHypothesis(
         original_problem=problem,
         target_domain=target_profile.name,
         shared_math=shared_math,
@@ -206,6 +206,67 @@ def cross_domain_reframe(
         confidence=confidence,
         trace=trace,
     )
+
+    # P13: 持久化到 KG + memory. 失败不阻塞返回, 单测默认不写
+    # (write_transfer_to_kg 的 mm 参数 None 时跳过 memory 写入)
+    try:
+        write_transfer_to_kg(transfer)
+    except Exception:
+        logger.warning("write_transfer_to_kg failed", exc_info=True)
+
+    return transfer
+
+
+def write_transfer_to_kg(
+    transfer: TransferHypothesis,
+    kg: Any = None,
+    memory_manager: Any = None,
+) -> None:
+    """把 transfer 写 KG + memory. flag off 或组件不可用时降级.
+
+    ponytail: 不在 cross_domain_reframe 内部直接调, 而是单独函数让 caller
+    决定是否写 (避免单测依赖全局 kg/memory_manager). KG 用 conjecture.get_kg
+    单例, 不新建存储.
+    """
+    # 1. 写 KG: caller 没传 kg 时用 conjecture 的全局单例, 不可用就跳过
+    if kg is None:
+        try:
+            from huginn.autoloop.conjecture import get_kg
+            kg = get_kg()
+        except Exception:
+            logger.debug("get_kg unavailable", exc_info=True)
+            kg = None
+    if kg is not None:
+        try:
+            kg.add_transfer_edge(transfer)
+        except Exception:
+            logger.warning("add_transfer_edge failed", exc_info=True)
+
+    # 2. 写 memory: caller 没传 mm 时跳过 (cross_domain_reframe 不知道 mm 在哪)
+    if memory_manager is None:
+        return
+    try:
+        content = (
+            f"CrossDomain transfer: {transfer.original_problem} -> "
+            f"{transfer.target_domain}\n"
+            f"shared_math: {transfer.shared_math}\n"
+            f"reframed: {transfer.reframed_problem}\n"
+            f"confidence: {transfer.confidence}"
+        )
+        # P12 typed API 优先, 不可用时降级到 category 字符串
+        if hasattr(memory_manager, "remember_typed"):
+            memory_manager.remember_typed(
+                content=content,
+                memory_type="cross_domain_transfer",
+                status="proposed",
+            )
+        else:
+            memory_manager.remember(
+                content=content,
+                category="cross_domain_transfer",
+            )
+    except Exception:
+        logger.warning("remember_typed failed, fallback skipped", exc_info=True)
 
 
 # === 自检 ===

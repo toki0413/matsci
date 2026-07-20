@@ -21,6 +21,10 @@ class EntityType:
     PROPERTY = "Property"
     CRYSTAL_STRUCTURE = "CrystalStructure"
     APPLICATION = "Application"
+    # ── Math concept layer (MathConceptGraph) ──
+    MATH_CONCEPT = "MathConcept"
+    # ── P13 CrossDomain transfer history ──
+    CROSS_DOMAIN_TRANSFER = "cross_domain_transfer"
 
 
 class Relation:
@@ -45,6 +49,14 @@ class Relation:
     USED_FOR = "used_for"                # Compound → Application
     COMPUTED_WITH = "computed_with"      # Property → Tool
     VALIDATES = "validates"              # Paper → Property
+    # ── Math concept relations (MathConceptGraph) ──
+    DEPENDS_ON = "depends_on"            # Hausdorff → Compact (Hausdorff 需要 Topology)
+    GENERALIZES = "generalizes"          # Metric → Topological (Metric 是 Topological 的特例)
+    DUAL_TO = "dual_to"                  # Maximize stability ↔ Minimize instability path
+    # ── P13 CrossDomain transfer relations ──
+    CROSS_DOMAIN_ANALOGY = "cross_domain_analogy"      # source problem → transfer node
+    TRANSFERS_TO = "transfers_to"                      # transfer node → target domain
+    STRUCTURALLY_ISOMORPHIC = "structurally_isomorphic"  # transfer ↔ math concept
 
 
 # Common keywords used for rule-based extraction.
