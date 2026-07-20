@@ -1191,10 +1191,25 @@ class MemoryManager:
                 principle,
                 source=f"episodic_distill:{str(workspace)[:64]}",
             )
-            return principle
         except Exception:
             logger.debug("distill_episodic_to_procedural 写入失败", exc_info=True)
             return None
+
+        # P14: EvolutionManager.distill — flag on 时同步把 failed_direction
+        # 蒸馏成 STABLE_PRINCIPLE (avoid persona X for math concept Y).
+        # flag off (默认) 不调, 走原 episodic 蒸馏路径.
+        import os as _os
+        if _os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "0") == "1":
+            try:
+                from huginn.evolution.manager import EvolutionManager
+
+                em = EvolutionManager.shared(self)
+                em.distill()
+            except Exception:
+                logger.warning(
+                    "EvolutionManager.distill failed", exc_info=True
+                )
+        return principle
 
     def recall_procedural(self, query: str, top_k: int = 3) -> list[str]:
         """召回相关 procedural memory (stable_principles).

@@ -177,6 +177,10 @@ class SkillEvolutionLayer:
 
     def __init__(self, persist_path: str | Path | None = None) -> None:
         self._beliefs: dict[tuple[str, str, str], ToolBelief] = {}
+        # P14: hypothesis / strategy 级失败记录, 跟 ToolBelief 并列.
+        # ponytail: 不做贝叶斯更新, list/dict 直接堆, 100 条封顶. 升级路径接 LLM 摘要.
+        self._hypothesis_failures: list[dict[str, Any]] = []
+        self._strategy_failures: dict[str, dict[str, Any]] = {}
         self._persist_path: Path | None = Path(persist_path) if persist_path else None
         if self._persist_path is not None:
             self._load()
@@ -294,6 +298,57 @@ class SkillEvolutionLayer:
             b.understanding_confidence = min(1.0, b.understanding_confidence + 0.2)
             self._save()
 
+    # ── Hypothesis / strategy level failures (P14) ───────────────────
+    # ToolBelief 只记 (tool, param, value) 级, 不覆盖 hypothesis 级和 strategy 级失败.
+    # 这里加 2 个方法补齐. ponytail: list / dict 直接堆, 不做贝叶斯; 升级路径接 LLM 摘要.
+
+    def record_hypothesis_failure(
+        self, hypothesis_text: str, reason: str, math_concept: str = ""
+    ) -> None:
+        """记录 hypothesis 级失败 (不仅仅工具参数级)."""
+        try:
+            self._hypothesis_failures.append(
+                {
+                    "hypothesis": hypothesis_text,
+                    "reason": reason,
+                    "math_concept": math_concept,
+                    "ts": time.time(),
+                }
+            )
+            # 100 条封顶, 防止 json 文件无限膨胀
+            if len(self._hypothesis_failures) > 100:
+                self._hypothesis_failures = self._hypothesis_failures[-100:]
+            self._save()
+        except Exception:
+            logger.warning("record_hypothesis_failure failed", exc_info=True)
+
+    def record_strategy_failure(
+        self, strategy_name: str, reason: str
+    ) -> None:
+        """记录 strategy 级失败. 按 strategy_name 聚合 count + 最近 10 条 reason."""
+        try:
+            rec = self._strategy_failures.setdefault(
+                strategy_name, {"count": 0, "reasons": []}
+            )
+            rec["count"] += 1
+            rec["reasons"].append(reason)
+            if len(rec["reasons"]) > 10:
+                rec["reasons"] = rec["reasons"][-10:]
+            self._save()
+        except Exception:
+            logger.warning("record_strategy_failure failed", exc_info=True)
+
+    def get_hypothesis_failures(self) -> list[dict[str, Any]]:
+        """读最近 hypothesis 失败 (按 ts 升序)."""
+        return list(self._hypothesis_failures)
+
+    def get_strategy_failures(self) -> dict[str, dict[str, Any]]:
+        """读 strategy 失败汇总 {strategy_name: {count, reasons}}."""
+        return {
+            k: {"count": v["count"], "reasons": list(v["reasons"])}
+            for k, v in self._strategy_failures.items()
+        }
+
     # ── Query ─────────────────────────────────────────────────────
 
     def get_belief(
@@ -379,6 +434,12 @@ class SkillEvolutionLayer:
                 "version": "2.0",
                 "saved_at": time.time(),
                 "beliefs": [b.to_dict() for b in self._beliefs.values()],
+                # P14: hypothesis / strategy 级失败一并落盘, 跨 session 可恢复
+                "hypothesis_failures": list(self._hypothesis_failures)[-100:],
+                "strategy_failures": {
+                    k: {"count": v["count"], "reasons": list(v["reasons"])[-10:]}
+                    for k, v in self._strategy_failures.items()
+                },
             }
             self._persist_path.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2),
@@ -416,8 +477,20 @@ class SkillEvolutionLayer:
                     "SkillEvolutionLayer: loaded %d beliefs from %s",
                     len(self._beliefs), self._persist_path,
                 )
+            # P14: hypothesis / strategy 级失败也恢复. 旧文件没这俩字段 → 空列表/字典.
+            self._hypothesis_failures = list(data.get("hypothesis_failures", []))[-100:]
+            sf = data.get("strategy_failures", {})
+            self._strategy_failures = {
+                k: {
+                    "count": v.get("count", 0),
+                    "reasons": list(v.get("reasons", []))[-10:],
+                }
+                for k, v in sf.items() if isinstance(v, dict)
+            }
         except Exception:
             logger.debug("belief load failed", exc_info=True)
 
     def clear(self) -> None:
         self._beliefs.clear()
+        self._hypothesis_failures.clear()
+        self._strategy_failures.clear()
