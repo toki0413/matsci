@@ -1536,7 +1536,14 @@ async def _step3_adversarial(
     )
     if external_critique_block:
         step3_prompt = external_critique_block + "\n\n## Now act on the critique above:\n" + step3_prompt
-    await stream_chat_fn(step3_prompt, "step3")
+    # Step 3 用独立 thread 隔离 Step 1/2 末尾可能 dangling 的 tool_calls 历史.
+    # DeepSeek API 严格校验 assistant(tool_calls) 必须紧跟 tool message, Step 2
+    # 跑完若 agent 调工具被中断 (timeout/exception), thread 历史会留 dangling,
+    # 同 thread 调 Step 3 直接 400. ConversationTree 全局重建历史, 换 thread 不丢上下文.
+    # ponytail: 单独 _step3 后缀, 不污染 Step 1/2 thread. 升级: 修 checkpointer
+    # 的 history restorer 自动过滤 dangling tool_calls (留后续).
+    _step3_tid = f"rcb_{ws.name}_step3"
+    await stream_chat_fn(step3_prompt, "step3", tid=_step3_tid)
 
     # v14 Task 8: Step3→Step2 回退通道 (拓扑许可动力学)
     # 重新 critique 看 agent 修没修好; 仍 fix_needed + β_1>0 + gap 类型匹配
@@ -1574,7 +1581,7 @@ async def _step3_adversarial(
                 f"'Attempted {_retry_count} retries, could not fix gap ({_retry_gap}).'\n"
                 f"Use file_write_tool to OVERWRITE report/report.md with this honest note."
             )
-            await stream_chat_fn(_finalize_prompt, "step3_finalize")
+            await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_step3_tid)
             break
 
         _retry_count += 1
@@ -1615,7 +1622,7 @@ async def _step3_adversarial(
             print(f"[step3_retry trace write failed: {_e}]", flush=True)
 
         print(f"[step3_retry: attempt {_retry_count}/2, gap={_retry_gap}]", flush=True)
-        await stream_chat_fn(_retry_execute_prompt, "step3_retry")
+        await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_step3_tid)
         # loop continues — re-critique next iteration
 
     return _final_verdict
