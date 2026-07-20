@@ -258,66 +258,80 @@ def run_selfcheck() -> None:
     print("10. CrossDomain gating (flag + _conjecture_hint 路径切换) OK")
 
     # ── G2: _check_stuck (cycle_detect + trajectory_match) ──────────────
-    eng5 = AutoloopEngine.__new__(AutoloopEngine)
-    eng5._traj_history = []  # 默认无历史, 只测 cycle 路径
+    # 极限模式默认关闭, selfcheck 临时开 env 验证功能正确
+    _os2.environ["HUGINN_EXTREME_DISPATCH"] = "1"
+    try:
+        eng5 = AutoloopEngine.__new__(AutoloopEngine)
+        eng5._traj_history = []  # 默认无历史, 只测 cycle 路径
 
-    # case A: 短序列 (< 4) → 不检, 返回 None
-    assert eng5._check_stuck(["observe", "hypothesize"]) is None
-    print("G2-A short sequence (<4) → None OK")
-
-    # case B: 周期序列 [a,b,a,b,a,b] → cycle 信号
-    seq_b = ["observe", "hypothesize", "observe", "hypothesize", "observe", "hypothesize"]
-    r_b = eng5._check_stuck(seq_b)
-    assert r_b is not None, "周期序列应触发 cycle"
-    assert r_b["type"] == "cycle", f"type 应为 cycle, got {r_b['type']}"
-    assert r_b["period"] >= 2, f"period 应 >=2, got {r_b['period']}"
-    assert "pivot" in r_b["advice"], f"advice 应含 pivot: {r_b['advice']}"
-    print(f"G2-B cycle detected: period={r_b['period']}, advice={r_b['advice'][:60]}")
-
-    # case C: 非周期序列, 无历史 → None
-    seq_c = ["observe", "hypothesize", "plan", "execute", "validate", "learn"]
-    r_c = eng5._check_stuck(seq_c)
-    assert r_c is None, f"非周期无历史应 None, got {r_c}"
-    print("G2-C non-cycle, no history → None OK")
-
-    # case D: 非周期, 但匹配历史轨迹 prefix → match 信号
-    eng5._traj_history = [
-        ["observe", "hypothesize", "plan", "execute", "validate", "learn", "observe"],
-        ["observe", "hypothesize", "plan", "execute", "validate", "learn", "pivot"],
-    ]
-    seq_d = ["observe", "hypothesize", "plan", "execute"]  # prefix of history[0]
-    r_d = eng5._check_stuck(seq_d)
-    assert r_d is not None, "prefix 匹配应触发 match"
-    assert r_d["type"] == "match", f"type 应为 match, got {r_d['type']}"
-    assert r_d["next_step"] == "validate", f"next_step 应为 validate, got {r_d['next_step']}"
-    print(f"G2-D trajectory match: next_step={r_d['next_step']}, sim={r_d['similarity']}")
-
-    # case E: 加载历史 trajectory (空目录 → 空列表)
-    with _tf.TemporaryDirectory() as _td_e:
-        eng5.workspace = _P(_td_e)
-        hist_e = eng5._load_trajectory_action_history(limit=10)
-        assert hist_e == [], f"空目录应返回 [], got {hist_e}"
-    print("G2-E empty trajectory dir → [] OK")
-
-    # case F: 加载历史 trajectory (有 json 文件 → 抽 spans phase)
-    with _tf.TemporaryDirectory() as _td_f:
-        eng5.workspace = _P(_td_f)
-        _traj_dir = _P(_td_f) / ".huginn" / "trajectories"
-        _traj_dir.mkdir(parents=True)
-        (_traj_dir / "run1.json").write_text(
-            '{"spans": [{"phase": "observe"}, {"phase": "hypothesize"}, '
-            '{"phase": "plan"}]}',
-            encoding="utf-8",
+        # case 0: env 关闭时 _check_stuck 直接返回 None (默认模式)
+        _os2.environ["HUGINN_EXTREME_DISPATCH"] = "0"
+        _r0 = eng5._check_stuck(
+            ["observe", "hypothesize", "observe", "hypothesize", "observe", "hypothesize"]
         )
-        (_traj_dir / "run2.json").write_text(
-            '{"spans": [{"phase": "observe"}, {"phase": "pivot"}]}',
-            encoding="utf-8",
-        )
-        hist_f = eng5._load_trajectory_action_history(limit=10)
-        assert len(hist_f) == 2, f"应加载 2 个轨迹, got {len(hist_f)}"
-        assert ["observe", "hypothesize", "plan"] in hist_f
-        assert ["observe", "pivot"] in hist_f
-    print("G2-F load trajectory history from disk OK")
+        assert _r0 is None, f"极限模式关闭时应返回 None, got {_r0}"
+        _os2.environ["HUGINN_EXTREME_DISPATCH"] = "1"
+        print("G2-0 extreme mode off (default) → None OK")
+
+        # case A: 短序列 (< 4) → 不检, 返回 None
+        assert eng5._check_stuck(["observe", "hypothesize"]) is None
+        print("G2-A short sequence (<4) → None OK")
+
+        # case B: 周期序列 [a,b,a,b,a,b] → cycle 信号
+        seq_b = ["observe", "hypothesize", "observe", "hypothesize", "observe", "hypothesize"]
+        r_b = eng5._check_stuck(seq_b)
+        assert r_b is not None, "周期序列应触发 cycle"
+        assert r_b["type"] == "cycle", f"type 应为 cycle, got {r_b['type']}"
+        assert r_b["period"] >= 2, f"period 应 >=2, got {r_b['period']}"
+        assert "pivot" in r_b["advice"], f"advice 应含 pivot: {r_b['advice']}"
+        print(f"G2-B cycle detected: period={r_b['period']}, advice={r_b['advice'][:60]}")
+
+        # case C: 非周期序列, 无历史 → None
+        seq_c = ["observe", "hypothesize", "plan", "execute", "validate", "learn"]
+        r_c = eng5._check_stuck(seq_c)
+        assert r_c is None, f"非周期无历史应 None, got {r_c}"
+        print("G2-C non-cycle, no history → None OK")
+
+        # case D: 非周期, 但匹配历史轨迹 prefix → match 信号
+        eng5._traj_history = [
+            ["observe", "hypothesize", "plan", "execute", "validate", "learn", "observe"],
+            ["observe", "hypothesize", "plan", "execute", "validate", "learn", "pivot"],
+        ]
+        seq_d = ["observe", "hypothesize", "plan", "execute"]  # prefix of history[0]
+        r_d = eng5._check_stuck(seq_d)
+        assert r_d is not None, "prefix 匹配应触发 match"
+        assert r_d["type"] == "match", f"type 应为 match, got {r_d['type']}"
+        assert r_d["next_step"] == "validate", f"next_step 应为 validate, got {r_d['next_step']}"
+        print(f"G2-D trajectory match: next_step={r_d['next_step']}, sim={r_d['similarity']}")
+
+        # case E: 加载历史 trajectory (空目录 → 空列表)
+        with _tf.TemporaryDirectory() as _td_e:
+            eng5.workspace = _P(_td_e)
+            hist_e = eng5._load_trajectory_action_history(limit=10)
+            assert hist_e == [], f"空目录应返回 [], got {hist_e}"
+        print("G2-E empty trajectory dir → [] OK")
+
+        # case F: 加载历史 trajectory (有 json 文件 → 抽 spans phase)
+        with _tf.TemporaryDirectory() as _td_f:
+            eng5.workspace = _P(_td_f)
+            _traj_dir = _P(_td_f) / ".huginn" / "trajectories"
+            _traj_dir.mkdir(parents=True)
+            (_traj_dir / "run1.json").write_text(
+                '{"spans": [{"phase": "observe"}, {"phase": "hypothesize"}, '
+                '{"phase": "plan"}]}',
+                encoding="utf-8",
+            )
+            (_traj_dir / "run2.json").write_text(
+                '{"spans": [{"phase": "observe"}, {"phase": "pivot"}]}',
+                encoding="utf-8",
+            )
+            hist_f = eng5._load_trajectory_action_history(limit=10)
+            assert len(hist_f) == 2, f"应加载 2 个轨迹, got {len(hist_f)}"
+            assert ["observe", "hypothesize", "plan"] in hist_f
+            assert ["observe", "pivot"] in hist_f
+        print("G2-F load trajectory history from disk OK")
+    finally:
+        _os2.environ.pop("HUGINN_EXTREME_DISPATCH", None)
 
     print("AutoloopEngine selfcheck OK (10/10 + G2)")
 
