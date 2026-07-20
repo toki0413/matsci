@@ -108,6 +108,8 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),
     ("huginn.tools.discrete_smt_tool", "DiscreteSMTTool"),
     ("huginn.tools.discrete_group_tool", "DiscreteGroupTool"),
+    ("huginn.tools.discrete_oeis_tool", "DiscreteOEISTool"),
+    ("huginn.tools.discrete_additive_tool", "DiscreteAdditiveTool"),
     ("huginn.tools.dynamics_discovery_tool", "DynamicsDiscoveryTool"),
     ("huginn.tools.sci.interpretable_ml_tool", "InterpretableMLTool"),
     ("huginn.tools.autodiff_tool", "AutoDiffTool"),
