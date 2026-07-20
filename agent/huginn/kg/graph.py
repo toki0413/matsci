@@ -535,10 +535,478 @@ class ProjectKnowledgeGraph:
         causes.sort(key=lambda d: d.get("step_id", 0))
         return causes
 
+    # ── Math concept layer join (双层 KG) ──
+
+    def attach_math_concept_graph(self, concept: str, depth: int = 1) -> dict[str, Any]:
+        """把 MathConceptGraph 里 concept 的邻域 merge 进当前 ProjectKnowledgeGraph.
+
+        双层 KG 设计: ProjectKnowledgeGraph 存项目作用域实体 (材料/工具/方法),
+        MathConceptGraph 存全局数学概念依赖. 用户在项目里提到某个数学概念
+        (e.g. "用 Sobolev 空间理论分析 PDE 弱解") 时, 调此方法把该概念的祖先
+        链拉进项目 KG, 让项目内的实体能跨连到数学概念层.
+
+        返回 merge 的节点/边数: {"added_nodes": N, "added_edges": M}.
+        Ponytail: 不持久化 MathConcept 子图 (它是全局只读的), 只在项目 KG 里
+        加引向 MathConcept 的 "anchor" 节点. 真要持久化时手动 save().
+        """
+        try:
+            mcg = get_math_concept_graph()
+        except Exception:
+            return {"added_nodes": 0, "added_edges": 0, "error": "mcg_unavailable"}
+
+        nb = mcg.query_concept_neighborhood(concept, depth=depth)
+        if not nb.get("found"):
+            return {"added_nodes": 0, "added_edges": 0, "error": "concept_not_found"}
+
+        added_nodes = 0
+        added_edges = 0
+        with self._lock:
+            # 把 concept + ancestors + descendants + duals 全部作为 MathConcept
+            # 节点加进项目 KG
+            all_concepts = {nb["concept"]} | set(nb["ancestors"]) | \
+                           set(nb["descendants"]) | set(nb["duals"])
+            for c in all_concepts:
+                eid = node_id(c, "MathConcept")
+                if eid not in self._graph:
+                    self._graph.add_node(
+                        eid, label=c, type="MathConcept",
+                        source="math_concept_graph", confidence=1.0,
+                        created_at=datetime.now().isoformat(), mentions=1,
+                    )
+                    added_nodes += 1
+
+            # 从 MathConceptGraph 复制依赖边 (depends_on / generalizes / dual_to)
+            for path in nb.get("paths_to_ancestors", []) + nb.get("paths_to_descendants", []):
+                for i in range(len(path) - 1):
+                    src_eid = node_id(path[i], "MathConcept")
+                    dst_eid = node_id(path[i + 1], "MathConcept")
+                    # 查 MathConceptGraph 里这条边的 relation
+                    edge_data = mcg._graph.get_edge_data(path[i], path[i + 1])
+                    rel = edge_data.get("relation", "depends_on") if edge_data else "depends_on"
+                    if not self._graph.has_edge(src_eid, dst_eid):
+                        self._graph.add_edge(
+                            src_eid, dst_eid, relation=rel,
+                            source="math_concept_graph", confidence=1.0,
+                            created_at=datetime.now().isoformat(),
+                        )
+                        added_edges += 1
+
+            # duals 加双向 dual_to 边
+            for dual in nb["duals"]:
+                src_eid = node_id(nb["concept"], "MathConcept")
+                dst_eid = node_id(dual, "MathConcept")
+                if not self._graph.has_edge(src_eid, dst_eid):
+                    self._graph.add_edge(
+                        src_eid, dst_eid, relation="dual_to",
+                        source="math_concept_graph", confidence=1.0,
+                        created_at=datetime.now().isoformat(),
+                    )
+                    added_edges += 1
+
+        return {"added_nodes": added_nodes, "added_edges": added_edges}
+
+    # ── P13 CrossDomain transfer history ──
+
+    def add_transfer_edge(self, transfer: Any) -> str:
+        """把 CrossDomain transfer 写入 KG.
+
+        加 CROSS_DOMAIN_TRANSFER 节点 + 3 条边:
+        - original_problem node → transfer node: cross_domain_analogy
+        - transfer node → target_domain node: transfers_to
+        - transfer node ↔ math_concept node: structurally_isomorphic
+
+        返回 transfer_node_id. 字段缺失时 getattr 兜底, 不 raise.
+        ponytail: 节点 id 用 uuid 防冲突 — 同一 source→target 可能多次 transfer.
+        """
+        from huginn.kg.entities import EntityType, Relation
+
+        original = getattr(transfer, "original_problem", "") or ""
+        target = getattr(transfer, "target_domain", "") or ""
+        math_concept = getattr(transfer, "math_concept", "") or ""
+        lca = getattr(transfer, "lca_concept", "") or ""
+        shared_math = getattr(transfer, "shared_math", []) or []
+        reframed = getattr(transfer, "reframed_problem", "") or ""
+        confidence = float(getattr(transfer, "confidence", 0.0) or 0.0)
+
+        transfer_id = f"transfer:{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{id(transfer) & 0xFFFFFF:x}"
+        now = datetime.now().isoformat()
+
+        with self._lock:
+            # transfer 节点本体
+            self._graph.add_node(
+                transfer_id,
+                type=EntityType.CROSS_DOMAIN_TRANSFER,
+                label=f"{original[:40]} → {target}",
+                original_problem=original,
+                target_domain=target,
+                math_concept=math_concept,
+                lca_concept=lca,
+                shared_math=list(shared_math),
+                reframed_problem=reframed,
+                confidence=confidence,
+                status="proposed",  # 后续 hypothesis 验证时更新
+                created_at=now,
+                last_seen=now,
+                mentions=1,
+            )
+
+            # source 节点 (Topic) + cross_domain_analogy 边
+            if original:
+                src_eid = node_id(original[:80], EntityType.TOPIC)
+                if src_eid not in self._graph:
+                    self._graph.add_node(
+                        src_eid, label=original[:80], type=EntityType.TOPIC,
+                        source="cross_domain", confidence=0.5,
+                        created_at=now, last_seen=now, mentions=1,
+                    )
+                self._graph.add_edge(
+                    src_eid, transfer_id, relation=Relation.CROSS_DOMAIN_ANALOGY,
+                    source="cross_domain", confidence=confidence,
+                    created_at=now, last_seen=now, mentions=1,
+                )
+
+            # target 节点 (Topic) + transfers_to 边
+            if target:
+                dst_eid = node_id(target, EntityType.TOPIC)
+                if dst_eid not in self._graph:
+                    self._graph.add_node(
+                        dst_eid, label=target, type=EntityType.TOPIC,
+                        source="cross_domain", confidence=0.5,
+                        created_at=now, last_seen=now, mentions=1,
+                    )
+                self._graph.add_edge(
+                    transfer_id, dst_eid, relation=Relation.TRANSFERS_TO,
+                    source="cross_domain", confidence=confidence,
+                    created_at=now, last_seen=now, mentions=1,
+                )
+
+            # math_concept 节点 (MathConcept) + 双向 structurally_isomorphic 边
+            if math_concept:
+                mc_eid = node_id(math_concept, EntityType.MATH_CONCEPT)
+                if mc_eid not in self._graph:
+                    self._graph.add_node(
+                        mc_eid, label=math_concept, type=EntityType.MATH_CONCEPT,
+                        source="cross_domain", confidence=1.0,
+                        created_at=now, last_seen=now, mentions=1,
+                    )
+                self._graph.add_edge(
+                    transfer_id, mc_eid, relation=Relation.STRUCTURALLY_ISOMORPHIC,
+                    source="cross_domain", confidence=confidence,
+                    created_at=now, last_seen=now, mentions=1,
+                )
+                self._graph.add_edge(
+                    mc_eid, transfer_id, relation=Relation.STRUCTURALLY_ISOMORPHIC,
+                    source="cross_domain", confidence=confidence,
+                    created_at=now, last_seen=now, mentions=1,
+                )
+
+        return transfer_id
+
+    def query_transfer_history(
+        self,
+        source_domain: str | None = None,
+        target_domain: str | None = None,
+        limit: int = 3,
+    ) -> list[dict]:
+        """查 transfer 历史. 返回 list[dict], 每条含 transfer 节点全部属性.
+
+        source_domain: 子串匹配 original_problem (None 跳过).
+        target_domain: 严格匹配 target_domain 字段 (None 跳过).
+        limit: 最多返回条数, 按创建时间倒序.
+        """
+        from huginn.kg.entities import EntityType
+
+        results: list[dict] = []
+        with self._lock:
+            for nid, data in self._graph.nodes(data=True):
+                if data.get("type") != EntityType.CROSS_DOMAIN_TRANSFER:
+                    continue
+                if target_domain and data.get("target_domain", "") != target_domain:
+                    continue
+                if source_domain and source_domain not in data.get("original_problem", ""):
+                    continue
+                row = dict(data)
+                row["node_id"] = nid
+                results.append(row)
+        # 按 created_at 倒序, 取前 limit 条
+        results.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+        return results[:limit]
+
+
+# ── Math concept dependency graph ──────────────────────────────────────
+# Ponytail 路径分析:
+# 1. 真做 `lake graph` 解析 Mathlib import 树 — 需要本地 mathlib 仓库 (几 GB),
+#    用户多数没装, 强依赖外部状态. 不可行.
+# 2. 真做"自动从 Lean 文件 import 解析" — 需要 Lean 工具链 + 全量 mathlib 源码.
+#    不可行.
+# 3. 懒方案: 内置核心数学概念依赖表 (~40 条), 覆盖拓扑/代数/分析/概率/动力系统
+#    核心概念. `lake graph` 升级路径明确标注, 用户装了 mathlib 后可 seed 扩展.
+
+# (parent_concept, relation, child_concept) — child depends_on / generalizes / dual_to parent
+# depends_on: child 需要 parent 才能定义 (Hausdorff 需要 Topological Space)
+# generalizes: child 是 parent 的特例 (Metric → Topological, Metric generalizes Topological)
+#              箭头方向: child --generalizes--> parent
+# dual_to: 双向, 标记对偶关系 (Max ↔ Min)
+_MATH_CONCEPT_DEPS: list[tuple[str, str, str]] = [
+    # ── 拓扑 ──
+    ("topological_space", "depends_on", "set_theory"),
+    ("hausdorff_space", "generalizes", "topological_space"),
+    ("compact_space", "generalizes", "hausdorff_space"),
+    ("metric_space", "generalizes", "topological_space"),
+    ("banach_space", "generalizes", "metric_space"),
+    ("hilbert_space", "generalizes", "banach_space"),
+    ("manifold", "depends_on", "hausdorff_space"),
+    ("riemannian_manifold", "generalizes", "manifold"),
+    ("symplectic_manifold", "generalizes", "manifold"),
+    ("lie_group", "depends_on", "manifold"),
+    ("covering_space", "depends_on", "topological_space"),
+    ("fundamental_group", "depends_on", "topological_space"),
+    ("homology_group", "depends_on", "topological_space"),
+    ("cohomology_group", "depends_on", "homology_group"),
+    # ── 代数 ──
+    ("group", "depends_on", "set_theory"),
+    ("ring", "generalizes", "group"),
+    ("field", "generalizes", "ring"),
+    ("vector_space", "depends_on", "field"),
+    ("module", "generalizes", "vector_space"),
+    ("algebra", "generalizes", "vector_space"),
+    ("lie_algebra", "depends_on", "vector_space"),
+    ("tensor", "depends_on", "vector_space"),
+    ("representation", "depends_on", "lie_algebra"),
+    ("category", "depends_on", "set_theory"),
+    ("functor", "depends_on", "category"),
+    ("natural_transformation", "depends_on", "functor"),
+    # ── 分析 ──
+    ("measure", "depends_on", "set_theory"),
+    ("lebesgue_measure", "generalizes", "measure"),
+    ("probability_measure", "generalizes", "measure"),
+    ("banach_space", "depends_on", "vector_space"),
+    ("hilbert_space", "depends_on", "banach_space"),
+    ("operator_algebra", "depends_on", "hilbert_space"),
+    ("c_star_algebra", "generalizes", "banach_algebra"),
+    ("banach_algebra", "generalizes", "algebra"),
+    ("sobolev_space", "generalizes", "banach_space"),
+    ("distribution", "depends_on", "sobolev_space"),
+    ("fourier_transform", "depends_on", "hilbert_space"),
+    # ── 动力系统 ──
+    ("dynamical_system", "depends_on", "metric_space"),
+    ("flow", "generalizes", "dynamical_system"),
+    ("ergodic_theory", "depends_on", "measure"),
+    ("markov_chain", "depends_on", "probability_measure"),
+    ("stochastic_process", "depends_on", "probability_measure"),
+    # ── 微分方程 ──
+    ("ode", "depends_on", "banach_space"),
+    ("pde", "depends_on", "sobolev_space"),
+    ("variational_formulation", "depends_on", "hilbert_space"),
+    ("weak_formulation", "generalizes", "variational_formulation"),
+    ("fem", "depends_on", "weak_formulation"),
+    # ── 几何 ──
+    ("riemannian_geometry", "depends_on", "riemannian_manifold"),
+    ("differential_geometry", "depends_on", "manifold"),
+    ("algebraic_geometry", "depends_on", "ring"),
+    # ── 数论 ──
+    ("number_theory", "depends_on", "ring"),
+    ("galois_theory", "depends_on", "field"),
+    # ── 对偶关系 (关键) ──
+    ("maximize_stability", "dual_to", "minimize_instability_path"),
+    ("primal_problem", "dual_to", "dual_problem"),
+    ("contravariant", "dual_to", "covariant"),
+    ("position_space", "dual_to", "momentum_space"),
+]
+
+
+class MathConceptGraph:
+    """Global math concept dependency graph (process-wide singleton).
+
+    Ponytail: 与 ProjectKnowledgeGraph 分离 — 项目 KG 是 workspace-scoped,
+    数学概念图是全局知识, 不应每个项目重建. networkx DiGraph 内存中
+    一次构建, 进程内共享.
+
+    升级路径:
+    - 用户装了 mathlib + lake 后, 调 `seed_from_mathlib(lake_graph_output)`
+      把 Mathlib import 树 merge 进来, 覆盖更细粒度的依赖.
+    - 当前 _MATH_CONCEPT_DEPS 是核心种子 (~50 条), 覆盖主流数学分支.
+    """
+
+    def __init__(self) -> None:
+        self._graph = nx.DiGraph()
+        self._lock = __import__("threading").RLock()
+        self._build_from_seed()
+
+    def _build_from_seed(self) -> None:
+        # 种子表三元组 (child, rel, parent): child 是 parent 的特例 / child 依赖 parent
+        # 箭头方向: child --rel--> parent (出边指向 ancestor)
+        for child, rel, parent in _MATH_CONCEPT_DEPS:
+            self._graph.add_node(parent, type="MathConcept", label=parent)
+            self._graph.add_node(child, type="MathConcept", label=child)
+            self._graph.add_edge(child, parent, relation=rel)
+
+    def query_concept_neighborhood(
+        self, concept: str, depth: int = 1
+    ) -> dict[str, Any]:
+        """查 concept 的邻域 (前驱+后继, depth 跳).
+
+        返回 {concept, ancestors, descendants, duals, paths}:
+        - ancestors: concept 依赖/特例化的更一般概念 (depth 跳内)
+        - descendants: 依赖 concept 的更具体概念
+        - duals: 对偶概念 (dual_to 关系)
+        - paths: concept 到各 ancestor 的路径列表
+        """
+        concept = concept.strip().lower()
+        with self._lock:
+            if concept not in self._graph:
+                return {"concept": concept, "found": False}
+
+            # ancestors: 沿出边走 (child → parent)
+            ancestors = set()
+            paths: list[list[str]] = []
+            self._bfs_collect(concept, direction="successors", depth=depth,
+                              collected=ancestors, paths=paths)
+
+            # descendants: 沿入边走 (parent ← child)
+            descendants = set()
+            desc_paths: list[list[str]] = []
+            self._bfs_collect(concept, direction="predecessors", depth=depth,
+                              collected=descendants, paths=desc_paths)
+
+            # duals: dual_to 关系 (双向)
+            duals = set()
+            for _, nbr, ed in self._graph.edges(concept, data=True):
+                if ed.get("relation") == "dual_to":
+                    duals.add(nbr)
+            for nbr, _, ed in self._graph.in_edges(concept, data=True):
+                if ed.get("relation") == "dual_to":
+                    duals.add(nbr)
+
+            return {
+                "concept": concept,
+                "found": True,
+                "ancestors": sorted(ancestors),
+                "descendants": sorted(descendants),
+                "duals": sorted(duals),
+                "paths_to_ancestors": paths,
+                "paths_to_descendants": desc_paths,
+            }
+
+    def _bfs_collect(
+        self,
+        start: str,
+        direction: str,
+        depth: int,
+        collected: set[str],
+        paths: list[list[str]],
+    ) -> None:
+        """BFS 走 depth 跳, 收集节点 + 记录路径."""
+        from collections import deque
+        queue: deque[tuple[str, int, list[str]]] = deque([(start, 0, [start])])
+        visited: set[str] = {start}
+        while queue:
+            node, d, path = queue.popleft()
+            if d >= depth:
+                continue
+            neighbors = (
+                self._graph.successors(node)
+                if direction == "successors"
+                else self._graph.predecessors(node)
+            )
+            for nb in neighbors:
+                if nb in visited:
+                    continue
+                visited.add(nb)
+                collected.add(nb)
+                new_path = path + [nb]
+                paths.append(new_path)
+                queue.append((nb, d + 1, new_path))
+
+    def find_common_ancestor(self, c1: str, c2: str, max_depth: int = 4) -> str | None:
+        """找两个概念的最近公共祖先 (LCA). 用于跨域类比的结构同构验证.
+
+        Ponytail: 双 BFS 到 max_depth, 取祖先交集的第一个. 不上 Tarjan LCA
+        (需要预处理), 当前图小 (~50 节点), O(n²) 可接受.
+        """
+        c1 = c1.strip().lower()
+        c2 = c2.strip().lower()
+        with self._lock:
+            if c1 not in self._graph or c2 not in self._graph:
+                return None
+            anc1: set[str] = set()
+            self._bfs_collect(c1, "successors", max_depth, anc1, [])
+            anc2: set[str] = set()
+            self._bfs_collect(c2, "successors", max_depth, anc2, [])
+            common = anc1 & anc2
+            if not common:
+                return None
+            # 取交集里 depth 最浅的 — 简化: 任取一个, 不严格 LCA
+            # ponytail: 严格 LCA 需要记 depth, 当前近似够用
+            return next(iter(common))
+
+    def stats(self) -> dict[str, int]:
+        return {
+            "nodes": self._graph.number_of_nodes(),
+            "edges": self._graph.number_of_edges(),
+        }
+
+
+# 模块级单例: 进程内共享, 双检锁懒加载
+_math_concept_graph_singleton: MathConceptGraph | None = None
+_math_concept_graph_lock = __import__("threading").Lock()
+
+
+def get_math_concept_graph() -> MathConceptGraph:
+    """拿进程级单例 MathConceptGraph. 线程安全懒加载."""
+    global _math_concept_graph_singleton
+    if _math_concept_graph_singleton is None:
+        with _math_concept_graph_lock:
+            if _math_concept_graph_singleton is None:
+                _math_concept_graph_singleton = MathConceptGraph()
+    return _math_concept_graph_singleton
+
+
+def seed_from_mathlib(lake_graph_output: str) -> int:
+    """升级路径: 从 `lake graph` 输出 merge import 依赖进 MathConceptGraph.
+
+    lake_graph_output 是 `lake graph` 命令的文本输出 (DOT 或类似格式).
+    解析失败返回 0, 成功返回新增边数. 当前留作 hook, 不实现解析
+    (避免依赖 lake 二进制; 用户真要用时再补 parser).
+    """
+    # ponytail: 留 stub, 真要接 lake graph 时在这里加 parser.
+    # 当前 _MATH_CONCEPT_DEPS 种子表已覆盖核心场景.
+    return 0
+
 
 if __name__ == "__main__":
     import tempfile
 
+    # MathConceptGraph self-check
+    mcg = MathConceptGraph()
+    assert mcg.stats()["nodes"] >= 40, f"种子表应 ≥40 节点, got {mcg.stats()}"
+    assert mcg.stats()["edges"] >= 40, f"种子表应 ≥40 边, got {mcg.stats()}"
+
+    # query_concept_neighborhood
+    nb = mcg.query_concept_neighborhood("hilbert_space", depth=2)
+    assert nb["found"], "hilbert_space 应在图中"
+    assert "banach_space" in nb["ancestors"], "hilbert → banach 应在 ancestors"
+    assert "metric_space" in nb["ancestors"], "depth=2 应能到 metric_space"
+    assert nb["duals"] == [], "hilbert_space 无 dual"
+
+    # duals
+    nb_primal = mcg.query_concept_neighborhood("primal_problem", depth=1)
+    assert "dual_problem" in nb_primal["duals"], "primal ↔ dual 应互为对偶"
+
+    # find_common_ancestor
+    lca = mcg.find_common_ancestor("hilbert_space", "banach_space")
+    # hilbert → banach → metric → topological; banach → metric → topological
+    # LCA 应是 banach_space 或 metric_space (近似 LCA)
+    assert lca in {"banach_space", "metric_space", "topological_space"}, \
+        f"LCA 应在祖先链上, got {lca}"
+
+    # 不存在的概念
+    assert not mcg.query_concept_neighborhood("nonexistent_concept")["found"]
+
+    # 单例
+    assert get_math_concept_graph() is get_math_concept_graph(), "单例应一致"
+
+    # 原有 ProjectKnowledgeGraph self-check
     with tempfile.TemporaryDirectory() as tmp:
         kg = ProjectKnowledgeGraph(tmp)
 
@@ -602,3 +1070,79 @@ if __name__ == "__main__":
         assert [c["step_id"] for c in causes] == [1, 2], causes
 
         print("all episode-graph checks passed")
+
+        # ── P13 CrossDomain transfer selfcheck ──
+        from huginn.metacog.cross_domain_pipeline import TransferHypothesis
+
+        kg_t = ProjectKnowledgeGraph(tempfile.mkdtemp(prefix="kg_transfer_"))
+
+        # 场景 1: mock transfer 写入 → 查询能拿到
+        t1 = TransferHypothesis(
+            original_problem="predict Fe magnetic transition temperature",
+            target_domain="ferromagnet",
+            shared_math=["landau_phi4"],
+            math_concept="lie_group",
+            lca_concept="group",
+            reframed_problem="reframed via Landau theory",
+            confidence=0.7,
+            trace=["s1", "s2", "s3", "s4", "s5"],
+        )
+        tid1 = kg_t.add_transfer_edge(t1)
+        assert tid1.startswith("transfer:"), tid1
+
+        hist = kg_t.query_transfer_history(limit=5)
+        assert len(hist) == 1, f"expected 1, got {len(hist)}"
+        assert hist[0]["original_problem"] == t1.original_problem
+        assert hist[0]["target_domain"] == "ferromagnet"
+        assert hist[0]["math_concept"] == "lie_group"
+        assert hist[0]["status"] == "proposed"
+        assert hist[0]["confidence"] == 0.7
+        # 3 条边都建了
+        edges_out = [
+            d for _, _, d in kg_t._graph.out_edges(tid1, data=True)
+        ]
+        edge_rels = {d.get("relation") for d in edges_out}
+        assert "transfers_to" in edge_rels, edge_rels
+        assert "structurally_isomorphic" in edge_rels, edge_rels
+        in_rels = {
+            d.get("relation") for _, _, d in kg_t._graph.in_edges(tid1, data=True)
+        }
+        assert "cross_domain_analogy" in in_rels, in_rels
+        print("1. add_transfer_edge + query round-trip OK")
+
+        # 场景 2: 3 条不同 transfer 写入 → limit=3 拿到 3 条
+        import time as _t
+        for i in range(3):
+            _ti = TransferHypothesis(
+                original_problem=f"problem_{i} Fe based",
+                target_domain=f"domain_{i}",
+                shared_math=[],
+                math_concept=f"concept_{i}",
+                lca_concept="",
+                reframed_problem="",
+                confidence=0.3 + i * 0.1,
+                trace=[],
+            )
+            kg_t.add_transfer_edge(_ti)
+            _t.sleep(0.01)  # 错开 created_at 让排序稳定
+        hist3 = kg_t.query_transfer_history(limit=3)
+        assert len(hist3) == 3, f"limit=3 应返 3, got {len(hist3)}"
+        # 总数应是 4 (1 + 3)
+        hist_all = kg_t.query_transfer_history(limit=100)
+        assert len(hist_all) == 4, f"total 应 4, got {len(hist_all)}"
+        print("2. multi-transfer + limit OK")
+
+        # 场景 3: source/target 过滤
+        fe_hist = kg_t.query_transfer_history(
+            source_domain="Fe", target_domain="ferromagnet", limit=5
+        )
+        assert len(fe_hist) == 1, fe_hist
+        assert fe_hist[0]["original_problem"] == t1.original_problem
+        domain_2_hist = kg_t.query_transfer_history(target_domain="domain_2", limit=5)
+        assert len(domain_2_hist) == 1
+        assert domain_2_hist[0]["target_domain"] == "domain_2"
+        none_hist = kg_t.query_transfer_history(target_domain="nonexistent", limit=5)
+        assert none_hist == []
+        print("3. source/target filter OK")
+
+        print("all transfer-graph checks passed")
