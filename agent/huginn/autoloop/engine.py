@@ -1833,6 +1833,28 @@ class AutoloopEngine:
                             advice=f"{self._consecutive_failures} consecutive failures",
                         )
 
+            # G2: 周期检测 + 历史轨迹匹配 (M3 cycle_detect + M2 trajectory_match).
+            # 不 should_stop — 给建议, 让 LLM decider / 规则版自己决定是否 pivot.
+            # cycle 信号强 → 强制 redirect; match 信号弱 → 只注入 hint.
+            try:
+                stuck = self._check_stuck(state.action_history)
+                if stuck:
+                    if stuck["type"] == "cycle":
+                        redirect = True
+                        advice = (advice + " | G2 cycle: " + stuck["advice"]).strip(" |")
+                        logger.warning("G2 stuck: %s", stuck["advice"])
+                    elif stuck["type"] == "match":
+                        # match 不是 stuck, 只是建议下一步. 注入 _speculator_hint
+                        # 让下轮 hypothesize 能看到. 不 redirect.
+                        self._speculator_hint = (
+                            (self._speculator_hint + " | " + stuck["advice"])
+                            .strip(" |")[:2000]
+                        )
+                        advice = (advice + " | G2 match: " + stuck["advice"]).strip(" |")
+                        logger.info("G2 trajectory match: %s", stuck["advice"])
+            except Exception:
+                logger.debug("G2 _check_stuck failed (non-fatal)", exc_info=True)
+
             # timeout / pivot 预算 (硬停)
             if tracker.is_expired(progress_task_id):
                 return ReflectionResult(should_stop=True, advice="timeout")
@@ -2461,6 +2483,13 @@ Respond JSON only:
         self._current_prediction = ""  # reset JEPA prediction buffer
         self._last_surprise = 0.0
         self._last_raw_hypothesis = ""  # 完整 LLM 输出, 含 LUCID review
+        # G2: 加载历史 trajectory action 序列, 给 _check_stuck 当 VF2 匹配历史.
+        # 失败/空都不影响 run, 只是少了 cross-run 匹配能力.
+        try:
+            self._traj_history = self._load_trajectory_action_history(limit=20)
+        except Exception:
+            self._traj_history = []
+            logger.debug("G2 traj history load failed (non-fatal)", exc_info=True)
         try:
             from huginn.agents.speculator import on_turn_start
 
@@ -4536,6 +4565,102 @@ Respond JSON only:
             seen[key] = seen.get(key, 0) + 1
 
         return [{"call_hash": k, "count": c} for k, c in seen.items() if c >= 2]
+
+    # -- G2: 周期检测 (M3 cycle_detect) + 历史轨迹匹配 (M2 trajectory_match) --
+
+    def _load_trajectory_action_history(self, limit: int = 20) -> list[list[str]]:
+        """从 workspace/.huginn/trajectories/ 加载历史 run 的 action 序列.
+
+        每个 trajectory.json 的 spans 里 phase 名就是 action. 抽出来给
+        trajectory_match 当 history 用 (VF2 子图同构 prefix 匹配).
+
+        ponytail: 只读最近 limit 个文件, 不做全量索引. 升级路径: KB 索引 + 元数据过滤.
+        """
+        traj_dir = self.workspace / ".huginn" / "trajectories"
+        if not traj_dir.exists():
+            return []
+        history: list[list[str]] = []
+        try:
+            files = sorted(
+                traj_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )[:limit]
+        except Exception:
+            return []
+        for f in files:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            spans = data.get("spans") or []
+            actions = [
+                s.get("phase") or s.get("name") or ""
+                for s in spans
+                if isinstance(s, dict)
+            ]
+            actions = [a for a in actions if a]
+            if len(actions) >= 2:
+                history.append(actions)
+        return history
+
+    def _check_stuck(self, action_history: list[str]) -> dict[str, Any] | None:
+        """G2 主入口: 周期检测 + 历史轨迹 prefix 匹配.
+
+        - cycle_detect.is_stuck: 当前 action 序列是否陷入周期 (M3, O(n²) 暴力).
+        - trajectory_match: 当前序列是否是某历史成功轨迹的 prefix (M2, VF2 子图同构).
+          匹配到 → 取下一步作为建议, 注入 _speculator_hint.
+
+        返回 None (无信号) 或 dict:
+          {"type": "cycle", "period": lam, "advice": "..."}
+          {"type": "match", "history_id": i, "similarity": s, "next_step": X, "advice": "..."}
+        """
+        if len(action_history) < 4:
+            return None  # 太短不检
+        try:
+            from huginn.runtime.cycle_detect import is_stuck, detect_cycle
+            from huginn.knowledge.trajectory_pattern import trajectory_match
+        except ImportError:
+            return None
+
+        # M3: 周期检测 (在当前 run 内)
+        try:
+            if is_stuck(action_history, min_cycle_len=2, min_repeats=2):
+                cycle = detect_cycle(action_history, min_cycle_len=2, min_repeats=2)
+                lam = cycle[1] if cycle else 0
+                return {
+                    "type": "cycle",
+                    "period": lam,
+                    "advice": (
+                        f"action 序列陷入周期 (period={lam}), 强制 pivot. "
+                        f"最近 {len(action_history)} 步: {action_history[-8:]}"
+                    ),
+                }
+        except Exception:
+            logger.debug("G2 cycle_detect failed (non-fatal)", exc_info=True)
+
+        # M2: 历史轨迹 prefix 匹配 (跨 run)
+        try:
+            history = getattr(self, "_traj_history", None) or []
+            if history:
+                match = trajectory_match(
+                    action_history, history, min_similarity=0.4,
+                )
+                if match and match.get("next_step"):
+                    return {
+                        "type": "match",
+                        "history_id": match["history_id"],
+                        "similarity": match["similarity"],
+                        "next_step": match["next_step"],
+                        "advice": (
+                            f"匹配历史成功轨迹 (sim={match['similarity']:.2f}), "
+                            f"考虑下一步: {match['next_step']}"
+                        ),
+                    }
+        except Exception:
+            logger.debug("G2 trajectory_match failed (non-fatal)", exc_info=True)
+
+        return None
 
     @staticmethod
     def _extract_text(execution_result: Any) -> str:

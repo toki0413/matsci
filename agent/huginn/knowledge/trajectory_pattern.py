@@ -247,6 +247,69 @@ async def extract_and_store_pattern(
         return None
 
 
+# === trajectory_match: line graph + VF2 子图同构 ===
+
+def _to_line_graph(tool_seq: list[str]) -> Any:
+    """tool_name 序列 → line graph (相邻关系图).
+
+    序列 [a,b,c,d] → path graph a-b-c-d.
+    VF2 子图同构: current 的 line graph 是否是 history line graph 的子图.
+    ponytail: networkx.path_graph 直接用, 节点 label = tool_name.
+    """
+    import networkx as nx
+    g = nx.path_graph(len(tool_seq))
+    # 节点 label 用 tool_name, 用于 VF2 匹配
+    for i, name in enumerate(tool_seq):
+        g.nodes[i]["tool"] = name
+    return g
+
+
+def trajectory_match(
+    current: list[str],
+    history: list[list[str]],
+    *,
+    min_similarity: float = 0.5,
+) -> dict | None:
+    """VF2 子图同构: 当前 tool 序列是否是某历史轨迹的 prefix.
+
+    治 spec 天花板 "trajectory KB 有写入无读取".
+    _check_stuck 调本函数, 找到相似历史 → 取下一步 tool 作为建议注入 prompt.
+
+    返回 {"history_id", "similarity", "next_step"} 或 None.
+    similarity = len(current) / len(history[hid])  (prefix 匹配长度比).
+
+    ponytail: line graph 让"序列 prefix 匹配"变成"子图同构", 复用 networkx VF2.
+    不引入自定义图算法. 升级: 跨域相似度 (Jaccard on tool_name set).
+    """
+    import networkx as nx
+    if not current or not history:
+        return None
+
+    cur_g = _to_line_graph(current)
+    best: dict | None = None
+    for hid, hist_seq in enumerate(history):
+        if len(hist_seq) <= len(current):
+            continue  # current 必须是严格 prefix (history 更长)
+        hist_g = _to_line_graph(hist_seq)
+        # node_match: tool_name 相等
+        matcher = nx.algorithms.isomorphism.GraphMatcher(
+            hist_g, cur_g,
+            node_match=lambda a, b: a.get("tool") == b.get("tool"),
+        )
+        if matcher.subgraph_is_isomorphic():
+            sim = len(current) / len(hist_seq)
+            if sim >= min_similarity and (best is None or sim > best["similarity"]):
+                # next_step = history 里 current 之后的第一个 tool
+                next_idx = len(current)
+                next_step = hist_seq[next_idx] if next_idx < len(hist_seq) else None
+                best = {
+                    "history_id": hid,
+                    "similarity": sim,
+                    "next_step": next_step,
+                }
+    return best
+
+
 # === 自检 ===
 
 if __name__ == "__main__":
@@ -402,5 +465,33 @@ if __name__ == "__main__":
         assert doc_id is None or isinstance(doc_id, str)
 
     asyncio.run(_run_no_kb())
+
+    # 9. trajectory_match — line graph + VF2 子图同构
+    # 历史 [[a,b,c,d], [a,b,e,f]], 当前 [a,b,c] → 匹配 hid=0, sim=0.75
+    history = [["a", "b", "c", "d"], ["a", "b", "e", "f"]]
+    current = ["a", "b", "c"]
+    match = trajectory_match(current, history)
+    assert match is not None, f"应匹配, got {match}"
+    assert match["history_id"] == 0, f"应匹配 hid=0, got {match['history_id']}"
+    assert abs(match["similarity"] - 0.75) < 1e-9, f"sim 应 0.75, got {match['similarity']}"
+    assert match["next_step"] == "d", f"next_step 应 d, got {match['next_step']}"
+    print(f"[ok] trajectory_match([a,b,c], history) → hid={match['history_id']}, sim={match['similarity']}, next={match['next_step']}")
+
+    # 9b. 当前 [a,b,e] → 匹配 hid=1
+    current2 = ["a", "b", "e"]
+    match2 = trajectory_match(current2, history)
+    assert match2 is not None and match2["history_id"] == 1, f"应 hid=1, got {match2}"
+    assert match2["next_step"] == "f"
+    print(f"[ok] trajectory_match([a,b,e], history) → hid=1, next=f")
+
+    # 9c. 当前 [x,y,z] 无匹配 → None
+    match3 = trajectory_match(["x", "y", "z"], history)
+    assert match3 is None, f"无匹配应 None, got {match3}"
+    print(f"[ok] trajectory_match([x,y,z], history) → None")
+
+    # 9d. 当前比历史长 → None (子图同构要求 current ⊆ history)
+    match4 = trajectory_match(["a", "b", "c", "d", "e"], history)
+    assert match4 is None, f"current 比历史长应 None, got {match4}"
+    print(f"[ok] current 比历史长 → None")
 
     print("trajectory_pattern selfcheck All passed")
