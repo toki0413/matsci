@@ -194,6 +194,9 @@ _ALLOWED_LEGACY_KEYS = frozenset({
     "encrypt_config", "encryption_password", "encryption_key_file",
     "privacy_redact_secrets", "privacy_block_on_secrets", "local_only_mode",
     "max_tool_output_tokens", "context_budget_tokens", "pet_accessories",
+    # 极限模式 + 分层 memory (前端 Settings "Advanced" tab)
+    "extreme_dispatch", "wm_summarize", "wm_token_budget",
+    "em_recall_top_k", "pm_c_min", "wm_summarize_every_n",
 })
 
 
@@ -240,10 +243,17 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         "team_mode_enabled": "HUGINN_TEAM_MODE",
         "max_concurrent_subagents": "HUGINN_MAX_CONCURRENT_SUBAGENTS",
         "pet_name": "HUGINN_PET_NAME",
-        "pet_personality": "HUGINN_PET_PERSONA",
+        "pet_personality": "HUGINN_PET_PERSONALITY",
         "encrypt_config": "HUGINN_ENCRYPT_CONFIG",
         "encryption_password": "HUGINN_ENCRYPTION_PASSWORD",
         "encryption_key_file": "HUGINN_ENCRYPTION_KEY_FILE",
+        # 极限模式 + 分层 memory
+        "extreme_dispatch": "HUGINN_EXTREME_DISPATCH",
+        "wm_summarize": "HUGINN_WM_SUMMARIZE",
+        "wm_token_budget": "HUGINN_WM_TOKEN_BUDGET",
+        "em_recall_top_k": "HUGINN_EM_RECALL_TOP_K",
+        "pm_c_min": "HUGINN_PM_C_MIN",
+        "wm_summarize_every_n": "HUGINN_WM_SUMMARIZE_EVERY_N",
     }
     import json as _json
 

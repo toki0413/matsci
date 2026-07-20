@@ -471,6 +471,21 @@ class HuginnConfig:
     # 这里只存配置文件里的覆盖值, 运行时 toggle 不写回这里
     feature_flags: dict[str, bool] = field(default_factory=dict)
 
+    # 极限模式 + 分层 memory (前端 Settings "Advanced" tab).
+    # 极限模式: 异步委派 DAG + cycle 检测 + trajectory 召回 + pattern confidence.
+    # 平常默认关闭, 用户在前端 toggle 启动跑分模式.
+    extreme_dispatch: bool = False
+    # WM summarize 策略: rule (默认, 0 LLM) / ngram / llm / hybrid
+    wm_summarize: str = "rule"
+    # WM sliding window 容量 (token)
+    wm_token_budget: int = 8192
+    # EM 召回 top_k (FTS5+embedding RRF)
+    em_recall_top_k: int = 5
+    # PM confidence 阈值, 低于此值删除 pattern
+    pm_c_min: float = 0.2
+    # Summarize 触发周期: 每 N 次 add_message 检查一次
+    wm_summarize_every_n: int = 5
+
     def apply_overrides(
         self,
         *,
@@ -782,6 +797,14 @@ class HuginnConfig:
             max_tokens=max_tokens,
             pet_name=os.environ.get("HUGINN_PET_NAME", "渡鸦").strip() or "渡鸦",
             pet_personality=os.environ.get("HUGINN_PET_PERSONALITY", "cheerful").strip().lower() or "cheerful",  # type: ignore[arg-type]
+            extreme_dispatch=os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower()
+            in ("1", "true"),
+            wm_summarize=os.environ.get("HUGINN_WM_SUMMARIZE", "rule").strip().lower()
+            or "rule",
+            wm_token_budget=int(os.environ.get("HUGINN_WM_TOKEN_BUDGET", "8192")),
+            em_recall_top_k=int(os.environ.get("HUGINN_EM_RECALL_TOP_K", "5")),
+            pm_c_min=float(os.environ.get("HUGINN_PM_C_MIN", "0.2")),
+            wm_summarize_every_n=int(os.environ.get("HUGINN_WM_SUMMARIZE_EVERY_N", "5")),
         )
 
     @staticmethod
@@ -967,6 +990,12 @@ class HuginnConfig:
             "pet_personality": self.pet_personality,
             "feature_flags": dict(self.feature_flags),
             "config_version": self.config_version,
+            "extreme_dispatch": self.extreme_dispatch,
+            "wm_summarize": self.wm_summarize,
+            "wm_token_budget": self.wm_token_budget,
+            "em_recall_top_k": self.em_recall_top_k,
+            "pm_c_min": self.pm_c_min,
+            "wm_summarize_every_n": self.wm_summarize_every_n,
         }
 
     @classmethod

@@ -1230,6 +1230,148 @@ export function SettingsPanel(props: SettingsPanelProps) {
           <BotPanel t={t} />
         )}
 
+        {settingsTab === "advanced" && (
+          <div className="max-w-2xl space-y-5">
+            <p className="text-sm text-text-secondary">
+              极限模式 (跑分用): 异步委派 DAG + cycle 检测 + trajectory 召回 + pattern confidence 闭环.
+              平常默认关闭, 开启会增加 LLM 调用和计算开销.
+            </p>
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              {/* 极限模式总开关 */}
+              <ConfigField label="极限模式总开关" full>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={config.extreme_dispatch}
+                    onChange={(e) => {
+                      const nextVal = e.target.checked;
+                      // 开启时弹确认, 避免误触
+                      if (nextVal && !config.extreme_dispatch) {
+                        const ok = window.confirm(
+                          "极限模式会增加 LLM 调用和计算开销, 确认开启?\n\n" +
+                          "开启后: DAG 分层调度 + cycle 检测 + trajectory 召回 + " +
+                          "WM sliding window summarize + pattern confidence 闭环.\n" +
+                          "关闭时已写入的 pattern/episode 保留, 不清除."
+                        );
+                        if (!ok) return;
+                      }
+                      const next = { ...config, extreme_dispatch: nextVal };
+                      setConfig(next);
+                      setConfigDirty(true);
+                    }}
+                    className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                  />
+                  <span className="text-sm text-text-primary">
+                    {config.extreme_dispatch ? "ON (跑分模式)" : "OFF (默认)"}
+                  </span>
+                </label>
+              </ConfigField>
+
+              {/* WM summarize 策略 */}
+              <ConfigField label="WM summarize 策略">
+                <select
+                  value={config.wm_summarize}
+                  onChange={(e) => {
+                    const next = { ...config, wm_summarize: e.target.value as "rule" | "ngram" | "llm" | "hybrid" };
+                    setConfig(next);
+                    setConfigDirty(true);
+                  }}
+                  className="input"
+                >
+                  <option value="rule">rule (默认, 0 LLM)</option>
+                  <option value="ngram">ngram (0 LLM, 高频短语)</option>
+                  <option value="llm">llm (1 LLM/边界, 高质量)</option>
+                  <option value="hybrid">hybrid (rule + 偶尔 LLM)</option>
+                </select>
+              </ConfigField>
+
+              {/* WM token 预算 */}
+              <ConfigField label="WM token 预算 (sliding window 容量)">
+                <input
+                  type="number"
+                  min={1024}
+                  max={65536}
+                  step={512}
+                  value={config.wm_token_budget}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value || "8192", 10);
+                    const next = { ...config, wm_token_budget: isNaN(v) ? 8192 : v };
+                    setConfig(next);
+                    setConfigDirty(true);
+                  }}
+                  className="input"
+                />
+              </ConfigField>
+
+              {/* Summarize 触发周期 */}
+              <ConfigField label="Summarize 触发周期 (每 N iter)">
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={config.wm_summarize_every_n}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value || "5", 10);
+                    const next = { ...config, wm_summarize_every_n: isNaN(v) ? 5 : v };
+                    setConfig(next);
+                    setConfigDirty(true);
+                  }}
+                  className="input"
+                />
+              </ConfigField>
+
+              {/* EM 召回 top_k */}
+              <ConfigField label="EM 召回 top_k (FTS5+embedding RRF)">
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={config.em_recall_top_k}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value || "5", 10);
+                    const next = { ...config, em_recall_top_k: isNaN(v) ? 5 : v };
+                    setConfig(next);
+                    setConfigDirty(true);
+                  }}
+                  className="input"
+                />
+              </ConfigField>
+
+              {/* PM confidence 阈值 */}
+              <ConfigField label="PM confidence 阈值 (低于此值删除 pattern)">
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={config.pm_c_min}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value || "0.2");
+                    const next = { ...config, pm_c_min: isNaN(v) ? 0.2 : v };
+                    setConfig(next);
+                    setConfigDirty(true);
+                  }}
+                  className="input"
+                />
+              </ConfigField>
+            </div>
+
+            <div className="card mt-4 border-accent/20 bg-accent/5">
+              <h3 className="text-sm font-semibold text-accent">分层 Memory 架构 (4 层)</h3>
+              <ul className="mt-2 space-y-1 text-xs text-text-secondary">
+                <li><b>WM</b> (Working Memory): 进程内, sliding window + summarize 推到 EM</li>
+                <li><b>EM</b> (Episodic Memory): SQLite + FTS5 + embedding, RRF 召回</li>
+                <li><b>SM</b> (Semantic Memory): KB chunks + KG entities, RAG 召回</li>
+                <li><b>PM</b> (Procedural Memory): stable_principles + Bayesian confidence</li>
+              </ul>
+              <p className="mt-2 text-[10px] text-text-muted">
+                极限模式开启后, 状态栏会显示 EXTREME 标记 (规划中).
+                PM 的 pattern confidence 闭环: c∈[0,1], 成功 +ε, 失败 -ε, c&lt;阈值 删除.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="mt-6 flex items-center gap-3 pt-2">
           <button onClick={() => saveConfig(config)} disabled={!configDirty} className="btn-primary">
             {t('settings.save')}
