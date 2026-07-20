@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,11 @@ _SUMMARIZE_THRESHOLD = 2000
 
 # 摘要时喂给 LLM 的原文截断长度, 避免超长输出把摘要请求也撑爆
 _SUMMARIZE_INPUT_LIMIT = 8000
+
+# G1: 当前 dispatch 递归深度. 主 agent 调 dispatch 时 _depth=0, 子 agent
+# 再调 subagent_tool 时从这里读到 _depth=1, 透传给 dispatch 守卫.
+# ponytail: 用 contextvar 而非给 ToolContext 加字段, LLM 看不见也改不了.
+_current_depth: ContextVar[int] = ContextVar("_current_depth", default=0)
 
 
 @dataclass
@@ -60,6 +66,9 @@ class SubagentSpec:
     max_iterations: int = 5
     summarize_result: bool = True
     summary_format: str = "free"
+    # G1: 递归深度 cap. 1=单层 (不能再委派), 2=可委派单层 sub-sub, 3=硬 cap.
+    # ponytail: 默认 1, 防 subagent 递归失控. 升级: M4 budget_decomp 推荐配置.
+    max_depth: int = 1
 
 
 @dataclass
@@ -185,12 +194,16 @@ class SubagentDispatch:
         task: str,
         context: dict | None = None,
         on_state: Any = None,
+        _depth: int = 0,
     ) -> SubagentResult:
         """Dispatch a subagent to handle a task in isolated context.
 
         context 里需要带 agent_factory (AgentFactory 实例), 没有就报错.
         on_state: optional async callback(state_dict) called for each
         intermediate agent state — lets callers stream subagent progress.
+
+        _depth: 递归深度 (G1 守卫). 主 agent 调 dispatch 时 _depth=0,
+        subagent 内再调 dispatch 时 _depth=1, 以此类推. 超 spec.max_depth 拒.
         """
         spec = self._specs.get(spec_name)
         if spec is None:
@@ -199,6 +212,16 @@ class SubagentDispatch:
                 success=False,
                 error=f"Unknown subagent spec: {spec_name}. "
                       f"Available: {sorted(self._specs.keys())}",
+                spec_name=spec_name,
+            )
+
+        # G1: 递归深度守卫. 超 max_depth 拒绝, 防 subagent 无限递归.
+        if _depth >= spec.max_depth:
+            return SubagentResult(
+                summary="", full_output="",
+                success=False,
+                error=f"depth {_depth} >= max_depth {spec.max_depth} "
+                      f"(spec={spec_name}). 递归过深, 拒绝 dispatch.",
                 spec_name=spec_name,
             )
 
@@ -246,6 +269,9 @@ class SubagentDispatch:
         # 设工具调用预算, chat() 里会据此建 ToolCallBudget
         agent._max_tool_calls = spec.max_tool_calls
 
+        # G1: 把 _depth+1 注入 contextvar, 子 agent 调 subagent_tool 时
+        # 能读到正确的递归深度. chat() 里的 tool call 同 task, contextvar 可见.
+        token = _current_depth.set(_depth + 1)
         try:
             final_state = None
             async for state in agent.chat(task, thread_id):
@@ -284,6 +310,8 @@ class SubagentDispatch:
                 error=f"Subagent execution failed: {exc}",
                 spec_name=spec_name,
             )
+        finally:
+            _current_depth.reset(token)
 
     def register_spec(self, spec: SubagentSpec) -> None:
         """Register a custom subagent type. 覆盖同名 spec."""
@@ -627,6 +655,56 @@ if __name__ == "__main__":
     assert "new info" in reason3, f"reason 应含 new info: {reason3}"
 
     print("\nv14 Task 10 self-check PASSED")
+
+    # ── G1: 递归深度守卫 self-check ─────────────────────────────────────
+    # spec.max_depth 默认 1 (单层), _depth >= max_depth 拒绝
+    assert d._specs["explore"].max_depth == 1, "默认 max_depth 应为 1"
+
+    # case A: _depth=1 >= max_depth=1 → 拒 (即使有 factory 也不让过)
+    result = asyncio.run(d.dispatch("explore", "test", _depth=1))
+    assert not result.success, f"_depth=1 应被拒, got success={result.success}"
+    assert "depth" in (result.error or "").lower(), f"error 应含 depth: {result.error}"
+    print(f"[ok] G1 depth guard 拒绝 _depth=1: {result.error}")
+
+    # case B: _depth=0 < max_depth=1 → 不被 depth guard 拦, 走到 factory 检查
+    result = asyncio.run(d.dispatch("explore", "test", _depth=0))
+    assert not result.success, "无 factory 应失败"
+    assert "depth" not in (result.error or "").lower(), \
+        f"_depth=0 不该触发 depth guard: {result.error}"
+    assert "agent_factory" in (result.error or ""), \
+        f"_depth=0 应走到 factory 检查: {result.error}"
+    print(f"[ok] G1 _depth=0 放行 depth guard, 走到 factory 检查")
+
+    # case C: contextvar 默认 0
+    assert _current_depth.get() == 0, "contextvar 默认应为 0"
+    # 模拟 dispatch 设置后, contextvar 应 +1
+    token = _current_depth.set(5)
+    assert _current_depth.get() == 5
+    _current_depth.reset(token)
+    assert _current_depth.get() == 0
+    print("[ok] G1 _current_depth contextvar set/reset 正常")
+
+    # case D: max_depth 可配置
+    deep_spec = SubagentSpec(
+        name="deep_test",
+        description="test deep",
+        system_prompt="test",
+        allowed_tools=["file_read_tool"],
+        max_depth=3,
+    )
+    d.register_spec(deep_spec)
+    assert d._specs["deep_test"].max_depth == 3
+    # _depth=2 < 3 放行 (走到 factory 检查)
+    result = asyncio.run(d.dispatch("deep_test", "test", _depth=2))
+    assert not result.success and "depth" not in (result.error or "").lower(), \
+        f"_depth=2 < max_depth=3 不该被 depth 拒: {result.error}"
+    # _depth=3 >= 3 拒
+    result = asyncio.run(d.dispatch("deep_test", "test", _depth=3))
+    assert not result.success and "depth" in (result.error or "").lower(), \
+        f"_depth=3 >= max_depth=3 应被拒: {result.error}"
+    print("[ok] G1 max_depth 可配置, _depth=2 放行, _depth=3 拒")
+
+    print("\nG1 self-check PASSED")
 
     print("\nAll self-checks passed.")
     sys.exit(0)
