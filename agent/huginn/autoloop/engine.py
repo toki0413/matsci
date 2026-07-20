@@ -201,6 +201,7 @@ class AutoloopEngine:
         verification_model: Any = None,
         memory_manager: MemoryManager | None = None,
         agent_factory: Any = None,
+        resume_from_state: str | None = None,
     ):
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
@@ -376,6 +377,85 @@ class AutoloopEngine:
         # 当前 phase 名 — _run_phase_async 写, _llm_chat 读, 用于 phase-aware thinking effort.
         # ponytail: 隐式状态, 但只在 single-threaded async run() 里用, 无竞态.
         self._current_phase: str = ""
+
+        # P15: crash-safe resume. flag off / snapshot 缺失时静默跳过, 行为不变.
+        # ponytail: 用 duck typing, 不做 isinstance 检查; 失败 log warning 不抛.
+        if resume_from_state:
+            try:
+                from huginn.runtime.engine_state import (
+                    apply_state_to_engine, load_engine_state, use_persistence,
+                    _hypothesis_graph_path,
+                )
+                if use_persistence():
+                    state = load_engine_state(resume_from_state, self.workspace)
+                    if state is not None:
+                        apply_state_to_engine(state, self)
+                        # hypothesis_graph 单独恢复 (refuted 状态跨 session 必须保留)
+                        try:
+                            loaded_graph = self.hypothesis_graph.load(
+                                _hypothesis_graph_path(self.workspace, resume_from_state)
+                            )
+                            if loaded_graph is not None:
+                                self.hypothesis_graph = loaded_graph
+                        except Exception:
+                            logger.debug(
+                                "resume: hypothesis_graph.load failed (non-fatal)",
+                                exc_info=True,
+                            )
+                        logger.info(
+                            "resumed engine from run_id=%s: iteration=%d persona=%s",
+                            resume_from_state, state._iteration,
+                            state._last_persona or "(none)",
+                        )
+                    else:
+                        logger.info(
+                            "resume requested but no snapshot for run_id=%s, "
+                            "starting fresh", resume_from_state,
+                        )
+            except Exception:
+                logger.warning(
+                    "resume_from_state=%s failed, starting fresh",
+                    resume_from_state, exc_info=True,
+                )
+
+    def _maybe_save_engine_state(
+        self, *, force: bool = False, reason: str = "",
+    ) -> None:
+        """P15: 周期 / forced 落盘 engine_state + hypothesis_graph.
+
+        - flag off (HUGINN_USE_PERSISTENCE=0) 时完全 no-op, 不碰磁盘.
+        - force=True: 立刻 save (pivot / refute 等关键事件触发).
+        - force=False: 周期 save, iteration % save_every == 0 才真写.
+        - run_id 缺失 (run_cognitive 没启动) 时 no-op, 避免误写.
+
+        ponytail: 失败只 log warning, 不抛 — save 失败不该阻塞主循环.
+        ceiling: 单进程串行 save, 不加锁; 并发 run_id 隔离由 run_id 命名空间保证.
+        """
+        try:
+            from huginn.runtime.engine_state import (
+                save_engine_state, save_every_steps, use_persistence,
+            )
+            if not use_persistence():
+                return
+            run_id = getattr(self, "_run_id", None)
+            if not run_id:
+                return
+            if not force:
+                every = save_every_steps()
+                if every <= 0:
+                    return
+                if self._iteration % every != 0:
+                    return
+            save_engine_state(self, run_id, self.workspace)
+            if reason:
+                logger.debug(
+                    "engine_state saved (reason=%s, iter=%d, run_id=%s)",
+                    reason, self._iteration, run_id,
+                )
+        except Exception:
+            logger.warning(
+                "_maybe_save_engine_state failed (non-fatal)", exc_info=True,
+            )
 
     def _get_evolution(self):
         """懒加载 EvolutionEngine, 避免实例化时就拉起日志和规则文件。"""
@@ -1684,6 +1764,8 @@ class AutoloopEngine:
                                     "reason": "cognitive pivot",
                                 },
                             )
+                            # P15: pivot 是关键事件, 立刻 save (force=True)
+                            self._maybe_save_engine_state(force=True, reason="pivot")
                         except Exception:
                             logger.warning("cognitive pivot failed", exc_info=True)
                     # 清中间状态, 下轮重新 observe
@@ -1950,6 +2032,10 @@ class AutoloopEngine:
                             state.should_stop = True
                     except Exception:
                         logger.debug("v10 F3 darwin_ratchet failed (non-fatal)", exc_info=True)
+
+            # P15: 周期 save — flag off 时 no-op, iteration % save_every == 0 才真写.
+            # refute 在 _learn 内发生, reflect 末尾的周期 save 会在 ≤save_every 步内捕获.
+            self._maybe_save_engine_state(reason="periodic")
 
             return ReflectionResult(
                 should_continue=True,
