@@ -4614,7 +4614,13 @@ Respond JSON only:
         返回 None (无信号) 或 dict:
           {"type": "cycle", "period": lam, "advice": "..."}
           {"type": "match", "history_id": i, "similarity": s, "next_step": X, "advice": "..."}
+
+        极限模式 (跑分) 才启用, 平常默认关闭省 cycle/trajectory 计算.
+        HUGINN_EXTREME_DISPATCH=1 时开.
         """
+        import os
+        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0") != "1":
+            return None
         if len(action_history) < 4:
             return None  # 太短不检
         try:

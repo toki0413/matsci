@@ -267,7 +267,17 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
                 success=True,
             )
 
-        # 有 dependencies: DAG 分层调度
+        # 有 dependencies: DAG 分层调度 (极限模式才开)
+        import os
+        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0") != "1":
+            return ToolResult(
+                data=SubagentToolOutput(
+                    success=False, action="dispatch_parallel",
+                    error="DAG-aware dispatch 需开启极限模式 (HUGINN_EXTREME_DISPATCH=1)",
+                ).model_dump(),
+                success=False,
+                error="DAG dispatch requires HUGINN_EXTREME_DISPATCH=1",
+            )
         from huginn.agents.task_dag import TaskDAG
         # task ID = spec_name + task 前 20 字符 (ponytail: 不引入显式 ID 字段)
         task_ids = [f"{t['spec_name']}:{t['task'][:20]}" for t in args.tasks]
