@@ -16,7 +16,8 @@ import json
 import logging
 from typing import Any
 
-from huginn.autoloop.goal_store import Goal, GoalStore, _now_iso
+from huginn.autoloop.goal_store import Goal, GoalStore
+from huginn.utils.common import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class GoalScheduler(GoalStore):
 
     def complete_goal(self, goal_id: str) -> Goal:
         return self.update_goal(
-            goal_id, status="completed", completed_at=_now_iso()
+            goal_id, status="completed", completed_at=now_iso()
         )
 
     def fail_goal(self, goal_id: str, reason: str | None = None) -> Goal:
@@ -68,7 +69,7 @@ class GoalScheduler(GoalStore):
             if goal is None:
                 raise KeyError(f"goal not found: {goal_id}")
             goal.status = "failed"
-            goal.updated_at = _now_iso()
+            goal.updated_at = now_iso()
             if reason:
                 goal.metadata["failure_reason"] = reason
             self._save()

@@ -15,12 +15,9 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from huginn.utils.common import now_iso
 
 
 @dataclass
@@ -30,7 +27,7 @@ class SideQuestion:
     id: str
     question: str
     answer: str | None = None
-    created_at: str = field(default_factory=_now_iso)
+    created_at: str = field(default_factory=now_iso)
     answered_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -85,7 +82,7 @@ class SideChannel:
             if sq is None:
                 return None
             sq.answer = answer
-            sq.answered_at = _now_iso()
+            sq.answered_at = now_iso()
             self._answered[question_id] = sq
             return sq
 

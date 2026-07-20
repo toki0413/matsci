@@ -65,9 +65,8 @@ PAPERBENCH_DELIVERABLES = DeliverableSpec(checks=[
 ])
 
 RCB_DELIVERABLES = DeliverableSpec(checks=[
-    ("report.md",         "report.md"),
-    ("figures/*.png",     "figures/*.png"),
-    ("data/*.csv",        "data/*.csv"),
+    ("report/report.md",     "report/report.md"),
+    ("report/images/*.png",  "report/images/*.png"),
 ])
 
 MLE_DELIVERABLES = DeliverableSpec(checks=[

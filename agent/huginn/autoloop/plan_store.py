@@ -24,7 +24,7 @@ import sys
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from huginn.utils.common import now_iso
 from pathlib import Path
 from typing import Any
 
@@ -91,7 +91,7 @@ class Plan:
 
     def __post_init__(self) -> None:
         if not self.created_at:
-            self.created_at = _now_iso()
+            self.created_at = now_iso()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,10 +122,6 @@ class Plan:
             reject_reason=data.get("reject_reason"),
             metadata=data.get("metadata", {}),
         )
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 @contextlib.contextmanager
@@ -264,7 +260,7 @@ class PlanStore:
 
     def confirm_plan(self, plan_id: str) -> Plan:
         return self.update_plan(
-            plan_id, status="confirmed", confirmed_at=_now_iso()
+            plan_id, status="confirmed", confirmed_at=now_iso()
         )
 
     def reject_plan(self, plan_id: str, reason: str | None = None) -> Plan:
@@ -279,7 +275,7 @@ class PlanStore:
 
     def complete_plan(self, plan_id: str) -> Plan:
         return self.update_plan(
-            plan_id, status="completed", completed_at=_now_iso()
+            plan_id, status="completed", completed_at=now_iso()
         )
 
     def fail_plan(self, plan_id: str, reason: str | None = None) -> Plan:

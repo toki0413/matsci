@@ -17,7 +17,6 @@ import json
 import threading
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +24,7 @@ import click
 from rich.table import Table
 
 from huginn.cli.context import CliContext
+from huginn.utils.common import now_iso
 
 # 状态文件默认放 ~/.huginn/, 跟 sessions 的 sqlite 一个目录
 _DEFAULT_STATE_FILE = Path.home() / ".huginn" / "background_tasks.json"
@@ -47,10 +47,6 @@ def _get_executor() -> ThreadPoolExecutor:
                     max_workers=_MAX_WORKERS, thread_name_prefix="huginn-bg"
                 )
     return _executor
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _truncate(text: str, width: int = 60) -> str:
@@ -141,8 +137,8 @@ class BackgroundTaskManager:
             task_id,
             objective=objective,
             status="running",
-            created_at=_now_iso(),
-            updated_at=_now_iso(),
+            created_at=now_iso(),
+            updated_at=now_iso(),
             result_path=str(result_path),
             error=None,
         )
@@ -176,7 +172,7 @@ class BackgroundTaskManager:
             self._update_task(
                 task_id,
                 status="completed",
-                updated_at=_now_iso(),
+                updated_at=now_iso(),
                 result_preview=_truncate(content, 200),
             )
         except Exception as e:
@@ -184,7 +180,7 @@ class BackgroundTaskManager:
                 task_id,
                 status="failed",
                 error=str(e),
-                updated_at=_now_iso(),
+                updated_at=now_iso(),
             )
         finally:
             with self._lock:
@@ -230,14 +226,14 @@ class BackgroundTaskManager:
         if future is not None:
             if future.cancel():
                 self._update_task(
-                    task_id, status="stopped", updated_at=_now_iso()
+                    task_id, status="stopped", updated_at=now_iso()
                 )
                 with self._lock:
                     self._futures.pop(task_id, None)
                 return True, "已取消"
             # 已在跑, cancel 不了
             self._update_task(
-                task_id, status="stopping", updated_at=_now_iso()
+                task_id, status="stopping", updated_at=now_iso()
             )
             return False, "任务正在运行, 已标记停止"
 
@@ -248,7 +244,7 @@ class BackgroundTaskManager:
         if task.get("status") in ("completed", "failed", "stopped"):
             return False, f"任务已结束 ({task.get('status')})"
         # 标记一下, 实际停不停得看运行方是否检查
-        self._update_task(task_id, status="stopping", updated_at=_now_iso())
+        self._update_task(task_id, status="stopping", updated_at=now_iso())
         return False, "已标记停止 (跨进程无法硬中断)"
 
     def get_result(self, task_id: str) -> str | None:

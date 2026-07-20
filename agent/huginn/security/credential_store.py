@@ -27,13 +27,13 @@ import secrets
 import sqlite3
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from huginn.crypto import KeyManager
+from huginn.utils.common import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,6 @@ _VALID_KINDS = (CRED_KIND_SSH, CRED_KIND_LLM)
 # 模块级单例 — get_credential_store() 懒加载, 测试可直接构造 CredentialStore
 _store_lock = threading.Lock()
 _store_singleton: CredentialStore | None = None
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _new_id() -> str:
@@ -286,7 +282,7 @@ class CredentialStore:
             raise ValueError("name 不能为空")
 
         cid = _new_id()
-        now = _now_iso()
+        now = now_iso()
         metadata = metadata or {}
 
         # 决定是否设默认
@@ -341,7 +337,7 @@ class CredentialStore:
         new_metadata = metadata if metadata is not None else rec.metadata
         # None=不改; 传了值(含空串)就覆盖
         new_secret = secret if secret is not None else rec.secret
-        now = _now_iso()
+        now = now_iso()
 
         with self._connect() as conn:
             conn.execute(
@@ -392,7 +388,7 @@ class CredentialStore:
             )
             conn.execute(
                 "UPDATE credentials SET is_default=1, updated_at=? WHERE id=?",
-                (_now_iso(), cid),
+                (now_iso(), cid),
             )
             conn.commit()
         return True
@@ -738,7 +734,7 @@ class ServiceCredentialStore:
             new_meta = dict(old_meta or {})
             if metadata:
                 new_meta.update(metadata)
-            now = _now_iso()
+            now = now_iso()
             new_meta["updated_at"] = now
             if "created_at" not in new_meta:
                 new_meta["created_at"] = now

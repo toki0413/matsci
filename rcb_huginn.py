@@ -307,7 +307,19 @@ def main():
 
     start = time.time()
     print(f"[RCB] Starting agent (timeout={args.timeout}s, max_tool_calls={args.max_tool_calls})")
-    final = asyncio.run(run_agent(instructions, workspace, args.timeout, args.max_tool_calls))
+    # v14 特性 (HintCoordinator / Meta-Trace / betti / Step3->Step2 回退) 在
+    # rcb_runner.run() 里, BenchmarkOrchestrator 路径不激活. 默认走 v14 路径.
+    # HUGINN_RCB_LEGACY=1 回退到 orchestrator+agent.chat() 路径作对照.
+    _legacy = os.environ.get("HUGINN_RCB_LEGACY", "0").lower() in ("1", "true", "yes")
+    try:
+        if _legacy:
+            final = asyncio.run(run_agent(instructions, workspace, args.timeout, args.max_tool_calls))
+        else:
+            from huginn.cli.rcb_runner import run as _rcb_run
+            rc = asyncio.run(asyncio.wait_for(_rcb_run(str(workspace)), timeout=args.timeout))
+            final = "" if rc == 0 else f"rcb_runner.run exited rc={rc}"
+    except asyncio.TimeoutError:
+        final = f"[TIMEOUT after {args.timeout}s]"
     elapsed = round(time.time() - start)
 
     report_path = workspace / "report" / "report.md"

@@ -290,7 +290,6 @@ def test_export_markdown_missing_plan_raises(tmp_path):
 def test_reflection_sidecar_writes_jsonl(tmp_path, monkeypatch):
     """_append_reflection_sidecar 应写 JSONL, 含反思结论字段."""
     from huginn.agent.reflection import ReflectionMixin
-    from huginn.autoloop.plan_store import _now_iso  # reuse iso helper if needed
 
     # 用 monkeypatch 把 home() 指到 tmp_path 避免污染真实 ~/.huginn
     monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))

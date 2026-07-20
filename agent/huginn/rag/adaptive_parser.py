@@ -18,9 +18,10 @@ import os
 import sqlite3
 import threading
 from difflib import SequenceMatcher
-from hashlib import sha256
 from typing import Any
 from urllib.parse import urlparse
+
+from huginn.utils.common import hash_text
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +62,6 @@ def _ensure_db(db_path: str) -> None:
         conn.close()
 
 
-def _hash_text(text: str) -> str:
-    return sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
 def _element_to_dict(element: dict[str, Any]) -> dict[str, Any]:
     """从元素信息提取指纹数据."""
     tag = (element.get("tag") or "").lower()
@@ -81,9 +78,9 @@ def _element_to_dict(element: dict[str, Any]) -> dict[str, Any]:
     return {
         "tag": tag,
         "text": text,
-        "text_hash": _hash_text(text) if text else "",
+        "text_hash": hash_text(text) if text else "",
         "text_preview": text[:80],
-        "attrs_hash": _hash_text(attrs_str) if stable_attrs else "",
+        "attrs_hash": hash_text(attrs_str) if stable_attrs else "",
         "attrs_json": str(stable_attrs)[:500],
         "selector": element.get("selector", ""),
         "xpath": element.get("xpath", ""),
