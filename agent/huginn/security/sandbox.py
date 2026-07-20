@@ -125,13 +125,59 @@ class SandboxExecutor:
         self.config = config or SandboxConfig()
 
     def _resolve_executable(self, cmd: list[str]) -> str:
-        """Resolve the first element of cmd to an absolute path."""
+        """Resolve the first element of cmd to an absolute path.
+
+        Windows 兼容: POSIX coreutils (ls/cp/mv/rm/cat/...) 在原生 Windows
+        没有 .exe. shutil.which("ls") 返回 None → 之前 agent 卡循环
+        (self-modify proposal 被 reject). 这里加 Windows fallback:
+          1. 先按原名 which (跨平台: 装了 git-bash/WSL 能直接用)
+          2. 失败时映射到 Windows 等价命令 (ls→cmd /c dir 等)
+          3. 都失败才 raise
+        映射表只覆盖白名单里有的 coreutils, 不引入新可执行文件.
+        ponytail: 用 cmd /c 调内置命令, 不装新依赖. 天花板: cmd /c 的
+          参数语义跟 POSIX 不完全一致 (e.g. ls -la vs dir), agent 需要适配.
+          升级路径: 装 git-bash 把 coreutils 加到 PATH, 或换 WSL.
+        """
         if not cmd:
             raise SandboxError("Empty command")
         exe = shutil.which(cmd[0])
-        if exe is None:
-            raise SandboxError(f"Executable not found: {cmd[0]}")
-        return exe
+        if exe is not None:
+            return exe
+
+        # Windows fallback: 映射 POSIX coreutils 到 cmd /c 内置命令
+        if os.name == "nt":
+            _WIN_FALLBACK = {
+                "ls": "dir",
+                "cp": "copy",
+                "mv": "move",
+                "rm": "del",
+                "cat": "type",
+                "touch": "copy /b",
+                "mkdir": "mkdir",
+                "rmdir": "rmdir",
+                "echo": "echo",
+                "pwd": "cd",
+                "which": "where",
+                "find": "find",
+                "sort": "sort",
+                "head": "more",
+                "tail": "more",
+                "wc": "find /c",
+                "grep": "findstr",
+                "diff": "fc",
+                "true": "rem",
+                "false": "rem",
+                "test": "if",
+                "env": "set",
+            }
+            _win_cmd = _WIN_FALLBACK.get(cmd[0].lower())
+            if _win_cmd:
+                # 验证 Windows 命令可用 (cmd 内置命令 which 不到, 直接信任)
+                # 返回 cmd[0] 让上层 subprocess 走 cmd /c 路径
+                # ponytail: 这里返回原 cmd[0], 实际执行在 run() 里用 cmd /c 包
+                return cmd[0]
+
+        raise SandboxError(f"Executable not found: {cmd[0]}")
 
     def _validate_command(
         self, cmd: list[str], config: SandboxConfig | None = None
@@ -247,6 +293,34 @@ class SandboxExecutor:
         # Drop scheduler-only hints so they do not reach subprocess.run.
         run_kwargs = {k: v for k, v in kwargs.items() if k not in self._REMOTE_KWARGS}
 
+        # Windows coreutils fallback: _resolve_executable 返回原 cmd[0] (e.g. "ls")
+        # 但 shutil.which 找不到 → 这里用 cmd /c 把整条命令包起来, 让 cmd.exe
+        # 走内置命令 (dir/copy/type/...). 白名单已含 cmd.exe 间接调用, 不开新口子.
+        # ponytail: 用 cmd /c 单层包裹, 不递归. 天花板: cmd /c 参数语义跟 POSIX
+        #   不完全一致 (e.g. ls -la vs dir), agent LLM 通常会自己适配 Windows 语法.
+        #   升级路径: 装 git-bash 让 coreutils 在 PATH 里直接 which 到.
+        _WIN_COREUTILS = {
+            "ls", "cp", "mv", "rm", "cat", "touch", "mkdir", "rmdir",
+            "echo", "pwd", "which", "find", "sort", "head", "tail",
+            "wc", "grep", "diff", "true", "false", "test", "env",
+        }
+        if os.name == "nt" and cmd and cmd[0].lower() in _WIN_COREUTILS:
+            # shutil.which 已经在 _resolve_executable 里试过失败, 直接走 cmd /c
+            _win_map = {
+                "ls": "dir", "cp": "copy", "mv": "move", "rm": "del",
+                "cat": "type", "touch": "copy /b", "mkdir": "mkdir",
+                "rmdir": "rmdir", "echo": "echo", "pwd": "cd",
+                "which": "where", "find": "find", "sort": "sort",
+                "head": "more", "tail": "more", "wc": "find /c",
+                "grep": "findstr", "diff": "fc", "true": "rem",
+                "false": "rem", "test": "if", "env": "set",
+            }
+            _mapped = _win_map.get(cmd[0].lower(), cmd[0])
+            # 重组: cmd /c <mapped> <rest args>
+            # ponytail: 不翻译 -la/-la 等参数, agent 自己写 Windows 语法时直接通过.
+            #   这里只在 cmd[0] 是 POSIX coreutil 时翻译, 参数透传 (可能不兼容但至少不卡).
+            cmd = ["cmd", "/c", _mapped, *cmd[1:]]
+
         try:
             result = subprocess.run(
                 cmd,
@@ -257,6 +331,7 @@ class SandboxExecutor:
                 errors="replace",
                 timeout=timeout,
                 env=env,
+                shell=False,
                 **run_kwargs,
             )
         except subprocess.TimeoutExpired as e:
