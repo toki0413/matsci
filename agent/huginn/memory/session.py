@@ -61,6 +61,9 @@ class SessionContext:
     _add_count: int = 0
     # 历次 summarize 结果, 外部 (manager) 可读后写入 EM.
     summaries: list[str] = field(default_factory=list)
+    # 最近一次 sliding window summarize 的时间戳 (ISO 字符串), 给前端面板显示.
+    # None 表示从未 summarize 过. ponytail: 不存 history list, 只记最后一次够用.
+    last_summarize_at: str | None = None
     # 可选 EM sink: manager 注入 callable(summary_text, metadata_dict).
     # 不注入时 summary 只存在 self.summaries 里, 不写 EM.
     episodic_sink: Callable[[str, dict[str, Any]], None] | None = None
@@ -153,6 +156,8 @@ class SessionContext:
             self.messages = system_msgs + recent
             return
         self.summaries.append(summary)
+        # 记最近一次 summarize 时间, 给前端 Memory 层级面板显示
+        self.last_summarize_at = datetime.now().isoformat()
         if self.episodic_sink is not None:
             try:
                 self.episodic_sink(summary, {
