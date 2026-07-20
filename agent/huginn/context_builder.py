@@ -405,35 +405,66 @@ class ContextBuilder:
 
         messages: list[Any] = []
         path = self._conversation_tree.active_path()
+        # 先收集每个 node 的 (role, tool_calls, tool_call_id), 用于 dangling 检测.
+        # dangling = AIMessage(tool_calls) 后续没有对应的 ToolMessage (timeout/异常
+        # 中断导致工具结果没回写). DeepSeek 严格校验 dangling tool_calls → 400,
+        # Step 3 用同 thread 调 agent.chat 直接挂. 这里剥掉 dangling tool_calls,
+        # 保留 content 作为纯 AIMessage. ponytail: lookahead 不改树, 只改重建结果.
+        # 升级路径: 修 streaming.py 写树时保证 tool_calls + ToolMessage 原子提交.
+        node_meta_list: list[dict] = []
         for node_id in path[:-1]:
             node = self._conversation_tree.get_node(node_id)
             if node is None:
+                node_meta_list.append({})
                 continue
             meta = node.metadata or {}
-            # G34: 给每条消息加 stable ID (ct_<node_id>), 让 langgraph
-            # add_messages reducer 按 ID 去重替换. include_history=True 时
-            # inputs["messages"] 每轮都带完整历史, 没 ID 会被 langgraph
-            # 当新消息追加 → 历史翻倍. 有 ID 后是替换, 不重复.
-            msg_id = f"ct_{node_id}"
-            flat = _flatten_replay_content(node.content)
-            if node.role == "user":
+            node_meta_list.append({
+                "role": node.role,
+                "content": _flatten_replay_content(node.content),
+                "tool_calls": meta.get("tool_calls"),
+                "tool_call_id": meta.get("tool_call_id", ""),
+                "name": meta.get("name"),
+                "node_id": node_id,
+            })
+
+        # 收集所有 ToolMessage 的 tool_call_id, 用于判断 AIMessage 的 tool_calls 是否 dangling
+        answered_call_ids: set[str] = set()
+        for m in node_meta_list:
+            if m.get("role") == "tool":
+                tc_id = m.get("tool_call_id")
+                if tc_id:
+                    answered_call_ids.add(tc_id)
+
+        for m in node_meta_list:
+            if not m:
+                continue
+            role = m.get("role")
+            msg_id = f"ct_{m['node_id']}"
+            flat = m.get("content", "")
+            if role == "user":
                 messages.append(HumanMessage(content=flat, id=msg_id))
-            elif node.role == "assistant":
-                tool_calls = meta.get("tool_calls")
+            elif role == "assistant":
+                tool_calls = m.get("tool_calls")
                 if tool_calls:
-                    messages.append(
-                        AIMessage(content=flat, tool_calls=tool_calls, id=msg_id)
-                    )
+                    # 剥掉 dangling: 没有对应 ToolMessage 的 tool_call 不发给 LLM
+                    kept = [tc for tc in tool_calls if tc.get("id") in answered_call_ids]
+                    if kept:
+                        messages.append(
+                            AIMessage(content=flat, tool_calls=kept, id=msg_id)
+                        )
+                    else:
+                        # 全部 dangling → 退化为纯 AIMessage (content 可能含已展示给用户的工具调用说明)
+                        messages.append(AIMessage(content=flat, id=msg_id))
                 else:
                     messages.append(AIMessage(content=flat, id=msg_id))
-            elif node.role == "system":
+            elif role == "system":
                 messages.append(SystemMessage(content=flat, id=msg_id))
-            elif node.role == "tool":
+            elif role == "tool":
                 messages.append(
                     ToolMessage(
                         content=flat,
-                        tool_call_id=meta.get("tool_call_id", ""),
-                        name=meta.get("name"),
+                        tool_call_id=m.get("tool_call_id", ""),
+                        name=m.get("name"),
                         id=msg_id,
                     )
                 )
