@@ -139,41 +139,50 @@ class BenchmarkOrchestrator:
         self.max_total_calls = max_total_calls
         self.timeout = timeout
         self.tag = tag
+        # sanity gate 上次结果. None=deliverable 未齐未检查; dict=已检查 (passed/fail).
+        # run() 读 _last_sanity 决定注入 fix_prompt 还是 CONTINUE_MSG.
+        self._last_sanity: Any = None
 
     def _log(self, msg: str) -> None:
         print(f"[{self.tag}] {msg}", flush=True)
 
     def _is_done(self, calls: int) -> bool:
-        """机械式完成判据: deliverable 全齐 OR 超 max_total_calls.
+        """机械式完成判据: (deliverable 全齐 AND sanity gate 过) OR 超 max_total_calls.
 
         R17: 删 50% budget 下限补丁. 原补丁强制 agent 至少用一半 budget,
         是 SCALECUA task_synthesizer 上线前的临时占位 — 现难度由 task_synthesizer
         按 (paper, complexity_tier) 合成时给定, 不再用 budget 下限强迫消耗.
+
+        [断层6] 修复: deliverable 全齐不等于真完成. pinn 跑 0.117s 假训练,
+        final_loss 16 位精度重复也能写出 outputs/*.json. 加 sanity_gate 兜底,
+        fail 时 _is_done 返回 False, run() 注入 fix_prompt 继续.
         """
         if calls >= self.max_total_calls:
             return True
-        # deliverable 全齐即完成
-        if not self.deliverable_spec.missing(self.workspace):
-            return True
-        return False
+        missing = self.deliverable_spec.missing(self.workspace)
+        if missing:
+            self._last_sanity = None  # deliverable 不齐, 重置避免 stale
+            return False
+        # deliverable 全齐, 跑 sanity gate. 结果缓存到 self._last_sanity.
+        from huginn.runtime.sanity_gate import check_sanity
+        self._last_sanity = check_sanity(self.workspace)
+        return bool(self._last_sanity["passed"])
 
     def _get_budget_override(self) -> Any:
         """从 agent 的 phase_manager 读 proposed_budget, 打通 phase→budget.
 
-        只在 research mode 时传 budget_override. chat mode (默认) 用 agent
-        构造时的 max_tool_calls, 避免 OPEN phase 的 500 calls 覆盖适配器的
-        max_total_calls 设置.
+        phase_budgets 通道对所有 mode 生效. harness 的 max_total_calls
+        会在外层截断, budget_override 只影响 agent 单轮 recursion_limit,
+        不会让 agent 跑超过 harness 上限. (原 mode 守卫是 phase_budgets
+        死配置的根因 — EXECUTION=300 等预算从未生效, 删掉让通道真正通.)
         """
         pm = getattr(self.agent, "_phase_manager", None)
         if pm is None:
             return None
-        mode = getattr(self.agent, "_mode", "chat")
-        if mode != "research":
-            return None
         return getattr(pm, "proposed_budget", None)
 
     async def run(self, initial_prompt: str) -> str:
-        """主循环: while + 三档分流 + budget_override."""
+        """主循环: while + 三档分流 + sanity gate + budget_override."""
         final = ""
         tool_count = 0
         turn = 0
@@ -185,7 +194,13 @@ class BenchmarkOrchestrator:
                     turn += 1
                     made_tool_call = False
                     budget = self._get_budget_override()
-                    async for chunk in self.agent.chat(current_msg, budget_override=budget):
+                    # [断层8] tool_calls 不可观测: 每轮注入累计 budget hint,
+                    # 让 agent 自救 (低预算时优先做高价值动作). ponytail: 一行拼接.
+                    budget_hint = (
+                        f"\n\n[budget] tool_calls: {tool_count}/{self.max_total_calls} "
+                        f"({self.max_total_calls - tool_count} remaining)"
+                    )
+                    async for chunk in self.agent.chat(current_msg + budget_hint, budget_override=budget):
                         msgs = chunk.get("messages", []) if isinstance(chunk, dict) else []
                         if msgs:
                             last = msgs[-1]
@@ -204,8 +219,12 @@ class BenchmarkOrchestrator:
                                 preview = content[:200].replace("\n", " ")
                                 self._log(f"AI: {preview}...")
 
-                    # 三档分流: agent 无 tool_call 且未完成时注入明确指令
-                    if not made_tool_call and not self._is_done(tool_count):
+                    # 四档分流: sanity_fail > triage > continue
+                    # sanity gate fail 时 _is_done 返回 False, 优先注入 fix_prompt
+                    if self._last_sanity and not self._last_sanity["passed"]:
+                        current_msg = self._last_sanity["fix_prompt"]
+                        self._log(f"Sanity FAIL: {self._last_sanity['reason']}")
+                    elif not made_tool_call and not self._is_done(tool_count):
                         missing = self.deliverable_spec.missing(self.workspace)
                         if not missing:
                             # 全齐但 agent 自停 → 继续优化
@@ -261,6 +280,39 @@ def _self_check() -> int:
 
         # 场景 4: HLE 无 deliverable -> 永远空集 (Orchestrator 退化为单次 chat)
         assert HLE_DELIVERABLES.missing(ws) == set()
+
+        # 场景 5: [断层6] sanity gate 集成 — deliverable 全齐但 sanity fail
+        # 验证 _is_done 返回 False, _last_sanity 缓存 fix_prompt 可读
+        import json as _json
+        out = sub / "outputs"
+        # 写两个 final_loss 16 位精度重复的 json (sanity_gate test 3 同款)
+        (out / "r1.json").write_text(_json.dumps({"final_loss": 3.306041717529297, "training_time": 100.0}))
+        (out / "r2.json").write_text(_json.dumps({"final_loss": 3.306041717529297, "training_time": 200.0}))
+        orch = BenchmarkOrchestrator(
+            agent=None, workspace=ws,
+            deliverable_spec=PAPERBENCH_DELIVERABLES,
+            max_total_calls=530, tag="TEST",
+        )
+        assert orch._is_done(0) is False, "sanity fail 时 _is_done 应返回 False"
+        assert orch._last_sanity is not None
+        assert orch._last_sanity["passed"] is False
+        assert "float_dedup" in orch._last_sanity["reason"], orch._last_sanity["reason"]
+        assert "SANITY GATE FAIL" in orch._last_sanity["fix_prompt"]
+
+        # 场景 6: sanity pass (真实 loss + 训练时间 + 单调曲线)
+        (out / "r1.json").write_text(_json.dumps({
+            "final_loss": 0.5, "training_time": 100.0, "loss_curve": [1.0, 0.8, 0.6, 0.5],
+        }))
+        (out / "r2.json").write_text(_json.dumps({
+            "final_loss": 0.3, "training_time": 200.0, "loss_curve": [1.0, 0.7, 0.5, 0.3],
+        }))
+        orch2 = BenchmarkOrchestrator(
+            agent=None, workspace=ws,
+            deliverable_spec=PAPERBENCH_DELIVERABLES,
+            max_total_calls=530, tag="TEST",
+        )
+        assert orch2._is_done(0) is True, "sanity pass 时 _is_done 应返回 True"
+        assert orch2._last_sanity["passed"] is True
 
     print("[ORCH] self-check OK")
     return 0
