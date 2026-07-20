@@ -88,6 +88,28 @@ def _migrate_memories_v1(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE memories ADD COLUMN archived INTEGER DEFAULT 0"
         )
+    # P12 Memory Typing: 4 个结构化列替代 category 字符串 + tags JSON hack.
+    # 默认 NULL, 旧行不参与 typed 查询 (WHERE memory_type = ? OR memory_type
+    # IS NULL 兼容路径). 调用方仍走 remember(content, category=...) 时 4 列
+    # 保持 NULL, 行为完全不变.
+    _migrate_memories_v2(conn)
+
+
+def _migrate_memories_v2(conn: sqlite3.Connection) -> None:
+    """P12: 加 memory_type / run_id / persona_id / status 4 个结构化列.
+
+    column_exists 守卫让旧 DB 升级路径幂等. 列默认 NULL, 旧行为 100% 不变.
+    """
+    from huginn.utils.migrations import column_exists
+
+    if not column_exists(conn, "memories", "memory_type"):
+        conn.execute("ALTER TABLE memories ADD COLUMN memory_type TEXT")
+    if not column_exists(conn, "memories", "run_id"):
+        conn.execute("ALTER TABLE memories ADD COLUMN run_id TEXT")
+    if not column_exists(conn, "memories", "persona_id"):
+        conn.execute("ALTER TABLE memories ADD COLUMN persona_id TEXT")
+    if not column_exists(conn, "memories", "status"):
+        conn.execute("ALTER TABLE memories ADD COLUMN status TEXT")
 
 
 def _run_memory_migrations(db_path: str) -> None:
@@ -432,15 +454,39 @@ class LongTermMemory:
             user_id=user_id,
         )
 
-    def _where_alive(self, alias: str = "m") -> tuple[str, tuple]:
-        """Return WHERE clause and params filtering out expired + archived memories."""
+    def _where_alive(
+        self,
+        alias: str = "m",
+        *,
+        memory_type: str | None = None,
+        persona_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, tuple]:
+        """Return WHERE clause and params filtering out expired + archived memories.
+
+        P12: 可选 memory_type / persona_id / status 过滤. NULL 兼容路径 —
+        旧行 (列 IS NULL) 也通过过滤, 不被排除. 这样 typed 查询能同时
+        拿到 typed 行和 legacy 行, 老库升级后不丢数据.
+        """
         # P5: archived=1 的条目被 cluster summary 替代, 不参与 recall.
         # 老库 migration 后 archived default 0, 全部视为 active, 行为不变.
-        return (
+        where = (
             f"({alias}.expires_at IS NULL OR {alias}.expires_at > ?) "
-            f"AND {alias}.archived = 0",
-            (datetime.now().isoformat(),),
+            f"AND {alias}.archived = 0"
         )
+        params: list[Any] = [datetime.now().isoformat()]
+        # NULL 兼容: 匹配值 OR 列为 NULL (旧行). 这样 typed 过滤不会把
+        # 没标 type 的老条目全部砍掉.
+        if memory_type is not None:
+            where += f" AND ({alias}.memory_type = ? OR {alias}.memory_type IS NULL)"
+            params.append(memory_type)
+        if persona_id is not None:
+            where += f" AND ({alias}.persona_id = ? OR {alias}.persona_id IS NULL)"
+            params.append(persona_id)
+        if status is not None:
+            where += f" AND ({alias}.status = ? OR {alias}.status IS NULL)"
+            params.append(status)
+        return where, tuple(params)
 
     @staticmethod
     def _path_rank(memory_path: str | None, lookup_path: str | None) -> tuple[int, int]:
