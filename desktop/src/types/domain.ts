@@ -23,6 +23,63 @@ export interface MemoryStats {
   tier_counts: { short: number; mid: number; long: number };
 }
 
+// 4 层 memory 状态, 对应后端 GET /memory/layers 返回结构.
+// 每层都可能 available=false (后端 try/except 隔离, 单层失败不阻塞其他).
+export interface MemoryLayers {
+  wm?: {
+    token_used?: number;
+    token_budget?: number;
+    messages_count?: number;
+    tool_calls_count?: number;
+    summaries_count?: number;
+    last_summarize_at?: string | null;
+    extreme_dispatch?: boolean;
+    available?: boolean;
+    error?: string;
+  };
+  em?: {
+    total_entries?: number;
+    tier_counts?: { short?: number; mid?: number; long?: number };
+    recent_episodes?: Array<{
+      id: string;
+      content: string;
+      last_accessed: string | null;
+      importance: number | null;
+      source: string | null;
+    }>;
+    available?: boolean;
+    error?: string;
+  };
+  sm?: {
+    kb_chunks?: number;
+    kg_nodes?: number;
+    kg_edges?: number;
+    kg_node_types?: Record<string, number>;
+    recent_patterns?: Array<{
+      doc_id: string;
+      task_pattern: string;
+      run_id: string;
+      objective: string;
+      confidence: number;
+      doc_preview: string;
+    }>;
+    available?: boolean;
+    error?: string;
+  };
+  pm?: {
+    stable_principles_count?: number;
+    stable_principles_preview?: string[];
+    top_patterns_by_confidence?: Array<{
+      doc_id: string;
+      task_pattern: string;
+      confidence: number;
+      objective: string;
+    }>;
+    available?: boolean;
+    error?: string;
+  };
+}
+
 export interface KbDoc {
   doc_id: string;
   filename: string;

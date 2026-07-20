@@ -13,7 +13,7 @@ import type { AppConfig, ModelConfig, AgentProfile } from "../types/domain";
 
 type SettingsTab =
   | "general" | "models" | "agents" | "privacy" | "pet"
-  | "security" | "credentials" | "jobs" | "export" | "bot";
+  | "security" | "credentials" | "jobs" | "export" | "bot" | "advanced";
 
 export function useConfig() {
   // Lazy init: loadStoredConfig() hits localStorage, only run once on mount.
