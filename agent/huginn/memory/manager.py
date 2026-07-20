@@ -1013,14 +1013,19 @@ class MemoryManager:
         status: str | None = None,
         limit: int = 10,
     ) -> list[dict]:
-        """SELECT * FROM memories WHERE memory_type=? (严格匹配, NULL 不参与).
+        """SELECT * FROM memories WHERE memory_type=? (严格匹配 + lazy migrate).
 
-        内部方法, 给 typing.recall_typed 用. 严格匹配 memory_type, 旧行
-        (NULL) 不返回 — 这是跟 _where_alive NULL 兼容路径的区别.
+        内部方法, 给 typing.recall_typed 用.
+        1. 先严格匹配 memory_type, 拿 typed 行
+        2. 如果结果为空, 扫 NULL 行用 _infer_memory_type_from_tags 反推,
+           命中后 UPDATE 回填 (write-on-read), 重新查
         ponytail: 直接拼 SQL, 不走 retrieve (retrieve 走 FTS5 + vector search,
         不适合按字段精确过滤).
         """
+        import json
         from datetime import datetime
+        from huginn.memory.typing import _infer_memory_type_from_tags
+
         sql = "SELECT * FROM memories AS m WHERE memory_type = ?"
         params: list[Any] = [memory_type]
         if persona_id is not None:
@@ -1040,8 +1045,33 @@ class MemoryManager:
         params.append(datetime.now().isoformat())
         sql += " ORDER BY m.last_accessed DESC LIMIT ?"
         params.append(limit)
+        now = datetime.now().isoformat()
         with self.longterm._connect() as conn:
             rows = conn.execute(sql, tuple(params)).fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+            # lazy migrate: strict 返空, 扫 NULL 行反推
+            null_rows = conn.execute(
+                "SELECT * FROM memories WHERE memory_type IS NULL"
+                " AND (expires_at IS NULL OR expires_at > ?)"
+                " AND archived = 0",
+                (now,),
+            ).fetchall()
+            migrated = 0
+            for r in null_rows:
+                tags = json.loads(r["tags"] or "[]")
+                inferred = _infer_memory_type_from_tags(
+                    tags, r["source"] or "", r["category"] or ""
+                )
+                if inferred == memory_type:
+                    conn.execute(
+                        "UPDATE memories SET memory_type = ? WHERE id = ?",
+                        (inferred, r["id"]),
+                    )
+                    migrated += 1
+            if migrated:
+                conn.commit()
+                rows = conn.execute(sql, tuple(params)).fetchall()
             return [dict(r) for r in rows]
 
     # --- Utility ---

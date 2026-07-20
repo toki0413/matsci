@@ -333,7 +333,168 @@ def run_selfcheck() -> None:
     finally:
         _os2.environ.pop("HUGINN_EXTREME_DISPATCH", None)
 
-    print("AutoloopEngine selfcheck OK (10/10 + G2)")
+    # ── C5: persona_use KG 召回 ─────────────────────────────────────────
+    # 用 __new__ 绕过 __init__, 手动建一个最小 KG 测 persona_use 召回路径
+    from pathlib import Path as _P5
+    import tempfile as _tf5
+    from huginn.kg.graph import ProjectKnowledgeGraph as _PKG
+
+    with _tf5.TemporaryDirectory() as _td5:
+        kg5 = _PKG(_P5(_td5))
+        # 写 3 个 persona_use 节点: dft_expert r_phys=0.3, reviewer r_phys=0.8, md_expert r_phys=0.7
+        for _p, _r, _i in [
+            ("dft_expert", 0.3, 1),
+            ("reviewer", 0.8, 2),
+            ("md_expert", 0.7, 3),
+        ]:
+            kg5.add_entity(
+                label=f"{_p}_iter{_i}",
+                entity_type="persona_use",
+                source="selfcheck",
+                confidence=_r,
+                persona=_p,
+                context_hash="dummy",
+                r_phys=_r,
+                iteration=_i,
+            )
+
+        eng_c5 = AutoloopEngine.__new__(AutoloopEngine)
+        eng_c5.kg = kg5
+        eng_c5._last_surprise = 0.0  # 不触发 reviewer 路径
+        eng_c5.memory = None  # 跳过 typed memory 路径
+        # KG 召回: reviewer avg=0.8, md_expert avg=0.7, dft_expert avg=0.3
+        # max=reviewer (0.8>0.5), 返回 reviewer
+        _p_c5 = eng_c5._pick_hypothesis_persona({"topic": "GaN band gap"})
+        assert _p_c5 == "reviewer", f"KG recall 应选 reviewer, got {_p_c5}"
+        print(f"C5-A KG persona_use recall (reviewer 0.8 > 0.5) OK → {_p_c5}")
+
+        # 清空 KG, 验证 fallback 到关键词匹配
+        kg5_empty = _PKG(_P5(_td5) / "empty")
+        eng_c5b = AutoloopEngine.__new__(AutoloopEngine)
+        eng_c5b.kg = kg5_empty
+        eng_c5b._last_surprise = 0.0
+        eng_c5b.memory = None
+        _p_c5b = eng_c5b._pick_hypothesis_persona(
+            {"topic": "lammps md simulation NVT"}
+        )
+        assert _p_c5b == "md_expert", f"无 KG 时应走关键词 → md_expert, got {_p_c5b}"
+        print(f"C5-B no KG → keyword fallback OK → {_p_c5b}")
+
+        # 低 r_phys KG (都 <0.5), 不触发 KG 召回, 走关键词
+        kg5_low = _PKG(_P5(_td5) / "low")
+        for _p, _r, _i in [("dft_expert", 0.2, 1), ("md_expert", 0.3, 2)]:
+            kg5_low.add_entity(
+                label=f"{_p}_iter{_i}",
+                entity_type="persona_use",
+                source="selfcheck",
+                confidence=_r,
+                persona=_p,
+                context_hash="dummy",
+                r_phys=_r,
+                iteration=_i,
+            )
+        eng_c5c = AutoloopEngine.__new__(AutoloopEngine)
+        eng_c5c.kg = kg5_low
+        eng_c5c._last_surprise = 0.0
+        eng_c5c.memory = None
+        _p_c5c = eng_c5c._pick_hypothesis_persona({"topic": "DFT calculation"})
+        assert _p_c5c == "dft_expert", (
+            f"低 r_phys 不触发 KG 召回, 走关键词 → dft_expert, got {_p_c5c}"
+        )
+        print(f"C5-C low r_phys KG → keyword fallback OK → {_p_c5c}")
+
+    # ── C2: PM 层 trajectory_match 召回 (_build_pm_text) ──────────────
+    # 3 个 case: 极限模式 off / current 过短 / 命中
+    import os as _os_c2
+    eng_c2 = AutoloopEngine.__new__(AutoloopEngine)
+    eng_c2._traj_history = [
+        ["observe", "hypothesize", "plan", "execute", "validate"],
+        ["observe", "hypothesize", "pivot"],
+    ]
+    eng_c2._current_run_phases = ["observe", "hypothesize", "plan"]
+
+    # C2-A: 极限模式 off → 返空
+    _os_c2.environ.pop("HUGINN_EXTREME_DISPATCH", None)
+    _pm_a = eng_c2._build_pm_text()
+    assert _pm_a == "", f"极限模式 off 应返空, got {_pm_a!r}"
+    print("C2-A extreme mode off → '' OK")
+
+    # C2-B: 极限模式 on, 但 current 过短 (<2) → 返空
+    _os_c2.environ["HUGINN_EXTREME_DISPATCH"] = "1"
+    eng_c2._current_run_phases = ["observe"]
+    _pm_b = eng_c2._build_pm_text()
+    assert _pm_b == "", f"current 过短应返空, got {_pm_b!r}"
+    print("C2-B current too short (<2) → '' OK")
+
+    # C2-C: 极限模式 on, current 匹配 history[0] prefix → 返非空 + 记 doc_id
+    eng_c2._current_run_phases = ["observe", "hypothesize", "plan"]
+    _pm_c = eng_c2._build_pm_text()
+    assert _pm_c and "Trajectory Match" in _pm_c, (
+        f"应命中 history[0] 返 advice, got {_pm_c!r}"
+    )
+    assert "history[0]" in _pm_c, f"应标 history[0], got {_pm_c!r}"
+    _hid = getattr(eng_c2, "_last_traj_match_doc_id", None)
+    assert _hid == 0, f"_last_traj_match_doc_id 应记 0, got {_hid}"
+    print(f"C2-C match history[0] OK → advice len={len(_pm_c)}")
+
+    # C2-D: 极限模式 on, current 不匹配任何 history → 返空 + doc_id 清 None
+    eng_c2._current_run_phases = ["observe", "execute", "validate", "learn", "stop"]
+    _pm_d = eng_c2._build_pm_text()
+    assert _pm_d == "", f"无匹配应返空, got {_pm_d!r}"
+    _os_c2.environ.pop("HUGINN_EXTREME_DISPATCH", None)
+    print("C2-D no match → '' OK")
+
+    # ── C-budget: 分层 prompt budget (_get_prompt_budget / _trim_to_budget phase) ─
+    import os as _os_b
+    eng_b = AutoloopEngine.__new__(AutoloopEngine)
+
+    # budget-A: 默认 — hypothesize / plan 走 dict (12000), 未知 phase 走 fallback (12000)
+    _os_b.environ.pop("HUGINN_PROMPT_BUDGET_HYPOTHESIZE", None)
+    _os_b.environ.pop("HUGINN_PROMPT_BUDGET_PLAN", None)
+    assert eng_b._get_prompt_budget("hypothesize") == 12000
+    assert eng_b._get_prompt_budget("plan") == 12000
+    assert eng_b._get_prompt_budget("unknown_phase") == 12000  # fallback
+    assert eng_b._get_prompt_budget(None) == 12000  # None → fallback
+    print("C-budget-A default: hypothesize=plan=12000, unknown→fallback OK")
+
+    # budget-B: env 覆盖优先于 dict
+    _os_b.environ["HUGINN_PROMPT_BUDGET_HYPOTHESIZE"] = "5000"
+    _os_b.environ["HUGINN_PROMPT_BUDGET_PLAN"] = "8000"
+    assert eng_b._get_prompt_budget("hypothesize") == 5000, (
+        f"env 覆盖应优先, got {eng_b._get_prompt_budget('hypothesize')}"
+    )
+    assert eng_b._get_prompt_budget("plan") == 8000
+    # 清理
+    _os_b.environ.pop("HUGINN_PROMPT_BUDGET_HYPOTHESIZE", None)
+    _os_b.environ.pop("HUGINN_PROMPT_BUDGET_PLAN", None)
+    print("C-budget-B env override: hypothesize=5000, plan=8000 OK")
+
+    # budget-C: _trim_to_budget phase 参数生效 — 小 budget 触发压缩
+    blocks = [
+        ("body", "B" * 500),
+        ("mem", "M" * 5000),  # 低优先级, 应被截断
+        ("kb", "K" * 5000),
+    ]
+    # phase=None 走 _PROMPT_BUDGET=12000, 总长 10500 < 12000, 不压缩
+    out_default = eng_b._trim_to_budget(blocks, phase=None)
+    assert "M" * 5000 in out_default and "K" * 5000 in out_default, (
+        "默认 budget 不应触发压缩"
+    )
+    # phase=hypothesize + env 设 3000, 总长 10500 > 3000, 应压缩
+    _os_b.environ["HUGINN_PROMPT_BUDGET_HYPOTHESIZE"] = "3000"
+    out_small = eng_b._trim_to_budget(blocks, phase="hypothesize")
+    assert len(out_small) <= 3500, (
+        f"小 budget 应触发压缩, output len={len(out_small)}"
+    )
+    assert "B" * 500 in out_small, "body 永不压缩"
+    assert "M" * 5000 not in out_small, "mem 应被压缩或删除"
+    _os_b.environ.pop("HUGINN_PROMPT_BUDGET_HYPOTHESIZE", None)
+    print(
+        f"C-budget-C _trim_to_budget phase: default len={len(out_default)}, "
+        f"small len={len(out_small)} (body preserved) OK"
+    )
+
+    print("AutoloopEngine selfcheck OK (10/10 + G2 + C5 + C2 + C-budget)")
 
 
 if __name__ == "__main__":

@@ -269,7 +269,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
 
         # 有 dependencies: DAG 分层调度 (极限模式才开)
         import os
-        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0") != "1":
+        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() not in ("1", "true"):
             return ToolResult(
                 data=SubagentToolOutput(
                     success=False, action="dispatch_parallel",

@@ -10,7 +10,8 @@ export type SettingsTab =
   | "credentials"
   | "jobs"
   | "export"
-  | "bot";
+  | "bot"
+  | "advanced";
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   general: "general",
@@ -23,11 +24,12 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   jobs: "SSH Jobs",
   export: "Export",
   bot: "Bot",
+  advanced: "Advanced",
 };
 
 const TAB_ORDER: SettingsTab[] = [
   "general", "models", "agents", "privacy", "pet",
-  "security", "credentials", "jobs", "export", "bot",
+  "security", "credentials", "jobs", "export", "bot", "advanced",
 ];
 
 export function SettingsTabNav({

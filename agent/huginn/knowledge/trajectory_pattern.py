@@ -225,6 +225,16 @@ async def extract_and_store_pattern(
     try:
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # C3: 写入前查 task_pattern 去重. 已存在 → 视为新证据 +ε.
+        task_pattern_key = parsed.get("task_pattern", "")
+        existing_doc_id = _find_pattern_by_task_pattern(kb, task_pattern_key)
+        if existing_doc_id:
+            update_pattern_confidence(kb, existing_doc_id, success=True)
+            logger.info(
+                "trajectory pattern already exists: doc_id=%s, +ε (c=0.5 initial)",
+                existing_doc_id,
+            )
+            return existing_doc_id
         result = kb.add_text(
             pattern_text,
             filename=f"pattern_{run_id or ts}",
@@ -233,18 +243,123 @@ async def extract_and_store_pattern(
                 "objective": objective[:200],
                 "run_id": run_id,
                 "task_pattern": parsed.get("task_pattern", ""),
+                "confidence": "0.5",  # C3: 初始 confidence (ChromaDB metadata 是 string)
             },
         )
         doc_id = result.get("doc_id") or None
         if doc_id:
             logger.info(
-                "trajectory pattern stored: doc_id=%s, task_pattern=%s",
+                "trajectory pattern stored: doc_id=%s, task_pattern=%s, c=0.5",
                 doc_id, parsed.get("task_pattern", "")[:80],
             )
         return doc_id
     except Exception:
         logger.debug("trajectory pattern KB write failed (non-fatal)", exc_info=True)
         return None
+
+
+# === C3: PM Bayesian confidence 闭环 ===
+# 数学: c ∈ [0,1], 写入 c_0=0.5, 复用成功 c←(c·α+1·β)/(α+β), 失败 c←(c·α+0·β)/(α+β)
+# α=经验权重 (5), β=新证据权重 (1). c < c_min (0.2) 删除.
+# ponytail: 直接操作 ChromaDB collection.update, 不引入新抽象层.
+# 升级路径: 加 prior (按 task_pattern 类型设不同 c_0).
+
+_C3_ALPHA = 5.0  # 经验权重
+_C3_BETA = 1.0   # 新证据权重
+# C3: c_min 默认 0.2, 前端 Settings 可调 (HUGINN_PM_C_MIN).
+# ponytail: 模块加载时读一次 env, 运行时改 env 不生效 (需重启). 升级路径: 改成函数读.
+import os as _os_c3
+_C3_C_MIN = float(_os_c3.environ.get("HUGINN_PM_C_MIN", "0.2"))
+_C3_C_INIT = 0.5  # 初始 confidence
+
+
+def _find_pattern_by_task_pattern(kb: Any, task_pattern: str) -> str | None:
+    """按 task_pattern metadata 查已存在的 pattern doc_id. 返回 doc_id 或 None.
+
+    ponytail: 直接 collection.get 拉 source=trajectory_pattern 的全部 metadata,
+    在 Python 端按 task_pattern 过滤. 不走 query (BM25+vector RRF).
+    """
+    if not task_pattern:
+        return None
+    try:
+        data = kb.collection.get(
+            where={"source": "trajectory_pattern"},
+            include=["metadatas"],
+        )
+    except Exception:
+        return None
+    metadatas = data.get("metadatas") or []
+    for meta in metadatas:
+        if meta.get("task_pattern") == task_pattern:
+            return meta.get("doc_id")
+    return None
+
+
+def update_pattern_confidence(
+    kb: Any,
+    doc_id: str,
+    success: bool,
+    *,
+    alpha: float = _C3_ALPHA,
+    beta: float = _C3_BETA,
+    c_min: float = _C3_C_MIN,
+) -> float | None:
+    """Bayesian confidence 更新. 复用成功 +ε, 失败 -ε.
+
+    返回更新后的 confidence, 或 None (doc_id 不存在 / 删除).
+    c < c_min → delete_document(doc_id) 并返回 None.
+    """
+    if not doc_id:
+        return None
+    try:
+        data = kb.collection.get(
+            where={"doc_id": doc_id},
+            include=["metadatas"],
+        )
+    except Exception:
+        return None
+    ids = data.get("ids") or []
+    metadatas = data.get("metadatas") or []
+    if not ids or not metadatas:
+        return None
+    # 取当前 confidence (默认 c_0)
+    try:
+        c_old = float(metadatas[0].get("confidence", _C3_C_INIT))
+    except (TypeError, ValueError):
+        c_old = _C3_C_INIT
+    # Bayesian update: c_new = (c_old·α + success·β) / (α+β)
+    c_new = (c_old * alpha + (1.0 if success else 0.0) * beta) / (alpha + beta)
+    # 低于阈值 → 删除
+    if c_new < c_min:
+        try:
+            kb.delete_document(doc_id)
+        except Exception:
+            logger.debug(
+                "delete low-confidence pattern failed: %s", doc_id, exc_info=True,
+            )
+        logger.info(
+            "pattern %s deleted (c=%.3f < c_min=%.2f)",
+            doc_id, c_new, c_min,
+        )
+        return None
+    # 更新所有 chunks 的 confidence metadata
+    new_metadatas = []
+    for meta in metadatas:
+        new_meta = dict(meta)
+        new_meta["confidence"] = f"{c_new:.4f}"
+        new_metadatas.append(new_meta)
+    try:
+        kb.collection.update(ids=ids, metadatas=new_metadatas)
+    except Exception:
+        logger.debug(
+            "update_pattern_confidence KB update failed", exc_info=True,
+        )
+        return None
+    logger.info(
+        "pattern %s confidence: %.3f → %.3f (success=%s)",
+        doc_id, c_old, c_new, success,
+    )
+    return c_new
 
 
 # === trajectory_match: line graph + VF2 子图同构 ===
@@ -493,5 +608,98 @@ if __name__ == "__main__":
     match4 = trajectory_match(["a", "b", "c", "d", "e"], history)
     assert match4 is None, f"current 比历史长应 None, got {match4}"
     print(f"[ok] current 比历史长 → None")
+
+    # === C3: PM Bayesian confidence 闭环 (用 mock KB) ===
+    class _MockKB:
+        """Mock KB 只实现 C3 需要的接口: collection.get/update, delete_document."""
+        def __init__(self):
+            # 存储: {id: {metadata: dict, document: str}}
+            self._store: dict[str, dict] = {}
+            self.collection = self  # kb.collection == kb (self)
+
+        def add_text(self, text, filename="", metadata=None):
+            import uuid
+            doc_id = uuid.uuid4().hex[:12]
+            meta = dict(metadata or {})
+            meta["doc_id"] = doc_id
+            self._store[doc_id] = {"metadata": meta, "document": text}
+            return {"doc_id": doc_id, "chunks": 1}
+
+        def get(self, where=None, include=None):
+            # 按 where 过滤 (只支持 source / doc_id 单字段)
+            src = where.get("source") if where else None
+            did = where.get("doc_id") if where else None
+            ids, metas = [], []
+            for k, v in self._store.items():
+                m = v["metadata"]
+                if src and m.get("source") != src:
+                    continue
+                if did and m.get("doc_id") != did:
+                    continue
+                ids.append(k)
+                metas.append(dict(m))
+            return {"ids": ids, "metadatas": metas}
+
+        def update(self, ids=None, metadatas=None):
+            for i, mid in enumerate(ids or []):
+                if mid in self._store and i < len(metadatas or []):
+                    self._store[mid]["metadata"] = dict(metadatas[i])
+
+        def delete_document(self, doc_id):
+            # 删除所有 chunks (mock 简化: doc_id 是 metadata.doc_id, 按 metadata 匹配)
+            keys_to_del = [
+                k for k, v in self._store.items()
+                if v["metadata"].get("doc_id") == doc_id
+            ]
+            for k in keys_to_del:
+                del self._store[k]
+            return True
+
+    mock_kb = _MockKB()
+    # case C3-A: 写入 → confidence=0.5
+    doc_id_a = mock_kb.add_text(
+        "REUSABLE PATTERN (from successful task: GaN band gap)\nTask type: dft_band_gap",
+        filename="pattern_test1",
+        metadata={
+            "source": "trajectory_pattern",
+            "task_pattern": "dft_band_gap",
+            "confidence": "0.5",
+        },
+        )["doc_id"]
+    # case C3-B: 复用成功 → +ε
+    c1 = update_pattern_confidence(mock_kb, doc_id_a, success=True)
+    assert c1 is not None, "success update should return new c"
+    assert c1 > 0.5, f"success should increase c, got {c1}"
+    print(f"[ok] C3-B success +ε: 0.5 → {c1:.4f}")
+
+    # case C3-C: 复用失败 → -ε
+    c2 = update_pattern_confidence(mock_kb, doc_id_a, success=False)
+    assert c2 is not None, "fail update should return new c"
+    assert c2 < c1, f"fail should decrease c, got {c2} (prev {c1})"
+    print(f"[ok] C3-C fail -ε: {c1:.4f} → {c2:.4f}")
+
+    # case C3-D: 多次失败 → c < c_min 删除
+    c_prev = c2
+    deleted = False
+    for _ in range(20):  # 足够多次失败让 c 跌破 0.2
+        c_new = update_pattern_confidence(mock_kb, doc_id_a, success=False)
+        if c_new is None:
+            deleted = True
+            break
+        c_prev = c_new
+    assert deleted, f"应被删除 (c 跌破 0.2), 最后 c={c_prev:.4f}"
+    print(f"[ok] C3-D multiple fails → deleted (c < c_min=0.2)")
+
+    # case C3-E: _find_pattern_by_task_pattern 去重
+    mock_kb2 = _MockKB()
+    mock_kb2.add_text(
+        "PATTERN 1",
+        metadata={"source": "trajectory_pattern", "task_pattern": "type_X", "confidence": "0.5"},
+    )
+    found = _find_pattern_by_task_pattern(mock_kb2, "type_X")
+    assert found, "应能找到 task_pattern=type_X"
+    not_found = _find_pattern_by_task_pattern(mock_kb2, "type_Y")
+    assert not_found is None, "type_Y 不存在"
+    print(f"[ok] C3-E _find_pattern_by_task_pattern dedup OK")
 
     print("trajectory_pattern selfcheck All passed")

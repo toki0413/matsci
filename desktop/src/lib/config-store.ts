@@ -124,6 +124,13 @@ function defaultConfig(): AppConfig {
     encrypt_config: false,
     encryption_password: "",
     encryption_key_file: "",
+    // 极限模式 + 分层 memory 默认值 (跟后端 spec 对齐)
+    extreme_dispatch: false,
+    wm_summarize: "rule",
+    wm_token_budget: 8192,
+    em_recall_top_k: 5,
+    pm_c_min: 0.2,
+    wm_summarize_every_n: 5,
   };
 }
 
