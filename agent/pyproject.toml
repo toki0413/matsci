@@ -60,6 +60,9 @@ ml-mace = ["mace-torch>=0.3"]
 ml-fairchem = ["fairchem-core>=1.0"]
 # pynep 不在公开 PyPI (NEP 模型本地接口), 按需本地装.
 ml-nep = ["pynep>=0.1"]
+# AtomWorld benchmark (arXiv:2510.04704): verifiable 3D 空间推理 eval.
+# 只在接 RCBench / CodeAct 沙箱做 eval 时装, 默认 pip install -e . 不拉.
+benchmark = ["atomworld[benchmark] @ git+https://github.com/MasterAI-EAM/AtomWorld.git"]
 # 科研图表 skill: AI 绘图 prompt 编译器 (论文/图注 -> Nano Banana/Qwen Image/GPT Image prompt).
 # 克隆到 huginn/plugins/science-skills/skills/happy_figure/ 即生效, 无 Python 依赖.
 # Flint MCP server (交互式 web 图表副通道): npx -y flint-chart-mcp, 配置见项目根 .mcp.json.
