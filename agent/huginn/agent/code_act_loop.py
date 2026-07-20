@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -288,7 +289,7 @@ def _tool_signature(name: str, tool: Any) -> str:
 
 def _build_system_prompt(tools: dict[str, Any]) -> str:
     sigs = "\n".join(f"- {name}: {_tool_signature(name, t)}" for name, t in tools.items())
-    return f"""You are Huginn, a materials science agent running in CodeAct mode.
+    prompt = f"""You are Huginn, a materials science agent running in CodeAct mode.
 
 In this mode you express every action as a Python code block. The block is
 executed in-process; tools below are available as plain Python functions.
@@ -305,6 +306,17 @@ Rules:
 6. Stay within the working directory. No network, no fork/exec.
 
 Remember: one code block per turn, then stop and wait for the execution result."""
+    # AtomWorld benchmark functions are injected when HUGINN_USE_ATOMWORLD=1.
+    # Surface them in the prompt so the agent knows they exist without dir().
+    if os.environ.get("HUGINN_USE_ATOMWORLD", "0") == "1":
+        prompt += (
+            "\n\nAtomWorld benchmark tools (plain Python functions in this "
+            "namespace): atomworld_evaluate(target_cif, generated_output), "
+            "atomworld_apply_action(input_cif, action_name, **params), "
+            "atomworld_list_actions(). You can also `from atomworld import "
+            "evaluate` for the raw upstream API."
+        )
+    return prompt
 
 
 def _build_namespace(
@@ -329,6 +341,26 @@ def _build_namespace(
             namespace[mod_name] = __import__(mod_name)
         except ImportError:
             pass
+
+    # AtomWorld benchmark — opt-in via HUGINN_USE_ATOMWORLD=1 (mirrors
+    # BranchIncubator gating). atomworld_tool already no-ops when the
+    # atomworld package isn't installed, so we just log and skip.
+    if os.environ.get("HUGINN_USE_ATOMWORLD", "0") == "1":
+        try:
+            from huginn.tools import atomworld_tool as _aw
+            if _aw.is_available():
+                namespace["atomworld_evaluate"] = _aw.evaluate
+                namespace["atomworld_apply_action"] = _aw.apply_action
+                namespace["atomworld_list_actions"] = _aw.list_actions
+            else:
+                logger.warning(
+                    "atomworld_tool: atomworld package not installed, "
+                    "skipping CodeAct registration"
+                )
+        except ImportError:
+            logger.warning(
+                "atomworld_tool: module import failed, skipping CodeAct registration"
+            )
 
     # Tool wrappers — sync facade over async tool.call via run_async bridge.
     for name, tool in tools.items():
@@ -715,6 +747,14 @@ _ALLOWED_IMPORTS = frozenset(
 
 def _safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
     """Replacement for __import__ inside the exec namespace."""
+    # AtomWorld is opt-in via HUGINN_USE_ATOMWORLD=1 — keeps flag-off behavior
+    # identical even if the package happens to be installed.
+    if name == "atomworld":
+        if os.environ.get("HUGINN_USE_ATOMWORLD", "0") != "1":
+            raise ImportError(
+                "import of 'atomworld' requires HUGINN_USE_ATOMWORLD=1"
+            )
+        return __import__(name, *args, **kwargs)
     if name not in _ALLOWED_IMPORTS:
         raise ImportError(
             f"import of {name!r} is not allowed in CodeAct mode; "
