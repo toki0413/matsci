@@ -20,9 +20,9 @@ from huginn.types import ToolContext, ToolResult
 
 
 class SubagentToolInput(BaseModel):
-    action: Literal["dispatch", "list_types"] = Field(
+    action: Literal["dispatch", "dispatch_parallel", "list_types"] = Field(
         default="list_types",
-        description="dispatch to run a subagent, list_types to see available types",
+        description="dispatch to run a subagent, dispatch_parallel for DAG-aware parallel, list_types to see available types",
     )
     spec_name: str | None = Field(
         default=None,
@@ -43,6 +43,24 @@ class SubagentToolInput(BaseModel):
             "If True, dispatch via PersistentTerminal (long session, async poll). "
             "If False, force in-process dispatch. "
             "None = follow env HUGINN_PERSISTENT_TERMINAL (1=on, else off)."
+        ),
+    )
+    # dispatch_parallel 用: [{spec_name, task}, ...], 最多 4 个 (硬 cap)
+    tasks: list[dict[str, str]] | None = Field(
+        default=None,
+        description=(
+            "For dispatch_parallel: list of {spec_name, task} dicts (1-4 items). "
+            "Tasks run concurrently via asyncio.gather."
+        ),
+    )
+    # dispatch_parallel 用: [(u_name, v_name), ...] 任务依赖. u_name/v_name 引用
+    # tasks 里 spec_name+task 的标识 (ponytail: 用 task 字符串前 20 字符做 ID).
+    dependencies: list[tuple[str, str]] | None = Field(
+        default=None,
+        description=(
+            "For dispatch_parallel: task dependencies as [(u, v), ...]. "
+            "u must finish before v starts. Enables DAG-aware scheduling. "
+            "Omit for full parallel."
         ),
     )
 
@@ -89,6 +107,8 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             return self._list_types()
         if args.action == "dispatch":
             return await self._dispatch_subagent(args, context)
+        if args.action == "dispatch_parallel":
+            return await self._dispatch_parallel(args, context)
 
         msg = f"Unknown action: {args.action}"
         return ToolResult(
@@ -127,6 +147,11 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         # v7: 透传父 agent 的 approval_callback, 子 agent 调 ASK 工具 (vasp_tool 等) 才能拿到批准.
         dispatch_ctx.setdefault("approval_callback", context.approval_callback)
 
+        # G1: 从 contextvar 读当前递归深度, 透传给 dispatch 守卫.
+        # 主 agent 这里读到 0, 子 agent 那里读到 1+.
+        from huginn.agents.subagent import _current_depth
+        _depth = _current_depth.get()
+
         # forward subagent intermediate states to the WS via progress_cb
         from huginn.types import progress_cb
 
@@ -161,7 +186,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
 
         result = await self._dispatch.dispatch(
             args.spec_name, args.task, dispatch_ctx,
-            on_state=_on_state,
+            on_state=_on_state, _depth=_depth,
         )
 
         out = SubagentToolOutput(
@@ -176,6 +201,107 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             data=out.model_dump(),
             success=result.success,
             error=result.error,
+        )
+
+    async def _dispatch_parallel(
+        self, args: SubagentToolInput, context: ToolContext
+    ) -> ToolResult:
+        """DAG-aware 并行 dispatch.
+
+        无 dependencies: 全部 asyncio.gather 并行.
+        有 dependencies: 用 TaskDAG 拓扑分层, 同层并行, 层间串行.
+
+        ponytail: 硬 cap 4 并行 (API 限速 + 调试可行性). DAG 调度复用 TaskDAG.
+        """
+        import asyncio
+
+        if not args.tasks:
+            return self._missing_field("tasks")
+        if len(args.tasks) > 4:
+            return ToolResult(
+                data=SubagentToolOutput(
+                    success=False, action="dispatch_parallel",
+                    error=f"tasks 最多 4 个, got {len(args.tasks)}",
+                ).model_dump(),
+                success=False,
+                error="tasks exceeds cap of 4",
+            )
+        # 校验每个 task dict 有 spec_name + task
+        for i, t in enumerate(args.tasks):
+            if "spec_name" not in t or "task" not in t:
+                return ToolResult(
+                    data=SubagentToolOutput(
+                        success=False, action="dispatch_parallel",
+                        error=f"tasks[{i}] 缺 spec_name 或 task",
+                    ).model_dump(),
+                    success=False,
+                    error=f"tasks[{i}] missing spec_name or task",
+                )
+
+        dispatch_ctx = dict(args.context)
+        dispatch_ctx.setdefault("agent_factory", context.agent_factory)
+        dispatch_ctx.setdefault("session_id", context.session_id)
+        dispatch_ctx.setdefault("workspace", context.workspace)
+        dispatch_ctx.setdefault("approval_callback", context.approval_callback)
+        # G1: 从 contextvar 读递归深度 (跟 _dispatch_subagent 一致)
+        from huginn.agents.subagent import _current_depth
+        _depth = _current_depth.get()
+
+        # 无 dependencies: 全并行
+        if not args.dependencies:
+            coros = [
+                self._dispatch.dispatch(
+                    t["spec_name"], t["task"], dispatch_ctx, _depth=_depth,
+                )
+                for t in args.tasks
+            ]
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            out_results = []
+            for r in results:
+                if isinstance(r, Exception):
+                    out_results.append({"success": False, "error": str(r)})
+                else:
+                    out_results.append(r.to_dict())
+            return ToolResult(
+                data={"action": "dispatch_parallel", "results": out_results, "n": len(out_results)},
+                success=True,
+            )
+
+        # 有 dependencies: DAG 分层调度
+        from huginn.agents.task_dag import TaskDAG
+        # task ID = spec_name + task 前 20 字符 (ponytail: 不引入显式 ID 字段)
+        task_ids = [f"{t['spec_name']}:{t['task'][:20]}" for t in args.tasks]
+        try:
+            dag = TaskDAG(tasks=task_ids, dependencies=args.dependencies)
+        except ValueError as e:
+            return ToolResult(
+                data=SubagentToolOutput(
+                    success=False, action="dispatch_parallel", error=f"DAG 错误: {e}",
+                ).model_dump(),
+                success=False,
+                error=str(e),
+            )
+        layers = dag.parallel_layers()
+        id_to_task = dict(zip(task_ids, args.tasks))
+        all_results: list[dict] = []
+        for layer in layers:
+            coros = [
+                self._dispatch.dispatch(
+                    id_to_task[tid]["spec_name"],
+                    id_to_task[tid]["task"],
+                    dispatch_ctx, _depth=_depth,
+                )
+                for tid in layer
+            ]
+            layer_results = await asyncio.gather(*coros, return_exceptions=True)
+            for r in layer_results:
+                if isinstance(r, Exception):
+                    all_results.append({"success": False, "error": str(r)})
+                else:
+                    all_results.append(r.to_dict())
+        return ToolResult(
+            data={"action": "dispatch_parallel", "results": all_results, "n": len(all_results), "layers": layers},
+            success=True,
         )
 
     # -- helpers -----------------------------------------------------------
