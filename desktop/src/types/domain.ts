@@ -125,6 +125,13 @@ export interface AppConfig {
   encrypt_config: boolean;
   encryption_password: string;
   encryption_key_file: string;
+  // 极限模式 + 分层 memory (Settings Advanced tab)
+  extreme_dispatch: boolean;
+  wm_summarize: "rule" | "ngram" | "llm" | "hybrid";
+  wm_token_budget: number;
+  em_recall_top_k: number;
+  pm_c_min: number;
+  wm_summarize_every_n: number;
 }
 
 export interface PersonaSeed {

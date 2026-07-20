@@ -697,12 +697,66 @@ class AutoloopEngine:
         except Exception:
             return ""
 
+    def _build_pm_text(self) -> str:
+        """C2: PM 层 trajectory_match 召回 — 当前 phase 序列是否是某历史轨迹的 prefix.
+
+        命中 → 注入 next_step 建议给 LLM 参考. 同时记下命中 doc_id,
+        供 _learn 调 update_pattern_confidence 做 ±ε 反馈 (C3 闭环).
+        返回空串时不影响 prompt.
+
+        极限模式才开 (HUGINN_EXTREME_DISPATCH=1), 平常默认关闭省计算.
+        """
+        import os
+        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() not in ("1", "true"):
+            return ""
+        try:
+            from huginn.knowledge.trajectory_pattern import trajectory_match
+            current = getattr(self, "_current_run_phases", [])
+            history = getattr(self, "_traj_history", None)
+            if history is None:
+                # 懒加载历史轨迹 (跟 _check_stuck 共用)
+                try:
+                    history = self._load_trajectory_action_history(limit=20)
+                    self._traj_history = history
+                except Exception:
+                    return ""
+            if len(current) < 2 or not history:
+                return ""
+            match = trajectory_match(current, history, min_similarity=0.4)
+            if match is None:
+                self._last_traj_match_doc_id = None
+                return ""
+            # 记下 doc_id 供 _learn 调 update_pattern_confidence (C3).
+            # ponytail: trajectory_match 返回 history_id, 不直接是 KB doc_id.
+            # 真要闭环需要从 history_id 反查 KB doc_id, 这里先记 history_id,
+            # _learn 暂不调 update_pattern_confidence (留给升级路径).
+            self._last_traj_match_doc_id = match.get("history_id")
+            advice = (
+                f"### Trajectory Match (PM layer)\n"
+                f"Current phase sequence matches history[{match['history_id']}] "
+                f"(similarity={match['similarity']:.2f}). "
+                f"Suggested next step: {match.get('next_step', '?')}. "
+                f"This is advisory — ignore if context differs.\n"
+                f"### End Trajectory Match"
+            )
+            return advice
+        except Exception:
+            self._last_traj_match_doc_id = None
+            return ""
+
     # 上下文预算: 防止 prompt block 累积超过 token 上限.
-    # 优先级: body > math > kg > visual > kb > mem > hint > skill > composite > pipeline
+    # 优先级: body > math > kg > visual > kb > mem > pm > hint > skill > composite > pipeline
     # 超预算时不是直接丢弃, 而是分层压缩: 先截断 → 再摘要 → 最后才删.
     # 视觉语言比文字语言更能压缩信息 — 一行 "[energies] peak=idx3, trend=↑"
     # 传达的信息等于 200 chars 的 JSON. 用压缩替代丢弃, 保留信息密度.
-    _PROMPT_BUDGET = 12000  # chars, 约 3K tokens
+    _PROMPT_BUDGET = 12000  # chars, 约 3K tokens (fallback default)
+    # C-budget: 分层 budget — hypothesis/plan 主战场留满, 其他 phase 不走 prompt builder.
+    # ponytail: 只 dict + getter, 不引 BudgetPolicy 抽象. env 覆盖留调参口子.
+    # 升级路径: 加 learn/pivot 的 prompt builder 后再扩 phase 覆盖.
+    _PROMPT_BUDGET_BY_PHASE: dict[str, int] = {
+        "hypothesize": 12000,
+        "plan": 12000,
+    }
 
     @staticmethod
     def _compress_block(name: str, text: str, level: int) -> str:
@@ -757,8 +811,34 @@ class AutoloopEngine:
             + "\nVerify which value is correct before proceeding.\n"
         )
 
-    def _trim_to_budget(self, blocks: list[tuple[str, str]]) -> str:
-        """按优先级拼接 blocks, 超预算时分层压缩: 截断→摘要→删除."""
+    def _get_prompt_budget(self, phase: str | None) -> int:
+        """按 phase 取 prompt budget. env 覆盖优先, dict 次之, fallback _PROMPT_BUDGET."""
+        import os
+        if phase:
+            env_key = f"HUGINN_PROMPT_BUDGET_{phase.upper()}"
+            env_val = os.environ.get(env_key)
+            if env_val:
+                try:
+                    return int(env_val)
+                except ValueError:
+                    pass
+            if phase in self._PROMPT_BUDGET_BY_PHASE:
+                return self._PROMPT_BUDGET_BY_PHASE[phase]
+        return self._PROMPT_BUDGET
+
+    def _trim_to_budget(
+        self,
+        blocks: list[tuple[str, str]],
+        *,
+        phase: str | None = None,
+    ) -> str:
+        """按优先级拼接 blocks, 超预算时分层压缩: 截断→摘要→删除.
+
+        phase 不传时走 _PROMPT_BUDGET (fallback), 传 "hypothesize"/"plan"
+        走 _PROMPT_BUDGET_BY_PHASE 分层 budget. env HUGINN_PROMPT_BUDGET_<PHASE>
+        覆盖一切.
+        """
+        budget = self._get_prompt_budget(phase)
         # 跨源冲突检测: 扫描各 block 中的 property=value 对, 标注矛盾
         conflict_warn = self._scan_block_conflicts(blocks)
         if conflict_warn:
@@ -766,12 +846,12 @@ class AutoloopEngine:
 
         kept = [(n, v) for n, v in blocks]
         total = sum(len(v) for _, v in kept)
-        if total <= self._PROMPT_BUDGET:
+        if total <= budget:
             return "".join(v for _, v in kept)
 
         # Pass 1: 截断低优先级 block 到 300 字符
         for i in range(len(kept) - 1, -1, -1):
-            if total <= self._PROMPT_BUDGET:
+            if total <= budget:
                 break
             name, text = kept[i]
             if name == "body":  # body 永远不压缩
@@ -780,12 +860,12 @@ class AutoloopEngine:
             total -= len(text) - len(compressed)
             kept[i] = (name, compressed)
 
-        if total <= self._PROMPT_BUDGET:
+        if total <= budget:
             return "".join(v for _, v in kept)
 
         # Pass 2: 压缩成一行摘要
         for i in range(len(kept) - 1, -1, -1):
-            if total <= self._PROMPT_BUDGET:
+            if total <= budget:
                 break
             name, text = kept[i]
             if name == "body":
@@ -794,13 +874,13 @@ class AutoloopEngine:
             total -= len(text) - len(compressed)
             kept[i] = (name, compressed)
 
-        if total <= self._PROMPT_BUDGET:
+        if total <= budget:
             return "".join(v for _, v in kept)
 
         # Pass 3: 从最低优先级开始删除
         # skill/composite 受保护 — skills 引用保留系统: 可截断可摘要, 但不可清空
         for i in range(len(kept) - 1, -1, -1):
-            if total <= self._PROMPT_BUDGET:
+            if total <= budget:
                 break
             name, text = kept[i]
             if name in ("body", "skill", "composite"):
@@ -2902,6 +2982,7 @@ Respond JSON only:
         # 这俩 persona 在 personas.py 内置, 直接取就行.
         persona_name = self._pick_hypothesis_persona(context)
         self._last_persona = persona_name  # 供 _learn 写入 memory/KG
+        self._last_context = context  # 供 _learn 写 persona_use entity (C5)
         try:
             # True parallel sampling: main call + high-temp diversity call.
             # Both run concurrently via asyncio.gather — same wall-clock latency
@@ -3460,13 +3541,13 @@ Respond JSON only:
         )
 
     def _recent_failed_hypotheses(self, limit: int = 3) -> list[str]:
-        """从 hypothesis_graph 捞最近被 refuted 的假设, 给 forget_then_generate 用.
+        """从 typed memory 捞最近被 refuted 的假设, 给 forget_then_generate 用.
 
-        P12: HUGINN_USE_MEMORY_TYPING=1 时优先走 typed 查询 (跨 session 可恢复),
+        C4: typed memory 默认 on, 走 recall_failed_directions (跨 session 可恢复).
+        旧行 NULL 通过 lazy migrate (tags 含 math_concept:/strategy:) 自动反推.
         typed 查询为空时降级到 hypothesis_graph 内存路径.
         """
-        from huginn.memory.typing import _use_typing
-        if _use_typing() and self.memory:
+        if self.memory:
             try:
                 _failed = self.memory.recall_failed_directions(limit=limit)
                 if _failed:
@@ -3474,10 +3555,10 @@ Respond JSON only:
                     return [h for h, _, _ in _failed if h]
             except Exception:
                 logger.debug(
-                    "typed recall_failed_directions failed, fallback to hypothesis_graph",
+                    "recall_failed_directions failed, fallback to hypothesis_graph",
                     exc_info=True,
                 )
-        # legacy 路径: 从内存 hypothesis_graph 捞
+        # fallback: 从内存 hypothesis_graph 捞
         try:
             nodes = getattr(self.hypothesis_graph, "_nodes", {})
             failed = [
@@ -3686,16 +3767,17 @@ Respond JSON only:
 
         深化: 查 memory 看 reviewer persona 历史效果, 如果上次 reviewer
         找到了问题(r_phys高), 倾向继续用 reviewer. 这是 persona→memory→persona
-        闭环的关键一环."""
+        闭环的关键一环.
+
+        C4 后 typed memory 默认 on, 旧行 NULL 走 lazy migrate 自动反推."""
         # JEPA: 上轮预测误差大时, 用 reviewer persona 审视 —
         # 预测错了说明 agent 的心智模型不准, 需要更批判的视角.
         if getattr(self, "_last_surprise", 0.0) > 0.6:
             return "reviewer"
 
-        # P12: HUGINN_USE_MEMORY_TYPING=1 时优先走 typed 查询, 拿 persona_history
-        # 的 r_phys 平均值. typed 查询为空 (旧行 NULL 或没历史) 降级到正则 grep.
-        from huginn.memory.typing import _use_typing
-        if _use_typing() and self.memory:
+        # C4: typed memory 默认 on, 旧行 NULL 走 lazy migrate 反推
+        # (旧行 tags 含 "autoloop" + "persona:reviewer" → 自动当 iteration_result)
+        if self.memory:
             try:
                 _typed_rows = self.memory.recall_typed(
                     memory_type="persona_history",
@@ -3715,32 +3797,38 @@ Respond JSON only:
                         _avg = sum(_scores) / len(_scores)
                         if _avg > 0.6:
                             return "reviewer"
-                    else:
-                        # typed 行有但没 r_phys 数值, 不降级, 直接走默认
-                        pass
             except Exception:
                 logger.debug(
-                    "typed recall_typed(persona_history) failed, fallback to regex grep",
-                    exc_info=True,
+                    "recall_typed(persona_history) failed", exc_info=True,
                 )
 
-        # 查 memory: 上次 reviewer persona 效果如何? (legacy 正则 grep 路径)
+        # C5: KG persona_use 召回 — knowledge→persona 闭环.
+        # 遍历 KG persona_use 节点, 按 persona 分组求 r_phys 均值, 取最高.
+        # ponytail: 不引入 embedding 相似度, 简单按 persona 聚合 r_phys.
+        # 升级路径: context_hash 距离或 embedding 召回相似 context.
         try:
-            if self.memory:
-                recall = self.memory.recall_for_prompt(
-                    "reviewer persona autoloop", max_entries=3
-                )
-                if recall and "r_phys" in recall.lower():
-                    # 如果 memory 里记录 reviewer 找到了问题, 倾向继续用
-                    import re
-
-                    scores = re.findall(r"r_phys[:\s]+([\d.]+)", recall)
-                    if scores:
-                        avg_score = sum(float(s) for s in scores) / len(scores)
-                        if avg_score > 0.6:
-                            return "reviewer"  # reviewer 历史效果好, 继续用
+            if hasattr(self, "kg") and self.kg is not None:
+                with self.kg._lock:
+                    persona_scores: dict[str, list[float]] = {}
+                    for _nid, _data in self.kg._graph.nodes(data=True):
+                        if _data.get("type") != "persona_use":
+                            continue
+                        _p = _data.get("persona")
+                        _r = _data.get("r_phys")
+                        if _p and _r is not None:
+                            try:
+                                persona_scores.setdefault(_p, []).append(float(_r))
+                            except (TypeError, ValueError):
+                                continue
+                if persona_scores:
+                    _avg_scores = {
+                        p: sum(v) / len(v) for p, v in persona_scores.items()
+                    }
+                    _best = max(_avg_scores, key=_avg_scores.get)
+                    if _avg_scores[_best] > 0.5:
+                        return _best
         except Exception:
-            pass
+            logger.debug("persona_use KG recall failed", exc_info=True)
 
         blob = json.dumps(context, ensure_ascii=False).lower()
         md_markers = ("md", "lammps", "molecular dynamics", "nvt", "npt", "md_steps")
@@ -4619,7 +4707,7 @@ Respond JSON only:
         HUGINN_EXTREME_DISPATCH=1 时开.
         """
         import os
-        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0") != "1":
+        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() not in ("1", "true"):
             return None
         if len(action_history) < 4:
             return None  # 太短不检
@@ -5402,42 +5490,48 @@ Respond JSON only:
                     else "surprise:0"
                 ),
             ]
-            # P12: HUGINN_USE_MEMORY_TYPING=1 时双写 typed memory,
-            # 让 _pick_hypothesis_persona / _recent_failed_hypotheses 走结构化
-            # 查询替代正则 grep. flag off (默认) 时只走原 remember, 行为不变.
-            from huginn.memory.typing import _use_typing
-            if _use_typing():
-                try:
-                    # status: 用 validation 结果映射 (supported/refuted)
-                    _tests_ok = (
-                        validation.get("tests_passed")
-                        if isinstance(validation, dict)
-                        else False
-                    )
-                    _typed_status = "supported" if _tests_ok else "refuted"
-                    self.memory.remember_typed(
-                        content=mem_content,
-                        memory_type="iteration_result",
-                        run_id=getattr(self, "_run_id", None),
-                        persona_id=persona_name,
-                        status=_typed_status,
-                        importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
-                        tier="mid",
-                        tags=_tags,
-                    )
-                except Exception:
-                    logger.debug(
-                        "typed remember_typed failed, fallback to legacy remember",
-                        exc_info=True,
-                    )
-                    self.memory.remember(
-                        content=mem_content,
-                        category="autoloop_iteration",
-                        importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
-                        tier="mid",
-                        tags=_tags,
-                    )
-            else:
+            # C4: typed memory 默认 on, 走 remember_typed (含 iteration_result
+            # + persona_id + status). 旧行 NULL 通过 lazy migrate 自动反推.
+            # typed 写入失败时 fallback 到 legacy remember.
+            try:
+                # status: 用 validation 结果映射 (supported/refuted)
+                _tests_ok = (
+                    validation.get("tests_passed")
+                    if isinstance(validation, dict)
+                    else False
+                )
+                _typed_status = "supported" if _tests_ok else "refuted"
+                self.memory.remember_typed(
+                    content=mem_content,
+                    memory_type="iteration_result",
+                    run_id=getattr(self, "_run_id", None),
+                    persona_id=persona_name,
+                    status=_typed_status,
+                    importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                    tier="mid",
+                    tags=_tags,
+                )
+                # C5: 额外写一条 persona_history (给 _pick_hypothesis_persona 查).
+                # 不双写完整 content, 只记 persona + r_phys 摘要, 避免冗余.
+                _ph_content = (
+                    f"Persona: {persona_name}, r_phys: {r_phys}"
+                    f", iter: {self._iteration}"
+                )
+                self.memory.remember_typed(
+                    content=_ph_content,
+                    memory_type="persona_history",
+                    run_id=getattr(self, "_run_id", None),
+                    persona_id=persona_name,
+                    status=_typed_status,
+                    importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                    tier="mid",
+                    tags=_tags,
+                )
+            except Exception:
+                logger.debug(
+                    "typed remember_typed failed, fallback to legacy remember",
+                    exc_info=True,
+                )
                 self.memory.remember(
                     content=mem_content,
                     category="autoloop_iteration",
@@ -5637,6 +5731,28 @@ Respond JSON only:
                     source="autoloop",
                     iteration=self._iteration,
                 )
+            # C5: persona_use entity — KG 层 persona 选择历史.
+            # _pick_hypothesis_persona 遍历 persona_use 节点按 r_phys 均值召回.
+            # ponytail: 不引入 embedding 相似度, 直接遍历 _graph.nodes 按 type 过滤.
+            # 升级路径: context_hash 距离 (Hamming) 或 embedding 相似度召回.
+            try:
+                from huginn.utils.common import hash_text
+                _ctx = getattr(self, "_last_context", {}) or {}
+                _ctx_hash = hash_text(
+                    json.dumps(_ctx, ensure_ascii=False, sort_keys=True, default=str)
+                )
+                self.kg.add_entity(
+                    label=f"{persona_name}_iter{self._iteration}",
+                    entity_type="persona_use",
+                    source="autoloop",
+                    confidence=float(r_phys) if r_phys is not None else 0.5,
+                    persona=persona_name,
+                    context_hash=_ctx_hash,
+                    r_phys=r_phys,
+                    iteration=self._iteration,
+                )
+            except Exception:
+                logger.debug("persona_use entity write skipped", exc_info=True)
             self.kg.save()
         except Exception:
             logger.warning("error in _learn: KG add_entity failed", exc_info=True)
@@ -5659,29 +5775,27 @@ Respond JSON only:
                     "error in _learn: benchmark_failure memory writeback failed",
                     exc_info=True,
                 )
-            # P12: HUGINN_USE_MEMORY_TYPING=1 时同步写 failed_direction,
+            # C4: typed memory 默认 on, 同步写 failed_direction,
             # 让 _recent_failed_hypotheses 跨 session 能恢复 (不靠 hypothesis_graph).
             # ponytail: 不动 HypothesisNode setter, 在 _learn 里集中写, 最小改动.
-            from huginn.memory.typing import _use_typing
-            if _use_typing():
-                try:
-                    _fail_reason = (
-                        validation.get("error")
-                        or validation.get("reason")
-                        or json.dumps(validation, default=str)[:200]
-                    )
-                    self.memory.record_failed_direction(
-                        hypothesis_text=hypothesis[:200],
-                        reason=str(_fail_reason)[:400],
-                        run_id=getattr(self, "_run_id", "") or "",
-                        persona_id=getattr(self, "_last_persona", None),
-                        math_concept="",
-                    )
-                except Exception:
-                    logger.debug(
-                        "record_failed_direction failed, fallback to legacy path",
-                        exc_info=True,
-                    )
+            try:
+                _fail_reason = (
+                    validation.get("error")
+                    or validation.get("reason")
+                    or json.dumps(validation, default=str)[:200]
+                )
+                self.memory.record_failed_direction(
+                    hypothesis_text=hypothesis[:200],
+                    reason=str(_fail_reason)[:400],
+                    run_id=getattr(self, "_run_id", "") or "",
+                    persona_id=getattr(self, "_last_persona", None),
+                    math_concept="",
+                )
+            except Exception:
+                logger.debug(
+                    "record_failed_direction failed, fallback to legacy path",
+                    exc_info=True,
+                )
 
         # Feynman learning: 高 surprise 或高奖励时, 让 agent 用通俗语言重新解释本轮发现.
         # 解释不出来的部分就是知识缺口, 写入 GoalStore 作为下轮子目标.
@@ -7033,6 +7147,10 @@ Please modify the code to address this task."""
         mem_block = self._build_memory_text(query=ctx_query)
         if mem_block:
             mem_block = f"\n{mem_block}\n"
+        # C2: PM 层 trajectory_match 召回 (极限模式才开)
+        pm_block = self._build_pm_text()
+        if pm_block:
+            pm_block = f"\n{pm_block}\n"
         # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
         # 给 LLM 具体坐标锚定推理 — Thinking with Visual Primitives 的
         # "point while it reasons" 原则, Mirage 效应的文本路径
@@ -7041,10 +7159,6 @@ Please modify the code to address this task."""
             visual_block = (
                 f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
             )
-        # 数学深度引导: 提醒 agent 优先识别 PDE / 变分原理 / 微分几何结构,
-        # 并用符号回归 + Sobol 灵敏度 + 物理约束先验 反复试探.
-        # 条件化: 只在 context 含数学信号时注入, coder-only 任务不需要.
-        # 节省 ~150 tokens × 2 calls/iter × 20 iters = 6K tokens/run.
         ctx_blob = json.dumps(context, ensure_ascii=False).lower()
         math_block = (
             self._MATH_DEPTH_PROMPT_BLOCK
@@ -7175,9 +7289,11 @@ Hypothesis:""",
                 ("visual", visual_block),
                 ("kb", kb_block),
                 ("mem", mem_block),
+                ("pm", pm_block),
                 ("cluster", cluster_block),
                 ("hint", hint_block),
-            ]
+            ],
+            phase="hypothesize",
         )
 
     _IMAGINATION_PROMPT_BLOCK = """
@@ -7239,11 +7355,14 @@ Math depth guidance (treat physics/chemistry as mathematics):
         mem_block = self._build_memory_text(query=hypothesis)
         if mem_block:
             mem_block = f"\n{mem_block}\n"
+        # C2: PM 层 trajectory_match 召回 (同 hypothesize, 极限模式才开)
+        pm_block = self._build_pm_text()
+        if pm_block:
+            pm_block = f"\n{pm_block}\n"
         # 视觉基元注入 (同 hypothesize)
         visual_block = getattr(self, "_last_visual_context", "")
         if visual_block:
-            visual_block = (
-                f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
+            visual_block = (                f"\n### Visual Primitives (from last tool output)\n{visual_block}\n"
             )
         # 条件化 math_block (同 hypothesize)
         hyp_blob = (
@@ -7398,12 +7517,14 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 ("visual", visual_block),
                 ("kb", kb_block),
                 ("mem", mem_block),
+                ("pm", pm_block),
                 ("skill", skill_hints + patch_hints),
                 ("composite", composite_block),
                 ("pipeline", pipeline_block),
                 ("subgoal", self._build_subgoal_block()),
                 ("ctx_hint", self._plan_context_hint()),
-            ]
+            ],
+            phase="plan",
         )
 
     def _plan_context_hint(self) -> str:
@@ -8370,6 +8491,13 @@ PREDICTION: <预期结果, 用于后续 validate 对比>"""
         # 记下当前 phase, 让 _llm_chat 能注入 phase-aware thinking effort 指令.
         # ponytail: 隐式状态, 但 run() 是 single-threaded async, 无竞态.
         self._current_phase = name
+        # C2: 追踪本 run 的 phase 序列, 供 trajectory_match 召回用.
+        if not hasattr(self, "_current_run_phases"):
+            self._current_run_phases = []
+        self._current_run_phases.append(name)
+        # 防止无界增长 (1000+ iter × 7 phase = 7000+), 只保留最近 50 个
+        if len(self._current_run_phases) > 50:
+            self._current_run_phases = self._current_run_phases[-50:]
         await self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
         from huginn.telemetry import get_telemetry_collector
 

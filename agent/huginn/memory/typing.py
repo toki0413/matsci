@@ -44,12 +44,55 @@ class MemoryType(str, Enum):
 def _use_typing() -> bool:
     """env flag HUGINN_USE_MEMORY_TYPING 控制 engine 是否调 typed API.
 
-    默认 OFF — 行为 100% 不变, 跟 P12 之前一致. schema migration v2 仍然跑
-    (加列 NULL 不影响旧行为), flag 翻转不需要再迁移. 显式设 =1 时 engine
-    的 _learn / _pick_hypothesis_persona / _recent_failed_hypotheses 改走
-    typed 路径, 失败时降级回原路径.
+    C4 后默认 ON — typed memory 是分层 memory 的基础, 平常该用.
+    显式设 =0 可关 (回退到 grep/正则 fallback 路径).
+    schema migration v2 无条件跑, 旧 DB 升级不需要额外操作.
     """
-    return os.environ.get("HUGINN_USE_MEMORY_TYPING", "0") in ("1", "true", "True")
+    return os.environ.get("HUGINN_USE_MEMORY_TYPING", "1") in ("1", "true", "True")
+
+
+# tags/source/category → memory_type 反推规则 (lazy migrate 用)
+# 旧行 memory_type IS NULL, recall 时按这些规则临时推断 type
+_INFER_RULES: list[tuple[str, str, str]] = [
+    # (predicate, matcher, memory_type)
+    # predicate 在 tags 任一元素上 prefix-match, 或 source/category 精确匹配
+    ("tag_prefix", "autoloop", "iteration_result"),
+    ("tag_prefix", "math_concept:", "failed_direction"),
+    ("tag_prefix", "strategy:", "failed_direction"),
+    ("source_prefix", "cross_domain:", "cross_domain_transfer"),
+    ("source_prefix", "evolution:failed_direction_store", "failed_direction"),
+    ("source_prefix", "evolution:distill", "stable_principle"),
+    ("source_prefix", "typed:failed_direction", "failed_direction"),
+    ("source_prefix", "typed:stable_principle", "stable_principle"),
+    ("source_prefix", "typed:cross_domain_transfer", "cross_domain_transfer"),
+    ("source_prefix", "typed:iteration_result", "iteration_result"),
+    ("source_prefix", "typed:persona_history", "persona_history"),
+    ("category_eq", "episode", "persona_history"),
+    ("category_eq", "iteration", "iteration_result"),
+]
+
+
+def _infer_memory_type_from_tags(
+    tags: list[str],
+    source: str,
+    category: str,
+) -> str | None:
+    """从 tags/source/category 反推 memory_type (lazy migrate 用).
+
+    旧行 memory_type IS NULL, recall 时按这些规则推断. 命中返回 memory_type,
+    否则 None. ponytail: 规则表驱动, 不引入 ML 分类器.
+    """
+    for pred, matcher, mtype in _INFER_RULES:
+        if pred == "tag_prefix":
+            if any(t.startswith(matcher) for t in tags):
+                return mtype
+        elif pred == "source_prefix":
+            if source and source.startswith(matcher):
+                return mtype
+        elif pred == "category_eq":
+            if category == matcher:
+                return mtype
+    return None
 
 
 def _memory_type_to_category(memory_type: str) -> str:
@@ -297,7 +340,7 @@ def _selfcheck() -> None:
         tier="mid",
     )
     assert legacy_id
-    # typed 查询不应该返回 legacy 行
+    # typed 查询不应该返回 legacy 行 (category=fact 无反推规则)
     typed_rows = recall_typed(
         mm2,
         memory_type=MemoryType.PERSONA_HISTORY.value,
@@ -312,10 +355,55 @@ def _selfcheck() -> None:
         )
     print("4. NULL compatibility (legacy rows excluded from typed query) OK")
 
+    # 场景 5: lazy migrate — legacy 行 tags 含 "autoloop" + "persona:reviewer"
+    # 应被反推为 iteration_result (write-on-read), typed 查询能命中
+    legacy_autoloop_id = mm2.remember(
+        content="Persona: reviewer, r_phys: 0.85 on GaN band gap",
+        category="autoloop_iteration",
+        tags=["autoloop", "persona:reviewer", "r_phys:0.85", "surprise:0.3"],
+        importance=0.8,
+        tier="mid",
+    )
+    assert legacy_autoloop_id
+    # 第一次查 iteration_result — strict 返空, 触发 lazy migrate
+    iter_rows_1 = recall_typed(
+        mm2,
+        memory_type=MemoryType.ITERATION_RESULT.value,
+        persona_id="reviewer",  # 但 legacy 行没 persona_id 列, 这个过滤会失败
+        limit=10,
+    )
+    # persona_id 列在 legacy 行也是 NULL, 加了 persona_id 过滤就查不到
+    # 不加 persona_id 过滤再查一次
+    iter_rows_2 = recall_typed(
+        mm2,
+        memory_type=MemoryType.ITERATION_RESULT.value,
+        limit=10,
+    )
+    assert len(iter_rows_2) >= 1, (
+        f"lazy migrate should make legacy autoloop row appear as iteration_result, "
+        f"got {len(iter_rows_2)}"
+    )
+    # 验证 memory_type 已回填 (write-on-read)
+    assert iter_rows_2[0]["memory_type"] == "iteration_result", (
+        f"lazy migrate should backfill memory_type, got {iter_rows_2[0].get('memory_type')}"
+    )
+    print("5. lazy migrate (legacy autoloop → iteration_result) OK")
+
+    # 场景 6: 反推规则覆盖 — _infer_memory_type_from_tags 各路径
+    assert _infer_memory_type_from_tags(["autoloop"], "", "") == "iteration_result"
+    assert _infer_memory_type_from_tags(["math_concept:X"], "", "") == "failed_direction"
+    assert _infer_memory_type_from_tags(["strategy:Y"], "", "") == "failed_direction"
+    assert _infer_memory_type_from_tags([], "cross_domain:foo", "") == "cross_domain_transfer"
+    assert _infer_memory_type_from_tags([], "evolution:distill", "") == "stable_principle"
+    assert _infer_memory_type_from_tags([], "", "episode") == "persona_history"
+    assert _infer_memory_type_from_tags([], "", "iteration") == "iteration_result"
+    assert _infer_memory_type_from_tags(["legacy"], "", "fact") is None
+    print("6. _infer_memory_type_from_tags rule coverage OK")
+
     # 清理临时目录
     import shutil
     shutil.rmtree(tmpdir, ignore_errors=True)
-    print("memory.typing selfcheck OK (4 scenarios)")
+    print("memory.typing selfcheck OK (6 scenarios)")
 
 
 if __name__ == "__main__":
