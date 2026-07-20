@@ -186,6 +186,9 @@ class RedTeamReviewer:
         # 拓扑透镜扫描 (高阶网络视角: 检查假设的证据网络结构是否合理)
         findings.extend(self._topology_scan(evidence))
 
+        # 离散反例搜索 (互补人类连续化偏置: 假设可离散化时, 用 SMT 找反例)
+        findings.extend(self._discrete_counterexample_scan(evidence))
+
         # 文献共识扫描: multi_review 产出的 high_conf claims 与假设对齐检查
         findings.extend(self._literature_consensus_check(evidence))
 
@@ -296,6 +299,55 @@ class RedTeamReviewer:
 
         except Exception:
             logger.debug("topology_scan failed (non-fatal)", exc_info=True)
+        return out
+
+    def _discrete_counterexample_scan(
+        self, evidence: dict[str, Any]
+    ) -> list[RedTeamFinding]:
+        """离散反例搜索: 假设可离散化时, 用 SMT 找反例.
+
+        触发条件: evidence 带 discrete_hypothesis 字段, 含:
+          - variables: list[dict] (z3 变量声明)
+          - premises: list[str] (z3 约束)
+          - conclusion: str (要验证的结论)
+        调 DiscreteSMTTool.verify_implication 找反例.
+
+        找到反例 → severity="high" (阻断), mitigation 给出反例.
+        找不到 → 不发 finding (z3 unknown 不算通过, 但也不误判).
+
+        ponytail: 只在 evidence 显式声明可离散化时触发, 不强加.
+        天花板: 只支持显式声明的离散假设, 不能从自然语言 hypothesis 自动提取.
+        升级路径: LLM 把 hypothesis 翻译成 z3 表达式 (留后续).
+        """
+        out: list[RedTeamFinding] = []
+        disc = evidence.get("discrete_hypothesis")
+        if not disc or not isinstance(disc, dict):
+            return out
+        variables = disc.get("variables")
+        premises = disc.get("premises")
+        conclusion = disc.get("conclusion")
+        if not (variables and premises and conclusion):
+            return out
+        try:
+            from huginn.tools.sci.discrete_smt import _verify_implication
+            r = _verify_implication(variables, premises, conclusion, timeout_ms=5000)
+            if r.get("holds") is False:
+                ce = r.get("counterexample", {})
+                out.append(RedTeamFinding(
+                    category="hidden_assumption",
+                    description=(
+                        f"离散反例搜索找到反例, 假设不成立. "
+                        f"反例: {ce}"
+                    ),
+                    severity="high",
+                    mitigation=(
+                        f"修改假设以排除反例 {ce}, 或承认假设只在子集上成立."
+                    ),
+                    source_class="tool_output",
+                ))
+            # holds=True 或 holds=None (unknown) 都不发 finding
+        except Exception:
+            logger.debug("discrete_counterexample_scan failed (non-fatal)", exc_info=True)
         return out
 
     def _literature_consensus_check(
