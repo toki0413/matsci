@@ -65,7 +65,8 @@ def _snapshot_dir(workspace: str | Path) -> Path:
 
 
 def save_autoloop_snapshot(
-    result: AutoloopResult, workspace: str | Path
+    result: AutoloopResult, workspace: str | Path,
+    in_progress: bool = False,
 ) -> Path | None:
     """Persist a compact JSON snapshot of an AutoloopResult under
     ``<workspace>/.huginn/autoloop_results/<objective_hash>.json``.
@@ -73,6 +74,10 @@ def save_autoloop_snapshot(
     Lets other components (DeliAutoResearch, future CLI subcommands) reuse a
     finished run without re-instantiating AutoloopEngine. Returns the snapshot
     path, or None on failure — callers treat None as "no snapshot, run normally".
+
+    in_progress=True (P15): 写到 ``<objective_hash>.in_progress.json``,
+    跟最终 snapshot 区分; save trigger 中途存, run 结束后写最终 snapshot
+    覆盖时 in_progress 文件应被调用方清理 (或下次 run 覆盖).
     """
     try:
         snap_dir = _snapshot_dir(workspace)
@@ -91,8 +96,10 @@ def save_autoloop_snapshot(
                 {"name": p.name, "status": p.status} for p in result.phases
             ],
             "saved_at": time.time(),
+            "in_progress": in_progress,
         }
-        path = snap_dir / f"{objective_hash(result.objective)}.json"
+        suffix = ".in_progress" if in_progress else ""
+        path = snap_dir / f"{objective_hash(result.objective)}{suffix}.json"
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",

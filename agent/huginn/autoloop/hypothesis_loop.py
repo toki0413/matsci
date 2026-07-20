@@ -1014,6 +1014,38 @@ class HypothesisGraph:
             graph._simplicials.add(frozenset(s))
         return graph
 
+    # ── 持久化 ───────────────────────────────────────────────────────
+
+    def save(self, path: Any) -> None:
+        """序列化图到 JSON 文件 (原子写, 防 crash 留半截).
+
+        ponytail: 复用 to_dict + atomic_write_json, 不引入 networkx 序列化 —
+        HypothesisGraph 不是 nx.Graph, 自己的 dict 结构更紧凑且版本稳.
+        ceiling: 全量 save, 不做增量 diff; 图 <10k 节点时全量够快.
+        """
+        import json as _json
+        from huginn.utils.common import atomic_write_json
+
+        atomic_write_json(path, self.to_dict())
+
+    @classmethod
+    def load(cls, path: Any) -> "HypothesisGraph | None":
+        """从 JSON 文件恢复图. 文件不存在 / 解析失败返 None."""
+        import json as _json
+        from pathlib import Path
+
+        p = Path(path)
+        if not p.exists():
+            return None
+        try:
+            data = _json.loads(p.read_text(encoding="utf-8"))
+            return cls.from_dict(data)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "HypothesisGraph.load failed: %s", p, exc_info=True,
+            )
+            return None
+
     # ── 内部 ─────────────────────────────────────────────────────────
 
     def _check_node(self, node_id: str) -> None:
@@ -1180,5 +1212,73 @@ def _selfcheck_connected_components() -> None:
     print("OK: connected_components selfcheck passed")
 
 
+def _selfcheck_save_load() -> None:
+    """P15: HypothesisGraph.save/load round-trip — 节点/边/单纯形/状态完整恢复."""
+    import json
+    import shutil
+    import tempfile as _tf
+    from pathlib import Path
+
+    g = HypothesisGraph()
+    h1 = g.add_hypothesis("h1: 掺杂增加带隙减小", rationale="r1")
+    h2 = g.add_hypothesis("h2: 温度调控载流子迁移", parent_id=h1)
+    g.support(h1, evidence={"modality": "deductive", "data_source": "lit"})
+    g.refute(h2, evidence={"errors": "迁移率反向"})
+    # 2-单纯形: 给 h1 加第 2 条 support 边 (不同 modality) → dual_covered 注册 simplex
+    g.support(h1, evidence={"modality": "numeric", "data_source": "dft"})
+    assert g.dual_covered(h1), "setup: h1 应该被双覆盖"
+
+    ws = Path(_tf.mkdtemp(prefix="hgraph_save_test_"))
+    path = ws / "graph.json"
+    try:
+        # save → load round-trip
+        g.save(path)
+        assert path.exists(), "save 没写文件"
+        loaded = HypothesisGraph.load(path)
+        assert loaded is not None, "load 返回 None"
+
+        # 节点数 + 内容一致
+        assert len(loaded.all_nodes()) == len(g.all_nodes())
+        n1_loaded = loaded.get(h1)
+        assert n1_loaded.statement == "h1: 掺杂增加带隙减小"
+        assert n1_loaded.status == "supported"
+        n2_loaded = loaded.get(h2)
+        assert n2_loaded.status == "refuted"
+        assert n2_loaded.parent_id == h1
+
+        # 边一致
+        orig_edges = {(e.from_id, e.to_id, e.edge_type) for e in g.edges()}
+        loaded_edges = {(e.from_id, e.to_id, e.edge_type) for e in loaded.edges()}
+        assert orig_edges == loaded_edges, f"边集合不一致: {orig_edges} vs {loaded_edges}"
+
+        # 单纯形 (frozenset) round-trip
+        orig_simp = sorted(sorted(s) for s in g._simplicials)
+        loaded_simp = sorted(sorted(s) for s in loaded._simplicials)
+        assert orig_simp == loaded_simp, f"单纯形不一致: {orig_simp} vs {loaded_simp}"
+
+        # 连通性 + 割点判定一致 (验证图结构可正常用)
+        assert loaded.component_count() == g.component_count()
+        assert loaded._articulation_points() == g._articulation_points()
+
+        # load 不存在的文件 → None
+        missing = HypothesisGraph.load(ws / "nope.json")
+        assert missing is None, "load missing should return None"
+
+        # save 出来是合法 JSON
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert "nodes" in data and "edges" in data and "simplicials" in data
+
+        # 二次覆盖 (atomic write 不破)
+        g.add_hypothesis("h3: 新增节点")
+        g.save(path)
+        loaded2 = HypothesisGraph.load(path)
+        assert len(loaded2.all_nodes()) == 3
+
+        print("OK: save/load round-trip selfcheck passed")
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+
+
 if __name__ == "__main__":
     _selfcheck_connected_components()
+    _selfcheck_save_load()

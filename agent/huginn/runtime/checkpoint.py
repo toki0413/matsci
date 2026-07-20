@@ -12,13 +12,16 @@ Retention: most recent 3 + one milestone every 10 steps.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+import logging
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from huginn.utils.common import atomic_write_json
+
 from huginn.events.audit_log import verify_audit_chain
+
+logger = logging.getLogger(__name__)
 
 GENESIS_HASH = "0" * 64
 
@@ -34,6 +37,9 @@ class Checkpoint:
     prospective_queue: list[str]  # pending intention_ids
     audit_hash_head: str  # audit.jsonl chain head at save time
     saved_at: float  # epoch seconds
+    # P15: EngineState 的 8 位 hash, resume 时跟重算的 digest 比对, 防 drift.
+    # None 表示该 checkpoint 没绑 engine_state (老格式 / 持久化未启用), 跳过校验.
+    engine_state_digest: str | None = None
 
 
 def _checkpoint_dir(workspace: Path, task_id: str) -> Path:
@@ -49,20 +55,6 @@ def _audit_jsonl_path(workspace: Path) -> Path:
     # construct it directly from workspace so the head reader and chain
     # verifier always agree on the file.
     return Path(workspace).resolve() / ".huginn_cache" / "events" / "audit.jsonl"
-
-
-def _atomic_write_json(path: Path, payload: dict) -> None:
-    # tmp + rename, same pattern as kg/graph.py save()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False, default=str))
-        os.replace(tmp, str(path))
-    except OSError:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
 
 
 def _from_dict(data: dict) -> Checkpoint:
@@ -91,7 +83,7 @@ def save_checkpoint(
         audit_hash_head=_get_audit_hash_head(workspace),
         saved_at=time.time(),
     )
-    _atomic_write_json(_checkpoint_path(workspace, task_id, step_id), asdict(cp))
+    atomic_write_json(_checkpoint_path(workspace, task_id, step_id), asdict(cp))
     _prune_checkpoints(task_id, workspace)
     return cp
 
@@ -140,6 +132,54 @@ def resume_from_checkpoint(checkpoint: Checkpoint, workspace: Path) -> int:
             f"current={current[:16]}"
         )
     return checkpoint.step_id + 1
+
+
+def resume_engine_from_checkpoint(
+    checkpoint: Checkpoint,
+    workspace: Path,
+    run_id: str | None = None,
+) -> Any:
+    """从 Checkpoint 重建 AutoloopEngine, 恢复 engine_state + hypothesis_graph.
+
+    1. run_id 默认从 checkpoint.task_id 取 (autoloop 把 run_id 当 task_id 用).
+    2. load_engine_state 读 <workspace>/.huginn/engine_state/<run_id>.json.
+       flag off / 文件缺失 → 返回未 resume 的 engine (不报错).
+    3. checkpoint.engine_state_digest 跟重算 digest 比对, 不一致 log warning
+       (仍继续 resume, 不阻塞 — drift 信号给调用方, 不强制 fail).
+    4. 创建 AutoloopEngine(resume_from_state=run_id), engine.__init__ 内部
+       调 apply_state_to_engine + hypothesis_graph.load 完成恢复.
+
+    ponytail: AutoloopEngine import 放函数内, 避免模块级循环 import.
+    ceiling: 单进程单 run_id resume; 多任务并发需外部 run_id 隔离 (已满足).
+    """
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.runtime.engine_state import (
+        engine_state_digest, load_engine_state,
+    )
+
+    resolved_run_id = run_id or checkpoint.task_id
+    state = load_engine_state(resolved_run_id, workspace)
+    if state is None:
+        # flag off 或 snapshot 不存在 — 返回普通 engine, 走原 init 路径
+        logger.info(
+            "resume_engine_from_checkpoint: no engine_state for run_id=%s, "
+            "returning fresh engine", resolved_run_id,
+        )
+        return AutoloopEngine(workspace=workspace)
+
+    # digest drift 检测 — 不阻塞 resume, 只 log
+    if checkpoint.engine_state_digest is not None:
+        actual = engine_state_digest(state)
+        if actual != checkpoint.engine_state_digest:
+            logger.warning(
+                "engine_state digest drift: checkpoint=%s reloaded=%s "
+                "(run_id=%s) — engine_state 可能已被外部修改",
+                checkpoint.engine_state_digest, actual, resolved_run_id,
+            )
+
+    return AutoloopEngine(
+        workspace=workspace, resume_from_state=resolved_run_id,
+    )
 
 
 def _prune_checkpoints(
@@ -276,6 +316,47 @@ if __name__ == "__main__":
             audit_path.unlink()
         except FileNotFoundError:
             pass
+
+        # 7. P15: engine_state_digest 字段 — 默认 None, 显式赋值后 round-trip 保留
+        from huginn.runtime.engine_state import engine_state_digest, EngineState
+        cp_digest = save_checkpoint(
+            task_id="t3", step_id=1, phase="execute", workspace=ws,
+            context_digest="digest_xyz", memory_cursor=None,
+            target_chain_progress={}, prospective_queue=[],
+        )
+        # 默认 None (向后兼容 — 老 checkpoint 没这个字段)
+        assert cp_digest.engine_state_digest is None, \
+            "engine_state_digest default should be None"
+        loaded_no_digest = load_checkpoint("t3", ws, step_id=1)
+        assert loaded_no_digest is not None
+        assert loaded_no_digest.engine_state_digest is None
+        # 显式赋值后 round-trip 保留
+        cp_digest.engine_state_digest = "abcd1234"
+        # 重写文件 (模拟 P15 save trigger 把 digest 写进去)
+        atomic_write_json(
+            _checkpoint_path(ws, "t3", 1),
+            asdict(cp_digest),
+        )
+        loaded_with_digest = load_checkpoint("t3", ws, step_id=1)
+        assert loaded_with_digest is not None
+        assert loaded_with_digest.engine_state_digest == "abcd1234", \
+            f"digest round-trip failed: {loaded_with_digest.engine_state_digest}"
+        print("7. engine_state_digest round-trip OK")
+
+        # 8. engine_state_digest 跟 EngineState 计算结果一致
+        state = EngineState(_iteration=5, _pivot_count=2, run_id="loop_test")
+        d = engine_state_digest(state)
+        assert len(d) == 8
+        cp2 = save_checkpoint(
+            task_id="t4", step_id=1, phase="execute", workspace=ws,
+            context_digest="x", memory_cursor=None,
+            target_chain_progress={}, prospective_queue=[],
+        )
+        cp2.engine_state_digest = d
+        atomic_write_json(_checkpoint_path(ws, "t4", 1), asdict(cp2))
+        loaded_cp2 = load_checkpoint("t4", ws, step_id=1)
+        assert loaded_cp2.engine_state_digest == d
+        print("8. engine_state_digest matches EngineState OK")
 
         print("ALL CHECKS PASSED")
     finally:
