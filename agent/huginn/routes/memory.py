@@ -161,6 +161,152 @@ async def memory_stats() -> dict[str, Any]:
         return {"error": str(e)}
 
 
+@router.get("/memory/layers")
+async def memory_layers() -> dict[str, Any]:
+    """聚合 4 层 memory (WM/EM/SM/PM) 状态, 给前端 Memory 层级面板用.
+
+    每层独立 try/except, 单层失败不阻塞其他层. 零新依赖, 全部复用
+    现有 manager / longterm / kb / kg / load_stable_principles.
+    ponytail: 不包 LayerAggregator 抽象, 直接调现成方法.
+    """
+    from huginn.server_core import get_context
+    from pathlib import Path
+
+    result: dict[str, Any] = {}
+
+    # ── WM: 当前 session 的 token 占用 / summaries / last_summarize_at ──
+    try:
+        mgr = get_memory_manager()
+        session = mgr.session
+        result["wm"] = {
+            "token_used": session._estimate_tokens(),
+            "token_budget": session.token_budget,
+            "messages_count": len(session.messages),
+            "tool_calls_count": len(session.tool_calls),
+            "summaries_count": len(session.summaries),
+            "last_summarize_at": session.last_summarize_at,
+            "extreme_dispatch": (
+                __import__("os").environ.get("HUGINN_EXTREME_DISPATCH", "0").lower()
+                in ("1", "true")
+            ),
+        }
+    except Exception as e:
+        result["wm"] = {"error": str(e), "available": False}
+
+    # ── EM: SQLite memories 表 — 总数 + tier 分布 + 最近 10 条 episode ──
+    try:
+        mgr = get_memory_manager()
+        stats = mgr.stats()
+        tier_counts = stats.get("tier_counts", {})
+        recent_episodes_raw = mgr.longterm.list_by_category(
+            "episode", limit=10, alive_only=True
+        )
+        recent_episodes = [
+            {
+                "id": str(ep.get("id", "")),
+                "content": (ep.get("content") or "")[:200],
+                "last_accessed": ep.get("last_accessed"),
+                "importance": ep.get("importance"),
+                "source": ep.get("source"),
+            }
+            for ep in recent_episodes_raw
+        ]
+        result["em"] = {
+            "total_entries": stats.get("longterm_entries", 0),
+            "tier_counts": tier_counts,
+            "recent_episodes": recent_episodes,
+        }
+    except Exception as e:
+        result["em"] = {"error": str(e), "available": False}
+
+    # ── SM: KB chunks + KG 节点 + 最近写入的 trajectory_pattern ──
+    # KB 走 ServerContext, KG 临时实例化 (YAGNI — 只此端点用)
+    try:
+        ctx = get_context()
+        kb = getattr(ctx, "kb", None)
+        kb_chunks = kb.count() if kb is not None else 0
+        # trajectory_pattern 也存在 KB 里 (metadata source=trajectory_pattern)
+        recent_patterns: list[dict[str, Any]] = []
+        top_patterns_by_confidence: list[dict[str, Any]] = []
+        if kb is not None:
+            try:
+                data = kb.collection.get(
+                    where={"source": "trajectory_pattern"},
+                    include=["metadatas", "documents"],
+                )
+                metas = data.get("metadatas") or []
+                docs = data.get("documents") or []
+                ids = data.get("ids") or []
+                rows = list(zip(ids, metas, docs))
+                # 最近写入: 按 run_id 字符串降序 (run_id 通常是 timestamp 格式)
+                def _run_id(r):
+                    return str((r[1] or {}).get("run_id") or "")
+                recent_rows = sorted(rows, key=_run_id, reverse=True)[:5]
+                for _id, meta, doc in recent_rows:
+                    recent_patterns.append({
+                        "doc_id": str(_id),
+                        "task_pattern": (meta or {}).get("task_pattern", ""),
+                        "run_id": (meta or {}).get("run_id", ""),
+                        "objective": (meta or {}).get("objective", ""),
+                        "confidence": _safe_float((meta or {}).get("confidence"), 0.5),
+                        "doc_preview": (doc or "")[:200],
+                    })
+                # top-5 by confidence
+                def _conf(r):
+                    return _safe_float((r[1] or {}).get("confidence"), 0.0)
+                top_rows = sorted(rows, key=_conf, reverse=True)[:5]
+                for _id, meta, doc in top_rows:
+                    top_patterns_by_confidence.append({
+                        "doc_id": str(_id),
+                        "task_pattern": (meta or {}).get("task_pattern", ""),
+                        "confidence": _safe_float((meta or {}).get("confidence"), 0.5),
+                        "objective": (meta or {}).get("objective", ""),
+                    })
+            except Exception:
+                pass  # KB collection 查询失败不阻塞, recent_patterns 留空
+        # KG 临时实例化
+        kg_stats: dict[str, Any] = {"nodes": 0, "edges": 0, "node_types": {}}
+        try:
+            from huginn.kg.graph import ProjectKnowledgeGraph
+            workspace = Path(getattr(ctx, "workspace", ".") or ".")
+            kg = ProjectKnowledgeGraph(workspace / ".huginn")
+            kg_stats = kg.stats()
+        except Exception:
+            pass  # KG 文件不存在或损坏不阻塞
+        result["sm"] = {
+            "kb_chunks": kb_chunks,
+            "kg_nodes": kg_stats.get("nodes", 0),
+            "kg_edges": kg_stats.get("edges", 0),
+            "kg_node_types": kg_stats.get("node_types", {}),
+            "recent_patterns": recent_patterns,
+        }
+    except Exception as e:
+        result["sm"] = {"error": str(e), "available": False}
+
+    # ── PM: stable_principles (JSONL) + top_patterns_by_confidence (从 SM 查) ──
+    try:
+        from huginn.memory.longterm import load_stable_principles
+        principles = load_stable_principles()
+        result["pm"] = {
+            "stable_principles_count": len(principles),
+            "stable_principles_preview": principles[:5],
+            # top_patterns_by_confidence 复用 SM 那次 collection.get 的结果
+            "top_patterns_by_confidence": top_patterns_by_confidence,
+        }
+    except Exception as e:
+        result["pm"] = {"error": str(e), "available": False}
+
+    return result
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    """容错把 ChromaDB metadata 的 string confidence 转 float."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 @router.get("/pet/memory-summary")
 async def pet_memory_summary() -> dict[str, Any]:
     """Lightweight memory summary for the pet UI.
