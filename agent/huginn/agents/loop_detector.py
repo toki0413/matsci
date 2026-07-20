@@ -23,6 +23,8 @@ import threading
 from collections import deque
 from typing import Any
 
+from huginn.utils.common import hash_text
+
 
 # 同工具同参数连续命中多少次算循环
 _SAME_PARAMS_THRESHOLD = 3
@@ -216,11 +218,6 @@ class LoopDetector:
 # ── 思考循环检测 ────────────────────────────────────────────────
 
 
-def _hash_text(text: str) -> str:
-    """Hash LLM output text for similarity detection."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
 def _similarity(text1: str, text2: str) -> float:
     """Calculate text similarity using Jaccard on word sets.
 
@@ -348,8 +345,8 @@ class ThoughtLoopDetector:
         outputs = list(self._outputs)
 
         # Rule 1: Exact duplicate
-        text_hash = _hash_text(text)
-        exact_count = sum(1 for o in outputs if _hash_text(o) == text_hash)
+        text_hash = hash_text(text)
+        exact_count = sum(1 for o in outputs if hash_text(o) == text_hash)
         if exact_count >= self.exact_dup_count:
             self._last_loop = {
                 "kind": "exact_dup",

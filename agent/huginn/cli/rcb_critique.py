@@ -168,11 +168,19 @@ class Decision:
 
 @dataclass
 class CritiqueResult:
-    """critique_decision 的返回 — 含 red_flags + suggestions + 总体 verdict."""
+    """critique_decision 的返回 — 含 red_flags + suggestions + 总体 verdict + gap_type.
+
+    gap_type (v14 Task 7): 标识 gap 类型, 驱动 Step3→Step2 回退判定.
+      - numeric_recompute: 数值需重算 (MAE 算错 / exclusion curve 数据需重跑)
+      - exact_component_missing: [EXACT] 标记组件缺失 (graph VAE 缺失 / Bayesian 未实现)
+      - text_description: 仅文字描述不足 (methodology 段太短) — 不触发回退
+      - none: verdict=pass, 无 gap
+    """
     verdict: str  # "accept" | "reject" | "fix_needed"
     red_flags: list[str] = _dc_field(default_factory=list)
     suggestions: list[str] = _dc_field(default_factory=list)
     reason: str = ""
+    gap_type: str = "none"  # v14 Task 7: 驱动 Step3→Step2 拓扑许可回退
 
 
 # 决策类型的合法 from/to 集合 — 模板 critique 用, LLM 路径不依赖
@@ -263,7 +271,13 @@ async def critique_decision(
         "你的工作是找 FLAWS — 不合理的转移、跳阶段、tool 选择错误.\n"
         "输出严格 JSON: "
         '{"verdict": "accept"|"reject"|"fix_needed", '
-        '"red_flags": [string], "suggestions": [string], "reason": string}'
+        '"red_flags": [string], "suggestions": [string], "reason": string, '
+        '"gap_type": "numeric_recompute"|"exact_component_missing"|"text_description"|"none"}\n'
+        "gap_type 分类 (v14 Task 7, 驱动 Step3→Step2 回退判定):\n"
+        "  - numeric_recompute: 数值需重算 (MAE 算错 / exclusion curve 数据需重跑)\n"
+        "  - exact_component_missing: [EXACT] 标记组件缺失 (graph VAE 缺失 / Bayesian 未实现)\n"
+        "  - text_description: 仅文字描述不足 (methodology 段太短) — 不触发回退\n"
+        "  - none: 无 gap, verdict=pass 时必为 none"
     ))
     ctx_str = json.dumps(context, ensure_ascii=False, default=str)[:2000]
     human = HumanMessage(content=(
@@ -280,11 +294,17 @@ async def critique_decision(
         text = resp.content if hasattr(resp, "content") else str(resp)
         text = _strip_code_fences(text)
         data = json.loads(text)
+        # v14 Task 7: gap_type 校验 — 非法值回退 none, 避免 _should_retry_execute 误判
+        _gap = data.get("gap_type", "none")
+        if _gap not in ("numeric_recompute", "exact_component_missing",
+                        "text_description", "none"):
+            _gap = "none"
         return CritiqueResult(
             verdict=data.get("verdict", "fix_needed"),
             red_flags=list(data.get("red_flags", [])),
             suggestions=list(data.get("suggestions", [])),
             reason=data.get("reason", ""),
+            gap_type=_gap,
         )
     except Exception as e:
         logger.warning("critique_decision LLM path failed: %s", e)

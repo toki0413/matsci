@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -184,6 +185,48 @@ def check_uncertainty_propagation(
         })
 
     return issues
+
+
+def _clamp01(x: float) -> float:
+    """[0, 1] clamp."""
+    if x < 0.0:
+        return 0.0
+    if x > 1.0:
+        return 1.0
+    return x
+
+
+def _compute_darwin_score(step_eval: Any) -> float:
+    """v14 Task 2: darwin = 1.0 - gap_severity.
+
+    Phase 1 默认路径: 从 StepEvaluator 评估结果反向打分.
+    - None: 探索期默认 0.5 (不算成功也不算失败)
+    - dict 含 gap_severity: 直接用 (测试 / Phase 2 LLM 覆盖路径)
+    - dict / StepEvaluation 含 on_track: 派生 gap_severity
+
+    ponytail: StepEvaluation 没有显式 gap_severity 字段, 从 on_track 离散映射
+      true=0.1 / unsure=0.5 / false=0.9, 不加权 structure/evidence.
+      天花板: 三档粒度, 无法区分 "true+low evidence" 跟 "true+high evidence".
+      升级路径: StepEvaluation 加显式 gap_severity float 字段 (Phase 2 LLM 评估时).
+    返回 float [0, 1], clamp 防越界.
+    """
+    if step_eval is None:
+        return 0.5
+
+    # dict 优先用显式 gap_severity (测试 / Phase 2 LLM 覆盖路径)
+    if isinstance(step_eval, dict):
+        gs = step_eval.get("gap_severity")
+        if gs is not None:
+            try:
+                return _clamp01(1.0 - float(gs))
+            except (TypeError, ValueError):
+                pass  # 坏值降级到 on_track 派生
+        on_track = step_eval.get("on_track", "unsure")
+    else:
+        on_track = getattr(step_eval, "on_track", "unsure")
+
+    gs = {"true": 0.1, "unsure": 0.5, "false": 0.9}.get(on_track, 0.5)
+    return _clamp01(1.0 - gs)
 
 
 def _tc_attr(tc: Any, name: str, default: Any = None) -> Any:
@@ -413,6 +456,156 @@ def _llm_evaluate(
         return ("unsure", "unknown", "LLM 评估失败")
 
     return _parse_llm_json(_resp_to_text(resp))
+
+
+def _build_darwin_eval_prompt(
+    recent_entries: list,
+    task_description: str,
+) -> tuple[str, str]:
+    """构造 LLM darwin 评估的 system + user prompt."""
+    sys_text = (
+        "You are a research trajectory evaluator. "
+        "Score each trace entry's fitness (darwin_score) on a scale of 0.0 to 1.0.\n\n"
+        "A high darwin_score means the entry:\n"
+        "- Made meaningful progress on the task\n"
+        "- Has supporting evidence for its claims\n"
+        "- Advanced the overall trajectory toward the goal\n\n"
+        "A low darwin_score means the entry:\n"
+        "- Was a dead end or unproductive exploration\n"
+        "- Lacked evidence or made unsupported claims\n"
+        "- Did not advance toward the goal"
+    )
+
+    entry_lines = []
+    for i, e in enumerate(recent_entries, 1):
+        if isinstance(e, dict):
+            sid = str(e.get("simplex_id", "") or "")
+            attempted = str(e.get("attempted", "") or "")
+            found = str(e.get("found", "") or "")
+            evidence = str(e.get("evidence", "") or "")
+        else:
+            sid = attempted = found = evidence = ""
+        entry_lines.append(
+            f"[entry {i}] simplex_id: {sid} attempted: {attempted} "
+            f"found: {found} evidence: {evidence}"
+        )
+
+    user_text = (
+        f"Task description: {task_description}\n\n"
+        f"Recent trace entries:\n"
+        + "\n".join(entry_lines)
+        + "\n\nReturn JSON only, no other text:\n"
+        "[\n"
+        '  {"simplex_id": "trace:...:iter_0:...", "darwin_score": 0.8, "reason": "..."},\n'
+        "  ...\n"
+        "]"
+    )
+    return (sys_text, user_text)
+
+
+def _parse_darwin_json(text: str) -> list[dict]:
+    """解析 LLM darwin 评估返回的 JSON 数组.
+
+    Returns list of {"simplex_id": str, "darwin_score": float, "reason": str}.
+    Raises ValueError on parse failure. 单个 entry 字段非法就跳过, 不整体抛.
+    """
+    if not text:
+        raise ValueError("empty response")
+
+    # 先直接试 json.loads, 失败再抠 [...] 块
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\[.*\]", text, re.DOTALL)
+        if not m:
+            raise ValueError("no JSON array found")
+        try:
+            data = json.loads(m.group(0))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"JSON parse failed: {e}")
+
+    if not isinstance(data, list):
+        raise ValueError("response is not a JSON array")
+
+    result: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        sid = item.get("simplex_id")
+        score = item.get("darwin_score")
+        reason = item.get("reason")
+        # bool 是 int 的子类, 得排除掉
+        if not isinstance(sid, str) or not isinstance(reason, str):
+            continue
+        if not isinstance(score, (int, float)) or isinstance(score, bool):
+            continue
+        score_f = float(score)
+        if score_f < 0.0 or score_f > 1.0:
+            continue
+        result.append({
+            "simplex_id": sid,
+            "darwin_score": score_f,
+            "reason": reason,
+        })
+    return result
+
+
+async def _llm_evaluate_darwin(
+    trace_entries: list,
+    model: Any,
+    task_description: str,
+) -> list[dict]:
+    """v14 Task 11: LLM 评估 darwin_score (Phase 2 增强路径).
+
+    env HUGINN_DARWIN_LLM_EVAL=1 启用; 每 HUGINN_DARWIN_LLM_INTERVAL 轮 (默认 5) 触发一次.
+    失败一律降级到空 list, 外层用 _compute_darwin_score 默认值兜底.
+
+    ponytail: 每 N 轮调一次 LLM 评 entry 适应度, 是成本/质量折中. 天花板:
+      5 条 entry + 1 次 LLM 调用 ≈ 1.5k tokens; interval=5 时单 task 增 ~10 次调用.
+      升级路径: 用更便宜的 model (haiku) 或 batch API.
+    """
+    try:
+        if os.environ.get("HUGINN_DARWIN_LLM_EVAL", "0").lower() not in ("1", "true", "yes"):
+            return []
+
+        if not trace_entries:
+            return []
+
+        # current_iter 从最后一条 entry 取, 跟 rcb_runner 主循环的 iteration 对齐
+        last = trace_entries[-1]
+        current_iter = 0
+        if isinstance(last, dict):
+            try:
+                current_iter = int(last.get("iteration", 0) or 0)
+            except (TypeError, ValueError):
+                current_iter = 0
+
+        interval = int(os.environ.get("HUGINN_DARWIN_LLM_INTERVAL", "5"))
+        if current_iter % interval != 0:
+            return []
+
+        if model is None:
+            return []
+
+        recent = trace_entries[-5:]
+        sys_text, user_text = _build_darwin_eval_prompt(recent, task_description)
+        messages = _build_messages(sys_text, user_text)
+
+        # 复用项目 with_retry 包装, 走统一的 429/529/超时 重试机制
+        from huginn.llm_retry import with_retry
+
+        async def _call() -> str:
+            if hasattr(model, "ainvoke"):
+                return _resp_to_text(await model.ainvoke(messages))
+            if hasattr(model, "invoke"):
+                return _resp_to_text(model.invoke(messages))
+            raise ValueError("model 无 invoke/ainvoke")
+
+        result_text = await with_retry(_call, source="darwin_llm_eval")
+        return _parse_darwin_json(result_text)
+    except Exception as e:
+        logger.warning("darwin_llm_eval_fallback: reason=%s", e)
+        return []
 
 
 def _make_pmk_feedback(
@@ -833,4 +1026,98 @@ if __name__ == "__main__":
         _empty.write_text("", encoding="utf-8")
         assert compute_tool_call_health(_empty, 1) is None, "empty → None"
 
+    # === v14 Task 11: LLM darwin 评估 self-check ===
+    class _MockLLM:
+        """简单 mock, 跟 langchain BaseChatModel 的 ainvoke 接口对齐."""
+        def __init__(self, response: str = "", error: Exception | None = None):
+            self.response = response
+            self.error = error
+            self.call_count = 0
+
+        async def ainvoke(self, messages):
+            self.call_count += 1
+            if self.error is not None:
+                raise self.error
+            return self.response
+
+    class _LogCapture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records: list[str] = []
+        def emit(self, record):
+            self.records.append(self.format(record))
+
+    _saved_eval = os.environ.get("HUGINN_DARWIN_LLM_EVAL")
+    _saved_interval = os.environ.get("HUGINN_DARWIN_LLM_INTERVAL")
+    try:
+        # case 1: mock LLM 返回固定 JSON, 断言 darwin_score 被覆盖
+        os.environ["HUGINN_DARWIN_LLM_EVAL"] = "1"
+        os.environ["HUGINN_DARWIN_LLM_INTERVAL"] = "5"
+        _entries = [{"iteration": 5, "simplex_id": "s1", "attempted": "a", "found": "f", "evidence": "e"}]
+        _mock = _MockLLM(response='[{"simplex_id": "s1", "darwin_score": 0.9, "reason": "good"}]')
+        _result = asyncio.run(_llm_evaluate_darwin(_entries, _mock, "test task"))
+        assert len(_result) == 1, f"case1: expect 1 entry, got {len(_result)}"
+        assert _result[0]["darwin_score"] == 0.9, f"case1: darwin_score=0.9, got {_result[0]['darwin_score']}"
+        assert _result[0]["simplex_id"] == "s1"
+        assert _mock.call_count == 1, f"case1: LLM called once, got {_mock.call_count}"
+
+        # case 2: mock LLM 抛异常, 断言降级到空 list + 日志含 fallback
+        _cap = _LogCapture()
+        _cap.setLevel(logging.WARNING)
+        logger.addHandler(_cap)
+        try:
+            _mock_err = _MockLLM(error=RuntimeError("simulated timeout"))
+            _result2 = asyncio.run(_llm_evaluate_darwin(_entries, _mock_err, "test task"))
+            assert _result2 == [], f"case2: expect empty list on fallback, got {_result2}"
+            _log_text = " ".join(_cap.records)
+            assert "darwin_llm_eval_fallback: reason=" in _log_text, f"case2: log missing fallback marker, got {_log_text!r}"
+        finally:
+            logger.removeHandler(_cap)
+
+        # case 3: env HUGINN_DARWIN_LLM_EVAL=0, 断言直接返回空 list 不调 LLM
+        os.environ["HUGINN_DARWIN_LLM_EVAL"] = "0"
+        _mock3 = _MockLLM(response='[{"simplex_id": "s1", "darwin_score": 0.9, "reason": "good"}]')
+        _result3 = asyncio.run(_llm_evaluate_darwin(_entries, _mock3, "test task"))
+        assert _result3 == [], f"case3: env=0 → empty list, got {_result3}"
+        assert _mock3.call_count == 0, f"case3: LLM not called, got call_count={_mock3.call_count}"
+
+        # case 4: env=1 + interval=5 + current_iter=3, 断言不触发 LLM (3%5!=0)
+        os.environ["HUGINN_DARWIN_LLM_EVAL"] = "1"
+        os.environ["HUGINN_DARWIN_LLM_INTERVAL"] = "5"
+        _entries4 = [{"iteration": 3, "simplex_id": "s4", "attempted": "a", "found": "f", "evidence": "e"}]
+        _mock4 = _MockLLM(response='[{"simplex_id": "s4", "darwin_score": 0.9, "reason": "good"}]')
+        _result4 = asyncio.run(_llm_evaluate_darwin(_entries4, _mock4, "test task"))
+        assert _result4 == [], f"case4: iter=3%5!=0 → empty, got {_result4}"
+        assert _mock4.call_count == 0, f"case4: LLM not called, got call_count={_mock4.call_count}"
+
+        # case 5: env=1 + interval=5 + current_iter=5, 断言触发 LLM (5%5==0)
+        _entries5 = [{"iteration": 5, "simplex_id": "s5", "attempted": "a", "found": "f", "evidence": "e"}]
+        _mock5 = _MockLLM(response='[{"simplex_id": "s5", "darwin_score": 0.7, "reason": "ok"}]')
+        _result5 = asyncio.run(_llm_evaluate_darwin(_entries5, _mock5, "test task"))
+        assert len(_result5) == 1, f"case5: iter=5%5==0 → 1 entry, got {len(_result5)}"
+        assert _result5[0]["darwin_score"] == 0.7, f"case5: darwin_score=0.7, got {_result5[0]['darwin_score']}"
+        assert _mock5.call_count == 1, f"case5: LLM called once, got call_count={_mock5.call_count}"
+
+        # 额外: _parse_darwin_json 字段校验 — 非法值跳过, 不整体抛
+        _parsed = _parse_darwin_json(
+            '[{"simplex_id": "ok", "darwin_score": 0.5, "reason": "fine"},'
+            ' {"simplex_id": 123, "darwin_score": 0.5, "reason": "bad sid"},'
+            ' {"simplex_id": "ok2", "darwin_score": 1.5, "reason": "out of range"},'
+            ' {"simplex_id": "ok3", "darwin_score": 0.3, "reason": 456},'
+            ' {"simplex_id": "ok4", "darwin_score": true, "reason": "bool score"}]'
+        )
+        assert len(_parsed) == 1, f"parse: only 1 valid entry, got {len(_parsed)}"
+        assert _parsed[0]["simplex_id"] == "ok", f"parse: valid entry sid=ok, got {_parsed[0]['simplex_id']}"
+    finally:
+        # 恢复原 env, 不污染其它测试
+        if _saved_eval is not None:
+            os.environ["HUGINN_DARWIN_LLM_EVAL"] = _saved_eval
+        else:
+            os.environ.pop("HUGINN_DARWIN_LLM_EVAL", None)
+        if _saved_interval is not None:
+            os.environ["HUGINN_DARWIN_LLM_INTERVAL"] = _saved_interval
+        else:
+            os.environ.pop("HUGINN_DARWIN_LLM_INTERVAL", None)
+
     print("all self-checks passed")
+    print("v14 Task 11 self-check PASSED")

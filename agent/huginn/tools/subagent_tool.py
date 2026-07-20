@@ -36,6 +36,15 @@ class SubagentToolInput(BaseModel):
         default_factory=dict,
         description="Optional context to pass to the subagent (merged with tool context)",
     )
+    # v14 Task 13: PersistentTerminal 接入. None 时看 env HUGINN_PERSISTENT_TERMINAL.
+    use_persistent_terminal: bool | None = Field(
+        default=None,
+        description=(
+            "If True, dispatch via PersistentTerminal (long session, async poll). "
+            "If False, force in-process dispatch. "
+            "None = follow env HUGINN_PERSISTENT_TERMINAL (1=on, else off)."
+        ),
+    )
 
 
 class SubagentToolOutput(BaseModel):

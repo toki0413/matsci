@@ -10,11 +10,11 @@ Layout: <workspace>/.huginn/task_metrics.json
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
+
+from huginn.utils.common import atomic_write_json
 
 
 @dataclass
@@ -36,20 +36,6 @@ class TaskMetrics:
     # 用于跨领域统计 + 领域包切换. 不强制 LLM 填, 缺失=unknown.
     # ponytail: 字符串标签而非 enum, 避免维护领域枚举. 升级路径: 领域包注册表.
     domain_label: str = "unknown"
-
-
-def _atomic_write_json(path: Path, payload: dict) -> None:
-    # tmp + rename, 跟 checkpoint.py 一个套路
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False, default=str))
-        os.replace(tmp, str(path))
-    except OSError:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
 
 
 def _metrics_path(workspace: Path) -> Path:
@@ -122,7 +108,7 @@ def update_metrics(
 def save_metrics(task_metrics: TaskMetrics, workspace: Path) -> Path:
     """落盘到 workspace/.huginn/task_metrics.json, 原子写, 返回路径."""
     path = _metrics_path(workspace)
-    _atomic_write_json(path, asdict(task_metrics))
+    atomic_write_json(path, asdict(task_metrics))
     return path
 
 

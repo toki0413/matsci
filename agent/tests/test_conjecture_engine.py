@@ -461,10 +461,15 @@ class TestSingletonAccessor:
         assert get_conjecture_generator() is first
 
     def test_module_exports(self):
-        # __all__ should expose both the class and the accessor
+        # __all__ should expose class, accessor, structure helpers, and reframe helpers
         import huginn.autoloop.conjecture as mod
 
-        assert set(mod.__all__) == {"ConjectureGenerator", "get_conjecture_generator"}
+        assert set(mod.__all__) == {
+            "ConjectureGenerator", "get_conjecture_generator",
+            "extract_physical_structure", "transfer_with_structure",
+            "generate_conjecture_with_structure",
+            "reframe_problem", "should_reframe",
+        }
 
 
 # ── 10. LLM path with a working stub model ───────────────────────────
