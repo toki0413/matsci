@@ -1,4 +1,4 @@
-﻿"""Autoloop Engine — the main autonomous loop for Huginn.
+"""Autoloop Engine — the main autonomous loop for Huginn.
 
 Ties together exploration, coder, workflow, benchmark, and report
 into a single closed-loop ecosystem:
@@ -3345,7 +3345,24 @@ Respond JSON only:
         )
 
     def _recent_failed_hypotheses(self, limit: int = 3) -> list[str]:
-        """从 hypothesis_graph 捞最近被 refuted 的假设, 给 forget_then_generate 用."""
+        """从 hypothesis_graph 捞最近被 refuted 的假设, 给 forget_then_generate 用.
+
+        P12: HUGINN_USE_MEMORY_TYPING=1 时优先走 typed 查询 (跨 session 可恢复),
+        typed 查询为空时降级到 hypothesis_graph 内存路径.
+        """
+        from huginn.memory.typing import _use_typing
+        if _use_typing() and self.memory:
+            try:
+                _failed = self.memory.recall_failed_directions(limit=limit)
+                if _failed:
+                    # 返回 hypothesis_text (三元组第一项)
+                    return [h for h, _, _ in _failed if h]
+            except Exception:
+                logger.debug(
+                    "typed recall_failed_directions failed, fallback to hypothesis_graph",
+                    exc_info=True,
+                )
+        # legacy 路径: 从内存 hypothesis_graph 捞
         try:
             nodes = getattr(self.hypothesis_graph, "_nodes", {})
             failed = [
@@ -3521,7 +3538,39 @@ Respond JSON only:
         if getattr(self, "_last_surprise", 0.0) > 0.6:
             return "reviewer"
 
-        # 查 memory: 上次 reviewer persona 效果如何?
+        # P12: HUGINN_USE_MEMORY_TYPING=1 时优先走 typed 查询, 拿 persona_history
+        # 的 r_phys 平均值. typed 查询为空 (旧行 NULL 或没历史) 降级到正则 grep.
+        from huginn.memory.typing import _use_typing
+        if _use_typing() and self.memory:
+            try:
+                _typed_rows = self.memory.recall_typed(
+                    memory_type="persona_history",
+                    persona_id="reviewer",
+                    limit=5,
+                )
+                if _typed_rows:
+                    # content 格式: "Persona: reviewer, r_phys: 0.78"
+                    import re as _re
+                    _scores: list[float] = []
+                    for _r in _typed_rows:
+                        _c = _r.get("content", "") if isinstance(_r, dict) else ""
+                        _m = _re.search(r"r_phys[:\s]+([\d.]+)", _c)
+                        if _m:
+                            _scores.append(float(_m.group(1)))
+                    if _scores:
+                        _avg = sum(_scores) / len(_scores)
+                        if _avg > 0.6:
+                            return "reviewer"
+                    else:
+                        # typed 行有但没 r_phys 数值, 不降级, 直接走默认
+                        pass
+            except Exception:
+                logger.debug(
+                    "typed recall_typed(persona_history) failed, fallback to regex grep",
+                    exc_info=True,
+                )
+
+        # 查 memory: 上次 reviewer persona 效果如何? (legacy 正则 grep 路径)
         try:
             if self.memory:
                 recall = self.memory.recall_for_prompt(
@@ -5097,13 +5146,49 @@ Respond JSON only:
                     else "surprise:0"
                 ),
             ]
-            self.memory.remember(
-                content=mem_content,
-                category="autoloop_iteration",
-                importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
-                tier="mid",
-                tags=_tags,
-            )
+            # P12: HUGINN_USE_MEMORY_TYPING=1 时双写 typed memory,
+            # 让 _pick_hypothesis_persona / _recent_failed_hypotheses 走结构化
+            # 查询替代正则 grep. flag off (默认) 时只走原 remember, 行为不变.
+            from huginn.memory.typing import _use_typing
+            if _use_typing():
+                try:
+                    # status: 用 validation 结果映射 (supported/refuted)
+                    _tests_ok = (
+                        validation.get("tests_passed")
+                        if isinstance(validation, dict)
+                        else False
+                    )
+                    _typed_status = "supported" if _tests_ok else "refuted"
+                    self.memory.remember_typed(
+                        content=mem_content,
+                        memory_type="iteration_result",
+                        run_id=getattr(self, "_run_id", None),
+                        persona_id=persona_name,
+                        status=_typed_status,
+                        importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                        tier="mid",
+                        tags=_tags,
+                    )
+                except Exception:
+                    logger.debug(
+                        "typed remember_typed failed, fallback to legacy remember",
+                        exc_info=True,
+                    )
+                    self.memory.remember(
+                        content=mem_content,
+                        category="autoloop_iteration",
+                        importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                        tier="mid",
+                        tags=_tags,
+                    )
+            else:
+                self.memory.remember(
+                    content=mem_content,
+                    category="autoloop_iteration",
+                    importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                    tier="mid",
+                    tags=_tags,
+                )
         except Exception:
             logger.warning(
                 "error in _learn: memory.remember iteration failed", exc_info=True
@@ -5318,6 +5403,29 @@ Respond JSON only:
                     "error in _learn: benchmark_failure memory writeback failed",
                     exc_info=True,
                 )
+            # P12: HUGINN_USE_MEMORY_TYPING=1 时同步写 failed_direction,
+            # 让 _recent_failed_hypotheses 跨 session 能恢复 (不靠 hypothesis_graph).
+            # ponytail: 不动 HypothesisNode setter, 在 _learn 里集中写, 最小改动.
+            from huginn.memory.typing import _use_typing
+            if _use_typing():
+                try:
+                    _fail_reason = (
+                        validation.get("error")
+                        or validation.get("reason")
+                        or json.dumps(validation, default=str)[:200]
+                    )
+                    self.memory.record_failed_direction(
+                        hypothesis_text=hypothesis[:200],
+                        reason=str(_fail_reason)[:400],
+                        run_id=getattr(self, "_run_id", "") or "",
+                        persona_id=getattr(self, "_last_persona", None),
+                        math_concept="",
+                    )
+                except Exception:
+                    logger.debug(
+                        "record_failed_direction failed, fallback to legacy path",
+                        exc_info=True,
+                    )
 
         # Feynman learning: 高 surprise 或高奖励时, 让 agent 用通俗语言重新解释本轮发现.
         # 解释不出来的部分就是知识缺口, 写入 GoalStore 作为下轮子目标.

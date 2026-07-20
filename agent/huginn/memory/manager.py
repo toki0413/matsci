@@ -828,6 +828,37 @@ class MemoryManager:
         return topic_file
 
     def recall_typed(
+        self,
+        memory_type: "MemoryType | str",
+        topic: str | None = None,
+        *,
+        persona_id: str | None = None,
+        run_id: str | None = None,
+        status: str | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """按类型读取记忆. 两条路径, 按 memory_type 参数类型分发:
+
+        - ``MemoryType`` enum (来自 types.py): 走文件 topic 路径, 配 ``topic``
+          参数. 旧 API, 给 routes/memory.py 用.
+        - ``str`` (如 "persona_history"): 走 SQLite typed 路径 (P12), 配
+          ``persona_id`` / ``run_id`` / ``status`` / ``limit``. 新 API.
+
+        ponytail: 同名方法靠参数类型分发, 不另起新名. 升级路径: 把文件 topic
+        路径也吞到 SQLite, enum/str 分发逻辑就可以删.
+        """
+        if isinstance(memory_type, MemoryType):
+            return self._recall_typed_file(memory_type, topic=topic)
+        # P12 typed SQLite 路径
+        return self._recall_typed(
+            memory_type=str(memory_type),
+            persona_id=persona_id,
+            run_id=run_id,
+            status=status,
+            limit=limit,
+        )
+
+    def _recall_typed_file(
         self, memory_type: MemoryType, topic: str | None = None
     ) -> list[dict[str, str]]:
         """按类型（可选指定主题）读取主题文件内容。
@@ -870,6 +901,148 @@ class MemoryManager:
         memory_dir = self._get_memory_dir()
         topic_files = sorted(memory_dir.rglob("*.md"))
         return build_memory_index(topic_files, memory_dir)
+
+    # ── P12 Typed Memory (SQLite memory_type/run_id/persona_id/status) ──
+    # 透传到 huginn.memory.typing, 内部方法直接走 longterm SQLite.
+    # 现有 remember(content, category=...) 保持不变 (向后兼容).
+
+    def remember_typed(
+        self,
+        content: str,
+        memory_type: str,
+        *,
+        run_id: str | None = None,
+        persona_id: str | None = None,
+        status: str | None = None,
+        importance: float = 0.5,
+        tier: str = "mid",
+        tags: list[str] | None = None,
+        source: str = "",
+        **extra: Any,
+    ) -> str:
+        """写 typed memory. 透传到 typing.remember_typed."""
+        from huginn.memory.typing import remember_typed as _remember_typed
+        return _remember_typed(
+            self,
+            content=content,
+            memory_type=memory_type,
+            run_id=run_id,
+            persona_id=persona_id,
+            status=status,
+            importance=importance,
+            tier=tier,
+            tags=tags,
+            source=source,
+            **extra,
+        )
+
+    def record_failed_direction(
+        self,
+        hypothesis_text: str,
+        reason: str,
+        run_id: str,
+        persona_id: str | None = None,
+        math_concept: str = "",
+    ) -> str:
+        """记录失败方向. 透传到 typing.record_failed_direction."""
+        from huginn.memory.typing import record_failed_direction as _rfd
+        return _rfd(
+            self,
+            hypothesis_text=hypothesis_text,
+            reason=reason,
+            run_id=run_id,
+            persona_id=persona_id,
+            math_concept=math_concept,
+        )
+
+    def recall_failed_directions(
+        self,
+        limit: int = 5,
+        persona_id: str | None = None,
+    ) -> list[tuple[str, str, str]]:
+        """查最近失败方向. 透传到 typing.recall_failed_directions."""
+        from huginn.memory.typing import recall_failed_directions as _rfd
+        return _rfd(self, limit=limit, persona_id=persona_id)
+
+    def _update_typed_fields(
+        self,
+        entry_id: str,
+        *,
+        memory_type: str | None = None,
+        run_id: str | None = None,
+        persona_id: str | None = None,
+        status: str | None = None,
+    ) -> bool:
+        """UPDATE memories SET memory_type/run_id/persona_id/status WHERE id=?.
+
+        内部方法, 给 typing.remember_typed 用. 只 UPDATE 非 None 字段, 不
+        覆盖已存在的值.
+        """
+        from datetime import datetime
+        with self.longterm._connect() as conn:
+            sets: list[str] = []
+            params: list[Any] = []
+            if memory_type is not None:
+                sets.append("memory_type = ?")
+                params.append(memory_type)
+            if run_id is not None:
+                sets.append("run_id = ?")
+                params.append(run_id)
+            if persona_id is not None:
+                sets.append("persona_id = ?")
+                params.append(persona_id)
+            if status is not None:
+                sets.append("status = ?")
+                params.append(status)
+            if not sets:
+                return False
+            params.append(entry_id)
+            cur = conn.execute(
+                f"UPDATE memories SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def _recall_typed(
+        self,
+        memory_type: str,
+        *,
+        persona_id: str | None = None,
+        run_id: str | None = None,
+        status: str | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """SELECT * FROM memories WHERE memory_type=? (严格匹配, NULL 不参与).
+
+        内部方法, 给 typing.recall_typed 用. 严格匹配 memory_type, 旧行
+        (NULL) 不返回 — 这是跟 _where_alive NULL 兼容路径的区别.
+        ponytail: 直接拼 SQL, 不走 retrieve (retrieve 走 FTS5 + vector search,
+        不适合按字段精确过滤).
+        """
+        from datetime import datetime
+        sql = "SELECT * FROM memories AS m WHERE memory_type = ?"
+        params: list[Any] = [memory_type]
+        if persona_id is not None:
+            sql += " AND persona_id = ?"
+            params.append(persona_id)
+        if run_id is not None:
+            sql += " AND run_id = ?"
+            params.append(run_id)
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
+        # alive 过滤: 排除 expired + archived
+        sql += (
+            " AND (m.expires_at IS NULL OR m.expires_at > ?)"
+            " AND m.archived = 0"
+        )
+        params.append(datetime.now().isoformat())
+        sql += " ORDER BY m.last_accessed DESC LIMIT ?"
+        params.append(limit)
+        with self.longterm._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
 
     # --- Utility ---
 
