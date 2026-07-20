@@ -138,7 +138,25 @@
 | M2 trajectory_match | ✓ | 4/4 |
 | M1 task_dag | ✓ | 7/7 |
 | G1 递归深度守卫 | ✓ | 4/4 (subagent.py selfcheck) |
-| G2 _check_stuck (engine.py) | ✓ | 6/6 (engine_selfcheck.py G2-A~F) |
+| G2 _check_stuck (engine.py) | ✓ | 7/7 (engine_selfcheck.py G2-0~F) |
 | G3 dispatch_parallel (subagent_tool.py) | ✓ | 跟 G1 共用 subagent_tool 验证 |
 
 数学映射全部接入主循环, 异步委派 4 天花板从"已知局限"变为"已解".
+
+## 极限模式 gating (默认关闭)
+
+这套能力是**跑分/极限模式**专用, 平常默认关闭, 用户显式启用才生效:
+
+```
+HUGINN_EXTREME_DISPATCH=1   # 开启极限模式
+```
+
+gate 点:
+- **G2 _check_stuck** (engine.py): env 关 → 直接 return None, 不跑 cycle_detect / trajectory_match
+- **G3 dispatch_parallel DAG 路径** (subagent_tool.py): env 关 → 传 dependencies 时拒绝 (无 dependencies 的全并行是基础能力, 不 gate)
+
+不 gate 的点 (本身惰性或已安全):
+- **M4 budget_decomp**: 独立模块, 按需 import, 不主动跑
+- **G1 max_depth**: 默认 1 已是安全档 (单层, 不能递归). 用户要深度配置自己显式设 spec.max_depth 或调 env
+
+selfcheck 临时设 env 验证功能正确, 跑完 reset.
