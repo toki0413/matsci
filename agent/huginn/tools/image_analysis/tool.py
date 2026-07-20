@@ -34,6 +34,7 @@ class ImageAnalysisInput(BaseModel):
         "plot_extract",
         "deplot_chart",
         "code_verify",
+        "compare_to_target",
     ] = Field(..., description="图像分析动作")
     parameters: dict[str, Any] = Field(
         default_factory=dict,
@@ -121,6 +122,8 @@ class ImageAnalysisTool(HuginnTool):
                 result = deplot_chart(input_data)
             elif input_data.action == "code_verify":
                 result = self._run_code_verify(input_data)
+            elif input_data.action == "compare_to_target":
+                result = self._run_compare_to_target(input_data)
             else:
                 return ToolResult(
                     data=None, success=False, error=f"未知 action: {input_data.action}"
@@ -142,6 +145,49 @@ class ImageAnalysisTool(HuginnTool):
             )
 
     # -- code_verify: SWE-Vision 范式, 用代码验证视觉判断 --
+
+    def _run_compare_to_target(self, input_data: ImageAnalysisInput) -> ToolResult:
+        """对比 agent 生成图 vs paper 目标图, 返回 CV 四算子相似度分数.
+
+        打通工作流断层: agent 生成图后能自评, 知道跟 paper 目标图差多远,
+        决定是否重画. CV 算子跟 RCBench 评分用同一套 (cv_compare 模块).
+        """
+        target_path = input_data.parameters.get("target_path")
+        if not target_path:
+            return ToolResult(
+                data=None, success=False,
+                error="compare_to_target 需要 parameters.target_path",
+            )
+        target = Path(target_path)
+        if not target.exists():
+            return ToolResult(
+                data=None, success=False,
+                error=f"target 图不存在: {target_path}",
+            )
+
+        # candidate_paths 优先, 缺省用 image_path
+        candidate_paths = input_data.parameters.get("candidate_paths")
+        if candidate_paths:
+            candidates = [Path(p) for p in candidate_paths]
+        else:
+            candidates = [Path(input_data.image_path)]
+
+        from huginn.tools.image_analysis.cv_compare import cv_best_match
+        result = cv_best_match(target, candidates)
+        return ToolResult(
+            data={
+                "target_path": str(target),
+                "best_score": result.get("score"),
+                "best_path": result.get("best_path"),
+                "details": result.get("details", []),
+                "message": (
+                    f"Best CV similarity: {result.get('score')}/100. "
+                    f"算子: SSIM(结构)+HSV histogram(配色)+HOG(形状)+ORB(关键点). "
+                    f"<40 建议重画, 40-70 可改进, >70 基本达标."
+                ),
+            },
+            success=result.get("score") is not None,
+        )
 
     def _run_code_verify(self, input_data: ImageAnalysisInput) -> ToolResult:
         """根据 analysis_result 生成验证代码, 在沙箱里跑, 返回 measured vs claimed.
