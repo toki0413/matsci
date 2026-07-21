@@ -3985,7 +3985,26 @@ Respond JSON only:
         mode = plan.get("mode", "coder")
         description = plan.get("description", "")
 
-        if mode == "coder":
+        # H4: toggle on 时从 PhaseRegistry 取 dispatch_table 替代 hardcode if/elif
+        # ponytail: dispatch_table 存 [method_name, arg_mode], arg_mode 决定传
+        # plan 还是 description (executor 签名不统一, 不改签名最小 diff).
+        # 升级路径: 统一所有 executor 签名为 (plan, context), 去掉 arg_mode.
+        from huginn.harness.phase_spec import get_phase_dispatch_table
+        dispatch = get_phase_dispatch_table()
+        if dispatch is not None:
+            entry = dispatch.get(mode)
+            if entry is None:
+                raise ValueError(f"Unknown plan mode: {mode}")
+            method_name, arg_mode = entry[0], entry[1]
+            executor = getattr(self, method_name)
+            arg = plan if arg_mode == "plan" else description
+            result = await executor(arg, context)
+            # workflow 失败走 evolved_fix (原 hardcode 逻辑保留)
+            if mode == "workflow" and isinstance(result, dict) and not result.get("success", True):
+                result = (
+                    await self._try_evolved_fix(mode, description, result) or result
+                )
+        elif mode == "coder":
             # Use CoderRunner to modify code
             result = await self._execute_coder(description, context)
         elif mode == "workflow":
@@ -6325,6 +6344,9 @@ Respond JSON only:
         last_hypothesis = getattr(self, "_last_hypothesis", "")
 
         kb_text = self._build_kb_text(query=objective)
+        # H4: persona 从 PhaseRegistry 取, toggle off 回退 "tutor"
+        from huginn.harness.phase_spec import get_phase_persona
+        _report_persona = get_phase_persona("_report") or "tutor"
         report_narrative = ""
         try:
             report_narrative = await self._llm_chat(
@@ -6337,7 +6359,7 @@ Respond JSON only:
                     last_hypothesis,
                     last_surprise,
                 ),
-                persona_name="tutor",
+                persona_name=_report_persona,
                 task="summarize",
             )
             report_narrative = (report_narrative or "").strip()
