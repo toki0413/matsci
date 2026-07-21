@@ -178,6 +178,17 @@ class MemoryManager:
         """Format recalled memories for injection into LLM prompt."""
         results = self.recall(query, top_k=max_entries, material_filter=material_filter)
 
+        # M: typed memory 叠加在 FTS5 之上. 按 memory_type 优先级拉结构化记录,
+        # 跟 FTS5 结果按 content 去重, typed 优先保留. ponytail: 不替换 FTS5,
+        # 在其结果上叠加. 升级路径: FTS5 + typed 合并到同一 SQL.
+        typed_results = self._recall_typed_for_prompt(max_entries)
+        if typed_results:
+            seen = {r.get("content", "") for r in results if r.get("content")}
+            for tr in typed_results:
+                if tr.get("content") and tr["content"] not in seen:
+                    results.append(tr)
+                    seen.add(tr["content"])
+
         blocks: list[str] = []
         if results:
             lines = ["## Relevant past knowledge:"]
@@ -1004,6 +1015,46 @@ class MemoryManager:
             conn.commit()
             return cur.rowcount > 0
 
+    # M: typed memory 在 prompt 注入里的优先级. 数值小 = 优先.
+    # failed_direction 最优先 (负信号, 避免重蹈覆辙), iteration_result 次之
+    # (正信号, 复用成功), cross_domain_transfer 弱正 (类比迁移). persona_history
+    # 和 stable_principle 已有专门路径 (JSONL + grep), 这里冗余兜底.
+    _TYPE_PRIORITY: dict[str, int] = {
+        "failed_direction": 0,
+        "iteration_result": 1,
+        "cross_domain_transfer": 2,
+        "persona_history": 3,
+        "stable_principle": 4,
+    }
+
+    def _recall_typed_for_prompt(self, max_entries: int) -> list[dict]:
+        """按 _TYPE_PRIORITY 拉结构化 memory, 每个 type 最多 1 条.
+
+        给 recall_for_prompt 用, 跟 FTS5 结果叠加. 不走 _recall_typed 的
+        lazy-migrate 路径 (那条返空时扫全表 NULL 行反推, 性能差).
+        ponytail: 直接 SQL WHERE memory_type = ?, 不扫全表. 升级路径:
+        跟 FTS5 合并到同一 SQL JOIN.
+        """
+        from datetime import datetime
+        results: list[dict] = []
+        now = datetime.now().isoformat()
+        with self.longterm._connect() as conn:
+            for mtype in sorted(
+                self._TYPE_PRIORITY.keys(), key=lambda k: self._TYPE_PRIORITY[k]
+            ):
+                if len(results) >= max_entries:
+                    break
+                row = conn.execute(
+                    "SELECT * FROM memories WHERE memory_type = ?"
+                    " AND (expires_at IS NULL OR expires_at > ?)"
+                    " AND archived = 0"
+                    " ORDER BY last_accessed DESC LIMIT 1",
+                    (mtype, now),
+                ).fetchone()
+                if row:
+                    results.append(dict(row))
+        return results
+
     def _recall_typed(
         self,
         memory_type: str,
@@ -1355,6 +1406,112 @@ if __name__ == "__main__":
         pid = mgr.distill_episodic_to_procedural(evs, workspace="ws")
         assert pid is None, "empty attempted should not trigger"
 
-        print("all self-checks passed")
+        print("distill self-checks passed")
     finally:
         _ltmod.store_stable_principle = _orig_store
+
+    # === M 块 selfcheck: typed memory 叠加到 recall_for_prompt ===
+    # 用临时 DB 建 typed 记录, 验证 4 件事:
+    #   M1. recall_for_prompt 返回结果含 typed 记录 (memory_type 非空)
+    #   M2. typed 按 _TYPE_PRIORITY 排序 (failed_direction 在 iteration_result 前)
+    #   M3. FTS5 路径保留 (普通 remember 写入的内容仍能召回)
+    #   M4. _recall_typed_for_prompt 不走 lazy-migrate (SQL WHERE memory_type = ?)
+    import tempfile
+    from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.typing import remember_typed, MemoryType
+
+    tmpdir_m = tempfile.mkdtemp(prefix="huginn_m_selfcheck_")
+    db_path_m = Path(tmpdir_m) / "memory.db"
+    ltm_m = LongTermMemory(db_path=str(db_path_m), enable_semantic=False)
+    mm_m = MemoryManager(longterm=ltm_m)
+
+    # 写两条 typed: failed_direction + iteration_result
+    # failed_direction priority=0 应该排在 iteration_result priority=1 前面
+    fd_id = remember_typed(
+        mm_m,
+        content="[Failed Direction] hypothesis: LDA gives GaN gap > 4 eV",
+        memory_type=MemoryType.FAILED_DIRECTION.value,
+        run_id="run_m_fd",
+        importance=0.7,
+        tier="long",
+    )
+    ir_id = remember_typed(
+        mm_m,
+        content="iteration_result: PBE sol gives gap 3.4 eV (run_m_ir)",
+        memory_type=MemoryType.ITERATION_RESULT.value,
+        run_id="run_m_ir",
+        importance=0.6,
+        tier="mid",
+    )
+    assert fd_id and ir_id, "remember_typed should return entry_id"
+
+    # 写一条普通 FTS5 记录 (走 mm.remember, memory_type 留 NULL)
+    legacy_id = mm_m.remember(
+        content="GaN formation energy from VASP = -3.5 eV",
+        category="calculation",
+        tags=["vasp", "GaN"],
+        importance=0.5,
+        tier="mid",
+    )
+    assert legacy_id
+
+    # M1 + M2: recall_for_prompt 返回 typed 记录, 且按 priority 排序
+    # 用一个匹配度低的 query 让 FTS5 不抢光名额, typed 才能冒上来
+    out = mm_m.recall_for_prompt("anything", max_entries=5)
+    assert out, "recall_for_prompt should return non-empty string"
+
+    # typed 记录都应该出现在结果里
+    assert "Failed Direction" in out, (
+        f"failed_direction should appear in recall_for_prompt, got: {out[:200]}"
+    )
+    assert "iteration_result" in out or "run_m_ir" in out, (
+        f"iteration_result should appear in recall_for_prompt, got: {out[:200]}"
+    )
+
+    # M2: priority 排序 — failed_direction 在 iteration_result 前面
+    fd_pos = out.find("Failed Direction")
+    ir_pos = out.find("run_m_ir")
+    if ir_pos == -1:
+        ir_pos = out.find("iteration_result")
+    assert fd_pos != -1 and ir_pos != -1, (
+        f"both typed records should be in output, fd_pos={fd_pos}, ir_pos={ir_pos}"
+    )
+    assert fd_pos < ir_pos, (
+        f"failed_direction (priority 0) should come before iteration_result (priority 1), "
+        f"fd_pos={fd_pos}, ir_pos={ir_pos}"
+    )
+    print("M1+M2: recall_for_prompt 含 typed 记录 + priority 排序 OK")
+
+    # M3: FTS5 路径保留 — 普通记录仍能召回
+    out_fts = mm_m.recall_for_prompt("GaN formation energy", max_entries=5)
+    assert "GaN formation energy" in out_fts and "VASP" in out_fts, (
+        f"FTS5 path broken: legacy record missing, got: {out_fts[:200]}"
+    )
+    print("M3: FTS5 path preserved OK")
+
+    # M4: _recall_typed_for_prompt 不走 lazy-migrate (直接 SQL WHERE memory_type=?)
+    # 验证方法: typed 列表里没有 NULL 行 (legacy_id 的 memory_type 是 NULL)
+    typed_only = mm_m._recall_typed_for_prompt(max_entries=10)
+    assert len(typed_only) >= 2, (
+        f"expected >= 2 typed records, got {len(typed_only)}"
+    )
+    for tr in typed_only:
+        mt = tr.get("memory_type")
+        assert mt is not None and mt != "", (
+            f"_recall_typed_for_prompt returned non-typed row, memory_type={mt!r}"
+        )
+        assert tr["id"] != legacy_id, (
+            "_recall_typed_for_prompt returned legacy NULL row — not strict WHERE"
+        )
+    # priority 排序在 _recall_typed_for_prompt 里也成立
+    types_in_order = [tr["memory_type"] for tr in typed_only]
+    if "failed_direction" in types_in_order and "iteration_result" in types_in_order:
+        assert types_in_order.index("failed_direction") < types_in_order.index("iteration_result"), (
+            f"_recall_typed_for_prompt priority broken: {types_in_order}"
+        )
+    print("M4: _recall_typed_for_prompt strict WHERE + priority OK")
+
+    # 清理临时 DB
+    import shutil
+    shutil.rmtree(tmpdir_m, ignore_errors=True)
+    print("all self-checks passed (distill + M block)")
