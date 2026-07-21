@@ -306,6 +306,11 @@ def main():
     os.chdir(workspace)
 
     start = time.time()
+    # 方案 A: Time-Aware Agent — 把 deadline 暴露给 pre_model_hook, agent
+    # 看到 remaining_time < 300s 就该停训写 report. ponytail: env var 传值,
+    # 不改 rcb_runner / agent __init__ 签名. 升级: langgraph config 传.
+    os.environ["HUGINN_RCB_DEADLINE"] = str(start + args.timeout)
+    os.environ["HUGINN_RCB_TIMEOUT"] = str(args.timeout)
     print(f"[RCB] Starting agent (timeout={args.timeout}s, max_tool_calls={args.max_tool_calls})")
     # v14 特性 (HintCoordinator / Meta-Trace / betti / Step3->Step2 回退) 在
     # rcb_runner.run() 里, BenchmarkOrchestrator 路径不激活. 默认走 v14 路径.
