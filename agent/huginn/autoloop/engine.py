@@ -58,6 +58,26 @@ def _autoloop_meta_trace_inject_enabled() -> bool:
         return False
 
 
+def _autoloop_streaming_enabled() -> bool:
+    """P0-1 toggle: cfg.feature_flags.autoloop_streaming (默认 on).
+
+    astream 替代 ainvoke, 把 LLM thinking chunk 增量推到 progress_cb (WS).
+    700 万步场景必需 — 否则用户看不到 agent 在想什么. 默认 on 是因为
+    fail 会自动回退 ainvoke, 无 WS 场景 progress_cb=None 也不流式.
+    ponytail: 环境变量 HUGINN_AUTOLOOP_STREAMING=0 可强制关.
+    """
+    if os.environ.get("HUGINN_AUTOLOOP_STREAMING", "1") == "0":
+        return False
+    try:
+        from huginn.config import get_config
+        cfg = get_config()
+        ff = getattr(cfg, "feature_flags", None) or {}
+        # 默认 True, 显式 False 才关
+        return ff.get("autoloop_streaming", True)
+    except Exception:
+        return True
+
+
 from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.autoloop.budget import ProgressiveBudget
 from huginn.autoloop.cognitive_loop import (
@@ -1637,6 +1657,23 @@ class AutoloopEngine:
             timeout_seconds=timeout_seconds,
         )
         self._progress_task_id = progress_task_id
+
+        # P0-2: bridge progress_cb → _emit_campaign. autoloop 路径不走 _stream_agent_response,
+        # progress_cb 默认 None, 导致 subagent_tool._on_state 早 return (cb is None).
+        # 这里 set 一个桥: subagent_event / autoloop_thinking 等事件 → campaign SSE.
+        # 外层已 set (WS 路径嵌入 autoloop) 则不覆盖. ponytail: 复用 contextvar, 不新开通道.
+        # 不显式 reset — run_cognitive 通常被 asyncio.create_task 包, contextvar 跟 task 同生命周期.
+        from huginn.types import progress_cb as _progress_cb
+        if _progress_cb.get(None) is None:
+            _autoloop_engine = self
+
+            async def _progress_bridge(msg: dict) -> None:
+                _etype = msg.get("type", "progress")
+                _data = {k: v for k, v in msg.items() if k != "type"}
+                _data.setdefault("run_id", run_id)
+                _autoloop_engine._emit_campaign(f"campaign.{_etype}", _data)
+
+            _progress_cb.set(_progress_bridge)
 
         # phase 间传递的中间结果 — 不放 LoopState (那是控制流状态)
         cog: dict[str, Any] = {
@@ -7852,8 +7889,46 @@ Please modify the code to address this task."""
         if effort_directive:
             prompt = f"[Thinking effort: {effort_directive}]\n\n{prompt}"
         messages.append(HumanMessage(content=prompt))
-        response = await llm.ainvoke(messages)
-        return str(response.content)
+        # P0-1: 流式化 — astream 替代 ainvoke, 增量 chunk 通过 progress_cb 推 WS.
+        # 700 万步场景: decider 思考过程实时可见, 不再黑盒. fail 回退 ainvoke.
+        # ponytail: 只在 progress_cb 存在时流式, 否则 ainvoke (兼容无 WS 场景).
+        from huginn.types import progress_cb as _progress_cb
+
+        _cb = _progress_cb.get(None)
+        if _cb is None or not hasattr(llm, "astream") or not _autoloop_streaming_enabled():
+            response = await llm.ainvoke(messages)
+            return str(response.content)
+        # 流式: 累积 content, 同时推 thinking chunk 到 WS
+        parts: list[str] = []
+        try:
+            async for chunk in llm.astream(messages):
+                _delta = ""
+                # langchain BaseMessageChunk: chunk.content 是 str 或 list
+                if hasattr(chunk, "content"):
+                    if isinstance(chunk.content, str):
+                        _delta = chunk.content
+                    elif isinstance(chunk.content, list):
+                        # 多模态 chunk, 只取 text block
+                        _delta = "".join(
+                            b.get("text", "") if isinstance(b, dict) else str(b)
+                            for b in chunk.content
+                        )
+                if _delta:
+                    parts.append(_delta)
+                    try:
+                        await _cb({
+                            "type": "autoloop_thinking",
+                            "phase": self._current_phase or "decider",
+                            "delta": _delta[:200],  # 截断防超大 delta
+                        })
+                    except Exception:
+                        pass  # cb 失败不阻塞 LLM
+            return "".join(parts)
+        except Exception as e:
+            # 流式失败回退 ainvoke (某些 provider astream 实现有 bug)
+            logger.debug("astream failed, fallback to ainvoke: %s", e)
+            response = await llm.ainvoke(messages)
+            return str(response.content)
 
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
@@ -10102,7 +10177,128 @@ def _selfcheck() -> None:
     )
     print("25. decider prompt 含 window fail rate + last run pattern OK")
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25)")
+    # 26. P0-1 streaming toggle: env HUGINN_AUTOLOOP_STREAMING=0 强制关
+    import os as _os_mod
+    _prev_env = _os_mod.environ.get("HUGINN_AUTOLOOP_STREAMING")
+    try:
+        _os_mod.environ["HUGINN_AUTOLOOP_STREAMING"] = "0"
+        assert _autoloop_streaming_enabled() is False, (
+            "env=0 应强制关闭 streaming"
+        )
+        _os_mod.environ["HUGINN_AUTOLOOP_STREAMING"] = "1"
+        # 默认 on: 即使 config 抛异常也返回 True (try/except 兜底)
+        assert _autoloop_streaming_enabled() is True, "env=1 默认 on"
+    finally:
+        if _prev_env is None:
+            _os_mod.environ.pop("HUGINN_AUTOLOOP_STREAMING", None)
+        else:
+            _os_mod.environ["HUGINN_AUTOLOOP_STREAMING"] = _prev_env
+    print("26. P0-1 streaming toggle (env HUGINN_AUTOLOOP_STREAMING=0/1) OK")
+
+    # 27. P0-1 _llm_chat: progress_cb + astream 路径 + fallback
+    from huginn.types import progress_cb as _pc_cb
+
+    class _FakeChunk:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class _FakeStreamLLM:
+        """LLM with broken astream — 验证 fallback 到 ainvoke."""
+        def __init__(self) -> None:
+            self.model = "fake-stream"
+        async def astream(self, messages):
+            yield _FakeChunk("hello ")
+            yield _FakeChunk("world")
+            raise RuntimeError("synthetic stream break")
+        async def ainvoke(self, messages):
+            return type("R", (), {"content": "fallback-ok"})()
+
+    class _FakeNoAstreamLLM:
+        """LLM without astream method — 应直接走 ainvoke."""
+        def __init__(self) -> None:
+            self.model = "fake-nostream"
+        async def ainvoke(self, messages):
+            return type("R", (), {"content": "nostream-ok"})()
+
+    eng_s = AutoloopEngine.__new__(AutoloopEngine)
+    eng_s._current_phase = None  # 跳过 thinking effort 注入, 聚焦流式路径
+    eng_s.model = None
+
+    async def _run_llm_chat_cases() -> None:
+        # 27a: 无 progress_cb → ainvoke 路径 (cb is None gate)
+        _pc_cb.set(None)
+        _r27a = await eng_s._llm_chat("hi", model=_FakeNoAstreamLLM())
+        assert _r27a == "nostream-ok", f"无 cb 应 ainvoke, got {_r27a}"
+
+        # 27b: 有 progress_cb + astream → 流式路径
+        _events: list[dict] = []
+        async def _collect_cb(msg: dict) -> None:
+            _events.append(msg)
+        _pc_cb.set(_collect_cb)
+        _r27b = await eng_s._llm_chat("hi", model=_FakeStreamLLM())
+        # astream 抛异常 → fallback ainvoke → "fallback-ok"
+        assert _r27b == "fallback-ok", f"astream fail 应 fallback, got {_r27b}"
+        # fallback 前 chunk 事件已发出 (hello/world)
+        _types = [e["type"] for e in _events]
+        assert _types.count("autoloop_thinking") >= 2, (
+            f"astream 应至少推 2 个 chunk event, got {_types}"
+        )
+        _pc_cb.set(None)
+
+    asyncio.run(_run_llm_chat_cases())
+    print("27. P0-1 _llm_chat (无 cb ainvoke / 有 cb astream+fallback) OK")
+
+    # 28. P0-2 progress_cb → _emit_campaign 桥 (run_cognitive 入口设)
+    # 验证: 桥接到 progress_cb 后, subagent_event / autoloop_thinking 能流到 campaign SSE
+    from huginn.types import progress_cb as _pc_cb2
+    _emitted: list[tuple[str, dict]] = []
+    eng_b = AutoloopEngine.__new__(AutoloopEngine)
+    eng_b._progress_task_id = "test_task_b"
+    # mock _emit_campaign 收集事件
+    eng_b._emit_campaign = lambda etype, data: _emitted.append((etype, data))
+    _run_id_b = "loop_test_b"
+    # 复刻 run_cognitive 入口的桥接逻辑
+    if _pc_cb2.get(None) is None:
+        _eng_ref = eng_b
+
+        async def _bridge_b(msg: dict) -> None:
+            _etype = msg.get("type", "progress")
+            _data = {k: v for k, v in msg.items() if k != "type"}
+            _data.setdefault("run_id", _run_id_b)
+            _eng_ref._emit_campaign(f"campaign.{_etype}", _data)
+
+        _pc_cb2.set(_bridge_b)
+
+    async def _run_bridge_cases() -> None:
+        _cb = _pc_cb2.get()
+        assert _cb is not None, "bridge 应已 set progress_cb"
+        # 模拟 subagent_tool._on_state 推 subagent_event
+        await _cb({
+            "type": "subagent_event",
+            "event": "tool_call",
+            "spec": "explore",
+            "tool": "file_read_tool",
+        })
+        # 模拟 P0-1 推 autoloop_thinking
+        await _cb({
+            "type": "autoloop_thinking",
+            "phase": "decider",
+            "delta": "thinking...",
+        })
+
+    asyncio.run(_run_bridge_cases())
+    _pc_cb2.set(None)  # 清理, 避免污染后续测试
+    assert len(_emitted) == 2, f"应推 2 个事件, got {len(_emitted)}"
+    assert _emitted[0][0] == "campaign.subagent_event", (
+        f"event_type 应 campaign.subagent_event, got {_emitted[0][0]}"
+    )
+    assert _emitted[0][1]["spec"] == "explore", f"data 丢失字段: {_emitted[0][1]}"
+    assert _emitted[0][1]["run_id"] == _run_id_b, "run_id 应注入"
+    assert _emitted[1][0] == "campaign.autoloop_thinking"
+    assert _emitted[1][1]["delta"] == "thinking..."
+    print("28. P0-2 progress_cb → _emit_campaign 桥 (subagent_event + autoloop_thinking → campaign SSE) OK")
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28)")
 
 
 if __name__ == "__main__":
