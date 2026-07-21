@@ -406,6 +406,12 @@ class AutoloopEngine:
         self._darwin_best_score: float = 0.0
         self._darwin_stagnation: int = 0  # 连续低增益轮数
         self._darwin_last_score: float = 0.0
+        # P2-6 belief: Gaussian 后验 N(μ, σ²) 替代单值 score.
+        # 单值 + Δ<0.5 阈值会被噪声翻转; 后验 σ² 减小才表示真收敛.
+        # 复用 subagent_tool._gaussian_update, 不重复实现.
+        # prior N(0, 100): 弱信息先验, 让早期观测主导.
+        self._darwin_belief_mu: float = 0.0
+        self._darwin_belief_sigma2: float = 100.0
         # v6 G54: 假设的 confidence + evidence_strength, 供 _plan / _validate 读取
         # confidence = darwin score / 10 (0-1); evidence_strength = supported_ratio (代理)
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
@@ -2744,6 +2750,24 @@ Respond JSON only:
 
         self._darwin_last_score = score
 
+        # P2-6 belief: Gaussian 后验更新. 单值 score 当观测, obs_sigma2=1.0
+        # (0-10 分制下单次观测噪声约 1 分). σ² 减小 = belief 收敛.
+        # toggle: HUGINN_BELIEF_DARWIN (默认 on). off 时只走原 delta<0.5 逻辑.
+        if os.environ.get("HUGINN_BELIEF_DARWIN", "1") != "0":
+            try:
+                from huginn.tools.subagent_tool import _gaussian_update
+                self._darwin_belief_mu, self._darwin_belief_sigma2 = _gaussian_update(
+                    self._darwin_belief_mu, self._darwin_belief_sigma2,
+                    float(score), 1.0,
+                )
+                try:
+                    from huginn.routes.metrics import track_belief_update
+                    track_belief_update("gaussian")
+                except Exception:
+                    pass
+            except Exception:
+                pass  # 循环 import 或其他故障 → 回退原逻辑
+
         # v6 G54: 把 darwin 分数 / supported_ratio 暴露给 _plan / _validate
         # ponytail: evidence_strength 用 supported_ratio 做代理, 已在算分时拿到,
         # 不重复调 RAG. 升级路径: 真 RAG recall 命中数 / provenance 引用数.
@@ -2787,6 +2811,20 @@ Respond JSON only:
                 "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
                 self._darwin_stagnation,
                 self._darwin_best_score,
+            )
+            self._should_stop = True
+
+        # P2-6 belief: σ² 收敛也作为 stop 信号. σ² < 0.1 = belief 不确定性低,
+        # 后续观测不会显著改变 μ, 边际信息收益递减. 跟 stagnation 互补:
+        # stagnation 测"score 不增", σ² 测" belief 不再变". 两者任一触发即 stop.
+        if (
+            os.environ.get("HUGINN_BELIEF_DARWIN", "1") != "0"
+            and self._darwin_belief_sigma2 < 0.1
+            and self._iteration > 2
+        ):
+            logger.info(
+                "darwin ratchet: belief converged σ²=%.4f μ=%.2f, early stop",
+                self._darwin_belief_sigma2, self._darwin_belief_mu,
             )
             self._should_stop = True
 
@@ -10298,7 +10336,38 @@ def _selfcheck() -> None:
     assert _emitted[1][1]["delta"] == "thinking..."
     print("28. P0-2 progress_cb → _emit_campaign 桥 (subagent_event + autoloop_thinking → campaign SSE) OK")
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28)")
+    # 53. P2-6 belief: _darwin_belief_mu/sigma2 后验更新 + σ² 收敛 early stop
+    import os as _os
+    from huginn.tools.subagent_tool import _gaussian_update
+    _saved_belief_darwin = _os.environ.get("HUGINN_BELIEF_DARWIN")
+    _os.environ["HUGINN_BELIEF_DARWIN"] = "1"
+
+    # 模拟 5 轮稳定 score → σ² 应显著下降
+    mu, s2 = 0.0, 100.0
+    for s in [7.0, 7.1, 6.9, 7.0, 7.05]:
+        mu, s2 = _gaussian_update(mu, s2, s, 1.0)
+    assert s2 < 0.5, f"5 轮稳定观测后 σ² 应 < 0.5, got {s2}"
+    assert 6.8 < mu < 7.2, f"μ 应接近 7.0, got {mu}"
+    # σ² 收敛阈值 0.1 — 5 轮可能还差一点, 验证再多几轮必到
+    for s in [7.0, 7.0, 7.0, 7.0, 7.0]:
+        mu, s2 = _gaussian_update(mu, s2, s, 1.0)
+    assert s2 < 0.1, f"10 轮稳定观测后 σ² 应 < 0.1 (收敛阈值), got {s2}"
+
+    # σ²_obs 大 (高噪声传感器) → 后验 σ² 下降慢, 不会误判收敛
+    # Gaussian 共轭: σ² 只跟 σ²_obs 和观测次数有关, 跟观测值方差无关.
+    # ponytail: 用 σ²_obs 区分噪声, 不是观测值 std.
+    mu2, s22 = 0.0, 100.0
+    for _ in range(6):
+        mu2, s22 = _gaussian_update(mu2, s22, 7.0, 10.0)  # σ²_obs=10 (高噪声)
+    assert s22 > 0.5, f"高噪声传感器 6 轮 σ² 应仍较大 (未收敛), got {s22}"
+
+    if _saved_belief_darwin is None:
+        _os.environ.pop("HUGINN_BELIEF_DARWIN", None)
+    else:
+        _os.environ["HUGINN_BELIEF_DARWIN"] = _saved_belief_darwin
+    print("53. P2-6 belief darwin (Gaussian 后验 σ² 收敛 + 高噪声不误判) OK")
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53)")
 
 
 if __name__ == "__main__":
