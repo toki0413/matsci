@@ -806,63 +806,25 @@ class HuginnAgent(
 
             system_prompt = self._effective_system_prompt()
 
-            # deepagents 没装时走这条 fallback 路径, 但 create_react_agent 没有
-            # middleware 接口, dangling tool_calls 不会被修. pre_model_hook 返回
-            # 的 messages 经 add_messages reducer 会把新 ToolMessage append 到
-            # 末尾 (顺序错乱), 不能用. 直接包装 model 的 bind_tools: 在 invoke
-            # 前原地 patch messages, 顺序保住. ponytail: 最小包装, 只拦截
-            # bind_tools.invoke/ainvoke, 其他方法 __getattr__ 透传.
+            # deepagents 没装时走 fallback. langgraph 1.2+ 的 pre_model_hook 支持
+            # llm_input_messages key — 只作 LLM 输入, 不经 add_messages reducer,
+            # 顺序保留. 比 wrap model.bind_tools 干净: 不用 fake Runnable,
+            # create_react_agent 的 model 类型校验直接过.
             from huginn.agent.middlewares import FixDanglingToolCallsMiddleware
             _fix_mw = FixDanglingToolCallsMiddleware()
 
-            class _PatchedBound:
-                def __init__(self, bound, mw):
-                    self._bound = bound
-                    self._mw = mw
+            def _pre_model_hook(state):
+                msgs = state.get("messages", []) or []
+                patched = _fix_mw._patch_messages(list(msgs))
+                return {"llm_input_messages": patched}
 
-                def invoke(self, input, config=None, **kw):
-                    if isinstance(input, list):
-                        input = self._mw._patch_messages(list(input))
-                    return self._bound.invoke(input, config=config, **kw)
-
-                async def ainvoke(self, input, config=None, **kw):
-                    if isinstance(input, list):
-                        input = self._mw._patch_messages(list(input))
-                    return await self._bound.ainvoke(input, config=config, **kw)
-
-                def __getattr__(self, name):
-                    return getattr(self._bound, name)
-
-            class _PatchedModel:
-                def __init__(self, model, mw):
-                    self._model = model
-                    self._mw = mw
-
-                def bind_tools(self, tools, **kw):
-                    return _PatchedBound(self._model.bind_tools(tools, **kw), self._mw)
-
-                def with_structured_output(self, *a, **kw):
-                    return self._model.with_structured_output(*a, **kw)
-
-                def __getattr__(self, name):
-                    return getattr(self._model, name)
-
-            _patched_model = _PatchedModel(self.select_model("agent"), _fix_mw)
-
-            try:
-                agent = create_react_agent(
-                    model=_patched_model,
-                    tools=self._effective_tools(query=get_user_message()),
-                    prompt=SystemMessage(content=system_prompt),
-                    checkpointer=self.checkpointer,
-                )
-            except TypeError:
-                agent = create_react_agent(
-                    model=_patched_model,
-                    tools=self._effective_tools(query=get_user_message()),
-                    state_modifier=[SystemMessage(content=system_prompt)],
-                    checkpointer=self.checkpointer,
-                )
+            agent = create_react_agent(
+                model=self.select_model("agent"),
+                tools=self._effective_tools(query=get_user_message()),
+                prompt=SystemMessage(content=system_prompt),
+                pre_model_hook=_pre_model_hook,
+                checkpointer=self.checkpointer,
+            )
 
             self._agent_graph = agent
             return agent
