@@ -37,6 +37,26 @@ TIER_TTL_HOURS = {
 # 以前不区分层级, 一条 short 层的高 importance 记忆会排在 long 层前面.
 _TIER_ORDER = "CASE tier WHEN 'long' THEN 0 WHEN 'mid' THEN 1 WHEN 'short' THEN 2 ELSE 3 END"
 
+# M: typed memory 在检索排序里的优先级. typed 行 (memory_type IS NOT NULL) 优先于
+# NULL 行. 同为 typed 时按 _TYPE_PRIORITY 排: failed_direction (0) > iteration_result (1)
+# > cross_domain_transfer (2) > persona_history (3) > stable_principle (4).
+# ponytail: 不改 schema 加 type_priority 列, 用 CASE WHEN 在 SQL 里算. 升级路径:
+# 加 type_priority INTEGER 列 + 索引.
+_TYPE_PRIORITY_ORDER = (
+    "CASE memory_type"
+    " WHEN 'failed_direction' THEN 0"
+    " WHEN 'iteration_result' THEN 1"
+    " WHEN 'cross_domain_transfer' THEN 2"
+    " WHEN 'persona_history' THEN 3"
+    " WHEN 'stable_principle' THEN 4"
+    " WHEN NULL THEN 10"
+    " ELSE 10 END"
+)
+# typed 行整体优先于 NULL 行
+_TYPED_FIRST = (
+    f"CASE WHEN memory_type IS NOT NULL THEN 0 ELSE 1 END, {_TYPE_PRIORITY_ORDER}"
+)
+
 MATERIAL_CATEGORIES = {
     "structure",
     "property",
@@ -614,7 +634,7 @@ class LongTermMemory:
                             + " AND m.rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?)"
                         )
                         fts_params = params + [fts_query]
-                        fts_sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
+                        fts_sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
                         fts_params.append(fetch_k)
                         rows = conn.execute(fts_sql, tuple(fts_params)).fetchall()
                         fts_matched = True
@@ -624,11 +644,11 @@ class LongTermMemory:
                 if not fts_matched:
                     sql += f" AND content LIKE ?"
                     params.append(f"%{query}%")
-                    sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
+                    sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
                     params.append(fetch_k)
                     rows = conn.execute(sql, tuple(params)).fetchall()
             else:
-                sql += f" ORDER BY {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
+                sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
                 params.append(fetch_k)
                 rows = conn.execute(sql, tuple(params)).fetchall()
 
