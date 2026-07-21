@@ -19,6 +19,7 @@ on the agent that previously built context now forward here.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -122,6 +123,144 @@ def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return dot / (na * nb)
+
+
+def format_kb_chunks(
+    chunks: list[dict[str, Any]],
+    *,
+    memory_recall_fn: Any = None,
+    with_image_ref: bool = True,
+    max_chars: int = 800,
+    cross_ref_top_k: int = 2,
+) -> str:
+    """KB chunks → prompt body 文本. engine 和 ContextBuilder 共享, 消除双路径漂移.
+
+    参数:
+        chunks: KB query 返回的 chunk 列表, 每项含 text/metadata.
+        memory_recall_fn: 可选, 签名 (query: str, max_entries: int) -> str.
+            传入则对 top N chunk 做 KB→memory cross-ref (二次召回).
+        with_image_ref: True 时 metadata.image_ref 视觉压缩页引用拼进去.
+        max_chars: 单 chunk 文本截断长度.
+        cross_ref_top_k: 对前 N 个 chunk 做 memory cross-ref.
+
+    返回 body 文本 (无外壳), 调用方自己包 "### Domain Knowledge Context" 之类.
+    空 chunks / 全空文本 → 返回 "".
+    ponytail: 不包外壳 — engine 和 ContextBuilder 的外壳文案不同 (engine 是
+      "ground your hypothesis and plan", chat 是 "ground your answer"), 强行
+      统一会丢语义. 升级路径: 加外壳参数, 但要确认两边都接受.
+    """
+    if not chunks:
+        return ""
+    lines: list[str] = []
+    for i, c in enumerate(chunks, 1):
+        text = (c.get("text") or "").strip()
+        if not text:
+            continue
+        if len(text) > max_chars:
+            text = text[:max_chars] + "…"
+        lines.append(f"[{i}] {text}")
+
+        # 视觉压缩页引用: metadata 带 image_ref 的 chunk 是整页视觉压缩,
+        # 多模态 agent 可以直接读图. 文本里只加引用路径, 不加载图像.
+        if with_image_ref:
+            meta = c.get("metadata") or {}
+            img_ref = meta.get("image_ref") if isinstance(meta, dict) else None
+            if img_ref:
+                lines.append(f"    ↳ [视觉压缩页 图像]: {img_ref}")
+
+        # KB chunk → memory cross-ref: 用 chunk 文本做 query 召回相关长期记忆,
+        # 建立 memory↔KB 双向链接. 只对前 N 个 chunk 做, 避免每 chunk 都查一次.
+        if memory_recall_fn is not None and i <= cross_ref_top_k:
+            try:
+                related = memory_recall_fn(text[:200], max_entries=1)
+                if related:
+                    lines.append(f"    ↳ Memory: {related[:200]}")
+            except Exception:
+                logger.debug("recall for prompt failed", exc_info=True)
+
+    if not lines:
+        return ""
+    return "\n".join(lines)
+
+
+def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
+    """读 .huginn/meta_trace.jsonl, 取最近 last_n 条拼成结构化摘要文本.
+
+    engine (autoloop) 和 ContextBuilder 共享 — 之前 engine 只写不读, 导致
+    autoloop 长轨迹里 agent 看不到自己上轮蒸馏的结构化历史. 文件不存在/
+    空/读失败都返回 "".
+
+    ponytail: 每字段截 200 字符, 总量约 2K tokens. 不做 schema 校验, 旧 entry
+      补默认值. 升级路径: pydantic model + version tag + 按 darwin_score top-K.
+    """
+    trace_path = Path(workspace) / ".huginn" / "meta_trace.jsonl"
+    if not trace_path.exists():
+        return ""
+    try:
+        with trace_path.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+
+    # 取最后 last_n 条, 倒序展示 (最新在前)
+    recent = lines[-last_n:][::-1]
+    entries: list[dict] = []
+    for line in recent:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        # 旧 entry 缺 simplicial complex 字段, 补默认值不阻塞读取.
+        if not {"simplex_id", "cochain_type", "domain", "task_id"}.issubset(e.keys()):
+            e.setdefault("darwin_score", 0.0)
+            e.setdefault("supported_ratio", 0.0)
+            e.setdefault("simplex_id", None)
+            e.setdefault("cochain_type", "legacy")
+            e.setdefault("domain", "unknown")
+            e.setdefault("task_id", "legacy")
+        entries.append(e)
+
+    if not entries:
+        return ""
+
+    def _short(s: Any, n: int = 200) -> str:
+        s = str(s or "").strip().replace("\n", " ")
+        return s[:n] + ("…" if len(s) > n else "")
+
+    out = ["### Research Trace (recent iterations, newest first)"]
+    for e in entries:
+        it = e.get("iteration", "?")
+        ds = e.get("darwin_score", "?")
+        sr = e.get("supported_ratio", "?")
+        out.append(f"[iter {it}] darwin={ds} supported={sr}")
+        att = _short(e.get("attempted", ""))
+        if att:
+            out.append(f"  attempted: {att}")
+        fnd = _short(e.get("found", ""))
+        if fnd:
+            out.append(f"  found: {fnd}")
+        ev = e.get("evidence") or []
+        if isinstance(ev, list) and ev:
+            ev_text = "; ".join(_short(x, 100) for x in ev[:3])
+            out.append(f"  evidence: {ev_text}")
+        lim = e.get("limitations") or []
+        if isinstance(lim, list) and lim:
+            lim_text = "; ".join(_short(x, 150) for x in lim[:2])
+            out.append(f"  limitations: {lim_text}")
+        art = e.get("artifacts") or []
+        if isinstance(art, list) and art:
+            art_text = ", ".join(_short(x, 80) for x in art[:5])
+            out.append(f"  artifacts: {art_text}")
+        hint = _short(e.get("next_hint", ""), 250)
+        if hint:
+            out.append(f"  next_hint: {hint}")
+    out.append("### End Research Trace")
+    return "\n".join(out)
 
 
 class ContextBuilder:
@@ -332,41 +471,18 @@ class ContextBuilder:
             chunks = self._kb.query(query, top_k=5)
             if not chunks:
                 return ""
-            lines = []
-            for i, c in enumerate(chunks, 1):
-                text = (c.get("text") or "").strip()
-                if not text:
-                    continue
-                if len(text) > 800:
-                    text = text[:800] + "…"
-                lines.append(f"[{i}] {text}")
-
-                # 视觉压缩页引用 (DeepSeek-OCR 启发): metadata 带 image_ref 的 chunk
-                # 是整页视觉压缩, 多模态 agent 可以直接读图. 这里只在文本里加引用路径,
-                # 不加载图像 — agent 端按需读.
-                meta = c.get("metadata") or {}
-                img_ref = meta.get("image_ref") if isinstance(meta, dict) else None
-                if img_ref:
-                    lines.append(f"    ↳ [视觉压缩页 图像]: {img_ref}")
-
-                # ── Cross-reference: KB chunk → memory recall ──────
-                # When a KB chunk is found, use its text as a query to
-                # recall related long-term memories. This creates a
-                # bidirectional link: if the agent previously learned
-                # something related to this KB content, it surfaces here.
-                if self.memory and i <= 2:  # only for top 2 chunks
-                    try:
-                        related = self.memory.recall_for_prompt(
-                            text[:200], max_entries=1
-                        )
-                        if related:
-                            lines.append(f"    ↳ Memory: {related[:200]}")
-                    except Exception:
-                        logger.debug("recall for prompt failed", exc_info=True)
-
-            if not lines:
+            # C1: 共享 format_kb_chunks, 跟 engine 走同一条格式化路径 — 消除双路径漂移.
+            recall_fn = (
+                self.memory.recall_for_prompt if self.memory is not None else None
+            )
+            body = format_kb_chunks(
+                chunks,
+                memory_recall_fn=recall_fn,
+                with_image_ref=True,
+                cross_ref_top_k=2,
+            )
+            if not body:
                 return ""
-            body = "\n".join(lines)
             return (
                 "### Domain Knowledge Context\n"
                 "The following first-principles reference chunks may ground your answer. "
@@ -598,10 +714,6 @@ class ContextBuilder:
         ponytail: mtime cache, 文件没变直接返回上次结果. 单次最多 last_n 条,
         每字段截 200 字符, 总量上限约 2K tokens. 升级: 流式 read + role 过滤.
         """
-        from pathlib import Path
-        import json
-        import os
-
         trace_path = Path(self.workspace) / ".huginn" / "meta_trace.jsonl"
         if not trace_path.exists():
             return ""
@@ -622,86 +734,8 @@ class ContextBuilder:
         self._meta_trace_mtime = mtime
         self._meta_trace_count = size
 
-        try:
-            with trace_path.open("r", encoding="utf-8") as f:
-                lines = f.readlines()
-        except OSError:
-            return ""
-
-        if not lines:
-            self._meta_trace_cache = ""
-            return ""
-
-        # 取最后 last_n 条, 倒序展示 (最新在前, agent 先看到最近做了啥)
-        recent = lines[-last_n:][::-1]
-        entries: list[dict] = []
-        _legacy_count = 0  # v14 Task 1: 统计 legacy entry, 出 warning
-        for line in recent:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            # v14 Task 1: 旧 entry 缺 simplicial complex 字段, 补默认值不阻塞读取.
-            # ponytail: 不做 schema 校验, 只补缺字段. 升级路径 pydantic model + version tag.
-            if not {"simplex_id", "cochain_type", "domain", "task_id"}.issubset(e.keys()):
-                _legacy_count += 1
-                e.setdefault("darwin_score", 0.0)
-                e.setdefault("supported_ratio", 0.0)
-                e.setdefault("simplex_id", None)
-                e.setdefault("cochain_type", "legacy")
-                e.setdefault("domain", "unknown")
-                e.setdefault("task_id", "legacy")
-            entries.append(e)
-
-        if _legacy_count > 0:
-            logger.warning(
-                "meta_trace legacy entries detected: %d (backfilled with "
-                "cochain_type=legacy, domain=unknown, task_id=legacy)",
-                _legacy_count,
-            )
-
-        if not entries:
-            self._meta_trace_cache = ""
-            return ""
-
-        def _short(s: Any, n: int = 200) -> str:
-            s = str(s or "").strip().replace("\n", " ")
-            return s[:n] + ("…" if len(s) > n else "")
-
-        out = ["### Research Trace (recent iterations, newest first)"]
-        for e in entries:
-            it = e.get("iteration", "?")
-            ds = e.get("darwin_score", "?")
-            sr = e.get("supported_ratio", "?")
-            out.append(
-                f"[iter {it}] darwin={ds} supported={sr}"
-            )
-            att = _short(e.get("attempted", ""))
-            if att:
-                out.append(f"  attempted: {att}")
-            fnd = _short(e.get("found", ""))
-            if fnd:
-                out.append(f"  found: {fnd}")
-            ev = e.get("evidence") or []
-            if isinstance(ev, list) and ev:
-                ev_text = "; ".join(_short(x, 100) for x in ev[:3])
-                out.append(f"  evidence: {ev_text}")
-            lim = e.get("limitations") or []
-            if isinstance(lim, list) and lim:
-                lim_text = "; ".join(_short(x, 150) for x in lim[:2])
-                out.append(f"  limitations: {lim_text}")
-            art = e.get("artifacts") or []
-            if isinstance(art, list) and art:
-                art_text = ", ".join(_short(x, 80) for x in art[:5])
-                out.append(f"  artifacts: {art_text}")
-            hint = _short(e.get("next_hint", ""), 250)
-            if hint:
-                out.append(f"  next_hint: {hint}")
-        out.append("### End Research Trace")
-        text = "\n".join(out)
+        # C4: 走共享 load_meta_trace_text, engine 也调同一个 — 消除双路径漂移.
+        text = load_meta_trace_text(self.workspace, last_n=last_n)
         self._meta_trace_cache = text
         return text
 

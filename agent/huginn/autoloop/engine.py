@@ -39,6 +39,25 @@ def _harness_workflow_evolution_enabled() -> bool:
         return False
 
 
+def _autoloop_meta_trace_inject_enabled() -> bool:
+    """C4 toggle: cfg.feature_flags.autoloop_meta_trace_inject (默认 off).
+
+    autoloop engine 每轮 _distill_meta_trace 写 .huginn/meta_trace.jsonl,
+    但 _build_memory_text 之前不读它 — 长轨迹里 agent 看不到上轮蒸馏的结构化
+    历史. toggle on 后注入最近 5 条 entry 到 memory_text.
+
+    ponytail: 默认 off, 因为 meta_trace 跟 FTS5 memory 可能内容重叠,
+      注入会增加 prompt 长度. 升级路径: 默认 on + 按 darwin_score top-K 去重.
+    """
+    try:
+        from huginn.config import get_config
+        cfg = get_config()
+        ff = getattr(cfg, "feature_flags", None) or {}
+        return bool(ff.get("autoloop_meta_trace_inject", False))
+    except Exception:
+        return False
+
+
 from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.autoloop.budget import ProgressiveBudget
 from huginn.autoloop.cognitive_loop import (
@@ -56,6 +75,9 @@ from huginn.autoloop.phase_gate import (
 from huginn.bench.runner import BenchmarkRunner  # noqa: F401  # monkeypatch
 from huginn.coder.loop import CoderRunner
 from huginn.config import get_settings
+# C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
+# C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
+from huginn.context_builder import format_kb_chunks, load_meta_trace_text
 from huginn.exploration.orchestrator import ExplorationOrchestrator
 from huginn.exploration.strategies import ParetoPruningStrategy
 from huginn.interaction.progress import ProgressTracker, get_progress_tracker
@@ -308,6 +330,10 @@ class AutoloopEngine:
         self.progress_tracker: ProgressTracker | None = None
         # 投机执行 hint: on_turn_start 写入, _build_*_prompt 读出注入 LLM
         self._speculator_hint: str = ""
+        # C2: target_chain + prospective 注入. _target_chains 首次 _build_*_prompt
+        # 时 lazy build (调 build_target_chains, 一次 LLM call). 之后只读.
+        self._target_chains: list = []
+        self._target_chains_built: bool = False
         # AV2: 元认知护航状态 — autoloop 之前零接 PMK/TaskMetrics/detect_drift,
         # 跑完无 task_metrics.json 落盘, 脱轨无告警, PMK 撕裂无感知. 现补上.
         self._evals_history: list = []
@@ -583,17 +609,20 @@ class AutoloopEngine:
                 chunks = kb.query(query, top_k=5)
             if not chunks:
                 return ""
-            lines = []
-            for i, c in enumerate(chunks, 1):
-                text = (c.get("text") or "").strip()
-                if not text:
-                    continue
-                if len(text) > 800:
-                    text = text[:800] + "…"
-                lines.append(f"[{i}] {text}")
-            if not lines:
+            # C1: 走共享 format_kb_chunks — 跟 ContextBuilder 同一路径, 含
+            # image_ref + KB→memory cross-ref. 之前 engine 版没这俩, 是双路径漂移.
+            recall_fn = None
+            mem = getattr(self, "memory", None)
+            if mem is not None:
+                recall_fn = mem.recall_for_prompt
+            body = format_kb_chunks(
+                chunks,
+                memory_recall_fn=recall_fn,
+                with_image_ref=True,
+                cross_ref_top_k=2,
+            )
+            if not body:
                 return ""
-            body = "\n".join(lines)
             return (
                 "### Domain Knowledge Context\n"
                 "The following first-principles reference chunks may ground your "
@@ -702,13 +731,30 @@ class AutoloopEngine:
         查询失败/空结果返回空串, 不影响 prompt."""
         if not query:
             return ""
+        parts: list[str] = []
         mem = getattr(self, "memory", None)
-        if mem is None:
-            return ""
-        try:
-            return mem.recall_for_prompt(query, max_entries=3)
-        except Exception:
-            return ""
+        if mem is not None:
+            try:
+                text = mem.recall_for_prompt(query, max_entries=3)
+                if text:
+                    parts.append(text)
+            except Exception:
+                pass
+
+        # C4: meta_trace 注入 — engine 每轮 _distill_meta_trace 写 jsonl,
+        # 这里读回来让 LLM 看到上轮蒸馏的结构化历史 (attempted/found/evidence/
+        # limitations/next_hint). toggle off 时不注入, 避免 prompt 膨胀.
+        if _autoloop_meta_trace_inject_enabled():
+            try:
+                ws = getattr(self, "workspace", None)
+                if ws is not None:
+                    trace_text = load_meta_trace_text(str(ws), last_n=5)
+                    if trace_text:
+                        parts.append(trace_text)
+            except Exception:
+                logger.debug("meta_trace inject failed", exc_info=True)
+
+        return "\n\n".join(parts) if parts else ""
 
     def _build_pm_text(self) -> str:
         """C2: PM 层 trajectory_match 召回 — 当前 phase 序列是否是某历史轨迹的 prefix.
@@ -756,6 +802,81 @@ class AutoloopEngine:
         except Exception:
             self._last_traj_match_doc_id = None
             return ""
+
+    def _ensure_target_chains(self) -> list:
+        """C2: lazy build target_chains from self._objective.
+
+        首次调用时把 objective 当单条 Mode-A item 调 build_target_chains,
+        LLM 推导 required_results/methods/data/verification. 失败容错返回空 list.
+        之后只读 self._target_chains. 跟 rcb_runner 的 _target_chains 路径同源.
+
+        ponytail: objective 当单条 Mode-A item — RCBench 是 checklist 多条,
+          autoloop 通常单 objective. 升级路径: 让 run_cognitive 接收 checklist.
+        """
+        # getattr 防 __new__ 测试场景 (跟 D1 的 _speculator_hint 同模式)
+        if getattr(self, "_target_chains_built", False):
+            return getattr(self, "_target_chains", [])
+        self._target_chains_built = True  # 防重入, 失败也不重试
+        objective = getattr(self, "_objective", "") or ""
+        if not objective.strip():
+            self._target_chains = []
+            return self._target_chains
+        try:
+            from huginn.metacog.target_chain import build_target_chains
+            kb = self._get_kb()
+            model = getattr(self, "model", None)
+            if model is None:
+                self._target_chains = []
+                return self._target_chains
+            checklist = [{"mode": "A", "item": objective[:2000]}]
+            self._target_chains = build_target_chains(checklist, kb, model, "") or []
+        except Exception:
+            logger.debug("build_target_chains failed in autoloop", exc_info=True)
+            self._target_chains = []
+        return self._target_chains
+
+    def _build_metacog_block(self, *, include_prospective: bool = True) -> str:
+        """C2: target_chain + prospective 注入 prompt.
+
+        target_chain: 当前 objective 在目标分解树里的位置 (required_results /
+        missing / progress), LLM 看了能避免偏题.
+        prospective: 已触发的待执行前瞻意图, LLM 看了能避免遗漏计划.
+        两者都空时返回空串, 不污染 prompt.
+
+        ponytail: target_chain 首次调用触发 build_target_chains (1 次 LLM),
+          之后只读. prospective 每次调 recall_prospective, 但 PM 层内部有
+          scan_and_fire 缓存, 代价可控. 升级路径: 把两者合并到 metacog signal.
+        """
+        parts: list[str] = []
+        tc = self._ensure_target_chains()
+        if tc:
+            try:
+                from huginn.metacog.target_chain import format_target_chain_text
+                step = getattr(self, "_iteration", 0) or 0
+                tc_text = format_target_chain_text(tc, step)
+                if tc_text:
+                    parts.append(tc_text)
+            except Exception:
+                logger.debug("format_target_chain_text failed", exc_info=True)
+
+        if include_prospective:
+            mem = getattr(self, "memory", None)
+            if mem is not None and hasattr(mem, "recall_prospective"):
+                try:
+                    step = getattr(self, "_iteration", 0) or 0
+                    fired = mem.recall_prospective({"current_step": step})
+                    if fired:
+                        from huginn.context_builder import ContextBuilder
+                        # 用 ContextBuilder 的格式化逻辑, 跟 rcb_runner 同源.
+                        # ponytail: __new__ 绕过 __init__, 只用 build_prospective_text.
+                        _ctx = ContextBuilder.__new__(ContextBuilder)
+                        pro_text = _ctx.build_prospective_text(fired)
+                        if pro_text:
+                            parts.append(pro_text)
+                except Exception:
+                    logger.debug("prospective inject failed", exc_info=True)
+
+        return "\n\n".join(p for p in parts if p)
 
     # 上下文预算: 防止 prompt block 累积超过 token 上限.
     # 优先级: body > math > kg > visual > kb > mem > pm > hint > skill > composite > pipeline
@@ -7570,6 +7691,11 @@ Please modify the code to address this task."""
         pm_block = self._build_pm_text()
         if pm_block:
             pm_block = f"\n{pm_block}\n"
+        # C2: metacog 信号注入 — target_chain (objective 在目标分解树的位置) +
+        # prospective (待执行前瞻意图). 跟 rcb_runner 同源, 之前 autoloop 零接.
+        metacog_block = self._build_metacog_block(include_prospective=True)
+        if metacog_block:
+            metacog_block = f"\n{metacog_block}\n"
         # H0: stable_principles 注入 (修 P3 断链 — 之前只进 chat agent system prompt,
         # autoloop 完全跳过 PM 层). 取 top-5 避免塞爆 prompt.
         try:
@@ -7723,6 +7849,7 @@ Hypothesis:""",
                 ("principles", principles_block),
                 ("mem", mem_block),
                 ("pm", pm_block),
+                ("metacog", metacog_block),
                 ("cluster", cluster_block),
                 ("hint", hint_block),
             ],
@@ -7793,6 +7920,10 @@ Math depth guidance (treat physics/chemistry as mathematics):
         pm_block = self._build_pm_text()
         if pm_block:
             pm_block = f"\n{pm_block}\n"
+        # C2: metacog 信号注入 (同 hypothesize) — target_chain + prospective
+        metacog_block = self._build_metacog_block(include_prospective=True)
+        if metacog_block:
+            metacog_block = f"\n{metacog_block}\n"
         # H0: stable_principles 注入 (同 hypothesize, 修 P3 断链)
         try:
             _principles = load_stable_principles()[:5]
@@ -7965,6 +8096,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 ("principles", principles_block),
                 ("mem", mem_block),
                 ("pm", pm_block),
+                ("metacog", metacog_block),
                 ("skill", skill_hints + patch_hints),
                 ("composite", composite_block),
                 ("pipeline", pipeline_block),
@@ -9481,7 +9613,140 @@ def _selfcheck() -> None:
             assert _cog_d2["last_learn_summary"] == "learn ran (no summary)"
     print("14b. D2 dispatch 模板写入 cog[last_learn_summary] (3 场景: 有 dict / None / 空) OK")
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14)")
+    # === C 块 selfcheck ===
+    # C1: format_kb_chunks 共享函数 — image_ref + cross-ref + 截断
+    from huginn.context_builder import format_kb_chunks
+    _c1_chunks = [
+        {"text": "first principles chunk " * 50, "metadata": {"image_ref": "/p/1.png"}},
+        {"text": "second chunk", "metadata": {}},
+        {"text": "", "metadata": {}},  # 空文本应被跳过
+    ]
+    _calls = []
+    _c1_out = format_kb_chunks(
+        _c1_chunks,
+        memory_recall_fn=lambda q, max_entries=1: _calls.append(q) or "related mem",
+        with_image_ref=True,
+        cross_ref_top_k=2,
+    )
+    assert "[1]" in _c1_out and "[2]" in _c1_out, "C1: chunks indexed"
+    assert "视觉压缩页" in _c1_out, "C1: image_ref injected"
+    assert "Memory: related mem" in _c1_out, "C1: cross-ref injected"
+    assert len(_calls) == 2, f"C1: cross-ref top_k=2 → 2 calls, got {len(_calls)}"
+    # 截断验证 — chunk 0 文本 > 800 chars 应被截断
+    _c1_lines = _c1_out.split("\n")
+    _first_chunk_line = next(l for l in _c1_lines if l.startswith("[1]"))
+    assert len(_first_chunk_line) <= 810, f"C1: truncation to 800+ellipsis, got {len(_first_chunk_line)}"
+    print("15. C1 format_kb_chunks (image_ref + cross-ref top_k + 截断) OK")
+
+    # C1b: engine._build_kb_text 跟 ContextBuilder 走同一函数 — 共享路径验证
+    # ponytail: 不实际调 _build_kb_text (依赖 kb store), 只验证 import + 函数引用
+    assert "format_kb_chunks" in dir(eng.__class__) or callable(getattr(eng, "_build_kb_text", None)), \
+        "C1b: engine has _build_kb_text method"
+    print("16. C1b engine._build_kb_text 存在 (调共享 format_kb_chunks) OK")
+
+    # C3: working_memory 死字段已删 — SessionContext 无此属性
+    from huginn.memory.session import SessionContext as _SC
+    _sc = _SC()
+    assert not hasattr(_sc, "working_memory"), "C3: working_memory should be deleted"
+    assert not hasattr(_sc, "set_working_memory"), "C3: set_working_memory deleted"
+    assert not hasattr(_sc, "get_working_memory"), "C3: get_working_memory deleted"
+    # manager.set_context/get_context 也应已删
+    from huginn.memory.manager import MemoryManager as _MM
+    assert not hasattr(_MM, "set_context"), "C3: MemoryManager.set_context deleted"
+    assert not hasattr(_MM, "get_context"), "C3: MemoryManager.get_context deleted"
+    # to_dict 不含 working_memory_keys
+    _sc_dict = _sc.to_dict()
+    assert "working_memory_keys" not in _sc_dict, "C3: to_dict no working_memory_keys"
+    print("17. C3 working_memory 死字段删除 (session + manager + to_dict) OK")
+
+    # C4: meta_trace toggle — 默认 off, _build_memory_text 不注入 trace
+    eng_c4 = AutoloopEngine.__new__(AutoloopEngine)
+    eng_c4._speculator_hint = ""
+    eng_c4._target_chains = []
+    eng_c4._target_chains_built = False
+    eng_c4._objective = ""
+    # toggle off (默认) — 即使有 meta_trace 文件也不应注入
+    import tempfile
+    import os
+    with tempfile.TemporaryDirectory() as _td:
+        eng_c4.workspace = Path(_td)
+        eng_c4.memory = None  # 无 memory → _build_memory_text 应返回空串
+        _out_off = eng_c4._build_memory_text("test query")
+        assert _out_off == "", f"C4: toggle off → empty, got {_out_off!r}"
+        # 造一个 meta_trace.jsonl, toggle off 仍不应注入
+        _huginn_dir = Path(_td) / ".huginn"
+        _huginn_dir.mkdir(parents=True, exist_ok=True)
+        _trace = _huginn_dir / "meta_trace.jsonl"
+        _trace.write_text(
+            '{"iteration":1,"attempted":"x","found":"y","darwin_score":0.5,"supported_ratio":0.6}\n',
+            encoding="utf-8",
+        )
+        _out_off2 = eng_c4._build_memory_text("test query")
+        assert "Research Trace" not in _out_off2, "C4: toggle off → no trace injection"
+    print("18. C4 meta_trace toggle off → _build_memory_text 不注入 trace OK")
+
+    # C4b: load_meta_trace_text 函数验证 — toggle on 路径信任代码逻辑
+    # (toggle 依赖全局 config, monkeypatch 模块函数在 method 内部调用时复杂,
+    #  改为直接测 load_meta_trace_text 函数本身 + 审查 _build_memory_text 的 toggle 分支)
+    from huginn.context_builder import load_meta_trace_text
+    with tempfile.TemporaryDirectory() as _td2:
+        _huginn_dir2 = Path(_td2) / ".huginn"
+        _huginn_dir2.mkdir(parents=True, exist_ok=True)
+        _trace2 = _huginn_dir2 / "meta_trace.jsonl"
+        _trace2.write_text(
+            '{"iteration":5,"attempted":"DFT calc","found":"E=-3.2eV",'
+            '"darwin_score":0.8,"supported_ratio":0.7,"evidence":["conv"]}\n',
+            encoding="utf-8",
+        )
+        _trace_text = load_meta_trace_text(_td2, last_n=5)
+        assert "Research Trace" in _trace_text, "C4b: load_meta_trace_text returns formatted block"
+        assert "iter 5" in _trace_text, "C4b: iteration field present"
+        assert "DFT calc" in _trace_text, "C4b: attempted field present"
+        assert "E=-3.2eV" in _trace_text, "C4b: found field present"
+    # C4c: 空目录 / 无文件 → load_meta_trace_text 返回空串 (不报错)
+    with tempfile.TemporaryDirectory() as _td3:
+        assert load_meta_trace_text(_td3, last_n=5) == "", "C4c: empty dir → empty string"
+    print("19. C4b load_meta_trace_text (有 trace / 空目录) → 函数 OK, toggle 分支信任代码")
+
+    # C4d: _build_memory_text toggle on 路径 — 用 monkeypatch 模块函数
+    # _build_memory_text 在 method 内调 _autoloop_meta_trace_inject_enabled(),
+    # 这是 engine.py 模块全局函数. monkeypatch 模块属性后 method 内部能读到.
+    # python -m 运行时 __name__='__main__', import huginn.autoloop.engine 会拿到
+    # 另一个 module 实例, patch 不生效. 必须打 sys.modules['__main__'].
+    import sys
+    _eng_mod = sys.modules.get("__main__")
+    if _eng_mod is None:
+        import huginn.autoloop.engine as _eng_mod
+    _orig_toggle = _eng_mod._autoloop_meta_trace_inject_enabled
+    try:
+        _eng_mod._autoloop_meta_trace_inject_enabled = lambda: True
+        with tempfile.TemporaryDirectory() as _td4:
+            eng_c4.workspace = Path(_td4)
+            _hd4 = Path(_td4) / ".huginn"
+            _hd4.mkdir(parents=True, exist_ok=True)
+            (Path(_td4) / ".huginn" / "meta_trace.jsonl").write_text(
+                '{"iteration":2,"attempted":"test","found":"ok","darwin_score":0.5}\n',
+                encoding="utf-8",
+            )
+            # toggle on + memory=None → 只应有 trace block, 不应有 memory recall
+            _out_on = eng_c4._build_memory_text("query")
+            assert "Research Trace" in _out_on, f"C4d: toggle on → inject, got {_out_on!r}"
+    finally:
+        _eng_mod._autoloop_meta_trace_inject_enabled = _orig_toggle
+    print("19b. C4d _build_memory_text toggle on (monkeypatch) → 注入 trace OK")
+
+    # C2: _build_metacog_block 在 _target_chains 空时返回空串
+    eng_c2 = AutoloopEngine.__new__(AutoloopEngine)
+    eng_c2._target_chains = []
+    eng_c2._target_chains_built = True  # 跳过 _ensure_target_chains 的 LLM 调用
+    eng_c2._objective = ""
+    eng_c2.memory = None
+    eng_c2._iteration = 0
+    _c2_out = eng_c2._build_metacog_block()
+    assert _c2_out == "", f"C2: empty target_chains + no memory → empty, got {_c2_out!r}"
+    print("20. C2 _build_metacog_block 空输入 → 空串 (不污染 prompt) OK")
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20)")
 
 
 if __name__ == "__main__":

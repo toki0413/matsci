@@ -105,12 +105,6 @@ class MemoryManager:
     def add_reasoning(self, text: str) -> None:
         self.session.add_reasoning(text)
 
-    def set_context(self, key: str, value: Any) -> None:
-        self.session.set_working_memory(key, value)
-
-    def get_context(self, key: str, default: Any = None) -> Any:
-        return self.session.get_working_memory(key, default)
-
     # --- Long-term memory operations ---
 
     def remember(
