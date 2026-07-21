@@ -1,0 +1,64 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_28bd7a8e",
+  "description": "Identify three key methodological tradeoffs between pseudopotential and all-electron calculations for transition metal oxides",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-07-21T07:41:39.701572+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "explore"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Systematically probe the three hypothesized methodological tradeoffs (pseudopotential transferability, basis-set convergence, XC-functional interaction) by running a small set of PAW vs. LAPW calculations on SrTiO₃ with varying O vacancy positions, comparing Ti 3d occupation, total energy differences, and semicore state relaxation."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "The 0.3–0.8 eV discrepancy will correlate with Ti 3s/3p semicore eigenvalue shifts >0.2 eV between PAW and LAPW; the discrepancy will be largest when the vacancy is nearest-neighbor to Ti and smallest when next-nearest-neighbor; PBE will show larger discrepancy than HSE06 due to reduced self-interaction masking the semicore relaxation effect."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_a3cd1fc6"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_28bd7a8e",
+    "description": "Identify three key methodological tradeoffs between pseudopotential and all-electron calculations for transition metal oxides",
+    "instrument": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_28bd7a8e.json",
+    "object": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\provenance.jsonl",
+    "startTime": "2026-07-21T15:40:54.659500",
+    "endTime": "2026-07-21T15:41:39.695407"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\huginn_autoloop_report_loop_2831fe52.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_28bd7a8e.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_eb51867e",
+  "description": "Propose a diagnostic checklist for detecting k-point convergence issues in VASP calculations",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-07-21T07:47:13.197789+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "explore"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Design and execute a diagnostic test to detect k-point convergence failures caused by DFT band-gap underestimation in VASP calculations. The test compares convergence behavior (total energy vs. k-point density) for a known insulator (SrTiO₃) using PBE (which underestimates the gap) and HSE06 (which corrects it), fitting the convergence curves to exponential vs. power-law models to identify false convergence signals."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "For SrTiO₃ with PBE (underestimated gap ~1.9 eV vs. experimental 3.25 eV), the total energy convergence with k-points will follow a power-law decay (~1/N_k) characteristic of metallic systems, giving a false positive for convergence at moderate k-point density. With HSE06 (corrected gap ~3.2 eV), the convergence will follow exponential decay (~exp(-α·N_k^{1/3})), requiring significantly fewer k-points for true convergence. The diagnostic metric — ratio of convergence rate between PBE and HSE06 — will be >3× for the same apparent convergence threshold, exposing the blind spot."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_6b20d1db"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_eb51867e",
+    "description": "Propose a diagnostic checklist for detecting k-point convergence issues in VASP calculations",
+    "instrument": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_eb51867e.json",
+    "object": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\provenance.jsonl",
+    "startTime": "2026-07-21T15:45:05.239143",
+    "endTime": "2026-07-21T15:47:13.195287"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\huginn_autoloop_report_loop_24c97fc5.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_eb51867e.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}
