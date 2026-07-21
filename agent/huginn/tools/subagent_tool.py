@@ -116,7 +116,14 @@ def _belief_merge(
     ceiling: 字段间独立假设不一定成立 (encut 跟 kpoints 相关), 升级路径: 多变量 Gaussian.
     """
     out: dict[str, Any] = {}
-    for field in lww_fields:
+    # 动态收集 belief 里提到的 field — 不只硬编码 lww_fields, 否则 success_rate
+    # 这类带 belief 但不在 lww_fields 的字段会被漏掉 (Beta 路径不触发).
+    belief_fields: set[str] = set()
+    for r in results:
+        if isinstance(r, dict) and isinstance(r.get("belief"), dict):
+            belief_fields.update(r["belief"].keys())
+    all_fields = lww_fields | belief_fields
+    for field in all_fields:
         # 收集所有带 belief 的 result
         belief_results = [
             r for r in results
