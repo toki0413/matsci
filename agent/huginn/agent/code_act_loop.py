@@ -316,6 +316,20 @@ Remember: one code block per turn, then stop and wait for the execution result."
             "atomworld_list_actions(). You can also `from atomworld import "
             "evaluate` for the raw upstream API."
         )
+    # Structure Cognitive Map — explicit 3D coords + adjacency + SE(3) equivariant
+    # queries, opt-in via HUGINN_USE_COGNITIVE_MAP=1. Returns map_id handles so
+    # the agent doesn't dump large structures into the conversation directly.
+    if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") == "1":
+        prompt += (
+            "\n\nStructure Cognitive Map tools (3D spatial reasoning, plain "
+            "Python functions): cognitive_map_from_cif(cif_str) -> map_id, "
+            "cognitive_map_query(map_id, query_type, **params) -> dict "
+            "(query_type in distance/angle/neighbors/subgraph/after_rotation/"
+            "after_translation), cognitive_map_transform(map_id, op, **params) "
+            "-> new_map_id (op in rotate/translate/supercell/remove_atom/"
+            "add_atom/swap_atoms), cognitive_map_to_text(map_id, max_atoms=50) "
+            "-> str. SE(3) equivariant: rotations preserve distances/angles."
+        )
     return prompt
 
 
@@ -360,6 +374,27 @@ def _build_namespace(
         except ImportError:
             logger.warning(
                 "atomworld_tool: module import failed, skipping CodeAct registration"
+            )
+
+    # Structure Cognitive Map — opt-in via HUGINN_USE_COGNITIVE_MAP=1.
+    # SE(3) equivariant 3D spatial queries for rotation-skill recovery.
+    if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") == "1":
+        try:
+            from huginn.tools import structure_cognitive_map_tool as _cm
+            if _cm.is_available():
+                namespace["cognitive_map_from_cif"] = _cm.cognitive_map_from_cif
+                namespace["cognitive_map_query"] = _cm.cognitive_map_query
+                namespace["cognitive_map_transform"] = _cm.cognitive_map_transform
+                namespace["cognitive_map_to_text"] = _cm.cognitive_map_to_text
+            else:
+                logger.warning(
+                    "structure_cognitive_map_tool: pymatgen/scipy not installed, "
+                    "skipping CodeAct registration"
+                )
+        except ImportError:
+            logger.warning(
+                "structure_cognitive_map_tool: module import failed, "
+                "skipping CodeAct registration"
             )
 
     # Tool wrappers — sync facade over async tool.call via run_async bridge.
@@ -755,6 +790,13 @@ def _safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
                 "import of 'atomworld' requires HUGINN_USE_ATOMWORLD=1"
             )
         return __import__(name, *args, **kwargs)
+    # Structure Cognitive Map is opt-in via HUGINN_USE_COGNITIVE_MAP=1.
+    # Agents should use the namespace functions, not import this name.
+    if name in ("cognitive_map", "structure_cognitive_map"):
+        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
+            raise ImportError(
+                "import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1"
+            )
     if name not in _ALLOWED_IMPORTS:
         raise ImportError(
             f"import of {name!r} is not allowed in CodeAct mode; "
