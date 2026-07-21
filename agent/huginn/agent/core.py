@@ -820,33 +820,95 @@ class HuginnAgent(
             def _pre_model_hook(state):
                 msgs = state.get("messages", []) or []
                 patched = _fix_mw._patch_messages(list(msgs))
-                # DeliverableCoverage: RCB 路径没走 deepagents middleware 协议,
-                # 这里手动复用它的纯函数注入 frontier/planning hint. 失败静默,
-                # 不阻塞 LLM 调用. ponytail: 每次都读 INSTRUCTIONS+report 文件
-                # (~1ms IO), 相比 LLM 调用 1-5s 零开销.
+                # 时间感知 + 覆盖率 + 负结果三层 hint, 失败静默不阻塞 LLM 调用.
+                # ponytail: 每次读 INSTRUCTIONS+report+outputs (~2ms IO), 相比
+                # LLM 调用 1-5s 零开销. 升级: langgraph config 传 deadline.
+                _extra_hints: list[str] = []
                 try:
+                    import json as _json
+                    import time as _time
                     from pathlib import Path as _P
                     _cwd = _P.cwd()
+                    _rpt_path = _cwd / "report" / "report.md"
+                    # 方案 A: Time-Aware — deadline env 由 rcb_huginn.py main set.
+                    _deadline = float(os.environ.get("HUGINN_RCB_DEADLINE", "0") or 0)
+                    if _deadline > 0:
+                        _remain = _deadline - _time.time()
+                        _total = float(os.environ.get("HUGINN_RCB_TIMEOUT", "0") or 0)
+                        if _remain < 300:
+                            _extra_hints.append(
+                                f"⏰ TIME BUDGET LOW: ~{int(_remain)}s remaining. "
+                                "STOP training / long-running compute NOW. "
+                                "Write report/report.md immediately with current results. "
+                                "An honest partial report beats a perfect report that never gets written."
+                            )
+                        elif _remain < 600:
+                            _extra_hints.append(
+                                f"⏰ Time check: ~{int(_remain)}s remaining. "
+                                "Begin wrapping up — finalize figures and start writing report.md."
+                            )
+                        # 方案 D: Stage-Gated — 过 50% timeout 且没 report 时,
+                        # 提醒 agent 写 partial report (可后续更新). 跟 <600s /
+                        # <300s 形成 3 级阶梯: 50% → begin draft, 600s → wrap up,
+                        # 300s → stop & write. ponytail: 只在没 report 时提醒,
+                        # 已有 report 不打扰.
+                        elif (_total > 0 and _remain < _total * 0.5
+                              and not _rpt_path.exists()):
+                            _extra_hints.append(
+                                f"⏰ Past 50% time budget (~{int(_remain)}s left). "
+                                "Consider writing a PARTIAL report/report.md now with current "
+                                "results — you can update it later. This protects against "
+                                "timeout losing all intermediate work."
+                            )
+                    # 方案 C: Negative Result — 扫 outputs/*.json 找低分指标,
+                    # 注入 "写 negative result 分析" hint. 不阻塞, 只提醒.
+                    if not _rpt_path.exists() and (_cwd / "outputs").exists():
+                        _weak_metrics: list[str] = []
+                        for _jp in (_cwd / "outputs").glob("*.json"):
+                            try:
+                                _d = _json.loads(_jp.read_text(encoding="utf-8"))
+                                if not isinstance(_d, dict):
+                                    continue
+                                for _k, _v in _d.items():
+                                    _kl = str(_k).lower()
+                                    if any(_t in _kl for _t in ("auc", "accuracy", "r2", "r_squared", "f1")):
+                                        try:
+                                            _fv = float(_v)
+                                            if 0 <= _fv < 0.6:
+                                                _weak_metrics.append(f"{_k}={_fv:.3f}")
+                                        except (TypeError, ValueError):
+                                            pass
+                            except Exception:
+                                pass
+                        if _weak_metrics:
+                            _extra_hints.append(
+                                "⚠️ WEAK SIGNAL DETECTED in outputs/: "
+                                + ", ".join(_weak_metrics[:5])
+                                + ". If model performance is below target, write a 'Negative Results' "
+                                "section in report.md explaining WHY signal is weak (data quantity, "
+                                "feature design, model architecture, compute budget). Honest negative "
+                                "results with root-cause analysis score better than silence."
+                            )
+                    # DeliverableCoverage: RCB 路径没走 deepagents middleware 协议,
+                    # 手动复用纯函数注入 frontier/planning hint.
                     _inst = _cwd / "INSTRUCTIONS.md"
-                    _rpt = _cwd / "report" / "report.md"
                     if _inst.exists():
                         _inst_text = _inst.read_text(encoding="utf-8")
                         _qs = _cov_mw._extract_quantities(_inst_text)
                         if _qs:
-                            if not _rpt.exists():
+                            if not _rpt_path.exists():
                                 _hint = _cov_mw._build_planning_msg(_qs)
-                                patched = [SystemMessage(content=_hint)] + patched
+                                _extra_hints.append(_hint)
                             else:
-                                _rpt_text = _rpt.read_text(encoding="utf-8")
+                                _rpt_text = _rpt_path.read_text(encoding="utf-8")
                                 _missing = _cov_mw._check_coverage(_inst_text, _rpt_text)
                                 _gaps = _cov_mw._check_layer_gaps(_inst_text, _rpt_text)
-                                if _missing or _gaps:
-                                    _parts = []
-                                    if _missing:
-                                        _parts.append(_cov_mw._build_frontier_msg(_missing))
-                                    if _gaps:
-                                        _parts.append(_cov_mw._build_layer_frontier_msg(_gaps))
-                                    patched = [SystemMessage(content="\n\n".join(_parts))] + patched
+                                if _missing:
+                                    _extra_hints.append(_cov_mw._build_frontier_msg(_missing))
+                                if _gaps:
+                                    _extra_hints.append(_cov_mw._build_layer_frontier_msg(_gaps))
+                    if _extra_hints:
+                        patched = [SystemMessage(content="\n\n".join(_extra_hints))] + patched
                 except Exception:
                     pass
                 return {"llm_input_messages": patched}
