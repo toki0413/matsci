@@ -57,7 +57,16 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                     _changed_blocks = True
                 except Exception:
                     pass
-        # 再处理 orphan tool_calls
+
+        # 再重建 list 保证 ToolMessage 紧跟 AIMessage(tool_calls), 同时补 orphan.
+        # DeepSeek 严格要求 assistant(tool_calls) 后面必须紧跟 tool messages
+        # 响应每个 tool_call_id, 中间隔其他消息 (SystemMessage/HumanMessage)
+        # 会 400. 之前只补 orphan (没对应 ToolMessage 的 tool_call), 不处理
+        # "ToolMessage 在但顺序错乱" — add_messages reducer ID 冲突或
+        # ctx_builder 注入 SystemMessage 时会把 ToolMessage 推离 AIMessage.
+        # ponytail: 重建可能改变语义连续性, 但比 400 强. 升级路径: 修上游
+        # 不产生错位 (langgraph add_messages reducer ID 冲突 / ctx 注入位置).
+        # 检测 orphan: 没对应 ToolMessage 的 tool_call
         answered_ids = {
             getattr(msg, "tool_call_id", None)
             for msg in patched
@@ -69,31 +78,73 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             if isinstance(msg, AIMessage)
             for tc in (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
         )
-        if not has_orphan and not _changed_blocks:
+        # 总是调 _reorder_tool_messages: 它内部 _changed 检测, 顺序没错位时
+        # 返回原 list (零开销). 不能只在 has_orphan 时调 — 顺序错位但无 orphan
+        # 时 (ToolMessage 在但被 SystemMessage 隔开) 也需要修.
+        rebuilt = self._reorder_tool_messages(
+            patched, force_cancel_orphans=has_orphan,
+        )
+        if rebuilt is not patched:
+            patched = rebuilt
+            _changed_blocks = True
+        return patched if _changed_blocks else messages
+
+    def _reorder_tool_messages(
+        self, messages: list, force_cancel_orphans: bool = False,
+    ) -> list:
+        """重排 messages 让 ToolMessage 紧跟 AIMessage(tool_calls).
+
+        force_cancel_orphans=True 时, 没找到对应 ToolMessage 的 tool_call
+        会补一个 cancelled ToolMessage. False 时只重排, 不补 orphan
+        (orphan 由 _patch_messages 主流程二次调用处理).
+
+        返回新 list; 如果顺序无变化且未补 orphan, 返回原 list (节省内存).
+        """
+        if not messages:
             return messages
-        if not has_orphan:
-            return patched
-        for msg in patched:
-            if not isinstance(msg, AIMessage):
-                continue
-            for tc in (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", [])):
-                tc_id = tc.get("id")
-                if tc_id is None or tc_id in answered_ids:
+        # 收集所有 ToolMessage, 按 tool_call_id 索引 (后面同 id 的覆盖前面)
+        tool_msgs_by_id: dict[str, ToolMessage] = {}
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                tool_msgs_by_id[msg.tool_call_id] = msg
+
+        rebuilt: list = []
+        used_tool_ids: set[str] = set()
+        _changed = False
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                # 已被前面的 AIMessage 吸收 → 跳过 (避免重复)
+                if msg.tool_call_id in used_tool_ids:
+                    _changed = True
                     continue
-                name = tc.get("name") or "unknown"
-                content = (
-                    f"Tool call {name} (id={tc_id}) was cancelled — "
-                    f"summarization compaction removed its result."
-                )
-                # 插到 AIMessage 后面紧跟的 ToolMessage 队列尾部, 不能 append
-                # 到消息列表末尾 — OpenAI/DeepSeek 要求 tool 响应紧跟其调用,
-                # 中间隔了别的消息会 400 (Step 3 序列错乱 σ₉).
-                insert_at = patched.index(msg) + 1
-                while insert_at < len(patched) and getattr(patched[insert_at], "type", None) == "tool":
-                    insert_at += 1
-                patched.insert(insert_at, ToolMessage(content=content, name=name, tool_call_id=tc_id))
-                answered_ids.add(tc_id)
-        return patched
+                # 孤儿 ToolMessage (没对应 AIMessage) → 保留原位
+                rebuilt.append(msg)
+                continue
+            if isinstance(msg, AIMessage):
+                tool_calls = (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
+                rebuilt.append(msg)
+                # 紧跟生成所有对应 ToolMessage
+                for tc in tool_calls:
+                    tc_id = tc.get("id")
+                    if tc_id is None:
+                        continue
+                    if tc_id in tool_msgs_by_id:
+                        rebuilt.append(tool_msgs_by_id[tc_id])
+                        used_tool_ids.add(tc_id)
+                    elif force_cancel_orphans and tc_id not in used_tool_ids:
+                        name = tc.get("name") or "unknown"
+                        rebuilt.append(ToolMessage(
+                            content=(
+                                f"Tool call {name} (id={tc_id}) was cancelled — "
+                                f"summarization compaction removed its result."
+                            ),
+                            name=name, tool_call_id=tc_id,
+                        ))
+                        used_tool_ids.add(tc_id)
+                        _changed = True
+                continue
+            rebuilt.append(msg)
+        return rebuilt if _changed else messages
 
     def wrap_model_call(self, request, handler):
         request.messages = self._patch_messages(request.messages)

@@ -134,10 +134,73 @@ def test_create_react_agent_accepts_pre_model_hook():
     print("OK test_create_react_agent_accepts_pre_model_hook")
 
 
+def test_patch_reorders_tool_messages_after_system_injection():
+    """AIMessage(tool_calls) + SystemMessage + ToolMessage → patch 后 ToolMessage
+    紧跟 AIMessage, SystemMessage 推到 ToolMessage 之后.
+
+    复现 Step 2 iter 2 / Step 3 的 400: ctx_builder 在 history 后注入
+    memory/kg/kb SystemMessage, 把 ToolMessage 推离 AIMessage. DeepSeek
+    严格校验 assistant(tool_calls) 后必须紧跟 tool messages → 400.
+    """
+    mw = FixDanglingToolCallsMiddleware()
+    ai = AIMessage(
+        content="let me read",
+        tool_calls=[{"id": "X1", "name": "bash", "args": {"cmd": "ls"}}],
+    )
+    sys_inject = SystemMessage(content="ctx memory")
+    tm = ToolMessage(content="ok", tool_call_id="X1", name="bash")
+    user = HumanMessage(content="next")
+
+    # 错位顺序: AIMessage(tool_calls) → SystemMessage → ToolMessage → Human
+    messages = [ai, sys_inject, tm, user]
+    patched = mw._patch_messages(list(messages))
+
+    # patch 后: AIMessage → ToolMessage → SystemMessage → Human
+    assert len(patched) == 4, f"expected 4 messages, got {len(patched)}: {patched}"
+    assert patched[0] is ai, "AIMessage should stay at position 0"
+    assert isinstance(patched[1], ToolMessage), f"position 1 should be ToolMessage, got {type(patched[1])}"
+    assert patched[1].tool_call_id == "X1", f"ToolMessage should be X1, got {patched[1].tool_call_id}"
+    assert patched[2] is sys_inject, f"SystemMessage should move to position 2, got {patched[2]}"
+    assert patched[3] is user, "HumanMessage should stay at end"
+    print("OK test_patch_reorders_tool_messages_after_system_injection")
+
+
+def test_patch_reorders_multiple_ai_tool_pairs():
+    """多个 AIMessage(tool_calls) + ToolMessage 对, 中间穿插 SystemMessage.
+    patch 后每对 ToolMessage 紧跟其 AIMessage, SystemMessage 推到对之间."""
+    mw = FixDanglingToolCallsMiddleware()
+    ai1 = AIMessage(
+        content="call A",
+        tool_calls=[{"id": "A", "name": "bash", "args": {}}],
+    )
+    tm1 = ToolMessage(content="a", tool_call_id="A", name="bash")
+    ai2 = AIMessage(
+        content="call B",
+        tool_calls=[{"id": "B", "name": "bash", "args": {}}],
+    )
+    tm2 = ToolMessage(content="b", tool_call_id="B", name="bash")
+    sys_inject = SystemMessage(content="ctx")
+
+    # 错位: ai1 → sys → tm1 → ai2 → tm2
+    messages = [ai1, sys_inject, tm1, ai2, tm2]
+    patched = mw._patch_messages(list(messages))
+
+    # 期望: ai1 → tm1 → sys → ai2 → tm2
+    assert len(patched) == 5, f"expected 5, got {len(patched)}: {patched}"
+    assert patched[0] is ai1
+    assert isinstance(patched[1], ToolMessage) and patched[1].tool_call_id == "A"
+    assert patched[2] is sys_inject, f"sys should be at position 2, got {patched[2]}"
+    assert patched[3] is ai2
+    assert isinstance(patched[4], ToolMessage) and patched[4].tool_call_id == "B"
+    print("OK test_patch_reorders_multiple_ai_tool_pairs")
+
+
 if __name__ == "__main__":
     test_patch_inserts_synthetic_tool_message_in_order()
     test_patch_no_change_when_all_answered()
     test_patch_handles_file_blocks()
     test_pre_model_hook_returns_patched_llm_input()
     test_create_react_agent_accepts_pre_model_hook()
+    test_patch_reorders_tool_messages_after_system_injection()
+    test_patch_reorders_multiple_ai_tool_pairs()
     print("[simple_graph_dangling] all tests OK")
