@@ -156,6 +156,11 @@ def _belief_merge(
             out[f"{field}_belief"] = {
                 "type": "gaussian", "mu": mu, "sigma2": s2,
             }
+            try:
+                from huginn.routes.metrics import track_belief_update
+                track_belief_update("gaussian")
+            except Exception:
+                pass
         elif btype == "beta":
             b0 = belief_results[0]["belief"][field]
             a = float(b0.get("alpha", 1.0))
@@ -169,6 +174,11 @@ def _belief_merge(
             out[f"{field}_belief"] = {
                 "type": "beta", "alpha": a, "beta": b,
             }
+            try:
+                from huginn.routes.metrics import track_belief_update
+                track_belief_update("beta")
+            except Exception:
+                pass
         else:
             # 未知 type, 回退 LWW
             best_val = None
@@ -208,6 +218,13 @@ def _crdt_merge(results: list[dict]) -> dict:
     """
     if not results:
         return {"success": False, "error": "no results", "merged": True}
+
+    # P1-2 metrics: 记录 CRDT merge 触发 + source 数 (跨 mode 共享)
+    try:
+        from huginn.routes.metrics import track_crdt_merge
+        track_crdt_merge(len(results))
+    except Exception:
+        pass
 
     # 收集所有字段名 (results 可能字段不一致, 全 union)
     all_keys: set[str] = set()

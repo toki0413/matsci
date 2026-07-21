@@ -612,6 +612,11 @@ class LongTermMemory:
             or len(candidates) <= top_k
             or self._vector_store is None
         ):
+            try:
+                from huginn.routes.metrics import track_memory_rerank
+                track_memory_rerank("none", len(candidates))
+            except Exception:
+                pass
             return candidates[:top_k]
         try:
             texts = [query] + [str(c.get("content", "")) for c in candidates]
@@ -667,6 +672,11 @@ class LongTermMemory:
                     selected.append(idx)
                 if len(selected) >= top_k:
                     break
+        try:
+            from huginn.routes.metrics import track_memory_rerank
+            track_memory_rerank("ising", len(candidates))
+        except Exception:
+            pass
         return [candidates[i] for i in selected]
 
     # ── P2-5: HiLS 分层稀疏 attention ─────────────────────────────────
@@ -716,14 +726,29 @@ class LongTermMemory:
             or len(candidates) <= top_k
             or self._vector_store is None
         ):
+            try:
+                from huginn.routes.metrics import track_memory_rerank
+                track_memory_rerank("none", len(candidates))
+            except Exception:
+                pass
             return candidates[:top_k]
         try:
             texts = [query] + [str(c.get("content", "")) for c in candidates]
             embs = self._vector_store._compute_embeddings(texts)
         except Exception:
             logger.warning("hils: embedding 失败, 回退原排序", exc_info=True)
+            try:
+                from huginn.routes.metrics import track_memory_rerank
+                track_memory_rerank("none", len(candidates))
+            except Exception:
+                pass
             return candidates[:top_k]
         if not embs or len(embs) != len(texts):
+            try:
+                from huginn.routes.metrics import track_memory_rerank
+                track_memory_rerank("none", len(candidates))
+            except Exception:
+                pass
             return candidates[:top_k]
 
         import math
@@ -744,12 +769,22 @@ class LongTermMemory:
         scores = [math.exp(beta * _cos(q_emb, c_embs[i])) for i in range(n)]
         total = sum(scores)
         if total <= 0:
+            try:
+                from huginn.routes.metrics import track_memory_rerank
+                track_memory_rerank("none", n)
+            except Exception:
+                pass
             return candidates[:top_k]
         alpha = [s / total for s in scores]
 
         # N < K: 退化到全 attention (v1 baseline), 不分层
         if n < n_landmarks:
             ranked = sorted(range(n), key=lambda i: -alpha[i])
+            try:
+                from huginn.routes.metrics import track_memory_rerank
+                track_memory_rerank("hils_full", n)
+            except Exception:
+                pass
             return [candidates[i] for i in ranked[:top_k]]
 
         # N >= K: 分层稀疏 (v2)
@@ -762,6 +797,11 @@ class LongTermMemory:
         if lm_total <= 0:
             # 地标全零, 回退全 attention
             ranked = sorted(range(n), key=lambda i: -alpha[i])
+            try:
+                from huginn.routes.metrics import track_memory_rerank
+                track_memory_rerank("hils_full", n)
+            except Exception:
+                pass
             return [candidates[i] for i in ranked[:top_k]]
         lm_alpha = [s / lm_total for s in lm_scores]
         top_lm_idx = sorted(range(len(landmarks)), key=lambda i: -lm_alpha[i])[:top_h]
@@ -792,6 +832,11 @@ class LongTermMemory:
                 if len(filtered) >= top_k * 2:
                     break
         ranked = sorted(filtered, key=lambda i: -alpha[i])
+        try:
+            from huginn.routes.metrics import track_memory_rerank
+            track_memory_rerank("hils_sparse", n)
+        except Exception:
+            pass
         return [candidates[i] for i in ranked[:top_k]]
 
     def _kmeans_landmarks(
