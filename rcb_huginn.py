@@ -293,8 +293,13 @@ def main():
     parser = argparse.ArgumentParser(description="Run HuginnAgent on RCBench task")
     parser.add_argument("--task", required=True, help="RCBench task id (e.g. Material_000)")
     parser.add_argument("--score", action="store_true", help="Score after run")
-    parser.add_argument("--timeout", type=int, default=1800, help="Timeout in seconds (default 1800)")
-    parser.add_argument("--max-tool-calls", type=int, default=100, help="Max tool calls (default 100)")
+    parser.add_argument("--timeout", type=int, default=7200, help="Timeout in seconds (default 7200 = 2h)")
+    parser.add_argument("--max-tool-calls", type=int, default=100, help="Max tool calls (legacy path only, default 100)")
+    parser.add_argument(
+        "--extreme", action="store_true",
+        help="v6 极限模式: thinking=high, max_tool_calls=300, context_budget=200K, "
+             "autoloop 50/50/20/15. 异步委派 700 万步能力需要此 flag.",
+    )
     args = parser.parse_args()
 
     print(f"[RCB] Task: {args.task}")
@@ -311,7 +316,12 @@ def main():
     # 不改 rcb_runner / agent __init__ 签名. 升级: langgraph config 传.
     os.environ["HUGINN_RCB_DEADLINE"] = str(start + args.timeout)
     os.environ["HUGINN_RCB_TIMEOUT"] = str(args.timeout)
-    print(f"[RCB] Starting agent (timeout={args.timeout}s, max_tool_calls={args.max_tool_calls})")
+    # 极限模式 env — rcb_runner.run() 读此 flag 激活 300 max_tool_calls +
+    # 200K context + thinking=high + 异步委派 DAG. 不开则 150 max_tool_calls.
+    if args.extreme:
+        os.environ["HUGINN_EXTREME_DISPATCH"] = "1"
+    _mode_tag = "EXTREME" if args.extreme else "normal"
+    print(f"[RCB] Starting agent (mode={_mode_tag}, timeout={args.timeout}s)")
     # v14 特性 (HintCoordinator / Meta-Trace / betti / Step3->Step2 回退) 在
     # rcb_runner.run() 里, BenchmarkOrchestrator 路径不激活. 默认走 v14 路径.
     # HUGINN_RCB_LEGACY=1 回退到 orchestrator+agent.chat() 路径作对照.
@@ -321,7 +331,7 @@ def main():
             final = asyncio.run(run_agent(instructions, workspace, args.timeout, args.max_tool_calls))
         else:
             from huginn.cli.rcb_runner import run as _rcb_run
-            rc = asyncio.run(asyncio.wait_for(_rcb_run(str(workspace)), timeout=args.timeout))
+            rc = asyncio.run(asyncio.wait_for(_rcb_run(str(workspace), extreme=args.extreme), timeout=args.timeout))
             final = "" if rc == 0 else f"rcb_runner.run exited rc={rc}"
     except asyncio.TimeoutError:
         final = f"[TIMEOUT after {args.timeout}s]"
