@@ -97,7 +97,31 @@ def autoloop(
         )
         return
 
-    engine = AutoloopEngine(workspace=obj.workspace)
+    # H3: 统一 resume 入口 — 有 checkpoint 就走 resume_engine_from_checkpoint,
+    # 让 audit 校验 + drift 检测 + engine_state + hypothesis_graph 一起跑.
+    # task_id 用 workspace.name (跟 rcb_runner 一致). 无 checkpoint / resume 失败
+    # → 退回 fresh engine, 不阻塞用户.
+    engine = None
+    try:
+        from huginn.runtime.checkpoint import (
+            load_checkpoint, resume_engine_from_checkpoint,
+        )
+        _cp = load_checkpoint(obj.workspace.name, obj.workspace)
+        if _cp is not None:
+            console.print(
+                f"[dim]Found checkpoint at step {_cp.step_id}, resuming...[/dim]"
+            )
+            engine = resume_engine_from_checkpoint(_cp, obj.workspace)
+            console.print(
+                f"[green]Resumed from checkpoint[/green] "
+                f"(task_id={obj.workspace.name}, step={_cp.step_id})"
+            )
+    except Exception as _e:
+        console.print(
+            f"[yellow]Checkpoint resume failed, starting fresh:[/yellow] {_e}"
+        )
+    if engine is None:
+        engine = AutoloopEngine(workspace=obj.workspace)
 
     # Goal resolution: --goal resumes a persisted goal; --success-criteria
     # creates a new one. Neither → no goal, run() behaves as before.
