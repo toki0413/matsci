@@ -11,6 +11,7 @@ R5 (W4): 把研究假设组织成图, 节点是假设, 边是 support / refute /
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,6 +20,16 @@ from typing import Any, Literal
 
 HypothesisStatus = Literal["untested", "supported", "refuted", "superseded"]
 EdgeType = Literal["support", "refute", "derive", "pivot"]
+
+
+# P1-1 Ising 升级 HypothesisGraph.frontier: 假设多了之后 (>10) 按能量最低
+# K-子集排, 互相支撑的子集能量低 (Tᵢⱼ>0), 互相矛盾的能量高 (Tᵢⱼ<0).
+# 数学结构跟 longterm._ising_rerank 同构 (节点是假设, Tᵢⱼ 是 support/refute 边).
+# ponytail: 不引入 embedding, 用 dimension 共享 + sibling 关系做 Tᵢⱼ.
+# ceiling: 纯结构耦合, 不捕捉语义. 升级路径: LLM/embedding 算 Tᵢⱼ.
+def _ising_frontier_enabled() -> bool:
+    """toggle: env HUGINN_ISING_FRONTIER (默认 on). off 时回退原 frontier()."""
+    return os.environ.get("HUGINN_ISING_FRONTIER", "1") != "0"
 
 
 # ── data structures ──────────────────────────────────────────────────────────
@@ -280,6 +291,100 @@ class HypothesisGraph:
     def frontier(self) -> list[HypothesisNode]:
         """未测试的假设 (campaign 该排队的)."""
         return [n for n in self._nodes.values() if n.status == "untested"]
+
+    def frontier_ranked(
+        self, top_k: int | None = None, beta: float = 1.0,
+    ) -> list[HypothesisNode]:
+        """P1-1 Ising-ranked frontier — 能量最低 K-子集排.
+
+        假设数 <= top_k (或 top_k=None) 时回退原 frontier() 顺序, 不强制切.
+        > top_k 时按 Ising 能量贪心选 K-子集:
+            Hᵢ = evidence 强度 (refute 过的 parent 优先, 跟 refine_failed 同动机)
+            Tᵢⱼ = +1 同 dimension (支撑), -1 同 sibling_group (互斥候选),
+                  0 否则. 用边类型 (support/refute) 覆盖: 已 support 的 parent
+                  的子假设 H 加分, 已 refute 的 parent 的兄弟 H 加分.
+            E(S) = -Σ Hᵢ - β Σ Tᵢⱼ, 贪心 ΔE<0 接受.
+
+        ponytail: 不引入 embedding (跟 longterm._ising_rerank 不同).
+        ceiling: 结构耦合粗, 不捕捉语义矛盾. 升级: LLM/embedding 算 Tᵢⱼ.
+        """
+        untested = self.frontier()
+        if top_k is None or len(untested) <= top_k or not _ising_frontier_enabled():
+            return untested
+        if top_k <= 1:
+            return untested[:1]
+
+        # Hᵢ: parent 已 refute 的假设优先 (refine_failed 同动机), parent 已 support 次之.
+        H: dict[str, float] = {}
+        for n in untested:
+            h = 0.5  # 基础分
+            if n.parent_id and n.parent_id in self._nodes:
+                p_status = self._nodes[n.parent_id].status
+                if p_status == "refuted":
+                    h += 1.0  # 失败驱动的修正假设优先
+                elif p_status == "supported":
+                    h += 0.3
+            H[n.id] = h
+
+        # Tᵢⱼ: 同 dimension 支撑 (+0.5), 同 sibling_group 互斥 (-1.0).
+        n = len(untested)
+        T: list[list[float]] = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                ni, nj = untested[i], untested[j]
+                t = 0.0
+                if ni.dimension and ni.dimension == nj.dimension:
+                    t += 0.5
+                if (ni.sibling_group_id and ni.sibling_group_id == nj.sibling_group_id):
+                    t -= 1.0  # 同组候选互斥, 选一个即可
+                T[i][j] = t
+                T[j][i] = t
+
+        # 贪心: 按 H 降序逐个加入, ΔE<0 接受.
+        # sibling_group 互斥走硬约束 (选过直接跳过), 不走软 Tᵢⱼ — 否则 H 大的
+        # 候选会被接受, 跟 "同组选一个" 语义冲突. ponytail: 硬约束比调 β 简单.
+        order = sorted(range(n), key=lambda i: -H[untested[i].id])
+        selected: list[int] = []
+        selected_siblings: set[str] = set()
+        for idx in order:
+            if len(selected) >= top_k:
+                break
+            ni = untested[idx]
+            if ni.sibling_group_id and ni.sibling_group_id in selected_siblings:
+                continue  # 同组互斥, 硬跳过
+            if not selected:
+                selected.append(idx)
+                if ni.sibling_group_id:
+                    selected_siblings.add(ni.sibling_group_id)
+                continue
+            dE = -H[ni.id]
+            for s in selected:
+                dE -= beta * T[idx][s]
+            if dE < 0:
+                selected.append(idx)
+                if ni.sibling_group_id:
+                    selected_siblings.add(ni.sibling_group_id)
+        # 不够 top_k 时按 H 降序补齐 (仍尊重 sibling 互斥)
+        if len(selected) < top_k:
+            for idx in order:
+                ni = untested[idx]
+                if idx in selected:
+                    continue
+                if ni.sibling_group_id and ni.sibling_group_id in selected_siblings:
+                    continue
+                selected.append(idx)
+                if ni.sibling_group_id:
+                    selected_siblings.add(ni.sibling_group_id)
+                if len(selected) >= top_k:
+                    break
+
+        try:
+            from huginn.routes.metrics import track_memory_rerank
+            track_memory_rerank("ising", n)
+        except Exception:
+            pass
+
+        return [untested[i] for i in selected]
 
     def supported(self) -> list[HypothesisNode]:
         return [n for n in self._nodes.values() if n.status == "supported"]
@@ -1279,6 +1384,72 @@ def _selfcheck_save_load() -> None:
         shutil.rmtree(ws, ignore_errors=True)
 
 
+def _selfcheck_frontier_ranked() -> None:
+    """P1-1 Ising-ranked frontier selfcheck."""
+    import os as _os
+
+    _saved = _os.environ.get("HUGINN_ISING_FRONTIER")
+    _os.environ["HUGINN_ISING_FRONTIER"] = "1"
+
+    # 场景 1: 假设数 <= top_k → 回退原 frontier
+    g = HypothesisGraph()
+    a = g.add_hypothesis("h1 composition")
+    b = g.add_hypothesis("h2 composition")
+    out = g.frontier_ranked(top_k=5)
+    assert len(out) == 2, f"<=top_k 应回退, got {len(out)}"
+    assert set(n.id for n in out) == {a, b}
+
+    # 场景 2: 假设数 > top_k, 无 parent/sibling → 按 H 排前 K
+    g2 = HypothesisGraph()
+    ids = [g2.add_hypothesis(f"h{i}") for i in range(6)]
+    out2 = g2.frontier_ranked(top_k=3)
+    assert len(out2) == 3, f"top_k=3 应返回 3 个, got {len(out2)}"
+    assert all(n.id in ids for n in out2)
+
+    # 场景 3: refute 过的 parent 的子假设 H 高, 优先入选
+    g3 = HypothesisGraph()
+    parent = g3.add_hypothesis("parent")
+    g3.refute(parent, evidence={"why": "fail"})
+    # 子假设 (parent refute 过)
+    child = g3.add_hypothesis("child-of-refuted", parent_id=parent)
+    # 5 个独立无 parent 的假设 (H 较低)
+    others = [g3.add_hypothesis(f"other{i}") for i in range(5)]
+    out3 = g3.frontier_ranked(top_k=2)
+    assert child in [n.id for n in out3], \
+        f"refute 过的 parent 的子假设应优先, got {[n.id for n in out3]}"
+
+    # 场景 4: 同 sibling_group 互斥 — 不应同时选两个同组候选
+    g4 = HypothesisGraph()
+    base = g4.add_hypothesis("base")
+    g4.refute(base, evidence={"why": "fail"})
+    # pivot 出 3 个兄弟 (同 sibling_group), parent 都 refute
+    pivot_a = g4.add_hypothesis("pivot_a", parent_id=base)
+    g4._nodes[pivot_a].sibling_group_id = "grp1"
+    pivot_b = g4.add_hypothesis("pivot_b", parent_id=base)
+    g4._nodes[pivot_b].sibling_group_id = "grp1"
+    pivot_c = g4.add_hypothesis("pivot_c", parent_id=base)
+    g4._nodes[pivot_c].sibling_group_id = "grp1"
+    out4 = g4.frontier_ranked(top_k=2)
+    grp_count = sum(1 for n in out4 if n.sibling_group_id == "grp1")
+    assert grp_count <= 1, \
+        f"同 sibling_group 不应同时选两个, got {grp_count} from {[n.id for n in out4]}"
+
+    # 场景 5: toggle off → 回退原 frontier() 顺序 (无 ranking)
+    _os.environ["HUGINN_ISING_FRONTIER"] = "0"
+    out5 = g3.frontier_ranked(top_k=3)
+    # toggle off 时返回 frontier() 完整列表 (未截断), 顺序保持
+    assert len(out5) == len(g3.frontier()), \
+        f"toggle off 应回退完整 frontier, got {len(out5)} vs {len(g3.frontier())}"
+
+    if _saved is None:
+        _os.environ.pop("HUGINN_ISING_FRONTIER", None)
+    else:
+        _os.environ["HUGINN_ISING_FRONTIER"] = _saved
+
+    print("OK: frontier_ranked selfcheck passed")
+
+
 if __name__ == "__main__":
     _selfcheck_connected_components()
     _selfcheck_save_load()
+    _selfcheck_frontier_ranked()
