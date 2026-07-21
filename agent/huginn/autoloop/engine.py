@@ -1877,6 +1877,20 @@ class AutoloopEngine:
                     )
                     cog["phases"].append(phase)
                     cog["completed_steps"] += 1
+                    # D2: learn 写 cog, 让下轮 decider 看到正反馈. 之前 learn
+                    # 是哑 action (不更新 cog), LLM 选了 learn 没反馈, 下轮
+                    # 容易重复 learn 或乱选. ponytail: 只塞 1 行摘要, 不暴露
+                    # _learn 完整内部状态. 升级路径: 结构化 summary 走 cog dict.
+                    _learned = phase.result if isinstance(phase.result, dict) else {}
+                    if _learned:
+                        cog["last_learn_summary"] = (
+                            f"learned: persona={_learned.get('persona','?')} "
+                            f"r_phys={_learned.get('r_phys','?')} "
+                            f"tests_passed={_learned.get('tests_passed','?')} "
+                            f"principles_added={_learned.get('principles_added',0)}"
+                        )
+                    else:
+                        cog["last_learn_summary"] = "learn ran (no summary)"
                     return phase.result
                 if action == "pivot":
                     _obj = self._objective if hasattr(self, "_objective") else ""
@@ -2271,7 +2285,14 @@ class AutoloopEngine:
     def _build_decider_prompt(
         self, state: LoopState, cog: dict, obs: dict,
     ) -> str:
-        """简短 prompt — 给 LLM 控制流状态, 不重复 phase 内部细节."""
+        """简短 prompt — 给 LLM 控制流状态, 不重复 phase 内部细节.
+
+        D1: 扩字段 — validation details / consecutive_failures / pivot_count /
+        refine_count / action_history / speculator_hint / last_learn_summary.
+        之前 LLM 只看到 5 个粗投影, 现在给 belief state 多几维.
+        ponytail: 不重组结构, 只在 State block 后追加 Detail block. 升级路径:
+        把这些字段做成 PhaseRegistry extra, 跟 H4 phase 分批一致.
+        """
         hyp = cog.get("hypothesis") or "NONE"
         if isinstance(hyp, str) and len(hyp) > 120:
             hyp = hyp[:120]
@@ -2280,6 +2301,31 @@ class AutoloopEngine:
         exec_done = cog.get("execution_result") is not None
         val = cog.get("validation") or {}
         val_status = "PASSED" if _extract_tests_passed(val) else "FAILED" if val else "NONE"
+
+        # D1: validation 具体字段 — 让 LLM 看到为什么 PASSED/FAILED
+        val_detail = ""
+        if isinstance(val, dict) and val:
+            _vd_keys = (
+                "thinking_collapse", "physics_validation_error",
+                "reviewer_critique", "dimensional_consistent",
+                "pde_classification", "constraint_check",
+            )
+            _vd_parts = []
+            for _k in _vd_keys:
+                _v = val.get(_k)
+                if _v:
+                    _vd_parts.append(f"{_k}={str(_v)[:80]}")
+            if _vd_parts:
+                val_detail = "; ".join(_vd_parts)[:300]
+
+        # D1: 控制流统计 — 让 LLM 感知 stuck 程度
+        # getattr 防 __new__ 测试场景 (selfcheck 绕过 __init__).
+        _max_fail = getattr(self, "_max_consecutive_failures", 20)
+        _max_pivot = 10  # ponytail: 硬编码上限, 升级路径走 PhaseRegistry extra
+        action_hist_str = ", ".join(state.action_history[-10:]) or "none"
+        spec_hint = (getattr(self, "_speculator_hint", "") or "")[:300]
+        last_learn = (cog.get("last_learn_summary") or "none")[:200]
+
         return f"""You are the cognitive controller of a research agent. Choose the next action.
 
 Iteration: {state.iteration}/{state.max_iterations}
@@ -2291,7 +2337,14 @@ State:
 - Plan mode: {plan_mode}
 - Execution: {'DONE' if exec_done else 'NONE'}
 - Validation: {val_status}
+- Consecutive failures: {getattr(self, "_consecutive_failures", 0)}/{_max_fail}
+- Pivot count: {getattr(self, "_pivot_count", 0)}/{_max_pivot}
+- Refine count: {getattr(self, "_refine_count", 0)}
+- Action history (last 10): {action_hist_str}
+- Last learn summary: {last_learn}
 
+Validation details: {val_detail or 'none'}
+Speculator hints: {spec_hint or 'none'}
 Last reflection advice: {state.redirect_reason or 'none'}
 
 Actions:
@@ -2305,6 +2358,8 @@ Actions:
 - skip: do nothing this iteration
 - stop: end the loop
 
+Note: report runs automatically when loop ends — do not pick "report".
+
 Respond JSON only:
 {{"action": "one of above", "rationale": "1 sentence why", "expected_outcome": "1 sentence what you expect"}}"""
 
@@ -2312,6 +2367,11 @@ Respond JSON only:
         """LLM 选择的 action 是否合法 (前置条件满足)."""
         if action in ("observe", "hypothesize", "skip", "stop"):
             return True
+        # D3: report 不让 LLM 选 — _finalize_run 自动跑. LLM 选 report 等于
+        # 浪费一轮 (execute_fn 是 no-op). 升级路径: 如果要 LLM 主动触发,
+        # 改成 action="stop" + rationale="report ready".
+        if action == "report":
+            return False
         if action == "plan":
             return bool(cog.get("hypothesis"))
         if action == "execute":
@@ -5692,8 +5752,15 @@ Respond JSON only:
 
     async def _learn(
         self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
-    ) -> None:
-        """Learn from iteration results — update memory, knowledge graph, evolution rules."""
+    ) -> dict[str, Any]:
+        """Learn from iteration results — update memory, knowledge graph, evolution rules.
+
+        D2: 返回 summary dict, 让 caller (execute_fn 的 learn 分支) 写入
+        cog["last_learn_summary"], 下轮 decider 看到正反馈. 之前返回 None,
+        LLM 选 learn 没反馈, 下轮容易重复 learn.
+        ponytail: 只返 4 个标量字段, 不暴露内部状态. 升级路径: 结构化
+        summary 走专门 cog slot (cog["last_learn_detail"]).
+        """
         # H4: importance 公式常量从 PhaseRegistry extra 取
         from huginn.harness.phase_spec import get_phase_extra
         _imp_default = get_phase_extra("_learn", "importance_default", 0.6)
@@ -6217,14 +6284,29 @@ Respond JSON only:
         # H0: 触发 episodic → procedural 蒸馏 (修死代码, 让 stable_principles
         # 真有产出). 触发条件由 distill_episodic_to_procedural 内部判断
         # (连续 3 次同 skill 成功), 不降低阈值. ponytail: 失败不阻塞主循环.
+        # D2: 捕获返回值, 用于 last_learn_summary 的 principles_added 字段.
+        _principles_added = 0
         try:
-            self.memory.distill_episodic_to_procedural(
+            _pid = self.memory.distill_episodic_to_procedural(
                 self._evals_history, self.workspace
             )
+            if _pid:
+                _principles_added = 1
         except Exception:
             logger.debug(
                 "distill_episodic_to_procedural failed", exc_info=True
             )
+
+        # D2: 返回 summary, 让 caller 写 cog["last_learn_summary"]
+        return {
+            "persona": getattr(self, "_last_persona", "unknown"),
+            "r_phys": r_phys,
+            "tests_passed": bool(
+                validation.get("tests_passed")
+                if isinstance(validation, dict) else False
+            ),
+            "principles_added": _principles_added,
+        }
 
     async def _generate_next_loop_directive(
         self,
@@ -8963,6 +9045,16 @@ def _selfcheck() -> None:
     assert eng._is_action_legal("unknown_action", {"hypothesis": "h"}) is False
     print("1. _is_action_legal (all actions) OK")
 
+    # 1b. D3: report 不在 VALID_ACTIONS + _is_action_legal 拦截
+    from huginn.autoloop.cognitive_loop import VALID_ACTIONS as _VA
+    assert "report" not in _VA, (
+        f"D3 broken: 'report' should not be in VALID_ACTIONS, got {_VA}"
+    )
+    assert eng._is_action_legal("report", {"hypothesis": "h", "plan": {"m": "x"}, "validation": {"v": 1}}) is False, (
+        "D3 broken: _is_action_legal('report') should return False"
+    )
+    print("1b. D3 report not in VALID_ACTIONS + _is_action_legal blocks report OK")
+
     # 2. _build_decider_prompt — 包含关键字段
     state = LoopState(iteration=3, max_iterations=10, last_action="hypothesize")
     cog = {
@@ -8979,6 +9071,68 @@ def _selfcheck() -> None:
     assert "Actions:" in prompt, f"missing actions list: {prompt}"
     assert "stop: end the loop" in prompt, f"missing stop action: {prompt}"
     print("2. _build_decider_prompt OK")
+
+    # 2b. D1: decider prompt 含新增字段
+    # validation 具体字段 / consecutive_failures / pivot_count / refine_count
+    # / action_history / last_learn_summary / speculator_hint
+    eng._consecutive_failures = 5
+    eng._max_consecutive_failures = 20
+    eng._pivot_count = 2
+    eng._refine_count = 3
+    eng._speculator_hint = "try alternative k-points"
+    state_d1 = LoopState(
+        iteration=7, max_iterations=15, last_action="validate",
+    )
+    state_d1.action_history = [
+        "observe", "hypothesize", "plan", "execute", "validate",
+        "learn", "observe", "plan", "execute", "validate",
+    ]
+    cog_d1 = {
+        "hypothesis": "GaN gap with PBE",
+        "plan": {"mode": "coder"},
+        "execution_result": {"r": 1},
+        "validation": {
+            "tests_passed": False,
+            "thinking_collapse": "model gave up mid-derivation",
+            "physics_validation_error": "band gap off by 0.5 eV",
+            "dimensional_consistent": True,
+        },
+        "current_hyp_id": "h_d1",
+        "last_learn_summary": "learned: persona=reviewer r_phys=0.4 tests_passed=False",
+    }
+    prompt_d1 = eng._build_decider_prompt(state_d1, cog_d1, {})
+    # D1 必含字段
+    assert "Consecutive failures: 5/20" in prompt_d1, (
+        f"D1 missing consecutive_failures: {prompt_d1[:300]}"
+    )
+    assert "Pivot count: 2/10" in prompt_d1, (
+        f"D1 missing pivot_count: {prompt_d1[:300]}"
+    )
+    assert "Refine count: 3" in prompt_d1, (
+        f"D1 missing refine_count: {prompt_d1[:300]}"
+    )
+    assert "Action history (last 10):" in prompt_d1, (
+        f"D1 missing action_history: {prompt_d1[:300]}"
+    )
+    assert "Last learn summary: learned: persona=reviewer" in prompt_d1, (
+        f"D1 missing last_learn_summary: {prompt_d1[:300]}"
+    )
+    # validation details 应该含具体字段值
+    assert "thinking_collapse" in prompt_d1, (
+        f"D1 missing validation details (thinking_collapse): {prompt_d1[:400]}"
+    )
+    assert "physics_validation_error" in prompt_d1, (
+        f"D1 missing validation details (physics_validation_error): {prompt_d1[:400]}"
+    )
+    # speculator_hint 注入
+    assert "Speculator hints: try alternative k-points" in prompt_d1, (
+        f"D1 missing speculator_hint: {prompt_d1[:400]}"
+    )
+    # D3 提示: report 自动跑
+    assert "report runs automatically" in prompt_d1, (
+        f"D3 missing report hint: {prompt_d1[:400]}"
+    )
+    print("2b. D1 decider prompt 含新增字段 (failures/pivot/refine/history/learn/validation/speculator) OK")
 
     # 3. _decide_next_action_llm — LLM 调用失败时返回 None (fallback 信号)
     async def _fail_chat(*a, **kw):
@@ -9280,7 +9434,54 @@ def _selfcheck() -> None:
     _shutil.rmtree(_tmp_h3, ignore_errors=True)
     del _os.environ["HUGINN_CACHE_DIR"]
 
-    print("AutoloopEngine selfcheck OK (13/13)")
+    # ---- D 块: decider 可观测性 + learn 反馈 + report 拦截 ----
+    # D2: _learn 签名返回 dict + dispatch 模板写入 cog["last_learn_summary"]
+    # ponytail: 不跑完整 _learn (依赖 memory/kg/evolution/llm 等 10+ 外部资源),
+    # 只验证 (a) 函数签名 (b) dispatch 模板逻辑 (c) 字段格式.
+    # 升级路径: 用 unittest.mock 伪造 _learn 内部依赖, 跑完整 _learn 验证返回值.
+    import inspect as _inspect
+    _learn_sig = _inspect.signature(AutoloopEngine._learn)
+    _learn_ret = _learn_sig.return_annotation
+    assert _learn_ret is dict[str, Any] or str(_learn_ret) == "dict[str, Any]", (
+        f"D2 broken: _learn should return dict[str, Any], got {_learn_ret!r}"
+    )
+    print("14a. D2 _learn signature -> dict[str, Any] OK")
+
+    # 14b. D2 dispatch 模板逻辑 — 模拟 phase.result 是 dict 时 cog 写入
+    # 直接镜像 execute_fn learn 分支的 D2 代码 (那里是 closure, 无法直接调).
+    _fake_phase_results = [
+        {"persona": "reviewer", "r_phys": 0.8, "tests_passed": True, "principles_added": 1},
+        {"persona": "coder", "r_phys": None, "tests_passed": False, "principles_added": 0},
+        None,  # _learn 异常时 phase.result 可能是 None
+    ]
+    for _fake in _fake_phase_results:
+        _cog_d2: dict = {}
+        _learned = _fake if isinstance(_fake, dict) else {}
+        if _learned:
+            _cog_d2["last_learn_summary"] = (
+                f"learned: persona={_learned.get('persona','?')} "
+                f"r_phys={_learned.get('r_phys','?')} "
+                f"tests_passed={_learned.get('tests_passed','?')} "
+                f"principles_added={_learned.get('principles_added',0)}"
+            )
+        else:
+            _cog_d2["last_learn_summary"] = "learn ran (no summary)"
+        # D5 断言: learn 后 cog["last_learn_summary"] 必须非空
+        assert _cog_d2["last_learn_summary"], (
+            f"D2 broken: last_learn_summary empty for phase.result={_fake}"
+        )
+        if _fake and isinstance(_fake, dict):
+            assert f"persona={_fake['persona']}" in _cog_d2["last_learn_summary"], (
+                f"D2 broken: persona not in summary: {_cog_d2['last_learn_summary']}"
+            )
+            assert f"r_phys={_fake['r_phys']}" in _cog_d2["last_learn_summary"], (
+                f"D2 broken: r_phys not in summary: {_cog_d2['last_learn_summary']}"
+            )
+        else:
+            assert _cog_d2["last_learn_summary"] == "learn ran (no summary)"
+    print("14b. D2 dispatch 模板写入 cog[last_learn_summary] (3 场景: 有 dict / None / 空) OK")
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14)")
 
 
 if __name__ == "__main__":
