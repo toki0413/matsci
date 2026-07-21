@@ -810,12 +810,45 @@ class HuginnAgent(
             # llm_input_messages key — 只作 LLM 输入, 不经 add_messages reducer,
             # 顺序保留. 比 wrap model.bind_tools 干净: 不用 fake Runnable,
             # create_react_agent 的 model 类型校验直接过.
-            from huginn.agent.middlewares import FixDanglingToolCallsMiddleware
+            from huginn.agent.middlewares import (
+                DeliverableCoverageMiddleware,
+                FixDanglingToolCallsMiddleware,
+            )
             _fix_mw = FixDanglingToolCallsMiddleware()
+            _cov_mw = DeliverableCoverageMiddleware()
 
             def _pre_model_hook(state):
                 msgs = state.get("messages", []) or []
                 patched = _fix_mw._patch_messages(list(msgs))
+                # DeliverableCoverage: RCB 路径没走 deepagents middleware 协议,
+                # 这里手动复用它的纯函数注入 frontier/planning hint. 失败静默,
+                # 不阻塞 LLM 调用. ponytail: 每次都读 INSTRUCTIONS+report 文件
+                # (~1ms IO), 相比 LLM 调用 1-5s 零开销.
+                try:
+                    from pathlib import Path as _P
+                    _cwd = _P.cwd()
+                    _inst = _cwd / "INSTRUCTIONS.md"
+                    _rpt = _cwd / "report" / "report.md"
+                    if _inst.exists():
+                        _inst_text = _inst.read_text(encoding="utf-8")
+                        _qs = _cov_mw._extract_quantities(_inst_text)
+                        if _qs:
+                            if not _rpt.exists():
+                                _hint = _cov_mw._build_planning_msg(_qs)
+                                patched = [SystemMessage(content=_hint)] + patched
+                            else:
+                                _rpt_text = _rpt.read_text(encoding="utf-8")
+                                _missing = _cov_mw._check_coverage(_inst_text, _rpt_text)
+                                _gaps = _cov_mw._check_layer_gaps(_inst_text, _rpt_text)
+                                if _missing or _gaps:
+                                    _parts = []
+                                    if _missing:
+                                        _parts.append(_cov_mw._build_frontier_msg(_missing))
+                                    if _gaps:
+                                        _parts.append(_cov_mw._build_layer_frontier_msg(_gaps))
+                                    patched = [SystemMessage(content="\n\n".join(_parts))] + patched
+                except Exception:
+                    pass
                 return {"llm_input_messages": patched}
 
             agent = create_react_agent(
