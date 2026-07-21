@@ -613,6 +613,15 @@ LUCID review (mandatory after generating hypothesis):
                 f"[TFM: T_hot={_t_hot:.2f} → {_k} forks] ---\n",
                 flush=True,
             )
+            # TFM fork 顺序执行共享 workspace, 后序 fork 覆盖主路径 report.md.
+            # winner=None 时不合并, 但 report.md 已被 fork 破坏 → Step 2.5 落回
+            # fallback. 备份主 report.md, winner=None 时恢复. ponytail: 最小备份,
+            # 不改 fork 执行逻辑.
+            _main_rp_backup = ws / "report" / "report.md"
+            _main_rp_backup_text = (
+                _main_rp_backup.read_text(encoding="utf-8")
+                if _main_rp_backup.exists() else None
+            )
             _fork_reports: dict[str, str] = {}
             _fork_leaves: dict[str, str] = {}
             for _persp, _bias in _FCM_PERSPECTIVES[:_k]:
@@ -676,6 +685,15 @@ LUCID review (mandatory after generating hypothesis):
             else:
                 _tree.set_active_leaf(_branch_point)
                 _ai_text = "[tfm: all forks produced empty reports, main trajectory unchanged]"
+                # winner=None 时 fork 已破坏主 report.md, 从备份恢复. 不恢复的话
+                # Step 2.5 看到的是最后一个 fork 的残缺 report (不是空), 不会触发
+                # emergency write, 最终评分拿到残缺 report.
+                if _main_rp_backup_text is not None:
+                    try:
+                        _main_rp_backup.write_text(
+                            _main_rp_backup_text, encoding="utf-8")
+                    except Exception as _e:
+                        print(f"[tfm restore main report failed: {_e}]", flush=True)
 
             # Meta-Trace: 分叉轮也留痕 (role=trajectory_fork_merge)
             try:
@@ -1297,6 +1315,10 @@ async def _step2_5_report_fallback(
     report_path = ws / "report" / "report.md"
     if not report_path.exists():
         print("\n=== Step 2.5: report.md Emergency Write ===\n", flush=True)
+        # ponytail: 独立 thread 隔离 Step 2 TFM fork 可能留下的 dangling
+        # tool_calls. 同 Step 3 思路 (commit a30f922). 不隔离 → fork 失败时
+        # 主 thread 历史带 dangling → Step 2.5 也 400 → 落回 fallback.
+        _step25_tid = f"rcb_{ws.name}_step25"
         await stream_chat_fn(
             "CRITICAL: report/report.md does NOT exist. Session scores ZERO without it.\n"
             "Write report/report.md NOW using file_write_tool. Base it on:\n"
@@ -1304,7 +1326,8 @@ async def _step2_5_report_fallback(
             "- Your code in code/ and results in outputs/\n"
             "Minimum: # Title, ## Methodology, ## Results (images/*.png), ## Discussion.\n"
             "Be HONEST. A short honest report beats no report. Write it NOW.",
-            "step2.5"
+            "step2.5",
+            tid=_step25_tid
         )
     if not report_path.exists():
         print("[fallback: auto-generating minimal report.md]", flush=True)
