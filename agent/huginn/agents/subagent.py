@@ -183,8 +183,23 @@ class SubagentDispatch:
     }
 
     def __init__(self) -> None:
-        # copy 一份内置 spec, register_spec 不会改类属性
-        self._specs: dict[str, SubagentSpec] = dict(self.BUILTIN_SPECS)
+        # copy 一份内置 spec, register_spec 不会改类属性.
+        # H4 试点: toggle harness_phase_evolve 开启时从 PhaseRegistry 取
+        # (baseline + 用户 override 合成), 没开保留 class attr 路径 (零开销).
+        # ponytail: 不在 import 时就拉起 PhaseRegistry, 避免循环 import +
+        # 单例污染. toggle off 时 get_subagent_specs_for_dispatch 返回 None.
+        specs_override = None
+        try:
+            from huginn.harness.phase_spec import (
+                get_subagent_specs_for_dispatch,
+            )
+            specs_override = get_subagent_specs_for_dispatch()
+        except Exception:
+            pass
+        if specs_override is not None:
+            self._specs: dict[str, SubagentSpec] = dict(specs_override)
+        else:
+            self._specs: dict[str, SubagentSpec] = dict(self.BUILTIN_SPECS)
 
     # ------------------------------------------------------------------ API
 
