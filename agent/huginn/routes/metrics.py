@@ -294,6 +294,36 @@ PROMPT_CACHE_MISSES_TOTAL = Counter(
     "Prompt cache prefix misses (new or changed prefix).",
 )
 
+# P1/P2 极限模式成果的观测点 — 跨 mode 共享 (chat/plan/research/autoloop).
+# MEMORY_RERANK: 触发了哪种 rerank (ising / hils_full / hils_sparse / none).
+# MEMORY_RERANK_N: 候选数量直方图, 看 N>=K 分层稀疏何时触发.
+# CRDT_MERGE: dispatch_parallel 合并次数 + 平均 source 数.
+# BELIEF_UPDATE: Bayesian update 触发次数 (按 type 分: gaussian / beta).
+MEMORY_RERANK_TOTAL = Counter(
+    "huginn_memory_rerank_total",
+    "Memory rerank invocations by strategy (ising/hils_full/hils_sparse/none).",
+    labelnames=("strategy",),
+)
+MEMORY_RERANK_CANDIDATES = Histogram(
+    "huginn_memory_rerank_candidates",
+    "Number of candidates fed into rerank (HiLS 分层稀疏阈值监测).",
+    buckets=(1, 8, 32, 128, 512, 2048, 8192, 32768, 131072),
+)
+CRDT_MERGE_TOTAL = Counter(
+    "huginn_crdt_merge_total",
+    "CRDT merge invocations in dispatch_parallel.",
+)
+CRDT_MERGE_SOURCES = Histogram(
+    "huginn_crdt_merge_sources",
+    "Number of subagent results merged per dispatch_parallel.",
+    buckets=(2, 3, 4, 6, 8),
+)
+BELIEF_UPDATE_TOTAL = Counter(
+    "huginn_belief_update_total",
+    "Bayesian belief update invocations by type (gaussian/beta).",
+    labelnames=("type",),
+)
+
 
 # ---------------------------------------------------------------------------
 # Small convenience helpers for future instrumentation points
@@ -390,6 +420,36 @@ def track_agent_turn(thread_id: str) -> None:
     """Increment the agent turn counter."""
     try:
         AGENT_TURNS_TOTAL.labels(thread_id=thread_id).inc()
+    except Exception:
+        pass
+
+
+def track_memory_rerank(strategy: str, n_candidates: int) -> None:
+    """P1/P2: 记录 memory rerank 策略 + 候选数.
+
+    strategy: "ising" | "hils_full" | "hils_sparse" | "none".
+    跨 mode 共享 — chat/plan/research/autoloop 都走 LongTermMemory.retrieve.
+    """
+    try:
+        MEMORY_RERANK_TOTAL.labels(strategy=strategy).inc()
+        MEMORY_RERANK_CANDIDATES.observe(n_candidates)
+    except Exception:
+        pass
+
+
+def track_crdt_merge(n_sources: int) -> None:
+    """P1-2: 记录 CRDT merge 触发 + source 数."""
+    try:
+        CRDT_MERGE_TOTAL.inc()
+        CRDT_MERGE_SOURCES.observe(n_sources)
+    except Exception:
+        pass
+
+
+def track_belief_update(btype: str) -> None:
+    """P2-6: 记录 Bayesian belief update 触发 (gaussian/beta)."""
+    try:
+        BELIEF_UPDATE_TOTAL.labels(type=btype).inc()
     except Exception:
         pass
 
