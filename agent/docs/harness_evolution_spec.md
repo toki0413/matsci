@@ -392,11 +392,11 @@ $$\text{PhaseSpec} = \{\text{name}, \text{prompt\_template}, \text{tool\_whiteli
 
 按依赖关系 + 风险最小 + 杠杆最大:
 
-1. **H0 stable_principles 接进 autoloop prompt** — 修 P3 断链, H1 最小前置. ~20 行. 独立可跑.
-2. **H1 Prompt Template Patch 闭环** — 最小改, 最直接验证"agent 改自己 prompt"可行性. ~150-210 行新文件 + 4 接入. 独立可跑.
-3. **H2 Workflow Evolutionary Search** — 依赖 dynamic_workflow 已有基础. ~300-400 行新文件 (2 个) + 3-4 接入. 独立可跑. **改动量比 spec 原估翻倍**, 主要因为没有现成 bandit selector + ToolBelief key schema 不匹配 + 没有现成 variant 生成器.
-4. **H3 Joint Optimization** — 依赖 H1 + H2. ~140 行 + 2 接入. 最后做. **P8 限制: 不包含 model 维度**.
-5. **H4 Phase + BUILTIN_SPECS 可演化** — 大改, 但**试点首选 BUILTIN_SPECS (~80 行) 验证 PhaseRegistry 设计**, 不必等 H1-H3. 试点后分批做 7 phase (~700 行总).
+1. **H0 stable_principles 接进 autoloop prompt** ✅ — 修 P3 断链, H1 最小前置. ~20 行. 独立可跑. (selfcheck 6/6, 13 principles loaded, 3 轮 autoloop 不崩)
+2. **H1 Prompt Template Patch 闭环** ✅ (代码完成, 端到端 patch store 写入待 H2) — 最小改, 最直接验证"agent 改自己 prompt"可行性. ~150-210 行新文件 + 4 接入. 独立可跑. (selfcheck 5/5 + engine selfcheck 8/8; 3 轮 reasoning-only autoloop 不崩, 但 r_phys=None 未触发 generate_patch, patch store 0 patches — 端到端写入需 compute-heavy objective 走 validate phase, 留到 H2 workflow 测试)
+3. **H2 Workflow Evolutionary Search** ✅ — 依赖 dynamic_workflow 已有基础. ~300-400 行新文件 (2 个) + 3-4 接入. 独立可跑. **改动量比 spec 原估翻倍**, 主要因为没有现成 bandit selector + ToolBelief key schema 不匹配 + 没有现成 variant 生成器. (bandit.py selfcheck 6/6 + variant_gen.py selfcheck 4/4 + engine selfcheck 12/12; 端到端冒烟 3 轮 bandit loop: archive 3 variants + Pareto 前沿更新 + Thompson sampling 信念分化 + _try_evolved_fix guard 生效; 修复 variant_id 跨轮冲突 bug, 加时间戳前缀)
+4. **H3 Joint Optimization** ✅ — 依赖 H1 + H2. ~280 行新文件 + 2 接入. **P8 限制: 不包含 model 维度**. (joint_optimizer.py selfcheck 5/5 + engine selfcheck 13/13 + variant_gen selfcheck 5/5 含 H3 接入验证; H1 apply_patches 入口接 select_block_subset_for_phase + H2 _perturb_script 入口接 select_workflow_params_for_stage; UCB 冷启动=inf 优先探索 + Beta(α,β) 信念分化 + 核心 block 必保留 + 持久化 reload OK; H3↔H1 集成路径验证 OK)
+5. **H4 Phase + BUILTIN_SPECS 可演化** ✅ (BUILTIN_SPECS 试点完成) — 大改, 但**试点首选 BUILTIN_SPECS (~80 行) 验证 PhaseRegistry 设计**, 不必等 H1-H3. 试点后分批做 7 phase (~700 行总). (selfcheck 4/4 + engine selfcheck 8/8; 3 轮 autoloop toggle on 走 registry 合成路径, 4 subagent specs baseline 正常)
 
 每个 H 完成后立即 selfcheck:
 - H0: 跑 3 轮 autoloop, 验证 stable_principles 出现在 hypothesis/plan prompt, _learn 有 distill_episodic_to_procedural 调用

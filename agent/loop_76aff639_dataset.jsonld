@@ -1,0 +1,64 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_76aff639",
+  "description": "Compare LDA vs GGA exchange-correlation functionals for silicon band gap: summarize literature consensus without running DFT",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-07-21T07:38:09.467820+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "explore"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Conduct a literature survey to compare LDA vs GGA performance for silicon band gaps and defect levels, then synthesize the findings into a structured report. The hypothesis claims GGA predicts deeper defect levels than LDA for Si vacancies — I need to verify this against the literature consensus."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "The literature survey will show: (1) pristine Si band gap: LDA ~0.5 eV, GGA ~0.6 eV, both far below experimental 1.17 eV; (2) for the Si vacancy, LDA often places the defect state near or inside the conduction band due to over-delocalization, while GGA (especially PBE) can produce a gap state — but neither is quantitatively reliable without GW corrections; (3) the hypothesis is qualitatively correct but oversimplified — the actual picture depends on charge state, supercell size, and whether finite-size corrections are applied."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_7554479b"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_76aff639",
+    "description": "Compare LDA vs GGA exchange-correlation functionals for silicon band gap: summarize literature consensus without running DFT",
+    "instrument": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_76aff639.json",
+    "object": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\provenance.jsonl",
+    "startTime": "2026-07-21T15:36:07.281822",
+    "endTime": "2026-07-21T15:38:09.455850"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\huginn_autoloop_report_loop_d0d2531b.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_76aff639.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

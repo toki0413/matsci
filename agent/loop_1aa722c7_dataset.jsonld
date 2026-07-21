@@ -1,0 +1,64 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_1aa722c7",
+  "description": "Identify three key methodological tradeoffs between pseudopotential and all-electron calculations for transition metal oxides",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-07-21T07:49:00.037485+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "explore"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Design and execute a computational screening pipeline to test the hypothesis that oxygen vacancy formation energies in transition metal oxides (TMOs) differ systematically between pseudopotential (PP) and all-electron (AE) methods. The plan: (1) Select 3-4 representative TMOs (TiO₂, SrTiO₃, ZnO, CeO₂) covering different d-electron counts and vacancy chemistries. (2) For each, build a 2×2×2 supercell with a single O vacancy. (3) Run DFT calculations with both a PP code (VASP, PBE, 520 eV cutoff, PAW) and an AE code (FHI-aims, PBE, tight basis). (4) Compute vacancy formation energy E_vac = E(defect) - E(perfect) + ½ μ(O₂). (5) Compare ΔE_vac = E_vac(PP) - E_vac(AE) across systems. (6) Analyze charge density differences (Δρ = ρ(defect) - ρ(perfect)) to quantify charge redistribution differences between methods. (7) Perform Bader charge analysis on both PP and AE densities to track charge transfer to/from the vacancy site. (8) Report systematic bias, if any, and correlate with d-orbital occupancy."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "For early TMOs (TiO₂, SrTiO₃), ΔE_vac ≈ +0.3–0.8 eV (PP predicts less stable vacancies, i.e., higher formation energy) because frozen-core PP underestimates charge transfer from TM d-orbitals to the vacancy-localized states. For ZnO, ΔE_vac ≈ +0.1–0.3 eV (smaller effect due to filled d¹⁰ shell). For CeO₂, ΔE_vac ≈ +0.5–1.0 eV (largest effect due to strong f-orbital involvement in charge compensation). Bader charge analysis will show PP systematically underestimates electron depletion on TM atoms adjacent to the vacancy by ~0.1–0.3 e⁻ compared to AE."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_23c12a0a"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_1aa722c7",
+    "description": "Identify three key methodological tradeoffs between pseudopotential and all-electron calculations for transition metal oxides",
+    "instrument": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_1aa722c7.json",
+    "object": "C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\provenance.jsonl",
+    "startTime": "2026-07-21T15:47:14.429523",
+    "endTime": "2026-07-21T15:49:00.033962"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\huginn_autoloop_report_loop_46a40d7d.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file://C:\\Users\\wanzh\\Desktop\\matsci-agent\\agent\\.huginn\\trajectories\\loop_1aa722c7.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

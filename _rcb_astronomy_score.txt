@@ -1,0 +1,9 @@
+﻿[SCORE] Workspace: C:\Users\wanzh\Desktop\matsci-agent\ResearchClawBench\workspaces\Astronomy_000_20260721_133318
+[SCORE] Generating CV descriptions for 9 images...
+  [text] w=0.2 score=35 :: The analysis ingests posterior samples for the target black holes. For the stell
+  [image] w=0.3 score=25 :: The core statistical output is the exclusion curve, which plots the probability 
+  [text] w=0.5 score=0 :: This is the primary physical finding. By identifying where the exclusion probabi
+
+[SCORE] Total: 14.5/100
+[SCORE] Images: 9
+[SCORE] Mode: text_with_cv
