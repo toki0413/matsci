@@ -827,6 +827,52 @@ class AutoloopEngine:
                 return self._PROMPT_BUDGET_BY_PHASE[phase]
         return self._PROMPT_BUDGET
 
+    def _apply_block_patches(
+        self,
+        blocks: list[tuple[str, str]],
+        phase: str,
+    ) -> list[tuple[str, str]]:
+        """H1: 在 _trim_to_budget 前应用 prompt patch.
+
+        apply_patches 内部按 Beta mean > 0.5 过滤 + 同名 block 取最高 Beta mean.
+        这里重算一遍 by_block 拿到实际应用的 patch ids, 存到
+        _last_applied_patches 供 _learn 更新 Beta. toggle off 或没 patch 时
+        直接返回原 blocks (apply_patches 内部处理, 这里零开销).
+
+        ponytail: 重算 by_block 跟 apply_patches 内部逻辑重复, 但避免改
+        apply_patches 返回签名. 升级路径: apply_patches 返回 (blocks, ids).
+        """
+        from huginn.harness.prompt_patch import apply_patches, PromptPatchStore
+        new_blocks = apply_patches(blocks, phase)
+        # 记录原始 blocks 供 _generate_next_loop_directive 调 generate_patch 用
+        # (generate_patch 需要看 block 名字 + 内容才能生成合理 patch)
+        if phase == "hypothesize":
+            self._last_hypothesis_blocks = blocks
+        elif phase == "plan":
+            self._last_plan_blocks = blocks
+        if new_blocks is blocks:
+            return new_blocks
+        try:
+            store = PromptPatchStore.get_instance()
+            patches = [
+                p for p in store.list_patches(phase=phase)
+                if p.alpha / max(1, p.alpha + p.beta) > 0.5
+            ]
+            by_block: dict[str, Any] = {}
+            for p in patches:
+                cur = by_block.get(p.block_name)
+                if cur is None or (
+                    p.alpha / max(1, p.alpha + p.beta)
+                    > cur.alpha / max(1, cur.alpha + cur.beta)
+                ):
+                    by_block[p.block_name] = p
+            applied_ids = [p.id for p in by_block.values()]
+            if applied_ids:
+                self._last_applied_patches = (phase, applied_ids)
+        except Exception:
+            logger.debug("_apply_block_patches: track applied fail", exc_info=True)
+        return new_blocks
+
     def _trim_to_budget(
         self,
         blocks: list[tuple[str, str]],
@@ -5571,6 +5617,27 @@ Respond JSON only:
             except Exception as e:
                 logger.warning("reward evolution failed: %s", e)
 
+        # H1: 给本轮 apply 过的 prompt patch 更新 Beta 信念. tests_passed 决定
+        # success/fail. _apply_block_patches 在 _build_hypothesis_prompt /
+        # _build_plan_prompt 里记录了 _last_applied_patches = (phase, [ids]).
+        # ponytail: _last_applied_patches 只记最近一次, 多 phase 同轮 apply 时
+        # 后者覆盖前者. 升级路径: 改成 dict[phase, ids] 完整追踪.
+        try:
+            applied = getattr(self, "_last_applied_patches", None)
+            if applied:
+                from huginn.harness.prompt_patch import PromptPatchStore
+                _phase, _ids = applied
+                _tests_passed = (
+                    validation.get("tests_passed", False)
+                    if isinstance(validation, dict)
+                    else False
+                )
+                store = PromptPatchStore.get_instance()
+                for _pid in _ids:
+                    store.update_alpha_beta(_pid, success=bool(_tests_passed))
+        except Exception:
+            logger.debug("H1 patch Beta update failed", exc_info=True)
+
         # Forest 回流: 如果是森林模式运行, 把 merged_graph 合并到本地假设图
         # 并写入 memory, 供后续迭代接续探索多树共识的结论.
         if self._merged_graph is not None:
@@ -5994,6 +6061,26 @@ Respond JSON only:
             logger.info("RSI directive stored in memory: %s", directive[:120])
         except Exception:
             logger.debug("RSI directive memory write failed", exc_info=True)
+
+        # H1: 看 r_phys + directive + 当前 hypothesis/plan blocks, LLM 生成
+        # prompt patch 写入 patch store. 下轮 _build_*_prompt 的 _apply_block_patches
+        # 自动 apply (Beta mean > 0.5 才生效, 新 patch alpha=beta=1 不会立即应用).
+        # 失败静默 — generate_patch 内部已 catch. ponytail: 不接 plan blocks,
+        # 只接 hypothesis — 单 phase 试点够验证, 多 phase 升级路径明确.
+        try:
+            from huginn.harness.prompt_patch import generate_patch
+            # 用最近一次 _build_hypothesis_prompt 的 blocks 做 context (无则跳过)
+            _hyp_blocks = getattr(self, "_last_hypothesis_blocks", None)
+            if _hyp_blocks:
+                await generate_patch(
+                    phase="hypothesize",
+                    blocks=_hyp_blocks,
+                    r_phys=float(r_phys) if r_phys is not None else None,
+                    directive=directive,
+                    llm_chat_fn=self._llm_chat,
+                )
+        except Exception:
+            logger.debug("H1 generate_patch failed", exc_info=True)
 
     async def _report(
         self, objective: str, phases: list[LoopPhase], total_time: float
@@ -7275,7 +7362,7 @@ Please modify the code to address this task."""
             pass
 
         # 按优先级拼接, 超预算自动裁剪低优先级 block
-        return self._trim_to_budget(
+        blocks = self._apply_block_patches(
             [
                 (
                     "body",
@@ -7320,8 +7407,9 @@ Hypothesis:""",
                 ("cluster", cluster_block),
                 ("hint", hint_block),
             ],
-            phase="hypothesize",
+            "hypothesize",
         )
+        return self._trim_to_budget(blocks, phase="hypothesize")
 
     _IMAGINATION_PROMPT_BLOCK = """
 Imagination directive (speculative mode activated):
@@ -7515,7 +7603,7 @@ Math depth guidance (treat physics/chemistry as mathematics):
         except Exception:
             pass  # pipeline 是 advisory, 失败不阻塞
 
-        return self._trim_to_budget(
+        blocks = self._apply_block_patches(
             [
                 (
                     "body",
@@ -7564,8 +7652,9 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 ("subgoal", self._build_subgoal_block()),
                 ("ctx_hint", self._plan_context_hint()),
             ],
-            phase="plan",
+            "plan",
         )
+        return self._trim_to_budget(blocks, phase="plan")
 
     def _plan_context_hint(self) -> str:
         """B: 把上下文信号转成 plan prompt 提示文本 (软路由).
@@ -8725,7 +8814,102 @@ def _selfcheck() -> None:
     else:
         print("6. H0 skipped (no stable_principles on disk)")
 
-    print("AutoloopEngine selfcheck OK (6/6)")
+    # 7. H1: _apply_block_patches 接入 + toggle off passthrough
+    # 验证 _build_hypothesis_prompt 在 toggle off 时不走 patch 路径 (零开销).
+    # toggle on 时 monkey-patch _harness_enabled, 加 patch, 验证 blocks 被替换.
+    import os as _os
+    import tempfile as _tempfile
+    import huginn.harness.prompt_patch as _pp
+    _orig_harness_enabled = _pp._harness_enabled
+    # 7a. toggle off: _apply_block_patches 直接返回原 blocks
+    _blocks_in = [("body", "x {context}"), ("mem", "mem text")]
+    _out = eng2._apply_block_patches(_blocks_in, "hypothesize")
+    assert _out is _blocks_in, "toggle off should passthrough"
+    print("7a. H1 _apply_block_patches toggle off → passthrough OK")
+
+    # 7b. toggle on + patch 应用
+    _pp._harness_enabled = lambda key, default=False: (
+        True if key == "harness_prompt_patch" else default
+    )
+    _tmp = _tempfile.mkdtemp()
+    _os.environ["HUGINN_CACHE_DIR"] = _tmp
+    _pp.PromptPatchStore._instance = None
+    _store = _pp.PromptPatchStore.get_instance()
+    _p = _pp.PromptPatch(
+        id="selfcheck_h1",
+        phase="hypothesize",
+        block_name="mem",
+        new_text="H1 SELFCHECK PATCHED",
+        op="prepend",
+    )
+    _store.add_patch(_p)
+    _store.update_alpha_beta("selfcheck_h1", success=True)
+    _store.update_alpha_beta("selfcheck_h1", success=True)
+    _out = eng2._apply_block_patches(_blocks_in, "hypothesize")
+    assert _out is not _blocks_in, "toggle on should return new list"
+    assert "H1 SELFCHECK PATCHED" in _out[1][1], (
+        f"H1 patch not applied: {_out[1][1]}"
+    )
+    # _last_applied_patches 记录了 phase + ids
+    assert hasattr(eng2, "_last_applied_patches"), "_last_applied_patches not set"
+    _applied_phase, _applied_ids = eng2._last_applied_patches
+    assert _applied_phase == "hypothesize"
+    assert "selfcheck_h1" in _applied_ids
+    print("7b. H1 _apply_block_patches toggle on + patch apply + ids tracked OK")
+
+    # 7c. _learn Beta 更新 (用 eng2 的 _apply_block_patches 记录的 ids)
+    # 直接调 store.update_alpha_beta 验证接口, 不跑完整 _learn (太重)
+    _store.update_alpha_beta("selfcheck_h1", success=True)
+    _p_reload = _store._patches["selfcheck_h1"]
+    assert _p_reload.alpha == 4, f"alpha should be 4 (1 init + 2 setup + 1 learn): {_p_reload.alpha}"
+    print("7c. H1 _learn Beta update interface OK")
+
+    # 清理 H1 测试状态
+    import shutil as _shutil
+    _shutil.rmtree(_tmp, ignore_errors=True)
+    del _os.environ["HUGINN_CACHE_DIR"]
+    _pp.PromptPatchStore._instance = None
+    _pp._harness_enabled = _orig_harness_enabled
+    if hasattr(eng2, "_last_applied_patches"):
+        del eng2._last_applied_patches
+
+    # 8. H4 试点: SubagentDispatch toggle on 时走 PhaseRegistry
+    import huginn.harness.phase_spec as _ps
+    _orig_ps_enabled = _ps._harness_enabled
+    _ps._harness_enabled = lambda key, default=False: (
+        True if key == "harness_phase_evolve" else default
+    )
+    _tmp2 = _tempfile.mkdtemp()
+    _os.environ["HUGINN_CACHE_DIR"] = _tmp2
+    _ps.PhaseRegistry._instance = None
+    _reg = _ps.PhaseRegistry.get_instance()
+    _reg.register_subagent_override("explore", {
+        "system_prompt": "H4 SELFCHECK EXPLORE PROMPT",
+        "max_tool_calls": 77,
+    })
+    # reset singleton 重读, 验证持久化
+    _ps.PhaseRegistry._instance = None
+    from huginn.agents.subagent import SubagentDispatch as _SD
+    _d = _SD()
+    assert _d._specs["explore"].system_prompt == "H4 SELFCHECK EXPLORE PROMPT", (
+        f"H4 override not applied: {_d._specs['explore'].system_prompt}"
+    )
+    assert _d._specs["explore"].max_tool_calls == 77, (
+        f"H4 max_tool_calls not applied: {_d._specs['explore'].max_tool_calls}"
+    )
+    # 未 override 的 spec 保留 baseline
+    assert _d._specs["coder"].system_prompt.startswith("You are a coding agent"), (
+        f"H4 baseline coder lost: {_d._specs['coder'].system_prompt}"
+    )
+    print("8. H4 SubagentDispatch PhaseRegistry override + baseline fallback OK")
+
+    # 清理 H4 测试状态
+    _shutil.rmtree(_tmp2, ignore_errors=True)
+    del _os.environ["HUGINN_CACHE_DIR"]
+    _ps.PhaseRegistry._instance = None
+    _ps._harness_enabled = _orig_ps_enabled
+
+    print("AutoloopEngine selfcheck OK (8/8)")
 
 
 if __name__ == "__main__":
