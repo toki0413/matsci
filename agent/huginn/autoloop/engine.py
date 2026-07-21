@@ -280,6 +280,21 @@ class AutoloopEngine:
         # 环境变量覆盖: 极限模式可设更高 (e.g. HUGINN_MAX_CONSECUTIVE_FAILURES=50).
         self._consecutive_failures = 0
         self._max_consecutive_failures = int(os.environ.get("HUGINN_MAX_CONSECUTIVE_FAILURES", "20"))
+        # F-borrow (forge 双预算思路): 按 failure_type 分类计数. 不同失败类型语义不同 —
+        # tool_error 是技术故障 (短期可恢复), hypothesis_error 是方向错 (持续才是真死路).
+        # 单一 _consecutive_failures 把两者混算, 5 次 tool_error 就该停 vs 5 次 hypothesis_error
+        # 还远不够. 在总数上叠加分类, decider prompt 显示分类, 按类阈值 stop.
+        # ponytail: 不拆总数 (向后兼容), 在其上叠加. 升级路径: 走 PhaseRegistry extra.
+        self._consecutive_failures_by_type: dict[str, int] = {}
+        # 按类阈值 — tool_error 类短期可恢复, 阈值低; hypothesis_error 持续才是真死路, 阈值高.
+        # ponytail: 硬编码, 跟 _max_pivot=10 一致. 升级路径: env / PhaseRegistry extra.
+        self._max_failures_by_type: dict[str, int] = {
+            "tool_error": 5,
+            "prompt_injection_suspect": 3,
+            "param_error": 5,
+            "data_noise": 5,
+            "hypothesis_error": 10,
+        }
         # refine 循环计数: 防止 refute→refine 无限循环
         # v7 长任务: 8→20 默认. Oxelra 失败回退不计数, 这里仍保留上限防失控.
         self._refine_count = 0
@@ -2095,11 +2110,35 @@ class AutoloopEngine:
                 tests_ok = _extract_tests_passed(validation)
                 if tests_ok:
                     self._consecutive_failures = 0
+                    self._consecutive_failures_by_type = {}
                 else:
                     self._consecutive_failures += 1
+                    # F-borrow: 按 failure_type 分类计数 (forge 双预算思路).
+                    # _classify_failure 已存在但之前没在 reflect 路径用 — 闭合断层.
+                    # 失败分类后按类阈值 stop, 避免 tool_error 跟 hypothesis_error 混算.
+                    try:
+                        _redteam = self._redteam_findings()
+                        ftype = AutoloopEngine._classify_failure(validation, _redteam)
+                    except Exception:
+                        ftype = "hypothesis_error"
+                    by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
+                    by_type[ftype] = by_type.get(ftype, 0) + 1
+                    self._consecutive_failures_by_type = by_type
+                    _type_max = getattr(self, "_max_failures_by_type", {}).get(
+                        ftype, self._max_consecutive_failures
+                    )
+                    if by_type[ftype] >= _type_max:
+                        logger.warning(
+                            "cognitive stop: %d consecutive %s failures",
+                            by_type[ftype], ftype,
+                        )
+                        return ReflectionResult(
+                            should_stop=True,
+                            advice=f"{by_type[ftype]} consecutive {ftype} failures",
+                        )
                     if self._consecutive_failures >= self._max_consecutive_failures:
                         logger.warning(
-                            "cognitive stop: %d consecutive failures",
+                            "cognitive stop: %d consecutive failures (total cap)",
                             self._consecutive_failures,
                         )
                         return ReflectionResult(
@@ -2446,6 +2485,16 @@ class AutoloopEngine:
         action_hist_str = ", ".join(state.action_history[-10:]) or "none"
         spec_hint = (getattr(self, "_speculator_hint", "") or "")[:300]
         last_learn = (cog.get("last_learn_summary") or "none")[:200]
+        # F-borrow: 分类失败计数 — 让 LLM 看到是 tool_error 多还是 hypothesis_error 多,
+        # 不同失败类型语义不同 (技术故障 vs 方向错). 空时不显示, 避免噪声.
+        _by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
+        _type_max = getattr(self, "_max_failures_by_type", {}) or {}
+        _type_parts = [
+            f"{k}={v}/{_type_max.get(k, '?')}"
+            for k, v in sorted(_by_type.items())
+            if v > 0
+        ]
+        _type_str = ", ".join(_type_parts) if _type_parts else "none"
 
         return f"""You are the cognitive controller of a research agent. Choose the next action.
 
@@ -2459,6 +2508,7 @@ State:
 - Execution: {'DONE' if exec_done else 'NONE'}
 - Validation: {val_status}
 - Consecutive failures: {getattr(self, "_consecutive_failures", 0)}/{_max_fail}
+- Failures by type: {_type_str}
 - Pivot count: {getattr(self, "_pivot_count", 0)}/{_max_pivot}
 - Refine count: {getattr(self, "_refine_count", 0)}
 - Action history (last 10): {action_hist_str}
@@ -2779,6 +2829,8 @@ Respond JSON only:
         self._iteration = 0
         self._should_stop = False
         self._consecutive_failures = 0
+        # F-borrow: 分类计数器随 run 重置 (跨 run 失败模式记忆没意义, 误导自适应).
+        self._consecutive_failures_by_type = {}
 
         if goal is not None and goal.status == "pending":
             goal.status = "active"
@@ -9212,6 +9264,12 @@ def _selfcheck() -> None:
     eng._pivot_count = 2
     eng._refine_count = 3
     eng._speculator_hint = "try alternative k-points"
+    # F-borrow: 分类失败计数 — 2 tool_error + 3 hypothesis_error
+    eng._consecutive_failures_by_type = {"tool_error": 2, "hypothesis_error": 3}
+    eng._max_failures_by_type = {
+        "tool_error": 5, "prompt_injection_suspect": 3,
+        "param_error": 5, "data_noise": 5, "hypothesis_error": 10,
+    }
     state_d1 = LoopState(
         iteration=7, max_iterations=15, last_action="validate",
     )
@@ -9264,7 +9322,17 @@ def _selfcheck() -> None:
     assert "report runs automatically" in prompt_d1, (
         f"D3 missing report hint: {prompt_d1[:400]}"
     )
-    print("2b. D1 decider prompt 含新增字段 (failures/pivot/refine/history/learn/validation/speculator) OK")
+    # F-borrow: 分类失败计数显示
+    assert "Failures by type:" in prompt_d1, (
+        f"F-borrow missing failures_by_type: {prompt_d1[:400]}"
+    )
+    assert "tool_error=2/5" in prompt_d1, (
+        f"F-borrow missing tool_error count: {prompt_d1[:400]}"
+    )
+    assert "hypothesis_error=3/10" in prompt_d1, (
+        f"F-borrow missing hypothesis_error count: {prompt_d1[:400]}"
+    )
+    print("2b. D1 decider prompt 含新增字段 (failures/pivot/refine/history/learn/validation/speculator/by_type) OK")
 
     # 3. _decide_next_action_llm — LLM 调用失败时返回 None (fallback 信号)
     async def _fail_chat(*a, **kw):
@@ -9746,7 +9814,70 @@ def _selfcheck() -> None:
     assert _c2_out == "", f"C2: empty target_chains + no memory → empty, got {_c2_out!r}"
     print("20. C2 _build_metacog_block 空输入 → 空串 (不污染 prompt) OK")
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20)")
+    # F-borrow (forge 双预算思路): 按 failure_type 分类计数 + 按类阈值 stop
+    # _classify_failure 已存在但之前没在 reflect 路径用 — 验证它返回 5 类,
+    # 且 _max_failures_by_type 阈值正确 (tool_error 低, hypothesis_error 高).
+    eng_f = AutoloopEngine.__new__(AutoloopEngine)
+    eng_f._consecutive_failures_by_type = {}
+    eng_f._max_failures_by_type = {
+        "tool_error": 5, "prompt_injection_suspect": 3,
+        "param_error": 5, "data_noise": 5, "hypothesis_error": 10,
+    }
+    # 1) tool_error: timeout 标记
+    _v_tool = {"errors": "subprocess timeout after 60s", "result": ""}
+    assert AutoloopEngine._classify_failure(_v_tool) == "tool_error", (
+        "F-borrow: timeout → tool_error"
+    )
+    # 2) param_error: 参数错
+    _v_param = {"errors": "invalid parameter encut=-1", "result": ""}
+    assert AutoloopEngine._classify_failure(_v_param) == "param_error", (
+        "F-borrow: invalid parameter → param_error"
+    )
+    # 3) data_noise: 噪声大
+    _v_noise = {"errors": "", "result": "signal is noisy, no clear trend"}
+    assert AutoloopEngine._classify_failure(_v_noise) == "data_noise", (
+        "F-borrow: noisy result → data_noise"
+    )
+    # 4) hypothesis_error: 默认 (结果与预期相反)
+    _v_hyp = {"errors": "band gap off by 0.5 eV", "result": "value mismatch"}
+    assert AutoloopEngine._classify_failure(_v_hyp) == "hypothesis_error", (
+        "F-borrow: value mismatch → hypothesis_error"
+    )
+    # 5) 阈值: tool_error=5 < hypothesis_error=10 (技术故障短期可恢复 vs 方向错持续才是死路)
+    assert eng_f._max_failures_by_type["tool_error"] < eng_f._max_failures_by_type["hypothesis_error"], (
+        "F-borrow: tool_error threshold should be lower than hypothesis_error"
+    )
+    # 6) 模拟 reflect 累加: 3 次 tool_error 不触发 stop (阈值 5), 5 次触发
+    for _i in range(3):
+        eng_f._consecutive_failures_by_type["tool_error"] = (
+            eng_f._consecutive_failures_by_type.get("tool_error", 0) + 1
+        )
+    assert eng_f._consecutive_failures_by_type["tool_error"] == 3, "F-borrow: 3 累加"
+    assert eng_f._consecutive_failures_by_type["tool_error"] < eng_f._max_failures_by_type["tool_error"], (
+        "F-borrow: 3 < 5 不应触发 stop"
+    )
+    for _i in range(2):
+        eng_f._consecutive_failures_by_type["tool_error"] += 1
+    assert eng_f._consecutive_failures_by_type["tool_error"] == 5, "F-borrow: 5 累加"
+    assert eng_f._consecutive_failures_by_type["tool_error"] >= eng_f._max_failures_by_type["tool_error"], (
+        "F-borrow: 5 >= 5 应触发 stop"
+    )
+    # 7) decider prompt 空分类时不显示噪声
+    eng_f._consecutive_failures_by_type = {}
+    eng_f._consecutive_failures = 0
+    eng_f._max_consecutive_failures = 20
+    eng_f._pivot_count = 0
+    eng_f._refine_count = 0
+    eng_f._speculator_hint = ""
+    _state_f = LoopState(iteration=1, max_iterations=10)
+    _cog_f = {"hypothesis": "", "plan": None, "execution_result": None, "validation": {}}
+    _prompt_f = eng_f._build_decider_prompt(_state_f, _cog_f, {})
+    assert "Failures by type: none" in _prompt_f, (
+        f"F-borrow: empty by_type should show 'none', got: {_prompt_f[:400]}"
+    )
+    print("21. F-borrow 分类计数 + 5 类 _classify_failure + 按类阈值 + prompt 显示 OK")
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21)")
 
 
 if __name__ == "__main__":
