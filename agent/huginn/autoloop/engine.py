@@ -49,6 +49,7 @@ from huginn.exploration.strategies import ParetoPruningStrategy
 from huginn.interaction.progress import ProgressTracker, get_progress_tracker
 from huginn.kg.builder import ProjectKnowledgeGraph
 from huginn.llm import get_model
+from huginn.memory.longterm import load_stable_principles
 from huginn.memory.manager import MemoryManager
 from huginn.metacog.signal_hub import SignalHub
 from huginn.tools.report_tool import ReportTool
@@ -5912,6 +5913,18 @@ Respond JSON only:
                     "EvolutionManager.record_outcome failed", exc_info=True
                 )
 
+        # H0: 触发 episodic → procedural 蒸馏 (修死代码, 让 stable_principles
+        # 真有产出). 触发条件由 distill_episodic_to_procedural 内部判断
+        # (连续 3 次同 skill 成功), 不降低阈值. ponytail: 失败不阻塞主循环.
+        try:
+            self.memory.distill_episodic_to_procedural(
+                self._evals_history, self.workspace
+            )
+        except Exception:
+            logger.debug(
+                "distill_episodic_to_procedural failed", exc_info=True
+            )
+
     async def _generate_next_loop_directive(
         self,
         hypothesis: str,
@@ -7151,6 +7164,19 @@ Please modify the code to address this task."""
         pm_block = self._build_pm_text()
         if pm_block:
             pm_block = f"\n{pm_block}\n"
+        # H0: stable_principles 注入 (修 P3 断链 — 之前只进 chat agent system prompt,
+        # autoloop 完全跳过 PM 层). 取 top-5 避免塞爆 prompt.
+        try:
+            _principles = load_stable_principles()[:5]
+        except Exception:
+            _principles = []
+        principles_block = (
+            "\n".join(f"- {p}" for p in _principles) if _principles else ""
+        )
+        if principles_block:
+            principles_block = (
+                f"\n### Stable Principles (procedural memory)\n{principles_block}\n"
+            )
         # 视觉基元: 上一轮 tool 输出的数值指针 (峰值/趋势/异常),
         # 给 LLM 具体坐标锚定推理 — Thinking with Visual Primitives 的
         # "point while it reasons" 原则, Mirage 效应的文本路径
@@ -7288,6 +7314,7 @@ Hypothesis:""",
                 ("kg", kg_block),
                 ("visual", visual_block),
                 ("kb", kb_block),
+                ("principles", principles_block),
                 ("mem", mem_block),
                 ("pm", pm_block),
                 ("cluster", cluster_block),
@@ -7359,6 +7386,18 @@ Math depth guidance (treat physics/chemistry as mathematics):
         pm_block = self._build_pm_text()
         if pm_block:
             pm_block = f"\n{pm_block}\n"
+        # H0: stable_principles 注入 (同 hypothesize, 修 P3 断链)
+        try:
+            _principles = load_stable_principles()[:5]
+        except Exception:
+            _principles = []
+        principles_block = (
+            "\n".join(f"- {p}" for p in _principles) if _principles else ""
+        )
+        if principles_block:
+            principles_block = (
+                f"\n### Stable Principles (procedural memory)\n{principles_block}\n"
+            )
         # 视觉基元注入 (同 hypothesize)
         visual_block = getattr(self, "_last_visual_context", "")
         if visual_block:
@@ -7516,6 +7555,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 ("kg", kg_block),
                 ("visual", visual_block),
                 ("kb", kb_block),
+                ("principles", principles_block),
                 ("mem", mem_block),
                 ("pm", pm_block),
                 ("skill", skill_hints + patch_hints),
@@ -8641,7 +8681,51 @@ def _selfcheck() -> None:
     assert result.action == "plan", f"action should be plan, got {result.action}"
     print("5. _decide_next_action_llm legal action → ActionDecision OK")
 
-    print("AutoloopEngine selfcheck OK (5/5)")
+    # 6. H0: stable_principles 注入 _build_hypothesis_prompt / _build_plan_prompt
+    # mock 掉检索依赖, 只验证 principles block 真的拼进 prompt.
+    from huginn.memory.longterm import load_stable_principles
+    _principles = load_stable_principles()
+    if _principles:
+        eng2 = AutoloopEngine.__new__(AutoloopEngine)
+        eng2._speculator_hint = ""
+        eng2._last_visual_context = ""
+        eng2._last_execution_result = None
+        eng2._last_failure_mode = ""
+        eng2._IMAGINATION_PROMPT_BLOCK = ""
+        eng2._MATH_DEPTH_PROMPT_BLOCK = ""
+        eng2._should_imaginate = lambda: False
+        eng2._build_kb_text = lambda query: ""
+        eng2._build_kg_text = lambda query: ""
+        eng2._build_memory_text = lambda query: ""
+        eng2._build_pm_text = lambda: ""
+        eng2._build_subgoal_block = lambda: ""
+        eng2._plan_context_hint = lambda: ""
+        eng2._get_evolution = lambda: type("_E", (), {
+            "get_relevant_skills": lambda self, h: [],
+            "get_prompt_patches": lambda self: [],
+        })()
+        # _trim_to_budget: 直接拼成字符串, 不做预算裁剪
+        def _fake_trim(blocks, phase=None):
+            return "\n".join(body for _, body in blocks if body)
+        eng2._trim_to_budget = _fake_trim
+        # _build_hypothesis_prompt
+        hyp_prompt = eng2._build_hypothesis_prompt({"test": 1})
+        assert "Stable Principles" in hyp_prompt, (
+            "H0 broken: principles block missing in hypothesis prompt"
+        )
+        assert _principles[0][:50] in hyp_prompt, (
+            "H0 broken: principle text not in hypothesis prompt"
+        )
+        # _build_plan_prompt
+        plan_prompt = eng2._build_plan_prompt("test hyp", {"test": 1})
+        assert "Stable Principles" in plan_prompt, (
+            "H0 broken: principles block missing in plan prompt"
+        )
+        print(f"6. H0 stable_principles 注入 (n={len(_principles)}) OK")
+    else:
+        print("6. H0 skipped (no stable_principles on disk)")
+
+    print("AutoloopEngine selfcheck OK (6/6)")
 
 
 if __name__ == "__main__":
