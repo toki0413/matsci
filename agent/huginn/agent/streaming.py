@@ -113,8 +113,27 @@ class StreamingMixin:
         try:
             if target_phase.value in ("hypothesis", "planning"):
                 self._conversation_tree.fork_from_active()
+            # P1-2 接线: 进入 reporting 时把所有兄弟分支的 findings/evidence
+            # CRDT 合并回当前 active leaf. 不切 active, 只灌 metadata.
+            # 之前只有 fork 没 merge, 跨分支信息丢在树里没人读.
+            if target_phase.value == "reporting":
+                branches = self._conversation_tree.get_branches()
+                active_leaf = self._conversation_tree.active_leaf_id
+                for branch in branches:
+                    if not branch:
+                        continue
+                    leaf = branch[-1]
+                    if leaf == active_leaf:
+                        continue
+                    try:
+                        self._conversation_tree.merge_branch_into_active(leaf)
+                    except Exception:
+                        logger.debug(
+                            "ConversationTree merge skipped for branch %s",
+                            leaf, exc_info=True,
+                        )
         except Exception:
-            logger.debug("ConversationTree fork skipped", exc_info=True)
+            logger.debug("ConversationTree fork/merge skipped", exc_info=True)
         logger.info("Research phase -> %s", target_phase.value)
         return True
 
