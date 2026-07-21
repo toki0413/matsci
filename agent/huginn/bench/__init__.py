@@ -14,19 +14,22 @@ from .task import BenchmarkTask, TaskResult
 from .llm_judge import judge_task, judge_with_regex_fallback, JudgeRubric
 from .baselines import BASELINES, get_baselines_for_suite, format_baseline_table
 from .atomworld_bench import AtomMotor2KSubtask
+from .misi_bench import MISISubtask
 
 __all__ = [
     "BenchmarkRunner", "BenchmarkReport", "BenchmarkTask", "TaskResult",
     "get_suite_tasks", "judge_task", "judge_with_regex_fallback", "JudgeRubric",
     "BASELINES", "get_baselines_for_suite", "format_baseline_table",
-    "AtomMotor2KSubtask", "SUBTASKS",
+    "AtomMotor2KSubtask", "MISISubtask", "SUBTASKS",
 ]
 
-# CIF-in/CIF-out 类子任务注册点. 这类子任务不 fit BenchmarkTask (text-in/text-out)
-# 模式, 走独立 Subtask 类 + run(agent_inference_fn) -> dict. 跟 "research" suite 一样,
-# get_suite_tasks() 对应 entry 返 []. 新增 3D 空间推理类 subtask 时往这里加.
+# CIF-in/CIF-out / image-in/text-out 类子任务注册点. 这类子任务不 fit BenchmarkTask
+# (text-in/text-out) 模式, 走独立 Subtask 类 + run(agent_inference_fn) -> dict. 跟
+# "research" suite 一样, get_suite_tasks() 对应 entry 返 []. 新增 3D 空间推理类
+# subtask 时往这里加.
 SUBTASKS: dict[str, type] = {
     AtomMotor2KSubtask.NAME: AtomMotor2KSubtask,
+    MISISubtask.NAME: MISISubtask,
 }
 
 
@@ -49,6 +52,7 @@ def get_suite_tasks(suite: str, max_tasks: int | None = None) -> list[BenchmarkT
       - naturebench: NatureBench-mini (10, Nature 系列论文复现)
       - research:   走独立脚本, 返回空
       - atommotor:  AtomWorld AtomMotor-2K (CIF-in/CIF-out, 走 SUBTASKS, 返回空)
+      - misi:       MiSI-Bench 微观空间智能 (image-in/text-out, 走 SUBTASKS, 返回空)
 
     max_tasks: 限制题量 (从全量随机抽样), None 表示不限制.
     """
@@ -92,6 +96,9 @@ def get_suite_tasks(suite: str, max_tasks: int | None = None) -> list[BenchmarkT
         return _build_physics_tasks()
     if suite == "atommotor":
         # CIF-in/CIF-out, 不 fit BenchmarkTask. 走 SUBTASKS["atomworld_atommotor_2k"].
+        return []
+    if suite == "misi":
+        # image-in/text-out, 不 fit BenchmarkTask. 走 SUBTASKS["misi_microscopic_spatial"].
         return []
     return []
 
