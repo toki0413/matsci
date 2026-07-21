@@ -17,12 +17,6 @@ class TestSessionContext:
         assert len(ctx.messages) <= 5
         assert ctx.messages[-1].content == "msg9"
 
-    def test_working_memory(self):
-        ctx = SessionContext()
-        ctx.set_working_memory("lattice_param", 3.52)
-        assert ctx.get_working_memory("lattice_param") == 3.52
-        assert ctx.get_working_memory("missing", "default") == "default"
-
     def test_tool_calls(self):
         ctx = SessionContext()
         ctx.add_tool_call(

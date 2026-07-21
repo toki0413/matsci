@@ -38,7 +38,6 @@ class SessionContext:
     messages: list[AgentMessage] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     reasoning_trace: list[str] = field(default_factory=list)
-    working_memory: dict[str, Any] = field(default_factory=dict)
     user_preferences: dict[str, Any] = field(default_factory=dict)
 
     # Context compaction settings
@@ -88,12 +87,6 @@ class SessionContext:
         if len(self.reasoning_trace) > self.max_reasoning_lines:
             # Summarize oldest entries
             self.reasoning_trace = self.reasoning_trace[-self.max_reasoning_lines :]
-
-    def set_working_memory(self, key: str, value: Any) -> None:
-        self.working_memory[key] = value
-
-    def get_working_memory(self, key: str, default: Any = None) -> Any:
-        return self.working_memory.get(key, default)
 
     def get_recent_messages(self, n: int = 10) -> list[AgentMessage]:
         return self.messages[-n:]
@@ -310,7 +303,6 @@ class SessionContext:
             "created_at": self.created_at.isoformat(),
             "message_count": len(self.messages),
             "tool_call_count": len(self.tool_calls),
-            "working_memory_keys": list(self.working_memory.keys()),
             "user_preferences": self.user_preferences,
         }
 
@@ -341,7 +333,6 @@ class SessionContext:
                 }
                 for t in self.tool_calls
             ],
-            "working_memory": self.working_memory,
         }
 
 
