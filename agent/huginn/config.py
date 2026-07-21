@@ -1281,14 +1281,25 @@ def get_config(
             env_path = os.environ.get("HUGINN_CONFIG_FILE")
             if env_path:
                 path = env_path
-            elif _config_cache is None or force_reload:
-                _config_cache = HuginnConfig.from_env()
-                _config_cache_path = None
-                _config_cache_mtime = 0.0
-                _apply_feature_flags(_config_cache)
-                return _config_cache
             else:
-                return _config_cache
+                # ponytail: 跟 _load_runtime_config 一致, 没显式 path 时
+                # 尝试工作目录 huginn.toml. 不做这步会让 feature_flags 里的
+                # harness_* toggle 在 CLI/server 入口里读不到 (那些入口用
+                # HuginnConfig.load 直接拿 cfg, 没填 _config_cache).
+                # 升级路径: 统一所有入口都走 get_config(), 不要旁路 load.
+                cwd_toml = pathlib.Path(
+                    os.environ.get("HUGINN_WORKSPACE", ".")
+                ) / "huginn.toml"
+                if cwd_toml.exists():
+                    path = cwd_toml
+                elif _config_cache is None or force_reload:
+                    _config_cache = HuginnConfig.from_env()
+                    _config_cache_path = None
+                    _config_cache_mtime = 0.0
+                    _apply_feature_flags(_config_cache)
+                    return _config_cache
+                else:
+                    return _config_cache
 
         target = pathlib.Path(path)
 

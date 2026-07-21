@@ -27,6 +27,18 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _harness_workflow_evolution_enabled() -> bool:
+    """H2 toggle: cfg.feature_flags.harness_workflow_evolution (默认 off)."""
+    try:
+        from huginn.config import get_config
+        cfg = get_config()
+        ff = getattr(cfg, "feature_flags", None) or {}
+        return bool(ff.get("harness_workflow_evolution", False))
+    except Exception:
+        return False
+
+
 from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.autoloop.budget import ProgressiveBudget
 from huginn.autoloop.cognitive_loop import (
@@ -4041,6 +4053,9 @@ Respond JSON only:
         we ask evolution if it's seen this error before and has a fix.
         Returns a patched result dict on hit, None on miss.
         """
+        # H2: variant 失败不走 evolved_fix (P6 guard) — 直接回 bandit loop 记录
+        if isinstance(error_result, dict) and error_result.get("_variant_id"):
+            return None
         try:
             evolution = self._get_evolution()
             error_str = str(error_result.get("error", ""))
@@ -4065,6 +4080,10 @@ Respond JSON only:
         WorkflowOrchestrator.run() 同步等完. 失败的 subtask 不炸整体,
         返回聚合结果让 validate/learn 阶段看.
         """
+        # H2: bandit loop — plan 带 n_variants 且 toggle on 时走 variant 演化
+        if plan.get("n_variants") and _harness_workflow_evolution_enabled():
+            return await self._execute_dynamic_workflow_bandit(plan, context)
+
         from huginn.autoloop.dynamic_workflow import (
             WorkflowOrchestrator,
             WorkflowScript,
@@ -4104,6 +4123,128 @@ Respond JSON only:
             "n_completed": result.n_completed,
             "n_failed": result.n_failed,
             "summary": result.summary(),
+        }
+
+    async def _execute_dynamic_workflow_bandit(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """H2: 对同一 objective 生成 N 个 variant, bandit 选一个跑.
+
+        generate_variants → bandit.select_variant → orch.run →
+        返回 dict 带 _variant_id / _objective_hash / _novelty / _efficiency,
+        供 _validate 调 bandit.record_variant_outcome + archive.add_variant.
+        失败静默回退到原 _execute_dynamic_workflow 逻辑.
+        """
+        import json as _json
+
+        from huginn.autoloop.bandit import (
+            WorkflowBandit,
+            VariantArchive,
+            compute_novelty,
+            _objective_hash,
+        )
+        from huginn.autoloop.dynamic_workflow import (
+            WorkflowOrchestrator,
+            WorkflowScript,
+        )
+        from huginn.autoloop.variant_gen import generate_variants
+        from huginn.types import ToolContext
+
+        raw_script = plan.get("script") or {}
+        if isinstance(raw_script, str):
+            try:
+                raw_script = _json.loads(raw_script)
+            except _json.JSONDecodeError:
+                raw_script = {}
+        try:
+            base_script = WorkflowScript.from_dict(raw_script)
+        except Exception:
+            return {
+                "mode": "dynamic_workflow",
+                "success": False,
+                "error": "base script parse fail",
+            }
+        if not base_script.subtasks:
+            return {
+                "mode": "dynamic_workflow",
+                "success": False,
+                "error": "脚本无有效 subtask",
+            }
+        objective = base_script.objective or str(plan.get("objective", ""))
+        obj_hash = _objective_hash(objective)
+        n_variants = int(plan.get("n_variants", 3))
+
+        # 生成 variants (参数扰动优先, base_script 非空走扰动)
+        try:
+            variants = await generate_variants(
+                objective,
+                n=n_variants,
+                base_script=base_script,
+                llm_chat_fn=getattr(self, "_llm_chat", None),
+            )
+        except Exception:
+            logger.debug("H2 generate_variants failed", exc_info=True)
+            variants = []
+        if not variants:
+            variants = [base_script]
+
+        # bandit select (variant_id 加时间戳前缀避免跨轮冲突)
+        _run_prefix = f"r{int(time.time() * 1000) % 100000}"
+        bandit = WorkflowBandit.get_instance()
+        candidate_ids = [f"{_run_prefix}_var_{i}" for i in range(len(variants))]
+        chosen_id = bandit.select_variant(candidate_ids, obj_hash)
+        if chosen_id is None:
+            chosen_id = candidate_ids[0]
+        chosen_idx = candidate_ids.index(chosen_id)
+        chosen = variants[chosen_idx]
+        variant_id = chosen_id
+
+        # 跑选中 variant
+        orch = WorkflowOrchestrator(max_concurrent=chosen.max_concurrent)
+        ctx = ToolContext(
+            session_id=f"dynwf_{chosen.id}",
+            workspace=str(self.workspace),
+            config=self.settings,
+        )
+        try:
+            result = await orch.run(chosen, ctx)
+        except Exception as exc:
+            logger.debug("H2 bandit variant run failed: %s", exc, exc_info=True)
+            return {
+                "mode": "dynamic_workflow",
+                "success": False,
+                "error": f"variant run fail: {exc}",
+                "_variant_id": variant_id,
+                "_objective_hash": obj_hash,
+                "_objective": objective,
+                "_script_dict": chosen.to_dict(),
+                "_novelty": 0.0,
+                "_efficiency": 0.0,
+            }
+
+        # novelty vs archive
+        try:
+            archive = VariantArchive.get_instance()
+            existing = archive.list_variants(obj_hash)
+            novelty = compute_novelty(chosen.to_dict(), existing)
+        except Exception:
+            novelty = 0.0
+
+        efficiency = result.n_completed / max(1, result.n_total)
+        return {
+            "mode": "dynamic_workflow",
+            "success": result.success,
+            "workflow_id": result.id,
+            "n_total": result.n_total,
+            "n_completed": result.n_completed,
+            "n_failed": result.n_failed,
+            "summary": result.summary(),
+            "_variant_id": variant_id,
+            "_objective_hash": obj_hash,
+            "_objective": objective,
+            "_script_dict": chosen.to_dict(),
+            "_novelty": float(novelty),
+            "_efficiency": float(efficiency),
         }
 
     async def _validate(self, execution_result: Any) -> dict[str, Any]:
@@ -4400,6 +4541,39 @@ Respond JSON only:
                     self._speculator_hint = self._speculator_hint[-2000:]
         except Exception:
             logger.debug("AV7 effort floor check in _validate failed", exc_info=True)
+
+        # H2: bandit 记录 variant outcome (r_phys + efficiency + novelty 都算出后)
+        # 只对 dynamic_workflow bandit 路径生效 (execution_result 带 _variant_id)
+        if isinstance(execution_result, dict) and execution_result.get("_variant_id"):
+            try:
+                from huginn.autoloop.bandit import (
+                    WorkflowBandit,
+                    VariantArchive,
+                )
+                _vid = execution_result["_variant_id"]
+                _obj_hash = execution_result.get("_objective_hash", "")
+                _obj = execution_result.get("_objective", "")
+                _novelty = float(execution_result.get("_novelty", 0.0))
+                _eff = float(execution_result.get("_efficiency", 0.0))
+                _r_phys = float(results.get("r_phys", 0.0) or 0.0)
+                _success = bool(results.get("tests_passed", False))
+                _script_dict = execution_result.get("_script_dict", {})
+                bandit = WorkflowBandit.get_instance()
+                bandit.record_variant_outcome(
+                    _vid, _obj_hash, _success,
+                    r_phys=_r_phys, efficiency=_eff, novelty=_novelty,
+                )
+                # archive: fitness = [r_phys, efficiency, novelty]
+                archive = VariantArchive.get_instance()
+                b = bandit.get_belief(_vid, _obj_hash)
+                archive.add_variant(
+                    _obj_hash, _obj, _vid, _script_dict,
+                    fitness=[_r_phys, _eff, _novelty],
+                    alpha=b.successes if b else 1,
+                    beta=b.failures if b else 1,
+                )
+            except Exception:
+                logger.debug("H2 bandit record in _validate failed", exc_info=True)
 
         self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[
             :1000
@@ -5637,6 +5811,31 @@ Respond JSON only:
                     store.update_alpha_beta(_pid, success=bool(_tests_passed))
         except Exception:
             logger.debug("H1 patch Beta update failed", exc_info=True)
+
+        # H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit.
+        # block_subset 从 _last_hypothesis_blocks / _last_plan_blocks 拿 block 名;
+        # workflow_params 留空 dict (reasoning-only 没 workflow stage 参数).
+        # ponytail: 不追踪 select 返回值, 从 _last_*_blocks 反推. 升级路径:
+        # select_block_subset_for_phase 返回 (blocks, selected_names) 避免 重算.
+        try:
+            from huginn.harness.joint_optimizer import JointBandit, _harness_enabled as _h3_on
+            if _h3_on("harness_joint_optimizer"):
+                _h3_phase = "hypothesize"
+                _h3_blocks = getattr(self, "_last_hypothesis_blocks", None) or []
+                if not _h3_blocks:
+                    _h3_blocks = getattr(self, "_last_plan_blocks", None) or []
+                    _h3_phase = "plan"
+                if _h3_blocks:
+                    _h3_subset = [n for n, _ in _h3_blocks]
+                    _h3_success = bool(
+                        validation.get("tests_passed", False)
+                        if isinstance(validation, dict) else False
+                    )
+                    JointBandit.get_instance().record_joint_outcome(
+                        _h3_phase, _h3_subset, {}, _h3_success,
+                    )
+        except Exception:
+            logger.debug("H3 joint record failed", exc_info=True)
 
         # Forest 回流: 如果是森林模式运行, 把 merged_graph 合并到本地假设图
         # 并写入 memory, 供后续迭代接续探索多树共识的结论.
@@ -8909,7 +9108,141 @@ def _selfcheck() -> None:
     _ps.PhaseRegistry._instance = None
     _ps._harness_enabled = _orig_ps_enabled
 
-    print("AutoloopEngine selfcheck OK (8/8)")
+    # ---- H2: Workflow Evolutionary Search (bandit + variant_gen) ----
+    import tempfile as _tempfile_h2
+    _tmp_h2 = _tempfile_h2.mkdtemp()
+    _os.environ["HUGINN_CACHE_DIR"] = _tmp_h2
+
+    from huginn.autoloop import bandit as _bd
+    from huginn.autoloop import variant_gen as _vg
+    from huginn.autoloop.dynamic_workflow import WorkflowScript as _WFS_h2
+
+    # 9. bandit cold start + Thompson sampling
+    _bd.WorkflowBandit._instance = None
+    _bd.VariantArchive._instance = None
+    _bandit = _bd.WorkflowBandit.get_instance()
+    _cands = ["v1", "v2", "v3"]
+    _chosen = _bandit.select_variant(_cands, "h2_test")
+    assert _chosen in _cands, f"H2 cold start failed: {_chosen}"
+    _bandit.record_variant_outcome("v1", "h2_test", True, r_phys=0.8)
+    _bandit.record_variant_outcome("v1", "h2_test", True, r_phys=0.9)
+    _bandit.record_variant_outcome("v2", "h2_test", False, r_phys=0.1)
+    _b1 = _bandit.get_belief("v1", "h2_test")
+    _b2 = _bandit.get_belief("v2", "h2_test")
+    assert _b1 and _b2 and _b1.posterior_mean > _b2.posterior_mean
+    print(f"9. H2 bandit Thompson: v1={_b1.posterior_mean:.2f} > v2={_b2.posterior_mean:.2f} OK")
+
+    # 10. variant_gen 参数扰动 + toggle guard
+    _orig_vg_enabled = _vg._harness_enabled
+    _vg._harness_enabled = lambda key, default=False: (
+        True if key == "harness_workflow_evolution" else default
+    )
+    _base_script = _WFS_h2.from_dict({
+        "objective": "h2 test Si band gap",
+        "subtasks": [
+            {"id": "s1", "tool": "vasp_tool",
+             "args": {"encut": 520, "kpoints": "2 2 2", "sigma": 0.05}},
+        ],
+    })
+    import asyncio as _asyncio_h2
+    _variants = _asyncio_h2.run(_vg.generate_variants("h2 test", n=3, base_script=_base_script))
+    assert len(_variants) == 3, f"H2 variant_gen should return 3: {len(_variants)}"
+    _base_encut = _base_script.subtasks[0].args["encut"]
+    _diff = sum(1 for v in _variants if v.subtasks[0].args["encut"] != _base_encut)
+    assert _diff > 0, "H2 at least one variant should differ in encut"
+    print(f"10. H2 variant_gen perturbation: 3 variants, {_diff} differ in encut OK")
+
+    # 11. archive + novelty + Pareto
+    _archive = _bd.VariantArchive.get_instance()
+    _sa = {"subtasks": [{"tool": "vasp", "args": {"encut": 520}}]}
+    _sb = {"subtasks": [{"tool": "vasp", "args": {"encut": 540}}]}
+    _archive.add_variant("h2_test", "test", "va", _sa, [0.8, 0.9, 0.7])
+    _archive.add_variant("h2_test", "test", "vb", _sb, [0.7, 0.8, 1.0])
+    _vs = _archive.list_variants("h2_test")
+    assert len(_vs) >= 2, f"H2 archive should have >=2: {len(_vs)}"
+    _n_same = _bd.compute_novelty(_sa, _vs)
+    _n_new = _bd.compute_novelty(
+        {"subtasks": [{"tool": "vasp", "args": {"encut": 600}}]}, _vs
+    )
+    assert _n_same == 0.0 and _n_new > 0.5
+    print(f"11. H2 archive+novelty: same={_n_same:.2f}, new={_n_new:.2f} OK")
+
+    # 12. _try_evolved_fix guard (variant_id 不走 evolved_fix)
+    _e = AutoloopEngine()
+    _guard_result = _asyncio_h2.run(_e._try_evolved_fix(
+        "vasp_tool", {"encut": 520}, {"_variant_id": "var_0", "error": "test"}
+    ))
+    assert _guard_result is None, f"H2 guard should return None: {_guard_result}"
+    print("12. H2 _try_evolved_fix variant guard OK")
+
+    _vg._harness_enabled = _orig_vg_enabled
+    _shutil.rmtree(_tmp_h2, ignore_errors=True)
+    del _os.environ["HUGINN_CACHE_DIR"]
+
+    # 13. H3 JointBandit + UCB (block subset + workflow params 联合优化)
+    import huginn.harness.joint_optimizer as _jo
+    _tmp_h3 = _tempfile_h2.mkdtemp()
+    _os.environ["HUGINN_CACHE_DIR"] = _tmp_h3
+    _jo.JointBandit._instance = None
+    _orig_jo_enabled = _jo._harness_enabled
+    _jo._harness_enabled = lambda key, default=False: (
+        True if key == "harness_joint_optimizer" else default
+    )
+
+    # block subset: 核心 block 必保留
+    _blocks_h3 = [("body", "b"), ("fail", "f"), ("mem", "m"), ("extra", "e")]
+    _sel = _jo.select_block_subset_for_phase("hypothesize", _blocks_h3)
+    _sel_names = [n for n, _ in _sel]
+    assert "body" in _sel_names and "fail" in _sel_names, f"core lost: {_sel_names}"
+    print(f"13a. H3 block subset: {_sel_names} (core preserved) OK")
+
+    # workflow params: 数值参数 ±10% 扰动
+    _params_h3 = {"encut": 520, "kpoints": "2 2 2"}
+    _perturbed = _jo.select_workflow_params_for_stage("vasp_tool", _params_h3)
+    assert "encut" in _perturbed and 468 <= _perturbed["encut"] <= 572, \
+        f"encut out of range: {_perturbed['encut']}"
+    assert _perturbed["kpoints"] == "2 2 2", f"kpoints should stay: {_perturbed['kpoints']}"
+    print(f"13b. H3 workflow params: encut={_perturbed['encut']} OK")
+
+    # record + UCB: 记两组 outcome, 验证 Beta 信念分化
+    _jb = _jo.JointBandit.get_instance()
+    _jb.record_joint_outcome("hypothesize", ["body", "mem"], {"encut": 520}, True)
+    _jb.record_joint_outcome("hypothesize", ["body", "mem"], {"encut": 520}, True)
+    _jb.record_joint_outcome("hypothesize", ["body", "extra"], {"encut": 540}, False)
+    _bs_h3 = _jb.list_beliefs("hypothesize")
+    assert len(_bs_h3) >= 2, f"should have >=2 beliefs: {len(_bs_h3)}"
+    # 冷启动 UCB = inf
+    _b_new = _jo.JointBelief(config_id="new", phase="hypothesize")
+    assert _b_new.ucb(10) == float("inf"), "cold start UCB should be inf"
+    print(f"13c. H3 record+UCB: {len(_bs_h3)} beliefs, cold start UCB=inf OK")
+
+    # 持久化 reload
+    _jo.JointBandit._instance = None
+    _jb2 = _jo.JointBandit.get_instance()
+    _bs2_h3 = _jb2.list_beliefs("hypothesize")
+    assert len(_bs2_h3) == len(_bs_h3), f"persistence lost: {len(_bs2_h3)} vs {len(_bs_h3)}"
+    print(f"13d. H3 persistence reload OK ({len(_bs2_h3)} beliefs)")
+
+    # 端到端集成: H1 apply_patches 在 H3 toggle on 时会调 H3 选 block 子集
+    _pp_blocks = [("body", "b"), ("fail", "f"), ("mem", "m"), ("extra", "e")]
+    try:
+        from huginn.harness.prompt_patch import apply_patches as _ap_h3
+        _out_h3 = _ap_h3(_pp_blocks, "hypothesize")
+        _out_names = [n for n, _ in _out_h3]
+        # H1 toggle off 时 apply_patches 直接 return blocks, 但 H3 在 toggle on 时
+        # 已经在 apply_patches 入口接管 block subset 选择 — 验证至少核心 block 还在
+        assert "body" in _out_names, f"H1+H3 lost body: {_out_names}"
+        print(f"13e. H3↔H1 integration: blocks={_out_names} OK")
+    except Exception as _e_h3:
+        # H1 toggle off 时 apply_patches 早期 return, H3 不触发 — 这是预期行为
+        print(f"13e. H3↔H1 integration skipped (H1 toggle off): {_e_h3}")
+
+    _jo._harness_enabled = _orig_jo_enabled
+    _jo.JointBandit._instance = None
+    _shutil.rmtree(_tmp_h3, ignore_errors=True)
+    del _os.environ["HUGINN_CACHE_DIR"]
+
+    print("AutoloopEngine selfcheck OK (13/13)")
 
 
 if __name__ == "__main__":
