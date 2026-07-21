@@ -65,7 +65,7 @@ _ENGINE_FIELDS: tuple[str, ...] = (
 class EngineState:
     """AutoloopEngine 运行时状态的快照.
 
-    13 个 engine 实例字段 + run_id + saved_at = 15 字段.
+    13 个 engine 实例字段 + cognitive_maps + run_id + saved_at = 16 字段.
     dataclass + asdict 直接 JSON 序列化, 不上 pickle — 跨版本/跨进程更稳.
     """
 
@@ -82,6 +82,9 @@ class EngineState:
     _evals_history: list[Any] = field(default_factory=list)
     _budget_rejects: dict[str, int] = field(default_factory=dict)
     _budget_degraded: bool = False
+    # P1: Structure Cognitive Map 持久化 (HUGINN_USE_COGNITIVE_MAP=1 时填充).
+    # 不是 engine 实例属性, 不在 _ENGINE_FIELDS 里, save 时单独从 tool registry 拉.
+    cognitive_maps: dict[str, dict] = field(default_factory=dict)
     # meta
     run_id: str = ""
     saved_at: float = 0.0
@@ -126,6 +129,19 @@ def save_engine_state(
         return None
     try:
         state = _snapshot_engine(engine, run_id)
+        # P1: Structure Cognitive Map — flag on 时从 tool registry 拉活跃 map.
+        # 跟 hypothesis_graph 同范式: try/except, 失败不阻塞 engine_state save.
+        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") == "1":
+            try:
+                from huginn.tools import structure_cognitive_map_tool as _cm
+                state.cognitive_maps = {
+                    mid: m.to_engine_state_dict() for mid, m in _cm._MAPS.items()
+                }
+            except Exception:
+                import logging
+                logging.getLogger(__name__).debug(
+                    "cognitive_maps serialization failed (non-fatal)", exc_info=True,
+                )
         atomic_write_json(_engine_state_path(workspace, run_id), asdict(state))
         # hypothesis_graph 同步落盘 — refuted/supported 状态跨 session 必须保留.
         # graph.save 自己处理 flag off (返 None) 和异常 (返 None).
@@ -167,6 +183,8 @@ def load_engine_state(
         # 字段缺失时用 dataclass 默认值, 兼容旧格式 (新增字段不破老 snapshot)
         defaults = EngineState()
         kwargs = {f: data.get(f, getattr(defaults, f)) for f in _ENGINE_FIELDS}
+        # cognitive_maps 不在 _ENGINE_FIELDS 里 (不是 engine 实例属性), 单独读.
+        kwargs["cognitive_maps"] = data.get("cognitive_maps", {})
         kwargs["run_id"] = data.get("run_id", run_id)
         kwargs["saved_at"] = data.get("saved_at", 0.0)
         return EngineState(**kwargs)
