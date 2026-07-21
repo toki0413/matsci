@@ -229,6 +229,12 @@ def apply_patches(
     """
     if not _harness_enabled("harness_prompt_patch"):
         return blocks
+    # H3 接入: toggle on 时按 UCB 选 block 子集 (核心 block 必保留)
+    try:
+        from huginn.harness.joint_optimizer import select_block_subset_for_phase
+        blocks = select_block_subset_for_phase(phase, blocks)
+    except Exception:
+        logger.debug("H3 block subset in apply_patches failed", exc_info=True)
     try:
         store = PromptPatchStore.get_instance()
         patches = store.list_patches(phase=phase)
