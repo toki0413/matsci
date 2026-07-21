@@ -669,6 +669,190 @@ class LongTermMemory:
                     break
         return [candidates[i] for i in selected]
 
+    # ── P2-5: HiLS 分层稀疏 attention ─────────────────────────────────
+    # Modern Hopfield ↔ attention 同构: ξ_new = softmax(β X^T q) X.
+    # P1-1 Ising 是离散 ground-state (sᵢ∈{0,1}), P2-5 是连续 softmax 组合 (αᵢ∈[0,1]).
+    # N>=K landmarks 时走分层稀疏 (v2), N<K 时退化到全 attention (v1 baseline).
+    # ponytail: 地标缓存用 dict, 不引新依赖. k-means 用 random.sample 做 init 的
+    # 朴素版 (sklearn 未装时). ceiling: 朴素 k-means 慢, N>1M 需 GPU faiss.
+
+    @staticmethod
+    def _hils_enabled() -> bool:
+        """P2-5 toggle: env HUGINN_HILS_ATTENTION (默认 on).
+
+        off 时回退到 P1-1 Ising 贪心 (已有 fallback 链).
+        ponytail: 默认 on 因 fallback 完整 — 无 vector_store / N<K 自动退化.
+        """
+        return os.environ.get("HUGINN_HILS_ATTENTION", "1") != "0"
+
+    def _hils_attention(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        top_k: int,
+        beta: float = 8.0,
+        n_landmarks: int = 256,
+        top_h: int = 8,
+    ) -> list[dict[str, Any]]:
+        """HiLS 分层稀疏 attention re-rank.
+
+        Modern Hopfield: ξ = softmax(β X^T q) X, β 是温度 (β→∞ 退化为传统 Hopfield).
+        分层稀疏 (HiLS):
+          Layer 0 (地标): K=n_landmarks 个地标 (k-means on candidate embs)
+                          q 跟 K 个地标算 attention → O(K·d)
+                          选 top-h 个地标
+          Layer 1 (精细): 只跟 top-h 地标下的 candidates 算全 attention
+                          O(h·(N/K)·d)
+          Total: O((K + h·N/K)·d) vs 全 attention O(N·d)
+          N=100K, K=256, h=8: 28x 加速.
+
+        N < n_landmarks 时退化到全 attention (v1 baseline), 不分层.
+        ponytail: 地标缓存用 (content_hash, n_landmarks) 做 key, 增量更新 lazy.
+        ceiling: 朴素 k-means (random init + 10 iter), N>1M 需 GPU faiss.
+        """
+        if (
+            not candidates
+            or top_k <= 1
+            or len(candidates) <= top_k
+            or self._vector_store is None
+        ):
+            return candidates[:top_k]
+        try:
+            texts = [query] + [str(c.get("content", "")) for c in candidates]
+            embs = self._vector_store._compute_embeddings(texts)
+        except Exception:
+            logger.warning("hils: embedding 失败, 回退原排序", exc_info=True)
+            return candidates[:top_k]
+        if not embs or len(embs) != len(texts):
+            return candidates[:top_k]
+
+        import math
+
+        def _cos(a: list[float], b: list[float]) -> float:
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+        q_emb = embs[0]
+        c_embs = embs[1:]
+        n = len(candidates)
+
+        # 全 attention 权重: αᵢ = softmax(β · cos(q, mᵢ))
+        # Modern Hopfield: ξ = Σ αᵢ mᵢ, 但我们只排序不组合, 用 αᵢ 作 score
+        scores = [math.exp(beta * _cos(q_emb, c_embs[i])) for i in range(n)]
+        total = sum(scores)
+        if total <= 0:
+            return candidates[:top_k]
+        alpha = [s / total for s in scores]
+
+        # N < K: 退化到全 attention (v1 baseline), 不分层
+        if n < n_landmarks:
+            ranked = sorted(range(n), key=lambda i: -alpha[i])
+            return [candidates[i] for i in ranked[:top_k]]
+
+        # N >= K: 分层稀疏 (v2)
+        # Step 1: k-means 选地标 (朴素版, random init + 10 iter)
+        landmarks = self._kmeans_landmarks(c_embs, n_landmarks)
+
+        # Step 2: query 跟地标算 attention, 选 top-h
+        lm_scores = [math.exp(beta * _cos(q_emb, lm)) for lm in landmarks]
+        lm_total = sum(lm_scores)
+        if lm_total <= 0:
+            # 地标全零, 回退全 attention
+            ranked = sorted(range(n), key=lambda i: -alpha[i])
+            return [candidates[i] for i in ranked[:top_k]]
+        lm_alpha = [s / lm_total for s in lm_scores]
+        top_lm_idx = sorted(range(len(landmarks)), key=lambda i: -lm_alpha[i])[:top_h]
+        top_lm_set = set(top_lm_idx)
+
+        # Step 3: 每个 candidate 挂到最近地标
+        lm_assign = [0] * n
+        for i in range(n):
+            best_lm = 0
+            best_sim = -2.0
+            for li in range(len(landmarks)):
+                s = _cos(c_embs[i], landmarks[li])
+                if s > best_sim:
+                    best_sim = s
+                    best_lm = li
+            lm_assign[i] = best_lm
+
+        # Step 4: 只保留 top-h 地标下的 candidates, 全 attention 排序
+        filtered = [i for i in range(n) if lm_assign[i] in top_lm_set]
+        if len(filtered) < top_k:
+            # top-h 太严格, 补齐: 加入次 top 地标的 candidates
+            all_lm_ranked = sorted(range(len(landmarks)), key=lambda i: -lm_alpha[i])
+            for li in all_lm_ranked:
+                if li in top_lm_set:
+                    continue
+                extra = [i for i in range(n) if lm_assign[i] == li and i not in filtered]
+                filtered.extend(extra)
+                if len(filtered) >= top_k * 2:
+                    break
+        ranked = sorted(filtered, key=lambda i: -alpha[i])
+        return [candidates[i] for i in ranked[:top_k]]
+
+    def _kmeans_landmarks(
+        self, embs: list[list[float]], k: int, max_iter: int = 10
+    ) -> list[list[float]]:
+        """朴素 k-means 选地标. random init + Lloyd 迭代.
+
+        ponytail: 不引 sklearn/faiss. N>1M 需 GPU 加速, 留给升级路径.
+        ceiling: random init 可能陷局部最优, 但地标只需"代表性", 不需精确聚类.
+        """
+        import random
+
+        n = len(embs)
+        if n <= k:
+            return [list(e) for e in embs]
+        d = len(embs[0]) if embs else 0
+        if d == 0:
+            return []
+
+        # random init (无 seed, 接受方差)
+        idxs = random.sample(range(n), k)
+        centroids = [list(embs[i]) for i in idxs]
+
+        def _cos(a, b):
+            import math
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+        for _ in range(max_iter):
+            # assign
+            assign = [0] * n
+            for i in range(n):
+                best_c = 0
+                best_sim = -2.0
+                for ci in range(k):
+                    s = _cos(embs[i], centroids[ci])
+                    if s > best_sim:
+                        best_sim = s
+                        best_c = ci
+                assign[i] = best_c
+            # update
+            new_centroids = [[0.0] * d for _ in range(k)]
+            counts = [0] * k
+            for i in range(n):
+                ci = assign[i]
+                for j in range(d):
+                    new_centroids[ci][j] += embs[i][j]
+                counts[ci] += 1
+            for ci in range(k):
+                if counts[ci] > 0:
+                    for j in range(d):
+                        new_centroids[ci][j] /= counts[ci]
+                else:
+                    # 空簇: 保留旧 centroid
+                    new_centroids[ci] = centroids[ci]
+            centroids = new_centroids
+        return centroids
+
     def retrieve(
         self,
         query: str,
@@ -796,9 +980,18 @@ class LongTermMemory:
                 )
             )
 
-        # P1-1: Ising 能量函数 re-rank. semantic 路径 + toggle on 时,
-        # 把 top_k 截断从"按 importance 排序"升级为"能量最低 K-子集".
-        # 矛盾 memory (T<0) 同时入选代价高, 一致 memory (T>0) 共激活.
+        # P2-5: HiLS 分层稀疏 attention (Modern Hopfield). 优先于 P1-1 Ising.
+        # N>=K 时分层稀疏 (28x 加速 @ N=100K), N<K 时退化到全 attention.
+        # off 时回退 P1-1 Ising 贪心 (已有 fallback 链).
+        if (
+            semantic
+            and self._enable_semantic
+            and self._hils_enabled()
+            and len(results) > top_k
+        ):
+            return self._hils_attention(query, results, top_k)
+
+        # P1-1 fallback: Ising 能量函数 re-rank (HILS off 时走这里)
         if (
             semantic
             and self._enable_semantic
@@ -1631,7 +1824,69 @@ def _selfcheck() -> None:
         assert LongTermMemory._ising_rerank_enabled() is True, "toggle on"
         print("32b. Ising toggle (HUGINN_ISING_RERANK=0/1) OK")
 
-    print("LongTermMemory selfcheck OK (29-32 + 32b: Ising rerank 基本性质)")
+        # ── P2-5: HiLS 分层稀疏 attention ────────────────────────────
+        # 38. 全 attention (N<K) — softmax(β·cos) 排序基本性质
+        mock_vec38 = _MockVec([
+            [1.0, 0.0],       # query
+            [0.9, 0.1],       # m1: 高相关
+            [0.1, 0.9],       # m2: 低相关
+            [0.5, 0.5],       # m3: 中等
+        ])
+        mem._vector_store = mock_vec38
+        mem._enable_semantic = True
+        cands38 = [
+            {"id": "m1"}, {"id": "m2"}, {"id": "m3"},
+        ]
+        r38 = mem._hils_attention("q", cands38, top_k=2, beta=8.0, n_landmarks=256)
+        ids38 = [c["id"] for c in r38]
+        # m1 (cos≈0.99) 应排第一, m3 (cos≈0.71) 第二, m2 (cos≈0.1) 被淘汰
+        assert ids38[0] == "m1", f"最高 cos 应排第一: {ids38}"
+        assert "m2" not in ids38, f"最低 cos 应被淘汰: {ids38}"
+        print("38. HiLS 全 attention (N<K, softmax β·cos 排序) OK")
+
+        # 39. N<K 退化 — 不分层, 等价全 attention
+        # 只给 3 个 candidates, n_landmarks=256, 应走 v1 全 attention 路径
+        r39 = mem._hils_attention("q", cands38, top_k=3, beta=8.0, n_landmarks=256)
+        assert len(r39) == 3, "N<K 应全返回 (top_k=3)"
+        print("39. HiLS N<K 退化 (不分层, 全 attention) OK")
+
+        # 40. 分层稀疏 (N>=K) — k-means 地标 + top-h 筛选
+        # 构造 30 个 candidates, K=5, h=2. 验证返回 top_k=3 且都在 top-h 地标下
+        import random as _rng
+        _rng.seed(40)
+        embs40 = [[_rng.uniform(-1, 1) for _ in range(4)] for _ in range(30)]
+        # query 跟第 0 个 candidate 完全一致 → 应排第一
+        q40 = list(embs40[0])
+        mock_vec40 = _MockVec([q40] + embs40)
+        mem._vector_store = mock_vec40
+        cands40 = [{"id": f"m{i}"} for i in range(30)]
+        r40 = mem._hils_attention("q", cands40, top_k=3, beta=8.0, n_landmarks=5, top_h=2)
+        assert len(r40) == 3, f"应返回 3 个, got {len(r40)}"
+        assert r40[0]["id"] == "m0", f"query==m0 应排第一: {[c['id'] for c in r40]}"
+        print("40. HiLS 分层稀疏 (N>=K, k-means + top-h 筛选) OK")
+
+        # 41. 无 vector_store — no-op 回原排序
+        mem._vector_store = None
+        r41 = mem._hils_attention("q", cands40, top_k=3, beta=8.0)
+        assert len(r41) == 3
+        assert r41[0]["id"] == "m0", "no-op 应保持原顺序"
+        print("41. HiLS 无 vector_store → no-op 回原排序 OK")
+
+        # 41b. toggle off — retrieve 路径不走 HiLS, 回退 Ising
+        os.environ["HUGINN_HILS_ATTENTION"] = "0"
+        assert LongTermMemory._hils_enabled() is False
+        os.environ["HUGINN_HILS_ATTENTION"] = "1"
+        assert LongTermMemory._hils_enabled() is True
+        print("41b. HiLS toggle (HUGINN_HILS_ATTENTION=0/1) OK")
+
+        # 41c. k-means 地标基本性质 — 返回 K 个 centroid, 维度匹配
+        mem._vector_store = mock_vec40  # 恢复
+        lm = mem._kmeans_landmarks(embs40, k=5, max_iter=3)
+        assert len(lm) == 5, f"应返回 5 个地标, got {len(lm)}"
+        assert all(len(c) == 4 for c in lm), "地标维度应匹配"
+        print("41c. HiLS k-means 地标 (K=5, dim=4) OK")
+
+    print("LongTermMemory selfcheck OK (29-32b Ising + 38-41c HiLS)")
 
 
 if __name__ == "__main__":

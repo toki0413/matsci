@@ -30,6 +30,161 @@ def _crdt_merge_enabled() -> bool:
     return os.environ.get("HUGINN_CRDT_MERGE", "1") != "0"
 
 
+def _belief_update_enabled() -> bool:
+    """P2-6 toggle: env HUGINN_BELIEF_UPDATE (默认 on).
+
+    Bayesian belief update for LWW fields. off 时回退 P1-2 LWW (ts 大者胜).
+    ponytail: 默认 on 因 fallback 完整 — result 无 belief 字段时自动走 LWW.
+    """
+    return os.environ.get("HUGINN_BELIEF_UPDATE", "1") != "0"
+
+
+# ── P2-6: Bayesian belief update ──────────────────────────────────────────
+# Friston 自由能原理: F(q, p) = KL[q(s) || p(s|o)] - log p(o).
+# perception 路径: 更新 q(s) 使其接近 p(s|o) — Bayesian 后验.
+# v1 只做闭合解 (Gaussian/Beta), 不学 surrogate (v2/P3).
+#
+# Gaussian (连续字段, e.g. best_encut):
+#   prior N(μ, σ²), obs N(o, σ_o²)
+#   posterior: μ' = (μ/σ² + o/σ_o²) / (1/σ² + 1/σ_o²)
+#              σ'² = 1 / (1/σ² + 1/σ_o²)
+#   多个 obs 重复 update 即可 (结合律).
+#
+# Beta (二值字段, e.g. success_rate):
+#   prior Beta(α, β), obs (n_success, n_fail)
+#   posterior: α' = α + n_success, β' = β + n_fail
+#
+# ponytail: 闭合解无新依赖. ceiling: 假设 obs noise 已知 (σ_o²), 实际需从
+# 数据估计. 升级路径: v2 学 surrogate, P3 用 neural process.
+
+def _gaussian_update(
+    mu: float, sigma2: float, obs: float, obs_sigma2: float
+) -> tuple[float, float]:
+    """Gaussian Bayesian update. 返回 (mu', sigma2').
+
+    prior N(mu, sigma2), obs N(obs, obs_sigma2).
+    后验精度 = 先验精度 + 观测精度 (共轭).
+    """
+    if sigma2 <= 0 or obs_sigma2 <= 0:
+        return mu, sigma2
+    post_prec = 1.0 / sigma2 + 1.0 / obs_sigma2
+    mu_post = (mu / sigma2 + obs / obs_sigma2) / post_prec
+    sigma2_post = 1.0 / post_prec
+    return mu_post, sigma2_post
+
+
+def _beta_update(
+    alpha: float, beta: float, n_success: int, n_fail: int
+) -> tuple[float, float]:
+    """Beta Bayesian update. 返回 (alpha', beta').
+
+    prior Beta(alpha, beta), obs (n_success, n_fail) — Bernoulli 共轭.
+    """
+    return alpha + n_success, beta + n_fail
+
+
+def _gaussian_kl(
+    mu1: float, sigma2_1: float, mu2: float, sigma2_2: float
+) -> float:
+    """KL(N1 || N2) — 冲突检测用. KL 大 = 两个 belief 严重不一致."""
+    import math
+    if sigma2_1 <= 0 or sigma2_2 <= 0:
+        return 0.0
+    return (
+        0.5 * (
+            math.log(sigma2_2 / sigma2_1)
+            + (sigma2_1 + (mu1 - mu2) ** 2) / sigma2_2
+            - 1.0
+        )
+    )
+
+
+def _belief_merge(
+    results: list[dict], lww_fields: set[str]
+) -> dict[str, Any]:
+    """P2-6: Bayesian belief merge for LWW fields.
+
+    每个 result 可带 "belief" 字段: {field: {"type": "gaussian"|"beta", ...}}.
+    - gaussian: {"type": "gaussian", "mu": 520, "sigma2": 400, "obs_sigma2": 100}
+      obs_sigma2 是该 subagent 观测噪声 (默认 100).
+    - beta: {"type": "beta", "alpha": 1, "beta": 1, "n_success": 3, "n_fail": 1}
+
+    无 belief 字段 → 回退 LWW (ts 大者胜).
+    有 belief → Bayesian update, 输出 posterior belief + point estimate (mu/mean).
+
+    ponytail: 只做 per-field 独立 update, 不做联合后验 (需协方差矩阵, 过重).
+    ceiling: 字段间独立假设不一定成立 (encut 跟 kpoints 相关), 升级路径: 多变量 Gaussian.
+    """
+    out: dict[str, Any] = {}
+    for field in lww_fields:
+        # 收集所有带 belief 的 result
+        belief_results = [
+            r for r in results
+            if isinstance(r, dict)
+            and isinstance(r.get("belief"), dict)
+            and isinstance(r["belief"].get(field), dict)
+        ]
+        if not belief_results:
+            # 无 belief, 走 LWW
+            best_val = None
+            best_ts = -1.0
+            for r in results:
+                if isinstance(r, dict) and r.get(field) is not None:
+                    ts = float(r.get("ts", 0.0) or 0.0)
+                    if ts >= best_ts:
+                        best_ts = ts
+                        best_val = r[field]
+            if best_val is not None:
+                out[field] = best_val
+                out[f"{field}_ts"] = best_ts
+            continue
+
+        # 按类型 update (第一个 result 的 belief type 为准, 混合类型跳过)
+        btype = belief_results[0]["belief"][field].get("type")
+        if btype == "gaussian":
+            # 用第一个做 prior, 依次 update
+            b0 = belief_results[0]["belief"][field]
+            mu = float(b0.get("mu", 0.0))
+            s2 = float(b0.get("sigma2", 0.0))
+            obs_s2 = float(b0.get("obs_sigma2", 100.0))
+            for r in belief_results[1:]:
+                b = r["belief"][field]
+                o = float(b.get("mu", 0.0))  # 观测值 = 该 result 的 mu
+                os2 = float(b.get("obs_sigma2", obs_s2))
+                mu, s2 = _gaussian_update(mu, s2, o, os2)
+            out[field] = mu  # point estimate = posterior mean
+            out[f"{field}_belief"] = {
+                "type": "gaussian", "mu": mu, "sigma2": s2,
+            }
+        elif btype == "beta":
+            b0 = belief_results[0]["belief"][field]
+            a = float(b0.get("alpha", 1.0))
+            b = float(b0.get("beta", 1.0))
+            for r in belief_results:
+                br = r["belief"][field]
+                ns = int(br.get("n_success", 0))
+                nf = int(br.get("n_fail", 0))
+                a, b = _beta_update(a, b, ns, nf)
+            out[field] = a / (a + b)  # point estimate = posterior mean
+            out[f"{field}_belief"] = {
+                "type": "beta", "alpha": a, "beta": b,
+            }
+        else:
+            # 未知 type, 回退 LWW
+            best_val = None
+            best_ts = -1.0
+            for r in results:
+                if isinstance(r, dict) and r.get(field) is not None:
+                    ts = float(r.get("ts", 0.0) or 0.0)
+                    if ts >= best_ts:
+                        best_ts = ts
+                        best_val = r[field]
+            if best_val is not None:
+                out[field] = best_val
+                out[f"{field}_ts"] = best_ts
+    return out
+
+
 def _content_hash(s: Any) -> str:
     """Stable hash for dedupe — G-Set 需要. 用 sha8 短摘要足够."""
     raw = str(s).encode("utf-8", errors="ignore")
@@ -83,21 +238,27 @@ def _crdt_merge(results: list[dict]) -> dict:
                     seen[h] = it
         merged[field] = list(seen.values())
 
-    # LWW 合并
-    for field in lww_fields:
-        if field not in all_keys:
-            continue
-        best_val: Any = None
-        best_ts: float = -1.0
-        for r in results:
-            if field in r and r[field] is not None:
-                ts = float(r.get("ts", 0.0) or 0.0)
-                if ts >= best_ts:
-                    best_ts = ts
-                    best_val = r[field]
-        if best_val is not None:
-            merged[field] = best_val
-            merged[f"{field}_ts"] = best_ts
+    # LWW 合并 — P2-6: 有 belief 字段时走 Bayesian update, 否则 LWW.
+    # _belief_merge 内部自动 fallback LWW, 这里只需 toggle on 时调它,
+    # off 时直接走原 LWW 逻辑 (回归 P1-2 行为).
+    if _belief_update_enabled():
+        belief_out = _belief_merge(results, lww_fields)
+        merged.update(belief_out)
+    else:
+        for field in lww_fields:
+            if field not in all_keys:
+                continue
+            best_val: Any = None
+            best_ts: float = -1.0
+            for r in results:
+                if field in r and r[field] is not None:
+                    ts = float(r.get("ts", 0.0) or 0.0)
+                    if ts >= best_ts:
+                        best_ts = ts
+                        best_val = r[field]
+            if best_val is not None:
+                merged[field] = best_val
+                merged[f"{field}_ts"] = best_ts
 
     # success: OR-join (任一 True → True)
     merged["success"] = any(
@@ -566,7 +727,89 @@ def _selfcheck() -> None:
     assert _crdt_merge_enabled() is True
     print("37. CRDT toggle (HUGINN_CRDT_MERGE=0/1) OK")
 
-    print("subagent_tool selfcheck OK (33-37: G-Set + LWW + 半格三公理 + 整合 + toggle)")
+    # ── P2-6: Bayesian belief update ──────────────────────────────
+    # 42. Gaussian update — prior N(520, 20²), obs N(572, 10²)
+    mu42, s2_42 = _gaussian_update(520.0, 400.0, 572.0, 100.0)
+    # 后验 μ ≈ (520/400 + 572/100) / (1/400 + 1/100) = (1.3 + 5.72) / 0.0125 = 561.6
+    # 后验 σ² ≈ 1/0.0125 = 80
+    assert abs(mu42 - 561.6) < 0.1, f"Gaussian μ' 应 ≈ 561.6, got {mu42}"
+    assert abs(s2_42 - 80.0) < 0.1, f"Gaussian σ'² 应 ≈ 80, got {s2_42}"
+    print("42. Gaussian Bayesian update (μ=520→561.6, σ²=400→80) OK")
+
+    # 43. Beta update — prior Beta(1, 1), 3 success 1 fail
+    a43, b43 = _beta_update(1.0, 1.0, 3, 1)
+    assert a43 == 4.0 and b43 == 2.0, f"Beta(1,1)+3s1f 应 Beta(4,2), got ({a43},{b43})"
+    # point estimate = 4/(4+2) = 2/3
+    mean43 = a43 / (a43 + b43)
+    assert abs(mean43 - 0.667) < 0.001, f"mean 应 ≈ 0.667, got {mean43}"
+    print("43. Beta Bayesian update (Beta(1,1)→Beta(4,2), mean=0.667) OK")
+
+    # 44. 无 belief → fallback LWW (兼容 P1-2)
+    r44a = {"best_value": 520, "ts": 100.0}
+    r44b = {"best_value": 572, "ts": 200.0}
+    m44 = _belief_merge([r44a, r44b], {"best_value"})
+    assert m44["best_value"] == 572, f"无 belief 应 LWW 取 ts=200: {m44.get('best_value')}"
+    assert m44["best_value_ts"] == 200.0
+    print("44. belief_merge 无 belief → fallback LWW OK")
+
+    # 45. 有 belief → Bayesian update
+    r45a = {
+        "best_encut": 520, "ts": 100.0,
+        "belief": {"best_encut": {"type": "gaussian", "mu": 520, "sigma2": 400, "obs_sigma2": 100}},
+    }
+    r45b = {
+        "best_encut": 572, "ts": 200.0,
+        "belief": {"best_encut": {"type": "gaussian", "mu": 572, "sigma2": 100, "obs_sigma2": 100}},
+    }
+    m45 = _belief_merge([r45a, r45b], {"best_encut"})
+    # r45a 做 prior, r45b 做 obs → 同 42 的计算
+    assert abs(m45["best_encut"] - 561.6) < 0.1, (
+        f"Bayesian 应 ≈ 561.6, got {m45.get('best_encut')}"
+    )
+    assert "best_encut_belief" in m45, "应输出 posterior belief"
+    assert m45["best_encut_belief"]["type"] == "gaussian"
+    print("45. belief_merge Gaussian (520+572 → 561.6 + belief) OK")
+
+    # 45b. Beta belief merge
+    r45c = {
+        "success_rate": 0.5, "ts": 1.0,
+        "belief": {"success_rate": {"type": "beta", "alpha": 1, "beta": 1, "n_success": 3, "n_fail": 1}},
+    }
+    r45d = {
+        "success_rate": 0.7, "ts": 2.0,
+        "belief": {"success_rate": {"type": "beta", "alpha": 1, "beta": 1, "n_success": 2, "n_fail": 3}},
+    }
+    m45b = _belief_merge([r45c, r45d], {"success_rate"})
+    # Beta(1,1) + (3s+2s, 1f+3f) = Beta(6, 5), mean = 6/11 ≈ 0.545
+    assert abs(m45b["success_rate"] - 6/11) < 0.001, (
+        f"Beta merge mean 应 ≈ 0.545, got {m45b.get('success_rate')}"
+    )
+    assert m45b["success_rate_belief"]["alpha"] == 6.0
+    assert m45b["success_rate_belief"]["beta"] == 5.0
+    print("45b. belief_merge Beta (Beta(1,1)+5s4f → Beta(6,5)) OK")
+
+    # 46. KL 冲突检测 — 两个 Gaussian belief KL 大 = 严重不一致
+    kl46 = _gaussian_kl(520.0, 100.0, 572.0, 100.0)
+    kl46_close = _gaussian_kl(520.0, 100.0, 521.0, 100.0)
+    assert kl46 > kl46_close, f"KL(520,572) 应 > KL(520,521): {kl46} vs {kl46_close}"
+    assert kl46 > 0.1, f"严重冲突 KL 应 > 0.1, got {kl46}"
+    print("46. Gaussian KL 冲突检测 (520 vs 572 KL > 0.1) OK")
+
+    # 47. toggle off — 回退 P1-2 LWW
+    os.environ["HUGINN_BELIEF_UPDATE"] = "0"
+    assert _belief_update_enabled() is False
+    # toggle off 时 _crdt_merge 应走 LWW (不调 _belief_merge)
+    m47 = _crdt_merge([r45a, r45b])
+    assert m47["best_encut"] == 572, (
+        f"toggle off 应 LWW 取 ts=200 的 572, got {m47.get('best_encut')}"
+    )
+    assert "best_encut_belief" not in m47, "toggle off 不应输出 belief"
+    # 恢复 toggle on
+    os.environ["HUGINN_BELIEF_UPDATE"] = "1"
+    assert _belief_update_enabled() is True
+    print("47. belief toggle (HUGINN_BELIEF_UPDATE=0/1) + LWW fallback OK")
+
+    print("subagent_tool selfcheck OK (33-37 CRDT + 42-47 Bayesian belief)")
 
 
 if __name__ == "__main__":
