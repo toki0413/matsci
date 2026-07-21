@@ -295,6 +295,15 @@ class AutoloopEngine:
             "data_noise": 5,
             "hypothesis_error": 10,
         }
+        # 700 万步极限场景: consecutive 语义在长轨迹里太窄 (20 次 tool timeout 就停).
+        # 加滑动窗口失败率 — 最近 N 次 validate 的失败率超阈值才 stop, 允许局部失败.
+        # consecutive 保留作快速止损 (短任务 / 连续坏方向), windowed rate 兜底长轨迹.
+        # ponytail: 用 list 存 bool (True=pass), 超窗口截断. 升级路径: 指数衰减加权.
+        self._validate_window: list[bool] = []
+        self._validate_window_size = int(os.environ.get("HUGINN_VALIDATE_WINDOW", "100"))
+        self._validate_window_fail_threshold = float(
+            os.environ.get("HUGINN_VALIDATE_FAIL_THRESHOLD", "0.8")
+        )
         # refine 循环计数: 防止 refute→refine 无限循环
         # v7 长任务: 8→20 默认. Oxelra 失败回退不计数, 这里仍保留上限防失控.
         self._refine_count = 0
@@ -2108,6 +2117,15 @@ class AutoloopEngine:
             if action == "validate":
                 validation = cog["validation"] or {}
                 tests_ok = _extract_tests_passed(validation)
+                # 700 万步极限场景: 滑动窗口失败率. 推入当前结果, 超窗口截断.
+                # consecutive 在长轨迹里太窄 (20 次 tool timeout 就停), windowed rate
+                # 允许局部失败 — 最近 100 次 validate 失败率 > 0.8 才算真死路.
+                _vwin = getattr(self, "_validate_window", None)
+                if _vwin is not None:
+                    _vwin.append(bool(tests_ok))
+                    _wsize = getattr(self, "_validate_window_size", 100)
+                    if len(_vwin) > _wsize:
+                        del _vwin[: -_wsize]
                 if tests_ok:
                     self._consecutive_failures = 0
                     self._consecutive_failures_by_type = {}
@@ -2137,14 +2155,39 @@ class AutoloopEngine:
                             advice=f"{by_type[ftype]} consecutive {ftype} failures",
                         )
                     if self._consecutive_failures >= self._max_consecutive_failures:
-                        logger.warning(
-                            "cognitive stop: %d consecutive failures (total cap)",
-                            self._consecutive_failures,
-                        )
-                        return ReflectionResult(
-                            should_stop=True,
-                            advice=f"{self._consecutive_failures} consecutive failures",
-                        )
+                        # 700 万步兜底: consecutive 触顶时, 检查滑动窗口失败率.
+                        # 如果窗口内失败率低于阈值, 说明只是局部连续失败, 整体仍在进展 —
+                        # 不停, 只清 consecutive 让它重新计数. 避免长轨迹被短期波动截停.
+                        _win = getattr(self, "_validate_window", None)
+                        _wsize = getattr(self, "_validate_window_size", 100)
+                        _wthresh = getattr(self, "_validate_window_fail_threshold", 0.8)
+                        if _win and len(_win) >= _wsize:
+                            _fail_rate = 1.0 - (sum(_win) / len(_win))
+                            if _fail_rate < _wthresh:
+                                logger.info(
+                                    "consecutive=%d 但窗口失败率 %.2f < %.2f, 不停, 清计数",
+                                    self._consecutive_failures, _fail_rate, _wthresh,
+                                )
+                                self._consecutive_failures = 0
+                                self._consecutive_failures_by_type = {}
+                            else:
+                                logger.warning(
+                                    "cognitive stop: consecutive=%d 且窗口失败率 %.2f >= %.2f",
+                                    self._consecutive_failures, _fail_rate, _wthresh,
+                                )
+                                return ReflectionResult(
+                                    should_stop=True,
+                                    advice=f"{self._consecutive_failures} consecutive failures (window fail rate {_fail_rate:.2f})",
+                                )
+                        else:
+                            logger.warning(
+                                "cognitive stop: %d consecutive failures (total cap)",
+                                self._consecutive_failures,
+                            )
+                            return ReflectionResult(
+                                should_stop=True,
+                                advice=f"{self._consecutive_failures} consecutive failures",
+                            )
 
             # G2: 周期检测 + 历史轨迹匹配 (M3 cycle_detect + M2 trajectory_match).
             # 不 should_stop — 给建议, 让 LLM decider / 规则版自己决定是否 pivot.
@@ -2495,6 +2538,17 @@ class AutoloopEngine:
             if v > 0
         ]
         _type_str = ", ".join(_type_parts) if _type_parts else "none"
+        # 700 万步场景: 滑动窗口失败率. 让 LLM 看到整体趋势, 不只是 consecutive.
+        # 窗口未满时不显示 (数据不足). ponytail: 简单 fail rate, 不做加权.
+        _vwin = getattr(self, "_validate_window", None) or []
+        _wsize = getattr(self, "_validate_window_size", 100)
+        if len(_vwin) >= _wsize:
+            _wfail_rate = 1.0 - (sum(_vwin) / len(_vwin))
+            _window_str = f"{_wfail_rate:.2f} (last {_wsize})"
+        else:
+            _window_str = f"building ({len(_vwin)}/{_wsize})"
+        # 700 万步场景: 跨 run 失败模式. 让 LLM 知道上 run 主要卡在哪类失败.
+        _last_pattern = (getattr(self, "_last_run_failure_pattern", "") or "").strip()
 
         return f"""You are the cognitive controller of a research agent. Choose the next action.
 
@@ -2509,6 +2563,8 @@ State:
 - Validation: {val_status}
 - Consecutive failures: {getattr(self, "_consecutive_failures", 0)}/{_max_fail}
 - Failures by type: {_type_str}
+- Window fail rate: {_window_str}
+- Last run pattern: {_last_pattern or 'none'}
 - Pivot count: {getattr(self, "_pivot_count", 0)}/{_max_pivot}
 - Refine count: {getattr(self, "_refine_count", 0)}
 - Action history (last 10): {action_hist_str}
@@ -2831,6 +2887,15 @@ Respond JSON only:
         self._consecutive_failures = 0
         # F-borrow: 分类计数器随 run 重置 (跨 run 失败模式记忆没意义, 误导自适应).
         self._consecutive_failures_by_type = {}
+        # 700 万步场景: 滑动窗口随 run 重置 (跨 run 失败率无意义).
+        self._validate_window = []
+        # 700 万步场景: 加载上 run 失败模式快照, 让 decider 知道历史卡点.
+        # 不恢复计数器 (跨 run 计数无意义), 只注入 prompt 作为参考.
+        self._last_run_failure_pattern: str = ""
+        try:
+            self._last_run_failure_pattern = self._load_failure_pattern()
+        except Exception:
+            logger.debug("load failure pattern failed", exc_info=True)
 
         if goal is not None and goal.status == "pending":
             goal.status = "active"
@@ -2874,6 +2939,77 @@ Respond JSON only:
 
         return run_id, provenance_record, run_collector
 
+    def _persist_failure_pattern(self, run_id: str) -> None:
+        """run 结束时把 by_type + window 快照存 longterm. 供下 run 加载.
+
+        700 万步场景: 单 run 可能只跑几十万步, 跨 run 失败模式记忆让 decider
+        知道"上次主要卡在 tool_error" → 这次优先换工具/换 backend.
+        ponytail: 复用 longterm.store, JSON 序列化. 升级路径: 独立 failure_pattern 表.
+        """
+        by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
+        vwin = getattr(self, "_validate_window", None) or []
+        # 只在有失败数据时存 — 全 pass 的 run 存了也没参考价值.
+        if not by_type and not vwin:
+            return
+        wsize = getattr(self, "_validate_window_size", 100)
+        fail_rate = 1.0 - (sum(vwin) / len(vwin)) if vwin else 0.0
+        snapshot = {
+            "run_id": run_id,
+            "by_type": by_type,
+            "window_size": len(vwin),
+            "window_fail_rate": round(fail_rate, 3),
+            "total_consecutive": getattr(self, "_consecutive_failures", 0),
+            "objective": (getattr(self, "_objective", "") or "")[:200],
+        }
+        try:
+            content = json.dumps(snapshot, ensure_ascii=False)
+            self.memory.remember(
+                content=content,
+                category="failure_pattern",
+                tags=["failure_pattern", run_id],
+                importance=0.6,
+                tier="mid",
+            )
+        except Exception:
+            logger.debug("failure_pattern store failed", exc_info=True)
+
+    def _load_failure_pattern(self) -> str:
+        """加载最近一条 failure_pattern, 返回人类可读摘要供 decider prompt 注入.
+
+        返回空串表示无历史或加载失败. ponytail: 只取最近 1 条, 不做聚合.
+        用空 query + category 过滤 — content 是 JSON, FTS5 语义匹配不到.
+        """
+        try:
+            results = self.memory.recall(
+                query="",
+                category="failure_pattern",
+                top_k=1,
+            )
+        except Exception:
+            return ""
+        if not results:
+            return ""
+        entry = results[0] if isinstance(results, list) else results
+        content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
+        if not content:
+            return ""
+        try:
+            snap = json.loads(content)
+        except (ValueError, TypeError):
+            return ""
+        by_type = snap.get("by_type", {}) or {}
+        if not by_type:
+            return ""
+        parts = [f"{k}={v}" for k, v in sorted(by_type.items()) if v > 0]
+        if not parts:
+            return ""
+        rate = snap.get("window_fail_rate", 0.0)
+        return (
+            f"last run: {', '.join(parts)}, "
+            f"window fail rate={rate:.2f} "
+            f"(n={snap.get('window_size', 0)})"
+        )
+
     async def _finalize_run(
         self,
         objective: str,
@@ -2886,6 +3022,13 @@ Respond JSON only:
         completed_steps: int,
     ) -> AutoloopResult:
         """Report, save trajectory, judge goal, write provenance + FAIR metadata."""
+        # 700 万步场景: 失败模式跨 run 持久化. run 结束时存 by_type + window 快照,
+        # 下个 run 开始时加载, 让 LLM 知道"上次主要卡在 tool_error 还是 hypothesis_error".
+        # ponytail: 复用 longterm.store, JSON 序列化. 升级路径: 独立 failure_pattern 表.
+        try:
+            self._persist_failure_pattern(run_id)
+        except Exception:
+            logger.debug("persist failure pattern failed", exc_info=True)
         total_time = time.time() - getattr(self, "_run_start_time", time.time())
         report_phase = await self._run_phase_async(
             "report", self._report, objective, phases, total_time
@@ -9869,6 +10012,9 @@ def _selfcheck() -> None:
     eng_f._pivot_count = 0
     eng_f._refine_count = 0
     eng_f._speculator_hint = ""
+    eng_f._validate_window = []
+    eng_f._validate_window_size = 100
+    eng_f._last_run_failure_pattern = ""
     _state_f = LoopState(iteration=1, max_iterations=10)
     _cog_f = {"hypothesis": "", "plan": None, "execution_result": None, "validation": {}}
     _prompt_f = eng_f._build_decider_prompt(_state_f, _cog_f, {})
@@ -9877,7 +10023,86 @@ def _selfcheck() -> None:
     )
     print("21. F-borrow 分类计数 + 5 类 _classify_failure + 按类阈值 + prompt 显示 OK")
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21)")
+    # 22. 700 万步场景: action_history 截断 (cognitive_loop 层)
+    from huginn.autoloop.cognitive_loop import _MAX_ACTION_HIST
+    _hist = ["observe"] * (_MAX_ACTION_HIST + 500)
+    if len(_hist) > _MAX_ACTION_HIST:
+        del _hist[: -_MAX_ACTION_HIST]
+    assert len(_hist) == _MAX_ACTION_HIST, (
+        f"action_history 截断后长度应 = {_MAX_ACTION_HIST}, got {len(_hist)}"
+    )
+    assert all(a == "observe" for a in _hist), "截断后尾部内容应保留"
+    print(f"22. action_history 截断到窗口 {_MAX_ACTION_HIST} (700 万步防内存爆炸) OK")
+
+    # 23. 700 万步场景: 滑动窗口失败率 — consecutive 触顶但 fail rate 低 → 不停
+    eng_w = AutoloopEngine.__new__(AutoloopEngine)
+    eng_w._consecutive_failures = 20
+    eng_w._max_consecutive_failures = 20
+    eng_w._validate_window = [True] * 80 + [False] * 20  # fail rate=0.2
+    eng_w._validate_window_size = 100
+    eng_w._validate_window_fail_threshold = 0.8
+    _fail_rate = 1.0 - (sum(eng_w._validate_window) / len(eng_w._validate_window))
+    assert abs(_fail_rate - 0.2) < 1e-6, f"fail rate 应 0.2, got {_fail_rate}"
+    assert _fail_rate < eng_w._validate_window_fail_threshold, (
+        "fail rate 0.2 < 0.8 应允许继续 (局部失败, 整体进展)"
+    )
+    if eng_w._consecutive_failures >= eng_w._max_consecutive_failures:
+        if len(eng_w._validate_window) >= eng_w._validate_window_size:
+            if _fail_rate < eng_w._validate_window_fail_threshold:
+                eng_w._consecutive_failures = 0
+    assert eng_w._consecutive_failures == 0, (
+        "consecutive 触顶但 fail rate 低 → 应清计数不停"
+    )
+    # 23b: fail rate 高 → 应停
+    eng_w2 = AutoloopEngine.__new__(AutoloopEngine)
+    eng_w2._validate_window = [False] * 90 + [True] * 10  # fail rate=0.9
+    _fail_rate2 = 1.0 - (sum(eng_w2._validate_window) / len(eng_w2._validate_window))
+    assert _fail_rate2 >= 0.8, "fail rate 0.9 >= 0.8 应停 (整体死路)"
+    print("23. 滑动窗口失败率 (0.2 < 0.8 继续 / 0.9 >= 0.8 停) OK")
+
+    # 24. 700 万步场景: 跨 run 失败模式持久化闭环
+    import tempfile
+    from huginn.memory.manager import MemoryManager
+    from huginn.memory.longterm import LongTermMemory
+    with tempfile.TemporaryDirectory() as _td_fp:
+        # 用临时 db 路径, 避免 ~/.huginn/memory.db 旧数据干扰
+        _db_path = Path(_td_fp) / "test_mem.db"
+        _mem_fp = MemoryManager()
+        _mem_fp.longterm = LongTermMemory(db_path=str(_db_path))
+        eng_p = AutoloopEngine.__new__(AutoloopEngine)
+        eng_p.memory = _mem_fp
+        eng_p._consecutive_failures_by_type = {"tool_error": 3, "hypothesis_error": 2}
+        eng_p._validate_window = [True] * 70 + [False] * 30  # fail rate=0.3
+        eng_p._validate_window_size = 100
+        eng_p._consecutive_failures = 5
+        eng_p._objective = "test 700万步 failure pattern persist"
+        eng_p._persist_failure_pattern("loop_test_fp")
+        _loaded = eng_p._load_failure_pattern()
+        assert "tool_error=3" in _loaded, f"persist/load 闭环: by_type 丢失, got: {_loaded}"
+        assert "hypothesis_error=2" in _loaded, f"persist/load 闭环: by_type 丢失, got: {_loaded}"
+        assert "fail rate=0.30" in _loaded, f"persist/load 闭环: fail rate 丢失, got: {_loaded}"
+        # 24b: 空 by_type 不存 (全 pass run)
+        eng_p._consecutive_failures_by_type = {}
+        eng_p._validate_window = [True] * 100
+        eng_p._persist_failure_pattern("loop_test_fp2")
+        _loaded2 = eng_p._load_failure_pattern()
+        assert "tool_error=3" in _loaded2, "空快照不应覆盖"
+    print("24. 跨 run 失败模式持久化 (persist/load 闭环 + 空快照不覆盖) OK")
+
+    # 25. decider prompt 含 700 万步新字段
+    eng_f._validate_window = [True] * 80 + [False] * 20
+    eng_f._validate_window_size = 100
+    eng_f._last_run_failure_pattern = "last run: tool_error=3, fail rate=0.30 (n=100)"
+    _prompt_w = eng_f._build_decider_prompt(_state_f, _cog_f, {})
+    assert "Window fail rate: 0.20 (last 100)" in _prompt_w, (
+        f"missing window fail rate: {_prompt_w[:500]}"
+    )
+    assert "Last run pattern: last run: tool_error=3" in _prompt_w, (
+        f"missing last run pattern: {_prompt_w[:500]}"
+    )
+    print("25. decider prompt 含 window fail rate + last run pattern OK")
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25)")
 
 
 if __name__ == "__main__":
