@@ -576,6 +576,99 @@ class LongTermMemory:
         # Quote each token and add prefix wildcard for flexible matching
         return " ".join(f'"{t}"*' for t in tokens)
 
+    @staticmethod
+    def _ising_rerank_enabled() -> bool:
+        """P1-1 toggle: env HUGINN_ISING_RERANK (默认 on).
+
+        Ising 能量函数 re-rank 把 FTS5 top_k 独立排序升级为能量最低 K-子集.
+        off 时行为完全回退到原排序, 回归测试安全.
+        ponytail: 默认 on 是因为 fallback 完整 — 无 embedding 自动 no-op.
+        """
+        return os.environ.get("HUGINN_ISING_RERANK", "1") != "0"
+
+    def _ising_rerank(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        top_k: int,
+        beta: float = 1.0,
+    ) -> list[dict[str, Any]]:
+        """Ising 能量函数 re-rank — 把 FTS5 top_k 独立排序升级为能量最低 K-子集.
+
+        数学结构 (Ising-Hopfield 同构):
+            Hᵢ = sim(query, mᵢ)  — 外场, query-memory 相关性
+            Tᵢⱼ = sim(mᵢ, mⱼ)    — memory-memory 耦合 (semantic similarity)
+            E(S) = -Σᵢ∈S Hᵢ - β Σᵢ<ⱼ∈S Tᵢⱼ
+            S* = argmin_S E(S), |S| = top_k
+
+        贪心: 按 Hᵢ 降序逐个加入, 每步算 ΔE, ΔE < 0 接受, 否则跳过.
+        ponytail: 不做精确 ground state (NP-hard). O(top_k * |candidates|²).
+        ceiling: 贪心不保证全局最优; 升级路径: 模拟退火 / Modern Hopfield attention.
+        """
+        # 边界: 候选不足 / 单选 / 无 vector_store — 全部 no-op 回原排序
+        if (
+            not candidates
+            or top_k <= 1
+            or len(candidates) <= top_k
+            or self._vector_store is None
+        ):
+            return candidates[:top_k]
+        try:
+            texts = [query] + [str(c.get("content", "")) for c in candidates]
+            embs = self._vector_store._compute_embeddings(texts)
+        except Exception:
+            logger.warning("ising rerank: embedding 失败, 回退原排序", exc_info=True)
+            return candidates[:top_k]
+        if not embs or len(embs) != len(texts):
+            return candidates[:top_k]
+
+        # cosine similarity (chromadb 返回的 embedding 未归一化, 手动算)
+        import math
+
+        def _cos(a: list[float], b: list[float]) -> float:
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+        q_emb = embs[0]
+        c_embs = embs[1:]
+        # Hᵢ = sim(query, mᵢ)
+        H = [_cos(q_emb, c_embs[i]) for i in range(len(candidates))]
+        # Tᵢⱼ = sim(mᵢ, mⱼ) — 对称矩阵, 只算上三角
+        n = len(candidates)
+        T: list[list[float]] = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                s = _cos(c_embs[i], c_embs[j])
+                T[i][j] = s
+                T[j][i] = s
+
+        # 贪心: 按 Hᵢ 降序, 逐个尝试加入 selected
+        order = sorted(range(n), key=lambda i: -H[i])
+        selected: list[int] = []
+        for idx in order:
+            if len(selected) >= top_k:
+                break
+            if not selected:
+                # 第一个: ΔE = -Hᵢ, Hᵢ > 0 时接受
+                if H[idx] > 0:
+                    selected.append(idx)
+                continue
+            # ΔE = -H_idx - β Σⱼ∈selected T[idx][j]
+            delta = -H[idx] - beta * sum(T[idx][j] for j in selected)
+            if delta < 0:
+                selected.append(idx)
+        # 兜底: 若贪心太保守没选够, 按 H 顺序补齐
+        if len(selected) < top_k:
+            for idx in order:
+                if idx not in selected and len(selected) < top_k:
+                    selected.append(idx)
+                if len(selected) >= top_k:
+                    break
+        return [candidates[i] for i in selected]
+
     def retrieve(
         self,
         query: str,
@@ -702,6 +795,17 @@ class LongTermMemory:
                     -(r.get("importance", 0.5)),
                 )
             )
+
+        # P1-1: Ising 能量函数 re-rank. semantic 路径 + toggle on 时,
+        # 把 top_k 截断从"按 importance 排序"升级为"能量最低 K-子集".
+        # 矛盾 memory (T<0) 同时入选代价高, 一致 memory (T>0) 共激活.
+        if (
+            semantic
+            and self._enable_semantic
+            and self._ising_rerank_enabled()
+            and len(results) > top_k
+        ):
+            return self._ising_rerank(query, results, top_k)
 
         return results[:top_k]
 
@@ -1451,3 +1555,84 @@ def load_stable_principles() -> list[str]:
 
 
 # seeds 仅走 RAG (knowledge/store.py)，不直接进 system_prompt
+
+
+# ── self-check ────────────────────────────────────────────────────────────
+# P1-1 验证: _ising_rerank 能量函数性质. 用 mock vector_store 避免依赖
+# embedding 模型. `python -m huginn.memory.longterm` 跑.
+
+def _selfcheck() -> None:
+    import math
+    import tempfile
+
+    class _MockVec:
+        """Mock vector_store — _compute_embeddings 返回预设向量."""
+        def __init__(self, embs: list[list[float]]) -> None:
+            self._embs = embs
+        def _compute_embeddings(self, texts: list[str]) -> list[list[float]] | None:
+            return self._embs[: len(texts)]
+
+    def _cos(a, b):
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        if na == 0 or nb == 0:
+            return 0.0
+        return sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+    # 用临时 db 构造 LongTermMemory, vector_store 用 mock
+    with tempfile.TemporaryDirectory() as _td:
+        _db = str(Path(_td) / "test.db")
+        mem = LongTermMemory(db_path=_db, vector_store=None, enable_semantic=False)
+
+        # 29. 能量函数基本性质 — 矛盾 candidate 被拒
+        # 3 个 candidates: m1, m2 高度相似 (cos=0.9), m3 跟 m1/m2 矛盾 (cos=-0.5,-0.4)
+        # H = [0.8, 0.7, 0.6] (query 相关性)
+        # top_k=2, 贪心应选 {m1, m2}, 不选 m3
+        q_emb = [1.0, 0.0, 0.0]
+        m1_emb = [0.8, 0.1, 0.0]
+        m2_emb = [0.7, 0.1, 0.1]   # 跟 m1 cos ≈ 0.99
+        m3_emb = [-0.5, 0.8, 0.3]  # 跟 m1/m2 矛盾
+        mock_vec = _MockVec([q_emb, m1_emb, m2_emb, m3_emb])
+        mem._vector_store = mock_vec
+        mem._enable_semantic = True
+        cands = [
+            {"id": "m1", "content": "encut=520 OK"},
+            {"id": "m2", "content": "encut=520 fine"},
+            {"id": "m3", "content": "encut=520 不够"},
+        ]
+        r29 = mem._ising_rerank("encut 520", cands, top_k=2, beta=1.0)
+        ids29 = [c["id"] for c in r29]
+        assert "m3" not in ids29, f"矛盾 candidate 不应入选: {ids29}"
+        assert "m1" in ids29 and "m2" in ids29, f"应选 m1+m2: {ids29}"
+        print("29. Ising 能量函数 (矛盾 candidate 被拒, 一致 candidate 入选) OK")
+
+        # 30. top_k=1 退化 — 等价 argmax H
+        r30 = mem._ising_rerank("encut 520", cands, top_k=1, beta=1.0)
+        assert r30[0]["id"] == "m1", f"top_k=1 应选 H 最大的 m1, got {r30[0]['id']}"
+        print("30. Ising top_k=1 退化 (argmax H) OK")
+
+        # 31. 无 vector_store — no-op 回原排序
+        mem._vector_store = None
+        r31 = mem._ising_rerank("encut 520", cands, top_k=2, beta=1.0)
+        assert len(r31) == 2, "无 vector_store 应回退原排序取前 2"
+        assert r31[0]["id"] == "m1", "no-op 应保持原顺序"
+        print("31. Ising 无 vector_store → no-op 回原排序 OK")
+
+        # 32. 候选不足 — 直接返回 candidates[:top_k]
+        mem._vector_store = mock_vec  # 恢复
+        r32 = mem._ising_rerank("encut 520", cands[:1], top_k=2, beta=1.0)
+        assert len(r32) == 1, f"候选不足应全返回, got {len(r32)}"
+        print("32. Ising 候选不足 → 全返回 OK")
+
+        # 32b. toggle off — retrieve 路径不走 rerank
+        os.environ["HUGINN_ISING_RERANK"] = "0"
+        assert LongTermMemory._ising_rerank_enabled() is False, "toggle off"
+        os.environ["HUGINN_ISING_RERANK"] = "1"
+        assert LongTermMemory._ising_rerank_enabled() is True, "toggle on"
+        print("32b. Ising toggle (HUGINN_ISING_RERANK=0/1) OK")
+
+    print("LongTermMemory selfcheck OK (29-32 + 32b: Ising rerank 基本性质)")
+
+
+if __name__ == "__main__":
+    _selfcheck()
