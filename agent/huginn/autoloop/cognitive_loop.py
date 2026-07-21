@@ -55,16 +55,18 @@ class LoopState:
 @dataclass
 class ActionDecision:
     """decide() 的返回 — LLM 或规则选的下一个 action."""
-    action: str  # observe/hypothesize/plan/execute/validate/learn/report/pivot/skip/stop
+    action: str  # observe/hypothesize/plan/execute/validate/learn/pivot/skip/stop
     rationale: str = ""
     expected_outcome: str = ""
     force: bool = False  # True = 跳过 reflect 的 redirect 建议
 
-
 # action 合法集合 — decide() 只能返回这些, 否则 reflect 标 redirect
+# D3: report 不在 VALID_ACTIONS — _finalize_run 自动跑, LLM 选 report 等于
+# 浪费一轮 (execute_fn 是 no-op). 升级路径: 如果要 LLM 主动触发 report,
+# 改成 action="stop" + rationale="report ready".
 VALID_ACTIONS = frozenset({
     "observe", "hypothesize", "plan", "execute", "validate",
-    "learn", "report", "pivot", "skip", "stop",
+    "learn", "pivot", "skip", "stop",
 })
 
 
