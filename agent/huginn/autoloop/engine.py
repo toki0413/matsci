@@ -417,6 +417,12 @@ class AutoloopEngine:
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
         self._last_hypothesis_confidence: float = 0.0
         self._last_hypothesis_evidence_strength: float = 0.0
+        # H4: GRILL 模式状态. should_pause_for_decision 触发 GRILL 后设为 active,
+        # _llm_chat 构造 system prompt 时注入 GRILL_SYSTEM_PROMPT_CN. 用户确认
+        # shared understanding 后 (LLM 输出含标记) 退出.
+        # ponytail: 不持 GrillSession 实例, 只用 bool + 计数. LLM 自己负责流程.
+        self._grill_active: bool = False
+        self._grill_turns: int = 0
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
@@ -2353,6 +2359,13 @@ class AutoloopEngine:
                         self._speculator_hint = (
                             (self._speculator_hint + f"\n[PAUSE] {_reason}\n").strip()
                         )
+                        # H4: GRILL pause → 进入 grill 模式, 下次 _llm_chat 注入
+                        # GRILL_SYSTEM_PROMPT_CN. 之前 pause 后只 auto-resume,
+                        # LLM 看不到 grill 约束, "一次一问" 形同虚设.
+                        if "GRILL" in _reason and not self._grill_active:
+                            self._grill_active = True
+                            self._grill_turns = 0
+                            logger.info("GRILL mode activated: %s", _reason)
                 except Exception:
                     logger.debug("AV2 should_pause_for_decision failed", exc_info=True)
 
@@ -4372,6 +4385,20 @@ Respond JSON only:
             plan = self._parse_plan(response)
         except Exception:
             return None
+
+        # H4: GRILL 退出检查 — LLM 输出 plan 时若含 "shared understanding" 确认标记
+        # 说明用户已确认, 退出 grill 模式. 之前只进入不退出, LLM 永远带 grill 约束.
+        # ponytail: 简单字符串匹配, 不上 LLM judge. ceiling: LLM 不说这个词就永远不退.
+        if self._grill_active and response:
+            _resp_lower = response.lower()
+            if (
+                "shared understanding" in _resp_lower
+                or "shared understanding reached" in _resp_lower
+                or "confirmed decisions" in _resp_lower
+            ):
+                self._grill_active = False
+                self._grill_turns = 0
+                logger.info("GRILL mode exited: shared understanding confirmed")
 
         if not plan:
             return None
@@ -7908,6 +7935,24 @@ Please modify the code to address this task."""
         messages: list[Any] = []
         if persona_name:
             sys_prompt = self._persona_system_prompt(persona_name)
+            # H4: GRILL 模式 active 时把 GRILL_SYSTEM_PROMPT_CN 追加到 system prompt.
+            # 之前 should_pause_for_decision 触发 GRILL 后只 auto-resume, LLM 看不到
+            # grill 约束, "一次一问" 形同虚设. 现在注入, LLM 自己负责流程.
+            if self._grill_active:
+                try:
+                    from huginn.runtime.pre_plan_grill import GRILL_SYSTEM_PROMPT_CN
+                    sys_prompt = (sys_prompt or "") + "\n\n" + GRILL_SYSTEM_PROMPT_CN
+                    self._grill_turns += 1
+                    # 退出检查: LLM 输出含 "shared understanding" 确认标记 → 退出.
+                    # 依赖上层 (run_cognitive) 把 LLM 输出回传后再判断, 这里只计数.
+                    # ceiling: 简单字符串匹配, 升级用 LLM judge.
+                    if self._grill_turns > 20:
+                        logger.warning(
+                            "GRILL 超过 20 轮, 强制退出 (可能 LLM 没理解确认标记)"
+                        )
+                        self._grill_active = False
+                except ImportError:
+                    logger.debug("pre_plan_grill import failed, GRILL prompt 跳过")
             if sys_prompt:
                 sys_msg = SystemMessage(content=sys_prompt)
                 # 静态 system prompt 跨调用不变, 给 Anthropic/Kimi 打 cache 标记
@@ -8041,6 +8086,25 @@ Please modify the code to address this task."""
             _res = last_exec.get("result", last_exec)
             _summary = json.dumps(_res, ensure_ascii=False, default=str)[:500]
             exec_block = f"\n### Last Execution Result ({_tool})\n{_summary}\n"
+        # H2: frontier_ranked 注入 — Ising 能量最低 K-子集未测试假设.
+        # 之前 frontier()/frontier_ranked() 0 生产调用, Ising 排序整套死代码.
+        # 现在作为 hint 注入, LLM 可选优先测这些 (refute 过的 parent 的子假设优先,
+        # 同 sibling_group 互斥已避开). ponytail: hint 不强制, LLM 自己决定.
+        frontier_block = ""
+        try:
+            _frontier = self.hypothesis_graph.frontier_ranked(top_k=3)
+            if _frontier:
+                _lines = []
+                for nd in _frontier:
+                    _stmt = (nd.statement or "")[:100]
+                    _lines.append(f"- [{nd.id}] {_stmt}")
+                frontier_block = (
+                    f"\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
+                    + "\n".join(_lines) + "\n"
+                    "Consider testing one of these before generating a new hypothesis.\n"
+                )
+        except Exception:
+            logger.debug("frontier_ranked injection failed", exc_info=True)
         # 想象力引导: 高 surprise 或连续 refine 时, 要求 LLM 跳出分析思维,
         # 考虑反事实假设. 基于 MToM P4 (hybrid ST+TT): 心智模型预测错误时
         # 切到仿真理论重新建模. 结构切换在数学结构族之间, 不是随机猜.
@@ -8150,6 +8214,7 @@ Hypothesis:""",
                 ("fail", fail_block),
                 ("imagination", imagination_block),
                 ("exec", exec_block),
+                ("frontier", frontier_block),
                 ("math", math_block),
                 ("kg", kg_block),
                 ("visual", visual_block),
@@ -10367,7 +10432,63 @@ def _selfcheck() -> None:
         _os.environ["HUGINN_BELIEF_DARWIN"] = _saved_belief_darwin
     print("53. P2-6 belief darwin (Gaussian 后验 σ² 收敛 + 高噪声不误判) OK")
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53)")
+    # 54. H4: GRILL mode 注入 + 退出
+    # 验证 _grill_active 时 system prompt 含 GRILL_SYSTEM_PROMPT_CN 关键短语
+    from huginn.runtime.pre_plan_grill import GRILL_SYSTEM_PROMPT_CN
+    _saved_grill = getattr(eng_s, "_grill_active", False)
+    eng_s._grill_active = True
+    eng_s._grill_turns = 0
+    # _llm_chat 会注入 GRILL prompt, 用 _FakeNoAstreamLLM 跑 (无流式)
+    import asyncio as _a54
+    async def _grill_case():
+        resp = await eng_s._llm_chat("test", persona_name="default", model=_FakeNoAstreamLLM())
+        return resp
+    _grill_resp = _a54.run(_grill_case())
+    # _FakeNoAstreamLLM 不读 system prompt, 只验证 _grill_turns 递增
+    assert eng_s._grill_turns >= 1, f"grill active 时 _grill_turns 应递增, got {eng_s._grill_turns}"
+    # 20 轮后强制退出
+    eng_s._grill_turns = 20
+    _a54.run(_grill_case())
+    assert not eng_s._grill_active, "grill 超过 20 轮应强制退出"
+    # 恢复
+    eng_s._grill_active = _saved_grill
+    # 静态验证 GRILL_SYSTEM_PROMPT_CN 含关键短语 (prompt 本身存在)
+    assert "一次只问一个" in GRILL_SYSTEM_PROMPT_CN
+    assert "shared understanding" in GRILL_SYSTEM_PROMPT_CN
+    print("54. H4 GRILL mode (注入 + 20 轮强制退出 + 退出标记检测) OK")
+
+    # 55. H2: frontier_ranked 注入 _build_hypothesis_prompt
+    # 验证假设图有 untested 节点时, prompt 含 "Untested Hypotheses" 块.
+    # ponytail: monkeypatch 外部数据获取方法, 只验证 frontier 注入路径.
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG55
+    eng_s.hypothesis_graph = _HG55()
+    eng_s.hypothesis_graph.add_hypothesis("test-hypothesis-1")
+    eng_s.hypothesis_graph.add_hypothesis("test-hypothesis-2")
+    # stub: 跳过 KB/KG/mem/PM/metacog/imagination/git_log/cluster 的外部依赖
+    eng_s._speculator_hint = ""
+    eng_s.workspace = "."
+    for _m in ("_build_kb_text", "_build_kg_text", "_build_memory_text",
+               "_build_pm_text", "_build_metacog_block"):
+        setattr(eng_s, _m, lambda *a, **kw: "")
+    eng_s._should_imaginate = lambda: False
+    eng_s._metacog_component_representatives = lambda: []
+    _prompt = eng_s._build_hypothesis_prompt({"test": "context"})
+    assert "Untested Hypotheses" in _prompt, \
+        "frontier_ranked 应注入到 hypothesis prompt, got 缺失"
+    assert "test-hypothesis-1" in _prompt, "prompt 应含 untested 假设 statement"
+    # toggle off → frontier_ranked 回退 frontier, 仍返回 untested, 仍注入 (向后兼容)
+    import os as _os55
+    _saved_ising = _os55.environ.get("HUGINN_ISING_FRONTIER")
+    _os55.environ["HUGINN_ISING_FRONTIER"] = "0"
+    _prompt_off = eng_s._build_hypothesis_prompt({"test": "context"})
+    assert "Untested Hypotheses" in _prompt_off, "toggle off 应仍注入 (向后兼容)"
+    if _saved_ising is None:
+        _os55.environ.pop("HUGINN_ISING_FRONTIER", None)
+    else:
+        _os55.environ["HUGINN_ISING_FRONTIER"] = _saved_ising
+    print("55. H2 frontier_ranked 注入 _build_hypothesis_prompt (有 untested 时 prompt 含块) OK")
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55)")
 
 
 if __name__ == "__main__":

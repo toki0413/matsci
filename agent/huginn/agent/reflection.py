@@ -354,6 +354,19 @@ class ReflectionMixin:
         except Exception:
             logger.debug("belief entropy signal check failed", exc_info=True)
 
+        # H1: drain SignalHub pending queue — tool runtime error 等无 csm 引用的
+        # emit 方发的信号在这里统一进 CSM. 之前 FailureModeRegistry.record_observation
+        # 调 route() 返回值被丢, 信号永远不进 CSM. 现在 emit() enqueue, 这里 drain.
+        if SignalHub is not None:
+            try:
+                for sig in SignalHub.shared().drain_pending():
+                    try:
+                        self._csm.transition(sig)
+                    except Exception:
+                        logger.debug("drain signal transition failed", exc_info=True)
+            except Exception:
+                logger.debug("signal hub drain failed", exc_info=True)
+
         # 节流保存 session snapshot: 每 3 turn 一次, 让下次会话能恢复 _mode/_csm/_phase.
         # 之前 session resume 只恢复消息历史, mode/csm/phase 全丢. 放这里集中, 不污染 mutation 点.
         # ponytail: 节流 + try/except 静默. 升级: dirty flag + 增量 diff.

@@ -230,7 +230,9 @@ class FailureModeRegistry:
         try:
             from huginn.metacog.signal_hub import SignalHub
 
-            SignalHub.shared().route(
+            # H1: 用 emit (enqueue) 替代 route (丢弃). 之前 route 返回值被丢,
+            # 信号永远不进 CSM. 现在 enqueue, reflection drain 拉.
+            SignalHub.shared().emit(
                 "skill_failure",
                 {"mode_id": mode_id, "tool_name": tool_name},
             )
