@@ -154,15 +154,26 @@ def _belief_merge(
             mu = float(b0.get("mu", 0.0))
             s2 = float(b0.get("sigma2", 0.0))
             obs_s2 = float(b0.get("obs_sigma2", 100.0))
+            # M6: KL 冲突检测 — prior vs 每个 obs belief. KL 大说明两个 subagent
+            # 看到的是不同分布, Bayesian merge 会假性缩小 σ² 给出虚假自信.
+            # 不阻塞 merge, 只在 out 上标 _conflict 让调用方决策.
+            # ponytail: 阈值 1.0 nat 硬编码. 升级: 按 field 配置 / 自适应.
+            _max_kl = 0.0
             for r in belief_results[1:]:
                 b = r["belief"][field]
                 o = float(b.get("mu", 0.0))  # 观测值 = 该 result 的 mu
                 os2 = float(b.get("obs_sigma2", obs_s2))
+                _kl = _gaussian_kl(mu, s2, o, os2)
+                if _kl > _max_kl:
+                    _max_kl = _kl
                 mu, s2 = _gaussian_update(mu, s2, o, os2)
             out[field] = mu  # point estimate = posterior mean
             out[f"{field}_belief"] = {
                 "type": "gaussian", "mu": mu, "sigma2": s2,
             }
+            if _max_kl > 1.0:
+                out[f"{field}_conflict"] = True
+                out[f"{field}_conflict_kl"] = _max_kl
             try:
                 from huginn.routes.metrics import track_belief_update
                 track_belief_update("gaussian")
@@ -818,6 +829,32 @@ def _selfcheck() -> None:
     assert kl46 > kl46_close, f"KL(520,572) 应 > KL(520,521): {kl46} vs {kl46_close}"
     assert kl46 > 0.1, f"严重冲突 KL 应 > 0.1, got {kl46}"
     print("46. Gaussian KL 冲突检测 (520 vs 572 KL > 0.1) OK")
+
+    # 46b. M6: _belief_merge 接入 KL — 高冲突时输出 _conflict + _conflict_kl
+    # r45a (mu=520) vs r45b (mu=572): KL(520,100,572,100) ≈ 13.5 > 1.0 → 标冲突
+    m46b = _belief_merge([r45a, r45b], {"best_encut"})
+    assert m46b.get("best_encut_conflict") is True, \
+        f"高 KL 应触发 _conflict, got {m46b.get('best_encut_conflict')}"
+    assert m46b.get("best_encut_conflict_kl", 0) > 1.0, \
+        f"_conflict_kl 应 > 1.0, got {m46b.get('best_encut_conflict_kl')}"
+    # 仍输出 merge 结果 (不阻塞), 调用方决定是否走 LLM 仲裁
+    assert "best_encut_belief" in m46b, "冲突时仍应输出 belief"
+    print(f"46b. M6 _belief_merge KL 冲突标记 (kl={m46b['best_encut_conflict_kl']:.2f} > 1.0) OK")
+
+    # 46c. M6: 低 KL (mu 接近) → 不标冲突
+    r46c_a = {
+        "best_encut": 520, "ts": 100.0,
+        "belief": {"best_encut": {"type": "gaussian", "mu": 520, "sigma2": 100, "obs_sigma2": 100}},
+    }
+    r46c_b = {
+        "best_encut": 521, "ts": 200.0,
+        "belief": {"best_encut": {"type": "gaussian", "mu": 521, "sigma2": 100, "obs_sigma2": 100}},
+    }
+    m46c = _belief_merge([r46c_a, r46c_b], {"best_encut"})
+    assert m46c.get("best_encut_conflict") is not True, \
+        f"低 KL 不应触发 _conflict, got {m46c.get('best_encut_conflict')}"
+    assert "best_encut_conflict_kl" not in m46c, "低 KL 不应输出 _conflict_kl"
+    print("46c. M6 _belief_merge 低 KL 不标冲突 OK")
 
     # 47. toggle off — 回退 P1-2 LWW
     os.environ["HUGINN_BELIEF_UPDATE"] = "0"

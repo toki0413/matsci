@@ -358,6 +358,72 @@ if __name__ == "__main__":
         assert loaded_cp2.engine_state_digest == d
         print("8. engine_state_digest matches EngineState OK")
 
+        # 9. H3: resume_engine_from_checkpoint — no engine_state → fresh engine.
+        # Mock AutoloopEngine 避免重 init (model/memory/kg 副作用). 验证:
+        # - 无 engine_state 文件时返回 AutoloopEngine(workspace=ws) (无 resume_from_state)
+        # - 有 engine_state 文件时返回 AutoloopEngine(workspace=ws, resume_from_state=run_id)
+        import huginn.autoloop.engine as _eng_mod
+        _orig_AE = _eng_mod.AutoloopEngine
+        _calls: list[dict] = []
+        class _StubAE:
+            def __init__(self, **kw):
+                _calls.append(kw)
+                self.workspace = kw.get("workspace")
+        _eng_mod.AutoloopEngine = _StubAE
+        try:
+            # 无 engine_state → fresh engine
+            cp_no_state = save_checkpoint(
+                task_id="t5", step_id=1, phase="execute", workspace=ws,
+                context_digest="x", memory_cursor=None,
+                target_chain_progress={}, prospective_queue=[],
+            )
+            eng1 = resume_engine_from_checkpoint(cp_no_state, ws)
+            assert isinstance(eng1, _StubAE), "应返回 stub 实例"
+            assert len(_calls) == 1, f"应调 1 次 AutoloopEngine, got {len(_calls)}"
+            assert _calls[0].get("workspace") == ws, "workspace 应传入"
+            assert _calls[0].get("resume_from_state") is None, \
+                "无 engine_state 时不应传 resume_from_state"
+            print("9a. resume_engine_from_checkpoint (no state → fresh) OK")
+
+            # 有 engine_state → resumed engine (带 resume_from_state)
+            # 需 HUGINN_USE_PERSISTENCE=1, 否则 load_engine_state 直接返 None.
+            import os as _os9
+            _saved_persist = _os9.environ.get("HUGINN_USE_PERSISTENCE")
+            _os9.environ["HUGINN_USE_PERSISTENCE"] = "1"
+            from huginn.runtime.engine_state import save_engine_state, EngineState
+            # save_engine_state 第一个参数是 engine (有 _iteration 等属性), 不是 state.
+            # ponytail: 直接用 EngineState 当 engine — _snapshot_engine 走 getattr 路径.
+            save_engine_state(state, "t5", ws)
+            _calls.clear()
+            try:
+                eng2 = resume_engine_from_checkpoint(cp_no_state, ws)
+                assert isinstance(eng2, _StubAE)
+                assert len(_calls) == 1
+                assert _calls[0].get("workspace") == ws
+                assert _calls[0].get("resume_from_state") == "t5", \
+                    f"有 engine_state 时应传 resume_from_state=t5, got {_calls[0]}"
+                print("9b. resume_engine_from_checkpoint (with state → resumed) OK")
+
+                # digest drift → log warning 但仍 resume (不阻塞)
+                cp_drift = save_checkpoint(
+                    task_id="t5", step_id=2, phase="execute", workspace=ws,
+                    context_digest="x", memory_cursor=None,
+                    target_chain_progress={}, prospective_queue=[],
+                )
+                cp_drift.engine_state_digest = "deadbeef"  # 故意 wrong
+                _calls.clear()
+                eng3 = resume_engine_from_checkpoint(cp_drift, ws)
+                assert isinstance(eng3, _StubAE), "drift 不应阻塞 resume"
+                assert len(_calls) == 1
+                print("9c. resume_engine_from_checkpoint (digest drift → warn but resume) OK")
+            finally:
+                if _saved_persist is None:
+                    _os9.environ.pop("HUGINN_USE_PERSISTENCE", None)
+                else:
+                    _os9.environ["HUGINN_USE_PERSISTENCE"] = _saved_persist
+        finally:
+            _eng_mod.AutoloopEngine = _orig_AE
+
         print("ALL CHECKS PASSED")
     finally:
         shutil.rmtree(ws.parent, ignore_errors=True)
