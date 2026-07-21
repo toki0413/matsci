@@ -66,6 +66,9 @@ class PhaseSpec:
     # H4 phase 分批: phase 特定可演化字段
     dispatch_table: dict[str, list[str]] = field(default_factory=dict)
     persona: str = ""
+    # phase 特定配置 (env name, marker, 阈值等). 用 dict 避免 PhaseSpec 字段膨胀.
+    # ponytail: 字段超 15 个再拆 per-phase dataclass. 升级路径见 class docstring.
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 # 7 phase baseline: 当前 hardcode 镜像. 分批接入, 先填 _execute + _report.
@@ -87,6 +90,49 @@ _PHASE_BASELINE: dict[str, PhaseSpec] = {
         name="_report",
         description="scientific report generation",
         persona="tutor",
+    ),
+    "_hypothesize": PhaseSpec(
+        name="_hypothesize",
+        description="hypothesis generation from context",
+        extra={
+            "branch_incubator_env": "HUGINN_USE_BRANCH_INCUBATOR",
+            "selected_marker": "SELECTED:",
+        },
+    ),
+    "_plan": PhaseSpec(
+        name="_plan",
+        description="plan generation from hypothesis",
+        extra={
+            "reject_tokens": ["no", "n", "cancel", "reject", "decline", "stop", "abort"],
+        },
+    ),
+    "_perceive": PhaseSpec(
+        name="_perceive",
+        description="workspace perception",
+        extra={
+            "signal_routes": [
+                "perception_error",
+                "perception_conflict",
+                "perception_converged",
+            ],
+        },
+    ),
+    "_validate": PhaseSpec(
+        name="_validate",
+        description="execution result validation",
+        extra={
+            "reviewer_threshold": 0.5,
+            "matworldbench_categories": ["structure", "thermo", "electronic"],
+            "needs_retry_threshold": 0.5,
+        },
+    ),
+    "_learn": PhaseSpec(
+        name="_learn",
+        description="Feynman learning + memory consolidation",
+        extra={
+            "importance_default": 0.6,
+            "importance_max": 0.9,
+        },
     ),
 }
 
@@ -204,10 +250,13 @@ class PhaseRegistry:
             return baseline
         # 合并 override: 只覆盖 override 里有的字段, 其余回退 baseline.
         # dispatch_table 做 key 级 merge (用户只覆盖想改的 mode, 其余保留 baseline),
-        # 其他字段整体替换.
+        # extra 做 key 级 merge (用户只覆盖想改的 key), 其他字段整体替换.
         merged_dispatch = {**baseline.dispatch_table}
         if "dispatch_table" in ov:
             merged_dispatch.update(ov["dispatch_table"])
+        merged_extra = {**baseline.extra}
+        if "extra" in ov:
+            merged_extra.update(ov["extra"])
         return PhaseSpec(
             name=phase_name,
             description=ov.get("description", baseline.description),
@@ -217,6 +266,7 @@ class PhaseRegistry:
             fallback=ov.get("fallback", baseline.fallback),
             dispatch_table=merged_dispatch,
             persona=ov.get("persona", baseline.persona),
+            extra=merged_extra,
         )
 
     def register_phase_override(
@@ -285,6 +335,25 @@ def get_phase_persona(phase_name: str) -> str | None:
     except Exception:
         logger.debug("get_phase_persona fail", exc_info=True)
         return None
+
+
+def get_phase_extra(phase_name: str, key: str, default: Any = None) -> Any:
+    """engine phase 方法调: toggle 开启时返回 phase extra 里的 key 值,
+    否则返回 default (caller 用 hardcode).
+
+    用于 _hypothesize (env name, marker), _plan (confirm/reject tokens) 等
+    phase 特定配置. extra 做 key 级 merge, 用户只覆盖想改的 key.
+    """
+    if not _harness_enabled("harness_phase_evolve"):
+        return default
+    try:
+        spec = PhaseRegistry.get_instance().get_phase_spec(phase_name)
+        if spec and spec.extra:
+            return spec.extra.get(key, default)
+        return default
+    except Exception:
+        logger.debug("get_phase_extra fail", exc_info=True)
+        return default
 
 
 def _selfcheck() -> None:
@@ -399,14 +468,71 @@ def _selfcheck() -> None:
     ps._harness_enabled = lambda key, default=False: False
     assert ps.get_phase_dispatch_table() is None, "toggle off should return None"
     assert ps.get_phase_persona("_report") is None, "toggle off should return None"
+    assert ps.get_phase_extra("_hypothesize", "selected_marker", "X") == "X", (
+        "toggle off get_phase_extra should return default"
+    )
     print("9. toggle off helpers → None OK")
+
+    # 10. 全 7 phase baseline 存在 + extra 字段正确
+    ps._harness_enabled = lambda key, default=False: (
+        True if key == "harness_phase_evolve" else default
+    )
+    ps.PhaseRegistry._instance = None
+    reg5 = ps.PhaseRegistry.get_instance()
+    expected_phases = {
+        "_execute", "_report", "_hypothesize", "_plan", "_perceive",
+        "_validate", "_learn",
+    }
+    actual_phases = set(reg5.list_phase_specs())
+    assert expected_phases <= actual_phases, (
+        f"missing phases: {expected_phases - actual_phases}"
+    )
+    # _hypothesize extra
+    hyp_spec = reg5.get_phase_spec("_hypothesize")
+    assert hyp_spec.extra.get("selected_marker") == "SELECTED:"
+    assert hyp_spec.extra.get("branch_incubator_env") == "HUGINN_USE_BRANCH_INCUBATOR"
+    # _plan extra
+    plan_spec = reg5.get_phase_spec("_plan")
+    assert "no" in plan_spec.extra.get("reject_tokens", [])
+    assert "abort" in plan_spec.extra.get("reject_tokens", [])
+    # _validate extra
+    val_spec = reg5.get_phase_spec("_validate")
+    assert val_spec.extra.get("reviewer_threshold") == 0.5
+    assert "structure" in val_spec.extra.get("matworldbench_categories", [])
+    # _learn extra
+    learn_spec = reg5.get_phase_spec("_learn")
+    assert learn_spec.extra.get("importance_default") == 0.6
+    assert learn_spec.extra.get("importance_max") == 0.9
+    print("10. 全 7 phase baseline + extra 字段 OK")
+
+    # 11. get_phase_extra helper + override (key 级 merge)
+    reg5.register_phase_override("_hypothesize", {
+        "extra": {"selected_marker": "CHOSEN:"},
+    })
+    ps.PhaseRegistry._instance = None
+    # override 的 key 生效
+    assert ps.get_phase_extra("_hypothesize", "selected_marker") == "CHOSEN:"
+    # 未 override 的 key 保留 baseline
+    assert ps.get_phase_extra("_hypothesize", "branch_incubator_env") == "HUGINN_USE_BRANCH_INCUBATOR"
+    print("11. get_phase_extra helper + extra key 级 merge OK")
+
+    # 12. _validate extra override (reviewer_threshold)
+    reg5.register_phase_override("_validate", {
+        "extra": {"reviewer_threshold": 0.7},
+    })
+    ps.PhaseRegistry._instance = None
+    assert ps.get_phase_extra("_validate", "reviewer_threshold") == 0.7
+    # 未 override 的 matworldbench_categories 保留 baseline
+    cats = ps.get_phase_extra("_validate", "matworldbench_categories", [])
+    assert "structure" in cats, f"baseline categories lost: {cats}"
+    print("12. _validate extra override OK")
 
     # 清理
     shutil.rmtree(tmp, ignore_errors=True)
     del os.environ["HUGINN_CACHE_DIR"]
     ps.PhaseRegistry._instance = None
     ps._harness_enabled = orig
-    print("H4 phase_spec selfcheck OK (9/9)")
+    print("H4 phase_spec selfcheck OK (12/12)")
 
 
 if __name__ == "__main__":
