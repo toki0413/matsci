@@ -3006,8 +3006,16 @@ Respond JSON only:
         """Generate a hypothesis from perceived context."""
         # BranchIncubator gating: flag on + factory 注入时走 N=3 隔离采样,
         # 失败/None 时 fallback 到下面 main+hot_model 2 路.
+        # H4: env name + selected marker 从 PhaseRegistry extra 取 (toggle off 回退 hardcode)
+        from huginn.harness.phase_spec import get_phase_extra
+        _incubator_env = get_phase_extra(
+            "_hypothesize", "branch_incubator_env", "HUGINN_USE_BRANCH_INCUBATOR"
+        )
+        _selected_marker = get_phase_extra(
+            "_hypothesize", "selected_marker", "SELECTED:"
+        )
         if (
-            os.environ.get("HUGINN_USE_BRANCH_INCUBATOR", "0") == "1"
+            os.environ.get(_incubator_env, "0") == "1"
             and self._agent_factory is not None
         ):
             try:
@@ -3072,8 +3080,8 @@ Respond JSON only:
                 if isinstance(raw, Exception) or not raw:
                     continue
                 raw = raw.strip()
-                if "SELECTED:" in raw:
-                    _after = raw.split("SELECTED:", 1)[1].strip()
+                if _selected_marker in raw:
+                    _after = raw.split(_selected_marker, 1)[1].strip()
                     _sel = _after.split("\n")[0].strip() if _after else ""
                     self._last_hypothesis = _sel or raw
                     self._last_raw_hypothesis = raw  # 保留 LUCID review 文本
@@ -3948,21 +3956,18 @@ Respond JSON only:
 
             # cost 确认门: None = 不用问 (非高成本 mode / manager 不可用),
             # 直接放行; 显式拒绝才拦. bool 和字符串都兼容 (测试 mock 常传 bool)
+            # H4: reject_tokens 从 PhaseRegistry extra 取 (toggle off 回退 hardcode tuple)
+            from huginn.harness.phase_spec import get_phase_extra
+            _reject_tokens = get_phase_extra("_plan", "reject_tokens", [
+                "no", "n", "cancel", "reject", "decline", "stop", "abort",
+            ])
             answer = await self._maybe_clarify("plan", plan)
             if answer is None:
                 should_confirm = True
             elif isinstance(answer, bool):
                 should_confirm = answer
             elif isinstance(answer, str):
-                should_confirm = answer.lower().strip() not in (
-                    "no",
-                    "n",
-                    "cancel",
-                    "reject",
-                    "decline",
-                    "stop",
-                    "abort",
-                )
+                should_confirm = answer.lower().strip() not in tuple(_reject_tokens)
             else:
                 should_confirm = bool(answer)
 
@@ -4268,6 +4273,13 @@ Respond JSON only:
 
     async def _validate(self, execution_result: Any) -> dict[str, Any]:
         """Validate execution results using benchmarks and constraints."""
+        # H4: reviewer 阈值 + MatWorldBench 白名单 + needs_retry 阈值从 PhaseRegistry extra 取
+        from huginn.harness.phase_spec import get_phase_extra
+        _reviewer_threshold = get_phase_extra("_validate", "reviewer_threshold", 0.5)
+        _mwb_categories = get_phase_extra("_validate", "matworldbench_categories", [
+            "structure", "thermo", "electronic",
+        ])
+        _needs_retry_threshold = get_phase_extra("_validate", "needs_retry_threshold", 0.5)
         results = {
             "tests_passed": False,
             "constraints_satisfied": False,
@@ -4388,7 +4400,7 @@ Respond JSON only:
         except Exception as e:
             results["generative_verify_error"] = str(e)
 
-        needs_review = gen_verify is None or gen_verify.get("score", 0.5) < 0.5
+        needs_review = gen_verify is None or gen_verify.get("score", 0.5) < _reviewer_threshold
         if needs_review:
             try:
                 reviewer_kb = self._build_kb_text(
@@ -4491,7 +4503,7 @@ Respond JSON only:
             exec_data = execution_result if isinstance(execution_result, dict) else {}
             eval_scores: list[dict] = []
             for task in bench.tasks:
-                if task.category in ("structure", "thermo", "electronic"):
+                if task.category in tuple(_mwb_categories):
                     try:
                         br = bench.evaluate(task.id, exec_data)
                         eval_scores.append(
@@ -5222,7 +5234,7 @@ Respond JSON only:
         return {
             "score": score,
             "reason": reason,
-            "needs_retry": score < 0.5,
+            "needs_retry": score < _needs_retry_threshold,
             "evidence_score": evidence_score,
             "evidence_gap": evidence_gap,
             "failure_mode": failure_mode,
@@ -5682,6 +5694,10 @@ Respond JSON only:
         self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
     ) -> None:
         """Learn from iteration results — update memory, knowledge graph, evolution rules."""
+        # H4: importance 公式常量从 PhaseRegistry extra 取
+        from huginn.harness.phase_spec import get_phase_extra
+        _imp_default = get_phase_extra("_learn", "importance_default", 0.6)
+        _imp_max = get_phase_extra("_learn", "importance_max", 0.9)
         r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
 
         # Log to memory
@@ -5747,7 +5763,7 @@ Respond JSON only:
                     run_id=getattr(self, "_run_id", None),
                     persona_id=persona_name,
                     status=_typed_status,
-                    importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                    importance=_imp_default if r_phys is None else min(_imp_max, float(r_phys)),
                     tier="mid",
                     tags=_tags,
                 )
@@ -5763,7 +5779,7 @@ Respond JSON only:
                     run_id=getattr(self, "_run_id", None),
                     persona_id=persona_name,
                     status=_typed_status,
-                    importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                    importance=_imp_default if r_phys is None else min(_imp_max, float(r_phys)),
                     tier="mid",
                     tags=_tags,
                 )
@@ -5775,7 +5791,7 @@ Respond JSON only:
                 self.memory.remember(
                     content=mem_content,
                     category="autoloop_iteration",
-                    importance=0.6 if r_phys is None else min(0.9, float(r_phys)),
+                    importance=_imp_default if r_phys is None else min(_imp_max, float(r_phys)),
                     tier="mid",
                     tags=_tags,
                 )
