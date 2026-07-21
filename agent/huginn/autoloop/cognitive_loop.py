@@ -26,10 +26,16 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
+
+# 700 万步极限场景的 action_history 滑动窗口. 所有调用方只用尾部 (decider prompt
+# 取 [-10:], cycle_detect O(n²) 在 1000 可接受, count/reversed/len 都 O(n)).
+# ponytail: 环境变量覆盖, 极限模式可调大. 升级路径: deque + 专用 tail_n().
+_MAX_ACTION_HIST = int(os.environ.get("HUGINN_ACTION_HIST_MAX", "1000"))
 
 
 @dataclass
@@ -154,6 +160,11 @@ class CognitiveLoop:
 
             # 死循环防护: 连续重复 action 超上限 → 强制 redirect, 超过 2 倍上限 → stop
             state.action_history.append(decision.action)
+            # 700 万步极限场景防内存爆炸: 截断到滑动窗口. 所有调用方只用尾部
+            # ([-10:], count, reversed, len), 截断前缀不影响语义. ponytail: 保留
+            # list 不改 deque, 避免切片兼容性. 升级路径: deque + 专用 tail_n().
+            if len(state.action_history) > _MAX_ACTION_HIST:
+                del state.action_history[: -_MAX_ACTION_HIST]
             state.last_action = decision.action
             state.last_rationale = decision.rationale
             repeated = self._count_repeated_tail(state.action_history)
