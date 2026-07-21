@@ -695,6 +695,7 @@ class StreamingMixin:
         thread_id: str = "default",
         image_path: str | None = None,
         budget_override: "BudgetSpec | None" = None,
+        include_history: bool | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Send a message to the Agent and stream responses.
 
@@ -707,6 +708,10 @@ class StreamingMixin:
         If *budget_override* is provided (BudgetSpec), temporarily
         overrides max_tool_calls / recursion_limit for this turn.
         PhaseManager.proposed_budget → Orchestrator → chat(budget_override=...).
+
+        If *include_history* is False, skip pulling ConversationTree history
+        into input messages. Used by Step 3 retry — fresh thread 的 prompt
+        已结构化注入所有必要 state, 不需要 Step 2 的 1M+ tokens 历史累积.
         """
         # ponytail: CodeAct 早返回 — 不走 langgraph / vision / cognitive engine,
         # 直接进 code_act_loop. CodeAct 模式下 LLM 输出 Python 代码块替代 JSON
@@ -987,6 +992,7 @@ class StreamingMixin:
                 memory_text=memory_text,
                 kb_text=kb_text,
                 session_state=self._session_state,
+                include_history=include_history,
             )
 
             if _vision_content is not None:
