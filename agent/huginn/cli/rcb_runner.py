@@ -1626,6 +1626,8 @@ async def _step3_adversarial(
     evals_history: list,
     stream_chat_fn,
     rcb_csm_advance_fn,
+    persona: Any = None,
+    kb: Any = None,
 ) -> str | None:
     """Step 3: 对抗式自检 — skeptical reviewer 视角找 gap.
 
@@ -1812,9 +1814,37 @@ async def _step3_adversarial(
                 _inst_text = _inst_path.read_text(encoding="utf-8")[:2000]
         except Exception:
             pass
+        # PMK 三路立场 + KB 专业召回 — 接入 Step 2 的 PMK 循环.
+        # 之前 retry 是 PMK 孤岛: persona/kb 都没传进来, 现在 build_pmk_state
+        # 抽 Persona/Memory/KB 三路立场, KB 再用 gap 关键词二次召回专业背景.
+        # ponytail: KB.query 是字符串匹配, 不上 LLM rerank; 升级路径接 Ising rerank.
+        _pmk_block = ""
+        _kb_recall = ""
+        try:
+            from huginn.autoloop.cognitive_loop import build_pmk_state
+            _last_eval = evals_history[-1] if evals_history else None
+            _pmk = build_pmk_state(persona, _last_eval, kb)
+            if _pmk:
+                _pmk_block = (
+                    f"### PMK 三路立场 (Step 2 末态)\n"
+                    f"- Persona: {_pmk.get('persona', '') or '(无)'}\n"
+                    f"- Memory:  {_pmk.get('memory', '') or '(无)'}\n"
+                    f"- KB:      {_pmk.get('kb', '') or '(无)'}\n\n"
+                )
+            if kb is not None and _retry_gap:
+                _hits = kb.query(_retry_gap, top_k=2)
+                if _hits:
+                    _kb_recall = "### KB 专业召回 (按 gap 关键词)\n" + " ".join(
+                        str(h.get("content", "") if isinstance(h, dict) else h)[:300]
+                        for h in _hits[:2]
+                    ) + "\n\n"
+        except Exception as _e:
+            print(f"[step3_retry PMK/KB injection skipped: {_e}]", flush=True)
         _retry_execute_prompt = (
             f"## Task Context (fresh thread — previous history not carried)\n"
             f"### INSTRUCTIONS.md (excerpt):\n{_inst_text}\n\n"
+            f"{_pmk_block}"
+            f"{_kb_recall}"
             f"### Previous Critique Verdict: {_retry_verdict}\n"
             f"### Gap Type: {_retry_gap}\n"
             f"### Critique Summary:\n{_critique_summary}\n\n"
@@ -2385,6 +2415,7 @@ async def run(workspace: str, extreme: bool = False) -> int:
     await _step2_5_report_fallback(ws, _stream_chat)
     _step3_final_verdict = await _step3_adversarial(
         ws, model, agent, checklist, _evals_history, _stream_chat, _rcb_csm_advance,
+        persona=persona, kb=kb,
     )
 
     # v14 Task 14: 跨 task Meta-Trace 累积. 把当前 task 的 meta_trace.jsonl
@@ -2844,7 +2875,7 @@ def self_check_v14_task8() -> None:
                 "missing_components": [],
             }
 
-        async def _mock_stream(_msg, _label, _tid=None):
+        async def _mock_stream(_msg, _label, _tid=None, **_kw):
             _stream_calls.append((_label, _msg))
             return ""
 
