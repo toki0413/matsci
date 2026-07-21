@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -48,16 +48,47 @@ class PhaseSpec:
 
     SubagentSpec 是 PhaseSpec 的子集 (没 postcondition / fallback),
     试点首选 BUILTIN_SPECS, 这俩字段留空. 7 phase 接入时才用.
+
+    H4 phase 分批加的字段 (dispatch_table / persona) 只有对应 phase 用,
+    其他 phase 留空. 不抽 per-phase dataclass 避免 class 膨胀
+    (ponytail: 统一 PhaseSpec 容纳所有 phase 字段, 升级路径: 字段超 15 个
+    再拆 per-phase dataclass + registry 多表).
     """
     name: str
-    prompt_template: str  # 对应 SubagentSpec.system_prompt
-    tool_whitelist: list[str]  # 对应 SubagentSpec.allowed_tools
+    prompt_template: str = ""  # 对应 SubagentSpec.system_prompt
+    tool_whitelist: list[str] = field(default_factory=list)  # 对应 SubagentSpec.allowed_tools
     postcondition: str = ""  # subagent 不用, phase 才用
     fallback: str = ""  # 同上
     max_tool_calls: int = 10
     max_iterations: int = 5
     summary_format: str = "free"
     description: str = ""
+    # H4 phase 分批: phase 特定可演化字段
+    dispatch_table: dict[str, list[str]] = field(default_factory=dict)
+    persona: str = ""
+
+
+# 7 phase baseline: 当前 hardcode 镜像. 分批接入, 先填 _execute + _report.
+# ponytail: baseline 不写盘, 用户写 override 才落盘. 跟 subagent baseline 同模式.
+_PHASE_BASELINE: dict[str, PhaseSpec] = {
+    "_execute": PhaseSpec(
+        name="_execute",
+        description="mode → executor dispatch table",
+        dispatch_table={
+            "coder": ["_execute_coder", "description"],
+            "workflow": ["_execute_workflow", "description"],
+            "dynamic_workflow": ["_execute_dynamic_workflow", "plan"],
+            "explore": ["_execute_explore", "description"],
+            "skill": ["_execute_skill", "plan"],
+            "visual_inspect": ["_execute_visual_inspect", "description"],
+        },
+    ),
+    "_report": PhaseSpec(
+        name="_report",
+        description="scientific report generation",
+        persona="tutor",
+    ),
+}
 
 
 class PhaseRegistry:
@@ -79,6 +110,7 @@ class PhaseRegistry:
         )
         self._reg_path = cache_dir / "phase_registry.json"
         self._overrides: dict[str, dict[str, Any]] = {}
+        self._phase_overrides: dict[str, dict[str, Any]] = {}
         self._load_overrides()
 
     @classmethod
@@ -93,8 +125,11 @@ class PhaseRegistry:
         try:
             if self._reg_path.exists():
                 d = json.loads(self._reg_path.read_text(encoding="utf-8"))
-                if isinstance(d, dict) and isinstance(d.get("subagents"), dict):
-                    self._overrides = d["subagents"]
+                if isinstance(d, dict):
+                    if isinstance(d.get("subagents"), dict):
+                        self._overrides = d["subagents"]
+                    if isinstance(d.get("phases"), dict):
+                        self._phase_overrides = d["phases"]
         except Exception:
             logger.debug("phase_registry load fail", exc_info=True)
 
@@ -102,7 +137,10 @@ class PhaseRegistry:
         try:
             self._reg_path.write_text(
                 json.dumps(
-                    {"subagents": self._overrides},
+                    {
+                        "subagents": self._overrides,
+                        "phases": self._phase_overrides,
+                    },
                     ensure_ascii=False,
                     indent=2,
                 ),
@@ -154,6 +192,47 @@ class PhaseRegistry:
         names.update(self._overrides.keys())
         return sorted(names)
 
+    # ── phase spec (H4 phase 分批) ──────────────────────────────
+
+    def get_phase_spec(self, phase_name: str) -> PhaseSpec | None:
+        """从 baseline + override 合成 PhaseSpec. 不存在返回 None."""
+        baseline = _PHASE_BASELINE.get(phase_name)
+        if baseline is None:
+            return None
+        ov = self._phase_overrides.get(phase_name)
+        if not ov:
+            return baseline
+        # 合并 override: 只覆盖 override 里有的字段, 其余回退 baseline.
+        # dispatch_table 做 key 级 merge (用户只覆盖想改的 mode, 其余保留 baseline),
+        # 其他字段整体替换.
+        merged_dispatch = {**baseline.dispatch_table}
+        if "dispatch_table" in ov:
+            merged_dispatch.update(ov["dispatch_table"])
+        return PhaseSpec(
+            name=phase_name,
+            description=ov.get("description", baseline.description),
+            prompt_template=ov.get("prompt_template", baseline.prompt_template),
+            tool_whitelist=ov.get("tool_whitelist", baseline.tool_whitelist),
+            postcondition=ov.get("postcondition", baseline.postcondition),
+            fallback=ov.get("fallback", baseline.fallback),
+            dispatch_table=merged_dispatch,
+            persona=ov.get("persona", baseline.persona),
+        )
+
+    def register_phase_override(
+        self, phase_name: str, spec_dict: dict[str, Any]
+    ) -> None:
+        """注册 / 更新一个 phase spec override. 落盘."""
+        with self._lock:
+            self._phase_overrides[phase_name] = spec_dict
+        self._save_overrides()
+
+    def list_phase_specs(self) -> list[str]:
+        """列出所有可用 phase spec 名 (baseline + override 合并)."""
+        names = set(_PHASE_BASELINE.keys())
+        names.update(self._phase_overrides.keys())
+        return sorted(names)
+
 
 def get_subagent_specs_for_dispatch() -> dict[str, Any] | None:
     """SubagentDispatch.__init__ 调: toggle 开启时返回 registry 合成的 specs,
@@ -172,6 +251,39 @@ def get_subagent_specs_for_dispatch() -> dict[str, Any] | None:
         }
     except Exception:
         logger.debug("get_subagent_specs_for_dispatch fail", exc_info=True)
+        return None
+
+
+def get_phase_dispatch_table() -> dict[str, list[str]] | None:
+    """engine._execute 调: toggle 开启时返回 _execute phase 的 dispatch_table,
+    否则返回 None (caller 用 hardcode if/elif).
+
+    返回 dict[mode, [method_name, arg_mode]] 或 None.
+    arg_mode = "description" | "plan", 决定 executor 传 plan 还是 description.
+    """
+    if not _harness_enabled("harness_phase_evolve"):
+        return None
+    try:
+        spec = PhaseRegistry.get_instance().get_phase_spec("_execute")
+        return spec.dispatch_table if spec else None
+    except Exception:
+        logger.debug("get_phase_dispatch_table fail", exc_info=True)
+        return None
+
+
+def get_phase_persona(phase_name: str) -> str | None:
+    """engine._report 等调: toggle 开启时返回 phase 的 persona,
+    否则返回 None (caller 用 hardcode).
+
+    返回 persona name str 或 None.
+    """
+    if not _harness_enabled("harness_phase_evolve"):
+        return None
+    try:
+        spec = PhaseRegistry.get_instance().get_phase_spec(phase_name)
+        return spec.persona if spec and spec.persona else None
+    except Exception:
+        logger.debug("get_phase_persona fail", exc_info=True)
         return None
 
 
@@ -234,12 +346,67 @@ def _selfcheck() -> None:
     assert specs["explore"].system_prompt == "PATCHED explore prompt"
     print("4. get_subagent_specs_for_dispatch OK")
 
+    # 5. phase spec baseline: _execute dispatch_table + _report persona
+    reg3 = ps.PhaseRegistry.get_instance()
+    exec_spec = reg3.get_phase_spec("_execute")
+    assert exec_spec is not None, "_execute baseline should exist"
+    assert "coder" in exec_spec.dispatch_table, "coder mode missing"
+    assert exec_spec.dispatch_table["coder"] == ["_execute_coder", "description"], (
+        f"coder dispatch entry wrong: {exec_spec.dispatch_table['coder']}"
+    )
+    assert exec_spec.dispatch_table["dynamic_workflow"] == ["_execute_dynamic_workflow", "plan"], (
+        f"dynamic_workflow dispatch entry wrong: {exec_spec.dispatch_table['dynamic_workflow']}"
+    )
+    report_spec = reg3.get_phase_spec("_report")
+    assert report_spec is not None, "_report baseline should exist"
+    assert report_spec.persona == "tutor", f"_report persona wrong: {report_spec.persona}"
+    print("5. phase spec baseline (_execute dispatch_table + _report persona) OK")
+
+    # 6. phase spec override + 持久化
+    reg3.register_phase_override("_execute", {
+        "dispatch_table": {
+            "coder": ["_execute_coder", "description"],
+            "custom_mode": ["_execute_explore", "description"],
+        },
+    })
+    ps.PhaseRegistry._instance = None
+    reg4 = ps.PhaseRegistry.get_instance()
+    exec_spec2 = reg4.get_phase_spec("_execute")
+    assert "custom_mode" in exec_spec2.dispatch_table, "override custom_mode missing"
+    # 未 override 的 mode 保留 baseline
+    assert "workflow" in exec_spec2.dispatch_table, "baseline workflow lost after override"
+    assert exec_spec2.dispatch_table["custom_mode"] == ["_execute_explore", "description"]
+    print("6. phase spec override + persistence + baseline fallback OK")
+
+    # 7. get_phase_dispatch_table helper (engine._execute 接入点)
+    dt = ps.get_phase_dispatch_table()
+    assert dt is not None, "toggle on should return dispatch_table"
+    assert "custom_mode" in dt, "custom_mode missing from helper"
+    assert dt["coder"] == ["_execute_coder", "description"]
+    print("7. get_phase_dispatch_table helper OK")
+
+    # 8. get_phase_persona helper (engine._report 接入点)
+    # override _report persona
+    reg4.register_phase_override("_report", {"persona": "reviewer"})
+    ps.PhaseRegistry._instance = None
+    persona = ps.get_phase_persona("_report")
+    assert persona == "reviewer", f"persona override failed: {persona}"
+    # 不存在的 phase → None
+    assert ps.get_phase_persona("nonexistent") is None
+    print("8. get_phase_persona helper OK")
+
+    # 9. toggle off: helpers 返回 None (caller 用 hardcode)
+    ps._harness_enabled = lambda key, default=False: False
+    assert ps.get_phase_dispatch_table() is None, "toggle off should return None"
+    assert ps.get_phase_persona("_report") is None, "toggle off should return None"
+    print("9. toggle off helpers → None OK")
+
     # 清理
     shutil.rmtree(tmp, ignore_errors=True)
     del os.environ["HUGINN_CACHE_DIR"]
     ps.PhaseRegistry._instance = None
     ps._harness_enabled = orig
-    print("H4 phase_spec 试点 selfcheck OK (4/4)")
+    print("H4 phase_spec selfcheck OK (9/9)")
 
 
 if __name__ == "__main__":
