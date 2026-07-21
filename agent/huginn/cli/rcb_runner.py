@@ -1757,7 +1757,7 @@ async def _step3_adversarial(
     # ponytail: 单独 _step3 后缀, 不污染 Step 1/2 thread. 升级: 修 checkpointer
     # 的 history restorer 自动过滤 dangling tool_calls (留后续).
     _step3_tid = f"rcb_{ws.name}_step3"
-    await stream_chat_fn(step3_prompt, "step3", tid=_step3_tid)
+    await stream_chat_fn(step3_prompt, "step3", tid=_step3_tid, fresh_history=True)
 
     # v14 Task 8: Step3→Step2 回退通道 (拓扑许可动力学)
     # 重新 critique 看 agent 修没修好; 仍 fix_needed + β_1>0 + gap 类型匹配
@@ -1809,7 +1809,8 @@ async def _step3_adversarial(
             # fresh thread 避免累积 — finalize 只需当前 report + critique verdict.
             # 之前用 _step3_tid 会累积 step3 + step3_retry 历史 → 1.6M tokens 超限.
             _finalize_tid = f"rcb_{ws.name}_step3_finalize"
-            await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_finalize_tid)
+            await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_finalize_tid,
+                                 fresh_history=True)
             break
 
         _retry_count += 1
@@ -1954,8 +1955,11 @@ async def _step3_adversarial(
         print(f"[step3_retry: attempt {_retry_count}/2, gap={_retry_gap}]", flush=True)
         # fresh thread per retry — 避免同 _step3_tid 累积消息超限.
         # 每次重试都是独立 thread + 结构化 state injection (上方构造).
+        # fresh_history=True: 不拉 ConversationTree 历史, 避免 Step 2 的
+        # 1M+ tokens 累积. retry prompt 已注入 PMK/KB/state/critique 全部 state.
         _retry_tid = f"rcb_{ws.name}_step3_retry{_retry_count}"
-        await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid)
+        await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid,
+                             fresh_history=True)
         # 记录 cross-retry memory: 算 report diff, 下次 retry 注入.
         # retry1 改了 +X/-Y 行, retry2 看到后试不同策略 (不重蹈覆辙).
         try:
@@ -2168,11 +2172,17 @@ async def run(workspace: str, extreme: bool = False) -> int:
 
     thread_id = f"rcb_{ws.name}"
 
-    async def _stream_chat(msg: str, step_label: str, tid: str | None = None) -> str:
+    async def _stream_chat(msg: str, step_label: str, tid: str | None = None,
+                           fresh_history: bool = False) -> str:
         """跑一轮 agent.chat, 流式打印 AIMessage, 返回最后的 AI 文本.
 
         tid: TFM 分叉用独立 thread 隔离 graph 内态 (历史从 ConversationTree
         重建, thread 只影响 checkpoint 内态, 换 tid 无历史损失).
+
+        fresh_history: True 时不拉 ConversationTree 历史. Step 3 retry 用 —
+        fresh thread 的 prompt 已结构化注入所有必要 state, 不需要 Step 2 的
+        1M+ tokens 历史累积. 之前换 tid 没解决超限, 因为 ConversationTree
+        是 agent 实例属性, thread_id 切换不影响它, history 照样被拉回来.
 
         视觉接入: msg 里含图片路径 (xxx.png/jpg/...) 时透传 image_path 给
         agent.chat, streaming.py 的 VisionRouter 自动接管 (CV 预分析 +
@@ -2198,6 +2208,7 @@ async def run(workspace: str, extreme: bool = False) -> int:
                 pass  # 视觉接入是增强, 失败不阻塞文本路径
             async for chunk in agent.chat(
                 msg, thread_id=tid or thread_id, image_path=_image_path,
+                include_history=not fresh_history,
             ):
                 msgs = chunk.get("messages", [])
                 if not msgs:
