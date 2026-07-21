@@ -1793,15 +1793,34 @@ async def _step3_adversarial(
                 f"'Attempted {_retry_count} retries, could not fix gap ({_retry_gap}).'\n"
                 f"Use file_write_tool to OVERWRITE report/report.md with this honest note."
             )
-            await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_step3_tid)
+            # fresh thread 避免累积 — finalize 只需当前 report + critique verdict.
+            # 之前用 _step3_tid 会累积 step3 + step3_retry 历史 → 1.6M tokens 超限.
+            _finalize_tid = f"rcb_{ws.name}_step3_finalize"
+            await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_finalize_tid)
             break
 
         _retry_count += 1
         _critique_summary = format_critique_for_agent(_retry_verdict_dict)[:500]
+        # 结构化 state injection: fresh thread 注入 INSTRUCTIONS + 前次 verdict,
+        # 不截断不累积. 比 simple truncation 智能: 保留 task gradient + critique context.
+        # ponytail: 升级路径 — LLM summarization 替代 fresh thread (保留中间过程),
+        # 但 Step 3 是 critique report, 不需要 Step 2 中间过程, fresh thread 已够.
+        _inst_text = ""
+        try:
+            _inst_path = ws / "INSTRUCTIONS.md"
+            if _inst_path.exists():
+                _inst_text = _inst_path.read_text(encoding="utf-8")[:2000]
+        except Exception:
+            pass
         _retry_execute_prompt = (
-            f"Critique found gap: {_critique_summary}\n"
-            f"Gap type: {_retry_gap}.\n"
-            f"Return to EXECUTE mode. Re-run code_tool to fix the gap. "
+            f"## Task Context (fresh thread — previous history not carried)\n"
+            f"### INSTRUCTIONS.md (excerpt):\n{_inst_text}\n\n"
+            f"### Previous Critique Verdict: {_retry_verdict}\n"
+            f"### Gap Type: {_retry_gap}\n"
+            f"### Critique Summary:\n{_critique_summary}\n\n"
+            f"## Current Report (read report/report.md for full content)\n"
+            f"Report exists at report/report.md ({len(_retry_report)} chars).\n\n"
+            f"## Task: Return to EXECUTE mode. Re-run code_tool to fix the gap. "
             f"OVERWRITE report/report.md after fix.\n"
             f"Retry attempt {_retry_count}/2."
         )
@@ -1834,7 +1853,10 @@ async def _step3_adversarial(
             print(f"[step3_retry trace write failed: {_e}]", flush=True)
 
         print(f"[step3_retry: attempt {_retry_count}/2, gap={_retry_gap}]", flush=True)
-        await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_step3_tid)
+        # fresh thread per retry — 避免同 _step3_tid 累积消息超限.
+        # 每次重试都是独立 thread + 结构化 state injection (上方构造).
+        _retry_tid = f"rcb_{ws.name}_step3_retry{_retry_count}"
+        await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid)
         # loop continues — re-critique next iteration
 
     return _final_verdict
