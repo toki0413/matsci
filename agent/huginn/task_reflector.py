@@ -17,10 +17,26 @@ This is the "reflection" phase in the loop engineering cycle:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# P2-6 belief upgrade: 单次失败切 mode 太激进, 跟用户 "prefer warnings + force
+# proceed" 偏好冲突. Beta(α, β) 共轭: α += success, β += fail. 当 β/(α+β) >
+# threshold 时才切 mode. 跨 turn 状态在 TaskReflector 实例上累积.
+#
+# ceiling: alpha/beta 跑久了会膨胀, 切 mode 决策变迟钝. 用滑动窗口 (最近 N 次)
+# 而非全历史. ponytail: 不引入新依赖, Beta 共轭闭合解.
+_MODE_BELIEF_WINDOW = 20  # 最近 N 次 tool result
+_MODE_SWITCH_THRESHOLD = 0.5  # 失败率超过 50% 才切 discover
+
+
+def _belief_switch_enabled() -> bool:
+    """toggle: env HUGINN_BELIEF_MODE_SWITCH (默认 on). off 时回退原硬规则."""
+    return os.environ.get("HUGINN_BELIEF_MODE_SWITCH", "1") != "0"
 
 
 @dataclass
@@ -90,6 +106,58 @@ class TaskReflector:
             yield confirmation_request
     """
 
+    def __init__(self) -> None:
+        # P2-6 Beta belief: 滑动窗口记 success/fail, 累积 belief 后才切 mode.
+        # 单次失败只降 confidence, 不立即切. 满足用户 "prefer warnings + force proceed".
+        self._mode_window: list[bool] = []  # True=success, False=fail
+
+    def _record_and_decide_switch(
+        self, success: bool, session_state: Any,
+    ) -> tuple[bool, str]:
+        """P2-6 belief-driven mode switch. 返回 (should_switch, suggested_mode).
+
+        滑动窗口 Beta 共轭: α = 窗口内 success 数, β = 窗口内 fail 数.
+        失败率 = β/(α+β) > threshold 才切 discover. 单次失败只降 confidence (alpha 减),
+        不切. 成功多时建议 construct.
+        """
+        self._mode_window.append(success)
+        if len(self._mode_window) > _MODE_BELIEF_WINDOW:
+            self._mode_window = self._mode_window[-_MODE_BELIEF_WINDOW:]
+
+        # toggle off → 回退原硬规则: 单次失败立即切
+        if not _belief_switch_enabled():
+            if not success and session_state:
+                current_mode = getattr(session_state, "cognitive_mode", None)
+                if current_mode and current_mode.value == "construct":
+                    return True, "discover"
+            return False, ""
+
+        # 数据不足时不切 (至少 3 次结果)
+        if len(self._mode_window) < 3:
+            return False, ""
+
+        alpha = sum(1 for s in self._mode_window if s)
+        beta = len(self._mode_window) - alpha
+        fail_rate = beta / (alpha + beta)
+
+        # metrics
+        try:
+            from huginn.routes.metrics import track_belief_update
+            track_belief_update("beta")
+        except Exception:
+            pass
+
+        current_mode = getattr(session_state, "cognitive_mode", None) if session_state else None
+        in_construct = bool(current_mode and current_mode.value == "construct")
+
+        # 失败率高 + 在 construct → 切 discover
+        if fail_rate > _MODE_SWITCH_THRESHOLD and in_construct:
+            return True, "discover"
+        # 失败率低 + 在 discover → 切 construct (信号: 探索成功, 可以建了)
+        if fail_rate < (1 - _MODE_SWITCH_THRESHOLD) and current_mode and current_mode.value == "discover":
+            return True, "construct"
+        return False, ""
+
     def reflect(
         self,
         tool_name: str,
@@ -126,9 +194,7 @@ class TaskReflector:
             result.message = self._build_failure_message(
                 tool_name, error, audit
             )
-            # On failure, suggest switching to discovery mode to explore alternatives
-            result.should_switch_mode = True
-            result.suggested_mode = "discover"
+            # P2-6 belief: 不再单次失败立即切. _record_and_decide_switch 算窗口 belief.
             result.needs_user_input = True
             result.confirm_type = "replan"
         elif result.has_physics_warnings:
@@ -156,17 +222,15 @@ class TaskReflector:
                 result.should_evolve = True
                 result.evolve_signal = "success"
 
-        # 5. Cognitive mode assessment
-        # If we just completed a plan step, suggest staying in construct mode
-        if result.plan_step_completed and not result.should_switch_mode:
+        # 5. Cognitive mode assessment — P2-6 belief-driven
+        # 单次失败不再立即切; 走滑动窗口 Beta 共轭.
+        should_switch, suggested = self._record_and_decide_switch(success, session_state)
+        if should_switch:
+            result.should_switch_mode = True
+            result.suggested_mode = suggested
+        elif result.plan_step_completed:
+            # 稳定成功时建议留在 construct
             result.suggested_mode = "construct"
-
-        # If tool failed and we're in construct mode, suggest switching to discover
-        if not success and session_state:
-            current_mode = getattr(session_state, "cognitive_mode", None)
-            if current_mode and current_mode.value == "construct":
-                result.should_switch_mode = True
-                result.suggested_mode = "discover"
 
         return result
 
@@ -213,3 +277,72 @@ class TaskReflector:
             if highlights:
                 parts.append("Key results: " + ", ".join(highlights))
         return "\n".join(parts)
+
+
+def _selfcheck() -> int:
+    """assert-based demo for P2-6 belief-driven mode switch."""
+    import os as _os
+    from enum import Enum
+
+    class _Mode(Enum):
+        DISCOVER = "discover"
+        CONSTRUCT = "construct"
+
+    class _FakeState:
+        def __init__(self, mode: str) -> None:
+            self.cognitive_mode = _Mode(mode)
+            self.active_plan_id = None
+
+    # save env, 强制 belief 模式
+    _saved = _os.environ.get("HUGINN_BELIEF_MODE_SWITCH")
+    _os.environ["HUGINN_BELIEF_MODE_SWITCH"] = "1"
+
+    # 48. 单次失败不切 (窗口 < 3 不决策)
+    r = TaskReflector()
+    res = r.reflect("vasp_tool", {"success": False}, _FakeState("construct"))
+    assert not res.should_switch_mode, "单次失败不应立即切"
+    assert res.confirm_type == "replan", "但仍应提示 replan"
+
+    # 49. 窗口 >= 3, 失败率 > 50% 在 construct → 切 discover
+    r2 = TaskReflector()
+    for _ in range(2):
+        r2.reflect("t", {"success": False}, _FakeState("construct"))
+    res = r2.reflect("t", {"success": False}, _FakeState("construct"))
+    assert res.should_switch_mode and res.suggested_mode == "discover", \
+        f"3 次失败应切 discover, got switch={res.should_switch_mode} mode={res.suggested_mode}"
+
+    # 50. 窗口有混合, 失败率 <= 50% 不切
+    r3 = TaskReflector()
+    r3.reflect("t", {"success": True}, _FakeState("construct"))
+    r3.reflect("t", {"success": True}, _FakeState("construct"))
+    res = r3.reflect("t", {"success": False}, _FakeState("construct"))
+    assert not res.should_switch_mode, "2 成功 1 失败不应切"
+
+    # 51. 在 discover 高成功率 → 切 construct
+    r4 = TaskReflector()
+    for _ in range(4):
+        r4.reflect("t", {"success": True}, _FakeState("discover"))
+    res = r4.reflect("t", {"success": True}, _FakeState("discover"))
+    assert res.should_switch_mode and res.suggested_mode == "construct", \
+        f"5 成功在 discover 应切 construct, got switch={res.should_switch_mode} mode={res.suggested_mode}"
+
+    # 52. toggle off → 回退原硬规则 (单次失败立即切)
+    _os.environ["HUGINN_BELIEF_MODE_SWITCH"] = "0"
+    r5 = TaskReflector()
+    res = r5.reflect("t", {"success": False}, _FakeState("construct"))
+    assert res.should_switch_mode and res.suggested_mode == "discover", \
+        "toggle off 时单次失败应立即切 (原硬规则)"
+
+    # restore env
+    if _saved is None:
+        _os.environ.pop("HUGINN_BELIEF_MODE_SWITCH", None)
+    else:
+        _os.environ["HUGINN_BELIEF_MODE_SWITCH"] = _saved
+
+    print("task_reflector selfcheck OK (48-52 P2-6 belief-driven mode switch)")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_selfcheck())
