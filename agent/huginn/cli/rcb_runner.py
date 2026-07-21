@@ -1763,6 +1763,17 @@ async def _step3_adversarial(
     # 重新 critique 看 agent 修没修好; 仍 fix_needed + β_1>0 + gap 类型匹配
     # 则发 step3_retry 让 agent 回 execute 模式重跑. 硬上限 2 次.
     _trace_task_id_s3 = _infer_task_id_from_workspace(ws.name)
+    # cross-retry memory: 记录每次 retry 的 gap + report diff, 下次 retry 注入.
+    # 之前 retry1/2 互不通信, retry2 重蹈 retry1 失败覆辙. 现在 retry1 改了啥
+    # 写 cross_retry.jsonl, retry2 prompt 注入 "retry1 试了 X 方案仍 fix_needed".
+    # ponytail: report diff 用 difflib 算 added/removed lines, 不上 LLM summarize.
+    # 升级路径: LLM summarize retry attempt (捕获 diff 没体现的语义变化).
+    _xretry_path = ws / ".huginn" / "cross_retry.jsonl"
+    try:
+        _xretry_path.parent.mkdir(parents=True, exist_ok=True)
+        _xretry_path.unlink(missing_ok=True)  # 清上次的, 避免跨 task 污染
+    except Exception:
+        pass
     while True:
         if not report_path.exists() or not checklist:
             break
@@ -1840,11 +1851,67 @@ async def _step3_adversarial(
                     ) + "\n\n"
         except Exception as _e:
             print(f"[step3_retry PMK/KB injection skipped: {_e}]", flush=True)
+        # State checkpoint — 扫 outputs/code/images/report 文件清单 + 大小.
+        # retry agent 知道 "已有 gp_model.pkl 可以复用", 不用从头跑. 避免 retry
+        # 重复 Step 2 的 EDA/数据加载/模型训练, 直接复用已有 artifacts.
+        # ponytail: 纯文件系统扫描, 无 LLM; 升级路径: LLM 抽取 artifact 语义.
+        _state_ckpt = ""
+        try:
+            _ckpt_files = []
+            for _sub in ("outputs", "code", "images", "report"):
+                _sp = ws / _sub
+                if not _sp.exists():
+                    continue
+                for _fp in _sp.rglob("*"):
+                    if _fp.is_file() and _fp.stat().st_size > 0:
+                        _rel = _fp.relative_to(ws).as_posix()
+                        _sz = _fp.stat().st_size
+                        _unit = "B" if _sz < 1024 else ("KB" if _sz < 1048576 else "MB")
+                        _sz_str = f"{_sz/1024:.1f}KB" if _unit == "KB" else (
+                            f"{_sz/1048576:.1f}MB" if _unit == "MB" else f"{_sz}B")
+                        _ckpt_files.append(f"  - {_rel} ({_sz_str})")
+            if _ckpt_files:
+                _state_ckpt = (
+                    "### State Checkpoint (Step 2 已生成, 可复用 — 不要从头跑)\n"
+                    + "\n".join(_ckpt_files[:25]) + "\n\n"
+                )
+        except Exception:
+            pass
+        # Cross-retry memory — 上次 retry 的 gap + report diff 摘要.
+        # retry1 改了 X 行但仍 fix_needed, retry2 知道后试不同策略.
+        # ponytail: difflib 算 added/removed lines; 升级路径: LLM summarize diff.
+        _xretry_block = ""
+        try:
+            if _xretry_path.exists():
+                _xretry_lines = _xretry_path.read_text(encoding="utf-8").strip().split("\n")
+                _xretry_entries = []
+                for _xl in _xretry_lines:
+                    if _xl.strip():
+                        try:
+                            _xretry_entries.append(json.loads(_xl))
+                        except Exception:
+                            pass
+                if _xretry_entries:
+                    _xretry_block = "### Cross-Retry Memory (避免重蹈覆辙)\n"
+                    for _xr in _xretry_entries:
+                        _xretry_block += (
+                            f"- Retry {_xr.get('retry','?')}: gap={_xr.get('gap','?')}, "
+                            f"changed +{_xr.get('added_lines',0)}/-{_xr.get('removed_lines',0)} lines, "
+                            f"verdict_after=still_fix_needed\n"
+                        )
+                    _xretry_block += (
+                        "\nDO NOT repeat the same approach. Try a DIFFERENT strategy "
+                        "(e.g. if retry1 added text, retry2 should RECOMPUTE data).\n\n"
+                    )
+        except Exception:
+            pass
         _retry_execute_prompt = (
             f"## Task Context (fresh thread — previous history not carried)\n"
             f"### INSTRUCTIONS.md (excerpt):\n{_inst_text}\n\n"
             f"{_pmk_block}"
             f"{_kb_recall}"
+            f"{_state_ckpt}"
+            f"{_xretry_block}"
             f"### Previous Critique Verdict: {_retry_verdict}\n"
             f"### Gap Type: {_retry_gap}\n"
             f"### Critique Summary:\n{_critique_summary}\n\n"
@@ -1854,6 +1921,8 @@ async def _step3_adversarial(
             f"OVERWRITE report/report.md after fix.\n"
             f"Retry attempt {_retry_count}/2."
         )
+        # snapshot report before retry — 用于下次 loop 算 diff
+        _report_before_retry = _retry_report
         # 写 trace entry 标记回退事件 (cochain_type="curl", role="step3_retry")
         try:
             import time as _t_s3
@@ -1887,6 +1956,33 @@ async def _step3_adversarial(
         # 每次重试都是独立 thread + 结构化 state injection (上方构造).
         _retry_tid = f"rcb_{ws.name}_step3_retry{_retry_count}"
         await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid)
+        # 记录 cross-retry memory: 算 report diff, 下次 retry 注入.
+        # retry1 改了 +X/-Y 行, retry2 看到后试不同策略 (不重蹈覆辙).
+        try:
+            import difflib as _dl
+            _report_after_retry = (
+                report_path.read_text(encoding="utf-8") if report_path.exists() else ""
+            )
+            _diff = _dl.unified_diff(
+                _report_before_retry.splitlines(),
+                _report_after_retry.splitlines(),
+                lineterm="",
+            )
+            _added = sum(1 for _l in _diff if _l.startswith("+") and not _l.startswith("+++"))
+            _removed = sum(1 for _l in _diff if _l.startswith("-") and not _l.startswith("---"))
+            _xentry = {
+                "retry": _retry_count,
+                "gap": _retry_gap,
+                "critique_before": _critique_summary[:200],
+                "added_lines": _added,
+                "removed_lines": _removed,
+                "report_chars_before": len(_report_before_retry),
+                "report_chars_after": len(_report_after_retry),
+            }
+            with _xretry_path.open("a", encoding="utf-8") as _f:
+                _f.write(json.dumps(_xentry, ensure_ascii=False) + "\n")
+        except Exception as _e:
+            print(f"[step3_retry cross_retry log failed: {_e}]", flush=True)
         # loop continues — re-critique next iteration
 
     return _final_verdict
