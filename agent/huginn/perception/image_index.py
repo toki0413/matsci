@@ -197,6 +197,20 @@ class ImageIndex:
             })
         return results
 
+    def neighborhood(self, x: Any, radius: float | None = None) -> set[Any]:
+        """A 拓扑 Protocol — SupportsNeighborhood 实现.
+
+        x = query (path/bytes) 或 text_query (str), radius = top_k (None=5).
+        返回匹配的 image path 集合.
+        """
+        top_k = int(radius) if radius is not None else 5
+        # 字符串视为 text_query (不存在的 path 会 search 失败, 用 text 路径更通用)
+        if isinstance(x, str) and not Path(x).exists():
+            results = self.search(query=None, top_k=top_k, text_query=x)
+        else:
+            results = self.search(query=x, top_k=top_k)
+        return {r.get("path") for r in results}
+
     # ── introspection ──
 
     def stats(self) -> dict[str, Any]:

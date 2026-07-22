@@ -14,6 +14,15 @@ env flag HUGINN_USE_COGNITIVE_MAP=1 控制. 默认 off, 行为完全不变.
 ponytail: 用 pymatgen + scipy 现有依赖, 不引入新包. SE(3) 用 scipy.spatial.transform.Rotation
 不手写旋转矩阵避免数值误差. adjacency 用 cutoff + PBC, 不上 KD-tree (YAGNI).
 升级路径: 接 Hodge decomposition 做 topological analysis (后续 P2 候选).
+
+Bourbaki 三结构视角 (B 文档化):
+  代数 I  (free monoid): 多个 map 可 concat 成 supercell (supercell 方法).
+                         from_cif/from_molecule/from_coords 是 monoid 元素构造.
+  代数 II (SE(3) 群作用): rotate/translate/query_after_rotation 是 SE(3) 群作用.
+                         半直积 (M × V) ⋊ SE(3) 已验证 (见 C 实验 composite_token_experiment).
+  拓扑   (邻域):         query_neighbors / adjacency 定义邻域.
+                         neighborhood 方法 (A 拓扑 Protocol) 适配 SupportsNeighborhood.
+                         升级路径: Hodge decomposition (gradient/curl/harmonic 三分量).
 """
 from __future__ import annotations
 
@@ -266,6 +275,14 @@ class StructureCognitiveMap:
             return neighbors
         d = np.linalg.norm(self.coords - self.coords[i], axis=1)
         return [j for j in range(len(self.species)) if j != i and d[j] <= cutoff]
+
+    def neighborhood(self, x: int, radius: float | None = None) -> set[int]:
+        """A 拓扑 Protocol — SupportsNeighborhood 实现.
+
+        x = 原子 index, radius = cutoff (None = 用预计算 adjacency).
+        跟 query_neighbors 同语义, 只是返回 set 适配 Protocol.
+        """
+        return set(self.query_neighbors(x, cutoff=radius))
 
     def query_subgraph(self, center_indices: list[int], hops: int = 2) -> SubgraphResult:
         """k-hop 邻域子图. BFS 扩展 hops 跳."""
