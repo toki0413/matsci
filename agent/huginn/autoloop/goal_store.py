@@ -53,6 +53,13 @@ class Goal:
     max_iterations: int = 20
     completed_at: str | None = None
     completion_condition: str | None = None
+    # P5 (chaoxu 启发): persistent goal mode — 挂钟时间预算.
+    # wall_clock_budget_seconds > 0 时, 配合 HUGINN_PERSISTENT_GOAL_MODE=1,
+    # stagnation 不 early stop, 直到挂钟预算耗尽才 stop.
+    # 0 = 无挂钟限制 (向后兼容, 走原 max_iterations / stagnation 逻辑).
+    # started_at 记录 goal 开始执行的时间, 用于算剩余预算.
+    wall_clock_budget_seconds: float = 0.0
+    started_at: str = ""
 
     def __post_init__(self) -> None:
         if not self.created_at:
@@ -88,6 +95,8 @@ class Goal:
             max_iterations=data.get("max_iterations", 20),
             completed_at=data.get("completed_at"),
             completion_condition=data.get("completion_condition"),
+            wall_clock_budget_seconds=data.get("wall_clock_budget_seconds", 0.0),
+            started_at=data.get("started_at", ""),
         )
 
 
@@ -292,6 +301,28 @@ class GoalStore:
     def complete(self, goal_id: str) -> Goal:
         return self.update_goal(goal_id, status="completed")
 
+    def wall_clock_expired(self, goal_id: str) -> bool:
+        """P5: 检查 goal 挂钟预算是否耗尽.
+
+        wall_clock_budget_seconds <= 0 或 started_at 为空时返 False (无限制).
+        否则算 (now - started_at) 是否超 budget.
+        """
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            if goal is None:
+                return False
+            if goal.wall_clock_budget_seconds <= 0 or not goal.started_at:
+                return False
+            from datetime import datetime, timezone
+            try:
+                start = datetime.fromisoformat(goal.started_at)
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+                return elapsed >= goal.wall_clock_budget_seconds
+            except Exception:
+                return False
+
     def clear(self, goal_id: str) -> None:
         with self._lock:
             self._goals.pop(goal_id, None)
@@ -345,5 +376,41 @@ if __name__ == "__main__":
         store2 = GoalStore(Path(tmp) / "test_goals.json")
         assert len(store2.list_goals()) == 1
         assert store2.get_goal(g.id).text == "test objective"
+
+    # P5: wall_clock_budget_seconds + wall_clock_expired
+    import time as _time5
+    from datetime import datetime, timezone as _tz5
+    with tempfile.TemporaryDirectory() as tmp5:
+        s5 = GoalStore(Path(tmp5) / "p5_goals.json")
+        # P5a: 无 budget → wall_clock_expired 返 False (无限制)
+        g5a = s5.create_goal("no budget goal")
+        assert g5a.wall_clock_budget_seconds == 0.0
+        assert s5.wall_clock_expired(g5a.id) is False, "无 budget 应返 False"
+        print("P5a. wall_clock_expired 无 budget → False OK")
+
+        # P5b: 有 budget + started_at 未设 → False (未开始)
+        g5b = s5.create_goal("budget but not started")
+        s5.update_goal(g5b.id, wall_clock_budget_seconds=3600.0)
+        assert s5.wall_clock_expired(g5b.id) is False, "started_at 空 应返 False"
+        print("P5b. wall_clock_expired 未开始 → False OK")
+
+        # P5c: budget=1s + started_at=now → 1s 后 expired=True
+        g5c = s5.create_goal("short budget goal")
+        s5.update_goal(
+            g5c.id,
+            wall_clock_budget_seconds=1.0,
+            started_at=datetime.now(_tz5.utc).isoformat(),
+        )
+        assert s5.wall_clock_expired(g5c.id) is False, "刚开始不应 expired"
+        _time5.sleep(1.1)
+        assert s5.wall_clock_expired(g5c.id) is True, "超 budget 应 expired"
+        print("P5c. wall_clock_expired 超 budget → True OK")
+
+        # P5d: persistence — wall_clock_budget_seconds + started_at 持久化
+        s5d = GoalStore(Path(tmp5) / "p5_goals.json")
+        _g5d = s5d.get_goal(g5c.id)
+        assert _g5d.wall_clock_budget_seconds == 1.0, "budget 应持久化"
+        assert _g5d.started_at != "", "started_at 应持久化"
+        print("P5d. wall_clock_budget + started_at 持久化 OK")
 
     print("goal_store self-check OK")
