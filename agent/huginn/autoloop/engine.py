@@ -277,7 +277,8 @@ class AutoloopEngine:
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
 
-        self.hypothesis_graph = HypothesisGraph()
+        # P0: 传 workspace 给 HypothesisGraph, 让 refute/support 时写 FAILED.md/PROVED.md
+        self.hypothesis_graph = HypothesisGraph(workspace=self.workspace)
         self.report_tool = ReportTool()
 
         # Sub-engines
@@ -8105,6 +8106,32 @@ Please modify the code to address this task."""
                 )
         except Exception:
             logger.debug("frontier_ranked injection failed", exc_info=True)
+        # P0: FAILED.md / PROVED.md durable state 注入 (chaoxu 启发).
+        # context 压缩后 agent 重读这两个文件, 不重试死路, 不重新证明已过的.
+        # ponytail: 读文件首 N 行避免膨胀, full text 留给 _extract_compact_attachments.
+        failed_block = ""
+        proved_block = ""
+        try:
+            from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG0
+            _ws = str(self.workspace) if hasattr(self, "workspace") else None
+            _failed_txt = _HG0.load_failed(_ws)
+            if _failed_txt:
+                _failed_lines = _failed_txt.strip().split("\n")[:40]
+                failed_block = (
+                    "\n### Dead Routes (FAILED.md)\n"
+                    + "\n".join(_failed_lines) + "\n"
+                    "Do NOT re-attempt these unless the Reopen-if condition is met.\n"
+                )
+            _proved_txt = _HG0.load_proved(_ws)
+            if _proved_txt:
+                _proved_lines = _proved_txt.strip().split("\n")[:40]
+                proved_block = (
+                    "\n### Verified Results (PROVED.md)\n"
+                    + "\n".join(_proved_lines) + "\n"
+                    "These are already established — build on them.\n"
+                )
+        except Exception:
+            logger.debug("FAILED/PROVED injection failed", exc_info=True)
         # 想象力引导: 高 surprise 或连续 refine 时, 要求 LLM 跳出分析思维,
         # 考虑反事实假设. 基于 MToM P4 (hybrid ST+TT): 心智模型预测错误时
         # 切到仿真理论重新建模. 结构切换在数学结构族之间, 不是随机猜.
@@ -8215,6 +8242,8 @@ Hypothesis:""",
                 ("imagination", imagination_block),
                 ("exec", exec_block),
                 ("frontier", frontier_block),
+                ("failed", failed_block),
+                ("proved", proved_block),
                 ("math", math_block),
                 ("kg", kg_block),
                 ("visual", visual_block),
