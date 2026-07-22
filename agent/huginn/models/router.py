@@ -47,6 +47,10 @@ class RegisteredModel:
     cost_input: float = 0.0  # USD per 1M input tokens
     cost_output: float = 0.0  # USD per 1M output tokens
     priority: int = 0  # higher = preferred when multiple candidates match
+    # P3 (chaoxu 启发): model family 标识 (如 "openai"/"anthropic"/"deepseek"),
+    # 用于 cross-family audit — verification 模型应来自不同 family, 避免
+    # "模型自己验证自己"的确认偏差. 空串 = 未指定 (向后兼容).
+    family: str = ""
 
 
 class ModelRouter:
@@ -81,6 +85,7 @@ class ModelRouter:
         cost_input: float = 0.0,
         cost_output: float = 0.0,
         priority: int = 0,
+        family: str = "",
     ) -> RegisteredModel:
         """Register an existing LangChain model instance."""
         entry = RegisteredModel(
@@ -90,6 +95,7 @@ class ModelRouter:
             cost_input=cost_input,
             cost_output=cost_output,
             priority=priority,
+            family=family,
         )
         self._models[name] = entry
         return entry
@@ -108,8 +114,13 @@ class ModelRouter:
         temperature: float = 0.7,
         thinking: ThinkingIntensity | dict[str, Any] | None = None,
         max_tokens: int | None = None,
+        family: str | None = None,
     ) -> RegisteredModel:
-        """Register a model by provider descriptor."""
+        """Register a model by provider descriptor.
+
+        P3: family 默认从 provider 推断 (provider 就是 family 的天然来源),
+        显式传 family 则覆盖. 这样调用方零改动即可获得 family 标签.
+        """
         model = create_langchain_model(
             provider=provider,
             model_name=model_name,
@@ -126,6 +137,7 @@ class ModelRouter:
             cost_input=cost_input,
             cost_output=cost_output,
             priority=priority,
+            family=family if family is not None else str(provider),
         )
 
     def select(
@@ -201,12 +213,39 @@ class ModelRouter:
                 logger.warning("model fallback: %s failed: %s", type(model).__name__, e)
         return None, last_err
 
-    def select_verification(self) -> Any:
+    def select_verification(self, different_family_from: str | None = None) -> Any:
         """选验证用 LLM. 优先 verification 标签的独立模型,
         没注册就退回 reasoning/science, 最后退回 default.
         这样默认情况下 verification = main, 但用户只要注册一个
-        带 verification 标签的模型就会自动启用独立验证."""
+        带 verification 标签的模型就会自动启用独立验证.
+
+        P3 (chaoxu 启发): different_family_from 传入主模型 family 时,
+        优先选不同 family 的 verification 模型 (cross-family audit, 避免
+        "模型自己验证自己"的确认偏差). 没有不同 family 的就退回原逻辑 (不阻塞,
+        只降级 — family 多样性是 advisory, 不该因找不到异族模型就不验证).
+
+        ponytail: 复用 _TASK_TAGS 的 tag 优先级 + family 过滤, 不改 select() 返回值.
+        """
+        if different_family_from:
+            preferred_tags = self._TASK_TAGS.get("verification", ["verification"])
+            for tag in preferred_tags:
+                matches = [
+                    m for m in self._models.values()
+                    if tag in m.tags and m.family != different_family_from
+                ]
+                if matches:
+                    matches.sort(key=lambda m: (-m.priority, m.cost_input + m.cost_output))
+                    return matches[0].model
+            # 没有不同 family 的, 退回原逻辑 (advisory, 不阻塞)
         return self.select("verification")
+
+    def get_family(self, name: str) -> str:
+        """查模型 family. 没注册返空串.
+
+        P3: 供调用方查主模型 family, 传给 select_verification(different_family_from=...).
+        """
+        m = self._models.get(name)
+        return m.family if m else ""
 
     def select_archival(self) -> Any:
         """选归档用 LLM. 优先 archival/cheap 模型, 降低归档成本."""
@@ -263,3 +302,63 @@ class ModelRouter:
             except Exception:
                 pass  # ollama 也没装就只能让 select() 报 RuntimeError
         return router
+
+
+def _selfcheck() -> None:
+    """P3 cross-family audit selfcheck.
+
+    验证 RegisteredModel.family 字段 + select_verification(different_family_from)
+    cross-family 过滤 + get_family 查询. 用 fake model 对象, 不依赖真 LLM.
+    """
+    r = ModelRouter()
+    # fake model 对象 — select 只返实例不调, 任意 object 即可
+    _m_openai = object()
+    _m_anthropic = object()
+    _m_deepseek = object()
+
+    # P3a: register_provider 默认从 provider 推断 family
+    # 不调真 create_langchain_model, 直接走 register 路径验证 family 逻辑
+    r.register("main_openai", _m_openai, tags={"default", "agent"}, family="openai")
+    r.register("verif_anthropic", _m_anthropic, tags={"verification"}, family="anthropic")
+    r.register("verif_deepseek", _m_deepseek, tags={"verification", "reasoning"}, family="deepseek")
+    assert r.get_family("main_openai") == "openai", "get_family 应返 openai"
+    assert r.get_family("verif_anthropic") == "anthropic"
+    assert r.get_family("nonexistent") == "", "未注册模型应返空串"
+    print("P3a. family 字段注册 + get_family 查询 OK")
+
+    # P3b: select_verification(different_family_from) 优先选不同 family
+    # 主模型 family=openai, 应选 anthropic 或 deepseek (都 != openai)
+    _v = r.select_verification(different_family_from="openai")
+    assert _v is not _m_openai, "cross-family audit: 不应选同 family 的 main 模型"
+    assert _v in (_m_anthropic, _m_deepseek), "应选不同 family 的 verification 模型"
+    print("P3b. select_verification(different_family_from) cross-family 过滤 OK")
+
+    # P3c: different_family_from 匹配所有 verification 时退回原逻辑 (advisory 不阻塞)
+    # 主模型 family=anthropic, 但 verification 模型有 anthropic + deepseek,
+    # 应选 deepseek (不同 family). 再试 family=deepseek, 应选 anthropic.
+    _v2 = r.select_verification(different_family_from="deepseek")
+    assert _v2 is _m_anthropic, f"应选 anthropic (非 deepseek), got {_v2}"
+    print("P3c. cross-family 优先选异族 (deepseek 主 → anthropic 验) OK")
+
+    # P3d: 没有不同 family 的 verification 时退回原逻辑 (不阻塞)
+    # 只有 openai family 的 verification 模型, 主模型也是 openai → 退回原 select
+    r2 = ModelRouter()
+    r2.register("main", object(), tags={"default", "agent"}, family="openai")
+    r2.register("verif", object(), tags={"verification"}, family="openai")
+    _v3 = r2.select_verification(different_family_from="openai")
+    # 退回原逻辑: select("verification") → 找 verification tag → 返 verif 模型
+    # 同 family 也能用, advisory 不阻塞
+    assert _v3 is not None, "无异族时退回原逻辑, 不应报错"
+    print("P3d. 无异族 verification 退回原逻辑 (advisory 不阻塞) OK")
+
+    # P3e: different_family_from=None 向后兼容 (原 select_verification 行为)
+    _v4 = r.select_verification()
+    # 原逻辑: verification tag 优先, priority 排序, 第一个匹配
+    assert _v4 in (_m_anthropic, _m_deepseek), "None 时走原逻辑选 verification 模型"
+    print("P3e. different_family_from=None 向后兼容 OK")
+
+    print("ModelRouter selfcheck OK (P3a-P3e cross-family audit)")
+
+
+if __name__ == "__main__":
+    _selfcheck()
