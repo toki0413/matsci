@@ -67,6 +67,7 @@ RCB_TOOL_FILTER = [
     "subagent_tool",         # Layer 3: explore/coder/analyst 并行
     "plot_tool",             # 画图 (Arial 20pt+ 加粗)
     "image_analysis_tool",   # 反向 CV 分析自己生成的 PNG, 闭环视觉验证
+    "vision_describe",       # 分层视觉描述 (OCR/CV), image criterion 闭环
 ]
 
 
@@ -240,7 +241,26 @@ async def run_agent(prompt: str, workspace: Path, timeout: int, max_tool_calls: 
         f"Do not invent reasons to disavow a result that matches the reference.\n"
         f"-禁止使用这些词: 'physically problematic', 'disavow', 'meaningless', 'invalid', "
         f"'cannot be trusted'. 改用: 'with caveat', 'model-dependent', 'approximate', "
-        f"'subject to systematic uncertainty'."
+        f"'subject to systematic uncertainty'.\n\n"
+        f"## DERIVATION CHAIN DISCIPLINE (critical — agent repeatedly quotes literature "
+        f"bounds instead of deriving from data)\n"
+        f"- Every quantitative result in the report MUST be derived from YOUR analysis, "
+        f"not quoted from literature. 'g < 5e-18 GeV^-1 from Bosenova bound (Arvanitaki 2011)' "
+        f"= WRONG (literature quote). 'g < X GeV^-1 derived from P_ex(μ) < 0.05 region "
+        f"of Figure N, using fa = M_pl² · μ / (coupling)' = RIGHT (data-derived).\n"
+        f"- The benchmark criterion asks for a RESULT derived from your analysis outputs "
+        f"(e.g., exclusion probability curve, posterior samples). Quoting a universal "
+        f"theoretical bound as your result is a fundamental methodological flaw, even if "
+        f"the number is correct. The judge wants to see YOUR derivation chain:\n"
+        f"  (1) data → (2) statistical analysis (posterior/P_ex) → (3) physical interpretation "
+        f"(mass range → coupling g). Each step must be in YOUR code, not a literature citation.\n"
+        f"- If a quantity can be derived multiple ways, derive it from YOUR primary output. "
+        f"E.g., coupling g should come from YOUR exclusion curve's excluded mass range + "
+        f"the axion field theory relation, NOT from a pre-existing Bosenova bound.\n"
+        f"- Literature bounds can be cited for COMPARISON ('our g < X agrees with Arvanitaki "
+        f"2011's Bosenova bound Y'), but NEVER as the primary result.\n"
+        f"- Self-check before writing report: for each quantitative claim, trace the derivation "
+        f"chain back to a number in YOUR outputs/. If the chain ends at a citation, redo it."
     )
 
     # ── 主线认知基础设施 (Task 2.1) ──────────────────────────────
