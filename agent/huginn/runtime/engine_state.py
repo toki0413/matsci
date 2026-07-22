@@ -42,8 +42,9 @@ def save_every_steps() -> int:
         return _DEFAULT_SAVE_EVERY
 
 
-# 13 个 engine 运行时字段 + run_id + saved_at = 15
+# 15 个 engine 运行时字段 + cognitive_maps + run_id + saved_at = 18
 # ponytail: 字段名前缀保留下划线跟 engine 实例属性对齐, 加载时直接 setattr.
+# QW1: 加 _visual_primitives_history (每轮 visual_hint 累积) + _image_embeddings (跨 session 视觉记忆)
 _ENGINE_FIELDS: tuple[str, ...] = (
     "_iteration",
     "_consecutive_failures",
@@ -58,6 +59,9 @@ _ENGINE_FIELDS: tuple[str, ...] = (
     "_evals_history",
     "_budget_rejects",
     "_budget_degraded",
+    # QW1: 视觉记忆 + 持久化 (跟 P15 EngineState 集成)
+    "_visual_primitives_history",
+    "_image_embeddings",
 )
 
 
@@ -65,7 +69,7 @@ _ENGINE_FIELDS: tuple[str, ...] = (
 class EngineState:
     """AutoloopEngine 运行时状态的快照.
 
-    13 个 engine 实例字段 + cognitive_maps + run_id + saved_at = 16 字段.
+    15 个 engine 实例字段 + cognitive_maps + run_id + saved_at = 18 字段.
     dataclass + asdict 直接 JSON 序列化, 不上 pickle — 跨版本/跨进程更稳.
     """
 
@@ -82,6 +86,12 @@ class EngineState:
     _evals_history: list[Any] = field(default_factory=list)
     _budget_rejects: dict[str, int] = field(default_factory=dict)
     _budget_degraded: bool = False
+    # QW1: 视觉记忆 + 持久化. 每 N 轮 visual_hint 累积 (默认 max 20 条).
+    # ceiling: 只存 text primitives, 不存 raw base64. 升级路径接 image_index 索引.
+    _visual_primitives_history: list[str] = field(default_factory=list)
+    # QW1: 跨 session image embeddings (image_id -> embedding vector).
+    # ceiling: 只存 embedding, 不存原图. 升级路径接 perception/image_index 持久化.
+    _image_embeddings: dict[str, list[float]] = field(default_factory=dict)
     # P1: Structure Cognitive Map 持久化 (HUGINN_USE_COGNITIVE_MAP=1 时填充).
     # 不是 engine 实例属性, 不在 _ENGINE_FIELDS 里, save 时单独从 tool registry 拉.
     cognitive_maps: dict[str, dict] = field(default_factory=dict)
@@ -242,7 +252,7 @@ def _selfcheck() -> None:
     try:
         # ── 场景 1: save → load round-trip ──────────────────────────
         class _FakeEngine:
-            """最小 engine stub, 只暴露 13 个字段 + hypothesis_graph."""
+            """最小 engine stub, 只暴露 15 个字段 + hypothesis_graph."""
 
             def __init__(self):
                 self._iteration = 7
@@ -258,6 +268,9 @@ def _selfcheck() -> None:
                 self._evals_history = [{"step": 1, "score": 0.3}]
                 self._budget_rejects = {"tier1": 2}
                 self._budget_degraded = True
+                # QW1: 视觉记忆字段
+                self._visual_primitives_history = ["[band] peak=<point>[500,800]</point>(2.5)"]
+                self._image_embeddings = {"img_001": [0.1, 0.2, 0.3]}
                 # hypothesis_graph stub
                 self.hypothesis_graph = None
 
@@ -286,6 +299,9 @@ def _selfcheck() -> None:
         assert loaded._evals_history == [{"step": 1, "score": 0.3}]
         assert loaded._budget_rejects == {"tier1": 2}
         assert loaded._budget_degraded is True
+        # QW1: 视觉记忆字段 round-trip
+        assert loaded._visual_primitives_history == ["[band] peak=<point>[500,800]</point>(2.5)"]
+        assert loaded._image_embeddings == {"img_001": [0.1, 0.2, 0.3]}
         assert loaded.run_id == "loop_abc123"
         assert loaded.saved_at == saved.saved_at
         print("1. save+load round-trip OK")
