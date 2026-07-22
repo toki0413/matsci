@@ -39,6 +39,29 @@ async def execute_visual_inspect(
 
     desc_lower = description.lower()
 
+    # G5: hippocampus recall — 读跨 session 视觉记忆, 注入 result.
+    # 默认 off (HUGINN_USE_HIPPOCAMPUS=1 才开). 不阻塞主路径.
+    # 把上次相似视觉检查的 note 作为 prior 注入, 让 agent 知道"之前看到过类似的东西".
+    try:
+        from huginn.metacog.visual_hippocampus import use_hippocampus, recall
+        if use_hippocampus():
+            history = getattr(engine, "_visual_primitives_history", None)
+            if history is None and hasattr(engine, "_state"):
+                history = getattr(engine._state, "_visual_primitives_history", None)
+            if history is not None and len(history) > 0:
+                recalled = recall(history, query=description, top_k=2, decay=True)
+                if recalled:
+                    result["visual_memory_prior"] = []
+                    for r in recalled:
+                        _entry = r.get("entry", {})
+                        if isinstance(_entry, dict):
+                            _prim = _entry.get("primitives", "")[:200]
+                        else:
+                            _prim = str(_entry)[:200]
+                        result["visual_memory_prior"].append(_prim)
+    except Exception:
+        logger.debug("G5 hippocampus recall failed (non-fatal)", exc_info=True)
+
     # 动作 -1 (G2): rotate — SE(3) 群作用, 不依赖 visual_base64
     # agent 能调 "rotate 90° z" 或 "chain: rotate 90° z; zoom [...]"
     # 从 cognitive_maps 拿当前结构, 调 rotate + to_composite_token
@@ -246,6 +269,21 @@ async def execute_visual_inspect(
             result["_visual_hint"] = enriched["_visual_hint"]
     except Exception:
         pass
+
+    # G5: hippocampus 闭环 — record 这次的视觉基元到跨 session 记忆.
+    # 默认 off (HUGINN_USE_HIPPOCAMPUS=1 才开). 不阻塞主路径, 失败只 debug.
+    # 跟 visual_hippocampus.py docstring 写的接入点对齐 — 注释说 "每次 visual_inspect 后调 record".
+    try:
+        from huginn.metacog.visual_hippocampus import use_hippocampus, record
+        if use_hippocampus():
+            history = getattr(engine, "_visual_primitives_history", None)
+            if history is None and hasattr(engine, "_state"):
+                history = getattr(engine._state, "_visual_primitives_history", None)
+            if history is not None:
+                primitives_to_record = result.get("visual_summary", "") or description
+                record(history, primitives_to_record, session_id=str(getattr(engine, "_run_id", "")))
+    except Exception:
+        logger.debug("G5 hippocampus record failed (non-fatal)", exc_info=True)
 
     return result
 
