@@ -969,6 +969,98 @@ def parse_box_primitive(text: str) -> list[dict[str, Any]]:
     return out
 
 
+# ── <point3d> 原语: 3D 坐标锚点 (扩 SE(3) 实验路径) ─────────────────────────
+
+
+_POINT3D_RE = _re.compile(
+    r"<point3d>\[(-?\d+),(-?\d+),(-?\d+)\]</point3d>(?:\(([^)]+)\))?"
+)
+
+
+def extract_point3d_primitives(
+    coords: "list[list[float]] | Any",
+    labels: list[str] | None = None,
+    species: list[str] | None = None,
+    normalize_to: int = 999,
+) -> str:
+    """从 3D coords 数组生成 <point3d>[x,y,z]</point3d>(label) 原语.
+
+    跟 extract_visual_primitives 的 <point>[x,y]</point> 平行, 只是 3D.
+    用于 StructureCognitiveMap coords → text primitives 的投影, 让 text-only
+    LLM 能引用 3D 原子坐标 (SE(3) 实验的工程入口).
+
+    Args:
+        coords: (N, 3) 数组或 list[list[float]], 3D 笛卡尔坐标 (Å)
+        labels: 可选 label list, 跟 coords 一一对应
+        species: 可选元素 list (e.g. ["Fe", "O"]), 优先于 labels
+        normalize_to: 归一化上限 (默认 999, 跟 <point> 一致).
+                     None = 不归一化, 直接用原值 (Å).
+
+    Returns:
+        str: 多行 primitives, 每行一个原子:
+        "<point3d>[x,y,z]</point3d>(Fe)" 或 "<point3d>[100,200,300]</point3d>(atom0)"
+
+    ponytail: 不去重, 不排序, 按 coords 顺序输出. 升级路径: 按 z 层分组.
+    """
+    try:
+        import numpy as _np
+    except ImportError:
+        return ""
+    try:
+        arr = _np.asarray(coords, dtype=float)
+    except (TypeError, ValueError):
+        return ""
+    if arr.size == 0 or arr.ndim != 2 or arr.shape[1] != 3:
+        return ""
+
+    # 归一化: 每维独立 min-max 到 [0, normalize_to]
+    if normalize_to is not None and len(arr) > 0:
+        mins = arr.min(axis=0)
+        maxs = arr.max(axis=0)
+        ranges = _np.where(maxs - mins > 1e-9, maxs - mins, 1.0)
+        arr_norm = ((arr - mins) / ranges * normalize_to).astype(int)
+    else:
+        arr_norm = arr.astype(int)
+
+    lines: list[str] = []
+    for i, (x, y, z) in enumerate(arr_norm):
+        label = ""
+        if species and i < len(species):
+            label = str(species[i])
+        elif labels and i < len(labels):
+            label = str(labels[i])
+        else:
+            label = f"atom{i}"
+        if label:
+            lines.append(f"<point3d>[{int(x)},{int(y)},{int(z)}]</point3d>({label})")
+        else:
+            lines.append(f"<point3d>[{int(x)},{int(y)},{int(z)}]</point3d>")
+    return "\n".join(lines)
+
+
+def parse_point3d_primitive(text: str) -> list[dict[str, Any]]:
+    """从文本解析 <point3d>[x,y,z]</point3d>(label) 原语, 返回 list[dict].
+
+    跟 parse_box_primitive 配对 — 让 LLM 引用 3D 坐标时后端能解析.
+    支持 -? 负数 (旋转后坐标可能为负).
+
+    Returns:
+        list[dict]: [{coordinates: [x,y,z], label: str, raw: str}]
+    """
+    if not text:
+        return []
+    out: list[dict[str, Any]] = []
+    for m in _POINT3D_RE.finditer(text):
+        x, y, z = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        label = m.group(4) or ""
+        out.append({
+            "coordinates": [x, y, z],
+            "label": label,
+            "raw": m.group(0),
+        })
+    return out
+
+
 # ── selfcheck ──────────────────────────────────────────────────────────────
 
 
@@ -1057,7 +1149,43 @@ def _selfcheck() -> None:
     assert "overall" in region_labels, f"missing overall: {region_labels}"
     print(f"7. min_area filter OK: {len(parsed3)} boxes after filter (small region dropped)")
 
-    print("M6 ALL CHECKS PASSED")
+    # 8. <point3d> 原语: extract_point3d_primitives + parse_point3d_primitive 回环
+    coords_3d = [
+        [0.0, 0.0, 0.0],
+        [2.5, 0.0, 0.0],
+        [0.0, 2.5, 0.0],
+    ]
+    species = ["Fe", "O", "O"]
+    out_3d = extract_point3d_primitives(coords_3d, species=species)
+    assert "<point3d>" in out_3d, f"missing <point3d> tag: {out_3d}"
+    assert "(Fe)" in out_3d and "(O)" in out_3d, f"missing species label: {out_3d}"
+    parsed_3d = parse_point3d_primitive(out_3d)
+    assert len(parsed_3d) == 3, f"expected 3 point3d, got {len(parsed_3d)}"
+    assert parsed_3d[0]["label"] == "Fe", f"first label Fe expected: {parsed_3d[0]}"
+    assert parsed_3d[0]["coordinates"] == [0, 0, 0], f"origin expected: {parsed_3d[0]}"
+    # 第二个点 x 应该归一化到 999 (max x = 2.5)
+    assert parsed_3d[1]["coordinates"][0] == 999, f"x normalized to 999 expected: {parsed_3d[1]}"
+    print(f"8. <point3d> round-trip OK: {len(parsed_3d)} atoms, Fe={parsed_3d[0]['coordinates']}")
+
+    # 9. parse_point3d_primitive: 负数坐标 (旋转后可能为负)
+    text_neg = "atom at <point3d>[-500,200,0]</point3d>(C) rotated"
+    p = parse_point3d_primitive(text_neg)
+    assert len(p) == 1, f"expected 1, got {len(p)}"
+    assert p[0]["coordinates"] == [-500, 200, 0], p[0]
+    assert p[0]["label"] == "C", p[0]
+    print(f"9. <point3d> negative coords OK: {p[0]['coordinates']}")
+
+    # 10. parse_point3d_primitive: 无 label 也能解析
+    p2 = parse_point3d_primitive("<point3d>[100,200,300]</point3d>")
+    assert len(p2) == 1 and p2[0]["label"] == "", p2
+    print("10. <point3d> no label OK")
+
+    # 11. extract_point3d_primitives: 空输入 / 错误形状
+    assert extract_point3d_primitives([]) == ""
+    assert extract_point3d_primitives([[1, 2]]) == ""  # 不是 (N, 3)
+    print("11. <point3d> empty/invalid input OK")
+
+    print("M6+point3d ALL CHECKS PASSED")
 
 
 if __name__ == "__main__":
