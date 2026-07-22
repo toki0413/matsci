@@ -2048,6 +2048,25 @@ async def run(workspace: str, extreme: bool = False) -> int:
         cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
         print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K, autoloop thresholds 50/50/20/15", flush=True)
 
+    # P5: persistent goal mode — 创建 active goal with wall_clock_budget.
+    # 让 _darwin_ratchet_check 的 stagnation stop 路径被 wall_clock 接管,
+    # agent 跑满 timeout 而非 stagnation 触发就停.
+    if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1":
+        try:
+            from huginn.autoloop.goal_store import get_goal_store
+            from datetime import datetime, timezone
+            _timeout_s = float(os.environ.get("HUGINN_RCB_TIMEOUT", "7200"))
+            _gs = get_goal_store()
+            _goal = _gs.create_goal(f"RCB {ws.name}")
+            _gs.update_goal(
+                _goal.id,
+                wall_clock_budget_seconds=_timeout_s,
+                started_at=datetime.now(timezone.utc).isoformat(),
+            )
+            print(f"[P5] persistent goal: budget={_timeout_s}s, goal_id={_goal.id[:8]}", flush=True)
+        except Exception as _e:
+            print(f"[P5] goal creation warning: {_e}", flush=True)
+
     registry = ModelRegistry.from_config(cfg)
     alias = registry.default_alias()
     if alias:

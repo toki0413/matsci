@@ -368,6 +368,9 @@ def main():
     # 200K context + thinking=high + 异步委派 DAG. 不开则 150 max_tool_calls.
     if args.extreme:
         os.environ["HUGINN_EXTREME_DISPATCH"] = "1"
+        # P5: persistent goal mode — stagnation 不 early stop, 跑满 timeout.
+        # rcb_runner.run() 会创建 active goal + wall_clock_budget_seconds.
+        os.environ.setdefault("HUGINN_PERSISTENT_GOAL_MODE", "1")
     _mode_tag = "EXTREME" if args.extreme else "normal"
     print(f"[RCB] Starting agent (mode={_mode_tag}, timeout={args.timeout}s)")
     # v14 特性 (HintCoordinator / Meta-Trace / betti / Step3->Step2 回退) 在
