@@ -2840,12 +2840,39 @@ Respond JSON only:
                 self._darwin_stagnation = 0
                 self._trigger_counterexample_hunt()
             else:
-                logger.info(
-                    "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
-                    self._darwin_stagnation,
-                    self._darwin_best_score,
+                # P5 (chaoxu 启发): persistent goal mode — stagnation 分类为 stop
+                # 时, 如果开了 HUGINN_PERSISTENT_GOAL_MODE 且有 active goal 且
+                # 挂钟预算未耗尽, 不 early stop, 重置 stagnation 继续.
+                # 无 active goal 或挂钟耗尽才真 stop.
+                _persistent = (
+                    os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1"
                 )
-                self._should_stop = True
+                _wall_expired = False
+                _has_active_goal = False
+                if _persistent:
+                    try:
+                        from huginn.autoloop.goal_store import get_goal_store
+                        _gs = get_goal_store()
+                        _ag = _gs.get_active()
+                        if _ag is not None:
+                            _has_active_goal = True
+                            _wall_expired = _gs.wall_clock_expired(_ag.id)
+                    except Exception:
+                        logger.debug("P5 wall_clock check failed", exc_info=True)
+                if _persistent and _has_active_goal and not _wall_expired:
+                    logger.info(
+                        "darwin ratchet: stagnation %d → stop, but persistent goal "
+                        "mode on + wall_clock not expired, reset & continue",
+                        self._darwin_stagnation,
+                    )
+                    self._darwin_stagnation = 0
+                else:
+                    logger.info(
+                        "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
+                        self._darwin_stagnation,
+                        self._darwin_best_score,
+                    )
+                    self._should_stop = True
 
         # P2-6 belief: σ² 收敛也作为 stop 信号. σ² < 0.1 = belief 不确定性低,
         # 后续观测不会显著改变 μ, 边际信息收益递减. 跟 stagnation 互补:
@@ -10906,7 +10933,114 @@ def _selfcheck() -> None:
     finally:
         _sh57.rmtree(_tmp57, ignore_errors=True)
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57)")
+    # 58. P5: persistent goal mode — stagnation stop 路径被 wall_clock 预算接管
+    # 验证 HUGINN_PERSISTENT_GOAL_MODE toggle:
+    # - toggle off (默认): stagnation stop 正常触发 _should_stop=True (57c3 已覆盖)
+    # - toggle on + wall_clock 未耗尽: stagnation stop 不触发, 重置 stagnation 继续
+    # - toggle on + wall_clock 耗尽: stagnation stop 正常触发
+    import tempfile as _tf58, shutil as _sh58, os as _os58
+    from datetime import datetime, timezone as _tz58
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG58
+    from huginn.autoloop.goal_store import GoalStore as _GS58
+    _tmp58 = Path(_tf58.mkdtemp(prefix="hgin_p5_"))
+    try:
+        # 恢复 _should_imaginate + _classify_stall 到真实类方法 (57 块曾 monkey-patch)
+        eng_s.__dict__.pop("_should_imaginate", None)
+        eng_s.__dict__.pop("_classify_stall", None)
+        eng_s.workspace = str(_tmp58)
+        eng_s.hypothesis_graph = _HG58(workspace=_tmp58)
+        _hid58 = eng_s.hypothesis_graph.add_hypothesis(
+            "test P5 persistent goal mode hypothesis statement")
+        eng_s._current_hyp_id_for_plan = _hid58
+
+        _orig_persistent = _os58.environ.get("HUGINN_PERSISTENT_GOAL_MODE")
+        _orig_stag = _os58.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT")
+        _orig_belief = _os58.environ.get("HUGINN_BELIEF_DARWIN")
+        _os58.environ["HUGINN_DARWIN_STAGNATION_LIMIT"] = "2"
+        _os58.environ["HUGINN_BELIEF_DARWIN"] = "0"
+        eng_s._darwin_last_score = 10.0
+        eng_s._darwin_best_score = 10.0
+        eng_s._iteration = 5
+        try:
+            # 58a: toggle off → stagnation stop 正常触发 (向后兼容)
+            _os58.environ["HUGINN_PERSISTENT_GOAL_MODE"] = "0"
+            eng_s._darwin_stagnation = 2
+            eng_s._should_stop = False
+            eng_s._classify_stall = lambda: "stop"
+            eng_s._darwin_ratchet_check()
+            assert eng_s._should_stop is True, \
+                "toggle off 时 stagnation stop 应正常触发"
+            print("58a. P5 toggle off → stagnation stop 正常触发 (向后兼容) OK")
+
+            # 58b: toggle on + 无 active goal → 走原 stop 逻辑 (无 goal 不持续)
+            _os58.environ["HUGINN_PERSISTENT_GOAL_MODE"] = "1"
+            # 临时替换 get_goal_store 返空 store (无 active goal)
+            import huginn.autoloop.goal_store as _gs_mod58
+            _orig_get_store = _gs_mod58.get_goal_store
+            _empty_store = _GS58(Path(_tmp58) / "empty.json")
+            _gs_mod58.get_goal_store = lambda: _empty_store
+            try:
+                eng_s._darwin_stagnation = 2
+                eng_s._should_stop = False
+                eng_s._darwin_ratchet_check()
+                assert eng_s._should_stop is True, \
+                    "toggle on 但无 active goal 时应走原 stop 逻辑"
+                print("58b. P5 toggle on + 无 active goal → 原 stop 逻辑 OK")
+            finally:
+                _gs_mod58.get_goal_store = _orig_get_store
+
+            # 58c: toggle on + active goal + wall_clock 未耗尽 → 不 stop, 重置
+            _os58.environ["HUGINN_PERSISTENT_GOAL_MODE"] = "1"
+            _store58 = _GS58(Path(_tmp58) / "p5.json")
+            _g58 = _store58.create_goal("persistent goal test")
+            _store58.update_goal(
+                _g58.id,
+                wall_clock_budget_seconds=3600.0,  # 1 小时, 肯定没超
+                started_at=datetime.now(_tz58.utc).isoformat(),
+            )
+            _gs_mod58.get_goal_store = lambda: _store58
+            try:
+                eng_s._darwin_stagnation = 2
+                eng_s._should_stop = False
+                eng_s._darwin_ratchet_check()
+                assert eng_s._darwin_stagnation == 0, \
+                    f"persistent mode + 未耗尽应重置 stagnation=0, got {eng_s._darwin_stagnation}"
+                assert eng_s._should_stop is False, \
+                    "persistent mode + 未耗尽不应 stop"
+                print("58c. P5 toggle on + wall_clock 未耗尽 → 不 stop, 重置 OK")
+
+                # 58d: toggle on + active goal + wall_clock 已耗尽 → 真 stop
+                _store58.update_goal(
+                    _g58.id,
+                    wall_clock_budget_seconds=0.001,  # 1ms, 肯定超了
+                )
+                import time as _time58
+                _time58.sleep(0.002)
+                eng_s._darwin_stagnation = 2
+                eng_s._should_stop = False
+                eng_s._darwin_ratchet_check()
+                assert eng_s._should_stop is True, \
+                    "wall_clock 耗尽时应真 stop"
+                print("58d. P5 toggle on + wall_clock 耗尽 → 真 stop OK")
+            finally:
+                _gs_mod58.get_goal_store = _orig_get_store
+        finally:
+            if _orig_persistent is None:
+                _os58.environ.pop("HUGINN_PERSISTENT_GOAL_MODE", None)
+            else:
+                _os58.environ["HUGINN_PERSISTENT_GOAL_MODE"] = _orig_persistent
+            if _orig_stag is None:
+                _os58.environ.pop("HUGINN_DARWIN_STAGNATION_LIMIT", None)
+            else:
+                _os58.environ["HUGINN_DARWIN_STAGNATION_LIMIT"] = _orig_stag
+            if _orig_belief is None:
+                _os58.environ.pop("HUGINN_BELIEF_DARWIN", None)
+            else:
+                _os58.environ["HUGINN_BELIEF_DARWIN"] = _orig_belief
+    finally:
+        _sh58.rmtree(_tmp58, ignore_errors=True)
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57 + P5 persistent goal 58)")
 
 
 if __name__ == "__main__":
