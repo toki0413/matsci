@@ -15,6 +15,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 
@@ -160,7 +161,7 @@ class HypothesisGraph:
     # 交叉授粉延迟: 分量成熟度达到此阈值才允许跨分量 derive/pivot
     _CROSS_POLLINATION_MATURITY_THRESHOLD = 0.6
 
-    def __init__(self) -> None:
+    def __init__(self, workspace: str | os.PathLike | None = None) -> None:
         self._nodes: dict[str, HypothesisNode] = {}
         self._edges: list[HypothesisEdge] = []
         self._events: list[dict[str, Any]] = []
@@ -170,6 +171,9 @@ class HypothesisGraph:
         self._simplicials: set[frozenset[str]] = set()
         # ponytail: in-memory event log, 不持久化. 升级: 写入 session event log
         # (Anthropic Managed Agents: Session as event log, 可 resume/replay/debug)
+        # P0: workspace 路径用于写 FAILED.md / PROVED.md durable state 文件.
+        # None 时不写文件 (向后兼容, 测试场景).
+        self._workspace: Path | None = Path(workspace) if workspace else None
 
     def _record_event(self, event_type: str, node_id: str | None = None,
                       **payload: Any) -> None:
@@ -422,6 +426,11 @@ class HypothesisGraph:
             parent_id=node_id, status="verified",
             tags=["autoloop", "verified"],
         )
+        # P0: 同步写 PROVED.md durable state (context 压缩后可重读)
+        try:
+            self._append_proved(node_id, node.statement, evidence)
+        except Exception:
+            logger.debug("PROVED.md append failed", exc_info=True)
 
     def refute(self, node_id: str, evidence: dict[str, Any]) -> None:
         """标记假设被实验反驳. 不自动生成修正假设 — 调 refine_failed 才生成."""
@@ -445,6 +454,11 @@ class HypothesisGraph:
             parent_id=node_id, status="refuted",
             tags=["autoloop", "refuted"],
         )
+        # P0: 同步写 FAILED.md durable state (context 压缩后可重读)
+        try:
+            self._append_failed(node_id, node.statement, evidence)
+        except Exception:
+            logger.debug("FAILED.md append failed", exc_info=True)
 
     def supersede(self, node_id: str) -> None:
         """标记假设被衍生假设取代 (refine_failed 后旧假设变 superseded)."""
@@ -465,6 +479,68 @@ class HypothesisGraph:
             parent_id=node_id, status="superseded",
             tags=["autoloop", "superseded"],
         )
+
+    # ── P0: 分层 durable state 文件契约 (chaoxu 启发) ─────────────────
+    #
+    # FAILED.md / PROVED.md 是 workspace 级的 markdown 文件, 跟 hypothesis_graph
+    # 的 JSON 快照互补: graph 是全量图, FAILED/PROVED 是"哪些路死透 / 哪些已过审"
+    # 的投影. context 压缩后 agent 重读这两个文件, 不重试死路, 不重新证明已过的.
+    #
+    # ponytail: markdown append, 不上 SQLite / index. 升级: 加 FTS5 全文索引.
+
+    def _durable_path(self, name: str) -> Path | None:
+        if self._workspace is None:
+            return None
+        d = self._workspace / ".huginn"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / name
+
+    def _append_failed(self, node_id: str, statement: str, evidence: dict[str, Any]) -> None:
+        """refute 时 append 到 FAILED.md. 含 obstruction + reopen 条件."""
+        p = self._durable_path("FAILED.md")
+        if p is None:
+            return
+        _errs = str(evidence.get("errors", ""))[:300]
+        _modality = evidence.get("modality", "unknown")
+        _ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entry = (
+            f"\n## [{node_id}] {_ts}\n"
+            f"Statement: {statement[:200]}\n"
+            f"Modality: {_modality}\n"
+            f"Obstruction: {_errs}\n"
+            f"Reopen-if: new evidence in {_modality} contradicts the obstruction above.\n"
+        )
+        with p.open("a", encoding="utf-8") as f:
+            f.write(entry)
+
+    def _append_proved(self, node_id: str, statement: str, evidence: dict[str, Any]) -> None:
+        """support 时 append 到 PROVED.md. 含 verification_level."""
+        p = self._durable_path("PROVED.md")
+        if p is None:
+            return
+        _modality = evidence.get("modality", "unknown")
+        _source = evidence.get("data_source", "unknown")
+        _ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entry = (
+            f"\n## [{node_id}] {_ts}\n"
+            f"Statement: {statement[:200]}\n"
+            f"Modality: {_modality} | Source: {_source}\n"
+            f"Verification: self-audited (upgrade to verifier-backed via blind reconstruction)\n"
+        )
+        with p.open("a", encoding="utf-8") as f:
+            f.write(entry)
+
+    @staticmethod
+    def load_failed(workspace: str | os.PathLike | None = None) -> str:
+        """读 FAILED.md 全文. workspace None 时读 cwd."""
+        p = Path(workspace or ".") / ".huginn" / "FAILED.md"
+        return p.read_text(encoding="utf-8") if p.exists() else ""
+
+    @staticmethod
+    def load_proved(workspace: str | os.PathLike | None = None) -> str:
+        """读 PROVED.md 全文."""
+        p = Path(workspace or ".") / ".huginn" / "PROVED.md"
+        return p.read_text(encoding="utf-8") if p.exists() else ""
 
     # ── 失败驱动的假设修正 ───────────────────────────────────────────
 
@@ -1449,7 +1525,57 @@ def _selfcheck_frontier_ranked() -> None:
     print("OK: frontier_ranked selfcheck passed")
 
 
+def _selfcheck_p0_durable_state() -> None:
+    """P0: FAILED.md / PROVED.md 分层 durable state 文件契约."""
+    import tempfile
+    import shutil
+    _tmp = Path(tempfile.mkdtemp(prefix="hgin_p0_"))
+    try:
+        # 1. workspace 传入时, refute/support 写 FAILED.md/PROVED.md
+        g = HypothesisGraph(workspace=_tmp)
+        _hid = g.add_hypothesis("test-h1")
+        g.refute(_hid, {"errors": "band_gap=3.5 too high", "modality": "dft"})
+        _hid2 = g.add_hypothesis("test-h2")
+        g.support(_hid2, {"modality": "expt", "data_source": "XRD"})
+        _failed_txt = HypothesisGraph.load_failed(_tmp)
+        assert _failed_txt, "refute 应写 FAILED.md"
+        assert "test-h1" in _failed_txt, "FAILED.md 应含 node id"
+        assert "band_gap=3.5 too high" in _failed_txt, "FAILED.md 应含 obstruction"
+        assert "Reopen-if" in _failed_txt, "FAILED.md 应含 reopen 条件"
+        _proved_txt = HypothesisGraph.load_proved(_tmp)
+        assert _proved_txt, "support 应写 PROVED.md"
+        assert "test-h2" in _proved_txt, "PROVED.md 应含 node id"
+        assert "expt" in _proved_txt and "XRD" in _proved_txt, "PROVED.md 应含 modality+source"
+        print("OK: P0 refute/support 写 FAILED.md/PROVED.md")
+
+        # 2. workspace=None 时不写文件 (向后兼容)
+        g2 = HypothesisGraph()
+        _hid3 = g2.add_hypothesis("test-h3")
+        g2.refute(_hid3, {"errors": "no workspace"})
+        _failed_txt2 = HypothesisGraph.load_failed(_tmp)
+        assert "test-h3" not in _failed_txt2, "workspace=None 不应写文件"
+        print("OK: P0 workspace=None 不写文件 (向后兼容)")
+
+        # 3. load_failed/load_proved 不存在时返回空串
+        _empty = Path(tempfile.mkdtemp(prefix="hgin_p0_empty_"))
+        assert HypothesisGraph.load_failed(_empty) == ""
+        assert HypothesisGraph.load_proved(_empty) == ""
+        shutil.rmtree(_empty, ignore_errors=True)
+        print("OK: P0 load 空目录返回空串")
+
+        # 4. append 多条不覆盖
+        _hid4 = g.add_hypothesis("test-h4")
+        g.refute(_hid4, {"errors": "second refute"})
+        _failed_txt3 = HypothesisGraph.load_failed(_tmp)
+        assert _failed_txt3.count("## [") >= 2, "多条 refute 应 append 不覆盖"
+        assert "test-h1" in _failed_txt3 and "test-h4" in _failed_txt3
+        print("OK: P0 多条 append 不覆盖")
+    finally:
+        shutil.rmtree(_tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     _selfcheck_connected_components()
     _selfcheck_save_load()
     _selfcheck_frontier_ranked()
+    _selfcheck_p0_durable_state()
