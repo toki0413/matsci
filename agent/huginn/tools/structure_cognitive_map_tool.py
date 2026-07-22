@@ -44,7 +44,8 @@ def cognitive_map_query(map_id: str, query_type: str, **params: Any) -> dict:
     """统一查询接口.
 
     query_type in {"distance", "angle", "neighbors", "subgraph",
-                   "after_rotation", "after_translation"}
+                   "after_rotation", "after_translation",
+                   "bonds", "coordination_shell", "hydrogen_bonds", "bond_types"}
     """
     m = _get_map(map_id)
     if query_type == "distance":
@@ -65,14 +66,36 @@ def cognitive_map_query(map_id: str, query_type: str, **params: Any) -> dict:
     elif query_type == "after_translation":
         coords = m.query_after_translation(params["indices"], params["vector"])
         return {"coords": coords}
+    elif query_type == "bonds":
+        method = params.get("method", "cutoff")
+        bonds = m.identify_bonds(method=method)
+        return {"bonds": [{"i": b.i, "j": b.j, "length": b.length,
+                            "bond_type": b.bond_type, "source": b.source} for b in bonds]}
+    elif query_type == "coordination_shell":
+        shell = m.coordination_shell(params["i"], method=params.get("method", "cutoff"))
+        return {"center": shell.center, "neighbors": shell.neighbors,
+                "distances": shell.neighbor_distances, "geometry": shell.geometry}
+    elif query_type == "hydrogen_bonds":
+        bonds = m.identify_hydrogen_bonds(cutoff=params.get("cutoff", 3.5))
+        return {"bonds": [{"i": b.i, "j": b.j, "length": b.length} for b in bonds]}
+    elif query_type == "bond_types":
+        groups = m.bond_types(method=params.get("method", "cutoff"))
+        return {"types": {k: [{"i": b.i, "j": b.j, "length": b.length} for b in v]
+                          for k, v in groups.items()}}
+    elif query_type == "coordination_polyhedra":
+        polys = m.coordination_polyhedra()
+        return {"polyhedra": [{"center": p.center, "neighbors": p.neighbors,
+                                "geometry": p.geometry} for p in polys]}
     else:
         raise ValueError(f"unknown query_type: {query_type}")
 
 
 def cognitive_map_transform(map_id: str, op: str, **params: Any) -> str:
-    """SE(3) transform, 返新 map_id.
+    """SE(3) transform, 返新 map_id. 补全 AtomWorld 15 actions.
 
-    op in {"rotate", "translate", "supercell", "remove_atom", "add_atom", "swap_atoms"}
+    op in {"rotate", "translate", "supercell", "remove_atom", "add_atom", "swap_atoms",
+            "move_atom", "move_selected", "move_towards", "move_around",
+            "change_atom", "scale", "insert_between", "delete_below", "delete_around_atom"}
     """
     m = _get_map(map_id)
     if op == "rotate":
@@ -88,6 +111,25 @@ def cognitive_map_transform(map_id: str, op: str, **params: Any) -> str:
         new_m = m.add_atom(params["species"], params["coord"])
     elif op == "swap_atoms":
         new_m = m.swap_atoms(params["i"], params["j"])
+    elif op == "move_atom":
+        new_m = m.move_atom(params["index"], params["vector"])
+    elif op == "move_selected":
+        new_m = m.move_selected(params["indices"], params["vector"])
+    elif op == "move_towards":
+        new_m = m.move_towards(params["i"], params["j"], params.get("fraction", 0.5))
+    elif op == "move_around":
+        new_m = m.move_around(params["i"], params["center"], params["axis"],
+                              params["angle"], degrees=params.get("degrees", True))
+    elif op == "change_atom":
+        new_m = m.change_atom(params["index"], params["species"])
+    elif op == "scale":
+        new_m = m.scale(params["factor"])
+    elif op == "insert_between":
+        new_m = m.insert_between(params["i"], params["j"], params["species"])
+    elif op == "delete_below":
+        new_m = m.delete_below(params["i"], cutoff=params.get("cutoff"))
+    elif op == "delete_around_atom":
+        new_m = m.delete_around_atom(params["i"], cutoff=params.get("cutoff"))
     else:
         raise ValueError(f"unknown op: {op}")
     new_id = f"map_{uuid.uuid4().hex[:8]}"
@@ -113,6 +155,20 @@ def cognitive_map_to_text(map_id: str, max_atoms: int = 50) -> str:
     return "\n".join(lines)
 
 
+def cognitive_map_compose(map_id: str, ops: list[dict]) -> str:
+    """串联多个 transform. ops 是 [{op: "rotate", axis: "z", angle: 90}, ...].
+
+    返回最终 map_id. ponytail: 逐个调 transform, 不做矩阵合并.
+    """
+    current_id = map_id
+    for op_spec in ops:
+        op = op_spec.pop("op") if isinstance(op_spec, dict) else None
+        if op is None:
+            raise ValueError("op spec missing 'op' key")
+        current_id = cognitive_map_transform(current_id, op, **op_spec)
+    return current_id
+
+
 def _get_map(map_id: str) -> StructureCognitiveMap:
     if map_id not in _MAPS:
         raise KeyError(f"unknown map_id: {map_id}")
@@ -120,8 +176,7 @@ def _get_map(map_id: str) -> StructureCognitiveMap:
 
 
 def _selfcheck() -> None:
-    """3 场景: from_cif + query + transform."""
-    # NaCl CIF (P1, 不写 spacegroup 避免 pymatgen 展开)
+    """8 场景: from_cif + query + transform + 9 新 ops + bond + compose."""
     nacl_cif = """data_NaCl
 _cell_length_a 5.64
 _cell_length_b 5.64
@@ -145,10 +200,12 @@ Cl1 Cl 0.5 0.5 0.5
     assert "Na" in text
     print(f"   OK: map_id={map_id}")
 
-    print("2. cognitive_map_query...")
+    print("2. cognitive_map_query distance + bonds...")
     result = cognitive_map_query(map_id, "distance", i=0, j=1)
     assert "distance" in result
-    print(f"   OK: d(0,1)={result['distance']:.3f}")
+    bonds = cognitive_map_query(map_id, "bonds")["bonds"]
+    assert isinstance(bonds, list)
+    print(f"   OK: d(0,1)={result['distance']:.3f}, bonds={len(bonds)}")
 
     print("3. cognitive_map_transform (rotate z=90, SE(3) 等变)...")
     new_id = cognitive_map_transform(map_id, "rotate", axis="z", angle=90)
@@ -158,7 +215,53 @@ Cl1 Cl 0.5 0.5 0.5
     assert abs(d_orig - d_rot) < 1e-6, f"SE(3) 不等变: {d_orig} vs {d_rot}"
     print(f"   OK: rotate 前后 d 不变 ({d_orig:.3f} -> {d_rot:.3f})")
 
-    print("\nstructure_cognitive_map_tool selfcheck OK")
+    print("4. 9 新 ops: move_atom + change_atom + scale + insert_between...")
+    moved_id = cognitive_map_transform(map_id, "move_atom", index=0, vector=[0.1, 0, 0])
+    assert moved_id != map_id
+    changed_id = cognitive_map_transform(map_id, "change_atom", index=0, species="K")
+    assert _get_map(changed_id).species[0] == "K"
+    scaled_id = cognitive_map_transform(map_id, "scale", factor=2.0)
+    assert len(_get_map(scaled_id)) == 2
+    inserted_id = cognitive_map_transform(map_id, "insert_between", i=0, j=1, species="O")
+    assert len(_get_map(inserted_id)) == 3
+    print("   OK: move_atom / change_atom / scale / insert_between 都工作")
+
+    print("5. move_towards + move_around + move_selected...")
+    towards_id = cognitive_map_transform(map_id, "move_towards", i=0, j=1, fraction=0.3)
+    around_id = cognitive_map_transform(map_id, "move_around", i=0, center=1, axis="z", angle=30)
+    selected_id = cognitive_map_transform(map_id, "move_selected", indices=[0], vector=[0.1, 0.1, 0])
+    assert towards_id and around_id and selected_id
+    print("   OK: move_towards / move_around / move_selected 都工作")
+
+    print("6. delete_below + delete_around_atom...")
+    # 先加几个原子再删
+    big_id = cognitive_map_transform(map_id, "insert_between", i=0, j=1, species="O")
+    big_id = cognitive_map_transform(big_id, "insert_between", i=0, j=1, species="O")
+    deleted_id = cognitive_map_transform(big_id, "delete_below", i=0, cutoff=5.0)
+    # 原子数应该减少
+    assert len(_get_map(deleted_id)) < len(_get_map(big_id))
+    print(f"   OK: delete_below 减少了原子 ({len(_get_map(big_id))} -> {len(_get_map(deleted_id))})")
+
+    print("7. bond 识别 + coordination_shell + bond_types...")
+    shell = cognitive_map_query(map_id, "coordination_shell", i=0, cutoff=5.0)
+    assert "geometry" in shell
+    types = cognitive_map_query(map_id, "bond_types")
+    assert "types" in types
+    print(f"   OK: shell.geometry={shell['geometry']}, bond_types={list(types['types'].keys())}")
+
+    print("8. compose (变换链)...")
+    composed_id = cognitive_map_compose(map_id, [
+        {"op": "rotate", "axis": "z", "angle": 90},
+        {"op": "translate", "vector": [1.0, 0, 0]},
+        {"op": "scale", "factor": 1.5},
+    ])
+    assert composed_id != map_id
+    d_composed = cognitive_map_query(composed_id, "distance", i=0, j=1)["distance"]
+    # scale 1.5 倍, 距离应该变 1.5 倍
+    assert abs(d_composed - d_orig * 1.5) < 0.5, f"compose 后距离错: {d_composed} vs {d_orig*1.5}"
+    print(f"   OK: rotate+translate+scale 链式变换 d={d_composed:.3f} (原 {d_orig:.3f} x 1.5)")
+
+    print("\nstructure_cognitive_map_tool selfcheck OK (15 actions + bond + compose)")
 
 
 if __name__ == "__main__":

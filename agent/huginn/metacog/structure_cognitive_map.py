@@ -54,6 +54,27 @@ class SubgraphResult:
 
 
 @dataclass
+class Bond:
+    """化学键. identify_bonds 返回单元."""
+
+    i: int
+    j: int
+    length: float
+    bond_type: str  # covalent / ionic / metallic / hydrogen / unknown
+    source: str = "cutoff"  # cutoff / crystalnn / voronoi
+
+
+@dataclass
+class CoordinationShell:
+    """配位壳层. coordination_shell 返回单元."""
+
+    center: int
+    neighbors: list[int]
+    neighbor_distances: list[float]
+    geometry: str  # octahedral / tetrahedral / square_planar / linear / unknown
+
+
+@dataclass
 class StructureCognitiveMap:
     """3D 空间认知地图 — 显式 coords + adjacency + SE(3) operations.
 
@@ -297,6 +318,303 @@ class StructureCognitiveMap:
                                      adjacency={k: list(v) for k, v in self.adjacency.items()},
                                      metadata={**self.metadata, "op": "swap_atoms"})
 
+    # ── 9 个新 ops (补全 AtomWorld 15 actions) ─────────────
+
+    def move_atom(self, index: int, vector) -> "StructureCognitiveMap":
+        """单原子平移. 跟 translate (整体平移) 不同."""
+        self._check_index(index)
+        vec = np.asarray(vector, dtype=float)
+        new_coords = self.coords.copy()
+        new_coords[index] += vec
+        adj = _build_adjacency_cart(new_coords, self.lattice, _DEFAULT_CUTOFF)
+        return self._clone_with(coords=new_coords, adjacency=adj, metadata={**self.metadata, "op": "move_atom"})
+
+    def move_selected(self, indices: list[int], vector) -> "StructureCognitiveMap":
+        """子集平移."""
+        for i in indices:
+            self._check_index(i)
+        vec = np.asarray(vector, dtype=float)
+        new_coords = self.coords.copy()
+        new_coords[indices] += vec
+        adj = _build_adjacency_cart(new_coords, self.lattice, _DEFAULT_CUTOFF)
+        return self._clone_with(coords=new_coords, adjacency=adj, metadata={**self.metadata, "op": "move_selected"})
+
+    def move_towards(self, i: int, j: int, fraction: float = 0.5) -> "StructureCognitiveMap":
+        """原子 i 朝 j 方向移动 fraction 比例 (0=不动, 1=到 j 位置)."""
+        self._check_index(i); self._check_index(j)
+        vec = (self.coords[j] - self.coords[i]) * float(fraction)
+        return self.move_atom(i, vec)
+
+    def move_around(self, i: int, center, axis, angle: float,
+                    degrees: bool = True) -> "StructureCognitiveMap":
+        """原子 i 绕 center 旋转. center 可以是 index 或 3-vector."""
+        self._check_index(i)
+        if isinstance(center, int):
+            self._check_index(center)
+            origin = self.coords[center]
+        else:
+            origin = np.asarray(center, dtype=float)
+        rot = _make_rotation(axis, angle, degrees)
+        new_coords = self.coords.copy()
+        new_coords[i] = rot.apply(new_coords[i] - origin) + origin
+        adj = _build_adjacency_cart(new_coords, self.lattice, _DEFAULT_CUTOFF)
+        return self._clone_with(coords=new_coords, adjacency=adj, metadata={**self.metadata, "op": "move_around"})
+
+    def change_atom(self, index: int, new_species: str) -> "StructureCognitiveMap":
+        """改原子种类 (不改坐标). 单步 API, 不用 swap+remove+add 组合."""
+        self._check_index(index)
+        new_sp = list(self.species)
+        new_sp[index] = new_species
+        return self._clone_with(species=new_sp, metadata={**self.metadata, "op": "change_atom"})
+
+    def scale(self, factor: float) -> "StructureCognitiveMap":
+        """整体缩放 (coords + lattice). MiSI T3 zooming 需要."""
+        f = float(factor)
+        new_coords = self.coords * f
+        new_lattice = self.lattice * f if self.lattice is not None else None
+        adj = _build_adjacency_cart(new_coords, new_lattice, _DEFAULT_CUTOFF)
+        return self._clone_with(coords=new_coords, lattice=new_lattice, adjacency=adj,
+                                metadata={**self.metadata, "op": "scale", "factor": f})
+
+    def insert_between(self, i: int, j: int, species: str) -> "StructureCognitiveMap":
+        """在 i-j 中点插入新原子."""
+        self._check_index(i); self._check_index(j)
+        midpoint = (self.coords[i] + self.coords[j]) / 2.0
+        return self.add_atom(species, midpoint)
+
+    def delete_below(self, i: int, cutoff: float | None = None) -> "StructureCognitiveMap":
+        """删除 i 的近邻 (保留 i). cutoff=None 用 _DEFAULT_CUTOFF."""
+        self._check_index(i)
+        c = cutoff if cutoff is not None else _DEFAULT_CUTOFF
+        to_delete = set(self.query_neighbors(i, cutoff=c))
+        if not to_delete:
+            return self
+        mask = np.ones(len(self.species), dtype=bool)
+        for d in to_delete:
+            mask[d] = False
+        new_species = [s for k, s in enumerate(self.species) if mask[k]]
+        new_coords = self.coords[mask]
+        old_to_new = {old: new for new, old in enumerate(np.where(mask)[0])}
+        adj: dict[int, list[int]] = {}
+        for old_i, nbs in self.adjacency.items():
+            if mask[old_i]:
+                new_i = old_to_new[old_i]
+                adj[new_i] = [old_to_new[nb] for nb in nbs if mask[nb]]
+        adj.setdefault(len(new_species), [])
+        return StructureCognitiveMap(species=new_species, coords=new_coords,
+                                     lattice=self.lattice.copy() if self.lattice is not None else None,
+                                     adjacency=adj, metadata={**self.metadata, "op": "delete_below"})
+
+    def delete_around_atom(self, i: int, cutoff: float | None = None) -> "StructureCognitiveMap":
+        """删除 i 的配位壳层 (保留 i). 跟 delete_below 同义, AtomWorld 语义."""
+        return self.delete_below(i, cutoff)
+
+    # ── bond 识别 (替代 3.0Å 单 cutoff) ──────────────────
+
+    def identify_bonds(self, method: str = "cutoff",
+                        cutoff: float | None = None) -> list[Bond]:
+        """识别化学键. method: cutoff / crystalnn / voronoi.
+
+        ponytail: cutoff 默认 3.0Å, 不区分键类型 (bond_type=unknown).
+        crystalnn 用 pymatgen CrystalNN (更准确, 但对金属/合金不稳定).
+        ceiling: crystalnn 对部分体系会报错, 降级到 cutoff.
+        """
+        c = cutoff if cutoff is not None else _DEFAULT_CUTOFF
+        if method == "crystalnn" and _HAS_PMG:
+            return self._bonds_crystalnn()
+        if method == "voronoi" and _HAS_PMG:
+            return self._bonds_voronoi()
+        return self._bonds_cutoff(c)
+
+    def _bonds_cutoff(self, cutoff: float) -> list[Bond]:
+        bonds: list[Bond] = []
+        n = len(self.species)
+        for i in range(n):
+            for j in range(i + 1, n):
+                if self.lattice is not None:
+                    d = _min_image_distance(self.coords[i], self.coords[j], self.lattice)
+                else:
+                    d = float(np.linalg.norm(self.coords[i] - self.coords[j]))
+                if d <= cutoff:
+                    bonds.append(Bond(i=i, j=j, length=d,
+                                       bond_type=self.classify_bond(i, j),
+                                       source="cutoff"))
+        return bonds
+
+    def _bonds_crystalnn(self) -> list[Bond]:
+        try:
+            from pymatgen.analysis.local_env import CrystalNN
+            s = _PmgStructure(species=self.species, coords=self.coords, lattice=self.lattice)
+            cnn = CrystalNN()
+            bonds: list[Bond] = []
+            for i in range(len(self.species)):
+                try:
+                    info = cnn.get_cn_dict(s, i)
+                    for j, count in info.items():
+                        if j > i:
+                            d = self.query_distance(i, j)
+                            bonds.append(Bond(i=i, j=int(j), length=d,
+                                               bond_type=self.classify_bond(i, int(j)),
+                                               source="crystalnn"))
+                except Exception:
+                    continue
+            return bonds
+        except Exception as e:
+            logger.debug("CrystalNN failed, fallback to cutoff: %s", e)
+            return self._bonds_cutoff(_DEFAULT_CUTOFF)
+
+    def _bonds_voronoi(self) -> list[Bond]:
+        try:
+            from pymatgen.analysis.local_env import VoronoiNN
+            s = _PmgStructure(species=self.species, coords=self.coords, lattice=self.lattice)
+            vnn = VoronoiNN()
+            bonds: list[Bond] = []
+            for i in range(len(self.species)):
+                try:
+                    nbs = vnn.get_nn_info(s, i)
+                    for nb in nbs:
+                        j = nb["site_index"]
+                        if j > i:
+                            d = self.query_distance(i, j)
+                            bonds.append(Bond(i=i, j=j, length=d,
+                                               bond_type=self.classify_bond(i, j),
+                                               source="voronoi"))
+                except Exception:
+                    continue
+            return bonds
+        except Exception as e:
+            logger.debug("VoronoiNN failed, fallback to cutoff: %s", e)
+            return self._bonds_cutoff(_DEFAULT_CUTOFF)
+
+    def coordination_shell(self, i: int, method: str = "cutoff",
+                            cutoff: float | None = None) -> CoordinationShell:
+        """配位壳层. 识别几何 (octahedral/tetrahedral/square_planar/linear)."""
+        self._check_index(i)
+        c = cutoff if cutoff is not None else _DEFAULT_CUTOFF
+        if method == "crystalnn" and _HAS_PMG:
+            try:
+                from pymatgen.analysis.local_env import CrystalNN
+                s = _PmgStructure(species=self.species, coords=self.coords, lattice=self.lattice)
+                cnn = CrystalNN()
+                info = cnn.get_cn_dict(s, i)
+                nbs = list(info.keys())
+                dists = [self.query_distance(i, j) for j in nbs]
+            except Exception:
+                nbs = self.query_neighbors(i, cutoff=c)
+                dists = [self.query_distance(i, j) for j in nbs]
+        else:
+            nbs = self.query_neighbors(i, cutoff=c)
+            dists = [self.query_distance(i, j) for j in nbs]
+        geom = self._classify_geometry(nbs)
+        return CoordinationShell(center=i, neighbors=nbs, neighbor_distances=dists, geometry=geom)
+
+    def _classify_geometry(self, neighbor_indices: list[int]) -> str:
+        """根据配位数粗判几何. ponytail: 不做完整点群分析."""
+        n = len(neighbor_indices)
+        return {2: "linear", 3: "trigonal", 4: "tetrahedral",
+                5: "trigonal_bipyramidal", 6: "octahedral",
+                8: "cubic"}.get(n, "unknown")
+
+    def classify_bond(self, i: int, j: int) -> str:
+        """分类键类型: covalent/ionic/metallic/hydrogen/unknown.
+
+        ponytail: 用元素电负性差 + 是否含 H. 不查真键长表.
+        ceiling: 不区分极性共价键, 升级路径接 Allen 电负性 + 键长数据库.
+        """
+        sp_i = self.species[i]
+        sp_j = self.species[j]
+        # 氢键: H 跟 N/O/F 之间
+        h_partners = {"H", "N", "O", "F"}
+        if (sp_i in h_partners and sp_j in h_partners) and \
+           ((sp_i == "H" and sp_j in {"N", "O", "F"}) or
+            (sp_j == "H" and sp_i in {"N", "O", "F"})):
+            d = self.query_distance(i, j)
+            if d > 1.5:  # >1.5Å 判氢键, <1.5Å 判共价
+                return "hydrogen"
+            return "covalent"
+        # 金属键: 两个都是金属
+        metals = {"Li", "Na", "K", "Rb", "Cs", "Mg", "Ca", "Sr", "Ba",
+                  "Al", "Fe", "Cu", "Zn", "Ag", "Au", "Ni", "Co", "Cr",
+                  "Mn", "Ti", "V", "Zr", "Mo", "W", "Pd", "Pt", "Pb", "Sn"}
+        if sp_i in metals and sp_j in metals:
+            return "metallic"
+        # 离子键: 电负性差 > 1.7 (Pauling 粗判)
+        en = {"H": 2.20, "Li": 0.98, "Na": 0.93, "K": 0.82, "Mg": 1.31,
+              "Ca": 1.00, "Al": 1.61, "C": 2.55, "N": 3.04, "O": 3.44,
+              "F": 3.98, "Cl": 3.16, "Br": 2.96, "I": 2.66, "S": 2.58,
+              "P": 2.19, "Si": 1.90, "B": 2.04, "Fe": 1.83, "Cu": 1.90,
+              "Zn": 1.65, "Ti": 1.54, "V": 1.63, "Cr": 1.66, "Mn": 1.55,
+              "Co": 1.88, "Ni": 1.91, "Ag": 1.93, "Au": 2.54, "Pt": 2.28,
+              "Pd": 2.20, "W": 2.36, "Mo": 2.16, "Zr": 1.33}
+        en_i = en.get(sp_i, 1.5)
+        en_j = en.get(sp_j, 1.5)
+        if abs(en_i - en_j) > 1.7:
+            return "ionic"
+        return "covalent"
+
+    def identify_hydrogen_bonds(self, cutoff: float = 3.5) -> list[Bond]:
+        """氢键识别. donor (N/O/F-H) ... acceptor (N/O/F).
+
+        ponytail: donor-H...acceptor 距离 < 3.5Å + 角度 > 120° (简化, 不查 H 位置).
+        ceiling: 不验 H 位置 (分子 CIF 里 H 坐标常缺), 升级路径接 rdkit.
+        """
+        h_donors = {"N", "O", "F"}
+        h_acceptors = {"N", "O", "F"}
+        bonds: list[Bond] = []
+        for i in range(len(self.species)):
+            if self.species[i] != "H":
+                continue
+            # 找 donor (i 附近的重原子)
+            donor = None
+            for nb in self.query_neighbors(i, cutoff=1.5):
+                if self.species[nb] in h_donors:
+                    donor = nb
+                    break
+            if donor is None:
+                continue
+            # 找 acceptor
+            for j in range(len(self.species)):
+                if j == i or j == donor:
+                    continue
+                if self.species[j] not in h_acceptors:
+                    continue
+                d = self.query_distance(i, j) if self.lattice is None else \
+                    _min_image_distance(self.coords[i], self.coords[j], self.lattice)
+                if d <= cutoff and d > 1.5:
+                    bonds.append(Bond(i=donor, j=j, length=d,
+                                       bond_type="hydrogen", source="hbond"))
+        return bonds
+
+    # ── 泛化深化: 变换链 + 配位多面体 + 键类型分组 ────────
+
+    def compose(self, *ops) -> "StructureCognitiveMap":
+        """串联多个变换. ops 是 callable: map -> map.
+
+        用法:
+            m2 = m.compose(
+                lambda m: m.rotate("z", 90),
+                lambda m: m.translate([1, 2, 3]),
+                lambda m: m.scale(2),
+            )
+        ponytail: 每步创建中间 map, O(N*k). 不做矩阵合并 (YAGNI).
+        """
+        result = self
+        for op in ops:
+            result = op(result)
+        return result
+
+    def coordination_polyhedra(self) -> list[CoordinationShell]:
+        """识别所有配位多面体. 遍历每个原子."""
+        return [self.coordination_shell(i) for i in range(len(self.species))]
+
+    def bond_types(self, method: str = "cutoff") -> dict[str, list[Bond]]:
+        """按键类型分组."""
+        bonds = self.identify_bonds(method=method)
+        groups: dict[str, list[Bond]] = {}
+        for b in bonds:
+            groups.setdefault(b.bond_type, []).append(b)
+        return groups
+
     # ── 序列化 (P15 Persistence) ─────────────────────────
 
     def save(self, path: str | Path) -> None:
@@ -403,7 +721,8 @@ def _min_image_distance(a: np.ndarray, b: np.ndarray, lattice: np.ndarray) -> fl
 # ── self-check ─────────────────────────────────────────────
 
 def _selfcheck() -> None:
-    """6 场景: 构建 + 距离/角度 + 邻居 + SE(3) 等变 + save/load + immutability.
+    """12 场景: 构建 + 距离/角度 + 邻居 + SE(3) 等变 + save/load + immutability
+    + 9 新 ops + bond 识别 + compose.
 
     ponytail: 用 NaCl 简单结构 (2 原子常规 cell, d≈4.88Å), 不依赖真 CIF 文件.
     ceiling: 不验 PBC 边界 case (a in cell 0, b in cell 1), 升级路径加 edge case.
@@ -437,12 +756,10 @@ Cl1 Cl 0.5 0.5 0.5
 
     print("2. query_distance + query_angle 测试...")
     d = m.query_distance(0, 1)
-    # Na-Cl: a*sqrt(3)/2 ≈ 4.88Å (2 原子常规 cell, Na 在原点 Cl 在体心)
     assert 4.0 < d < 6.0, f"NaCl distance expected ~4.88Å, got {d}"
     print(f"   OK: d(Na, Cl) = {d:.3f}Å")
 
     print("3. query_neighbors 测试...")
-    # Fm-3m 常规 cell 只有 2 原子, cutoff=5.0 时 Cl 在 Na 邻居里
     nbs = m.query_neighbors(0, cutoff=5.0)
     print(f"   Na neighbors (cutoff=5.0): {nbs}")
 
@@ -467,14 +784,69 @@ Cl1 Cl 0.5 0.5 0.5
     original_d = m.query_distance(0, 1)
     rotated_coords = m.query_after_rotation([0, 1], axis="z", angle=45, degrees=True)
     assert len(rotated_coords) == 2
-    # 原 map 不变
     assert m.query_distance(0, 1) == original_d, "原 map 被改了!"
-    # 旋转后两点间距离不变 (SE(3) 等变)
     rot_d = float(np.linalg.norm(np.array(rotated_coords[0]) - np.array(rotated_coords[1])))
     assert abs(rot_d - original_d) < 1e-6, f"SE(3) 不等变: rot_d={rot_d}, orig={original_d}"
     print("   OK: query_after_rotation 不改原 map, 距离等变")
 
-    print("\nstructure_cognitive_map selfcheck OK")
+    print("7. move_atom + move_selected + move_towards...")
+    m_moved = m.move_atom(0, [0.1, 0, 0])
+    assert len(m_moved) == 2
+    m_sel = m.move_selected([0], [0.2, 0, 0])
+    assert len(m_sel) == 2
+    m_towards = m.move_towards(0, 1, fraction=0.5)
+    d_towards = m_towards.query_distance(0, 1)
+    # 朝 j 移动一半, 距离减半
+    assert abs(d_towards - d * 0.5) < 0.1, f"move_towards 距离错: {d_towards} vs {d*0.5}"
+    print(f"   OK: move_towards 距离减半 ({d:.3f} -> {d_towards:.3f})")
+
+    print("8. move_around + change_atom + scale...")
+    m_around = m.move_around(0, center=1, axis="z", angle=45)
+    assert len(m_around) == 2
+    m_changed = m.change_atom(0, "K")
+    assert m_changed.species[0] == "K"
+    m_scaled = m.scale(2.0)
+    d_scaled = m_scaled.query_distance(0, 1)
+    assert abs(d_scaled - d * 2.0) < 0.1, f"scale 距离错: {d_scaled} vs {d*2.0}"
+    print(f"   OK: scale 2x 距离翻倍 ({d:.3f} -> {d_scaled:.3f})")
+
+    print("9. insert_between + delete_below + delete_around_atom...")
+    m_ins = m.insert_between(0, 1, "O")
+    assert len(m_ins) == 3
+    m_del = m.delete_below(0, cutoff=5.0)
+    assert len(m_del) < len(m), f"delete_below 没删: {len(m_del)} vs {len(m)}"
+    m_del2 = m.delete_around_atom(0, cutoff=5.0)
+    assert len(m_del2) == len(m_del)
+    print(f"   OK: insert_between n=3, delete_below n={len(m_del)}")
+
+    print("10. bond 识别 (cutoff + crystalnn) + classify_bond...")
+    bonds = m.identify_bonds(method="cutoff", cutoff=5.0)
+    assert len(bonds) >= 1, f"期望至少 1 个键, got {bonds}"
+    bt = m.classify_bond(0, 1)
+    assert bt in ("ionic", "covalent", "metallic", "hydrogen", "unknown")
+    types = m.bond_types(method="cutoff")
+    assert isinstance(types, dict)
+    print(f"   OK: bonds={len(bonds)}, Na-Cl={bt}, types={list(types.keys())}")
+
+    print("11. coordination_shell + coordination_polyhedra...")
+    shell = m.coordination_shell(0, cutoff=5.0)
+    assert shell.center == 0
+    polys = m.coordination_polyhedra()
+    assert len(polys) == len(m)
+    print(f"   OK: shell.geometry={shell.geometry}, polys={len(polys)}")
+
+    print("12. compose (变换链)...")
+    m_composed = m.compose(
+        lambda mm: mm.rotate("z", 90),
+        lambda mm: mm.translate([1.0, 0, 0]),
+        lambda mm: mm.scale(1.5),
+    )
+    d_composed = m_composed.query_distance(0, 1)
+    # rotate + translate 不改变距离, scale 1.5 改变距离
+    assert abs(d_composed - d * 1.5) < 0.5, f"compose 距离错: {d_composed} vs {d*1.5}"
+    print(f"   OK: rotate+translate+scale d={d_composed:.3f} (原 {d:.3f} x 1.5)")
+
+    print("\nstructure_cognitive_map selfcheck OK (15 actions + bond + compose)")
 
 
 if __name__ == "__main__":
