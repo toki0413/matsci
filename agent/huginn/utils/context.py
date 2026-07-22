@@ -506,6 +506,23 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
         for a in artifact_matches[-5:]:  # 保留最近 5 个
             lines.append(f"  - {a}")
 
+    # 5. P0: Force re-read FAILED.md / PROVED.md durable state.
+    # context 压缩后 agent 必须知道哪些路死透 / 哪些已过审, 不重试死路.
+    # ponytail: 从 cwd/.huginn 读, 不传 workspace 避免改函数签名. 升级: 传 workspace.
+    try:
+        from pathlib import Path as _P5
+        for _name, _label in (("FAILED.md", "Dead Routes (do NOT re-attempt)"),
+                              ("PROVED.md", "Verified Results (build on these)")):
+            _p5 = _P5(".huginn") / _name
+            if _p5.exists():
+                _txt5 = _p5.read_text(encoding="utf-8").strip()
+                if _txt5:
+                    _lines5 = _txt5.split("\n")[:40]
+                    lines.append(f"### {_label}")
+                    lines.extend(f"  {l}" for l in _lines5)
+    except Exception:
+        pass
+
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
