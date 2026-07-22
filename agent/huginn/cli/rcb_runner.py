@@ -1550,8 +1550,10 @@ def _should_retry_execute(
     拓扑许可: β_1>0 (Meta-Trace 存在循环回退路径) 才允许回退.
     gap 类型: numeric_recompute / exact_component_missing 才回退,
               text_description 不回退 (文字补完在 Step 3 内 OVERWRITE report.md 即可).
+    verdict: fix_needed 和 fail 都允许回退 — fail + 具体 gap 说明 critique
+             找到了可修问题, 放弃重试等于 0 分, 重试至少有机会.
     """
-    if verdict != "fix_needed":
+    if verdict not in ("fix_needed", "fail"):
         return False
     if beta_1 <= 0:
         return False
@@ -3359,6 +3361,9 @@ if __name__ == "__main__":
         # case 1: 触发回退 (fix_needed + β_1>0 + numeric/exact gap)
         assert _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="numeric_recompute") == True
         assert _should_retry_execute(verdict="fix_needed", beta_1=2, gap_type="exact_component_missing") == True
+        # case 1b: verdict=fail 也触发回退 (fail + 具体 gap = 可修问题, 放弃=0分)
+        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="numeric_recompute") == True
+        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="exact_component_missing") == True
         # case 2: verdict=pass 不回退
         assert _should_retry_execute(verdict="pass", beta_1=1, gap_type="numeric_recompute") == False
         # case 3: β_1=0 不回退 (拓扑不许可, 无循环回退路径)
@@ -3369,7 +3374,9 @@ if __name__ == "__main__":
         assert _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="none") == False
         # case 6: verdict=reject 也不回退 (reject 走 finalize, 不走 retry)
         assert _should_retry_execute(verdict="reject", beta_1=1, gap_type="numeric_recompute") == False
-        print("[CHECK v14 Task 7] Step3→Step2 retry trigger OK (6 cases)")
+        # case 7: fail + text_description 不回退 (文字问题不必重跑 execute)
+        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="text_description") == False
+        print("[CHECK v14 Task 7] Step3→Step2 retry trigger OK (8 cases)")
 
         # v14 Task 7 SubTask 7.1: CritiqueResult.gap_type 字段 + 默认值
         # 验证 dataclass 默认 gap_type="none", 模板路径不显式传 gap_type 时也是 none
