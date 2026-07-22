@@ -476,9 +476,58 @@ async def calculation_ingest_hook(ctx: HookContext) -> HookContext | None:
 
         tool_input = ctx.args if isinstance(ctx.args, dict) else {}
         _get_ingester().ingest_calculation(ctx.tool_name, tool_input, ctx.result)
+
+        # G4: 把 visual_primitives 单独 ingest 到 KB, 让视觉经验能被 RAG 召回.
+        # visual_hook 给 result 塞 _visual_primitives 字段, 之前只流向 memory/KG,
+        # 不进 RAG KB → 这里补上. 非 block, 失败只 debug.
+        _vis = result.get("_visual_primitives") if isinstance(result, dict) else None
+        if not _vis:
+            _res_inner = result.get("result") if isinstance(result, dict) else None
+            _vis = _res_inner.get("_visual_primitives") if isinstance(_res_inner, dict) else None
+        if _vis and isinstance(_vis, str) and _vis.strip():
+            ingest_visual_primitives(ctx.tool_name, _vis, tool_input)
     except Exception:
         logger.debug("calculation_ingest_hook 失败 (非致命)", exc_info=True)
     return None
+
+
+def ingest_visual_primitives(
+    tool_name: str,
+    visual_primitives: str,
+    tool_input: dict | None = None,
+) -> str | None:
+    """G4: 把 visual_primitives 作为独立 KB 条目摄入, 让 RAG 能召回视觉经验.
+
+    之前 visual_primitives 只流向 memory/KG/hippocampus, 不进 RAG KB.
+    这里补上 — visual_hook 生成的 <point>/<box> 原语文本直接 add_text,
+    下次 agent 查 KB 时能按 "band peak" / "EDS coverage" 等关键词召回.
+
+    ponytail: 直接 add_text, 不上 distiller. 升级路径: 调 G8 distill_visual_lessons
+    做聚合蒸馏. 当前先把单条视觉经验进 RAG, 能召回就够.
+    """
+    if not visual_primitives or not visual_primitives.strip():
+        return None
+    kb = _get_kb()
+    if kb is None:
+        return None
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # 文本加前缀让 RAG 检索时能识别这是视觉经验
+    text = f"# Visual Primitives ({tool_name})\n{visual_primitives}"
+    try:
+        result = kb.add_text(
+            text,
+            filename=f"visual_{tool_name}_{ts}",
+            metadata={
+                "source": "visual_primitives",
+                "tool_name": tool_name,
+                "content_type": "visual_primitives",
+            },
+        )
+        return result.get("doc_id")
+    except Exception:
+        logger.debug("G4 ingest_visual_primitives 失败 (非致命)", exc_info=True)
+        return None
 
 
 async def hook_failure_hook(ctx: HookContext) -> HookContext | None:
