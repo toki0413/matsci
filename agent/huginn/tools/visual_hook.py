@@ -8,6 +8,14 @@ Also extracts structured "visual primitives" — numerical deictic pointers
 (peak positions, trends, anomalies) — that give text-only LLMs concrete
 coordinates to reason about, inspired by Thinking with Visual Primitives'
 "point while it reasons" principle.
+
+Bourbaki 三结构视角 (B 文档化):
+  代数 I  (free monoid): primitives 是字符串, concat 关闭 (a·b ∈ M).
+                         <point>[x,y]</point> 等原语是 monoid 元素.
+  代数 II (SE(3) 群作用): <point> 2D 坐标可被 SE(3) 穿过 (见 C 实验).
+                         visual_hook 不直接施加 SE(3), 但原语格式兼容.
+  拓扑   (坐标邻域):    M6 <box> 连通域是显式拓扑结构.
+                         BoxPrimitivesView (topology_protocol) 适配.
 """
 
 from __future__ import annotations

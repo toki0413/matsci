@@ -17,6 +17,14 @@ ceiling:
 升级路径:
   - sketch: 接 Stable Diffusion / DALL-E 真生成任意图像
   - verify: 接 LLM 判断图像是否符合 spec (semantic check)
+
+Bourbaki 三结构视角 (B 文档化):
+  代数 I  (free monoid): spec 是字符串 (自然语言), sketch/verify 操作把 spec 映射
+                         到 image_bytes. mental_imagery_loop 是 sketch∘verify 复合.
+  代数 II (SE(3) 群作用): lattice 模板用 2D 正弦光栅, 可被 SE(2) 旋转作用.
+                         sketch 不直接施加 SE(3), 但输出图像兼容 SE(3) (FFT 旋转不变).
+  拓扑   (连通域邻域):  verify 用 extract_box_primitives (M6) 检查连通域.
+                         BoxPrimitivesView (topology_protocol) 适配 sketch 输出.
 """
 from __future__ import annotations
 
