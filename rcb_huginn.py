@@ -260,7 +260,28 @@ async def run_agent(prompt: str, workspace: Path, timeout: int, max_tool_calls: 
         f"- Literature bounds can be cited for COMPARISON ('our g < X agrees with Arvanitaki "
         f"2011's Bosenova bound Y'), but NEVER as the primary result.\n"
         f"- Self-check before writing report: for each quantitative claim, trace the derivation "
-        f"chain back to a number in YOUR outputs/. If the chain ends at a citation, redo it."
+        f"chain back to a number in YOUR outputs/. If the chain ends at a citation, redo it.\n\n"
+        f"## DERIVATION TRACE FORMAT (critical — agent claims 'derived from exclusion curve' "
+        f"but uses a literature value with a relabeled caption)\n"
+        f"- For each derived quantity, the report MUST include a numbered trace:\n"
+        f"  STEP 1 (INPUT): cite the specific number from YOUR outputs/ (file + value), "
+        f"e.g. 'P_ex = 0.05 at mu = X from bayesian_results.npz'\n"
+        f"  STEP 2 (FORMULA): state the physical relation (symbolic form, no numbers yet), "
+        f"e.g. 'g = mu / (coupling_constant * fa), where fa = M_pl^2 * mu / Lambda^2'\n"
+        f"  STEP 3 (COMPUTATION): plug YOUR numbers into the formula and show the arithmetic, "
+        f"e.g. 'fa = (1.22e19)^2 * X / Lambda^2 = Y GeV, g = X / Y = Z GeV^-1'\n"
+        f"  STEP 4 (OUTPUT): final value with units and confidence level\n"
+        f"- If STEP 1 cites a paper instead of YOUR outputs/, the result is INVALID.\n"
+        f"- If STEP 2 is 'the literature says g < W', that is a citation, NOT a formula.\n"
+        f"- If STEP 3 is missing (no arithmetic shown), the derivation is unverifiable.\n"
+        f"- The judge checks whether YOUR computation (STEP 3) produces the output (STEP 4). "
+        f"Relabeling a literature bound as 'derived from curve' without showing the arithmetic "
+        f"is detectable: if your 'derived' value equals a known literature bound to 2 sig figs, "
+        f"the judge will flag it as a literature quote, not a derivation.\n"
+        f"- If your derivation produces a value that coincidentally matches a literature bound, "
+        f"that is FINE — but you must still show STEPs 1-3 with YOUR numbers. The coincidence "
+        f"should be noted in STEP 4 ('this agrees with Arvanitaki 2011's bound'), not used as "
+        f"a shortcut to skip the derivation."
     )
 
     # ── 主线认知基础设施 (Task 2.1) ──────────────────────────────
@@ -333,6 +354,22 @@ def score_run(workspace: Path) -> dict:
     # monkey-patch 回去, 不依赖 reload.
     import evaluation.config as _cfg
     _cfg.JUDGE_MODEL_NAME = os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat")
+
+    # deepseek-chat 不支持 image_url content block, image 项调 vision 会 400.
+    # monkey-patch: image 项直接走 CV + text LLM fallback (档 2/3).
+    # 升级路径: 换 vision-capable judge (gpt-4o/claude) 后移除此 patch.
+    import evaluation.score as _score_mod
+    _orig_score_single = _score_mod._score_single_item
+
+    def _patched_score_single(agent, report_text, item, target_image_path,
+                              generated_images, instructions):
+        if item.get("type") == "image":
+            item = dict(item)
+            item["type"] = "text"
+        return _orig_score_single(agent, report_text, item, None, [], instructions)
+
+    _score_mod._score_single_item = _patched_score_single
+
     from evaluation.score import score_workspace
     return score_workspace(workspace)
 
