@@ -120,6 +120,21 @@ async def execute_visual_inspect(
                 "error": f"rotate failed: {e}",
                 "description": description,
             })
+
+        # G9: SE(3) rotate 产物入 hippocampus — 补 G5 盲点.
+        # rotate 分支早返回 (line 123), 绕过末尾的 record 调用.
+        # 这里补上, 让 point3d_primitives 也能跨 session recall.
+        try:
+            from huginn.metacog.visual_hippocampus import use_hippocampus, record
+            if use_hippocampus() and token:
+                history = getattr(engine, "_visual_primitives_history", None)
+                if history is None and hasattr(engine, "_state"):
+                    history = getattr(engine._state, "_visual_primitives_history", None)
+                if history is not None:
+                    record(history, token["text"], session_id=str(getattr(engine, "_run_id", "")))
+        except Exception:
+            logger.debug("G9 rotate hippocampus record failed (non-fatal)", exc_info=True)
+
         return result
 
     # 动作 0 (QW3): chain — 必须在 visual_ctx 检查之前, 否则空 visual_ctx 时
