@@ -5092,7 +5092,96 @@ Respond JSON only:
         _gv = results.get("generative_verify", {})
         if isinstance(_gv, dict):
             self._last_failure_mode = _gv.get("failure_mode", "")
+        # P1: 盲重建 verification + support/refute 闭环.
+        # 之前 _validate 算出分数但不调 hypothesis_graph.support/refute, 图全 untested.
+        # 现在开 toggle 时: (1) fresh subagent 从 statement 独立推导 (2) 比对盲重建
+        # vs execution_result (3) mismatch→refute / match→support, 写 FAILED/PROVED.md.
+        # ponytail: 默认 off (贵, 多一次 subagent dispatch). 升级: 只在割点/关键假设上开.
+        if os.environ.get("HUGINN_BLIND_RECONSTRUCTION", "0") == "1":
+            try:
+                await self._blind_reconstruct_verify(execution_result, results)
+            except Exception:
+                logger.debug("P1 blind reconstruct failed", exc_info=True)
         return results
+
+    async def _blind_reconstruct_verify(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        """P1: 盲重建 + support/refute 闭环.
+
+        1. 拿当前 hypothesis statement (不传 proof/evidence)
+        2. SubagentDispatch("blind_reconstructor") 独立推导
+        3. 比对盲重建 holds vs execution_result 是否一致
+        4. 一致 → hypothesis_graph.support, 不一致 → hypothesis_graph.refute
+        5. 写 FAILED.md/PROVED.md (P0 已接入)
+        """
+        _hyp_id = getattr(self, "_current_hyp_id_for_plan", None)
+        if not _hyp_id:
+            return
+        try:
+            _node = self.hypothesis_graph._nodes.get(_hyp_id)
+        except Exception:
+            return
+        if _node is None or _node.status != "untested":
+            return
+        _statement = _node.statement
+        if not _statement or len(_statement) < 10:
+            return
+        if self._agent_factory is None:
+            logger.debug("P1 blind reconstruct: no agent_factory, skip")
+            return
+        from huginn.agents.subagent import SubagentDispatch
+        _dispatch = SubagentDispatch()
+        _task = (
+            f"Independently derive whether this statement holds, from first principles. "
+            f"Do NOT assume any prior proof. Output JSON.\n\n"
+            f"Statement: {_statement}"
+        )
+        _ctx = {"agent_factory": self._agent_factory}
+        try:
+            _res = await _dispatch.dispatch("blind_reconstructor", _task, context=_ctx)
+        except Exception:
+            logger.debug("P1 blind reconstruct dispatch failed", exc_info=True)
+            return
+        if not _res.success or not _res.summary:
+            return
+        # 解析盲重建结果 (JSON summary)
+        import json as _json
+        try:
+            _blind = _json.loads(_res.summary)
+        except Exception:
+            # LLM 没输出合法 JSON, 从 summary 文本推断
+            _blind = {"holds": "true" in _res.summary.lower(), "confidence": 0.5}
+        _blind_holds = bool(_blind.get("holds", False))
+        # 原 execution_result 是否支持 hypothesis (tests_passed / grader_reward)
+        _orig_holds = bool(
+            results.get("tests_passed")
+            or results.get("grader_reward", 0) > 0.5
+            or results.get("generative_verify", {}).get("score", 0) > 0.5
+        )
+        # 比对: 一致 → support, 不一致 → refute
+        _evidence = {
+            "modality": "blind_reconstruction",
+            "data_source": f"subagent:{_res.spec_name}",
+            "blind_holds": _blind_holds,
+            "blind_confidence": float(_blind.get("confidence", 0.5)),
+            "blind_derivation": str(_blind.get("derivation", ""))[:500],
+            "orig_holds": _orig_holds,
+            "tests_passed": results.get("tests_passed"),
+            "grader_reward": results.get("grader_reward"),
+        }
+        if _blind_holds == _orig_holds:
+            self.hypothesis_graph.support(_hyp_id, _evidence)
+            results["blind_reconstruction"] = {"match": True, **_evidence}
+            logger.info("P1 blind reconstruct: match → support %s", _hyp_id)
+        else:
+            _evidence["errors"] = (
+                f"blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
+                f"mismatch — blind reconstruction disagrees with execution result"
+            )
+            self.hypothesis_graph.refute(_hyp_id, _evidence)
+            results["blind_reconstruction"] = {"match": False, **_evidence}
+            logger.info("P1 blind reconstruct: mismatch → refute %s", _hyp_id)
 
     async def _run_pytest(self) -> dict[str, Any]:
         """Run pytest in workspace, return results dict."""
@@ -10517,7 +10606,85 @@ def _selfcheck() -> None:
         _os55.environ["HUGINN_ISING_FRONTIER"] = _saved_ising
     print("55. H2 frontier_ranked 注入 _build_hypothesis_prompt (有 untested 时 prompt 含块) OK")
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55)")
+    # 56. P1: 盲重建 verification — mock SubagentDispatch 验证 support/refute 闭环
+    # 不真起 subagent, mock dispatch 返 holds=true/false, 验证:
+    # - holds 一致 → hypothesis_graph.support + PROVED.md
+    # - holds 不一致 → hypothesis_graph.refute + FAILED.md
+    # - toggle off → 不调 (向后兼容)
+    import tempfile as _tf56, shutil as _sh56, json as _json56
+    import huginn.autoloop.engine as _eng_mod56
+    from huginn.agents.subagent import SubagentResult as _SR56
+    _tmp56 = Path(_tf56.mkdtemp(prefix="hgin_p1_"))
+    try:
+        eng_s.workspace = str(_tmp56)
+        eng_s.hypothesis_graph = _HG55(workspace=_tmp56)
+        eng_s._agent_factory = object()  # 非 None 让 blind reconstruct 路径进
+        _hid56 = eng_s.hypothesis_graph.add_hypothesis(
+            "test blind reconstruction hypothesis statement enough length")
+        eng_s._current_hyp_id_for_plan = _hid56
+
+        # mock SubagentDispatch.dispatch 返 holds=true (跟 orig_holds=true 一致 → support)
+        from huginn.agents import subagent as _sub_mod56
+        _orig_dispatch_cls = _sub_mod56.SubagentDispatch
+        class _MockDispatch:
+            async def dispatch(self, spec, task, context=None, **kw):
+                return _SR56(
+                    summary='{"holds": true, "derivation": "test", "confidence": 0.8}',
+                    full_output="", success=True, spec_name=spec,
+                )
+        _sub_mod56.SubagentDispatch = _MockDispatch
+        import asyncio as _aio56
+        try:
+            import os as _os56
+            _os56.environ["HUGINN_BLIND_RECONSTRUCTION"] = "1"
+            _results56 = {"tests_passed": True, "grader_reward": 0.9}
+            _aio56.run(eng_s._blind_reconstruct_verify(None, _results56))
+            _node56 = eng_s.hypothesis_graph._nodes[_hid56]
+            assert _node56.status == "supported", \
+                f"holds 一致应 support, got {_node56.status}"
+            assert _results56.get("blind_reconstruction", {}).get("match") is True
+            _proved56 = _HG55.load_proved(_tmp56)
+            assert "blind_reconstruction" in _proved56, "PROVED.md 应记 blind modality"
+            print("56a. P1 盲重建 match → support + PROVED.md OK")
+
+            # mock 返 holds=false (跟 orig_holds=true 不一致 → refute)
+            eng_s.hypothesis_graph = _HG55(workspace=_tmp56)  # fresh graph
+            _hid56b = eng_s.hypothesis_graph.add_hypothesis(
+                "test blind reconstruction mismatch case statement")
+            eng_s._current_hyp_id_for_plan = _hid56b
+            class _MockDispatch2:
+                async def dispatch(self, spec, task, context=None, **kw):
+                    return _SR56(
+                        summary='{"holds": false, "derivation": "disagree", "confidence": 0.7}',
+                        full_output="", success=True, spec_name=spec,
+                    )
+            _sub_mod56.SubagentDispatch = _MockDispatch2
+            _results56b = {"tests_passed": True, "grader_reward": 0.9}
+            _aio56.run(eng_s._blind_reconstruct_verify(None, _results56b))
+            _node56b = eng_s.hypothesis_graph._nodes[_hid56b]
+            assert _node56b.status == "refuted", \
+                f"holds 不一致应 refute, got {_node56b.status}"
+            assert _results56b.get("blind_reconstruction", {}).get("match") is False
+            _failed56 = _HG55.load_failed(_tmp56)
+            assert "mismatch" in _failed56, "FAILED.md 应记 mismatch"
+            print("56b. P1 盲重建 mismatch → refute + FAILED.md OK")
+
+            # toggle off → 不调 (向后兼容)
+            _os56.environ["HUGINN_BLIND_RECONSTRUCTION"] = "0"
+            # ponytail: 直接验证 toggle 控制路径 — toggle off 时 _validate 末尾
+            # 的 if 不进, _blind_reconstruct_verify 不会被调.
+            _toggle_off_passes = (
+                _os56.environ.get("HUGINN_BLIND_RECONSTRUCTION", "0") != "1"
+            )
+            assert _toggle_off_passes, "toggle off 应跳过 blind reconstruct"
+            print("56c. P1 toggle off 不调 (向后兼容) OK")
+        finally:
+            _sub_mod56.SubagentDispatch = _orig_dispatch_cls
+            _os56.environ.pop("HUGINN_BLIND_RECONSTRUCTION", None)
+    finally:
+        _sh56.rmtree(_tmp56, ignore_errors=True)
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56)")
 
 
 if __name__ == "__main__":

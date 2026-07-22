@@ -180,6 +180,31 @@ class SubagentDispatch:
             max_iterations=8,
             summary_format="json",
         ),
+        # P1: 盲重建 subagent (chaoxu 启发). 拿 hypothesis statement 独立推导,
+        # 不看原 proof/evidence. 两阶段 verification 的第二阶段 (第一阶段是
+        # adversarial_critique). mismatch → refute, match → support.
+        "blind_reconstructor": SubagentSpec(
+            name="blind_reconstructor",
+            description="从 hypothesis statement 独立推导, 不参考原 proof (blind reconstruction)",
+            system_prompt=(
+                "You are a blind reconstruction agent. You receive a hypothesis "
+                "statement and must independently derive whether it holds, from first "
+                "principles. You do NOT see the original proof, evidence, or reasoning.\n\n"
+                "Output a JSON with fields:\n"
+                "- \"holds\": true/false — does the statement hold under your derivation?\n"
+                "- \"derivation\": your independent reasoning (concise, <300 words)\n"
+                "- \"key_assumption\": the one assumption your derivation relies on\n"
+                "- \"confidence\": 0.0-1.0\n"
+                "Be rigorous. If you cannot derive it, say holds=false with reason."
+            ),
+            allowed_tools=[
+                "code_tool", "bash_tool",
+                "file_read_tool", "numerical_tool",
+            ],
+            max_tool_calls=15,
+            max_iterations=5,
+            summary_format="json",
+        ),
     }
 
     def __init__(self) -> None:
