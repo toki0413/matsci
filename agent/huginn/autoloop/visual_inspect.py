@@ -46,8 +46,32 @@ async def execute_visual_inspect(
 
     desc_lower = description.lower()
 
+    # 动作 0 (QW3): chain — 必须在 zoom/measure/etc 之前判断, 否则 "chain: zoom ..."
+    # 子描述会被 zoom 分支拦截. 用 startswith 区分 "chain:..." 跟 "zoom into ...".
+    if desc_lower.startswith("chain"):
+        body = re.sub(r"^\s*chain\s*:?\s*", "", description, flags=re.IGNORECASE).strip()
+        sub_descs = [s.strip() for s in re.split(r"\s*;\s*|\s+then\s+", body, flags=re.IGNORECASE) if s.strip()]
+        trajectory: list[dict[str, Any]] = []
+        for sd in sub_descs:
+            sub_result = await execute_visual_inspect(engine, sd, context)
+            sub_actions = sub_result.get("actions", [])
+            first = sub_actions[0] if sub_actions else {}
+            trajectory.append({
+                "step": sd,
+                "action": first.get("action", "unknown"),
+                "note": first.get("note", ""),
+                "sub_result": sub_result,
+            })
+        result["actions"].append({
+            "action": "chain",
+            "description": description,
+            "trajectory": trajectory,
+            "n_steps": len(trajectory),
+            "note": f"Chain of {len(trajectory)} visual_inspect steps",
+        })
+
     # 动作 1: zoom — 放大某区域
-    if "zoom" in desc_lower:
+    elif "zoom" in desc_lower:
         coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
         if len(coords) >= 2:
             x1, y1 = int(coords[0][0]), int(coords[0][1])
