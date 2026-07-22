@@ -2821,12 +2821,31 @@ Respond JSON only:
         # 2 轮就 early stop 太激进, 真正突破常在 10+ 轮停滞之后.
         _stag_limit = int(os.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT", "5"))
         if self._darwin_stagnation >= _stag_limit and self._iteration > 2:
-            logger.info(
-                "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
-                self._darwin_stagnation,
-                self._darwin_best_score,
-            )
-            self._should_stop = True
+            # P2: stagnation 触发前先分类 (chaoxu 启发).
+            # method_failure → pivot 换方法继续, 不 stop
+            # evidence_against → counterexample hunt, 不 stop
+            # unclassifiable / 已试过 → 真 stop
+            _stall_action = self._classify_stall()
+            if _stall_action == "pivot":
+                logger.info(
+                    "darwin ratchet: stagnation %d → method_failure, pivot (不 stop)",
+                    self._darwin_stagnation,
+                )
+                self._darwin_stagnation = 0  # 给 pivot 后的新假设重新累积
+            elif _stall_action == "counterexample":
+                logger.info(
+                    "darwin ratchet: stagnation %d → evidence_against, counterexample hunt (不 stop)",
+                    self._darwin_stagnation,
+                )
+                self._darwin_stagnation = 0
+                self._trigger_counterexample_hunt()
+            else:
+                logger.info(
+                    "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
+                    self._darwin_stagnation,
+                    self._darwin_best_score,
+                )
+                self._should_stop = True
 
         # P2-6 belief: σ² 收敛也作为 stop 信号. σ² < 0.1 = belief 不确定性低,
         # 后续观测不会显著改变 μ, 边际信息收益递减. 跟 stagnation 互补:
@@ -2849,6 +2868,93 @@ Respond JSON only:
             self._distill_meta_trace(score, supported_ratio)
         except Exception:
             logger.debug("meta_trace distill failed (non-fatal)", exc_info=True)
+
+    def _classify_stall(self) -> str:
+        """P2: stagnation 触发时归因 (chaoxu 启发).
+
+        分两类:
+        - method_failure: 当前方法/工具用尽, 换方法能救 → 返回 "pivot"
+        - evidence_against: 证据指向假设本身错 → 返回 "counterexample"
+        - unclassifiable / 已试过太多次 → 返回 "stop"
+
+        ponytail: 用 _last_failure_mode + _consecutive_failures + pivot_count
+        做规则归因, 不调 LLM (省 token). 升级: LLM judge 归因.
+        ceiling: 只用已有信号, 不引入新 sensor.
+        """
+        _fail_mode = getattr(self, "_last_failure_mode", "") or ""
+        _consec = getattr(self, "_consecutive_failures", 0)
+        _pivots = getattr(self, "_pivot_count", 0)
+        _max_pivots = getattr(self, "_max_pivots", 10)
+        # evidence_against 信号: failure_mode 含 hypothesis_error / refuted /
+        # counterexample, 或最近 validation 明确反驳
+        _evidence_signals = (
+            "hypothesis_error" in _fail_mode
+            or "refuted" in _fail_mode.lower()
+            or "counterexample" in _fail_mode.lower()
+            or "contradicts" in _fail_mode.lower()
+        )
+        # method_failure 信号: failure_mode 含 tool_error / param_error /
+        # timeout / convergence, 或纯工具失败
+        _method_signals = (
+            "tool_error" in _fail_mode
+            or "param_error" in _fail_mode
+            or "timeout" in _fail_mode
+            or "convergence" in _fail_mode
+            or "data_noise" in _fail_mode
+        )
+        # 已 pivot 太多次 → 不再 pivot, 考虑 stop
+        if _pivots >= _max_pivots:
+            return "stop"
+        if _evidence_signals and not _method_signals:
+            return "counterexample"
+        if _method_signals and not _evidence_signals:
+            return "pivot"
+        # 混合信号或无信号: 看 consecutive_failures
+        # 高失败率 → 假设方向可能错 → counterexample
+        # 中低失败率 → 方法问题 → pivot
+        if _consec >= 10:
+            return "counterexample"
+        if _consec >= 3:
+            return "pivot"
+        return "stop"
+
+    def _trigger_counterexample_hunt(self) -> None:
+        """P2: 触发反例搜索 (chaoxu 启发).
+
+        两种路径:
+        1. SMT 离散反例 (已有 _discrete_counterexample_scan, 需 evidence 带
+           discrete_hypothesis 字段)
+        2. LLM 主动构造反例 scenario — 让 imagination block 强制开, 下轮
+           hypothesize 时 LLM 被要求考虑反事实
+
+        ponytail: 不新起 subagent (贵), 只设 flag 让下轮 _should_imaginate
+        返 True + 注入 counterexample hint. 升级: LLM 把 hypothesis 翻译成
+        z3 表达式跑 SMT.
+        """
+        # 强制开 imagination (override _should_imaginate 的判断)
+        self._force_imaginate = True
+        # 注入 counterexample hint 给下轮 hypothesize
+        _cur_hyp = getattr(self, "_current_hyp_id_for_plan", None)
+        _stmt = ""
+        if _cur_hyp:
+            try:
+                _node = self.hypothesis_graph._nodes.get(_cur_hyp)
+                if _node:
+                    _stmt = _node.statement[:200]
+            except Exception:
+                pass
+        _hint = (
+            f"Stagnation classified as evidence_against. "
+            f"Current hypothesis may be wrong. Hunt for a counterexample.\n"
+            f"Hypothesis: {_stmt}\n"
+            f"Construct a specific scenario / parameter set where this hypothesis "
+            f"would fail. If found, refute and pivot to a corrected hypothesis."
+        )
+        # _speculator_hint 会被 _build_hypothesis_prompt 读取注入
+        self._speculator_hint = (
+            (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
+        )
+        logger.info("P2 counterexample hunt triggered, hint injected")
 
     def _distill_meta_trace(self, darwin_score: float, supported_ratio: float) -> None:
         """把本轮蒸馏成结构化科研要点, 追加到 .huginn/meta_trace.jsonl.
@@ -4067,6 +4173,10 @@ Respond JSON only:
             logger.debug("heat_engine.should_imaginate failed, fallback to legacy", exc_info=True)
 
         # 回落: 旧触发逻辑 (surprise + refine_count)
+        # P2: _force_imaginate 由 _trigger_counterexample_hunt 设置,
+        # stagnation 归因为 evidence_against 时强制开 imagination.
+        if getattr(self, "_force_imaginate", False):
+            return True
         return (
             getattr(self, "_last_surprise", 0.0) > 0.5
             or getattr(self, "_refine_count", 0) >= 2
@@ -10684,7 +10794,119 @@ def _selfcheck() -> None:
     finally:
         _sh56.rmtree(_tmp56, ignore_errors=True)
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56)")
+    # 57. P2: stagnation 分类 → counterexample hunt (chaoxu 启发)
+    # 验证 _classify_stall 归因 + _trigger_counterexample_hunt 副作用 +
+    # _darwin_ratchet_check 按 _classify_stall 返回值分流 (pivot/counterexample/stop)
+    import tempfile as _tf57, shutil as _sh57, os as _os57
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG57
+    _tmp57 = Path(_tf57.mkdtemp(prefix="hgin_p2_"))
+    try:
+        # 恢复 _should_imaginate 到真实类方法 (55 块曾 monkey-patch 成 lambda: False)
+        eng_s.__dict__.pop("_should_imaginate", None)
+        eng_s.workspace = str(_tmp57)
+        eng_s.hypothesis_graph = _HG57(workspace=_tmp57)
+        # 加一个节点让 _darwin_ratchet_check 不 early return
+        _hid57 = eng_s.hypothesis_graph.add_hypothesis(
+            "test P2 stagnation classification hypothesis statement")
+        eng_s._current_hyp_id_for_plan = _hid57
+
+        # 57a: _classify_stall 归因正确性 (纯规则, 不调 LLM)
+        eng_s._max_pivots = 10
+        # method_failure → "pivot"
+        eng_s._last_failure_mode = "tool_error: VASP timeout"
+        eng_s._consecutive_failures = 5
+        eng_s._pivot_count = 0
+        assert eng_s._classify_stall() == "pivot", \
+            "tool_error 应归因 method_failure → pivot"
+        # evidence_against → "counterexample"
+        eng_s._last_failure_mode = "refuted by counterexample"
+        assert eng_s._classify_stall() == "counterexample", \
+            "refuted 应归因 evidence_against → counterexample"
+        # max_pivots 用尽 → "stop" (优先于其他归因)
+        eng_s._pivot_count = 10
+        eng_s._last_failure_mode = "tool_error"
+        assert eng_s._classify_stall() == "stop", \
+            "pivots 用尽应 stop (优先于其他归因)"
+        # 无信号 + 低失败率 → "stop"
+        eng_s._pivot_count = 0
+        eng_s._last_failure_mode = ""
+        eng_s._consecutive_failures = 2
+        assert eng_s._classify_stall() == "stop", \
+            "无信号 + 低失败率应 stop"
+        print("57a. P2 _classify_stall 归因 (method→pivot / evidence→counterexample / 用尽→stop) OK")
+
+        # 57b: _trigger_counterexample_hunt 副作用 + _should_imaginate override
+        eng_s._force_imaginate = False
+        eng_s._speculator_hint = ""
+        eng_s._trigger_counterexample_hunt()
+        assert eng_s._force_imaginate is True, \
+            "_trigger_counterexample_hunt 应设 _force_imaginate=True"
+        assert "counterexample" in (eng_s._speculator_hint or "").lower(), \
+            "_speculator_hint 应含 counterexample 关键词"
+        assert eng_s._should_imaginate() is True, \
+            "_force_imaginate=True 应让 _should_imaginate 返 True (override)"
+        print("57b. P2 counterexample hunt (force_imaginate + hint + should_imaginate override) OK")
+
+        # 57c: _darwin_ratchet_check 按 _classify_stall 返回值分流
+        _orig_stag = _os57.environ.get("HUGINN_DARWIN_STAGNATION_LIMIT")
+        _orig_belief = _os57.environ.get("HUGINN_BELIEF_DARWIN")
+        _os57.environ["HUGINN_DARWIN_STAGNATION_LIMIT"] = "2"
+        # 关掉 belief stop 避免 σ²<0.1 误触发, 聚焦 stagnation 分流
+        _os57.environ["HUGINN_BELIEF_DARWIN"] = "0"
+        # 设高分 last_score, 保证 delta<0.5 → stagnation++ 触发分流
+        eng_s._darwin_last_score = 10.0
+        eng_s._darwin_best_score = 10.0
+        eng_s._iteration = 5
+        try:
+            # pivot 路径: 重置 stagnation, 不 stop
+            eng_s._darwin_stagnation = 2
+            eng_s._should_stop = False
+            eng_s._classify_stall = lambda: "pivot"
+            eng_s._darwin_ratchet_check()
+            assert eng_s._darwin_stagnation == 0, \
+                f"pivot 应重置 stagnation=0, got {eng_s._darwin_stagnation}"
+            assert eng_s._should_stop is False, \
+                "pivot 不应触发 _should_stop"
+            print("57c1. P2 pivot 路径 (reset stagnation, no stop) OK")
+
+            # counterexample 路径: 重置 + 触发 hunt, 不 stop
+            eng_s._darwin_stagnation = 2
+            eng_s._should_stop = False
+            eng_s._force_imaginate = False
+            eng_s._speculator_hint = ""
+            eng_s._classify_stall = lambda: "counterexample"
+            eng_s._darwin_ratchet_check()
+            assert eng_s._darwin_stagnation == 0, \
+                f"counterexample 应重置 stagnation=0, got {eng_s._darwin_stagnation}"
+            assert eng_s._should_stop is False, \
+                "counterexample 不应触发 _should_stop"
+            assert eng_s._force_imaginate is True, \
+                "counterexample 应触发 hunt (_force_imaginate=True)"
+            assert "counterexample" in (eng_s._speculator_hint or "").lower(), \
+                "counterexample 应注入 hint"
+            print("57c2. P2 counterexample 路径 (reset + hunt, no stop) OK")
+
+            # stop 路径: 真 stop
+            eng_s._darwin_stagnation = 2
+            eng_s._should_stop = False
+            eng_s._classify_stall = lambda: "stop"
+            eng_s._darwin_ratchet_check()
+            assert eng_s._should_stop is True, \
+                "stop 应设 _should_stop=True"
+            print("57c3. P2 stop 路径 (_should_stop=True) OK")
+        finally:
+            if _orig_stag is None:
+                _os57.environ.pop("HUGINN_DARWIN_STAGNATION_LIMIT", None)
+            else:
+                _os57.environ["HUGINN_DARWIN_STAGNATION_LIMIT"] = _orig_stag
+            if _orig_belief is None:
+                _os57.environ.pop("HUGINN_BELIEF_DARWIN", None)
+            else:
+                _os57.environ["HUGINN_BELIEF_DARWIN"] = _orig_belief
+    finally:
+        _sh57.rmtree(_tmp57, ignore_errors=True)
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57)")
 
 
 if __name__ == "__main__":
