@@ -362,6 +362,97 @@ class KnowledgeDistiller:
         return kid
 
     # ------------------------------------------------------------------
+    # G8: Visual lessons distillation
+    # ------------------------------------------------------------------
+
+    def distill_visual_lessons(
+        self,
+        visual_entries: list[dict],
+        *,
+        min_support: int = 2,
+    ) -> list[str]:
+        """G8: 从历史 visual_primitives 蒸馏可复用的视觉经验.
+
+        visual_entries 是 [{"tool_name", "primitives", "ts", "context"}] 列表.
+        蒸馏逻辑:
+          1. 按 tool_name 分组 (band_structure / EDS / phase_field / ...)
+          2. 每组 ≥ min_support 条 → 抽一个 visual_lesson
+          3. visual_lesson 内容: 该类图的常见特征 (高频关键词) + 出现次数
+
+        ponytail: 关键词频率统计, 不上 LLM 抽取. 升级路径: 调 LLM 做语义聚类.
+          ceiling: 不识别语义相似 (peak/max/min 会被当 3 个不同词).
+        """
+        if not visual_entries or len(visual_entries) < min_support:
+            return []
+
+        # 按 tool_name 分组
+        groups: dict[str, list[dict]] = {}
+        for e in visual_entries:
+            tool = e.get("tool_name", "unknown")
+            groups.setdefault(tool, []).append(e)
+
+        kids: list[str] = []
+        for tool, entries in groups.items():
+            if len(entries) < min_support:
+                continue
+
+            # 抽 primitives 里的关键词频率
+            from collections import Counter
+            import re
+            word_freq: Counter = Counter()
+            for e in entries:
+                prim = e.get("primitives", "") or ""
+                # 提取 <point>/<box>/<band> 等 visual primitive 标签
+                tags = re.findall(r"\[(\w+)\]|<(\w+)>", prim)
+                for t in tags:
+                    for g in t:
+                        if g:
+                            word_freq[g] += 1
+                # 提取峰/异常/趋势等关键词
+                for kw in ("peak", "min", "max", "anomal", "trend", "increasing", "decreasing"):
+                    if kw in prim.lower():
+                        word_freq[kw] += 1
+
+            if not word_freq:
+                continue
+
+            top_features = word_freq.most_common(5)
+            features_str = ", ".join(f"{k}({v})" for k, v in top_features)
+
+            content_parts = [
+                f"# Visual Lesson ({tool})",
+                f"## Observed Pattern (n={len(entries)})",
+                f"Common visual features in {len(entries)} {tool} results:",
+                f"- Top features: {features_str}",
+            ]
+            # 附 2-3 个原始 primitives 作例子
+            examples = entries[:3]
+            for i, e in enumerate(examples):
+                prim = (e.get("primitives", "") or "")[:200]
+                content_parts.append(f"\nExample {i+1}:\n{prim}")
+            content = "\n".join(content_parts)
+
+            kid = f"visual_lesson_{tool}_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+            if any(k.knowledge_id == kid for k in self.knowledge_base):
+                continue
+
+            dk = DistilledKnowledge(
+                knowledge_id=kid,
+                content=content,
+                source_type="visual_lesson",
+                source_evidence=[e.get("ts", "unknown") for e in entries],
+                confidence=min(0.8, 0.4 + 0.1 * len(entries)),
+                category=f"visual_{tool}",
+                tags=["visual", "lesson", tool],
+            )
+            self.knowledge_base.append(dk)
+            kids.append(kid)
+
+        if kids:
+            self._save()
+        return kids
+
+    # ------------------------------------------------------------------
     # Export to RAG
     # ------------------------------------------------------------------
 
