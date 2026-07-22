@@ -837,3 +837,220 @@ def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
         "caveats": caveats,
         "note": "数值数据可视化置信度估算, 让红队判断可视化结论可信度",
     }
+
+
+# ── M6: <box>[x1,y1,x2,y2]</box> 原语 + 连通域 bbox 检测 ────────────────────
+
+
+def extract_box_primitives(
+    image_bytes: bytes,
+    threshold: int = 128,
+    max_boxes: int = 10,
+    min_area_px2: int = 5,
+) -> str:
+    """M6: 从图像 bytes 检测连通域, 输出 <box>[x1,y1,x2,y2]</box>(label:area) 原语.
+
+    跟 <point>[x,y]</point> 配对: point 是单点, box 是区域.
+    让 text-only LLM 通过坐标化 bbox "指向"图像里的粒子/缺陷/相域.
+
+    算法: scipy.ndimage.label 做连通域 (binary mask = 像素 < threshold, 即暗区域).
+    坐标归一化到 0-999, 跟 _extract_2d_primitives / _normalize_coord 同坐标系.
+
+    ponytail: 固定阈值, 不上 Otsu/adaptive. 升级路径: Otsu 或 LLM 判阈值.
+    ceiling: 只检测暗连通域, 不区分粒子/缺陷类型. 升级: 用 shape features 分类.
+
+    Args:
+        image_bytes: 图像二进制 (PNG/JPEG)
+        threshold: 二值化阈值 (像素 < threshold 视为前景). 默认 128.
+        max_boxes: 最多输出几个 bbox. 默认 10.
+        min_area_px2: 最小连通域面积 (小于此值的忽略, 滤噪点). 默认 5px².
+
+    Returns:
+        primitives 文本. 无连通域时返回空字符串.
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+        from scipy import ndimage
+    except ImportError:
+        return ""
+
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != "L":
+            img = img.convert("L")
+        arr = np.asarray(img)
+        h, w = arr.shape
+        if h == 0 or w == 0:
+            return ""
+
+        binary = arr < threshold
+        labeled, n = ndimage.label(binary)
+        if n == 0:
+            return ""
+
+        slices = ndimage.find_objects(labeled)
+        boxes: list[str] = []
+        for i, sl in enumerate(slices):
+            if sl is None:
+                continue
+            y1, y2 = int(sl[0].start), int(sl[0].stop)
+            x1, x2 = int(sl[1].start), int(sl[1].stop)
+            area = (y2 - y1) * (x2 - x1)
+            if area < min_area_px2:
+                continue
+            # 真实像素面积 (连通域内像素数, 比 bbox 面积更准)
+            real_area = int(np.sum(labeled[sl] == i + 1))
+            nx1 = int(x1 / w * 999) if w > 0 else 0
+            ny1 = int(y1 / h * 999) if h > 0 else 0
+            nx2 = int(x2 / w * 999) if w > 0 else 0
+            ny2 = int(y2 / h * 999) if h > 0 else 0
+            boxes.append(
+                f"<box>[{nx1},{ny1},{nx2},{ny2}]</box>(region{i+1}:{real_area}px²)"
+            )
+            if len(boxes) >= max_boxes:
+                break
+
+        if not boxes:
+            return ""
+        # 加整体 bbox (覆盖所有连通域的最小外接矩形)
+        ys, xs = np.where(binary)
+        if len(ys) > 0 and len(xs) > 0:
+            overall_x1 = int(xs.min() / w * 999) if w > 0 else 0
+            overall_y1 = int(ys.min() / h * 999) if h > 0 else 0
+            overall_x2 = int(xs.max() / w * 999) if w > 0 else 0
+            overall_y2 = int(ys.max() / h * 999) if h > 0 else 0
+            overall = (
+                f"<box>[{overall_x1},{overall_y1},{overall_x2},{overall_y2}]</box>"
+                f"(overall:{int(np.sum(binary))}px²)"
+            )
+            boxes.insert(0, overall)
+
+        return f"[boxes] n_regions={n}, bboxes: " + ", ".join(boxes)
+    except Exception as exc:
+        logger.debug("extract_box_primitives failed: %s", exc, exc_info=True)
+        return ""
+
+
+def parse_box_primitive(text: str) -> list[dict[str, Any]]:
+    """M6: 从 visual_hint 文本里解析 <box>[x1,y1,x2,y2]</box>(label:area) 原语.
+
+    跟 measure_nearest_primitive 的 <point> 解析配对 — 让 LLM 引用 box 坐标时,
+    后端能把 box 解出来. 返回 list[dict] 含 coordinates + label + area.
+
+    用于 visual_inspect.py 的 measure/zoom 动作支持 box 输入 (不只是 point).
+    """
+    if not text:
+        return []
+    # <box>[x1,y1,x2,y2]</box>(label:area) — 4 坐标 + label:area
+    pattern = _re.compile(
+        r"<box>\[(\d+),(\d+),(\d+),(\d+)\]</box>"
+        r"(?:\(([^:)]+):(\d+)px²\))?"
+    )
+    out: list[dict[str, Any]] = []
+    for m in pattern.finditer(text):
+        x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        label = m.group(5) or ""
+        area = int(m.group(6)) if m.group(6) else None
+        out.append({
+            "coordinates": [x1, y1, x2, y2],
+            "label": label,
+            "area_px2": area,
+            "raw": m.group(0),
+        })
+    return out
+
+
+# ── selfcheck ──────────────────────────────────────────────────────────────
+
+
+def _selfcheck() -> None:
+    """M6 selfcheck: <box> 原语 + parse + extract (真图 + 解析回环)."""
+    import io as _io
+    from PIL import Image
+
+    # 1. parse_box_primitive: 标准 <box> 原语解析
+    text = (
+        "[boxes] n_regions=3, bboxes: "
+        "<box>[100,200,300,400]</box>(overall:5000px²), "
+        "<box>[150,250,280,380]</box>(region1:1200px²)"
+    )
+    parsed = parse_box_primitive(text)
+    assert len(parsed) == 2, f"expected 2 boxes, got {len(parsed)}"
+    assert parsed[0]["coordinates"] == [100, 200, 300, 400], parsed[0]
+    assert parsed[0]["label"] == "overall", parsed[0]
+    assert parsed[0]["area_px2"] == 5000, parsed[0]
+    assert parsed[1]["label"] == "region1", parsed[1]
+    assert parsed[1]["area_px2"] == 1200, parsed[1]
+    print(f"1. parse_box_primitive OK: {len(parsed)} boxes parsed")
+
+    # 2. parse_box_primitive: 无 <box> 时返空 list
+    empty = parse_box_primitive("[band] peak=<point>[500,800]</point>(2.5)")
+    assert empty == [], f"expected [], got {empty}"
+    print("2. parse_box_primitive no box OK")
+
+    # 3. parse_box_primitive: 无 label/area 的 box 也能解析
+    text_no_label = "<box>[10,20,30,40]</box>"
+    p = parse_box_primitive(text_no_label)
+    assert len(p) == 1, p
+    assert p[0]["coordinates"] == [10, 20, 30, 40], p[0]
+    assert p[0]["label"] == "", p[0]
+    assert p[0]["area_px2"] is None, p[0]
+    print("3. parse_box_primitive no label OK")
+
+    # 4. extract_box_primitives: 真图检测 — 黑底白图反过来, 黑色像素 < 128
+    # 画一张 100x100 白图, 中间放 3 个黑色方块 (10x10 each)
+    img = Image.new("L", (100, 100), 255)
+    for cx, cy in [(10, 10), (50, 50), (80, 80)]:
+        for x in range(cx, cx + 10):
+            for y in range(cy, cy + 10):
+                img.putpixel((x, y), 0)
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    out = extract_box_primitives(buf.getvalue(), threshold=128, max_boxes=10)
+    assert out, f"expected non-empty output, got empty"
+    assert "[boxes]" in out, f"missing [boxes] tag: {out}"
+    assert "n_regions=" in out, f"missing n_regions: {out}"
+    assert "<box>" in out, f"missing <box> tag: {out}"
+    # 应该检测到 3 个 region + 1 个 overall = 4 个 box
+    n_boxes = out.count("<box>")
+    assert n_boxes >= 3, f"expected >=3 boxes, got {n_boxes}: {out}"
+    print(f"4. extract_box_primitives 3 regions OK: {out[:120]}...")
+
+    # 5. extract_box_primitives: 全白图 → 无连通域 → 空字符串
+    white_img = Image.new("L", (50, 50), 255)
+    buf2 = _io.BytesIO()
+    white_img.save(buf2, format="PNG")
+    out2 = extract_box_primitives(buf2.getvalue(), threshold=128)
+    assert out2 == "", f"expected empty for white image, got: {out2}"
+    print("5. white image → empty OK")
+
+    # 6. extract_box_primitives + parse_box_primitive 回环: extract 输出能被 parse 解出
+    parsed2 = parse_box_primitive(out)
+    assert len(parsed2) >= 3, f"round-trip parse failed: {len(parsed2)} boxes from {out}"
+    print(f"6. round-trip extract→parse OK: {len(parsed2)} boxes")
+
+    # 7. min_area_px2 过滤小连通域
+    img2 = Image.new("L", (100, 100), 255)
+    # 大方块 20x20 + 小方块 2x2
+    for x in range(20, 40):
+        for y in range(20, 40):
+            img2.putpixel((x, y), 0)
+    for x in range(80, 82):
+        for y in range(80, 82):
+            img2.putpixel((x, y), 0)
+    buf3 = _io.BytesIO()
+    img2.save(buf3, format="PNG")
+    out3 = extract_box_primitives(buf3.getvalue(), threshold=128, min_area_px2=10)
+    parsed3 = parse_box_primitive(out3)
+    # 小方块 2x2 = 4px² < min_area_px2=10, 应该被过滤
+    # 但 overall bbox 仍在 (覆盖所有暗像素)
+    region_labels = [p["label"] for p in parsed3 if p["label"]]
+    assert "overall" in region_labels, f"missing overall: {region_labels}"
+    print(f"7. min_area filter OK: {len(parsed3)} boxes after filter (small region dropped)")
+
+    print("M6 ALL CHECKS PASSED")
+
+
+if __name__ == "__main__":
+    _selfcheck()
