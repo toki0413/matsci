@@ -595,9 +595,102 @@ def extract_comparative_primitives(
         if new_anomalies:
             lines.append(f"[{key}] new_anomalies: {new_anomalies} points outside baseline 2σ")
 
+    # QW2: 2D 比较分支 — EDS centroid shift / coverage diff / phase_field vol_frac diff
+    # 之前只比 1D, 2D 数据 (相场/元素分布) 的空间变化对 text-only LLM 不可见.
+    lines.extend(_comparative_2d_primitives(bl_result, cr_result))
+
     if not lines:
         return ""
     return "### Comparative Visual Primitives (vs last run)\n" + "\n".join(lines)
+
+
+def _comparative_2d_primitives(bl_result: dict[str, Any], cr_result: dict[str, Any]) -> list[str]:
+    """2D 差分原语: EDS 质心位移 / 覆盖率变化 / 相场体积分数差.
+
+    跟 _extract_2d_primitives 配对: 单轮提取结构化 primitives, 本函数做跨轮 diff.
+    坐标归一化到 0-999, 让 LLM 通过 <point> 引用空间位移.
+    ponytail: 只处理结构化字段, 不重建 2D 矩阵. 升级: 光流 / 域配准.
+    """
+    out: list[str] = []
+
+    # EDS: elements 字典, 每元素 {centroid_px, coverage_fraction, hotspots}
+    bl_meas = bl_result.get("measurements") or bl_result
+    cr_meas = cr_result.get("measurements") or cr_result
+    bl_els = bl_meas.get("elements") if isinstance(bl_meas, dict) else None
+    cr_els = cr_meas.get("elements") if isinstance(cr_meas, dict) else None
+    if isinstance(bl_els, dict) and isinstance(cr_els, dict):
+        bl_shape = bl_meas.get("image_shape") or [1, 1]
+        cr_shape = cr_meas.get("image_shape") or bl_shape
+        bl_h, bl_w = float(bl_shape[0]), float(bl_shape[1])
+        cr_h, cr_w = float(cr_shape[0]), float(cr_shape[1])
+        parts = []
+        for elem in set(bl_els) & set(cr_els):
+            be, ce = bl_els[elem], cr_els[elem]
+            if not (isinstance(be, dict) and isinstance(ce, dict)):
+                continue
+            try:
+                bcx, bcy = be.get("centroid_px", [0, 0])
+                ccx, ccy = ce.get("centroid_px", [0, 0])
+                bnx = int(float(bcx) / bl_w * 999) if bl_w > 0 else 0
+                bny = int(float(bcy) / bl_h * 999) if bl_h > 0 else 0
+                cnx = int(float(ccx) / cr_w * 999) if cr_w > 0 else 0
+                cny = int(float(ccy) / cr_h * 999) if cr_h > 0 else 0
+                dx = cnx - bnx
+                dy = cny - bny
+                if dx or dy:
+                    parts.append(
+                        f"  {elem} centroid_shift: "
+                        f"<point>[{bnx},{bny}]</point> → <point>[{cnx},{cny}]</point> "
+                        f"(Δx={dx:+d}, Δy={dy:+d})"
+                    )
+                bl_cov = float(be.get("coverage_fraction", 0))
+                cr_cov = float(ce.get("coverage_fraction", 0))
+                if abs(cr_cov - bl_cov) > 1e-4:
+                    parts.append(
+                        f"  {elem} coverage: {bl_cov * 100:.1f}% → {cr_cov * 100:.1f}% "
+                        f"(Δ={(cr_cov - bl_cov) * 100:+.2f}%)"
+                    )
+            except (ValueError, TypeError, IndexError):
+                continue
+        # baseline 有但本轮消失 / 本轮新增的元素
+        only_bl = set(bl_els) - set(cr_els)
+        only_cr = set(cr_els) - set(bl_els)
+        if only_bl:
+            parts.append(f"  lost_elements: {sorted(only_bl)}")
+        if only_cr:
+            parts.append(f"  new_elements: {sorted(only_cr)}")
+        if parts:
+            out.append("[EDS_mapping] 2D diff:\n" + "\n".join(parts))
+
+    # phase_field: volume_fractions + interface_pixel_fraction
+    bl_pf = bl_meas.get("volume_fractions") if isinstance(bl_meas, dict) else None
+    cr_pf = cr_meas.get("volume_fractions") if isinstance(cr_meas, dict) else None
+    if isinstance(bl_pf, dict) and isinstance(cr_pf, dict):
+        parts = []
+        for phase in set(bl_pf) & set(cr_pf):
+            try:
+                bf = float(bl_pf[phase])
+                cf = float(cr_pf[phase])
+                if abs(cf - bf) > 1e-4:
+                    parts.append(
+                        f"  {phase}: {bf * 100:.1f}% → {cf * 100:.1f}% "
+                        f"(Δ={(cf - bf) * 100:+.2f}%)"
+                    )
+            except (ValueError, TypeError):
+                continue
+        bl_iface = bl_meas.get("interface_pixel_fraction") if isinstance(bl_meas, dict) else None
+        cr_iface = cr_meas.get("interface_pixel_fraction") if isinstance(cr_meas, dict) else None
+        if isinstance(bl_iface, (int, float)) and isinstance(cr_iface, (int, float)):
+            if abs(float(cr_iface) - float(bl_iface)) > 1e-4:
+                parts.append(
+                    f"  interface: {float(bl_iface) * 100:.2f}% → "
+                    f"{float(cr_iface) * 100:.2f}% "
+                    f"(Δ={(float(cr_iface) - float(bl_iface)) * 100:+.3f}%)"
+                )
+        if parts:
+            out.append("[phase_field] 2D diff:\n" + "\n".join(parts))
+
+    return out
 
 
 def enrich_with_visual(tool_name: str, output: dict[str, Any]) -> dict[str, Any]:
