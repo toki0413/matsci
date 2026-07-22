@@ -395,6 +395,197 @@ def describe_image(
     return describe_image_bytes(image_bytes, question)
 
 
+# ── M5: 结构化 captioning ─────────────────────────────────────────────────
+
+
+# 8 scene action 跟 caption 模板的映射. 每个 action 一段 caption 模板,
+# 用 .format(**structured_dict) 填关键字段. 字段缺失时模板自动跳过.
+# ponytail: 模板拼接, 不调 LLM (节省成本 + 避免循环依赖). 升级: 接 LLM 汇总.
+_SCENE_CAPTION_TEMPLATES: dict[str, str] = {
+    "plot_extract": (
+        "[Plot] {n_curves} curve(s), x-axis='{x_axis_type}', y-axis='{y_axis_type}'. "
+        "Extracted data points: {n_points}."
+    ),
+    "sem_analysis": (
+        "[SEM] {n_particles} particles detected, mean size={mean_size_nm} nm, "
+        "coverage={coverage_percent}%. Contrast: {contrast_level}."
+    ),
+    "tem_lattice": (
+        "[TEM] Lattice fringes d-spacing={d_spacing_nm} nm, FFT spots: {n_fft_spots}. "
+        "Crystallographic orientation: {orientation}."
+    ),
+    "eds_mapping": (
+        "[EDS] {n_elements} elements mapped: {elements_list}. "
+        "Spatial distribution: {distribution_pattern}."
+    ),
+    "particle_stats": (
+        "[Particles] Count={n_particles}, size distribution: "
+        "min={min_size}/mean={mean_size}/max={max_size} nm, polydispersity={polydispersity}."
+    ),
+    "defect_detect": (
+        "[Defects] {n_defects} {defect_type} defects detected, "
+        "density={defect_density}. Sensitivity={sensitivity}."
+    ),
+    "phase_field": (
+        "[Phase Field] {n_phases} phases, volume fractions: {volume_fractions}. "
+        "Interface fraction={interface_percent}%."
+    ),
+    "deplot_chart": (
+        "[Chart] Captioned: {chart_caption}. "
+        "Data series identified: {n_series}."
+    ),
+}
+
+
+def _format_caption(scene: str, structured: dict[str, Any]) -> str:
+    """把 image_analysis_tool 的 structured_analysis 渲染成一段 caption.
+
+    字段缺失时, 模板里 {field} 留空 — LLM 看到空字段也能理解是 'unknown'.
+    """
+    template = _SCENE_CAPTION_TEMPLATES.get(scene)
+    if not template:
+        return f"[{scene}] analysis completed."
+    try:
+        # 安全 format: 缺字段不抛
+        from string import Formatter
+        fields_needed = [
+            f for _, f, _, _ in Formatter().parse(template) if f is not None
+        ]
+        safe_kwargs = {f: structured.get(f, "unknown") for f in fields_needed}
+        return template.format(**safe_kwargs)
+    except (KeyError, IndexError, ValueError):
+        return f"[{scene}] analysis completed."
+
+
+def caption_image_bytes(
+    image_bytes: bytes,
+    question: str = "",
+    max_scenes: int = 3,
+) -> dict[str, Any]:
+    """M5: 结构化 captioning — 调 image_analysis_tool 8 scene action, 汇总 caption.
+
+    流程:
+      1. 先调 describe_image_bytes 拿基础结构化结果 (Tier 3/2/1)
+      2. 如果已有 structured_analysis (Tier 2 question 路由命中), 直接 caption
+      3. 否则启发式跑 top-N scene action (默认 plot_extract + sem_analysis,
+         因为这两类覆盖材料科学图像最常见的谱图 + 形貌)
+      4. 把每个 scene 的 structured_analysis 渲染成 caption 段
+      5. 拼接成完整 caption, 让 text-only LLM 通过 caption 理解图像内容
+
+    替代真 VLM: 不需要视觉 encoder, 用专用 CV 算法 + 模板拼接.
+    ponytail: 模板汇总, 不调 LLM 汇总 (避免成本 + 循环依赖).
+    升级路径: 接 LLM 把多段 caption 重写成一段自然语言.
+
+    Args:
+        image_bytes: 图像二进制
+        question: 可选, 影响 scene 路由 (含 'XRD'/'SEM' 等关键词时优先对应 scene)
+        max_scenes: 最多跑几个 scene action (避免开销)
+
+    Returns:
+        dict 含:
+          - caption: 汇总 caption 文本 (核心输出)
+          - scene_captions: 各 scene 单独 caption (列表)
+          - scenes_tried: 跑了哪些 scene
+          - base_tier: describe_image_bytes 选的 Tier
+          - available: 是否拿到任何结构化结果
+    """
+    base = describe_image_bytes(image_bytes, question)
+    base_tier = base.get("tier", "unknown")
+    base_available = bool(base.get("available"))
+
+    scene_captions: list[str] = []
+    scenes_tried: list[str] = []
+
+    # 1. 如果 base 已经有 structured_analysis (Tier 2 question 路由命中), 直接用
+    existing_struct = base.get("structured_analysis")
+    existing_scene = base.get("scene")
+    if isinstance(existing_struct, dict) and existing_scene:
+        cap = _format_caption(existing_scene, existing_struct)
+        scene_captions.append(cap)
+        scenes_tried.append(existing_scene)
+
+    # 2. 启发式补 scene: 如果还不够 max_scenes, 跑默认 2 个最常见 scene
+    # ponytail: plot_extract + sem_analysis 覆盖最常见的谱图 + 形貌.
+    # 升级路径: 用 pixel_stats / 直方图自动判图像类型再选 scene.
+    default_scenes = ["plot_extract", "sem_analysis"]
+    q_lower = question.lower() if question else ""
+    # question 含特定关键词时把对应 scene 提到前面
+    if any(k in q_lower for k in ("xrd", "ir", "raman", "uv", "stress", "strain", "dsc", "tga")):
+        default_scenes = ["plot_extract"] + [s for s in default_scenes if s != "plot_extract"]
+    elif any(k in q_lower for k in ("sem", "tem", "particle", "morphology")):
+        default_scenes = ["sem_analysis"] + [s for s in default_scenes if s != "sem_analysis"]
+
+    for scene in default_scenes:
+        if len(scenes_tried) >= max_scenes:
+            break
+        if scene in scenes_tried:
+            continue
+        try:
+            # scene 函数接收 ImageAnalysisInput(image_path, action, parameters)
+            # 落盘 image_bytes 到 tmp 文件 — scene 函数需要真实文件路径读图.
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp.write(image_bytes)
+                tmp_path = tmp.name
+            try:
+                from huginn.tools.image_analysis.tool import ImageAnalysisInput
+                input_data = ImageAnalysisInput(
+                    image_path=tmp_path,
+                    action=scene,  # type: ignore[arg-type]
+                    parameters={"task_description": question or f"Run {scene} analysis"},
+                )
+                # lazy import 对应 scene 模块, 直接调 sync 函数 (绕开 async ToolRegistry)
+                mod_path = f"huginn.tools.image_analysis.scenes_{scene.split('_')[0]}"
+                if scene == "plot_extract":
+                    mod_path = "huginn.tools.image_analysis.scenes_plot_extract"
+                elif scene == "deplot_chart":
+                    mod_path = "huginn.tools.image_analysis.scenes_deplot"
+                elif scene == "particle_stats":
+                    mod_path = "huginn.tools.image_analysis.scenes_particles"
+                elif scene == "defect_detect":
+                    mod_path = "huginn.tools.image_analysis.scenes_defect"
+                elif scene == "phase_field":
+                    mod_path = "huginn.tools.image_analysis.scenes_phase_field"
+                import importlib
+                mod = importlib.import_module(mod_path)
+                fn = getattr(mod, scene)
+                res = fn(input_data)
+                if res and getattr(res, "success", False):
+                    structured = res.data if hasattr(res, "data") else res
+                    if isinstance(structured, dict):
+                        cap = _format_caption(scene, structured)
+                        scene_captions.append(cap)
+                        scenes_tried.append(scene)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+        except Exception as exc:
+            logger.debug("caption scene %s failed: %s", scene, exc, exc_info=True)
+
+    # 3. Tier 0 兜底: 如果啥 scene 都没跑出来, 用 pixel_stats 生成最简 caption
+    if not scene_captions and base_available:
+        ps = base.get("pixel_stats") or {}
+        if ps:
+            size = ps.get("size", [0, 0])
+            mean = ps.get("mean", 0)
+            std = ps.get("std", 0)
+            scene_captions.append(
+                f"[Pixel] Image size={size}, gray mean={mean:.1f}, std={std:.1f}. "
+                "No specialized scene analysis available."
+            )
+            scenes_tried.append("pixel_stats")
+
+    caption_text = "\n".join(scene_captions) if scene_captions else ""
+
+    return {
+        "caption": caption_text,
+        "scene_captions": scene_captions,
+        "scenes_tried": scenes_tried,
+        "base_tier": base_tier,
+        "available": bool(scene_captions),
+        "base_result": base,
+    }
+
+
 # ── HuginnTool 包装 ──────────────────────────────────────────
 
 class VisionDescribeInput(BaseModel):
