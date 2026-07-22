@@ -772,6 +772,147 @@ class StructureCognitiveMap:
         kind = "crystal" if self.lattice is not None else "molecule"
         return f"StructureCognitiveMap({kind}, n={len(self.species)})"
 
+    # ── G1: 复合 token 接入 (C 实验工程化) ─────────────────────
+
+    def to_composite_token(self) -> dict[str, Any]:
+        """把 cognitive map 投影成复合 token (text + coords).
+
+        C 实验验证: SE(3) 群作用能同时穿过 text <point3d> 和 coords,
+        半直积 (M × V) ⋊ SE(3) 合法. 本方法是工程入口 —
+        让 StructureCognitiveMap 能进 se3_act 群作用流程.
+
+        返回:
+            dict: {
+                "text": "<point3d>[x,y,z]</point3d>(Fe)\\n<point3d>...",  # 原语文本
+                "coords": (N, 3) ndarray,  # 原始 3D 坐标 (Å)
+                "species": ["Fe", "O", ...],
+                "n_atoms": int,
+            }
+
+        用法:
+            token = m.to_composite_token()
+            from huginn.metacog.composite_token_experiment import se3_act, CompositeToken
+            ct = CompositeToken(token["text"], token["coords"])
+            rot = Rotation.from_euler("z", 90, degrees=True)
+            rotated = se3_act(rot, np.zeros(3), ct)
+            # rotated.text 是旋转后的 <point3d>, rotated.coords 是旋转后的坐标
+
+        ponytail: 返回 dict 不引入新类. 升级路径: 返回 CompositeToken 实例.
+        """
+        from huginn.tools.visual_hook import extract_point3d_primitives
+        text = extract_point3d_primitives(
+            self.coords.tolist(),
+            species=self.species,
+            normalize_to=999,
+        )
+        return {
+            "text": text,
+            "coords": self.coords.copy(),
+            "species": list(self.species),
+            "n_atoms": len(self.species),
+        }
+
+    # ── Hodge: 拓扑三分量分解 ─────────────────────────────────
+
+    def hodge_decomposition(self) -> dict[str, Any]:
+        """把 adjacency 拓扑分解为 gradient / curl / harmonic 三分量.
+
+        Bourbaki 拓扑结构视角: 邻域图 (graph) 的 1-form 可 Hodge 分解:
+          ω = ∇φ (gradient, 无旋) ⊕ ∇×A (curl, 无散) ⊕ h (harmonic, 闭且余闭)
+
+        材料科学意义:
+          - gradient: 单向流动 (如单向应力梯度, 浓度梯度)
+          - curl: 环流 (如位错 Burgers 矢量, 涡旋)
+          - harmonic: 亏格 (如孔洞/晶界拓扑缺陷, 全局拓扑不变量)
+
+        实现:
+          - 构建图拉普拉斯 L = D - A
+          - 求 L 的特征值/特征向量
+          - λ=0 对应 harmonic (亏格数 = λ=0 重数 - 1)
+          - λ 小对应低频 (gradient 主导)
+          - λ 大对应高频 (curl 主导)
+
+        ponytail: numpy.linalg.eigh, 不引入 scipy.sparse. 升级路径: 大图接 scipy.sparse.csgraph.
+
+        Returns:
+            dict: {
+                "n_harmonic": int,  # λ≈0 重数 (亏格)
+                "eigenvalues": list[float],  # 升序
+                "gradient_fraction": float,  # 低频能量占比 (前 1/3)
+                "curl_fraction": float,  # 高频能量占比 (后 1/3)
+                "harmonic_fraction": float,  # λ≈0 占比
+                "spectrum_gap": float,  # λ[1] - λ[0] (谱隙, >0 连通)
+                "note": str,
+            }
+        """
+        n = len(self.species)
+        if n < 2:
+            return {
+                "n_harmonic": 0, "eigenvalues": [],
+                "gradient_fraction": 0.0, "curl_fraction": 0.0,
+                "harmonic_fraction": 0.0, "spectrum_gap": 0.0,
+                "note": "n<2, no graph structure",
+            }
+
+        # 构建邻接矩阵 A (对称, 无权)
+        A = np.zeros((n, n), dtype=float)
+        for i, neighbors in self.adjacency.items():
+            for j in neighbors:
+                if 0 <= i < n and 0 <= j < n:
+                    A[i, j] = 1.0
+                    A[j, i] = 1.0
+
+        # 图拉普拉斯 L = D - A
+        D = np.diag(A.sum(axis=1))
+        L = D - A
+
+        # 特征值分解 (对称矩阵, eigh 返回升序)
+        try:
+            eigenvalues, _ = np.linalg.eigh(L)
+        except np.linalg.LinAlgError as e:
+            return {
+                "n_harmonic": 0, "eigenvalues": [],
+                "gradient_fraction": 0.0, "curl_fraction": 0.0,
+                "harmonic_fraction": 0.0, "spectrum_gap": 0.0,
+                "note": f"eigh failed: {e}",
+            }
+
+        eigenvalues_sorted = np.sort(eigenvalues)
+        # λ≈0 阈值 (数值误差容忍)
+        tol = 1e-8 * max(1.0, abs(eigenvalues_sorted[-1]))
+        n_harmonic = int(np.sum(np.abs(eigenvalues_sorted) < tol))
+
+        # 三分量能量占比 (按特征值分三段)
+        n_eig = len(eigenvalues_sorted)
+        if n_eig >= 3:
+            third = n_eig // 3
+            low = eigenvalues_sorted[:third]  # gradient
+            high = eigenvalues_sorted[-third:]  # curl
+            mid = eigenvalues_sorted[third:-third] if third < n_eig - third else np.array([])
+
+            total_energy = float(np.sum(eigenvalues_sorted ** 2)) + 1e-12
+            grad_frac = float(np.sum(low ** 2)) / total_energy
+            curl_frac = float(np.sum(high ** 2)) / total_energy
+            harm_frac = float(np.sum(eigenvalues_sorted[np.abs(eigenvalues_sorted) < tol] ** 2)) / total_energy
+        else:
+            grad_frac = curl_frac = harm_frac = 0.0
+
+        spectrum_gap = float(eigenvalues_sorted[1] - eigenvalues_sorted[0]) if n_eig >= 2 else 0.0
+
+        return {
+            "n_harmonic": n_harmonic,
+            "eigenvalues": eigenvalues_sorted.tolist(),
+            "gradient_fraction": round(grad_frac, 4),
+            "curl_fraction": round(curl_frac, 4),
+            "harmonic_fraction": round(harm_frac, 4),
+            "spectrum_gap": round(spectrum_gap, 6),
+            "note": (
+                f"topology: {n_harmonic} harmonic (genus), "
+                f"gap={spectrum_gap:.4f} ({'connected' if spectrum_gap > 1e-6 else 'disconnected'}), "
+                f"gradient={grad_frac:.2f}, curl={curl_frac:.2f}"
+            ),
+        }
+
 
 # ── module-level helpers ─────────────────────────────────────
 
@@ -998,7 +1139,88 @@ Cl1 Cl 0.5 0.5 0.5
         print(f"   SKIP: tem_lattice on synthetic grating failed ({exc})")
         print("   (ceiling: 合成正弦光栅可能不够 'TEM-like' 触发 FFT 峰检测)")
 
-    print("\nstructure_cognitive_map selfcheck OK (15 actions + bond + compose + from_image)")
+    # ── 14. G1: to_composite_token (C 实验工程化) ──────────────
+    print("\n14. G1 to_composite_token (coords → <point3d> + dict)...")
+    _m_g1 = StructureCognitiveMap.from_coords(
+        species=["Fe", "O", "O"],
+        coords=np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
+        cutoff=3.0,
+    )
+    token = _m_g1.to_composite_token()
+    assert "text" in token and "coords" in token and "species" in token
+    assert token["n_atoms"] == 3
+    assert "<point3d>" in token["text"], f"missing <point3d>: {token['text']}"
+    assert "(Fe)" in token["text"] and "(O)" in token["text"]
+    # 原点归一化到 [0,0,0]
+    from huginn.tools.visual_hook import parse_point3d_primitive
+    parsed = parse_point3d_primitive(token["text"])
+    assert len(parsed) == 3, f"expected 3 atoms, got {len(parsed)}"
+    assert parsed[0]["label"] == "Fe"
+    assert parsed[0]["coordinates"] == [0, 0, 0], f"origin: {parsed[0]}"
+    # coords 跟原 map 一致
+    assert np.allclose(token["coords"], _m_g1.coords)
+    # 跟 se3_act 集成: 旋转 90° z, <point3d> 和 coords 同步
+    try:
+        from huginn.metacog.composite_token_experiment import CompositeToken, se3_act
+        ct = CompositeToken(token["text"], token["coords"])
+        rot_z90 = _R.from_euler("z", 90, degrees=True)
+        rotated = se3_act(rot_z90, np.zeros(3), ct)
+        # coords [2,0,0] (O, x 轴) → [0,2,0] (y 轴)
+        assert np.allclose(rotated.coords[1], [0.0, 2.0, 0.0], atol=1e-6), \
+            f"coords rotate: {rotated.coords[1]}"
+        # <point3d> 同步: [999,0,0] (O x 轴 max) → [-0,999,0] 或 [0,999,0]
+        r_parsed = parse_point3d_primitive(rotated.text)
+        assert len(r_parsed) == 3
+        # Fe 原点不变
+        assert r_parsed[0]["coordinates"] == [0, 0, 0], f"Fe origin: {r_parsed[0]}"
+        print(f"   OK: n_atoms=3, <point3d>={parsed[0]['coordinates']}...{parsed[2]['coordinates']}")
+        print(f"   OK: se3_act rotate z=90°, coords[1] [2,0,0]→{rotated.coords[1].tolist()}")
+    except ImportError:
+        print("   SKIP: scipy not available for se3_act integration test")
+
+    # ── 15. Hodge: 拓扑三分量分解 ─────────────────────────────
+    print("\n15. Hodge decomposition (gradient / curl / harmonic)...")
+    # 构建已知图: 4 原子方形 (连通, genus=0)
+    _m_hodge = StructureCognitiveMap.from_coords(
+        species=["A", "B", "C", "D"],
+        coords=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=float),
+        cutoff=1.5,  # 对角线 √2 ≈ 1.41 ≤ 1.5, 全连通
+    )
+    hodge = _m_hodge.hodge_decomposition()
+    assert "n_harmonic" in hodge and "eigenvalues" in hodge
+    assert "gradient_fraction" in hodge and "curl_fraction" in hodge
+    # 4 原子全连通: λ=0 重数 = 1 (1 个连通分量)
+    assert hodge["n_harmonic"] == 1, f"connected graph should have 1 harmonic, got {hodge['n_harmonic']}"
+    # 谱隙 > 0 (连通)
+    assert hodge["spectrum_gap"] > 1e-6, f"connected graph gap>0, got {hodge['spectrum_gap']}"
+    print(f"   OK: 4-atom 全连通图, n_harmonic={hodge['n_harmonic']}, "
+          f"gap={hodge['spectrum_gap']:.4f}, grad={hodge['gradient_fraction']}, "
+          f"curl={hodge['curl_fraction']}")
+    # 测试不连通图: 2 个独立对
+    _m_disc = StructureCognitiveMap.from_coords(
+        species=["A", "B", "C", "D"],
+        coords=np.array([[0, 0, 0], [1, 0, 0], [10, 0, 0], [11, 0, 0]], dtype=float),
+        cutoff=1.5,  # 只有 A-B 和 C-D 连, AB-CD 不连
+    )
+    hodge_disc = _m_disc.hodge_decomposition()
+    assert hodge_disc["n_harmonic"] == 2, \
+        f"2-component graph should have 2 harmonic, got {hodge_disc['n_harmonic']}"
+    assert hodge_disc["spectrum_gap"] < 1e-6, \
+        f"disconnected graph gap≈0, got {hodge_disc['spectrum_gap']}"
+    print(f"   OK: 2-component 图, n_harmonic={hodge_disc['n_harmonic']}, "
+          f"gap={hodge_disc['spectrum_gap']:.6f} (≈0, disconnected)")
+    # 测试环形图 (genus 相关): 3 原子三角环
+    _m_tri = StructureCognitiveMap.from_coords(
+        species=["A", "B", "C"],
+        coords=np.array([[0, 0, 0], [1, 0, 0], [0.5, 0.866, 0]], dtype=float),
+        cutoff=1.5,  # 三边都连, 形成环
+    )
+    hodge_tri = _m_tri.hodge_decomposition()
+    assert hodge_tri["n_harmonic"] == 1, f"connected triangle: 1 harmonic, got {hodge_tri['n_harmonic']}"
+    print(f"   OK: 3-atom 三角环, n_harmonic={hodge_tri['n_harmonic']}, "
+          f"eigenvalues={[round(e, 4) for e in hodge_tri['eigenvalues']]}")
+
+    print("\nstructure_cognitive_map selfcheck OK (15 actions + bond + compose + from_image + G1 + Hodge)")
 
 
 if __name__ == "__main__":

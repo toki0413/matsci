@@ -37,17 +37,70 @@ async def execute_visual_inspect(
     visual_ctx = getattr(engine, "_last_visual_context", "")
     visual_base64 = getattr(engine, "_visual_base64", "")
 
-    if not visual_ctx and not visual_base64:
-        return {
-            **result,
-            "success": False,
-            "error": "No visual data from previous iteration to inspect",
-        }
-
     desc_lower = description.lower()
 
-    # 动作 0 (QW3): chain — 必须在 zoom/measure/etc 之前判断, 否则 "chain: zoom ..."
-    # 子描述会被 zoom 分支拦截. 用 startswith 区分 "chain:..." 跟 "zoom into ...".
+    # 动作 -1 (G2): rotate — SE(3) 群作用, 不依赖 visual_base64
+    # agent 能调 "rotate 90° z" 或 "chain: rotate 90° z; zoom [...]"
+    # 从 cognitive_maps 拿当前结构, 调 rotate + to_composite_token
+    # 返回旋转后的 <point3d> 文本给 LLM (C 实验工程化)
+    if desc_lower.startswith("rotate"):
+        # 解析 "rotate 90° z" / "rotate z 90" / "rotate 90 around z"
+        axis_match = re.search(r"\b([xyz])\b", desc_lower)
+        angle_match = re.search(r"(-?\d+(?:\.\d+)?)\s*°?", description)
+        if not axis_match or not angle_match:
+            result["actions"].append({
+                "action": "rotate",
+                "error": "cannot parse axis/angle, expect 'rotate 90° z' or 'rotate z 90'",
+                "description": description,
+            })
+            return result
+        axis = axis_match.group(1)
+        angle = float(angle_match.group(1))
+
+        # 从 engine._state.cognitive_maps 拿最后一个 map
+        state = getattr(engine, "_state", None)
+        cog_maps = getattr(state, "cognitive_maps", {}) if state else {}
+        if not cog_maps:
+            result["actions"].append({
+                "action": "rotate",
+                "error": "no cognitive_map in engine state, build one first",
+                "description": description,
+            })
+            return result
+
+        try:
+            from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+            # 取最后一个 map (按插入顺序)
+            last_map_id = list(cog_maps.keys())[-1]
+            m = StructureCognitiveMap.from_engine_state_dict(cog_maps[last_map_id])
+            # 调 SE(3) rotate
+            m_rotated = m.rotate(axis=axis, angle=angle, degrees=True)
+            # 投影成 <point3d> 复合 token
+            token = m_rotated.to_composite_token()
+            # 也算 Hodge 看拓扑有没有变
+            hodge = m_rotated.hodge_decomposition()
+            result["actions"].append({
+                "action": "rotate",
+                "map_id": last_map_id,
+                "axis": axis,
+                "angle": angle,
+                "n_atoms": token["n_atoms"],
+                "species": token["species"],
+                "point3d_primitives": token["text"],
+                "coords_rotated": token["coords"].tolist(),
+                "hodge": hodge["note"],
+                "note": f"SE(3) rotate {angle}° around {axis}: <point3d> + coords synced (C experiment)",
+            })
+        except Exception as e:
+            result["actions"].append({
+                "action": "rotate",
+                "error": f"rotate failed: {e}",
+                "description": description,
+            })
+        return result
+
+    # 动作 0 (QW3): chain — 必须在 visual_ctx 检查之前, 否则空 visual_ctx 时
+    # "chain: rotate ..." 跑不了. 子描述自己检查 visual_ctx (rotate 不需要).
     if desc_lower.startswith("chain"):
         body = re.sub(r"^\s*chain\s*:?\s*", "", description, flags=re.IGNORECASE).strip()
         sub_descs = [s.strip() for s in re.split(r"\s*;\s*|\s+then\s+", body, flags=re.IGNORECASE) if s.strip()]
@@ -69,9 +122,17 @@ async def execute_visual_inspect(
             "n_steps": len(trajectory),
             "note": f"Chain of {len(trajectory)} visual_inspect steps",
         })
+        return result
+
+    if not visual_ctx and not visual_base64:
+        return {
+            **result,
+            "success": False,
+            "error": "No visual data from previous iteration to inspect",
+        }
 
     # 动作 1: zoom — 放大某区域
-    elif "zoom" in desc_lower:
+    if "zoom" in desc_lower:
         coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
         if len(coords) >= 2:
             x1, y1 = int(coords[0][0]), int(coords[0][1])
@@ -123,7 +184,7 @@ async def execute_visual_inspect(
             result["actions"].append(action_result)
 
     # 动作 2: measure — 测量某点或区域的数据值
-    elif "measure" in desc_lower:
+    if "measure" in desc_lower:
         coords = re.findall(r"\[?(\d+)\s*,\s*(\d+)\]?", description)
         if coords:
             x, y = int(coords[0][0]), int(coords[0][1])
@@ -137,7 +198,7 @@ async def execute_visual_inspect(
             })
 
     # 动作 3: annotate — 标注结构特征
-    elif "annotate" in desc_lower:
+    if "annotate" in desc_lower:
         annotation = annotate_visual_features(description, visual_base64, visual_ctx)
         result["actions"].append({
             "action": "annotate",
@@ -150,7 +211,7 @@ async def execute_visual_inspect(
             result["actions"][-1]["tool_output"] = annotation["tool_output"]
 
     # 动作 4: compare — 比较两组数据
-    elif "compare" in desc_lower:
+    if "compare" in desc_lower:
         comparison = compare_visual_data(description, visual_ctx)
         result["actions"].append({
             "action": "compare",
