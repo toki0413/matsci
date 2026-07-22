@@ -481,6 +481,7 @@ def _validation_to_step_eval_fields(
     ponytail: dict 字段映射, 不上 schema 库. 升级路径: pydantic model.
     """
     # attempted: validation 里没有 attempted, 从 execution_result 拼
+    # G6: PMK 的 K 查询看不到 visual_primitives → 加 visual 摘要让 KB 能召回视觉经验.
     _attempted = ""
     if isinstance(execution_result, dict):
         _attempted = str(
@@ -489,6 +490,11 @@ def _validation_to_step_eval_fields(
             or execution_result.get("result_type")
             or ""
         )[:200]
+    # G6: 附 visual_primitives 摘要 (前 150 字), 让 PMK 的 K 查询能看到视觉内容.
+    # ponytail: 直接拼字符串, 不上 schema. 升级路径: StepEvaluation 加 visual_context 字段.
+    _vis = validation.get("visual_primitives") if isinstance(validation, dict) else None
+    if _vis and isinstance(_vis, str):
+        _attempted = (f"{_attempted} | Visual: {_vis[:150]}").strip(" |")
 
     # found: tests_passed 状态 + benchmarks 关键指标
     _found_parts: list[str] = []
