@@ -44,6 +44,9 @@ class BranchResult:
     round_idx: int = 0
     # PTD tree-shape: layer2 sub-branch 的父 agent_id. layer1 为空.
     parent_agent_id: str = ""
+    # P4 (chaoxu 启发): 分配的 model family (如 "openai"/"anthropic"/"deepseek").
+    # 空串 = 未指定 (向后兼容). 调用方可据此选不同 profile, 实现跨模型多样性.
+    model_family: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +58,7 @@ class BranchResult:
             "tokens_used": self.tokens_used,
             "round_idx": self.round_idx,
             "parent_agent_id": self.parent_agent_id,
+            "model_family": self.model_family,
         }
 
 
@@ -97,6 +101,8 @@ class BranchIncubator:
         total_rounds: int = 10,
         depth: int = 1,
         width: int = 2,
+        wave_mode: str = "push",
+        model_families: list[str] | None = None,
     ) -> list[BranchResult]:
         """跑一轮隔离探索.
 
@@ -107,6 +113,13 @@ class BranchIncubator:
         depth=2: PTD tree-shape — layer1 N flat → 每 layer1 成功 branch 派
           width 个 sub-branch → 每 parent prune top-1 (tokens_used 最小 + success).
           layer2 全失败的 parent 回退到 layer1. 返回长度 = n_branches.
+
+        P4 (chaoxu 启发):
+        - wave_mode: "push" 生成假设 / "verify" 验证上轮假设. 轮替使用避免
+          "自己生成自己验证"的确认偏差. verify 模式 enhanced_task 加验证引导.
+        - model_families: 传入可用 model family 列表时, 给每个 branch 分配一个
+          model_family (尽量分散), 记录在 BranchResult.model_family 供调用方调度.
+          None 时不分配 (向后兼容).
         """
         bundle = ContextBundle(
             global_math_background=math_background,
@@ -117,10 +130,18 @@ class BranchIncubator:
         )
 
         family_assignments = self._assign_families(n_branches)
+        # P4: model_family 分配 (尽量分散, None 时不分配)
+        model_assignments = (
+            self._assign_model_families(n_branches, model_families)
+            if model_families else [""] * n_branches
+        )
         # Layer 1: flat asyncio.gather (depth=1 和 depth=2 都跑这步)
         coros = [
-            self._run_single_branch(fam, bundle, task, agent_factory, round_idx)
-            for fam in family_assignments
+            self._run_single_branch(
+                fam, bundle, task, agent_factory, round_idx,
+                model_family=mf, wave_mode=wave_mode,
+            )
+            for fam, mf in zip(family_assignments, model_assignments)
         ]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
@@ -149,6 +170,7 @@ class BranchIncubator:
         # Layer 2: PTD tree-shape — 每 layer1 成功 branch 派 width 个 sub-branch
         layer2_by_parent = await self._run_tree_layer(
             layer1, bundle, task, agent_factory, round_idx, width,
+            wave_mode=wave_mode,
         )
 
         # Prune + Fallback: 每 parent 保留 top-1 (tokens_used 最小 + success),
@@ -175,6 +197,7 @@ class BranchIncubator:
         agent_factory: Any,
         round_idx: int,
         width: int,
+        wave_mode: str = "push",
     ) -> dict[str, list[BranchResult]]:
         """对 layer_branches 里成功的 branch 派 width 个 sub-branch 做 refinement.
 
@@ -195,6 +218,8 @@ class BranchIncubator:
                     round_idx=round_idx,
                     parent_hypothesis=parent.hypothesis,
                     parent_agent_id=parent.agent_id,
+                    model_family=parent.model_family,
+                    wave_mode=wave_mode,
                 ))
                 parent_map.append(parent.agent_id)
 
@@ -238,6 +263,23 @@ class BranchIncubator:
             chosen[target] = chosen.get(target, 0) + 1
         return assignments
 
+    def _assign_model_families(
+        self, n: int, available: list[str] | None,
+    ) -> list[str]:
+        """P4: 给 n 个 branch 分配 model family, 尽量分散.
+
+        跟 _assign_families 同范式 (贪心 + 去重), 但管 model family 而非 method family.
+        available 不足 n 时循环复用 (保证每个 branch 有分配).
+        None / 空列表时返 n 个空串 (向后兼容).
+
+        ponytail: 不接 ModelRouter (避免循环 import), 调用方传可用列表.
+        ceiling: 纯轮询分配, 不考虑 model 能力差异. 升级: 按 task 类型选 model.
+        """
+        if not available:
+            return [""] * n
+        n_avail = len(available)
+        return [available[i % n_avail] for i in range(n)]
+
     async def _run_single_branch(
         self,
         family_id: str,
@@ -247,11 +289,16 @@ class BranchIncubator:
         round_idx: int,
         parent_hypothesis: str = "",
         parent_agent_id: str = "",
+        model_family: str = "",
+        wave_mode: str = "push",
     ) -> BranchResult:
         """起单个 Subagent, 注入隔离后的 context + family 引导.
 
         parent_hypothesis 非空时 (layer2 sub-branch), 加进 enhanced_task
         让 sub-branch 看到祖先 π(v) — PTD tree 的偏序祖先链机制.
+
+        P4: wave_mode="verify" 时 enhanced_task 加验证引导 (而非生成引导).
+        model_family 非 "" 时记录到 BranchResult 供调用方调度.
         """
         ctx = isolate(bundle, role="exploration")
         family = self._registry.by_id(family_id)
@@ -266,6 +313,14 @@ class BranchIncubator:
         # PTD tree: layer2 sub-branch 看到父 hypothesis (祖先 π(v))
         if parent_hypothesis:
             enhanced_task += f"[Parent hypothesis: {parent_hypothesis}]\n"
+        # P4: wave_mode="verify" 时改引导为验证 (而非生成), 避免"自己生成自己验证"
+        if wave_mode == "verify":
+            enhanced_task += (
+                f"[Wave mode: VERIFY — do NOT generate new hypotheses. "
+                f"Instead, critically evaluate the hypotheses above. "
+                f"Look for counterexamples, logical gaps, or unsupported claims. "
+                f"Report whether each holds or fails, with evidence.]\n"
+            )
         enhanced_task += (
             f"[Visible method families for self-categorization: "
             f"{ctx.get('_method_family_ids', [])}]\n"
@@ -290,6 +345,7 @@ class BranchIncubator:
                 error=f"dispatch error: {exc}",
                 round_idx=round_idx,
                 parent_agent_id=parent_agent_id,
+                model_family=model_family,
             )
 
         if not result.success:
@@ -302,6 +358,7 @@ class BranchIncubator:
                 error=result.error,
                 round_idx=round_idx,
                 parent_agent_id=parent_agent_id,
+                model_family=model_family,
             )
 
         # 成功 — 注册到 registry, 让后续轮的 suggest_redirect 看到分布
@@ -315,6 +372,7 @@ class BranchIncubator:
             tokens_used=result.tokens_used,
             round_idx=round_idx,
             parent_agent_id=parent_agent_id,
+            model_family=model_family,
         )
 
     def _fallback_hypothesis(self, family_id: str) -> str:
@@ -657,6 +715,82 @@ def _selfcheck() -> None:
     # layer1 task 不含 [Parent hypothesis]
     for spec_name, task_content, _ in layer1_calls_ph:
         assert "[Parent hypothesis:" not in task_content
+
+    # 13. P4: wave_mode="verify" 时 enhanced_task 含 VERIFY 引导
+    inc_wv = BranchIncubator(dispatch=_MockSubagentDispatch())
+    asyncio.run(inc_wv.run_round(
+        task="test hypothesis to verify", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        wave_mode="verify",
+    ))
+    mock_wv = inc_wv._dispatch  # type: ignore
+    assert len(mock_wv.calls) == 3
+    for spec_name, task_content, _ in mock_wv.calls:
+        assert "[Wave mode: VERIFY" in task_content, \
+            "verify 模式 enhanced_task 应含 VERIFY 引导"
+    print("13. P4 wave_mode=verify 注入 VERIFY 引导 OK")
+
+    # 14. P4: wave_mode="push" (默认) 不含 VERIFY 引导 (向后兼容)
+    inc_wp = BranchIncubator(dispatch=_MockSubagentDispatch())
+    asyncio.run(inc_wp.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+    ))
+    mock_wp = inc_wp._dispatch  # type: ignore
+    for spec_name, task_content, _ in mock_wp.calls:
+        assert "[Wave mode: VERIFY" not in task_content, \
+            "push 模式不应含 VERIFY 引导"
+    print("14. P4 wave_mode=push (默认) 不含 VERIFY 引导 OK")
+
+    # 15. P4: model_families 分配 — 3 个 branch 分到不同 model_family
+    inc_mf = BranchIncubator(dispatch=_MockSubagentDispatch())
+    results_mf = asyncio.run(inc_mf.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        model_families=["openai", "anthropic", "deepseek"],
+    ))
+    assert len(results_mf) == 3
+    _mfs = [r.model_family for r in results_mf]
+    assert _mfs == ["openai", "anthropic", "deepseek"], \
+        f"3 个 branch 应分到 3 个不同 model_family, got {_mfs}"
+    print("15. P4 model_families 分配 (3 branch → 3 不同 model_family) OK")
+
+    # 16. P4: model_families=None (默认) → model_family 空串 (向后兼容)
+    inc_nf = BranchIncubator(dispatch=_MockSubagentDispatch())
+    results_nf = asyncio.run(inc_nf.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+    ))
+    assert all(r.model_family == "" for r in results_nf), \
+        "model_families=None 时 model_family 应为空串"
+    print("16. P4 model_families=None 向后兼容 (model_family 空串) OK")
+
+    # 17. P4: model_families 不足时循环复用 (2 family → 3 branch, 有重复)
+    inc_lr = BranchIncubator(dispatch=_MockSubagentDispatch())
+    results_lr = asyncio.run(inc_lr.run_round(
+        task="test", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        model_families=["openai", "anthropic"],
+    ))
+    _mfs_lr = [r.model_family for r in results_lr]
+    assert _mfs_lr == ["openai", "anthropic", "openai"], \
+        f"2 family → 3 branch 应循环复用, got {_mfs_lr}"
+    print("17. P4 model_families 不足循环复用 OK")
+
+    # 18. P4: wave_mode + model_families 组合 (verify wave + model 多样性)
+    inc_combo = BranchIncubator(dispatch=_MockSubagentDispatch())
+    results_combo = asyncio.run(inc_combo.run_round(
+        task="verify this", agent_factory=object(),
+        n_branches=3, round_idx=0, total_rounds=10,
+        wave_mode="verify",
+        model_families=["openai", "anthropic", "deepseek"],
+    ))
+    # 双重检查: VERIFY 引导 + model_family 分配
+    mock_combo = inc_combo._dispatch  # type: ignore
+    for spec_name, task_content, _ in mock_combo.calls:
+        assert "[Wave mode: VERIFY" in task_content
+    assert [r.model_family for r in results_combo] == ["openai", "anthropic", "deepseek"]
+    print("18. P4 wave_mode=verify + model_families 组合 OK")
 
     print("branch_incubator selfcheck OK")
 
