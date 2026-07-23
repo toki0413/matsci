@@ -1,0 +1,7 @@
+chore: 清理 P3 瘦身 + RCBench 验证副产物
+
+删 27 个根目录临时文件 (_p3_*.py/_rcb_*.txt/_t5_*.txt/_test_*.py)
+删 32 个 agent/ 临时脚本 (_t7*.py/_distill_*.py/_ingest_*.py/_ocr_*/_fable5_*)
+保留 4 个有价值 untracked: 2 spec docs + mini_rotation_baseline + routes/kg.py
+
+工作区干净, 剩余 4 个 untracked 是有意写的功能模块.
