@@ -541,7 +541,148 @@ def _validation_to_step_eval_fields(
     }
 
 
+
+
+class CognitiveLoopMixin:
+    """cognitive loop 主循环方法族, 从 engine.py 下沉 (P3 slim-down). 通过 self 访问 engine 状态."""
+
+    pass  # methods migrated from engine.py via P3 slim-down
+
 # === 自检 ===
+
+    def _run_phase(self, name: str, fn, *args) -> LoopPhase:
+        """Run a synchronous phase function."""
+        phase = LoopPhase(name=name)
+        phase.start_time = time.time()
+        phase.status = "running"
+        # 同步路径: 如果当前在 event loop 里, fire-and-forget 发开始事件.
+        # 不 await, 因为 _run_phase 本身是同步的.
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
+            )
+        except RuntimeError:
+            logger.warning(
+                "error in _run_phase: stage-start event dispatch skipped (no running loop)",
+                exc_info=True,
+            )
+        # 包 telemetry span: 把 phase 级决策也记进轨迹, 回放时不止看 tool_call
+        from huginn.telemetry import get_telemetry_collector
+
+        span_cm = get_telemetry_collector().span(f"phase:{name}")
+        try:
+            with span_cm as phase_span:
+                phase.result = fn(*args)
+                phase.status = "completed"
+                phase_span.metadata["status"] = "completed"
+        except Exception as e:
+            phase.status = "failed"
+            phase.error = str(e)
+            try:
+                phase_span.metadata["status"] = "failed"
+                phase_span.metadata["error"] = str(e)
+            except Exception:
+                logger.warning(
+                    "error in _run_phase: span metadata update failed", exc_info=True
+                )
+        phase.end_time = time.time()
+        # fire-and-forget 发结束/失败事件
+        try:
+            loop = asyncio.get_running_loop()
+            done_type = (
+                EventType.ON_WORKFLOW_STAGE_DONE
+                if phase.status == "completed"
+                else EventType.ON_WORKFLOW_FAILED
+            )
+            loop.create_task(
+                self._dispatch_stage_event(
+                    done_type,
+                    name,
+                    duration_sec=phase.end_time - (phase.start_time or 0),
+                    error=phase.error,
+                )
+            )
+        except RuntimeError:
+            logger.warning(
+                "error in _run_phase: stage-done event dispatch skipped (no running loop)",
+                exc_info=True,
+            )
+        return phase
+
+    async def _run_phase_async(self, name: str, fn, *args) -> LoopPhase:
+        """Run an async phase function."""
+        phase = LoopPhase(name=name)
+        phase.start_time = time.time()
+        phase.status = "running"
+        # 记下当前 phase, 让 _llm_chat 能注入 phase-aware thinking effort 指令.
+        # ponytail: 隐式状态, 但 run() 是 single-threaded async, 无竞态.
+        self._current_phase = name
+        # C2: 追踪本 run 的 phase 序列, 供 trajectory_match 召回用.
+        if not hasattr(self, "_current_run_phases"):
+            self._current_run_phases = []
+        self._current_run_phases.append(name)
+        # 防止无界增长 (1000+ iter × 7 phase = 7000+), 只保留最近 50 个
+        if len(self._current_run_phases) > 50:
+            self._current_run_phases = self._current_run_phases[-50:]
+        await self._dispatch_stage_event(EventType.ON_WORKFLOW_STAGE_START, name)
+        from huginn.telemetry import get_telemetry_collector
+
+        span_cm = get_telemetry_collector().span(f"phase:{name}")
+        try:
+            with span_cm as phase_span:
+                phase.result = await fn(*args)
+                phase.status = "completed"
+                phase_span.metadata["status"] = "completed"
+        except Exception as e:
+            phase.status = "failed"
+            phase.error = str(e)
+            try:
+                phase_span.metadata["status"] = "failed"
+                phase_span.metadata["error"] = str(e)
+            except Exception:
+                logger.warning(
+                    "error in _run_phase_async: span metadata update failed",
+                    exc_info=True,
+                )
+        phase.end_time = time.time()
+        if phase.status == "completed":
+            await self._dispatch_stage_event(
+                EventType.ON_WORKFLOW_STAGE_DONE,
+                name,
+                duration_sec=phase.end_time - (phase.start_time or 0),
+            )
+        else:
+            await self._dispatch_stage_event(
+                EventType.ON_WORKFLOW_FAILED,
+                name,
+                duration_sec=phase.end_time - (phase.start_time or 0),
+                error=phase.error,
+            )
+        return phase
+
+    def _render_report(self, data: dict[str, Any]) -> str:
+        """Render a markdown report."""
+        lines = [
+            "# Huginn Autoloop Report",
+            "",
+            f"**Objective:** {data['objective']}",
+            f"**Run ID:** {data['run_id']}",
+            f"**Total Time:** {data['total_time_seconds']:.1f}s",
+            "",
+            "## Phases",
+            "",
+            "| Phase | Status | Duration (s) | Error |",
+            "|-------|--------|--------------|-------|",
+        ]
+        for p in data["phases"]:
+            lines.append(
+                f"| {p['name']} | {p['status']} | {p['duration']:.1f} | {p['error'] or ''} |"
+            )
+        lines.append("")
+        lines.append("---")
+        lines.append("Generated by Huginn Autoloop Engine")
+        return "\n".join(lines)
 
 def _selfcheck() -> None:
     """CognitiveLoop 骨架自检 — 不依赖 LLM, 用 mock 钩子验证控制流."""

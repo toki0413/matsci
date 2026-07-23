@@ -1574,6 +1574,12 @@ def _selfcheck_p0_durable_state() -> None:
         shutil.rmtree(_tmp, ignore_errors=True)
 
 
+class HypothesisMixin:
+    """hypothesis 生成/管理方法族, 从 engine.py 下沉 (P3 slim-down). 通过 self 访问 engine 状态."""
+
+    pass  # methods migrated from engine.py via P3 slim-down
+
+
 if __name__ == "__main__":
     _selfcheck_connected_components()
     _selfcheck_save_load()
