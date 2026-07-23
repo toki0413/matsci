@@ -205,6 +205,32 @@ class SubagentDispatch:
             max_iterations=5,
             summary_format="json",
         ),
+        # Task 3: 失败推理反推 (failure trace inversion). 拿 (input, failed_result)
+        # 反推"为什么这个 input 会导致这个 failed result". 跟 blind_reconstructor
+        # 同款 dispatch 路径, 仅 system_prompt 反转: 不是判 holds, 是反推 failure.
+        "failure_inverter": SubagentSpec(
+            name="failure_inverter",
+            description="从 (input, failed_result) 反推为什么这个 input 会导致这个 failed result (failure trace inversion)",
+            system_prompt=(
+                "You are a failure inversion agent. You receive (input parameters, "
+                "failed result, failure mode) and must INFER the failure reasoning: "
+                "trace back from the failed result to which step / assumption broke, "
+                "and what counterfactual change could make it work.\n\n"
+                "Output a JSON with fields:\n"
+                "- \"failure_reasoning\": the full reverse-engineered failure path (<300 words)\n"
+                "- \"failure_point\": at which step / assumption does it break\n"
+                "- \"counterfactual\": what condition could change to make it work\n"
+                "- \"confidence\": 0.0-1.0\n"
+                "Be rigorous. If you cannot invert, return empty failure_reasoning with confidence=0.0."
+            ),
+            allowed_tools=[
+                "code_tool", "bash_tool",
+                "file_read_tool", "numerical_tool",
+            ],
+            max_tool_calls=15,
+            max_iterations=5,
+            summary_format="json",
+        ),
     }
 
     def __init__(self) -> None:
