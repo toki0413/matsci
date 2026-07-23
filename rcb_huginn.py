@@ -56,6 +56,10 @@ Path(_tmpdir).mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("TEMP", _tmpdir)
 os.environ.setdefault("TMP", _tmpdir)
 
+# arviz 默认写 ~/.arviz/ 或 AppData/Local/arviz/, TRAE 沙箱拦截 → 进程退出.
+# 重定向到 workspace _cache 内. ponytail: arviz 无 disable-cache 选项, 只能改路径.
+os.environ.setdefault("ARVIZ_CACHE_DIR", str(Path(_tmpdir) / "arviz"))
+
 # RestrictedPython 禁了 os/pathlib/open/pickle/eval — 科学计算全要用.
 # 在 import huginn 前 monkey-patch validate_code 为空操作.
 # ponytail: RCBench workspace 是隔离的临时目录, 风险可控. 升级: 加白名单而非全禁.
