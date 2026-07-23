@@ -263,6 +263,38 @@ def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
     return "\n".join(out)
 
 
+# 按需 KB 注入启发式: 非 knowledge 类 query 跳过 KB 检索省 token + 注意力.
+# 调用方: engine._build_kb_text / ContextBuilder.build_kb_text.
+# ponytail: 纯结构判断, 不上 LLM/embedding. 天花板: 短任务名可能误判为
+# "不需要 KB"; 升级路径接轻量意图分类器.
+_KB_STOPWORDS_PREFIX = ("tests_passed=", "constraints_satisfied=", "{", "[", "<")
+_KB_MIN_QUERY_LEN = 8
+
+
+def should_inject_kb(query: str) -> bool:
+    """判断 query 是否值得走 KB 检索. True = 该注入, False = 跳过.
+
+    跳过条件 (任一命中即 False):
+    - 空 / 极短 (< 8 字符): 语义锚点不足, embedding 质量差.
+    - 纯 JSON / 代码符号 / 字段名=value 串: _summarize_for_kb / _extract_search_query
+      兜底产出的噪声 query, 检索无意义.
+    - 纯文件路径 (无空格 + 含分隔符 + 含点): 退化情况, 检索无意义.
+
+    ponytail: 字符串前缀 + 长度判断, 不引新依赖. 升级路径: 轻量意图分类器
+    (区分 "材料物性查询" vs "纯代码摘要"), 但要先证明这个判断有价值.
+    """
+    if not query:
+        return False
+    q = query.strip()
+    if len(q) < _KB_MIN_QUERY_LEN:
+        return False
+    if q.startswith(_KB_STOPWORDS_PREFIX):
+        return False
+    if (" " not in q) and ("/" in q or "\\" in q) and q.count(".") >= 1:
+        return False
+    return True
+
+
 class ContextBuilder:
     """Builds the dynamic context (memory, KG, KB, emotion) for each turn.
 
