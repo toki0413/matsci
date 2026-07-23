@@ -473,6 +473,10 @@ class AutoloopEngine:
         # 当前 phase 名 — _run_phase_async 写, _llm_chat 读, 用于 phase-aware thinking effort.
         # ponytail: 隐式状态, 但只在 single-threaded async run() 里用, 无竞态.
         self._current_phase: str = ""
+        # P0 Task 4: 自我效能统计周期更新计数器. _learn 末尾自增, 每 10 次触发
+        # _compute_self_model + 缓存写入. toggle HUGINN_SELF_MODEL 默认 off,
+        # off 时不触发 (向后兼容). ponytail: 复用 longterm typed memory 存储.
+        self._experiment_count_since_self_model_update = 0
 
         # P15: crash-safe resume. flag off / snapshot 缺失时静默跳过, 行为不变.
         # ponytail: 用 duck typing, 不做 isinstance 检查; 失败 log warning 不抛.
@@ -1982,6 +1986,22 @@ class AutoloopEngine:
                             self._current_hyp_id_for_plan = cog["current_hyp_id"]
                         except Exception:
                             logger.debug("hypothesis_graph add failed", exc_info=True)
+                    # P0 Task 3: per-hyp 验证预算 — 创建时评估 informativeness + 分配 budget
+                    # toggle off 时跳过 (向后兼容, 不消耗 LLM 调用)
+                    if (
+                        os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1"
+                        and cog.get("current_hyp_id")
+                    ):
+                        try:
+                            _info = await self._evaluate_informativeness(
+                                cog["current_hyp_id"]
+                            )
+                            self._compute_verification_budget(
+                                cog["current_hyp_id"],
+                                _info["expected_informativeness"],
+                            )
+                        except Exception:
+                            logger.debug("per-hyp budget eval failed", exc_info=True)
                     # P1.4: campaign SSE 对齐 run() L1435
                     self._emit_campaign(
                         "campaign.hypothesis",
@@ -2987,6 +3007,26 @@ Respond JSON only:
         返 True + 注入 counterexample hint. 升级: LLM 把 hypothesis 翻译成
         z3 表达式跑 SMT.
         """
+        # P0 Task 3: per-hyp budget 检查 — ce 轮数上限, toggle off 时不检查
+        if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1":
+            try:
+                _ce_hyp = getattr(self, "_current_hyp_id_for_plan", None)
+                if _ce_hyp:
+                    _ce_node = self.hypothesis_graph._nodes.get(_ce_hyp)
+                    if _ce_node is not None:
+                        _ce_vb = _ce_node.evidence.get("verification_budget")
+                        if _ce_vb is not None:
+                            _ce_used = _ce_node.evidence.get("ce_rounds_used", 0)
+                            if _ce_used >= _ce_vb.get("ce_rounds", 0):
+                                _ce_node.evidence["budget_exhausted"] = True
+                                logger.debug(
+                                    "counterexample hunt skipped: budget_exhausted (hyp=%s)",
+                                    _ce_hyp,
+                                )
+                                return
+                            _ce_node.evidence["ce_rounds_used"] = _ce_used + 1
+            except Exception:
+                logger.debug("per-hyp ce budget check failed", exc_info=True)
         # 强制开 imagination (override _should_imaginate 的判断)
         self._force_imaginate = True
         # 注入 counterexample hint 给下轮 hypothesize
@@ -3039,6 +3079,32 @@ Respond JSON only:
                 )
         except Exception:
             logger.debug("recall failed directions for exemplar failed", exc_info=True)
+        # P1 Task 8: inject [VERIFIER WEAKNESS] from past blind mismatches
+        try:
+            _mm = self.memory.recall_typed("verification_mismatch", limit=3)
+            if _mm:
+                _wl: list[str] = []
+                for _m in _mm:
+                    _mc = _m.get("content", "") if isinstance(_m, dict) else str(_m)
+                    try:
+                        _md = json.loads(_mc)
+                        _wl.append(
+                            f"- hyp: {str(_md.get('hypothesis', '?'))[:100]} "
+                            f"(blind={_md.get('blind_holds')}, orig={_md.get('orig_holds')})"
+                        )
+                    except Exception:
+                        _wl.append(f"- {_mc[:100]}")
+                if _wl:
+                    _wb = (
+                        "\n[VERIFIER WEAKNESS] Past cases where blind "
+                        "reconstruction disagreed with original reasoning:\n"
+                        + "\n".join(_wl[:3]) + "\n"
+                    )
+                    self._speculator_hint = (
+                        (getattr(self, "_speculator_hint", "") or "") + _wb
+                    )
+        except Exception:
+            logger.debug("verifier weakness hint failed", exc_info=True)
         logger.info("P2 counterexample hunt triggered, hint injected")
 
     def _distill_meta_trace(self, darwin_score: float, supported_ratio: float) -> None:
@@ -5324,6 +5390,25 @@ Respond JSON only:
         _statement = _node.statement
         if not _statement or len(_statement) < 10:
             return
+        # P0 Task 3: per-hyp budget 检查 — toggle off 时不检查 (向后兼容)
+        if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1":
+            try:
+                _vb = _node.evidence.get("verification_budget")
+                if _vb is not None:
+                    _used = _node.evidence.get("blind_rounds_used", 0)
+                    if _used >= _vb.get("blind_rounds", 0):
+                        _node.evidence["budget_exhausted"] = True
+                        results["blind_reconstruction"] = {
+                            "match": None, "skipped": "budget_exhausted",
+                        }
+                        logger.debug(
+                            "blind reconstruct skipped: budget_exhausted (hyp=%s)",
+                            _hyp_id,
+                        )
+                        return
+                    _node.evidence["blind_rounds_used"] = _used + 1
+            except Exception:
+                logger.debug("per-hyp blind budget check failed", exc_info=True)
         if self._agent_factory is None:
             logger.debug("P1 blind reconstruct: no agent_factory, skip")
             return
@@ -5400,6 +5485,24 @@ Respond JSON only:
             _evidence["verification_level"] = "refute"
             self.hypothesis_graph.refute(_hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": False, **_evidence}
+            # P1 Task 8: record verification_mismatch for counterexample hint
+            try:
+                self.memory.remember_typed(
+                    content=json.dumps({
+                        "hypothesis": _statement[:300],
+                        "blind_holds": _blind_holds,
+                        "orig_holds": _orig_holds,
+                        "blind_derivation": _blind_derivation[:500],
+                        "hyp_id": _hyp_id,
+                    }, ensure_ascii=False),
+                    memory_type="verification_mismatch",
+                    tags=["verification_mismatch", f"hyp:{_hyp_id}"],
+                    source="blind_reconstruction",
+                    importance=0.7,
+                    tier="mid",
+                )
+            except Exception:
+                logger.debug("verification_mismatch record failed", exc_info=True)
             logger.info("P1 blind reconstruct: mismatch → refute %s", _hyp_id)
             return
         # holds match — 按 derivation 一致性分档
@@ -5535,6 +5638,302 @@ Respond JSON only:
             f"[BREAK POINT]\n{_break}\n\n"
             f"[COUNTERFACTUAL]\n{_counter}"
         )
+
+    async def _abstract_skill_if_ready(self) -> None:
+        """P0 Task 1: 扫 longterm trace clusters, ≥3 条 + 无 skill 时归纳 skill.
+
+        Voyager-style skill library: 同簇 N 条 reasoning trace 喂 skill_abstractor
+        subagent, 归纳成参数化 skill (function_name/params/precondition/reasoning_template),
+        存 typed memory (memory_type='skill') 给后续 retrieve 命中直接注入模板.
+
+        toggle HUGINN_SKILL_ABSTRACTION 默认 off — 不开不消耗 dispatch 配额.
+        失败 try/except 全包, skill 抽象是 enhancement 不阻塞主流程.
+
+        ponytail: 复用 _invert_failure_trace 的 dispatch 模式 + typed memory 存储,
+        不引新 dispatch 路径. 升级路径: 多次 sample 投票降单次偏差 + trace 写入时
+        带 dimension tag 让 _cluster_traces_by_dimension 真能按 dimension 分簇.
+        """
+        if os.environ.get("HUGINN_SKILL_ABSTRACTION", "0") != "1":
+            return
+        if self._agent_factory is None:
+            return
+        try:
+            clusters = self.memory.longterm._cluster_traces_by_dimension()
+            for cluster_key, traces in clusters.items():
+                if len(traces) < 3:
+                    continue
+                if self.memory.longterm._get_skill_for_cluster(cluster_key) is not None:
+                    continue
+                # 前 5 条 trace 的 reasoning 内容喂 abstractor, 截到 1500 字控 prompt
+                sample = traces[:5]
+                blocks: list[str] = []
+                trace_ids: list[str] = []
+                for i, tr in enumerate(sample, 1):
+                    tid = tr.get("id", f"trace_{i}")
+                    trace_ids.append(tid)
+                    content = tr.get("content", "") or ""
+                    blocks.append(f"--- Trace {i} (id={tid}) ---\n{content[:1500]}")
+                _task = (
+                    f"Abstract a reusable parameterized skill from the following "
+                    f"{len(sample)} reasoning traces (cluster={cluster_key}). "
+                    f"Output JSON.\n\n" + "\n\n".join(blocks)
+                )
+                from huginn.agents.subagent import SubagentDispatch
+                _dispatch = SubagentDispatch()
+                _ctx = {"agent_factory": self._agent_factory}
+                try:
+                    _res = await _dispatch.dispatch(
+                        "skill_abstractor", _task, context=_ctx
+                    )
+                except Exception:
+                    logger.debug("skill_abstractor dispatch failed", exc_info=True)
+                    continue
+                if not _res.success or not _res.summary:
+                    continue
+                try:
+                    _skill = json.loads(_res.summary)
+                except Exception:
+                    logger.debug("skill_abstractor summary not JSON, skip")
+                    continue
+                # function_name 为空 = traces 太散, abstractor 自己放弃
+                if not str(_skill.get("function_name", "")).strip():
+                    continue
+                _skill["cluster_key"] = cluster_key
+                _skill["source_traces"] = trace_ids
+                _tags = [
+                    "skill",
+                    f"cluster_key:{cluster_key}",
+                    f"applicable_dimension:{_skill.get('applicable_dimension', 'unknown')}",
+                ]
+                try:
+                    self.memory.remember_typed(
+                        content=json.dumps(_skill, ensure_ascii=False),
+                        memory_type="skill",
+                        tags=_tags,
+                        source="skill_abstraction",
+                        importance=0.7,
+                        tier="long",
+                    )
+                    logger.info(
+                        "skill abstracted for cluster=%s function=%s",
+                        cluster_key, _skill.get("function_name"),
+                    )
+                except Exception:
+                    logger.debug("skill store failed", exc_info=True)
+        except Exception:
+            logger.debug("skill abstraction failed", exc_info=True)
+
+    async def _synthesize_self_goal_if_ready(self) -> None:
+        """P1 Task 7: scan self_model weak clusters, synthesize self-goal.
+
+        rate<0.3 + n>=5 -> pending_confirmation goal (origin=self).
+        toggle HUGINN_SELF_GOAL_SYNTHESIS off. dedup by cluster_key.
+        ponytail: reuse self_model (T4) + GoalStore, no new stat path.
+        """
+        if os.environ.get("HUGINN_SELF_GOAL_SYNTHESIS", "0") != "1":
+            return
+        _mem = getattr(self, "memory", None)
+        if _mem is None or not hasattr(_mem, "longterm"):
+            return
+        try:
+            _sm = _mem.longterm.get_self_model()
+        except Exception:
+            return
+        if not _sm:
+            return
+        try:
+            from huginn.autoloop.goal_store import get_goal_store
+            _gs = get_goal_store()
+        except Exception:
+            return
+        _existing: set[str] = set()
+        try:
+            for _g in _gs.list_goals():
+                if getattr(_g, "origin", "user") != "self":
+                    continue
+                if _g.status in ("pending_confirmation", "active"):
+                    _ck = (_g.metadata or {}).get("cluster_key")
+                    if _ck:
+                        _existing.add(_ck)
+        except Exception:
+            pass
+        _synth = 0
+        for _key, _v in _sm.items():
+            _rate = _v.get("rate")
+            _n = _v.get("success", 0) + _v.get("failure", 0)
+            if not isinstance(_rate, (int, float)):
+                continue
+            if _rate >= 0.3 or _n < 5:
+                continue
+            _dim = _v.get("dimension", "unknown")
+            _ht = _v.get("hyp_type", "unknown")
+            _ck = f"{_dim}/{_ht}"
+            if _ck in _existing:
+                continue
+            _text = f"master {_dim} {_ht} verification (rate={_rate:.2f}, n={_n})"
+            try:
+                _gs.create_goal(_text, origin="self", status="pending_confirmation",
+                    metadata={"cluster_key": _ck, "rate": _rate, "sample_size": _n})
+                _synth += 1
+                _existing.add(_ck)
+                logger.info("self-goal synthesized: %s r=%.2f n=%d", _ck, _rate, _n)
+            except Exception:
+                logger.debug("self-goal create failed", exc_info=True)
+        if _synth:
+            logger.info("self-goal synthesis: %d pending_confirmation", _synth)
+    async def _evaluate_informativeness(self, hypothesis_id: str) -> dict[str, Any]:
+        """P0 Task 3: 评估 hypothesis 的 expected_informativeness (新颖度 × 可验证性).
+
+        metacog LLM 打两个分:
+        - novelty: 与已有 supported/refuted hypothesis 重叠度 (0-1, 低重叠=高新颖)
+        - verifiability: 是否有明确 testable prediction (0-1)
+        expected_informativeness = novelty * verifiability
+
+        ponytail: 复用 verification_model.ainvoke, 不引新 LLM 路径.
+        失败降级 {novelty: 0.5, verifiability: 0.5} (保守中等).
+        """
+        _default = {
+            "novelty": 0.5, "verifiability": 0.5,
+            "expected_informativeness": 0.25, "reason": "eval failed, default",
+        }
+        try:
+            _node = self.hypothesis_graph._nodes.get(hypothesis_id)
+        except Exception:
+            return _default
+        if _node is None:
+            return _default
+        _statement = _node.statement
+        if not _statement or len(_statement) < 5:
+            return _default
+        # 收集已有 supported/refuted hypothesis 摘要, 给 LLM 判重叠用
+        _existing: list[str] = []
+        try:
+            for _n in self.hypothesis_graph.all_nodes():
+                if _n.id == hypothesis_id:
+                    continue
+                if _n.status in ("supported", "refuted"):
+                    _existing.append(_n.statement[:120])
+        except Exception:
+            pass
+        _existing_block = (
+            "\n".join(f"- {s}" for s in _existing[:10]) or "(none)"
+        )
+        _prompt = (
+            f"评估 hypothesis 的 novelty 和 verifiability.\n\n"
+            f"Hypothesis: {_statement}\n\n"
+            f"已有 supported/refuted hypothesis (供判重叠):\n{_existing_block}\n\n"
+            f"novelty (0-1, 与已有低重叠=高新颖), "
+            f"verifiability (0-1, 有明确 testable prediction=高). "
+            f"输出 JSON: {{\"novelty\": float, \"verifiability\": float, \"reason\": str}}"
+        )
+        try:
+            from langchain_core.messages import HumanMessage
+            _resp = await self.verification_model.ainvoke(
+                [HumanMessage(content=_prompt)]
+            )
+            _text = getattr(_resp, "content", str(_resp))
+            # LLM 可能包 ```json fence, 直接抠第一个含 novelty 的 JSON 对象
+            _m = re.search(r"\{[^{}]*\"novelty\"[^{}]*\}", _text, re.DOTALL)
+            if not _m:
+                return _default
+            _parsed = json.loads(_m.group(0))
+            _nov = max(0.0, min(1.0, float(_parsed.get("novelty", 0.5))))
+            _ver = max(0.0, min(1.0, float(_parsed.get("verifiability", 0.5))))
+            return {
+                "novelty": _nov,
+                "verifiability": _ver,
+                "expected_informativeness": _nov * _ver,
+                "reason": str(_parsed.get("reason", "")),
+            }
+        except Exception:
+            logger.debug("informativeness eval failed", exc_info=True)
+            return _default
+
+    def _compute_verification_budget(
+        self, hypothesis_id: str, informativeness: float,
+    ) -> None:
+        """P0 Task 3: 映射 informativeness 到 verification_budget, 写进 node.evidence.
+
+        基础预算 = informativeness * MAX (blind=5, ce=3).
+        查 self_model: 该体系历史成功率低 → *1.5, 高 → *0.7, 无统计 → 基础.
+        wall_clock 全局预算耗尽 → 强制 0.
+        写 evidence["verification_budget"] = {blind_rounds, ce_rounds, rationale}.
+
+        ponytail: 复用 get_self_model 接口, 不引新统计路径.
+        ceiling: self_model 按 (dimension, hyp_type) 聚合, 关键词命中粗.
+        """
+        _MAX_BLIND = 5
+        _MAX_CE = 3
+        try:
+            _node = self.hypothesis_graph._nodes.get(hypothesis_id)
+        except Exception:
+            return
+        if _node is None:
+            return
+        _info = max(0.0, min(1.0, float(informativeness)))
+        _blind = _info * _MAX_BLIND
+        _ce = _info * _MAX_CE
+        _rationale = "base_informativeness"
+        # 查 self_model 调整预算
+        try:
+            _dim = _node.dimension or ""
+            _htype = "other"
+            _mem = getattr(self, "memory", None)
+            if _mem is not None and hasattr(_mem, "longterm"):
+                try:
+                    _htype = _mem.longterm._infer_hyp_type(_node.statement)
+                except Exception:
+                    pass
+                _sm = _mem.longterm.get_self_model(
+                    dimension=_dim or None, hyp_type=_htype,
+                )
+                if _sm:
+                    # 多 key 取平均 rate (过滤后通常 1 个 key, 防御性聚合)
+                    _tot = 0.0
+                    _cnt = 0
+                    for _v in _sm.values():
+                        _r = _v.get("rate")
+                        if isinstance(_r, (int, float)):
+                            _tot += float(_r)
+                            _cnt += 1
+                    if _cnt > 0:
+                        _rate = _tot / _cnt
+                        if _rate < 0.4:
+                            _blind *= 1.5
+                            _ce *= 1.5
+                            _rationale = "low_self_efficacy"
+                        elif _rate > 0.7:
+                            _blind *= 0.7
+                            _ce *= 0.7
+                            _rationale = "high_self_efficacy"
+                        else:
+                            _rationale = "normal_self_efficacy"
+                else:
+                    _rationale = "no_self_model"
+        except Exception:
+            logger.debug("self_model lookup for budget failed", exc_info=True)
+            _rationale = "no_self_model"
+        # wall_clock 全局上限: 耗尽则预算强制 0
+        try:
+            if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1":
+                from huginn.autoloop.goal_store import get_goal_store
+                _gs = get_goal_store()
+                _ag = _gs.get_active()
+                if _ag is not None and _gs.wall_clock_expired(_ag.id):
+                    _blind = 0.0
+                    _ce = 0.0
+                    _rationale = "wall_clock_exhausted"
+        except Exception:
+            logger.debug("wall_clock budget check failed", exc_info=True)
+        # 轮数取整 (正数 floor), 存 node evidence
+        _node.evidence["verification_budget"] = {
+            "blind_rounds": max(0, int(_blind)),
+            "ce_rounds": max(0, int(_ce)),
+            "rationale": _rationale,
+            "informativeness": _info,
+        }
+        _node.evidence.setdefault("blind_rounds_used", 0)
+        _node.evidence.setdefault("ce_rounds_used", 0)
 
     async def _run_pytest(self) -> dict[str, Any]:
         """Run pytest in workspace, return results dict."""
@@ -7174,6 +7573,42 @@ Respond JSON only:
                 "distill_episodic_to_procedural failed", exc_info=True
             )
 
+        # P0 Task 4: 周期更新 self_model 缓存. 每 10 次实验 (成功+失败都算)
+        # 触发 _compute_self_model + _store_self_model_cached. toggle
+        # HUGINN_SELF_MODEL 默认 off, off 时不触发 (向后兼容). 失败 try/except
+        # 包, 不阻塞主流程. ponytail: 复用 longterm typed memory 存储.
+        try:
+            self._experiment_count_since_self_model_update += 1
+            if (
+                os.environ.get("HUGINN_SELF_MODEL", "0") == "1"
+                and self._experiment_count_since_self_model_update >= 10
+            ):
+                _sm = self.memory.longterm._compute_self_model()
+                self.memory.longterm._store_self_model_cached(_sm)
+                self._experiment_count_since_self_model_update = 0
+                logger.info(
+                    "self_model updated: %d groups, sample_size=%d",
+                    len(_sm),
+                    sum(s["success"] + s["failure"] for s in _sm.values()),
+                )
+        except Exception:
+            logger.debug("self_model periodic update failed", exc_info=True)
+
+        # P0 Task 1: 实验成功后扫 trace clusters, ≥3 条同簇 + 无 skill 时
+        # 触发 skill 抽象 (Voyager-style). toggle HUGINN_SKILL_ABSTRACTION 默认 off,
+        # 失败不阻塞主流程. ponytail: 接在 _learn 末尾是最低侵入的接入点 —
+        # 每轮实验成功都查一次, cluster_key 命中已有 skill 直接跳过.
+        try:
+            await self._abstract_skill_if_ready()
+        except Exception:
+            logger.debug("skill abstraction hook failed", exc_info=True)
+
+        # P1 Task 7: scan self_model weak clusters, synthesize self-goal.
+        try:
+            await self._synthesize_self_goal_if_ready()
+        except Exception:
+            logger.debug("self-goal synthesis hook failed", exc_info=True)
+
         # D2: 返回 summary, 让 caller 写 cog["last_learn_summary"]
         return {
             "persona": getattr(self, "_last_persona", "unknown"),
@@ -8472,6 +8907,44 @@ Please modify the code to address this task."""
             response = await llm.ainvoke(messages)
             return str(response.content)
 
+    def _build_curiosity_block(self) -> str:
+        """P1 Task 6: 检索 self_model 里成功率低的簇, 拼 [CURIOSITY] block.
+
+        把"哪类问题我长期搞不定"喂给 hypothesize prompt, 让 agent 主动
+        seek 而非被动 escape. 复用 Task 4 self_model (rate<0.4 且样本≥3).
+        toggle HUGINN_CURIOSITY_HINT 默认 off — 不开不消耗 self_model 查询.
+        ceiling: self_model 按 (dimension, hyp_type) 聚合, 关键词命中粗.
+        """
+        if os.environ.get("HUGINN_CURIOSITY_HINT", "0") != "1":
+            return ""
+        _mem = getattr(self, "memory", None)
+        if _mem is None or not hasattr(_mem, "longterm"):
+            return ""
+        try:
+            _sm = _mem.longterm.get_self_model()
+        except Exception:
+            return ""
+        if not _sm:
+            return ""
+        # 过滤: rate<0.4 且样本量≥3 (统计有意义)
+        weak: list[str] = []
+        for _key, _v in _sm.items():
+            _rate = _v.get("rate")
+            _succ = _v.get("success", 0)
+            _fail = _v.get("failure", 0)
+            _n = _succ + _fail
+            if isinstance(_rate, (int, float)) and _rate < 0.4 and _n >= 3:
+                _dim = _v.get("dimension", "?")
+                _htype = _v.get("hyp_type", "?")
+                weak.append(f"- {_dim}/{_htype}: rate={_rate:.2f} (n={_n})")
+        if not weak:
+            return ""
+        return (
+            "\n[CURIOSITY] 历史预测不准的簇 (主动探索方向, 而非被动 escape):\n"
+            + "\n".join(weak[:5])
+            + "\n"
+        )
+
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
         # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
@@ -8483,6 +8956,12 @@ Please modify the code to address this task."""
                 "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
                 "(方法族/等价性陷阱/连通分量/缺口).\n"
             )
+        # P1 Task 6: curiosity bonus — self_model 里预测不准的簇, 喂给 hypothesize
+        # 让 agent 主动 seek "哪类问题我长期搞不定", 而非等 stagnation 才 escape.
+        # toggle HUGINN_CURIOSITY_HINT 默认 off, off 时 _build_curiosity_block 返空.
+        curiosity_block = self._build_curiosity_block()
+        if curiosity_block:
+            hint_block = (hint_block + curiosity_block) if hint_block else curiosity_block
         # 三路检索共用一个 query — 从 context 提取有意义的检索词,
         # 不用 json.dumps (JSON 语法噪声会淹没 embedding 语义锚点)
         ctx_query = self._extract_search_query(context)
@@ -11698,7 +12177,692 @@ def _selfcheck() -> None:
         # 复原: 让后续 (若有) selfcheck 不被 stub 污染
         eng_s.memory = None
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57 + P5 persistent goal 58 + KB query 59 + Task 2 derivation 三档 60 + Task 3 failure inversion 61 + Task 4 historical failure trace exemplar 62)")
+    # 63. P0 Task 1: skill 抽象 (Voyager-style skill library) — toggle on/off
+    # 4 场景: A ≥3 条触发 / B retrieve 注入模板 / C <3 条降级 / D 已有 skill 不重复
+    # 直接调 _abstract_skill_if_ready 验证行为, 不走 _learn (避免再 stub 一堆子系统).
+    # mock SubagentDispatch + memory.longterm stub 控制 cluster 输入和 skill 查询.
+    import tempfile as _tf63, shutil as _sh63, os as _os63
+    from huginn.agents.subagent import SubagentResult as _SR63
+    _tmp63 = Path(_tf63.mkdtemp(prefix="hgin_p0t1_"))
+    try:
+        eng_s.workspace = str(_tmp63)
+        eng_s._agent_factory = object()  # 非 None 进 dispatch 路径
+        eng_s._iteration = 63
+
+        from huginn.agents import subagent as _sub_mod63
+        _orig_dispatch_cls63 = _sub_mod63.SubagentDispatch
+
+        # ── 63a: toggle on + ≥3 条 trace + 无 skill → dispatch + remember_typed ──
+        _dispatched_a: list[str] = []
+        _captured_skill_a: list[dict] = []
+
+        class _LongtermStubA:
+            def _cluster_traces_by_dimension(self, dimension=None, tool_name=None):
+                return {
+                    "unknown:vasp_tool": [
+                        {"id": f"tr_a_{i}", "content": f"[REASONING]\nstep {i} reasoning for converge encut"}
+                        for i in range(4)
+                    ],
+                }
+            def _get_skill_for_cluster(self, key):
+                return None  # 尚无 skill → 应触发抽象
+
+        class _MemStubA:
+            def __init__(self):
+                self.longterm = _LongtermStubA()
+            def remember_typed(self, **kw):
+                _captured_skill_a.append(kw)
+                return "fake_skill_id_a"
+
+        eng_s.memory = _MemStubA()
+
+        class _MockDispatchA63:
+            async def dispatch(self, spec, task, context=None, **kw):
+                _dispatched_a.append(spec)
+                assert spec == "skill_abstractor", \
+                    f"应调 skill_abstractor, got {spec}"
+                assert "Trace 1" in task and "Trace 4" in task, \
+                    "task 文本应含 N 条 trace 编号"
+                return _SR63(
+                    summary=(
+                        '{"function_name": "converge_encut", '
+                        '"params": ["structure", "target_accuracy"], '
+                        '"precondition": "体系非磁性 + 已知空间群", '
+                        '"reasoning_template": "given {structure}, ramp encut '
+                        'from 400 eV in 50 eV steps until dE < 1e-4 eV/atom", '
+                        '"applicable_dimension": "convergence", '
+                        '"confidence": 0.85}'
+                    ),
+                    full_output="", success=True, spec_name=spec,
+                )
+        _sub_mod63.SubagentDispatch = _MockDispatchA63
+        _os63.environ["HUGINN_SKILL_ABSTRACTION"] = "1"
+        try:
+            asyncio.run(eng_s._abstract_skill_if_ready())
+            assert _dispatched_a == ["skill_abstractor"], \
+                f"63a: 应 dispatch skill_abstractor 一次, got {_dispatched_a}"
+            assert _captured_skill_a, "63a: remember_typed 应被调 (存 skill)"
+            _stored_a = _captured_skill_a[0]
+            assert _stored_a.get("memory_type") == "skill", \
+                f"63a: memory_type 应为 skill, got {_stored_a.get('memory_type')}"
+            assert _stored_a.get("source") == "skill_abstraction", \
+                "63a: source 应标 skill_abstraction"
+            _tags_a = _stored_a.get("tags") or []
+            assert any(t.startswith("cluster_key:") for t in _tags_a), \
+                f"63a: tags 应含 cluster_key:..., got {_tags_a}"
+            assert any(t.startswith("applicable_dimension:") for t in _tags_a), \
+                f"63a: tags 应含 applicable_dimension:..., got {_tags_a}"
+            _content_a = json.loads(_stored_a["content"])
+            assert _content_a["function_name"] == "converge_encut"
+            assert _content_a["reasoning_template"].startswith("given {structure}")
+            assert _content_a["cluster_key"] == "unknown:vasp_tool"
+            assert len(_content_a["source_traces"]) == 4, \
+                "63a: source_traces 应含全部 4 条 trace id"
+            print("63a. toggle on + ≥3 trace + 无 skill → dispatch + 存 skill typed memory OK")
+        finally:
+            _sub_mod63.SubagentDispatch = _orig_dispatch_cls63
+            _os63.environ.pop("HUGINN_SKILL_ABSTRACTION", None)
+
+        # ── 63b: retrieve 命中 skill → context_builder 注入 [SKILL LIBRARY] block ──
+        # 用 ContextBuilder + 真 longterm (tmp db) 插 1 条 skill, 验 build_memory_text.
+        from huginn.memory.longterm import LongTermMemory as _LTM63
+        from huginn.memory.manager import MemoryManager as _MM63
+        from huginn.context_builder import ContextBuilder as _CB63
+        _lt63 = _LTM63(db_path=str(_tmp63 / "skill.db"))
+        _skill_obj_b = {
+            "function_name": "converge_kmesh",
+            "params": ["structure", "target_accuracy"],
+            "precondition": "ENCUT 已收敛",
+            "reasoning_template": "given {structure}, start k-mesh 1x1x1 double until dE < 1e-3",
+            "applicable_dimension": "convergence",
+            "cluster_key": "unknown:vasp_tool",
+            "source_traces": ["tr_b_1", "tr_b_2", "tr_b_3"],
+        }
+        _lt63.store(
+            content=json.dumps(_skill_obj_b, ensure_ascii=False),
+            category="fact",
+            tags=["skill", "cluster_key:unknown:vasp_tool"],
+            importance=0.7,
+            tier="long",
+        )
+        # 手动把刚插的行 memory_type 升级为 'skill' (走 typed memory 写入路径)
+        with _lt63._connect() as _conn63:
+            _conn63.execute(
+                "UPDATE memories SET memory_type = 'skill' WHERE tags LIKE '%cluster_key:%'"
+            )
+            _conn63.commit()
+        _mm63 = _MM63(longterm=_lt63)
+        _cb63 = _CB63(_mm63, str(_tmp63), conversation_tree=None)
+        _mem_text_b = _cb63.build_memory_text(query="how to converge kmesh")
+        assert "[SKILL LIBRARY]" in _mem_text_b, \
+            f"63b: build_memory_text 应含 [SKILL LIBRARY] block, got: {_mem_text_b[:200]!r}"
+        assert "reasoning_template:" in _mem_text_b, \
+            "63b: 应注入 reasoning_template 字段"
+        assert "function: converge_kmesh" in _mem_text_b, \
+            "63b: 应含 function_name"
+        assert "source: skill_library" in _mem_text_b, \
+            "63b: 应标 source: skill_library"
+        # 无 skill 时不应含 [SKILL LIBRARY] (用空 longterm 验证降级路径)
+        _lt63_empty = _LTM63(db_path=str(_tmp63 / "empty.db"))
+        _mm63_empty = _MM63(longterm=_lt63_empty)
+        _cb63_empty = _CB63(_mm63_empty, str(_tmp63), conversation_tree=None)
+        _mem_text_empty = _cb63_empty.build_memory_text(query="anything")
+        assert "[SKILL LIBRARY]" not in _mem_text_empty, \
+            "63b: 无 skill 时不应注入 [SKILL LIBRARY] block (向后兼容)"
+        print("63b. retrieve 命中 skill → build_memory_text 注入 [SKILL LIBRARY] + reasoning_template + source OK")
+
+        # ── 63c: toggle on 但 <3 条 trace → dispatch 不被调 (降级) ──
+        _dispatched_c: list[str] = []
+
+        class _LongtermStubC:
+            def _cluster_traces_by_dimension(self, dimension=None, tool_name=None):
+                return {
+                    "unknown:vasp_tool": [
+                        {"id": "tr_c_1", "content": "[REASONING]\nonly one trace"}
+                    ],
+                }
+            def _get_skill_for_cluster(self, key):
+                return None
+
+        class _MemStubC:
+            def __init__(self):
+                self.longterm = _LongtermStubC()
+            def remember_typed(self, **kw):
+                return "fake_skill_id_c"
+
+        eng_s.memory = _MemStubC()
+
+        class _MockDispatchC63:
+            async def dispatch(self, spec, task, context=None, **kw):
+                _dispatched_c.append(spec)
+                raise AssertionError(
+                    f"63c: <3 条 trace 不应 dispatch, got {spec}"
+                )
+        _sub_mod63.SubagentDispatch = _MockDispatchC63
+        _os63.environ["HUGINN_SKILL_ABSTRACTION"] = "1"
+        try:
+            asyncio.run(eng_s._abstract_skill_if_ready())
+            assert not _dispatched_c, \
+                f"63c: <3 条 trace 不应 dispatch, got {_dispatched_c}"
+            print("63c. toggle on 但 <3 条 trace → 不 dispatch (降级) OK")
+        finally:
+            _sub_mod63.SubagentDispatch = _orig_dispatch_cls63
+            _os63.environ.pop("HUGINN_SKILL_ABSTRACTION", None)
+
+        # ── 63d: toggle on + ≥3 trace + 已有 skill → dispatch 不被调 (去重) ──
+        _dispatched_d: list[str] = []
+
+        class _LongtermStubD:
+            def _cluster_traces_by_dimension(self, dimension=None, tool_name=None):
+                return {
+                    "unknown:vasp_tool": [
+                        {"id": f"tr_d_{i}", "content": f"[REASONING]\ntrace {i}"}
+                        for i in range(5)
+                    ],
+                }
+            def _get_skill_for_cluster(self, key):
+                # 已有 skill → 不应再触发抽象
+                return {"id": "existing_skill_d", "content": "{}", "tags": "[]"}
+
+        class _MemStubD:
+            def __init__(self):
+                self.longterm = _LongtermStubD()
+            def remember_typed(self, **kw):
+                return "fake_skill_id_d"
+
+        eng_s.memory = _MemStubD()
+
+        class _MockDispatchD63:
+            async def dispatch(self, spec, task, context=None, **kw):
+                _dispatched_d.append(spec)
+                raise AssertionError(
+                    f"63d: 已有 skill 不应 dispatch, got {spec}"
+                )
+        _sub_mod63.SubagentDispatch = _MockDispatchD63
+        _os63.environ["HUGINN_SKILL_ABSTRACTION"] = "1"
+        try:
+            asyncio.run(eng_s._abstract_skill_if_ready())
+            assert not _dispatched_d, \
+                f"63d: 已有 skill 不应 dispatch, got {_dispatched_d}"
+            print("63d. toggle on + ≥3 trace + 已有 skill → 不 dispatch (去重) OK")
+        finally:
+            _sub_mod63.SubagentDispatch = _orig_dispatch_cls63
+            _os63.environ.pop("HUGINN_SKILL_ABSTRACTION", None)
+            eng_s.memory = None
+    finally:
+        _sh63.rmtree(_tmp63, ignore_errors=True)
+
+    # 64. P0 Task 3: per-hypothesis 验证预算 — informativeness → budget → 耗尽停止
+    # 5 场景: A 高价值高预算 / B 低价值低预算 / C self_model 调整 / D 预算耗尽停止 / E toggle off 降级
+    # 复用 60 的 mock SubagentDispatch + tmp dir 模式, 直接调 _evaluate_informativeness
+    # + _compute_verification_budget + _blind_reconstruct_verify 验行为.
+    import tempfile as _tf64, shutil as _sh64, os as _os64
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG64
+    from huginn.agents.subagent import SubagentResult as _SR64
+    from huginn.agents import subagent as _sub_mod64
+    _orig_dispatch_cls64 = _sub_mod64.SubagentDispatch
+    _tmp64 = Path(_tf64.mkdtemp(prefix="hgin_p0t3_"))
+    try:
+        eng_s.workspace = str(_tmp64)
+        eng_s._iteration = 64
+        eng_s._agent_factory = object()  # 非 None 让 blind reconstruct 路径进
+
+        # mock verification_model: ainvoke 返可配置 novelty/verifiability JSON
+        class _FakeInfoLLM64:
+            def __init__(self, novelty, verifiability):
+                self._nov = novelty
+                self._ver = verifiability
+            async def ainvoke(self, messages):
+                _txt = (
+                    f'{{"novelty": {self._nov}, "verifiability": {self._ver}, '
+                    f'"reason": "mock eval"}}'
+                )
+                return type("R", (), {"content": _txt})()
+
+        # mock longterm: get_self_model + _infer_hyp_type 可配置
+        class _LongtermStub64:
+            def __init__(self, self_model=None, htype="other"):
+                self._sm = self_model or {}
+                self._htype = htype
+            def _infer_hyp_type(self, statement):
+                return self._htype
+            def get_self_model(self, dimension=None, hyp_type=None, max_age_days=7):
+                return dict(self._sm)
+        class _MemStub64:
+            def __init__(self, longterm):
+                self.longterm = longterm
+                class _Sess:
+                    reasoning_trace = []
+                self.session = _Sess()
+
+        # ── 64a: 高价值高预算 (novelty=0.9, verifiability=0.9 → info=0.81, no_self_model) ──
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64a = eng_s.hypothesis_graph.add_hypothesis(
+            "test high value hypothesis for encut convergence prediction statement")
+        eng_s.verification_model = _FakeInfoLLM64(0.9, 0.9)
+        eng_s.memory = _MemStub64(_LongtermStub64(self_model={}))
+        _info_a = asyncio.run(eng_s._evaluate_informativeness(_hid64a))
+        assert abs(_info_a["novelty"] - 0.9) < 1e-6, f"64a: novelty 应为 0.9, got {_info_a['novelty']}"
+        assert abs(_info_a["verifiability"] - 0.9) < 1e-6
+        assert abs(_info_a["expected_informativeness"] - 0.81) < 1e-6
+        eng_s._compute_verification_budget(_hid64a, _info_a["expected_informativeness"])
+        _vb_a = eng_s.hypothesis_graph._nodes[_hid64a].evidence["verification_budget"]
+        # 0.81 * 5 = 4.05 → int floor = 4
+        assert _vb_a["blind_rounds"] >= 4, \
+            f"64a: 高价值 blind_rounds 应 >= 4, got {_vb_a['blind_rounds']}"
+        assert _vb_a["ce_rounds"] >= 2, \
+            f"64a: 高价值 ce_rounds 应 >= 2, got {_vb_a['ce_rounds']}"
+        assert _vb_a["rationale"] == "no_self_model", \
+            f"64a: 空 self_model 应标 no_self_model, got {_vb_a['rationale']}"
+        # used 计数应初始化为 0
+        assert eng_s.hypothesis_graph._nodes[_hid64a].evidence["blind_rounds_used"] == 0
+        assert eng_s.hypothesis_graph._nodes[_hid64a].evidence["ce_rounds_used"] == 0
+        print("64a. 高价值 (info=0.81, no_self_model) → blind>=4 + ce>=2 + rationale=no_self_model OK")
+
+        # ── 64b: 低价值低预算 (novelty=0.4, verifiability=0.5 → info=0.2, no_self_model) ──
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64b = eng_s.hypothesis_graph.add_hypothesis(
+            "test low value duplicate hypothesis statement enough length")
+        eng_s.verification_model = _FakeInfoLLM64(0.4, 0.5)
+        eng_s.memory = _MemStub64(_LongtermStub64(self_model={}))
+        _info_b = asyncio.run(eng_s._evaluate_informativeness(_hid64b))
+        assert abs(_info_b["expected_informativeness"] - 0.2) < 1e-6
+        eng_s._compute_verification_budget(_hid64b, _info_b["expected_informativeness"])
+        _vb_b = eng_s.hypothesis_graph._nodes[_hid64b].evidence["verification_budget"]
+        # 0.2 * 5 = 1.0 → int = 1; 0.2 * 3 = 0.6 → int = 0
+        assert _vb_b["blind_rounds"] <= 1, \
+            f"64b: 低价值 blind_rounds 应 <= 1, got {_vb_b['blind_rounds']}"
+        assert _vb_b["ce_rounds"] == 0, \
+            f"64b: 低价值 ce_rounds 应 = 0, got {_vb_b['ce_rounds']}"
+        print("64b. 低价值 (info=0.2, no_self_model) → blind<=1 + ce=0 OK")
+
+        # ── 64c: self_model 调整 (固定 info=0.8, 变 self_model rate) ──
+        # base: blind = 0.8*5 = 4.0 → 4, ce = 0.8*3 = 2.4 → 2
+        _SM_LOW = {"composition|convergence": {"success": 3, "failure": 7, "rate": 0.3}}
+        _SM_HIGH = {"composition|convergence": {"success": 8, "failure": 2, "rate": 0.8}}
+
+        # 64c-1: rate=0.3 → *1.5, low_self_efficacy
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64c1 = eng_s.hypothesis_graph.add_hypothesis(
+            "test self model low efficacy hypothesis statement enough length")
+        eng_s.memory = _MemStub64(_LongtermStub64(self_model=_SM_LOW))
+        eng_s._compute_verification_budget(_hid64c1, 0.8)
+        _vb_c1 = eng_s.hypothesis_graph._nodes[_hid64c1].evidence["verification_budget"]
+        # 4.0 * 1.5 = 6.0 → 6; 2.4 * 1.5 = 3.6 → 3
+        assert _vb_c1["blind_rounds"] == 6, \
+            f"64c-1: low_self_efficacy blind 应 = 6 (4*1.5), got {_vb_c1['blind_rounds']}"
+        assert _vb_c1["ce_rounds"] == 3, \
+            f"64c-1: low_self_efficacy ce 应 = 3 (2.4*1.5 floor), got {_vb_c1['ce_rounds']}"
+        assert _vb_c1["rationale"] == "low_self_efficacy", \
+            f"64c-1: rationale 应 = low_self_efficacy, got {_vb_c1['rationale']}"
+        print("64c-1. self_model rate=0.3 → *1.5 + low_self_efficacy OK")
+
+        # 64c-2: rate=0.8 → *0.7, high_self_efficacy
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64c2 = eng_s.hypothesis_graph.add_hypothesis(
+            "test self model high efficacy hypothesis statement enough length")
+        eng_s.memory = _MemStub64(_LongtermStub64(self_model=_SM_HIGH))
+        eng_s._compute_verification_budget(_hid64c2, 0.8)
+        _vb_c2 = eng_s.hypothesis_graph._nodes[_hid64c2].evidence["verification_budget"]
+        # 4.0 * 0.7 = 2.8 → 2; 2.4 * 0.7 = 1.68 → 1
+        assert _vb_c2["blind_rounds"] == 2, \
+            f"64c-2: high_self_efficacy blind 应 = 2 (4*0.7 floor), got {_vb_c2['blind_rounds']}"
+        assert _vb_c2["ce_rounds"] == 1, \
+            f"64c-2: high_self_efficacy ce 应 = 1 (2.4*0.7 floor), got {_vb_c2['ce_rounds']}"
+        assert _vb_c2["rationale"] == "high_self_efficacy", \
+            f"64c-2: rationale 应 = high_self_efficacy, got {_vb_c2['rationale']}"
+        print("64c-2. self_model rate=0.8 → *0.7 + high_self_efficacy OK")
+
+        # 64c-3: 空 dict → no_self_model, 基础预算
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64c3 = eng_s.hypothesis_graph.add_hypothesis(
+            "test self model empty hypothesis statement enough length")
+        eng_s.memory = _MemStub64(_LongtermStub64(self_model={}))
+        eng_s._compute_verification_budget(_hid64c3, 0.8)
+        _vb_c3 = eng_s.hypothesis_graph._nodes[_hid64c3].evidence["verification_budget"]
+        assert _vb_c3["blind_rounds"] == 4, \
+            f"64c-3: no_self_model blind 应 = 4 (base), got {_vb_c3['blind_rounds']}"
+        assert _vb_c3["ce_rounds"] == 2, \
+            f"64c-3: no_self_model ce 应 = 2 (base), got {_vb_c3['ce_rounds']}"
+        assert _vb_c3["rationale"] == "no_self_model", \
+            f"64c-3: rationale 应 = no_self_model, got {_vb_c3['rationale']}"
+        print("64c-3. self_model 空 dict → no_self_model + 基础预算 OK")
+
+        # ── 64d: 预算耗尽停止 (blind_rounds=2, used=2, toggle on → 跳过 + budget_exhausted) ──
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64d = eng_s.hypothesis_graph.add_hypothesis(
+            "test budget exhausted blind reconstruct hypothesis statement")
+        eng_s._current_hyp_id_for_plan = _hid64d
+        _node64d = eng_s.hypothesis_graph._nodes[_hid64d]
+        _node64d.evidence["verification_budget"] = {
+            "blind_rounds": 2, "ce_rounds": 1,
+            "rationale": "no_self_model", "informativeness": 0.5,
+        }
+        _node64d.evidence["blind_rounds_used"] = 2  # 已达上限
+        _node64d.evidence["ce_rounds_used"] = 0
+        eng_s.memory = _MemStub64(_LongtermStub64(self_model={}))
+        _dispatched_d: list[str] = []
+
+        class _MockDispatchSentinel64:
+            async def dispatch(self, spec, task, context=None, **kw):
+                _dispatched_d.append(spec)
+                raise AssertionError(
+                    f"64d: 预算耗尽不应 dispatch, got {spec}"
+                )
+        _sub_mod64.SubagentDispatch = _MockDispatchSentinel64
+        _os64.environ["HUGINN_PER_HYP_BUDGET"] = "1"
+        try:
+            _results64d = {"tests_passed": True, "grader_reward": 0.9}
+            asyncio.run(eng_s._blind_reconstruct_verify(None, _results64d))
+            assert not _dispatched_d, \
+                f"64d: 预算耗尽应跳过 dispatch, got {_dispatched_d}"
+            assert _node64d.evidence.get("budget_exhausted") is True, \
+                "64d: 应标 budget_exhausted"
+            assert _results64d.get("blind_reconstruction", {}).get("skipped") == "budget_exhausted", \
+                "64d: results 应标 skipped=budget_exhausted"
+            # blind_rounds_used 不应再增 (已达上限, 直接 return)
+            assert _node64d.evidence["blind_rounds_used"] == 2
+            print("64d. 预算耗尽 (blind used=2 >= budget=2) → 跳过 dispatch + budget_exhausted OK")
+        finally:
+            _os64.environ.pop("HUGINN_PER_HYP_BUDGET", None)
+
+        # ── 64e: toggle off 降级 (同 64d 预算配置, 但 toggle off → 不检查, 走原逻辑) ──
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64e = eng_s.hypothesis_graph.add_hypothesis(
+            "test toggle off backward compat blind reconstruct statement")
+        eng_s._current_hyp_id_for_plan = _hid64e
+        _node64e = eng_s.hypothesis_graph._nodes[_hid64e]
+        _node64e.evidence["verification_budget"] = {
+            "blind_rounds": 2, "ce_rounds": 1,
+            "rationale": "no_self_model", "informativeness": 0.5,
+        }
+        _node64e.evidence["blind_rounds_used"] = 2  # 已达上限, 但 toggle off 应忽略
+        _node64e.evidence["ce_rounds_used"] = 0
+        eng_s.memory = _MemStub64(_LongtermStub64(self_model={}))
+        _dispatched_e: list[str] = []
+
+        class _MockDispatchE64:
+            async def dispatch(self, spec, task, context=None, **kw):
+                _dispatched_e.append(spec)
+                return _SR64(
+                    summary='{"holds": true, "confidence": 0.8}',
+                    full_output="", success=True, spec_name=spec,
+                )
+        _sub_mod64.SubagentDispatch = _MockDispatchE64
+        # toggle off: 不设 HUGINN_PER_HYP_BUDGET (默认 off)
+        _os64.environ.pop("HUGINN_PER_HYP_BUDGET", None)
+        _results64e = {"tests_passed": True, "grader_reward": 0.9}
+        asyncio.run(eng_s._blind_reconstruct_verify(None, _results64e))
+        assert _dispatched_e == ["blind_reconstructor"], \
+            f"64e: toggle off 应走原逻辑 dispatch, got {_dispatched_e}"
+        assert _node64e.evidence.get("budget_exhausted") is None, \
+            "64e: toggle off 不应标 budget_exhausted"
+        # toggle off 时 blind_rounds_used 不应被 budget 检查递增 (保持 2)
+        assert _node64e.evidence["blind_rounds_used"] == 2, \
+            "64e: toggle off 不应改 blind_rounds_used"
+        print("64e. toggle off (HUGINN_PER_HYP_BUDGET=0) → 不检查 budget, 走原逻辑 dispatch OK")
+
+        # ── 64f: counterexample hunt budget 耗尽停止 (ce_rounds=1, used=1, toggle on) ──
+        eng_s.hypothesis_graph = _HG64(workspace=_tmp64)
+        _hid64f = eng_s.hypothesis_graph.add_hypothesis(
+            "test ce budget exhausted counterexample hunt statement")
+        eng_s._current_hyp_id_for_plan = _hid64f
+        _node64f = eng_s.hypothesis_graph._nodes[_hid64f]
+        _node64f.evidence["verification_budget"] = {
+            "blind_rounds": 2, "ce_rounds": 1,
+            "rationale": "no_self_model", "informativeness": 0.5,
+        }
+        _node64f.evidence["ce_rounds_used"] = 1  # 已达 ce 上限
+        _node64f.evidence["blind_rounds_used"] = 0
+        eng_s._speculator_hint = ""
+        eng_s._force_imaginate = False
+        _os64.environ["HUGINN_PER_HYP_BUDGET"] = "1"
+        try:
+            eng_s._trigger_counterexample_hunt()
+            assert _node64f.evidence.get("budget_exhausted") is True, \
+                "64f: ce 预算耗尽应标 budget_exhausted"
+            assert eng_s._force_imaginate is False, \
+                "64f: ce 预算耗尽应跳过 (不设 _force_imaginate)"
+            assert "counterexample" not in (eng_s._speculator_hint or "").lower(), \
+                "64f: ce 预算耗尽不应注入 counterexample hint"
+            print("64f. ce 预算耗尽 (used=1 >= budget=1) → 跳过 counterexample hunt + budget_exhausted OK")
+        finally:
+            _os64.environ.pop("HUGINN_PER_HYP_BUDGET", None)
+
+        # 恢复
+        eng_s.memory = None
+    finally:
+        _sub_mod64.SubagentDispatch = _orig_dispatch_cls64
+        _os64.environ.pop("HUGINN_PER_HYP_BUDGET", None)
+        _sh64.rmtree(_tmp64, ignore_errors=True)
+
+    # ── P1 Task 6: Curiosity Bonus Hint ──────────────────────────────
+    # 6 场景: toggle off 空 / 有弱簇注入 [CURIOSITY] / 无弱簇空 / 样本不足空 / 无 memory 空 / 异常空.
+    # _build_curiosity_block 是 sync 方法, 直接调, 不走 asyncio.
+    import os as _os65
+
+    class _LongtermStub65:
+        def __init__(self, model: dict):
+            self._model = model
+        def get_self_model(self, dimension=None, hyp_type=None, max_age_days=7):
+            return self._model
+
+    class _MemStub65:
+        def __init__(self, model: dict):
+            self.longterm = _LongtermStub65(model)
+
+    # 65a: toggle off → 空块
+    _os65.environ.pop("HUGINN_CURIOSITY_HINT", None)
+    eng_s.memory = _MemStub65({"k": {"dimension": "d", "hyp_type": "h", "rate": 0.1, "success": 1, "failure": 9}})
+    _blk_65a = eng_s._build_curiosity_block()
+    assert _blk_65a == "", f"65a: toggle off 应返空, got {_blk_65a!r}"
+    print("65a. toggle off (HUGINN_CURIOSITY_HINT 未设) → 空块 OK")
+    eng_s.memory = None
+
+    # 65b: toggle on + 有弱簇 (rate=0.2, n=10) → [CURIOSITY] 块含该簇
+    _os65.environ["HUGINN_CURIOSITY_HINT"] = "1"
+    _weak_model = {
+        "composition|convergence": {
+            "dimension": "composition", "hyp_type": "convergence",
+            "rate": 0.2, "success": 2, "failure": 8,
+        },
+    }
+    eng_s.memory = _MemStub65(_weak_model)
+    _blk_65b = eng_s._build_curiosity_block()
+    assert "[CURIOSITY]" in _blk_65b, f"65b: 应含 [CURIOSITY], got {_blk_65b!r}"
+    assert "composition/convergence" in _blk_65b, f"65b: 应含弱簇摘要, got {_blk_65b!r}"
+    assert "rate=0.20" in _blk_65b, f"65b: 应含 rate, got {_blk_65b!r}"
+    print("65b. toggle on + 弱簇 (rate=0.2, n=10) → [CURIOSITY] 块含弱簇摘要 OK")
+
+    # 65c: toggle on + 只有强簇 (rate=0.8) → 空块
+    _strong_model = {
+        "structure|property_prediction": {
+            "dimension": "structure", "hyp_type": "property_prediction",
+            "rate": 0.8, "success": 8, "failure": 2,
+        },
+    }
+    eng_s.memory = _MemStub65(_strong_model)
+    _blk_65c = eng_s._build_curiosity_block()
+    assert _blk_65c == "", f"65c: 无弱簇应返空, got {_blk_65c!r}"
+    print("65c. toggle on + 仅强簇 (rate=0.8) → 空块 (无可好奇的方向) OK")
+
+    # 65d: toggle on + 样本不足 (n=2 < 3) → 空块
+    _small_model = {
+        "k|k": {"dimension": "d", "hyp_type": "h", "rate": 0.0, "success": 0, "failure": 2},
+    }
+    eng_s.memory = _MemStub65(_small_model)
+    _blk_65d = eng_s._build_curiosity_block()
+    assert _blk_65d == "", f"65d: 样本不足应返空, got {_blk_65d!r}"
+    print("65d. toggle on + 样本不足 (n=2 < 3) → 空块 (统计无意义) OK")
+
+    # 65e: toggle on + 无 memory → 空块
+    eng_s.memory = None
+    _blk_65e = eng_s._build_curiosity_block()
+    assert _blk_65e == "", f"65e: 无 memory 应返空, got {_blk_65e!r}"
+    print("65e. toggle on + 无 memory → 空块 (降级) OK")
+
+    # 65f: toggle on + get_self_model 抛异常 → 空块
+    class _BoomLT65:
+        def get_self_model(self, *a, **kw):
+            raise RuntimeError("boom")
+    class _BoomMem65:
+        longterm = _BoomLT65()
+    eng_s.memory = _BoomMem65()
+    _blk_65f = eng_s._build_curiosity_block()
+    assert _blk_65f == "", f"65f: 异常应降级空块, got {_blk_65f!r}"
+    print("65f. toggle on + get_self_model 异常 → 空块 (不崩) OK")
+    _os65.environ.pop("HUGINN_CURIOSITY_HINT", None)
+    eng_s.memory = None
+
+    # ── P1 Task 7: Self-goal 合成 ───────────────────────────────────
+    # lazy factory: bare instance via __new__, attrs set per-test.
+    # reuse for Task 7 (self-goal) + Task 8 (counterexample) selfchecks.
+    def _make_selfcheck_engine():
+        _e = AutoloopEngine.__new__(AutoloopEngine)
+        _e._current_phase = None
+        _e.model = None
+        return _e
+
+    import tempfile as _tf7
+    _os7 = __import__("os")
+    _os7.environ.pop("HUGINN_SELF_GOAL_SYNTHESIS", None)
+
+    import huginn.autoloop.goal_store as _gs_mod7
+    from huginn.autoloop.goal_store import GoalStore as _GS7
+    _tmpdir7 = _tf7.mkdtemp(prefix="t7_gs_")
+    _store7 = _GS7(__import__("pathlib").Path(_tmpdir7) / "t7.json")
+    _orig_get_gs7 = _gs_mod7.get_goal_store
+    _gs_mod7.get_goal_store = lambda: _store7
+
+    class _LT7:
+        def __init__(self, sm): self._sm = sm
+        def get_self_model(self, *a, **kw): return self._sm
+
+    class _MS7:
+        def __init__(self, sm): self.longterm = _LT7(sm)
+
+    # 66a: toggle off -> no goal
+    eng7a = _make_selfcheck_engine()
+    eng7a.memory = _MS7({"GAN/struct": {"rate": 0.1, "success": 1, "failure": 9,
+        "dimension": "GAN", "hyp_type": "struct"}})
+    asyncio.run(eng7a._synthesize_self_goal_if_ready())
+    assert len(_store7.list_goals()) == 0, "66a"
+    print("66a. toggle off -> no self-goal OK")
+
+    # 66b: toggle on + weak cluster -> pending_confirmation
+    _os7.environ["HUGINN_SELF_GOAL_SYNTHESIS"] = "1"
+    eng7b = _make_selfcheck_engine()
+    eng7b.memory = _MS7({"GAN/struct": {"rate": 0.1, "success": 1, "failure": 9,
+        "dimension": "GAN", "hyp_type": "struct"}})
+    asyncio.run(eng7b._synthesize_self_goal_if_ready())
+    _pb = _store7.list_pending_confirmation()
+    assert len(_pb) == 1, f"66b got {len(_pb)}"
+    _g7b = _pb[0]
+    assert _g7b.origin == "self"
+    assert _g7b.metadata.get("cluster_key") == "GAN/struct"
+    print("66b. weak cluster -> pending_confirmation OK")
+
+    # 66c: dedup
+    _before = len(_store7.list_goals())
+    asyncio.run(eng7b._synthesize_self_goal_if_ready())
+    assert len(_store7.list_goals()) == _before, "66c dedup"
+    print("66c. dedup OK")
+
+    # 66d: confirm -> active
+    _store7.confirm_self_goal(_g7b.id)
+    assert _store7.get_goal(_g7b.id).status == "active", "66d"
+    assert _store7.get_active().id == _g7b.id
+    assert _store7.list_pending_confirmation() == []
+    print("66d. confirm -> active OK")
+
+    # 66e: reject -> rejected + reason
+    eng7e = _make_selfcheck_engine()
+    eng7e.memory = _MS7({"TIO2/surf": {"rate": 0.15, "success": 1, "failure": 7,
+        "dimension": "TIO2", "hyp_type": "surf"}})
+    asyncio.run(eng7e._synthesize_self_goal_if_ready())
+    _pe = _store7.list_pending_confirmation()
+    assert len(_pe) == 1, "66e"
+    _g7e = _pe[0]
+    _store7.reject_self_goal(_g7e.id, reason="have surface tools")
+    _g7e2 = _store7.get_goal(_g7e.id)
+    assert _g7e2.status == "rejected"
+    assert _g7e2.metadata.get("rejection_reason") == "have surface tools"
+    print("66e. reject -> rejected + reason OK")
+
+    # 66f: strong cluster (rate=0.8) -> no goal
+    _store7f = _GS7(__import__("pathlib").Path(_tmpdir7) / "t7f.json")
+    _gs_mod7.get_goal_store = lambda: _store7f
+    eng7f = _make_selfcheck_engine()
+    eng7f.memory = _MS7({"FE/bulk": {"rate": 0.8, "success": 8, "failure": 2,
+        "dimension": "FE", "hyp_type": "bulk"}})
+    asyncio.run(eng7f._synthesize_self_goal_if_ready())
+    assert len(_store7f.list_goals()) == 0, "66f"
+    print("66f. strong cluster -> no goal OK")
+
+    # 66g: insufficient samples (n=2) -> no goal
+    eng7g = _make_selfcheck_engine()
+    eng7g.memory = _MS7({"SI/defect": {"rate": 0.0, "success": 0, "failure": 2,
+        "dimension": "SI", "hyp_type": "defect"}})
+    asyncio.run(eng7g._synthesize_self_goal_if_ready())
+    assert len(_store7f.list_goals()) == 0, "66g"
+    print("66g. insufficient samples -> no goal OK")
+
+    # ── P1 Task 8: 对抗性 Counterexample 强化 ────────────────────────
+    _os8 = __import__("os")
+    _os8.environ.pop("HUGINN_PER_HYP_BUDGET", None)
+
+    class _MemStub8:
+        def __init__(self, mismatches=None, raise_on_recall=False):
+            self._mm = mismatches or []
+            self._raise = raise_on_recall
+        def recall_typed(self, memory_type, **kw):
+            if self._raise:
+                raise RuntimeError("boom")
+            return self._mm
+
+    import json as _json8
+
+    # 67a: has verification_mismatch -> [VERIFIER WEAKNESS] block injected
+    _mm_data = [
+        {"content": _json8.dumps({"hypothesis": "GaN bandgap > 3 eV",
+            "blind_holds": False, "orig_holds": True})}
+    ]
+    eng8a = _make_selfcheck_engine()
+    eng8a.memory = _MemStub8(mismatches=_mm_data)
+    eng8a._speculator_hint = ""
+    eng8a._trigger_counterexample_hunt()
+    assert "[VERIFIER WEAKNESS]" in (eng8a._speculator_hint or ""), "67a"
+    print("67a. verification_mismatch -> [VERIFIER WEAKNESS] injected OK")
+
+    # 67b: no mismatches -> no block
+    eng8b = _make_selfcheck_engine()
+    eng8b.memory = _MemStub8(mismatches=[])
+    eng8b._speculator_hint = ""
+    eng8b._trigger_counterexample_hunt()
+    assert "[VERIFIER WEAKNESS]" not in (eng8b._speculator_hint or ""), "67b"
+    print("67b. no mismatches -> no block OK")
+
+    # 67c: memory is None -> no block (graceful)
+    eng8c = _make_selfcheck_engine()
+    eng8c.memory = None
+    eng8c._speculator_hint = ""
+    eng8c._trigger_counterexample_hunt()
+    assert "[VERIFIER WEAKNESS]" not in (eng8c._speculator_hint or ""), "67c"
+    print("67c. memory=None -> graceful, no block OK")
+
+    # 67d: recall_typed raises -> no block (graceful)
+    eng8d = _make_selfcheck_engine()
+    eng8d.memory = _MemStub8(raise_on_recall=True)
+    eng8d._speculator_hint = ""
+    eng8d._trigger_counterexample_hunt()
+    assert "[VERIFIER WEAKNESS]" not in (eng8d._speculator_hint or ""), "67d"
+    print("67d. recall_typed raises -> graceful, no block OK")
+
+    _os7.environ.pop("HUGINN_SELF_GOAL_SYNTHESIS", None)
+    _gs_mod7.get_goal_store = _orig_get_gs7
+    import shutil as _sh7
+    _sh7.rmtree(_tmpdir7, ignore_errors=True)
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57 + P5 persistent goal 58 + KB query 59 + Task 2 derivation 三档 60 + Task 3 failure inversion 61 + Task 4 historical failure trace exemplar 62 + P0 Task 1 skill 抽象 63 + P0 Task 3 per-hyp 验证预算 64 + P1 Task 6 curiosity hint 65 + P1 Task 7 self-goal 66 + P1 Task 8 counterexample 67)")
 
 
 if __name__ == "__main__":

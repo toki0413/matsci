@@ -38,7 +38,7 @@ class Goal:
     text: str
     sub_goals: list[str] = field(default_factory=list)
     iteration: int = 0
-    status: str = "active"  # active | paused | completed | pending | failed
+    status: str = "active"  # active|paused|completed|pending|failed|pending_confirmation|rejected
     created_at: str = ""
     updated_at: str = ""
     session_id: str = ""
@@ -60,6 +60,7 @@ class Goal:
     # started_at 记录 goal 开始执行的时间, 用于算剩余预算.
     wall_clock_budget_seconds: float = 0.0
     started_at: str = ""
+    origin: str = "user"  # P1 Task 7: "user"|"self"
 
     def __post_init__(self) -> None:
         if not self.created_at:
@@ -97,6 +98,7 @@ class Goal:
             completion_condition=data.get("completion_condition"),
             wall_clock_budget_seconds=data.get("wall_clock_budget_seconds", 0.0),
             started_at=data.get("started_at", ""),
+            origin=data.get("origin", "user"),
         )
 
 
@@ -153,11 +155,18 @@ class GoalStore:
 
     # ── CRUD ──────────────────────────────────────────────────────
 
-    def create_goal(self, text: str, session_id: str = "") -> Goal:
+    def create_goal(
+        self, text: str, session_id: str = "",
+        origin: str = "user", status: str = "active",
+        metadata: dict[str, Any] | None = None,
+    ) -> Goal:
         goal = Goal(
             id=f"goal_{uuid.uuid4().hex[:8]}",
             text=text,
             session_id=session_id,
+            origin=origin,
+            status=status,
+            metadata=metadata or {},
         )
         with self._lock:
             self._goals[goal.id] = goal
@@ -301,6 +310,38 @@ class GoalStore:
     def complete(self, goal_id: str) -> Goal:
         return self.update_goal(goal_id, status="completed")
 
+    def confirm_self_goal(self, goal_id: str) -> Goal:
+        """P1 Task 7: confirm self-synthesized goal, enter scheduling."""
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            if goal is None:
+                raise KeyError(f"goal not found: {goal_id}")
+            goal.status = "active"
+            goal.metadata["confirmed_at"] = now_iso()
+            goal.updated_at = now_iso()
+            self._save()
+            return goal
+
+    def reject_self_goal(self, goal_id: str, reason: str = "") -> Goal:
+        """P1 Task 7: reject self-synthesized goal, mark rejected + reason."""
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            if goal is None:
+                raise KeyError(f"goal not found: {goal_id}")
+            goal.status = "rejected"
+            goal.metadata["rejected_at"] = now_iso()
+            if reason:
+                goal.metadata["rejection_reason"] = reason
+            goal.updated_at = now_iso()
+            self._save()
+            return goal
+
+    def list_pending_confirmation(self) -> list[Goal]:
+        """P1 Task 7: list self-synthesized goals pending confirmation."""
+        with self._lock:
+            return [g for g in self._goals.values()
+                    if g.status == "pending_confirmation"]
+
     def wall_clock_expired(self, goal_id: str) -> bool:
         """P5: 检查 goal 挂钟预算是否耗尽.
 
@@ -412,5 +453,38 @@ if __name__ == "__main__":
         assert _g5d.wall_clock_budget_seconds == 1.0, "budget 应持久化"
         assert _g5d.started_at != "", "started_at 应持久化"
         print("P5d. wall_clock_budget + started_at 持久化 OK")
+
+    # P1 Task 7: self-goal + confirm/reject
+    with tempfile.TemporaryDirectory() as tmp7:
+        s7 = GoalStore(Path(tmp7) / "t7.json")
+        g7a = s7.create_goal("master GaN DFT",
+            origin="self", status="pending_confirmation",
+            metadata={"cluster_key": "GAN/struct", "rate": 0.2, "n": 8})
+        assert g7a.origin == "self"
+        assert g7a.status == "pending_confirmation"
+        assert g7a.metadata.get("cluster_key") == "GAN/struct"
+        assert s7.list_pending_confirmation() == [g7a]
+        print("66a. self-goal create OK")
+        s7.confirm_self_goal(g7a.id)
+        g7b = s7.get_goal(g7a.id)
+        assert g7b.status == "active"
+        assert "confirmed_at" in g7b.metadata
+        assert s7.list_pending_confirmation() == []
+        assert s7.get_active().id == g7a.id
+        print("66b. confirm -> active OK")
+        g7c = s7.create_goal("master TiO2 surface",
+            origin="self", status="pending_confirmation",
+            metadata={"cluster_key": "TIO2/surf"})
+        s7.reject_self_goal(g7c.id, reason="have surface tools")
+        g7c2 = s7.get_goal(g7c.id)
+        assert g7c2.status == "rejected"
+        assert g7c2.metadata.get("rejection_reason") == "have surface tools"
+        assert "rejected_at" in g7c2.metadata
+        print("66c. reject -> rejected OK")
+        s7d = GoalStore(Path(tmp7) / "t7.json")
+        assert s7d.get_goal(g7a.id).origin == "self"
+        assert s7d.get_goal(g7a.id).metadata.get("cluster_key") == "GAN/struct"
+        assert s7d.get_goal(g7c.id).status == "rejected"
+        print("66d. persist OK")
 
     print("goal_store self-check OK")
