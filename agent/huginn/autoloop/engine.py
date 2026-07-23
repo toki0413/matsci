@@ -8945,6 +8945,43 @@ Please modify the code to address this task."""
             + "\n"
         )
 
+
+    def _build_world_model_block(self, hypothesis: str) -> str:
+        """P1 Task 5: retrieval world model (懒路) — predict_via_analogy.
+
+        把 hypothesis 当 query, 调 longterm.predict_via_analogy 检索相似
+        历史实验, 注入 [WORLD MODEL] block 给 plan prompt. LLM 参考历史
+        结果做 plan, 不是硬约束. toggle HUGINN_WORLD_MODEL 默认 off.
+        ceiling: 无外推能力, 仅返回历史最相似实验. 升级: P2 surrogate.
+        """
+        if os.environ.get("HUGINN_WORLD_MODEL", "0") != "1":
+            return ""
+        _mem = getattr(self, "memory", None)
+        if _mem is None or not hasattr(_mem, "longterm"):
+            return ""
+        try:
+            _pred = _mem.longterm.predict_via_analogy(
+                {"hypothesis": hypothesis[:200]},
+                top_k=3,
+                similarity_threshold=0.6,
+            )
+        except Exception:
+            return ""
+        if _pred.get("prediction_type") != "analogy":
+            return ""
+        _analogy = _pred.get("analogy", [])
+        if not _analogy:
+            return ""
+        _lines: list[str] = []
+        for _a in _analogy[:3]:
+            _content = str(_a.get("content", ""))[:120]
+            _score = _a.get("score", 0)
+            _lines.append(f"  - (sim={_score:.2f}) {_content}")
+        return (
+            "\n[WORLD MODEL] 历史相似实验结果 (懒路预测, 仅供参考, 无外推):\n"
+            + "\n".join(_lines) + "\n"
+        )
+
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
         # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
@@ -9276,6 +9313,11 @@ Math depth guidance (treat physics/chemistry as mathematics):
             principles_block = (
                 f"\n### Stable Principles (procedural memory)\n{principles_block}\n"
             )
+        # P1 Task 5: world model 预测注入 (懒路, toggle HUGINN_WORLD_MODEL)
+        world_model_block = self._build_world_model_block(hypothesis)
+        if world_model_block:
+            world_model_block = f"\n### World Model Prediction (analogy-based)\n{world_model_block}"
+
         # 视觉基元注入 (同 hypothesize)
         visual_block = getattr(self, "_last_visual_context", "")
         if visual_block:
@@ -9434,6 +9476,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 ("visual", visual_block),
                 ("kb", kb_block),
                 ("principles", principles_block),
+                ("world_model", world_model_block),
                 ("mem", mem_block),
                 ("pm", pm_block),
                 ("metacog", metacog_block),
@@ -12858,11 +12901,62 @@ def _selfcheck() -> None:
     assert "[VERIFIER WEAKNESS]" not in (eng8d._speculator_hint or ""), "67d"
     print("67d. recall_typed raises -> graceful, no block OK")
 
+    # ── P1 Task 5: World Model 接线 ────────────────────────────────
+    _os5 = __import__("os")
+    _os5.environ.pop("HUGINN_WORLD_MODEL", None)
+
+    class _LT5:
+        def predict_via_analogy(self, params, top_k=3, similarity_threshold=0.7):
+            if not getattr(self, "_enabled", True):
+                return {"prediction_type": "no_data", "analogy": [], "hint": "off"}
+            return getattr(self, "_result", {"prediction_type": "no_data", "analogy": []})
+
+    class _Mem5:
+        def __init__(self, result=None, enabled=True):
+            self.longterm = _LT5()
+            self.longterm._enabled = enabled
+            self.longterm._result = result or {"prediction_type": "no_data", "analogy": []}
+
+    # 68a: toggle off -> 空块
+    eng5a = _make_selfcheck_engine()
+    eng5a.memory = _Mem5()
+    _os5.environ.pop("HUGINN_WORLD_MODEL", None)
+    _blk5a = eng5a._build_world_model_block("test hypothesis")
+    assert _blk5a == "", f"68a: toggle off 应空, got {_blk5a!r}"
+    print("68a. toggle off -> 空块 OK")
+
+    # 68b: toggle on + analogy 预测 -> [WORLD MODEL] block
+    _os5.environ["HUGINN_WORLD_MODEL"] = "1"
+    _good_pred = {"prediction_type": "analogy", "analogy": [
+        {"content": "GaN encut=600 -> bandgap=1.7eV", "score": 0.85}]}
+    eng5b = _make_selfcheck_engine()
+    eng5b.memory = _Mem5(result=_good_pred)
+    _blk5b = eng5b._build_world_model_block("GaN bandgap calculation")
+    assert "[WORLD MODEL]" in _blk5b, f"68b: 应含 [WORLD MODEL], got {_blk5b!r}"
+    assert "sim=0.85" in _blk5b, f"68b: 应含 score, got {_blk5b!r}"
+    print("68b. toggle on + analogy -> [WORLD MODEL] block OK")
+
+    # 68c: toggle on + no_data -> 空块
+    eng5c = _make_selfcheck_engine()
+    eng5c.memory = _Mem5(result={"prediction_type": "no_data", "analogy": []})
+    _blk5c = eng5c._build_world_model_block("test")
+    assert _blk5c == "", f"68c: no_data 应空, got {_blk5c!r}"
+    print("68c. no_data -> 空块 OK")
+
+    # 68d: toggle on + memory=None -> 空块 (降级)
+    eng5d = _make_selfcheck_engine()
+    eng5d.memory = None
+    _blk5d = eng5d._build_world_model_block("test")
+    assert _blk5d == "", f"68d: memory=None 应空, got {_blk5d!r}"
+    print("68d. memory=None -> 空块 OK")
+
+    _os5.environ.pop("HUGINN_WORLD_MODEL", None)
+
     _os7.environ.pop("HUGINN_SELF_GOAL_SYNTHESIS", None)
     _gs_mod7.get_goal_store = _orig_get_gs7
     import shutil as _sh7
     _sh7.rmtree(_tmpdir7, ignore_errors=True)
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57 + P5 persistent goal 58 + KB query 59 + Task 2 derivation 三档 60 + Task 3 failure inversion 61 + Task 4 historical failure trace exemplar 62 + P0 Task 1 skill 抽象 63 + P0 Task 3 per-hyp 验证预算 64 + P1 Task 6 curiosity hint 65 + P1 Task 7 self-goal 66 + P1 Task 8 counterexample 67)")
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57 + P5 persistent goal 58 + KB query 59 + Task 2 derivation 三档 60 + Task 3 failure inversion 61 + Task 4 historical failure trace exemplar 62 + P0 Task 1 skill 抽象 63 + P0 Task 3 per-hyp 验证预算 64 + P1 Task 6 curiosity hint 65 + P1 Task 7 self-goal 66 + P1 Task 8 counterexample 67 + P1 Task 5 world model 68)")
 
 
 if __name__ == "__main__":
