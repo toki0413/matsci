@@ -176,6 +176,10 @@ class MemoryManager:
         # 跟 FTS5 结果按 content 去重, typed 优先保留. ponytail: 不替换 FTS5,
         # 在其结果上叠加. 升级路径: FTS5 + typed 合并到同一 SQL.
         typed_results = self._recall_typed_for_prompt(max_entries)
+        # P0 Task 1 retrieve 端 (705e4d9 漏实现): skill typed memory 单独格式化为
+        # [SKILL LIBRARY] block, 不混进通用 past knowledge 行.
+        skill_rows = [tr for tr in typed_results if tr.get("memory_type") == "skill"]
+        typed_results = [tr for tr in typed_results if tr.get("memory_type") != "skill"]
         if typed_results:
             seen = {r.get("content", "") for r in results if r.get("content")}
             for tr in typed_results:
@@ -208,6 +212,13 @@ class MemoryManager:
                     f"- [{r.get('category', 'fact')}] {r.get('content', '')}{provenance}{conflict_warn}"
                 )
             blocks.append("\n".join(lines))
+
+        # P0 Task 1: skill library 注入 — Voyager-style 参数化模板, retrieve 命中
+        # 直接给 LLM function_name + reasoning_template, 省去重复推理.
+        if skill_rows:
+            skill_block = self._format_skill_block(skill_rows)
+            if skill_block:
+                blocks.append(skill_block)
 
         # 同 session 内最近几条成功 tool call — 不带上 LLM 看不到上轮工具结果,
         # 多轮 tool 调用时会重复算/丢上下文. ponytail: 直接读 session.tool_calls,
@@ -246,6 +257,39 @@ class MemoryManager:
                 summary = summary[:max_chars] + "…"
             lines.append(f"- [{tc.tool_name}] {summary}")
         lines.append("## End Recent tool results")
+        return "\n".join(lines)
+
+    def _format_skill_block(self, skill_rows: list[dict]) -> str:
+        """格式化 skill typed memory 为 [SKILL LIBRARY] prompt block.
+
+        P0 Task 1 retrieve 端: skill_abstractor 写入的 skill 是 JSON content,
+        这里反序列化抽 function_name / reasoning_template / params / precondition
+        拼成 Voyager-style 模板块. 解析失败或缺 function_name 的 row 跳过.
+        ponytail: 直接 json.loads, 不校验 schema. 升级路径: pydantic model + 版本号.
+        """
+        lines = ["[SKILL LIBRARY]"]
+        for r in skill_rows:
+            try:
+                skill = json.loads(r.get("content", "{}"))
+            except (ValueError, TypeError):
+                continue
+            fn = skill.get("function_name", "")
+            if not fn:
+                continue
+            lines.append(f"function: {fn}")
+            params = skill.get("params", [])
+            if params:
+                lines.append(f"params: {', '.join(str(p) for p in params)}")
+            prec = skill.get("precondition", "")
+            if prec:
+                lines.append(f"precondition: {prec}")
+            rt = skill.get("reasoning_template", "")
+            if rt:
+                lines.append(f"reasoning_template: {rt}")
+            lines.append("source: skill_library")
+        if len(lines) <= 1:
+            return ""
+        lines.append("[END SKILL LIBRARY]")
         return "\n".join(lines)
 
     # --- Cross-session continuity ---
@@ -1033,6 +1077,7 @@ class MemoryManager:
         "cross_domain_transfer": 2,
         "persona_history": 3,
         "stable_principle": 4,
+        "skill": 5,
     }
 
     def _recall_typed_for_prompt(self, max_entries: int) -> list[dict]:
