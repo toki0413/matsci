@@ -408,6 +408,15 @@ def main():
         # P5: persistent goal mode — stagnation 不 early stop, 跑满 timeout.
         # rcb_runner.run() 会创建 active goal + wall_clock_budget_seconds.
         os.environ.setdefault("HUGINN_PERSISTENT_GOAL_MODE", "1")
+        # agi-frontier-gap-closure (705e4d9): 4 toggle 默认 off, extreme 模式全开.
+        # blind reconstruction 三档交叉验证 (964ea0c T2) — 需要 subagent dispatch
+        os.environ.setdefault("HUGINN_BLIND_RECONSTRUCTION", "1")
+        # skill 抽象: trace cluster >=3 自动归纳 skill typed memory
+        os.environ.setdefault("HUGINN_SKILL_ABSTRACTION", "1")
+        # curiosity hint: 扫 self_model 弱簇注入 [CURIOSITY] block
+        os.environ.setdefault("HUGINN_CURIOSITY_HINT", "1")
+        # self-goal 合成: 弱簇自动生成 pending_confirmation goal
+        os.environ.setdefault("HUGINN_SELF_GOAL_SYNTHESIS", "1")
     _mode_tag = "EXTREME" if args.extreme else "normal"
     print(f"[RCB] Starting agent (mode={_mode_tag}, timeout={args.timeout}s)")
     # v14 特性 (HintCoordinator / Meta-Trace / betti / Step3->Step2 回退) 在
