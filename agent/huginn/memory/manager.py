@@ -404,14 +404,28 @@ class MemoryManager:
         """Promote a successful computational result to long-term memory."""
         if not record.result or not record.result.data:
             return
-        content = (
-            f"{record.tool_name}: {json.dumps(record.result.data, default=str)[:500]}"
-        )
+        result_json = json.dumps(record.result.data, default=str)[:500]
+        # reasoning_trace 资产化: 有推理时存 [REASONING]+[RESULT] 双 block, 无时走原
+        # `tool_name: result` 单行格式. ponytail: 直接读 self.session, 不改函数签名;
+        # tags 里加 has_reasoning 标记 (跟 record_failed_direction 的 math_concept:X
+        # 同模式), retrieve 时按标记优先召回. 升级路径: 独立 has_reasoning 列.
+        reasoning = getattr(self.session, "reasoning_trace", []) or []
+        tags = [record.tool_name, "auto_promoted"]
+        if reasoning:
+            # 最近 N 条拼接后截断 2000 字符, 避免 content 撑爆 FTS5
+            recent = "\n".join(reasoning[-20:])[:2000]
+            content = (
+                f"[REASONING]\n{recent}\n\n[RESULT]\n"
+                f"{record.tool_name}: {result_json}"
+            )
+            tags.append("has_reasoning")
+        else:
+            content = f"{record.tool_name}: {result_json}"
         importance = self._score_importance(record)
         self.longterm.store(
             content=content,
             category="calculation",
-            tags=[record.tool_name, "auto_promoted"],
+            tags=tags,
             source=f"session:{self.session.session_id}/call:{record.call_id}",
             importance=importance,
             tier="mid",
@@ -1315,6 +1329,96 @@ class MemoryManager:
         return [p for _, p in scored[:top_k]]
 
 
+def _selfcheck_promote_reasoning() -> None:
+    """selfcheck: reasoning_trace 资产化到 _promote_tool_result.
+
+    A. 有 reasoning_trace → content 含 [REASONING]/[RESULT] block + tags 含 has_reasoning
+    B. 无 reasoning_trace → 走原 tool_name: result 单行格式, tags 无 has_reasoning
+    C. retrieve bonus: 同 keyword 下有推理条目优先于无推理条目 (stable sort 验证)
+    """
+    import json as _json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.session import ToolCallRecord
+    from huginn.types import ToolResult
+
+    tmp = tempfile.mkdtemp(prefix="huginn_promote_selfcheck_")
+    db = Path(tmp) / "memory.db"
+    ltm = LongTermMemory(db_path=str(db), enable_semantic=False)
+    mm = MemoryManager(longterm=ltm)
+
+    # 场景 A: 有 reasoning_trace
+    mm.session.reasoning_trace = [
+        "选 ENCUT=520 因为收敛测试显示 400 不够",
+        "排除 LDA, 用 PBE",
+    ]
+    mm._promote_tool_result(ToolCallRecord(
+        tool_name="vasp_tool",
+        input_args={},
+        result=ToolResult(data={"energy": -3.5, "converged": True}, success=True),
+    ))
+    rows = ltm.retrieve(query="energy", top_k=5, semantic=False)
+    assert rows, "场景 A: promote 后应能 retrieve 到"
+    a = rows[0]
+    assert "[REASONING]" in a["content"], "场景 A: content 缺 [REASONING] block"
+    assert "[RESULT]" in a["content"], "场景 A: content 缺 [RESULT] block"
+    assert "ENCUT=520" in a["content"], "场景 A: reasoning 文本丢失"
+    assert "has_reasoning" in _json.loads(a["tags"]), "场景 A: tags 缺 has_reasoning"
+    print("A: 有 reasoning → [REASONING]/[RESULT] block + has_reasoning tag OK")
+
+    # 场景 B: 无 reasoning_trace (空 list, 走原格式)
+    mm.session.reasoning_trace = []
+    mm._promote_tool_result(ToolCallRecord(
+        tool_name="lammps_tool",
+        input_args={},
+        result=ToolResult(data={"diffusivity": 1e-9}, success=True),
+    ))
+    rows_b = ltm.retrieve(query="diffusivity", top_k=5, semantic=False)
+    assert rows_b, "场景 B: promote 后应能 retrieve 到"
+    b = rows_b[0]
+    assert "[REASONING]" not in b["content"], "场景 B: 不应含 [REASONING] block"
+    assert b["content"].startswith("lammps_tool:"), (
+        f"场景 B: 应走原 tool_name: result 格式, got {b['content'][:40]!r}"
+    )
+    assert "has_reasoning" not in _json.loads(b["tags"]), "场景 B: 不应标 has_reasoning"
+    print("B: 无 reasoning → 原格式 + 无 has_reasoning OK")
+
+    # 场景 C: retrieve bonus — 同 keyword 下 has_reasoning 条目优先.
+    # 先插无推理 (低 rowid → SQL 先返), 再插有推理; 默认返回路径 stable sort
+    # 应把有推理那条提到 rows[0].
+    tmp_c = tempfile.mkdtemp(prefix="huginn_promote_bonus_")
+    db_c = Path(tmp_c) / "memory.db"
+    ltm_c = LongTermMemory(db_path=str(db_c), enable_semantic=False)
+    mm_c = MemoryManager(longterm=ltm_c)
+    mm_c.session.reasoning_trace = []
+    mm_c._promote_tool_result(ToolCallRecord(
+        tool_name="vasp_tool",
+        input_args={},
+        result=ToolResult(data={"energy": 1.0, "converged": True}, success=True),
+    ))
+    mm_c.session.reasoning_trace = ["用 PBE 因为 LDA 低估 gap"]
+    mm_c._promote_tool_result(ToolCallRecord(
+        tool_name="vasp_tool",
+        input_args={},
+        result=ToolResult(data={"energy": 2.0, "converged": True}, success=True),
+    ))
+    rows_c = ltm_c.retrieve(query="energy", top_k=5, semantic=False)
+    assert len(rows_c) >= 2, f"场景 C: 应召回 >= 2 条, got {len(rows_c)}"
+    top = rows_c[0]
+    assert "has_reasoning" in _json.loads(top["tags"]), (
+        f"场景 C: retrieve bonus 失败, rows[0] 应是 has_reasoning 条目, "
+        f"tags={_json.loads(top['tags'])}"
+    )
+    print("C: retrieve bonus — has_reasoning 优先 OK")
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(tmp_c, ignore_errors=True)
+    print("promote reasoning selfcheck OK (A/B/C)")
+
+
 # === 自检 ===
 if __name__ == "__main__":
     import sys
@@ -1509,3 +1613,5 @@ if __name__ == "__main__":
     import shutil
     shutil.rmtree(tmpdir_m, ignore_errors=True)
     print("all self-checks passed (distill + M block)")
+
+    _selfcheck_promote_reasoning()

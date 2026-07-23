@@ -97,7 +97,7 @@ from huginn.coder.loop import CoderRunner
 from huginn.config import get_settings
 # C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
 # C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
-from huginn.context_builder import format_kb_chunks, load_meta_trace_text
+from huginn.context_builder import format_kb_chunks, load_meta_trace_text, should_inject_kb
 from huginn.exploration.orchestrator import ExplorationOrchestrator
 from huginn.exploration.strategies import ParetoPruningStrategy
 from huginn.interaction.progress import ProgressTracker, get_progress_tracker
@@ -647,11 +647,40 @@ class AutoloopEngine:
                 "error in _dispatch_stage_event: bus.dispatch failed", exc_info=True
             )
 
+    def _extract_search_query(self, context: dict[str, Any]) -> str:
+        """从 context 提取有意义的检索词, 不直接 dump JSON.
+
+        之前用 json.dumps(context)[:500] 做 KB/KG/memory 三路检索的 query,
+        但 JSON 语法噪声 (引号/括号/key名/timestamp) 会淹没语义锚点,
+        embedding 质量差. 只取 objective + 文件名 + error 关键词.
+        """
+        parts: list[str] = []
+        # objective 是最重要的语义锚点
+        obj = context.get("objective") or context.get("goal") or ""
+        if not obj:
+            obj = getattr(self, "_objective", "") or ""
+        if obj:
+            parts.append(obj[:200])
+        # 文件名暗示领域 (diffusion_analysis.py → 扩散)
+        for f in (context.get("changed_files") or [])[:3]:
+            name = str(f).split()[-1] if " " in str(f) else str(f)
+            parts.append(name)
+        # error 关键词
+        for e in (context.get("error_patterns") or [])[:2]:
+            parts.append(str(e)[:100])
+        if not parts:
+            # 兜底: 没有可提取字段时回退到 JSON (总比空 query 好)
+            return json.dumps(context, ensure_ascii=False)[:200]
+        return " ".join(parts)[:400]
+
     def _build_kb_text(self, query: str) -> str:
         """检索领域知识库, 把命中 chunk 拼成 prompt 上下文块. KB 没装、
         空、查询失败都返回空串, 不影响 loop. 用 query_with_dedup 去重,
         避免分块重叠导致的近似重复段落浪费 token."""
         if not query:
+            return ""
+        # 按需注入: 非知识类 query 跳过 KB 检索, 省 token 和注意力
+        if not should_inject_kb(query):
             return ""
         kb = self._get_kb()
         if kb is None:
@@ -2981,6 +3010,35 @@ Respond JSON only:
         self._speculator_hint = (
             (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
         )
+        # Task 4: 拉历史 failure trace exemplar 给 LLM 参考.
+        # 复用 recall_failed_directions; 只挑 reason 含 [FAILURE TRACE]/[BREAK POINT]
+        # 标记的 (Task 3 反推产物), 旧数据 (简短 error 串) 跳过 — 没推理链, 当 exemplar
+        # 没价值. ponytail: recall 接口本身不接受 query, 只返最近 N 条; 用 persona 过滤.
+        try:
+            _hist_traces: list[str] = []
+            _mem = getattr(self, "memory", None)
+            if _mem is not None and hasattr(_mem, "recall_failed_directions"):
+                _failed = _mem.recall_failed_directions(
+                    limit=5,
+                    persona_id=getattr(self, "_last_persona", None),
+                )
+                for _h, _reason, _mc in _failed:
+                    if not _reason:
+                        continue
+                    if "[FAILURE TRACE]" not in _reason and "[BREAK POINT]" not in _reason:
+                        continue  # 旧数据: 简短 error 串, 当 exemplar 没价值
+                    _hist_traces.append(_reason[:500])
+                    if len(_hist_traces) >= 2:
+                        break
+            if _hist_traces:
+                _block = "[HISTORICAL FAILURE TRACES]"
+                for _i, _t in enumerate(_hist_traces, 1):
+                    _block += f"\n--- {_i} ---\n{_t}"
+                self._speculator_hint = (
+                    (getattr(self, "_speculator_hint", "") or "") + "\n" + _block
+                )
+        except Exception:
+            logger.debug("recall failed directions for exemplar failed", exc_info=True)
         logger.info("P2 counterexample hunt triggered, hint injected")
 
     def _distill_meta_trace(self, darwin_score: float, supported_ratio: float) -> None:
@@ -5244,13 +5302,15 @@ Respond JSON only:
     async def _blind_reconstruct_verify(
         self, execution_result: Any, results: dict[str, Any],
     ) -> None:
-        """P1: 盲重建 + support/refute 闭环.
+        """P1: 盲重建 + support/refute 闭环 (Task 2 升级为三档交叉验证).
 
         1. 拿当前 hypothesis statement (不传 proof/evidence)
-        2. SubagentDispatch("blind_reconstructor") 独立推导
-        3. 比对盲重建 holds vs execution_result 是否一致
-        4. 一致 → hypothesis_graph.support, 不一致 → hypothesis_graph.refute
-        5. 写 FAILED.md/PROVED.md (P0 已接入)
+        2. SubagentDispatch("blind_reconstructor") 独立推导, 返 holds + derivation
+        3. 三档判定:
+           - holds match + derivation 一致 → strong support (写 PROVED.md)
+           - holds match + derivation 冲突 → weak (不调 support, further_verification)
+           - holds mismatch → refute (写 FAILED.md, evidence 含 blind derivation)
+           - 缺 derivation / 缺 orig reasoning → 走原两档 (legacy)
         """
         _hyp_id = getattr(self, "_current_hyp_id_for_plan", None)
         if not _hyp_id:
@@ -5296,29 +5356,185 @@ Respond JSON only:
             or results.get("grader_reward", 0) > 0.5
             or results.get("generative_verify", {}).get("score", 0) > 0.5
         )
-        # 比对: 一致 → support, 不一致 → refute
+        # derivation 字段 (可能缺, 向后兼容)
+        _blind_derivation = str(_blind.get("derivation", "") or "").strip()
+        _has_derivation = bool(_blind_derivation)
+        # 取原始推理路径 (session.reasoning_trace 最近几条), 用于跟 blind derivation 比对
+        _orig_reasoning = ""
+        try:
+            _rt = getattr(self.memory.session, "reasoning_trace", None) or []
+            if _rt:
+                _orig_reasoning = "\n".join(str(_x) for _x in _rt[-5:])[:2000]
+        except Exception:
+            logger.debug("orig reasoning_trace extract failed", exc_info=True)
+        # derivation 语义一致性: 仅当 blind+orig 都有内容时才判
+        # ponytail: LLM zero-shot 判语义一致, 失败降级 token Jaccard heuristic
+        # ceiling: heuristic 抓不到同义改写; 升级换 embedding cosine > 0.85
+        _derivation_consistent: bool | None = None
+        if _has_derivation and _orig_reasoning:
+            try:
+                _derivation_consistent = await self._judge_derivation_consistency(
+                    _blind_derivation, _orig_reasoning,
+                )
+            except Exception:
+                logger.debug("derivation consistency judge crashed", exc_info=True)
+                _derivation_consistent = None
         _evidence = {
             "modality": "blind_reconstruction",
             "data_source": f"subagent:{_res.spec_name}",
             "blind_holds": _blind_holds,
             "blind_confidence": float(_blind.get("confidence", 0.5)),
-            "blind_derivation": str(_blind.get("derivation", ""))[:500],
+            "blind_derivation": _blind_derivation[:500],
             "orig_holds": _orig_holds,
+            "orig_reasoning_excerpt": _orig_reasoning[:500],
+            "derivation_consistent": _derivation_consistent,
             "tests_passed": results.get("tests_passed"),
             "grader_reward": results.get("grader_reward"),
         }
-        if _blind_holds == _orig_holds:
-            self.hypothesis_graph.support(_hyp_id, _evidence)
-            results["blind_reconstruction"] = {"match": True, **_evidence}
-            logger.info("P1 blind reconstruct: match → support %s", _hyp_id)
-        else:
+        if _blind_holds != _orig_holds:
+            # holds mismatch → refute (走原逻辑, evidence 含 blind derivation)
             _evidence["errors"] = (
                 f"blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
                 f"mismatch — blind reconstruction disagrees with execution result"
             )
+            _evidence["verification_level"] = "refute"
             self.hypothesis_graph.refute(_hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": False, **_evidence}
             logger.info("P1 blind reconstruct: mismatch → refute %s", _hyp_id)
+            return
+        # holds match — 按 derivation 一致性分档
+        if _derivation_consistent is None:
+            # 缺 derivation 或缺 orig reasoning → 走原两档 (legacy, 向后兼容)
+            _evidence["verification_level"] = "legacy"
+            self.hypothesis_graph.support(_hyp_id, _evidence)
+            results["blind_reconstruction"] = {"match": True, **_evidence}
+            logger.info("P1 blind reconstruct: legacy match → support %s", _hyp_id)
+        elif _derivation_consistent:
+            # holds match + derivation 一致 → strong support
+            _evidence["verification"] = "blind_strong"
+            _evidence["verification_level"] = "strong"
+            self.hypothesis_graph.support(_hyp_id, _evidence)
+            results["blind_reconstruction"] = {"match": True, **_evidence}
+            logger.info("P1 blind reconstruct: strong match → support %s", _hyp_id)
+        else:
+            # holds match + derivation 冲突 → weak, 不调 support, 不写 PROVED.md
+            _evidence["verification_level"] = "weak"
+            _evidence["further_verification_needed"] = True
+            results["blind_reconstruction"] = {"match": True, **_evidence}
+            logger.info("P1 blind reconstruct: weak (derivation 冲突) %s", _hyp_id)
+
+    async def _judge_derivation_consistency(
+        self, blind_derivation: str, orig_reasoning: str,
+    ) -> bool | None:
+        """LLM zero-shot 比对 blind derivation 与原始推理路径是否语义一致.
+
+        Returns True=一致 / False=冲突 / None=无法判 (heuristic 也判不出时).
+
+        ponytail: 复用 verification_model.ainvoke 路径 (跟 trajectory_pattern 同款),
+                  不新增模型注册. LLM 失败降级到 token Jaccard > 0.3
+                  (ceiling: 抓不到同义改写; 升级换 embedding cosine > 0.85).
+        """
+        if not blind_derivation or not orig_reasoning:
+            return None
+        # 1. LLM 判
+        try:
+            import json as _json_jdg
+            from langchain_core.messages import HumanMessage, SystemMessage
+            _sys = SystemMessage(content=(
+                "You are a semantic consistency judge. Compare two reasoning paths "
+                "and decide if they are semantically consistent (same conclusion via "
+                "compatible reasoning, even if worded differently) or in conflict "
+                "(same conclusion but contradictory reasoning steps/assumptions).\n\n"
+                "Output ONLY a JSON object: "
+                '{"consistent": true|false, "reason": "..."}'
+            ))
+            _human = HumanMessage(content=(
+                f"## Reasoning path A (blind reconstruction)\n"
+                f"{blind_derivation[:1500]}\n\n"
+                f"## Reasoning path B (original)\n{orig_reasoning[:1500]}\n\n"
+                "Are A and B semantically consistent? Output ONLY the JSON."
+            ))
+            _model = getattr(self, "verification_model", None) or self.model
+            _resp = await _model.ainvoke([_sys, _human])
+            _text = getattr(_resp, "content", str(_resp))
+            _text = _text.strip()
+            if _text.startswith("```"):
+                _nl = _text.find("\n")
+                _text = _text[_nl + 1:] if _nl > 0 else _text[3:]
+                if _text.endswith("```"):
+                    _text = _text[:-3]
+                _text = _text.strip()
+            _verdict = _json_jdg.loads(_text)
+            return bool(_verdict.get("consistent", False))
+        except Exception:
+            logger.debug(
+                "LLM derivation consistency judge failed, fallback heuristic",
+                exc_info=True,
+            )
+        # 2. 降级: token Jaccard > 0.3 视为一致
+        # ponytail: heuristic ceiling 是抓不到同义改写 (例如 "use ENCUT=520"
+        # vs "ENCUT should be 520"); 升级路径换 sentence-transformers cosine > 0.85
+        try:
+            import re as _re_jdg
+            _tok_a = set(_re_jdg.findall(r"\w+", blind_derivation.lower()))
+            _tok_b = set(_re_jdg.findall(r"\w+", orig_reasoning.lower()))
+            if not _tok_a or not _tok_b:
+                return None
+            _jac = len(_tok_a & _tok_b) / len(_tok_a | _tok_b)
+            return _jac > 0.3
+        except Exception:
+            return None
+
+    async def _invert_failure_trace(
+        self, input_params: str, failed_result: str, failure_mode: str = "",
+    ) -> str:
+        """Task 3: 失败时反推完整 failure reasoning trace.
+
+        复用 blind_reconstructor 的 dispatch 模式, 调 failure_inverter subagent
+        从 (input, failed_result) 反推"为什么这个 input 会导致这个 failed result".
+        返回结构化文本含 [FAILURE TRACE]/[BREAK POINT]/[COUNTERFACTUAL] 三段.
+        任何失败返回空串 — 失败反推本身是 enhancement, 不能阻塞主流程.
+
+        ponytail: 不引入新 dispatch 路径, 复用 SubagentDispatch("failure_inverter").
+        升级路径: 多次 sample 投票降单次偏差; 当前一次 dispatch 够用.
+        """
+        if self._agent_factory is None:
+            logger.debug("Task 3 failure inversion: no agent_factory, skip")
+            return ""
+        from huginn.agents.subagent import SubagentDispatch
+        _dispatch = SubagentDispatch()
+        _task = (
+            f"Invert the failure reasoning: why does this input lead to this "
+            f"failed result? At which step does it break? What counterfactual "
+            f"change could make it work? Output JSON.\n\n"
+            f"Input parameters:\n{input_params}\n\n"
+            f"Failed result:\n{failed_result}\n\n"
+            f"Failure mode: {failure_mode}"
+        )
+        _ctx = {"agent_factory": self._agent_factory}
+        try:
+            _res = await _dispatch.dispatch("failure_inverter", _task, context=_ctx)
+        except Exception:
+            logger.debug("failure inversion dispatch failed", exc_info=True)
+            return ""
+        if not _res.success or not _res.summary:
+            return ""
+        import json as _json_inv
+        try:
+            _inv = _json_inv.loads(_res.summary)
+        except Exception:
+            logger.debug("failure inversion summary not JSON, skip")
+            return ""
+        _reasoning = str(_inv.get("failure_reasoning", "") or "").strip()
+        _break = str(_inv.get("failure_point", "") or "").strip()
+        _counter = str(_inv.get("counterfactual", "") or "").strip()
+        if not _reasoning:
+            return ""
+        return (
+            f"[FAILURE TRACE]\n{_reasoning}\n\n"
+            f"[BREAK POINT]\n{_break}\n\n"
+            f"[COUNTERFACTUAL]\n{_counter}"
+        )
 
     async def _run_pytest(self) -> dict[str, Any]:
         """Run pytest in workspace, return results dict."""
@@ -6798,9 +7014,25 @@ Respond JSON only:
                     or validation.get("reason")
                     or json.dumps(validation, default=str)[:200]
                 )
+                # Task 3: toggle on 时反推 failure reasoning trace, 替换简短 error 串.
+                # 默认 off — 旧行为完全不变. 失败静默回退到原 _fail_reason.
+                if os.environ.get("HUGINN_FAILURE_INVERSION", "0") == "1":
+                    try:
+                        _inverted = await self._invert_failure_trace(
+                            input_params=str(hypothesis)[:500],
+                            failed_result=json.dumps(validation, default=str)[:1000],
+                            failure_mode=str(_fail_reason),
+                        )
+                        if _inverted:
+                            _fail_reason = _inverted
+                    except Exception:
+                        logger.debug(
+                            "failure inversion failed, fallback to original reason",
+                            exc_info=True,
+                        )
                 self.memory.record_failed_direction(
                     hypothesis_text=hypothesis[:200],
-                    reason=str(_fail_reason)[:400],
+                    reason=str(_fail_reason),
                     run_id=getattr(self, "_run_id", "") or "",
                     persona_id=getattr(self, "_last_persona", None),
                     math_concept="",
@@ -8251,8 +8483,9 @@ Please modify the code to address this task."""
                 "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
                 "(方法族/等价性陷阱/连通分量/缺口).\n"
             )
-        # 三路检索共用一个 query, 避免重复序列化 context 3 次
-        ctx_query = json.dumps(context, ensure_ascii=False)[:500]
+        # 三路检索共用一个 query — 从 context 提取有意义的检索词,
+        # 不用 json.dumps (JSON 语法噪声会淹没 embedding 语义锚点)
+        ctx_query = self._extract_search_query(context)
         # 领域知识库检索: 命中 first-principles 参考块就拼进 prompt
         kb_block = self._build_kb_text(query=ctx_query)
         if kb_block:
@@ -11040,7 +11273,432 @@ def _selfcheck() -> None:
     finally:
         _sh58.rmtree(_tmp58, ignore_errors=True)
 
-    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57 + P5 persistent goal 58)")
+    # 59. _extract_search_query — KB 检索词提取, 不再用 json.dumps
+    # 之前 json.dumps(context) 含 JSON 语法噪声, embedding 质量差
+    _eng59 = AutoloopEngine.__new__(AutoloopEngine)
+    _eng59._objective = "Optimize C-S-H defect kinetics"
+    # 标准 context: 有 goal + changed_files
+    _ctx59 = {
+        "changed_files": [" M diffusion_analysis.py", "?? new_file.py"],
+        "git_diff": "+def calc_diffusion(ca_si_ratio): ...",
+        "goal": "Optimize C-S-H defect kinetics",
+        "timestamp": "2026-07-04T10:00:00Z",
+    }
+    _q59 = _eng59._extract_search_query(_ctx59)
+    assert "Optimize C-S-H" in _q59, f"objective should be in query: {_q59}"
+    assert "diffusion_analysis.py" in _q59, f"filename should be in query: {_q59}"
+    assert "new_file.py" in _q59, f"second filename should be in query: {_q59}"
+    assert "{" not in _q59, f"JSON syntax should NOT be in query: {_q59}"
+    assert "timestamp" not in _q59.lower(), f"noise keys should NOT be in query: {_q59}"
+    print(f"59a. _extract_search_query standard → '{_q59[:80]}...' (no JSON noise) OK")
+
+    # context 用 objective 而非 goal
+    _ctx59b = {"objective": "Find band gap of GaN", "changed_files": ["band.py"]}
+    _q59b = _eng59._extract_search_query(_ctx59b)
+    assert "Find band gap of GaN" in _q59b
+    assert "band.py" in _q59b
+    print(f"59b. _extract_search_query objective key → '{_q59b}' OK")
+
+    # 空 context → fallback 到 JSON (总比空 query 好)
+    _q59c = _eng59._extract_search_query({})
+    assert len(_q59c) > 0, "empty context should produce non-empty fallback query"
+    print(f"59c. _extract_search_query empty → fallback JSON OK")
+
+    # 有 error_patterns
+    _ctx59d = {"goal": "debug convergence", "error_patterns": ["SCF not converged: max_iter=100"]}
+    _q59d = _eng59._extract_search_query(_ctx59d)
+    assert "debug convergence" in _q59d
+    assert "SCF not converged" in _q59d
+    print(f"59d. _extract_search_query with errors → '{_q59d[:80]}...' OK")
+
+    # 60. Task 2: 盲重建 derivation 三档交叉验证 (strong/weak/refute/legacy)
+    # 复用 56 的 mock SubagentDispatch 模式 + 给 eng_s.memory 灌 stub reasoning_trace
+    # + monkey-patch _judge_derivation_consistency 控制一致性 verdict.
+    import tempfile as _tf60, shutil as _sh60, os as _os60
+    import huginn.autoloop.engine as _eng_mod60
+    from huginn.agents.subagent import SubagentResult as _SR60
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG60
+    _tmp60 = Path(_tf60.mkdtemp(prefix="hgin_t2_"))
+    try:
+        eng_s.workspace = str(_tmp60)
+        eng_s._agent_factory = object()  # 非 None 让 blind reconstruct 路径进
+        # stub memory.session.reasoning_trace — 让 orig_reasoning 非空, 触发 judge
+        class _SessStub60:
+            reasoning_trace = [
+                "chose ENCUT=520 because convergence test showed plateau",
+                "system converged with these parameters",
+            ]
+        class _MemStub60:
+            session = _SessStub60()
+        eng_s.memory = _MemStub60()
+        from huginn.agents import subagent as _sub_mod60
+        _orig_dispatch_cls60 = _sub_mod60.SubagentDispatch
+        _os60.environ["HUGINN_BLIND_RECONSTRUCTION"] = "1"
+        try:
+            # 60a: holds=true + derivation 一致 → strong support + PROVED.md
+            eng_s.hypothesis_graph = _HG60(workspace=_tmp60)
+            _hid60a = eng_s.hypothesis_graph.add_hypothesis(
+                "test blind reconstruction strong case statement enough length")
+            eng_s._current_hyp_id_for_plan = _hid60a
+            class _MockDispatchA60:
+                async def dispatch(self, spec, task, context=None, **kw):
+                    return _SR60(
+                        summary='{"holds": true, "derivation": "ENCUT=520 converges per test", "confidence": 0.85}',
+                        full_output="", success=True, spec_name=spec,
+                    )
+            _sub_mod60.SubagentDispatch = _MockDispatchA60
+            async def _judge_true60(bd, orig):
+                return True
+            eng_s._judge_derivation_consistency = _judge_true60
+            _results60a = {"tests_passed": True, "grader_reward": 0.9}
+            _aio60 = asyncio
+            _aio60.run(eng_s._blind_reconstruct_verify(None, _results60a))
+            _node60a = eng_s.hypothesis_graph._nodes[_hid60a]
+            assert _node60a.status == "supported", \
+                f"strong 应 support, got {_node60a.status}"
+            assert _node60a.evidence.get("verification") == "blind_strong", \
+                "strong evidence 应含 verification=blind_strong"
+            assert _node60a.evidence.get("verification_level") == "strong"
+            assert _results60a["blind_reconstruction"]["match"] is True
+            _proved60a = _HG60.load_proved(_tmp60)
+            assert _hid60a in _proved60a, "strong 应写 PROVED.md"
+            print("60a. Task 2 strong (holds match + derivation 一致) → support + PROVED + verification=blind_strong OK")
+
+            # 60b: holds=true + derivation 冲突 → weak, 不调 support, further_verification
+            eng_s.hypothesis_graph = _HG60(workspace=_tmp60)
+            _hid60b = eng_s.hypothesis_graph.add_hypothesis(
+                "test blind reconstruction weak case statement enough length")
+            eng_s._current_hyp_id_for_plan = _hid60b
+            class _MockDispatchB60:
+                async def dispatch(self, spec, task, context=None, **kw):
+                    return _SR60(
+                        summary='{"holds": true, "derivation": "contradicts original path entirely", "confidence": 0.6}',
+                        full_output="", success=True, spec_name=spec,
+                    )
+            _sub_mod60.SubagentDispatch = _MockDispatchB60
+            async def _judge_false60(bd, orig):
+                return False
+            eng_s._judge_derivation_consistency = _judge_false60
+            _results60b = {"tests_passed": True, "grader_reward": 0.9}
+            _aio60.run(eng_s._blind_reconstruct_verify(None, _results60b))
+            _node60b = eng_s.hypothesis_graph._nodes[_hid60b]
+            assert _node60b.status == "untested", \
+                f"weak 不应调 support, status 应仍 untested, got {_node60b.status}"
+            assert _results60b["blind_reconstruction"]["verification_level"] == "weak"
+            assert _results60b["blind_reconstruction"]["further_verification_needed"] is True
+            assert _results60b["blind_reconstruction"]["match"] is True
+            _proved60b = _HG60.load_proved(_tmp60)
+            assert _hid60b not in _proved60b, "weak 不应写 PROVED.md"
+            print("60b. Task 2 weak (holds match + derivation 冲突) → 不调 support + further_verification_needed OK")
+
+            # 60c: holds=false (mismatch) → refute + FAILED.md + evidence 含 blind derivation
+            eng_s.hypothesis_graph = _HG60(workspace=_tmp60)
+            _hid60c = eng_s.hypothesis_graph.add_hypothesis(
+                "test blind reconstruction refute case statement enough length")
+            eng_s._current_hyp_id_for_plan = _hid60c
+            class _MockDispatchC60:
+                async def dispatch(self, spec, task, context=None, **kw):
+                    return _SR60(
+                        summary='{"holds": false, "derivation": "disagrees: counterexample found", "confidence": 0.7}',
+                        full_output="", success=True, spec_name=spec,
+                    )
+            _sub_mod60.SubagentDispatch = _MockDispatchC60
+            # refute 路径不依赖 judge 结果, 恢复成 True 避免污染
+            eng_s._judge_derivation_consistency = _judge_true60
+            _results60c = {"tests_passed": True, "grader_reward": 0.9}
+            _aio60.run(eng_s._blind_reconstruct_verify(None, _results60c))
+            _node60c = eng_s.hypothesis_graph._nodes[_hid60c]
+            assert _node60c.status == "refuted", \
+                f"mismatch 应 refute, got {_node60c.status}"
+            assert _node60c.evidence.get("verification_level") == "refute"
+            assert _node60c.evidence.get("blind_derivation", ""), \
+                "refute evidence 应含 blind derivation"
+            assert "disagrees" in _node60c.evidence.get("blind_derivation", "")
+            assert _results60c["blind_reconstruction"]["match"] is False
+            _failed60c = _HG60.load_failed(_tmp60)
+            assert _hid60c in _failed60c, "refute 应写 FAILED.md"
+            print("60c. Task 2 refute (holds mismatch) → refute + FAILED + evidence 含 blind derivation OK")
+
+            # 60d: 缺 derivation 字段 → 走原两档 (legacy)
+            eng_s.hypothesis_graph = _HG60(workspace=_tmp60)
+            _hid60d = eng_s.hypothesis_graph.add_hypothesis(
+                "test blind reconstruction legacy case statement enough length")
+            eng_s._current_hyp_id_for_plan = _hid60d
+            class _MockDispatchD60:
+                async def dispatch(self, spec, task, context=None, **kw):
+                    # 故意不返 derivation 字段 (老版本 blind_reconstructor 行为)
+                    return _SR60(
+                        summary='{"holds": true, "confidence": 0.8}',
+                        full_output="", success=True, spec_name=spec,
+                    )
+            _sub_mod60.SubagentDispatch = _MockDispatchD60
+            # judge 不应被调; 若被调说明分支逻辑错了, 用 sentinel 抓
+            async def _judge_sentinel60(bd, orig):
+                raise AssertionError("legacy 路径不应调 judge")
+            eng_s._judge_derivation_consistency = _judge_sentinel60
+            _results60d = {"tests_passed": True, "grader_reward": 0.9}
+            _aio60.run(eng_s._blind_reconstruct_verify(None, _results60d))
+            _node60d = eng_s.hypothesis_graph._nodes[_hid60d]
+            assert _node60d.status == "supported", \
+                f"legacy 应 support, got {_node60d.status}"
+            assert _node60d.evidence.get("verification_level") == "legacy"
+            assert _node60d.evidence.get("verification") is None, \
+                "legacy 不应打 blind_strong 标记"
+            assert _results60d["blind_reconstruction"]["match"] is True
+            print("60d. Task 2 legacy (缺 derivation) → 走原 support + verification_level=legacy OK")
+        finally:
+            _sub_mod60.SubagentDispatch = _orig_dispatch_cls60
+            eng_s.__dict__.pop("_judge_derivation_consistency", None)
+            _os60.environ.pop("HUGINN_BLIND_RECONSTRUCTION", None)
+    finally:
+        _sh60.rmtree(_tmp60, ignore_errors=True)
+
+    # 61. Task 3: 失败推理反推 (failure trace inversion) — toggle on/off
+    # 复用 60 的 mock SubagentDispatch 模式, 但走 _learn 的失败分支,
+    # 捕获 record_failed_direction 的 reason 参数验证反推 trace 是否替换原 error 串.
+    import tempfile as _tf61, shutil as _sh61, os as _os61
+    from huginn.agents.subagent import SubagentResult as _SR61
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG61
+    _tmp61 = Path(_tf61.mkdtemp(prefix="hgin_t3_"))
+    try:
+        # 给 eng_s 配齐 _learn 跑通所需的最小 stub. _learn 触碰多个子系统
+        # (memory / kg / hypothesis_graph / 各种 *_applied_patches), 失败路径
+        # (record_failed_direction) 才是这里要验的目标, 其余子系统给 stub 跳过.
+        eng_s.workspace = str(_tmp61)
+        eng_s._agent_factory = object()  # 非 None 让 _invert_failure_trace 进 dispatch 路径
+        eng_s.hypothesis_graph = _HG61(workspace=_tmp61)
+        eng_s._merged_graph = None
+        eng_s._iteration = 61
+        eng_s._run_id = "test_run_61"
+        eng_s._last_persona = "tester"
+        eng_s._last_applied_patches = None
+        eng_s._last_hypothesis_blocks = None
+        eng_s._last_plan_blocks = None
+        eng_s._last_context = {}
+        eng_s._speculator_hint = ""
+        eng_s._evals_history = []
+        eng_s._get_plan_store = lambda: None
+        eng_s._get_kb = lambda: None
+        eng_s._get_evolution = lambda: None  # r_phys None 时不会被调, 防御性给
+
+        async def _no_directive61(*a, **kw):
+            return None
+        eng_s._generate_next_loop_directive = _no_directive61
+
+        class _KGStub61:
+            # KG 块整体在 try/except 里, 失败也只 warning; 给最小可工作 stub
+            class _G61:
+                nodes: dict = {}
+            _graph = _G61()
+            def add_entity(self, **kw):
+                return "fake_eid"
+            def add_hyperedge(self, *a, **kw):
+                return None
+            def save(self):
+                pass
+        eng_s.kg = _KGStub61()
+
+        _captured_fd: list[dict] = []
+        class _MemStub61:
+            def add_message(self, *a, **kw):
+                pass
+            def remember(self, *a, **kw):
+                pass
+            def remember_typed(self, *a, **kw):
+                return "fake_typed_id"
+            def record_failed_direction(self, **kw):
+                _captured_fd.append(kw)
+                return "fake_fd_id"
+            def store_plan_progress(self, *a, **kw):
+                pass
+            def distill_episodic_to_procedural(self, *a, **kw):
+                return None
+        eng_s.memory = _MemStub61()
+
+        from huginn.agents import subagent as _sub_mod61
+        _orig_dispatch_cls61 = _sub_mod61.SubagentDispatch
+        try:
+            # 61a: toggle on → mock 返 JSON 含 failure_reasoning →
+            #      _invert_failure_trace 返回 [FAILURE TRACE] 结构化文本 →
+            #      record_failed_direction 的 reason 字段是反推 trace (不是原 error)
+            _os61.environ["HUGINN_FAILURE_INVERSION"] = "1"
+            _captured_fd.clear()
+
+            class _MockDispatchA61:
+                async def dispatch(self, spec, task, context=None, **kw):
+                    assert spec == "failure_inverter", \
+                        f"应调 failure_inverter spec, got {spec}"
+                    return _SR61(
+                        summary=(
+                            '{"failure_reasoning": "input X violates constraint Y '
+                            'because step 3 assumes Z which is false under these '
+                            'parameters; the chain breaks at the convergence check '
+                            'where the residual never drops below threshold", '
+                            '"failure_point": "step 3: constraint Y check fails — '
+                            'residual stays above threshold", '
+                            '"counterfactual": "reduce X by 50% or relax threshold '
+                            'so the convergence loop can complete", '
+                            '"confidence": 0.8}'
+                        ),
+                        full_output="", success=True, spec_name=spec,
+                    )
+            _sub_mod61.SubagentDispatch = _MockDispatchA61
+            _aio61 = asyncio
+            _aio61.run(eng_s._learn(
+                "test hypothesis for failure inversion on path",
+                {"mode": "test"},
+                {"tests_passed": False, "error": "original short error"},
+            ))
+            assert _captured_fd, "toggle on: record_failed_direction 应被调"
+            _reason_a = _captured_fd[0]["reason"]
+            assert "[FAILURE TRACE]" in _reason_a, \
+                f"toggle on reason 应含 [FAILURE TRACE], got: {_reason_a[:120]!r}"
+            assert "[BREAK POINT]" in _reason_a, "reason 应含 [BREAK POINT]"
+            assert "[COUNTERFACTUAL]" in _reason_a, "reason 应含 [COUNTERFACTUAL]"
+            assert _reason_a.startswith("[FAILURE TRACE]"), \
+                "reason 应被反推 trace 替换 (不是原 error 串)"
+            assert "original short error" not in _reason_a, \
+                "toggle on: 原 error 串不应出现在 reason 里"
+            print("61a. Task 3 toggle on → _invert_failure_trace 替换 reason 为反推 trace OK")
+
+            # 61b: toggle off → 不调 failure_inverter → reason 字段是原 error 串
+            _os61.environ["HUGINN_FAILURE_INVERSION"] = "0"
+            _captured_fd.clear()
+            _dispatched_specs: list[str] = []
+
+            class _MockDispatchSentinel61:
+                async def dispatch(self, spec, task, context=None, **kw):
+                    _dispatched_specs.append(spec)
+                    raise AssertionError(
+                        f"toggle off 时不应调 SubagentDispatch({spec!r})"
+                    )
+            _sub_mod61.SubagentDispatch = _MockDispatchSentinel61
+            _aio61.run(eng_s._learn(
+                "test hypothesis for failure inversion off path",
+                {"mode": "test"},
+                {"tests_passed": False, "error": "original short error"},
+            ))
+            assert _captured_fd, \
+                "toggle off: record_failed_direction 仍应被调 (走原逻辑)"
+            _reason_b = _captured_fd[0]["reason"]
+            assert _reason_b == "original short error", \
+                f"toggle off reason 应是原 error 串, got: {_reason_b!r}"
+            assert not _dispatched_specs, \
+                f"toggle off 不应 dispatch failure_inverter, got {_dispatched_specs}"
+            print("61b. Task 3 toggle off → reason 是原 error 串 + 不调 failure_inverter OK")
+        finally:
+            _sub_mod61.SubagentDispatch = _orig_dispatch_cls61
+            _os61.environ.pop("HUGINN_FAILURE_INVERSION", None)
+    finally:
+        _sh61.rmtree(_tmp61, ignore_errors=True)
+
+    # 62. Task 4: _trigger_counterexample_hunt 注入历史 failure trace exemplar
+    # mock recall_failed_directions 控制返回, 验 exemplar block 拼接 + 降级.
+    try:
+        # 62a: recall 返 2 条 reason 含 [FAILURE TRACE] → hint 含 [HISTORICAL FAILURE TRACES]
+        #      + 两条截断内容
+        eng_s._speculator_hint = ""
+        eng_s._force_imaginate = False
+        _trace_a = (
+            "[FAILURE TRACE]\nstep 3 assumes Z which is false under these params; "
+            "the chain breaks at convergence check where residual never drops "
+            "below threshold.\n\n[BREAK POINT]\nstep 3 residual stays high\n\n"
+            "[COUNTERFACTUAL]\nreduce X by 50%"
+        )
+        _trace_b = (
+            "[FAILURE TRACE]\ninput Y violates constraint because the relaxation "
+            "step assumes symmetry that does not hold for this crystal structure.\n\n"
+            "[BREAK POINT]\nrelaxation symmetry mismatch\n\n"
+            "[COUNTERFACTUAL]\nbreak symmetry explicitly"
+        )
+        # 截断验证用: 给 _trace_a 加一段长尾, 确认最终 hint 里被 [:500] 截掉
+        _trace_a_long = _trace_a + ("X" * 600)
+
+        class _MemStub62a:
+            def recall_failed_directions(self, limit=5, persona_id=None):
+                return [
+                    ("hyp A", _trace_a_long, ""),
+                    ("hyp B", _trace_b, ""),
+                    ("hyp C", "[FAILURE TRACE]\nthird should not appear", ""),
+                ]
+        eng_s.memory = _MemStub62a()
+        eng_s._last_persona = "tester62"
+        eng_s._trigger_counterexample_hunt()
+        _hint_62a = eng_s._speculator_hint or ""
+        assert "[HISTORICAL FAILURE TRACES]" in _hint_62a, \
+            "62a: hint 应含 [HISTORICAL FAILURE TRACES] block"
+        assert "--- 1 ---" in _hint_62a and "--- 2 ---" in _hint_62a, \
+            "62a: hint 应含两条 exemplar 编号"
+        assert "third should not appear" not in _hint_62a, \
+            "62a: 第 3 条不应出现 (只取前 2 条)"
+        # 截断验证: _trace_a_long 总长 > 500, hint 里不应含 600 个 X 的尾巴
+        assert "X" * 600 not in _hint_62a, \
+            "62a: reason 应被 [:500] 截断, 不应含完整长尾"
+        # 反推 trace 关键内容应保留 (前 500 字符内的内容)
+        assert "step 3 assumes Z" in _hint_62a, \
+            "62a: trace A 前 500 字符内容应保留"
+        assert "input Y violates constraint" in _hint_62a, \
+            "62a: trace B 内容应保留"
+        # 原 counterexample hint 仍在
+        assert "counterexample" in _hint_62a.lower(), \
+            "62a: 原 counterexample hint 应仍在"
+        print("62a. Task 4 recall 返 2 条 [FAILURE TRACE] → hint 含 [HISTORICAL FAILURE TRACES] + 截断内容 OK")
+
+        # 62b: recall 返空 → 降级, hint 只含原 counterexample 关键词, 无 exemplar block
+        eng_s._speculator_hint = ""
+        eng_s._force_imaginate = False
+
+        class _MemStub62b:
+            def recall_failed_directions(self, limit=5, persona_id=None):
+                return []  # 首次失败该方向: 无历史
+        eng_s.memory = _MemStub62b()
+        eng_s._trigger_counterexample_hunt()
+        _hint_62b = eng_s._speculator_hint or ""
+        assert "[HISTORICAL FAILURE TRACES]" not in _hint_62b, \
+            "62b: recall 空 → 不应含 [HISTORICAL FAILURE TRACES] block"
+        assert "counterexample" in _hint_62b.lower(), \
+            "62b: 原 counterexample hint 应仍在 (降级不报错)"
+        print("62b. Task 4 recall 返空 → 降级, 只含原 hint 不含 exemplar block OK")
+
+        # 62c: recall 返旧数据 (reason 不含 [FAILURE TRACE] 标记) → 跳过, 不当 exemplar
+        eng_s._speculator_hint = ""
+        eng_s._force_imaginate = False
+
+        class _MemStub62c:
+            def recall_failed_directions(self, limit=5, persona_id=None):
+                # 旧数据: 简短 error 串, 没反推 trace
+                return [("hyp old", "VASP timeout at step 5", "")]
+        eng_s.memory = _MemStub62c()
+        eng_s._trigger_counterexample_hunt()
+        _hint_62c = eng_s._speculator_hint or ""
+        assert "[HISTORICAL FAILURE TRACES]" not in _hint_62c, \
+            "62c: 旧数据 reason 不含 [FAILURE TRACE] → 不当 exemplar"
+        assert "VASP timeout at step 5" not in _hint_62c, \
+            "62c: 旧 error 串不应注入 hint"
+        assert "counterexample" in _hint_62c.lower(), \
+            "62c: 原 counterexample hint 应仍在"
+        print("62c. Task 4 旧数据 (无 [FAILURE TRACE] 标记) → 跳过, 不当 exemplar OK")
+
+        # 62d: recall 抛异常 → try/except 吞掉, 只用原 hint
+        eng_s._speculator_hint = ""
+        eng_s._force_imaginate = False
+
+        class _MemStub62d:
+            def recall_failed_directions(self, limit=5, persona_id=None):
+                raise RuntimeError("db connection lost")
+        eng_s.memory = _MemStub62d()
+        eng_s._trigger_counterexample_hunt()
+        _hint_62d = eng_s._speculator_hint or ""
+        assert "[HISTORICAL FAILURE TRACES]" not in _hint_62d, \
+            "62d: recall 抛异常 → 不应含 exemplar block"
+        assert "counterexample" in _hint_62d.lower(), \
+            "62d: 异常被吞, 原 counterexample hint 应仍在"
+        print("62d. Task 4 recall 抛异常 → 吞掉, 只用原 hint OK")
+    finally:
+        # 复原: 让后续 (若有) selfcheck 不被 stub 污染
+        eng_s.memory = None
+
+    print("AutoloopEngine selfcheck OK (13/13 + D block 1b+2b+14 + C block 15-20 + F-borrow 21 + 700万步 22-25 + P0-1 流式 26-27 + P0-2 桥 28 + P2-6 belief darwin 53 + H4 GRILL 54 + H2 frontier 55 + P1 blind 56 + P2 stall 57 + P5 persistent goal 58 + KB query 59 + Task 2 derivation 三档 60 + Task 3 failure inversion 61 + Task 4 historical failure trace exemplar 62)")
 
 
 if __name__ == "__main__":
