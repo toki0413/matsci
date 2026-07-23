@@ -57,6 +57,26 @@ _TYPED_FIRST = (
     f"CASE WHEN memory_type IS NOT NULL THEN 0 ELSE 1 END, {_TYPE_PRIORITY_ORDER}"
 )
 
+
+def _entry_has_reasoning(row: dict) -> bool:
+    """读 tags 里有没有 has_reasoning 标记. 旧记录无标记 → False.
+
+    ponytail: 复用 tags JSON 当 metadata, 不加 schema 列. 跟 record_failed_direction
+    的 math_concept:X 标记同模式. 升级路径: 独立 has_reasoning INTEGER 列.
+    """
+    tags = row.get("tags", "[]")
+    if isinstance(tags, str):
+        try:
+            tag_list = json.loads(tags)
+        except (ValueError, TypeError):
+            return False
+    elif isinstance(tags, list):
+        tag_list = tags
+    else:
+        return False
+    return "has_reasoning" in tag_list
+
+
 MATERIAL_CATEGORIES = {
     "structure",
     "property",
@@ -1045,6 +1065,11 @@ class LongTermMemory:
         ):
             return self._ising_rerank(query, results, top_k)
 
+        # has_reasoning 优先: 在原 FTS5+vector 排序上叠加 stable sort, 有推理的条目
+        # 冒到前面. ponytail: 不改 SQL/HiLS/Ising 主逻辑, 只在默认返回路径 re-rank
+        # (retrieve 不暴露数值 score, 用 stable sort 等价表达 +0.1 bonus).
+        # 升级路径: SQL CASE WHEN has_reasoning THEN -0.1 ELSE 0 END 加到 ORDER BY.
+        results.sort(key=lambda r: 0 if _entry_has_reasoning(r) else 1)
         return results[:top_k]
 
     def _rejuvenate(self, entry_ids: list[str]) -> None:
