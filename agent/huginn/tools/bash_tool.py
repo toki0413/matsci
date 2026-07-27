@@ -232,6 +232,10 @@ class BashTool(HuginnTool):
                 capture_output=True,
                 text=True,
             )
+            _err = None
+            if not result.success:
+                _tail = (result.stderr or result.stdout or "")[-2000:]
+                _err = f"Command failed (rc={result.returncode}).\n{_tail}"
             return ToolResult(
                 data={
                     "command": input_data.command,
@@ -246,6 +250,7 @@ class BashTool(HuginnTool):
                     "stream_progress": _extract_progress(result.stdout),
                 },
                 success=result.success,
+                error=_err,
             )
 
         # SandboxExecutor path — uses executable whitelist + work-dir validation.
@@ -258,6 +263,12 @@ class BashTool(HuginnTool):
                     capture_output=input_data.capture_output,
                     text=True,
                 )
+                # 失败时把 stderr 拼进 error, 否则 adapter 只看到 "Unknown error",
+                # agent 无法 debug (Material_000 卡死的根因).
+                _err = None
+                if result.returncode != 0:
+                    _tail = (result.stderr or result.stdout or "")[-2000:]
+                    _err = f"Command failed (rc={result.returncode}).\n{_tail}"
                 return ToolResult(
                     data={
                         "command": input_data.command,
@@ -274,6 +285,7 @@ class BashTool(HuginnTool):
                         "stream_progress": _extract_progress(result.stdout),
                     },
                     success=result.returncode == 0,
+                    error=_err,
                 )
             except SandboxError as e:
                 return ToolResult(
