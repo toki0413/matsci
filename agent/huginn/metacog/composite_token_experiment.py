@@ -20,6 +20,10 @@
 若三性质都成立, SE(3) 是 aut(M×V) 的子群, 半直积有意义.
 三结构 (代数 concat / 代数 SE(3) / 拓扑 坐标邻域) 兼容叠加.
 """
+# Wired into CodeAct via cognitive_map_se3_act (HUGINN_USE_COGNITIVE_MAP=1).
+# structure_cognitive_map_tool.cognitive_map_se3_act exposes se3_act() to the
+# agent as a plain Python function — SE(3) group action on text <point3d> and
+# 3D coords simultaneously.
 from __future__ import annotations
 
 import re
