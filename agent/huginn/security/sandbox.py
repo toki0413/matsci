@@ -100,8 +100,9 @@ class SandboxConfig:
     # Dry-run mode: log but do not execute
     dry_run: bool = False
 
-    # Strict mode: cwd must be under allowed_work_dirs
-    strict_work_dir: bool = False
+    # Strict mode: cwd must be under allowed_work_dirs.
+    # 默认 True (安全优先); HUGINN_SANDBOX_RELAX=1 可关.
+    strict_work_dir: bool = True
 
 
 @dataclass
@@ -123,6 +124,16 @@ class SandboxExecutor:
 
     def __init__(self, config: SandboxConfig | None = None) -> None:
         self.config = config or SandboxConfig()
+        # HUGINN_SANDBOX_RELAX=1 关闭 strict_work_dir (兼容老用户)
+        if os.environ.get("HUGINN_SANDBOX_RELAX") == "1":
+            self.config.strict_work_dir = False
+        # strict=True 但 allowed_work_dirs 空 → path scoping 实际不生效, warn
+        if self.config.strict_work_dir and not self.config.allowed_work_dirs:
+            import logging
+            logging.getLogger(__name__).warning(
+                "strict_work_dir=True but allowed_work_dirs empty — path scoping "
+                "inactive. Set allowed_work_dirs or HUGINN_WORKSPACE to enable."
+            )
 
     def _resolve_executable(self, cmd: list[str]) -> str:
         """Resolve the first element of cmd to an absolute path.
