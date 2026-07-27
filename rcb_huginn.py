@@ -44,6 +44,11 @@ os.environ.setdefault("HUGINN_RATE_LIMIT_TOKENS_PER_TURN", "500000")
 # 关掉熔断器: code_tool 前几次试错失败后会被 circuit-open 锁死 60s,
 # RCBench 是无人工场景, agent 没法等. code_tool 试错是正常科研流程.
 os.environ.setdefault("HUGINN_HEALTH_MONITOR", "0")
+
+# 关掉 trajectory fork: RCBench 是复现任务, 多视角分叉不提升分数,
+# 反而每 fork 跑完整 sub-agent (k=3 时 3x agent 调用), iter 1 光分叉就 22 分钟.
+# ponytail: 复现任务确定性高, 单轨迹够用. ceiling: 创意探索任务可开.
+os.environ.setdefault("HUGINN_RCB_FORK_ENABLED", "0")
 # file_read_tool 默认限制在 cwd 下, 但 agent 可能传绝对路径读 data/
 os.environ.setdefault("HUGINN_ALLOW_UNRESTRICTED_READ", "1")
 # code_tool/bash_tool 需要本地执行后端, 否则 get_executor() 直接拒绝
