@@ -1,0 +1,360 @@
+"""Hypothesis Manifold — 把 hypothesis space 建模为 manifold, 用 Bayesian
+posterior + Fisher metric 引导搜索, 替代 random walk.
+
+Why this exists:
+    700万步预算够, 但当前架构不知道怎么用. darwin_score 是 post-hoc evaluation
+    (评估不等于引导), hint boost 是 syntactic level (文字密度不等于推理密度).
+    真正的突破是把 hypothesis space 建模成 manifold, 每一步在 posterior 上
+    gradient descent, 不是 random walk.
+
+Mathematical structure:
+    H = {h_1, ..., h_n}             hypothesis space (discrete points on manifold)
+    P(h)     ∝ exp(-MDL(h))         prior, simpler = more probable (Occam)
+    P(O|h)                          likelihood, observations under hypothesis
+    P(h|O)   ∝ P(O|h) * P(h)        posterior (Bayes)
+    d_F(h_i, h_j)                   Fisher metric: prediction-disagreement proxy
+    abduction = argmax_h P(h|O)     best explanation (MDL + fit)
+
+Search guidance (this is the point):
+    - Each step samples from posterior, not uniform random
+    - Fisher metric tells you which direction has max info gain
+    - 7M steps = MCMC on posterior landscape, not random walk
+    - Credit assignment: Fisher info backprops early decisions to late failures
+
+Honest boundaries (ponytail: named ceilings + upgrade paths):
+    - Fisher metric via prediction disagreement is a proxy. True Fisher needs
+      ∂²log P/∂h². Upgrade: when hypothesis has parametric form, compute true Fisher.
+    - MCMC is Metropolis-Hastings lite. No HMC, no NUTS. Upgrade: jax + blackjax
+      when scaling beyond ~100 hypotheses.
+    - MDL via len(description) is BPE-token proxy. True MDL needs universal prior.
+      Upgrade: Solomonoff induction approximation (Li & Vitányi §4.5).
+    - This module proves the concept. Wiring into rcb_runner is spec work.
+"""
+from __future__ import annotations
+
+import math
+import random
+from dataclasses import dataclass, field
+from typing import Callable, Iterable
+
+
+# ---------- 简单工具 ----------
+
+def _logsumexp(xs: list[float]) -> float:
+    """log(sum(exp(xs))) 数值稳定版. ponytail: stdlib only."""
+    if not xs:
+        return float("-inf")
+    m = max(xs)
+    if m == float("-inf"):
+        return float("-inf")
+    return m + math.log(sum(math.exp(x - m) for x in xs))
+
+
+def _mdl_logprior(description: str, n_params: int = 0) -> float:
+    """MDL/BIC prior: log P(h) ∝ -(description_length + n_params * log(n_data)).
+
+    BIC spirit: -2 log L + k log n. 这里只用 prior 部分 (k log n), likelihood
+    另外算. ponytail: char count 代理 description length, n_params 是显式声明的
+    有效参数数. 升级路径: 真正 BPE token count + Solomonoff approximation.
+    """
+    n = len(description.strip())
+    if n == 0 and n_params == 0:
+        return float("-inf")
+    # λ=0.1 (description 弱权重), BIC 标准: 0.5 * k * log(n)
+    # 参数数才是真正的 complexity, 描述文字长度受表达方式影响太大
+    # n_data 用 100 代理 (升级路径: 从 observations 拿真实 n)
+    desc_penalty = 0.1 * n
+    bic_penalty = 0.5 * n_params * math.log(max(n_params * 10, 100))
+    return -(desc_penalty + bic_penalty)
+
+
+# ---------- 核心数据结构 ----------
+
+@dataclass
+class Hypothesis:
+    """Manifold 上的一个点.
+
+    predictions 是 hypothesis 对 observable 的预测 (离散 token 或数值).
+    Fisher metric 通过比较两个 hypothesis 的 predictions 差异来定义距离.
+    n_params: 有效参数数 (BIC penalty 用). ad hoc hypothesis 参数多 → 重罚.
+    """
+    h_id: str
+    description: str
+    predictions: dict[str, float] = field(default_factory=dict)
+    n_params: int = 0  # 有效参数数, BIC 用
+    # 可选: 自定义 prior override (默认用 MDL)
+    prior_override: float | None = None
+    # abductive_inference 填: posterior 置信度 + 证据强度 (RAG hits 数/量级)
+    confidence: float = 0.0
+    evidence_strength: float = 0.0
+
+    def log_prior(self) -> float:
+        if self.prior_override is not None:
+            return math.log(self.prior_override)
+        return _mdl_logprior(self.description, self.n_params)
+
+
+@dataclass
+class Observation:
+    """一次观察: observable name + measured value + noise scale."""
+    name: str
+    value: float
+    sigma: float = 1.0  # 测量噪声标准差
+
+
+# ---------- Manifold ----------
+
+class HypothesisManifold:
+    """Hypothesis space as a manifold with Bayesian posterior + Fisher metric.
+
+    核心数学:
+        posterior(h | O) ∝ exp(log_prior(h) + log_likelihood(O | h))
+        fisher_distance(h_i, h_j) = E[(prediction_i - prediction_j)² / sigma²]
+        info_gain(h) = entropy(prior) - entropy(posterior | h observed)
+
+    用法:
+        m = HypothesisManifold()
+        m.add(Hypothesis("h1", "...", predictions={"x": 1.0}))
+        m.add(Hypothesis("h2", "...", predictions={"x": 2.0}))
+        post = m.posterior([Observation("x", 1.1)])
+        best = m.abductive_inference([Observation("x", 1.1)])
+        next_h = m.propose_next_exploration([Observation("x", 1.1)])
+    """
+
+    def __init__(self, likelihood_log: Callable[[Hypothesis, Observation], float] | None = None):
+        self._hyp: dict[str, Hypothesis] = {}
+        # 默认 likelihood: Gaussian prediction error. 用户可注入自定义.
+        # ponytail: 升级路径是接 LLM-as-judge 评估 P(O|h).
+        self._log_lik = likelihood_log or self._gaussian_log_likelihood
+
+    @staticmethod
+    def _gaussian_log_likelihood(h: Hypothesis, o: Observation) -> float:
+        """log P(o | h) = -0.5 * ((o - pred) / sigma)²  (Gaussian, 常数项省略)."""
+        if o.name not in h.predictions:
+            # hypothesis 对此 observable 没预测 → 弱 penalty (uniform fallback)
+            # ponytail: 真正处理是用 marginal likelihood, 这里用 -log(2)/2 近似
+            return -0.5 * math.log(2.0)
+        pred = h.predictions[o.name]
+        z = (o.value - pred) / max(o.sigma, 1e-9)
+        return -0.5 * z * z
+
+    def add(self, h: Hypothesis) -> None:
+        if h.h_id in self._hyp:
+            raise ValueError(f"duplicate h_id: {h.h_id}")
+        self._hyp[h.h_id] = h
+
+    def log_posterior(self, obs: Iterable[Observation]) -> dict[str, float]:
+        """返回每个 hypothesis 的 log posterior (未归一化)."""
+        obs = list(obs)
+        out: dict[str, float] = {}
+        for h_id, h in self._hyp.items():
+            lp = h.log_prior()
+            for o in obs:
+                lp += self._log_lik(h, o)
+            out[h_id] = lp
+        return out
+
+    def posterior(self, obs: Iterable[Observation]) -> dict[str, float]:
+        """归一化 posterior P(h | O)."""
+        log_post = self.log_posterior(obs)
+        Z = _logsumexp(list(log_post.values()))
+        if Z == float("-inf"):
+            return {h_id: 0.0 for h_id in log_post}
+        return {h_id: math.exp(lp - Z) for h_id, lp in log_post.items()}
+
+    def abductive_inference(self, obs: Iterable[Observation]) -> Hypothesis | None:
+        """abduction: argmax_h P(h | O).
+
+        这是 Hempel-Oppenheim model 里 O → H 这一步. LLM 做不到 (pattern completion
+        ≠ abduction), 这里用 Bayesian model selection 实现.
+        """
+        if not self._hyp:
+            return None
+        log_post = self.log_posterior(obs)
+        best_id = max(log_post, key=log_post.get)
+        best = self._hyp[best_id]
+        # confidence 取归一化 posterior; evidence_strength 暂无 RAG hits 来源.
+        # ponytail: 后续接 posterior / RAG hits 后再填实际值
+        post = self.posterior(obs)
+        best.confidence = post.get(best_id, 0.5)
+        best.evidence_strength = 0.0
+        return best
+
+    def fisher_distance(self, h_i_id: str, h_j_id: str) -> float:
+        """Fisher information metric 的工程近似.
+
+        d_F(h_i, h_j)² = Σ_k (pred_i[k] - pred_j[k])² / sigma_k²
+
+        ponytail: 真正 Fisher info metric 是 g_μν = E[∂_μ log P · ∂_ν log P],
+        需要参数化 hypothesis. 这里用 prediction 差异代理 — 升级路径是
+        hypothesis 参数化后计算 true Fisher.
+        """
+        h_i = self._hyp.get(h_i_id)
+        h_j = self._hyp.get(h_j_id)
+        if h_i is None or h_j is None:
+            return float("inf")
+        common_keys = set(h_i.predictions) & set(h_j.predictions)
+        if not common_keys:
+            return float("inf")
+        d2 = 0.0
+        for k in common_keys:
+            # sigma 用 1.0 默认, 真实场景从 observation 拿
+            d2 += (h_i.predictions[k] - h_j.predictions[k]) ** 2
+        return math.sqrt(d2)
+
+    def propose_next_exploration(
+        self,
+        obs: Iterable[Observation],
+        *,
+        rng: random.Random | None = None,
+    ) -> Hypothesis | None:
+        """Active learning: 选一个 hypothesis, 使期望信息增益最大.
+
+        Info gain(h) = H[prior] - H[posterior | observe h's prediction]
+                     ≈ entropy of current posterior - expected entropy after test
+
+        工程近似: 当前 posterior 越均匀, 选离 top hypothesis 最远的 h 越能区分.
+        ponytail: 真正 info gain 需要在 hypothesis space 上期望, 这里用
+        "max fisher distance to argmax" 代理. 升级路径: 真正 Bayesian D-optimal.
+        """
+        if not self._hyp:
+            return None
+        rng = rng or random
+        post = self.posterior(obs)
+        # 当前 best
+        best_id = max(post, key=post.get)
+        # 找离 best 最远的 h (Fisher metric 下)
+        max_d = -1.0
+        candidate = None
+        for h_id in self._hyp:
+            if h_id == best_id:
+                continue
+            d = self.fisher_distance(best_id, h_id)
+            if d > max_d:
+                max_d = d
+                candidate = h_id
+        return self._hyp[candidate] if candidate else self._hyp[best_id]
+
+    def mcmc_step(
+        self,
+        obs: Iterable[Observation],
+        current_h_id: str,
+        *,
+        rng: random.Random | None = None,
+    ) -> str:
+        """Metropolis-Hastings 一步在 posterior 上采样.
+
+        700万步 = 这个 step 跑 7M 次. 每步是从 current_h 提议一个 neighbor,
+        按 posterior ratio 接受/拒绝. 这才是有引导的搜索, 不是 random walk.
+
+        Returns: next h_id (可能等于 current, 即拒绝提议).
+        """
+        rng = rng or random
+        h_ids = list(self._hyp)
+        if len(h_ids) < 2:
+            return current_h_id
+        # 提议: 随机选一个非当前的 h (uniform proposal kernel, 简化)
+        proposal = rng.choice([h for h in h_ids if h != current_h_id])
+        log_post = self.log_posterior(obs)
+        log_ratio = log_post[proposal] - log_post[current_h_id]
+        # 接受概率 min(1, exp(log_ratio))
+        if math.log(rng.random()) < log_ratio:
+            return proposal
+        return current_h_id
+
+
+# ---------- Self-check ----------
+
+def _selfcheck() -> None:
+    """Assert-based demo: 经典 abduction 测试.
+
+    场景: 黑箱子里有个机制, 我们观察到输出值. 多个 hypothesis 解释这个机制.
+    Bayesian model selection 应该选最简且 fit 最好的 hypothesis (Occam razor).
+    """
+    # 三个 hypothesis 解释同一组观察
+    h_newton = Hypothesis(
+        h_id="newton",
+        description="F = G m1 m2 / r^2",  # 简短, MDL 低
+        predictions={"orbital_period": 1.0, "precession": 0.0},
+        n_params=2,  # G, mass
+    )
+    h_gr = Hypothesis(
+        h_id="gr",
+        description="G_μν = 8π T_μν, geodesic equation in curved spacetime",  # 长
+        predictions={"orbital_period": 1.0, "precession": 0.43},  # 包含相对论修正
+        n_params=10,  # metric tensor components + stress-energy
+    )
+    h_epicycle = Hypothesis(
+        h_id="epicycle",
+        description="deferent and epicycle with 40 parameters tuned",  # ad hoc
+        predictions={"orbital_period": 1.0, "precession": 0.43},  # 也能 fit
+        n_params=40,  # 40 个调出来的参数 — BIC 应重罚
+    )
+
+    m = HypothesisManifold()
+    m.add(h_newton)
+    m.add(h_gr)
+    m.add(h_epicycle)
+
+    # 观察: 水星近日点进动 0.43 arcsec/century — GR 的关键证据
+    obs = [
+        Observation("orbital_period", 1.0, sigma=0.01),
+        Observation("precession", 0.43, sigma=0.05),
+    ]
+
+    # Test 1: abduction 应该选 GR, 不是 epicycle (Occam: GR 更简)
+    best = m.abductive_inference(obs)
+    assert best is not None, "abduction returned None on non-empty manifold"
+    assert best.h_id == "gr", (
+        f"expected GR (simplest fit), got {best.h_id}. "
+        f"posterior={m.posterior(obs)}"
+    )
+
+    # Test 2: 没有进动观察时, Newton 应该赢 (最简)
+    obs_no_prec = [Observation("orbital_period", 1.0, sigma=0.01)]
+    best_no_prec = m.abductive_inference(obs_no_prec)
+    assert best_no_prec.h_id == "newton", (
+        f"without precession data, Newton (simplest) should win, got {best_no_prec.h_id}"
+    )
+
+    # Test 3: Fisher distance — Newton 跟 GR 在 precession 维度上有距离
+    d_newton_gr = m.fisher_distance("newton", "gr")
+    d_newton_newton = m.fisher_distance("newton", "newton")
+    assert d_newton_gr > 0.0, "Newton and GR should differ on precession"
+    assert d_newton_newton == 0.0, "self-distance should be 0"
+
+    # Test 4: active learning 应该提议测 precession (区分 newton vs gr 的关键)
+    next_h = m.propose_next_exploration(obs_no_prec)
+    # 离 newton (当前 best) Fisher 距离最远的是 gr (precession 差 0.43)
+    assert next_h is not None and next_h.h_id == "gr", (
+        f"expected GR as next exploration (max Fisher distance to current best), "
+        f"got {next_h.h_id if next_h else None}"
+    )
+
+    # Test 5: MCMC 在 posterior 上采样, 多步后访问 GR 的频率 ≈ posterior(GR)
+    rng = random.Random(42)
+    current = "newton"
+    visit_count = {"newton": 0, "gr": 0, "epicycle": 0}
+    n_steps = 10000
+    for _ in range(n_steps):
+        current = m.mcmc_step(obs, current, rng=rng)
+        visit_count[current] += 1
+    # 频率应近似 posterior (GR 应该是 dominant)
+    assert visit_count["gr"] > visit_count["epicycle"], (
+        f"MCMC should visit GR more than epicycle, got {visit_count}"
+    )
+    assert visit_count["gr"] > n_steps * 0.3, (
+        f"GR should be visited >30% of time, got {visit_count['gr']/n_steps:.2%}"
+    )
+
+    print("✓ hypothesis_manifold self-check passed")
+    print(f"  posterior(obs) = {m.posterior(obs)}")
+    print(f"  abduction → {best.h_id} (Occam + fit)")
+    print(f"  no-precession abduction → {best_no_prec.h_id} (Occam wins without data)")
+    print(f"  fisher(newton, gr) = {d_newton_gr:.3f}")
+    print(f"  active learning → {next_h.h_id} (max info gain direction)")
+    print(f"  MCMC visit freq: { {k: v/n_steps for k, v in visit_count.items()} }")
+
+
+if __name__ == "__main__":
+    _selfcheck()
