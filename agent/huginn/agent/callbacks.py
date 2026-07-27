@@ -119,6 +119,13 @@ class CallbackMixin:
             if post_ctx and post_ctx.metadata.get("blocked_by_hook"):
                 block_reason = post_ctx.metadata.get("block_reason", "blocked by post_tool_use hook")
                 return {"error": block_reason, "_hook_blocked": True}
+            # v18: bandit effort controller — record tool call for reward_fast.
+            # ponytail: 无条件调, bandit 内部 fallback (无 items 注册时直接 return).
+            try:
+                from huginn.agent.bandit_controller import EffortBandit
+                EffortBandit.get_instance().record_tool_call()
+            except Exception:
+                pass
             return result
 
         async def hooked_coroutine(**kwargs: Any) -> Any:
