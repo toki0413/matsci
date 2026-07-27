@@ -299,18 +299,52 @@ class ConjectureGenerator:
 
         结果写 research_log (CONJECTURE), parent 指向 transfer 的 BRIDGE 记录.
         """
+        # v15 Phase 4 Task 9.1: 先试 imagination (Bourbaki structure-preserving
+        # transform), 把 transfer_result 当 seed hypothesis 喂 imagine(). 失败
+        # 降级到下面原 LLM/template 路径, 不阻塞.
+        result = None
         if model is not None and self._is_real_model(model):
             try:
-                result = self._llm_generate(
-                    transfer_result, model,
-                    prompt_level=prompt_level,
-                    known_solutions=known_solutions,
-                )
+                from huginn.metacog.imagination import imagine
+                from huginn.metacog.hypothesis_manifold import Hypothesis
+                _seed_desc = (transfer_result.get("transferred_pattern")
+                              or transfer_result.get("abstract_pattern") or "")
+                if _seed_desc:
+                    h_seed = Hypothesis(
+                        h_id=f"h_transfer_{transfer_result.get('log_id', 'x')}",
+                        description=_seed_desc,
+                        predictions={},
+                        n_params=2,
+                    )
+                    for t_type in ("algebraic", "topological", "order"):
+                        new_h = imagine(h_seed, t_type, model=model)
+                        if new_h is not None:
+                            result = {
+                                "statement": new_h.description,
+                                "prediction": json.dumps(new_h.predictions, ensure_ascii=False),
+                                "rationale": f"imagination ({t_type} transform) of {_seed_desc[:60]}",
+                                "confidence": "medium",
+                                "method": f"imagination:{t_type}",
+                            }
+                            break
             except Exception:
-                logger.debug("LLM generate failed, fallback to template", exc_info=True)
+                logger.debug("imagination in generate_conjecture failed, fallback", exc_info=True)
+                result = None
+
+        # imagination 失败 -> 降级到原 LLM/template 路径
+        if result is None:
+            if model is not None and self._is_real_model(model):
+                try:
+                    result = self._llm_generate(
+                        transfer_result, model,
+                        prompt_level=prompt_level,
+                        known_solutions=known_solutions,
+                    )
+                except Exception:
+                    logger.debug("LLM generate failed, fallback to template", exc_info=True)
+                    result = self._template_generate(transfer_result)
+            else:
                 result = self._template_generate(transfer_result)
-        else:
-            result = self._template_generate(transfer_result)
 
         parent_id = transfer_result.get("log_id")
         log_id = self._log_research(
