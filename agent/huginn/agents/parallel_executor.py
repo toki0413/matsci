@@ -14,6 +14,16 @@ tool B 的输入引用了 tool A 的输出, B 必须等 A 跑完拿到结果才�
      调用独立计时, 单个失败不影响其它, 返回带 error/dt 的结果列表
 
 调用方拿到结果自己决定要不要把依赖串行跑第二遍.
+
+适用范围 (跟 swarm 跨进程扩展的分工):
+  - _depends_on 启发式只管单进程内的 tool_call 级依赖, 也就是同一个
+    LLM turn 里同时返回的几个 call 之间有没有数据引用. 进程边界之内
+    的事, 这个文件管.
+  - 跨进程 / 跨机器的 swarm 任务依赖, 由 task_dag.TaskDAG (拓扑序 +
+    最大反链 + parallel_layers) + provenance 接管. swarm.Distributed
+    SwarmBackend 的队列只负责分发任务本身, 依赖解析在分发前就由
+    TaskDAG 算好了, 不靠这里的启发式. 两套机制不重叠: 这里看 tool_input
+    里的占位符, TaskDAG 看 dispatch_parallel 时的 dependencies 字段.
 """
 
 from __future__ import annotations

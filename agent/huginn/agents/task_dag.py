@@ -16,10 +16,10 @@ Dilworth 定理: 有限偏序集的最大反链大小 = 最小链覆盖数.
 
 不做 (YAGNI):
   - PERT 加权 (节点耗时) — LLM 不预知 subagent 耗时, 无权 DAG 够用
-  - DAG 自动依赖推断 — LLM 在 dispatch_parallel 时填 dependencies 字段
   - 并发资源约束 (machine limit) — 用 budget_decomp 的 parallel 硬 cap
 
-天花板: 假设依赖已知. 升级: LLM 不填 dependencies 时退化到全并行.
+天花板: 依赖来源优先 LLM 显式填, 缺失时用 provenance registry 反推
+(见 infer_dependencies_from_provenance). 升级: 完全无 provenance 时退化到全并行.
 """
 from __future__ import annotations
 
@@ -143,6 +143,106 @@ class TaskDAG:
         return layers
 
 
+# ── provenance 反推依赖 (Task 26.8) ────────────────────────
+
+# 路径字段名跟 register_tool_output 对齐, 不另立标准
+_PROV_PATH_FIELDS = (
+    "file_path", "working_dir", "poscar_path", "structure_file",
+    "output_file", "outcar_path", "trajectory_file", "saved_to",
+)
+
+
+def _extract_paths_from_tool_input(tool_input: dict) -> set[str]:
+    """从 tool_input 顶层抓路径值. 嵌套结构不递归 — register_tool_output
+    自己也只扫顶层, 跟它对齐."""
+    paths: set[str] = set()
+    if not isinstance(tool_input, dict):
+        return paths
+    for k in _PROV_PATH_FIELDS:
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            paths.add(v)
+    return paths
+
+
+def infer_dependencies_from_provenance(
+    tasks: list[dict],
+    provenance_registry,
+) -> list[tuple[str, str]]:
+    """从 provenance 溯源链反推 task 间依赖 (后验补全).
+
+    对每个 task B, 抽它 tool_input 里出现的路径, 在 registry 里 find_by_path
+    反查; 命中则该路径是某个上游 task 的产出. 再用 get_lineage 拿溯源链,
+    链上每个上游产出的 file_path 反查"哪个 task 的 tool_input 提到过它",
+    从而定位上游 task A, 加 A→B 边.
+
+    LLM 填的 dependencies 当先验, 这里推出来的当后验, 取并集即可.
+    LLM 完全不填时, 只要 registry 有数据也能建出正确 DAG.
+
+    Args:
+        tasks: list of dict, 每个含 id (str) 和 tool_input (dict).
+        provenance_registry: ProvenanceRegistry 实例 (或任何有 find_by_path
+            和 get_lineage 的对象).
+
+    Returns:
+        list of (A_id, B_id) tuples, A 是 B 的上游.
+    """
+    if provenance_registry is None:
+        return []
+
+    # task_id -> tool_input 里出现的路径集合
+    task_paths: dict[str, set[str]] = {}
+    # path -> 引用过它的 task_id 集合 (反查上游产出归属哪个 task)
+    path_to_tasks: dict[str, set[str]] = {}
+    for t in tasks:
+        tid = t["id"]
+        paths = _extract_paths_from_tool_input(t.get("tool_input") or {})
+        task_paths[tid] = paths
+        for p in paths:
+            path_to_tasks.setdefault(p, set()).add(tid)
+
+    inferred: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for t in tasks:
+        bid = t["id"]
+        for p in task_paths.get(bid, ()):
+            entry = provenance_registry.find_by_path(p)
+            if entry is None:
+                # registry 里没记录, 判不了上游
+                continue
+            # get_lineage 返回 p 的溯源链 (含 p 自己), 链头是最新产出
+            chain = provenance_registry.get_lineage(p, depth=5)
+            for e in chain:
+                upstream = e.file_path
+                if upstream == p:
+                    # p 本身是 B 消费的产出, 上游归属看链后续 entry
+                    continue
+                for aid in path_to_tasks.get(upstream, ()):
+                    if aid != bid:
+                        edge = (aid, bid)
+                        if edge not in seen:
+                            seen.add(edge)
+                            inferred.append(edge)
+    return inferred
+
+
+def build_dag_with_provenance(
+    tasks: list[dict],
+    provenance_registry,
+    explicit_deps: list[tuple[str, str]] | None = None,
+) -> TaskDAG:
+    """LLM 显式 dep 当先验, provenance 推断当后验, 取并集建 DAG."""
+    task_ids = [t["id"] for t in tasks]
+    inferred = infer_dependencies_from_provenance(tasks, provenance_registry)
+    merged: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for d in (explicit_deps or []) + inferred:
+        if d not in seen:
+            seen.add(d)
+            merged.append(d)
+    return TaskDAG(tasks=task_ids, dependencies=merged)
+
+
 # ── selfcheck ──────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -207,4 +307,34 @@ if __name__ == "__main__":
     assert dag3.parallel_layers() == [["A"], ["B"], ["C"]], "线性链每层 1 节点"
     print(f"[ok] 线性链 A→B→C: width=1, cp=3, layers=[[A],[B],[C]]")
 
-    print("[task_dag] self-check OK (7/7)")
+    # 8. provenance 自动推断: B 引用 A 输出但 LLM 未填 dependencies
+    #    验证 LLM 完全不填 dependencies 时也能建出正确 DAG
+    import os
+    import tempfile
+    os.environ["HUGINN_CACHE_DIR"] = tempfile.mkdtemp(prefix="huginn_prov_")
+    from huginn.provenance.registry import ProvenanceRegistry
+    reg = ProvenanceRegistry()
+    # task A 产出 A_out.cif (无上游)
+    reg.register(file_path="/tmp/A_out.cif", produced_by="relax_tool",
+                 input_files=[], file_format="cif")
+    # task M 消费 A_out.cif, 产出 M_out.cif
+    reg.register(file_path="/tmp/M_out.cif", produced_by="static_tool",
+                 input_files=["/tmp/A_out.cif"], file_format="cif")
+    tasks_no_dep = [
+        {"id": "A", "tool_input": {"output_file": "/tmp/A_out.cif"}},
+        {"id": "M", "tool_input": {"output_file": "/tmp/M_out.cif",
+                                    "file_path": "/tmp/A_out.cif"}},
+        {"id": "B", "tool_input": {"file_path": "/tmp/M_out.cif"}},
+    ]
+    inferred = infer_dependencies_from_provenance(tasks_no_dep, reg)
+    assert ("A", "M") in inferred, f"应推断 A→M, got {inferred}"
+    assert ("M", "B") in inferred, f"应推断 M→B, got {inferred}"
+    assert ("A", "B") in inferred, f"应推断 A→B (溯源链传递), got {inferred}"
+    # build_dag_with_provenance: explicit_deps 留空也能建出有依赖的 DAG
+    dag4 = build_dag_with_provenance(tasks_no_dep, reg, explicit_deps=[])
+    order4 = dag4.topological_order()
+    assert order4.index("A") < order4.index("M") < order4.index("B"), \
+        f"拓扑序应 A 先 M 中 B 后, got {order4}"
+    print(f"[ok] provenance 推断: {inferred}, 拓扑序 {order4}")
+
+    print("[task_dag] self-check OK (8/8)")

@@ -606,11 +606,29 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
                 success=False,
                 error="DAG dispatch requires HUGINN_EXTREME_DISPATCH=1",
             )
-        from huginn.agents.task_dag import TaskDAG
+        from huginn.agents.task_dag import TaskDAG, build_dag_with_provenance
         # task ID = spec_name + task 前 20 字符 (ponytail: 不引入显式 ID 字段)
         task_ids = [f"{t['spec_name']}:{t['task'][:20]}" for t in args.tasks]
         try:
-            dag = TaskDAG(tasks=task_ids, dependencies=args.dependencies)
+            # P4 Task 26.8: LLM 填的 dependencies 作为先验, provenance chain 作为后验补全.
+            # provenance registry 可能没启用 (HUGINN_PROVENANCE_ENABLED=0), 失败退化为纯 explicit_deps.
+            _prov_reg = None
+            try:
+                from huginn.provenance.registry import get_provenance_registry
+                _prov_reg = get_provenance_registry()
+            except Exception:
+                pass
+            if _prov_reg is not None and hasattr(_prov_reg, "get_lineage"):
+                _tasks_with_input = [
+                    {"id": tid, "tool_input": t} for tid, t in zip(task_ids, args.tasks)
+                ]
+                dag = build_dag_with_provenance(
+                    tasks=_tasks_with_input,
+                    provenance_registry=_prov_reg,
+                    explicit_deps=args.dependencies,
+                )
+            else:
+                dag = TaskDAG(tasks=task_ids, dependencies=args.dependencies)
         except ValueError as e:
             return ToolResult(
                 data=SubagentToolOutput(
