@@ -516,6 +516,18 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                     resume_from_state, exc_info=True,
                 )
 
+        # P1-4 / P2-6 自动触发: resume_from_state 恢复完后, 检测 WakeStore
+        # 有无 pending wakes → 有则 spawn WakeScheduler. runner 调用方负责
+        # 真正 resume session (autoloop 自身是长跑循环, 不需要 P1-4 resume;
+        # 这个 hook 给 Unattended 场景用: 长任务被 sleep_for 挂起后, scheduler
+        # 到点唤醒继续 run_cognitive).
+        # ponytail: 不在 __init__ spawn (可能还没 event loop), 延迟到 run_cognitive
+        # 第一次 await 时 lazy start. 升级路径: 由调用方 (CLI/routes) 显式管理.
+        self._wake_scheduler: Any = None
+        self._auto_wake_enabled = os.environ.get(
+            "HUGINN_AUTO_WAKE", "1"
+        ) == "1"
+
     def _maybe_save_engine_state(
         self, *, force: bool = False, reason: str = "",
     ) -> None:
@@ -3693,11 +3705,15 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
           {"type": "cycle", "period": lam, "advice": "..."}
           {"type": "match", "history_id": i, "similarity": s, "next_step": X, "advice": "..."}
 
-        极限模式 (跑分) 才启用, 平常默认关闭省 cycle/trajectory 计算.
-        HUGINN_EXTREME_DISPATCH=1 时开.
+        启用条件: HUGINN_EXTREME_DISPATCH=1, 或长程任务 (max_iterations >= 20).
+        短程任务默认关, 省 cycle/trajectory 计算.
         """
         import os
-        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() not in ("1", "true"):
+        # 长程任务 (max_iterations >= 20) 默认开 cycle/trajectory 检测,
+        # 短程任务仍需 HUGINN_EXTREME_DISPATCH=1 才开 (省计算).
+        _max_iter = getattr(self, "_max_iterations", 10)
+        _extreme = os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true")
+        if not (_extreme or _max_iter >= 20):
             return None
         if len(action_history) < 4:
             return None  # 太短不检
