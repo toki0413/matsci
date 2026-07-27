@@ -1129,6 +1129,11 @@ LUCID review (mandatory after generating hypothesis):
         _budget_items = None
 
     # Task 3: 从 resume 的 iter 开始, 不重跑已 checkpoint 的轮次
+    # 连续驳回计数: agent 已尽力但 gates 太严时, 第 3 次接受 TASK COMPLETE.
+    # ponytail: 修 Math_003 iter 2-5 反复 'TASK COMPLETE' 不调工具被驳回循环.
+    #   ceiling: 让 LLM judge 区分 '真尽力' vs '偷懒', 这里用计数兜底.
+    _consecutive_complete_rejections = 0
+    _MAX_COMPLETE_REJECTIONS = int(os.environ.get("HUGINN_RCB_MAX_COMPLETE_REJECTIONS", "3"))
     for _iter_n in range(_resume_from_iter, _max_exec_iters):
         # ponytail: v16 引入 _derivation_audit 只在 else 分支赋值, iter 0
         # 走 if 分支跳过赋值, line 1170 引用时 UnboundLocalError 崩溃.
@@ -1673,6 +1678,11 @@ LUCID review (mandatory after generating hypothesis):
 
         # 退火降温 (在停滞重热之前, 停滞信号下一轮生效)
         _t_hot = max(0.0, _t_hot * 0.5)
+
+        # agent 这轮没说 TASK COMPLETE → 连续驳回计数清零. agent 做了实际工作,
+        # 之前的驳回不算"陷入循环". ponytail: 字符串匹配, 简单粗暴.
+        if not (_ai_text and "TASK COMPLETE" in _ai_text.upper()):
+            _consecutive_complete_rejections = 0
 
         # v15 Phase 2 Task 3.2+3.3: 收集 observations + abductive inference
         # 失败降级到空 observations + 不写 abduction entry, 不阻塞主循环.
@@ -2578,8 +2588,19 @@ LUCID review (mandatory after generating hypothesis):
         # v16: TASK COMPLETE 时强制重跑 derivation audit (即使非 3 轮调度点),
         # 因这是最后一次放行机会. audit 失败 (空串) 不阻塞, fallback 到 keyword.
         if _ai_text and "TASK COMPLETE" in _ai_text.upper() and not (ctx.wall_expired_fn and ctx.wall_expired_fn()):
+            # 连续驳回计数: agent 反复 'TASK COMPLETE' 不调工具时, 第 N+1 次接受.
+            # 修 Math_003 iter 2-5 反复驳回循环: agent 已尽力, gates 太严只会空转.
+            _consecutive_complete_rejections += 1
+            _force_accept = _consecutive_complete_rejections > _MAX_COMPLETE_REJECTIONS
+            if _force_accept:
+                print(
+                    f"[effort floor] 接受 TASK COMPLETE: 连续驳回 "
+                    f"{_consecutive_complete_rejections - 1} 次达上限 "
+                    f"{_MAX_COMPLETE_REJECTIONS}. agent 已尽力, 强制收尾.",
+                    flush=True,
+                )
             _final_derivation = _derivation_audit
-            if model and not _final_derivation:
+            if not _force_accept and model and not _final_derivation:
                 try:
                     _final_derivation = await _derivation_chain_audit(
                         model, ws, checklist,
@@ -2587,7 +2608,7 @@ LUCID review (mandatory after generating hypothesis):
                     ) or ""
                 except Exception as _e:
                     print(f"[v16] final derivation audit skipped: {_e}", flush=True)
-            _eff_ok, _eff_reason = _rcb_effort_floor(
+            _eff_ok, _eff_reason = (True, "force_accept skipped") if _force_accept else _rcb_effort_floor(
                 ws, checklist, derivation_audit=_final_derivation or None,
             )
             if not _eff_ok:
@@ -2618,42 +2639,43 @@ LUCID review (mandatory after generating hypothesis):
             # ponytail: 顶层函数不依赖 engine, hypothesis_graph=None 退化到启发式.
             #   阻断时覆盖下一轮 prompt, 让 agent 补缺而非重复 TASK COMPLETE.
             _metacog_blocked = False
-            try:
-                from huginn.autoloop.cognitive_loop import (
-                    metacog_check_completion,
-                    metacog_check_topology_collapse,
-                )
-                # _report_text 在 iter 头部算, 可能空; 兜底重读文件.
-                _rep_md = _report_text or (
-                    _report_path_iter.read_text(encoding="utf-8")
-                    if _report_path_iter.exists() else ""
-                )
-                _completion = metacog_check_completion(
-                    report_md=_rep_md,
-                    outputs_dir=ws / "outputs",
-                )
-                # P1-C: 别名给 final cognitive evidence write 用 (修变量名不匹配 bug)
-                _completion_audit = _completion
-                if not _completion.get("passed", True):
-                    print(
-                        f"[TaskComplete] blocked by metacog_check: "
-                        f"{_completion.get('block_reasons', [])}",
-                        flush=True,
+            if not _force_accept:
+                try:
+                    from huginn.autoloop.cognitive_loop import (
+                        metacog_check_completion,
+                        metacog_check_topology_collapse,
                     )
-                    _metacog_blocked = True
-                # 拓扑层反完成审计: hypothesis space 多样性检测.
-                _topo = metacog_check_topology_collapse(
-                    hypothesis_graph=None, hypothesis_list=None,
-                )
-                if _topo.get("collapsed", False):
-                    print(
-                        f"[TaskComplete] blocked by topology collapse: "
-                        f"{_topo.get('reason')}",
-                        flush=True,
+                    # _report_text 在 iter 头部算, 可能空; 兜底重读文件.
+                    _rep_md = _report_text or (
+                        _report_path_iter.read_text(encoding="utf-8")
+                        if _report_path_iter.exists() else ""
                     )
-                    _metacog_blocked = True
-            except Exception as _e:
-                print(f"[TaskComplete] metacog audit failed: {_e}", flush=True)
+                    _completion = metacog_check_completion(
+                        report_md=_rep_md,
+                        outputs_dir=ws / "outputs",
+                    )
+                    # P1-C: 别名给 final cognitive evidence write 用 (修变量名不匹配 bug)
+                    _completion_audit = _completion
+                    if not _completion.get("passed", True):
+                        print(
+                            f"[TaskComplete] blocked by metacog_check: "
+                            f"{_completion.get('block_reasons', [])}",
+                            flush=True,
+                        )
+                        _metacog_blocked = True
+                    # 拓扑层反完成审计: hypothesis space 多样性检测.
+                    _topo = metacog_check_topology_collapse(
+                        hypothesis_graph=None, hypothesis_list=None,
+                    )
+                    if _topo.get("collapsed", False):
+                        print(
+                            f"[TaskComplete] blocked by topology collapse: "
+                            f"{_topo.get('reason')}",
+                            flush=True,
+                        )
+                        _metacog_blocked = True
+                except Exception as _e:
+                    print(f"[TaskComplete] metacog audit failed: {_e}", flush=True)
             if _metacog_blocked:
                 # 阻断时覆盖下一轮 prompt, 让 agent 补缺而非重复 TASK COMPLETE
                 try:
