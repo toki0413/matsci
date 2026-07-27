@@ -421,6 +421,11 @@ def _llm_evaluate(
 
     ctx_text = _recall_context_bits(memory, kb, found)
 
+    # ponytail: agent 可能写 20KB+ report, 全塞 LLM prompt 会让评估调 4-8 分钟.
+    #   截到 2000 字符够 LLM 判 on_track. ceiling: 分段摘要再评估.
+    _attempted_trunc = (attempted or "")[:2000]
+    _found_trunc = (found or "")[:2000]
+
     sys = (
         "你是中间步骤评估器. 判断当前步骤是否在目标链上, 证据质量如何, 偏差是什么."
         '严格输出一行 JSON: {"on_track": "true|false|unsure", '
@@ -429,8 +434,8 @@ def _llm_evaluate(
     )
     usr = (
         f"目标链:\n{chain_text}\n\n"
-        f"本步 attempted: {attempted}\n"
-        f"本步 found: {found}\n"
+        f"本步 attempted: {_attempted_trunc}\n"
+        f"本步 found: {_found_trunc}\n"
     )
     if ctx_text:
         usr += f"\n参考上下文:\n{ctx_text}\n"
