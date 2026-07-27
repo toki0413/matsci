@@ -81,31 +81,37 @@ _DESTRUCTIVE_TOOL_CALLS = re.compile(
 )
 
 
-def _assess_risk(code: str, tools: dict[str, Any]) -> tuple[RiskLevel, str]:
-    """三档风险评级 (Cline 模式).
-
-    low: 纯计算, 只调 print/math/json/numpy 等只读工具, 无副作用关键词
-    medium: 调用 search/rag/literature 等只读外部工具 (有网络/IO 但不改状态)
-    high: 代码含 savefig/open/write 等副作用, 或调用 destructive 工具
-    """
-    if _SIDE_EFFECT_PATTERNS.search(code) or _DESTRUCTIVE_TOOL_CALLS.search(code):
-        return ("high", "代码含副作用关键词或 destructive 工具调用")
-    # 扫代码里调用的工具名, 看是否触发 destructive
-    called = set()
+def _scan_called_tools(code: str, tools: dict[str, Any]) -> list[str]:
+    """扫代码里调用的工具名, 返回 sorted list. _assess_risk 和 standing rule 共用."""
+    called: set[str] = set()
     for name in tools:
         if name in _BLOCKED_TOOLS:
             continue
         if re.search(rf"\b{name}\s*\(", code):
             called.add(name)
+    return sorted(called)
+
+
+def _assess_risk(code: str, tools: dict[str, Any]) -> tuple[RiskLevel, str, list[str]]:
+    """三档风险评级 (Cline 模式). 返回 (risk, reason, called_tools).
+
+    called_tools 给 standing rule 用; high risk 返回空 list (destructive 不记 standing).
+    low: 纯计算, 只调 print/math/json/numpy 等只读工具, 无副作用关键词
+    medium: 调用 search/rag/literature 等只读外部工具 (有网络/IO 但不改状态)
+    high: 代码含 savefig/open/write 等副作用, 或调用 destructive 工具
+    """
+    if _SIDE_EFFECT_PATTERNS.search(code) or _DESTRUCTIVE_TOOL_CALLS.search(code):
+        return ("high", "代码含副作用关键词或 destructive 工具调用", [])
+    called = _scan_called_tools(code, tools)
     for name in called:
         tool = tools.get(name)
         if tool is None:
             continue
         if getattr(tool, "destructive", False):
-            return ("high", f"调用 destructive 工具 {name}")
+            return ("high", f"调用 destructive 工具 {name}", [])
     if called:
-        return ("medium", f"调用工具: {sorted(called)}")
-    return ("low", "纯计算")
+        return ("medium", f"调用工具: {sorted(called)}", called)
+    return ("low", "纯计算", [])
 
 
 # 本会话内 "approve_always" 的风险级别白名单, 避免确认疲劳.
@@ -119,6 +125,36 @@ def _mark_auto_approved(session_id: str, risk_level: RiskLevel) -> None:
 
 def _is_auto_approved(session_id: str, risk_level: RiskLevel) -> bool:
     return risk_level in _auto_approved.get(session_id, set())
+
+
+# P1-3: Standing rules by tool combination (derived from OpenWorker permissions.py:62-80).
+# 比 risk_level 精细 (区分 "允许 file_write" vs "允许 bash"), 比 (tool, target) 简单
+# (CodeAct 场景下 args 从代码解析太重). key = frozenset(called_tools).
+# ponytail: 升级路径 — tool_call 模式接 (tool, target) 精细维度.
+_standing_rules: dict[str, set[frozenset[str]]] = {}
+
+
+def _mark_standing_rule(session_id: str, called_tools: list[str]) -> None:
+    """approve_always 时记录当前工具组合, 下次同组合自动放行."""
+    if not called_tools:
+        return
+    _standing_rules.setdefault(session_id, set()).add(frozenset(called_tools))
+
+
+def _is_standing_rule(session_id: str, called_tools: list[str]) -> bool:
+    """检查当前工具组合是否在 standing rules 里."""
+    if not called_tools:
+        return False
+    key = frozenset(called_tools)
+    return key in _standing_rules.get(session_id, set())
+
+
+def reset_standing_rules(session_id: str | None = None) -> None:
+    """测试用: 清空 standing rules."""
+    if session_id is None:
+        _standing_rules.clear()
+    else:
+        _standing_rules.pop(session_id, None)
 
 
 def reset_auto_approvals(session_id: str | None = None) -> None:
@@ -536,7 +572,7 @@ async def run_code_act_turn(
         combined_feedback: list[str] = []
         for code in code_blocks:
             # ── Human-in-the-loop approval gate (Cline 三档模式) ──
-            risk, risk_reason = _assess_risk(code, tools)
+            risk, risk_reason, called = _assess_risk(code, tools)
             approval_fn: ApprovalFn | None = getattr(agent, "approval_fn", None)
             session_id = context.session_id
 
@@ -588,6 +624,7 @@ async def run_code_act_turn(
                 action, payload = resume_decision
                 if action == "approve_always":
                     _mark_auto_approved(session_id, risk)
+                    _mark_standing_rule(session_id, called)
                 if action == "edit" and payload:
                     code = payload
                 suggest_skip = True
@@ -611,7 +648,12 @@ async def run_code_act_turn(
                 or _should_auto_medium(session_id, risk)
                 or budget_escalated
                 or (_is_auto_approved(session_id, risk) and not _should_force_ask(session_id))
+                or _is_standing_rule(session_id, called)
             )
+
+            # standing rule 命中时 yield 事件 (借鉴 OpenWorker Decision.rule 的可观测性)
+            if not suggest_skip and called and _is_standing_rule(session_id, called):
+                yield {"type": "standing_rule_hit", "tools": called}
 
             if budget_escalated:
                 yield {
@@ -644,6 +686,7 @@ async def run_code_act_turn(
                         continue
                     if action == "approve_always":
                         _mark_auto_approved(session_id, risk)
+                        _mark_standing_rule(session_id, called)
                     if action == "edit" and payload:
                         code = payload  # 用户改了代码, 用新版执行
                 else:
@@ -685,6 +728,7 @@ async def run_code_act_turn(
                         continue
                     if action == "approve_always":
                         _mark_auto_approved(session_id, risk)
+                        _mark_standing_rule(session_id, called)
                     if action == "edit" and payload:
                         code = payload
 

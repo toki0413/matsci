@@ -12,6 +12,9 @@ from huginn.agent.code_act_loop import (
     _suggest_modes,
     resume_suggest,
     _active_agents,
+    _mark_standing_rule,
+    _is_standing_rule,
+    reset_standing_rules,
 )
 from huginn.memory.intuition import detect_intuition
 from huginn.interaction.clarification import should_ask_clarification
@@ -40,6 +43,43 @@ def test_auto_approve():
     _mark_auto_approved("test", "medium")
     assert _is_auto_approved("test", "medium")
     assert not _is_auto_approved("test", "high")
+
+
+def test_standing_rules():
+    # P1-3: standing rule by tool combination
+    reset_standing_rules("test_sr")
+    tools = {"rag_tool": _FakeTool(), "search_tool": _FakeTool(), "delete_tool": _DestTool()}
+
+    # medium risk (rag_tool) → called 非空, 可记 standing rule
+    risk, _, called = _assess_risk('r = rag_tool(query="GaN")', tools)
+    assert risk == "medium"
+    assert called == ["rag_tool"]
+    assert not _is_standing_rule("test_sr", called)
+    _mark_standing_rule("test_sr", called)
+    assert _is_standing_rule("test_sr", called)
+
+    # 不同工具组合不互染
+    risk2, _, called2 = _assess_risk('s = search_tool(q="Si")', tools)
+    assert called2 == ["search_tool"]
+    assert not _is_standing_rule("test_sr", called2)
+
+    # high risk (destructive) → called 空, 不记 standing
+    risk3, _, called3 = _assess_risk('delete_tool(doc_ids=["x"])', tools)
+    assert risk3 == "high"
+    assert called3 == []
+    _mark_standing_rule("test_sr", called3)  # 空 list, no-op
+    assert not _is_standing_rule("test_sr", called3)
+
+    # 多工具组合: frozenset 匹配 (顺序无关)
+    multi = 'r = rag_tool(q="a")\ns = search_tool(q="b")'
+    risk4, _, called4 = _assess_risk(multi, tools)
+    assert set(called4) == {"rag_tool", "search_tool"}
+    _mark_standing_rule("test_sr", called4)
+    # 顺序不同也能命中
+    assert _is_standing_rule("test_sr", ["search_tool", "rag_tool"])
+
+    reset_standing_rules("test_sr")
+    assert not _is_standing_rule("test_sr", called)
 
 
 def test_intuition_detection():
@@ -177,6 +217,8 @@ if __name__ == "__main__":
     print("PASS: risk_assessment")
     test_auto_approve()
     print("PASS: auto_approve")
+    test_standing_rules()
+    print("PASS: standing_rules")
     test_intuition_detection()
     print("PASS: intuition_detection")
     test_clarification_trigger()
