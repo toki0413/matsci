@@ -1676,6 +1676,44 @@ class LongTermMemory:
 
         return report
 
+    def get_self_model(self) -> dict[str, dict]:
+        """按 persona_id 聚合 iteration_result, 返回 {persona: {rate, success, failure, dimension, hyp_type}}.
+
+        curiosity_hint/self_goal_synthesis 的数据源. 跨任务共享 db 时,
+        多个 RCB task 的 iteration_result 累积, self_model 反映历史成功率.
+
+        ponytail: 数据没存 dimension/hyp_type (iteration_result 只记 persona+status),
+        用 persona_id 作 dimension + status 推 hyp_type. 升级: 写入时打 dimension tag.
+        ceiling: persona 粒度粗, 同 persona 不同 dimension 的假设混在一起.
+        """
+        with self._connect() as conn:
+            alive_where, alive_params = self._where_alive()
+            rows = conn.execute(
+                f"""SELECT persona_id, status, COUNT(*) as n
+                    FROM memories AS m
+                    WHERE {alive_where} AND m.memory_type = 'iteration_result'
+                      AND m.persona_id IS NOT NULL
+                    GROUP BY persona_id, status""",
+                alive_params,
+            ).fetchall()
+        if not rows:
+            return {}
+        # 按 persona 聚合: success=_supported, failure=refuted
+        agg: dict[str, dict] = {}
+        for r in rows:
+            p = r["persona_id"]
+            if p not in agg:
+                agg[p] = {"success": 0, "failure": 0, "dimension": p, "hyp_type": "unknown"}
+            if r["status"] == "supported":
+                agg[p]["success"] = r["n"]
+            else:
+                agg[p]["failure"] += r["n"]
+        # 算 rate
+        for p, v in agg.items():
+            total = v["success"] + v["failure"]
+            v["rate"] = v["success"] / total if total > 0 else 0.0
+        return agg
+
 
 # ── stable_principles: persona 一部分, S7 自修改回流 ──────────────────────
 # G8 加法: knowledge→persona 回路. S7 accepted 提案写进来, 下一轮 build_system_prompt
