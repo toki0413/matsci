@@ -312,6 +312,15 @@ class HuginnAgent(
         self._approval_callback: Callable[[str, str], bool] | None = (
             sec.approval_callback
         )
+        # P2-5: Inbox opt-in. HUGINN_APPROVAL_MODE=inbox 时, CodeAct approval
+        # 走跨会话队列 (Unattended 场景). 默认 None → yield approval_request 事件.
+        if os.environ.get("HUGINN_APPROVAL_MODE") == "inbox":
+            from huginn.interaction.inbox import get_inbox_store, inbox_approval_fn
+            self.approval_fn = inbox_approval_fn(
+                get_inbox_store(), thread_id or "default"
+            )
+        else:
+            self.approval_fn = None
 
         self.compression_max_tokens = t.compression_max_tokens
 
@@ -923,6 +932,15 @@ class HuginnAgent(
                                     _extra_hints.append(_cov_mw._build_layer_frontier_msg(_gaps))
                     if _extra_hints:
                         patched = [SystemMessage(content="\n\n".join(_extra_hints))] + patched
+                    # v18: bandit effort controller hint (advisory).
+                    # ponytail: 失败静默, build_hint 已 catch. 不阻塞 LLM 调用.
+                    try:
+                        from huginn.agent.bandit_controller import EffortBandit
+                        _bandit_hint = EffortBandit.get_instance().build_hint()
+                        if _bandit_hint:
+                            patched = [SystemMessage(content=_bandit_hint)] + patched
+                    except Exception:
+                        pass
                 except Exception:
                     pass
                 return {"llm_input_messages": patched}
