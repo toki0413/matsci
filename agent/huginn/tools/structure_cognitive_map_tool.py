@@ -169,6 +169,52 @@ def cognitive_map_compose(map_id: str, ops: list[dict]) -> str:
     return current_id
 
 
+def cognitive_map_se3_act(
+    map_id: str,
+    euler_angles: list[float],
+    translation: list[float],
+    order: str = "XYZ",
+    degrees: bool = True,
+) -> dict:
+    """SE(3) 群作用同时穿过 text <point3d> 和 3D coords (半直积工程入口).
+
+    接 composite_token_experiment.se3_act — 把 map 投影成 CompositeToken,
+    作用 SE(3) 变换, 返回旋转/平移后的 text + coords. CodeAct 调用, 不返
+    map_id (SE(3) 作用不创建新 map, 只读投影).
+
+    Args:
+        map_id: from cognitive_map_from_cif
+        euler_angles: [rx, ry, rz] 欧拉角 (degrees or radians)
+        translation: [tx, ty, tz] 平移 (Å)
+        order: 欧拉角顺序, 默认 "XYZ" (scipy Rotation 约定)
+        degrees: True 角度制, False 弧度制
+
+    Returns:
+        {"text": str, "coords": list[list[float]], "species": list[str], "n_atoms": int}
+
+    ponytail: 只读投影, 不写 _MAPS. 升级: 加 inplace 选项, 把旋转后结果注册新 map.
+    """
+    import numpy as np
+    from scipy.spatial.transform import Rotation as _R
+    from huginn.metacog.composite_token_experiment import CompositeToken, se3_act
+
+    m = _get_map(map_id)
+    token_dict = m.to_composite_token()
+    ct = CompositeToken(
+        text=token_dict["text"],
+        coords=token_dict["coords"],
+    )
+    rot = _R.from_euler(order, euler_angles, degrees=degrees)
+    trans = np.asarray(translation, dtype=float)
+    rotated = se3_act(rot, trans, ct)
+    return {
+        "text": rotated.text,
+        "coords": rotated.coords.tolist(),
+        "species": token_dict["species"],
+        "n_atoms": token_dict["n_atoms"],
+    }
+
+
 def _get_map(map_id: str) -> StructureCognitiveMap:
     if map_id not in _MAPS:
         raise KeyError(f"unknown map_id: {map_id}")
