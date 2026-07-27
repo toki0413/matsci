@@ -29,6 +29,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
@@ -328,12 +329,15 @@ def update_drift_and_metrics(
     workspace: Any,
     run_id: str,
     max_iterations: int,
+    target_chain_progress: float | None = None,
 ) -> tuple[tuple | None, Any]:
     """AV4: detect_drift + TaskMetrics 滚动更新共享函数.
 
     返回 (drift_info, task_metrics). 失败时 drift_info=None, task_metrics 不变.
     rcb_runner (G62+G70) 和 autoloop reflect_fn (AV2) 都调这个.
     ponytail: duck typing — step_eval 可以是 StepEvaluation 或 SimpleNamespace.
+    target_chain_progress: RCB 路径算的 chain 平均进度, 透传给 update_metrics.
+      autoloop 不传 (默认 None), 行为不变.
     """
     drift_info: tuple | None = None
     try:
@@ -355,7 +359,12 @@ def update_drift_and_metrics(
             if task_state is None:
                 from types import SimpleNamespace as _NS
                 task_state = _NS(created_at=time.time())
-        task_metrics = _um(task_metrics, step_eval, task_state=task_state)
+        # target_chain_progress 透传 — update_metrics 接受 None (autoloop 路径).
+        task_metrics = _um(
+            task_metrics, step_eval,
+            task_state=task_state,
+            target_chain_progress=target_chain_progress,
+        )
         _sm(task_metrics, workspace)
     except Exception as exc:
         logger.debug("AV4 TaskMetrics update failed: %s", exc)
@@ -1638,6 +1647,34 @@ Respond JSON only:
 
         返回 AutoloopResult, 与 run() 接口一致, 调用方无需感知差异.
         """
+        # P2-6 自动触发: WakeStore 有 pending wakes 时 lazy spawn scheduler.
+        # runner 调 self.run_cognitive() 继续长跑循环 (wake 触发的 resume).
+        if getattr(self, "_auto_wake_enabled", False) and self._wake_scheduler is None:
+            try:
+                from huginn.runtime.selfwake import get_wake_store
+                from huginn.runtime.scheduler import WakeScheduler
+                store = get_wake_store()
+                if store.pending():
+                    async def _wake_runner(session_id: str, wake) -> None:
+                        # session_id 这里是 wake.session_id, autoloop 场景
+                        # 直接继续当前 run_cognitive (同进程同 engine).
+                        # ponytail: 不跨 engine resume, 仅日志 — 真正的跨 session
+                        # resume 需要 P1-4 + checkpointer 配合.
+                        logger.info(
+                            "wake %s fired for session %s — continuing autoloop",
+                            wake.id, session_id,
+                        )
+                    self._wake_scheduler = WakeScheduler(
+                        store, _wake_runner, tick_seconds=30.0
+                    )
+                    self._wake_scheduler.start()
+                    logger.info(
+                        "auto-spawned WakeScheduler (%d pending wakes)",
+                        len(store.pending()),
+                    )
+            except Exception:
+                logger.debug("auto wake scheduler spawn failed", exc_info=True)
+
         from huginn.autoloop.cognitive_loop import (
             CognitiveLoop, LoopState, ActionDecision, ReflectionResult,
         )
@@ -2519,6 +2556,341 @@ Respond JSON only:
         )
 
 
+# === RCB 顶层认知反馈函数 ===
+# P1 前置: 把 autoloop 的 _darwin_ratchet_check / _classify_stall /
+# _metacog_check_completion / _metacog_check_topology_collapse 抽成无 self 版本,
+# 让 RCB 路径不实例化 AutoloopEngine 也能调. 原方法保留不动, autoloop 路径不断.
+# ponytail: 顶层函数只抽核心判定逻辑, 不复制 belief / heat_engine / meta_trace
+# 这些 side-effect — RCB 不需要它们. 升级路径: RCB 也想要 belief 时再加.
+
+
+def darwin_ratchet_check(
+    darwin_score: float,
+    supported_ratio: float,
+    stagnation_count: int,
+    stagnation_limit: int = 3,
+    hypothesis_graph: Any = None,
+    speculator_hint: str | None = None,
+) -> tuple[str, dict]:
+    """RCB 可直接调用的 darwin ratchet 检查. 返回 (action, state_dict).
+
+    action ∈ {"continue", "pivot", "counterexample", "stop"}
+    - continue:      stagnation 未达 limit
+    - pivot:         stagnation >= limit, 方法问题, 换 hypothesis
+    - counterexample:stagnation >= limit, 证据指向 hypothesis 错
+    - stop:          stagnation >= limit, 调节无效
+
+    RCB 路径不传 hypothesis_graph 时, 退化为只看 darwin_score / supported_ratio.
+    ponytail: 无 _last_failure_mode / _consecutive_failures 这些 engine 状态,
+    用 supported_ratio + darwin_score 阈值做粗分类. ceiling: 真 stall 归因要看
+    failure trace, 升级时让 RCB 把 failure trace 传进来.
+    """
+    if stagnation_count < stagnation_limit:
+        return "continue", {
+            "stagnation_count": stagnation_count,
+            "darwin_score": darwin_score,
+            "supported_ratio": supported_ratio,
+            "speculator_hint": speculator_hint,
+        }
+
+    # stagnation 达 limit → 分类 stall (无 history, 用 snapshot 阈值)
+    if darwin_score < 2.0:
+        action = "stop"
+    elif supported_ratio < 0.3:
+        action = "counterexample"
+    else:
+        action = "pivot"
+
+    new_stagnation = stagnation_count
+    new_hint = speculator_hint
+    if action == "pivot":
+        new_stagnation = 0  # 给 pivot 后的新假设重新累积
+    elif action == "counterexample":
+        new_stagnation = 0
+        # 注入 counterexample hint, 调用方下轮 hypothesize 会读到
+        new_hint = (speculator_hint or "") + (
+            "\n[Darwin ratchet] stagnation 达 limit 且 supported_ratio 偏低, "
+            "当前 hypothesis 可能错. Hunt for a counterexample: 构造一个具体 "
+            "scenario / 参数集让该 hypothesis 失败, 若找到则 refute 并 pivot."
+        )
+
+    return action, {
+        "stagnation_count": new_stagnation,
+        "darwin_score": darwin_score,
+        "supported_ratio": supported_ratio,
+        "speculator_hint": new_hint,
+    }
+
+
+def classify_stall(
+    darwin_score_history: list[float],
+    supported_ratio_history: list[float],
+    hypothesis_graph: Any = None,
+) -> str:
+    """RCB 可直接调用的 stagnation 分类. 返回 stall_type.
+
+    stall_type ∈ {"pivot", "counterexample", "stop"}
+    - pivot:          idea pool 枯竭, score 平台, 换 hypothesis
+    - counterexample: supported_ratio 下滑或低位, 找反例
+    - stop:           score 持续低位, 调节无效
+
+    无 hypothesis_graph 时, 用 score history 形状分类.
+    ponytail: 只看 last-3 形状, 不做完整 trend analysis. ceiling: 6+ 点的
+    Bayesian change-point detection.
+    """
+    n = len(darwin_score_history)
+    if n == 0:
+        return "pivot"  # 没历史, 默认换 hypothesis
+
+    last_score = darwin_score_history[-1]
+    # 1. 持续低位 → stop
+    if n >= 3 and all(s < 2.0 for s in darwin_score_history[-3:]):
+        return "stop"
+    if last_score < 1.5:
+        return "stop"
+
+    # 2. supported_ratio 下滑或低位 → counterexample
+    if supported_ratio_history:
+        last_ratio = supported_ratio_history[-1]
+        if last_ratio < 0.3:
+            return "counterexample"
+        # 下滑检测: 最近 2 个点都比前 2 个点低
+        if len(supported_ratio_history) >= 4:
+            recent = supported_ratio_history[-2:]
+            prev = supported_ratio_history[-4:-2]
+            if all(r < p for r, p in zip(recent, prev)):
+                return "counterexample"
+
+    # 3. score 平台 → pivot (idea pool 枯竭, 换方向)
+    if n >= 3:
+        last3 = darwin_score_history[-3:]
+        if max(last3) - min(last3) < 0.5:
+            return "pivot"
+
+    # 4. 默认 → pivot (stagnation 已触发, 换 hypothesis 是合理默认)
+    return "pivot"
+
+
+def metacog_check_completion(
+    report_md: str,
+    outputs_dir: str | Path,
+    hypothesis_graph: Any = None,
+    derivation_chain: list[str] | None = None,
+) -> dict:
+    """RCB 可直接调用的完成度检查. 返回 4 层审计结果.
+
+    返回 {
+        "derivation_chain_coverage": float,  # 0.0-1.0
+        "topology_health": float,           # 0.0-1.0
+        "repro_evidence": float,            # 0.0-1.0
+        "evidence_strength": float,         # 0.0-1.0
+        "passed": bool,                     # 所有层 >= 0.5 才 True
+        "block_reasons": list[str],
+    }
+
+    ponytail: 4 层用文件 / 字符串启发式算, 不调 LLM judge. ceiling: 真 audit
+    调 CompletionAuditor + EquivalenceAuditor. RCB 路径无 engine state,
+    退化为 report / outputs_dir / graph 三源启发式.
+    """
+    reasons: list[str] = []
+
+    # L1: derivation_chain_coverage — chain 中有多少 step 在 report 里被提到
+    if derivation_chain:
+        mentioned = sum(
+            1 for step in derivation_chain
+            if step and step[:50] in report_md
+        )
+        cov = mentioned / len(derivation_chain)
+    else:
+        # 没 chain 传进来, 退化为: report 里有没有 derivation / derive 字样
+        _low = report_md.lower()
+        cov = 1.0 if ("derivation" in _low or "derive" in _low) else 0.3
+    if cov < 0.5:
+        reasons.append(f"derivation_chain_coverage={cov:.2f} < 0.5")
+
+    # L2: topology_health — hypothesis_graph 连通分量数 / 节点数
+    if hypothesis_graph is not None:
+        try:
+            n_nodes = len(hypothesis_graph.all_nodes())
+            n_comp = hypothesis_graph.component_count()
+            # 0 节点 → 0; 否则 [0,1] 标准化, 越多分量越健康
+            topo = (n_comp / n_nodes) if n_nodes > 0 else 0.0
+        except Exception:
+            topo = 0.5  # 不阻断, advisory
+    else:
+        topo = 1.0  # 没 graph, 默认不阻断
+    if topo < 0.5:
+        reasons.append(f"topology_health={topo:.2f} < 0.5")
+
+    # L3: repro_evidence — outputs_dir 里有文件 (.png/.csv/.json/.txt/.parquet)
+    try:
+        out_path = Path(outputs_dir)
+        if out_path.exists() and out_path.is_dir():
+            files = list(out_path.rglob("*"))
+            evidence_files = [
+                f for f in files
+                if f.is_file() and f.suffix.lower() in
+                {".png", ".csv", ".json", ".txt", ".parquet", ".pdf", ".jpg"}
+            ]
+            # 5+ 文件 → 1.0; 线性插值
+            repro = min(1.0, len(evidence_files) / 5.0)
+        else:
+            repro = 0.0
+    except Exception:
+        repro = 0.5
+    if repro < 0.5:
+        reasons.append(f"repro_evidence={repro:.2f} < 0.5")
+
+    # L4: evidence_strength — report 里引用 / ref / citation 数
+    try:
+        # ponytail: 字符串计数, 不上正则. ceiling: 真 citation parser.
+        _low = report_md.lower()
+        cite_hits = (
+            _low.count("[") + _low.count("ref:")
+            + _low.count("cite") + _low.count("see ")
+        )
+        # 10+ 引用 → 1.0
+        strength = min(1.0, cite_hits / 10.0)
+    except Exception:
+        strength = 0.5
+    if strength < 0.5:
+        reasons.append(f"evidence_strength={strength:.2f} < 0.5")
+
+    passed = (cov >= 0.5 and topo >= 0.5
+              and repro >= 0.5 and strength >= 0.5)
+    return {
+        "derivation_chain_coverage": cov,
+        "topology_health": topo,
+        "repro_evidence": repro,
+        "evidence_strength": strength,
+        "passed": passed,
+        "block_reasons": reasons,
+    }
+
+
+def metacog_check_topology_collapse(
+    hypothesis_graph: Any = None,
+    hypothesis_list: list | None = None,
+) -> dict:
+    """RCB 可直接调用的拓扑坍缩检测. 返回检测结果.
+
+    返回 {
+        "collapsed": bool,
+        "diversity_score": float,  # 0.0-1.0, 越低越坍缩
+        "reason": str | None,
+    }
+
+    无 hypothesis_graph 时, 用 hypothesis_list (List[Hypothesis]) 计算.
+    ponytail: 多样性用 unique statements / total 算. ceiling: 真 diversity
+    要看 statement 语义嵌入的 cosine 距离, 这里只看字面重复.
+    """
+    # 路径 1: hypothesis_graph 优先
+    if hypothesis_graph is not None:
+        try:
+            n_nodes = len(hypothesis_graph.all_nodes())
+            n_comp = hypothesis_graph.component_count()
+            if n_nodes == 0:
+                return {"collapsed": True, "diversity_score": 0.0,
+                        "reason": "hypothesis_graph 为空 (无节点)"}
+            # ponytail: 用 component_count / n_nodes 当 diversity 代理.
+            # ceiling: 用 statement 语义嵌入算真 diversity.
+            diversity = n_comp / n_nodes
+            collapsed = hypothesis_graph.is_collapsed(min_components=2)
+            reason = None
+            if collapsed:
+                reason = (f"连通分量 {n_comp} < 2, 搜索空间坍缩 "
+                          f"(n_nodes={n_nodes})")
+            return {
+                "collapsed": collapsed,
+                "diversity_score": diversity,
+                "reason": reason,
+            }
+        except Exception as exc:
+            return {"collapsed": False, "diversity_score": 0.5,
+                    "reason": f"hypothesis_graph 检测异常: {exc}"}
+
+    # 路径 2: hypothesis_list (List[Hypothesis] or List[dict])
+    if hypothesis_list is not None:
+        statements = []
+        for h in hypothesis_list:
+            stmt = getattr(h, "statement", None)
+            if stmt is None and isinstance(h, dict):
+                stmt = h.get("statement", "")
+            if stmt:
+                statements.append(stmt)
+        if not statements:
+            return {"collapsed": True, "diversity_score": 0.0,
+                    "reason": "hypothesis_list 为空或无 statement"}
+        unique = len(set(statements))
+        diversity = unique / len(statements)
+        collapsed = diversity < 0.5
+        reason = None
+        if collapsed:
+            reason = (f"unique statements {unique}/{len(statements)} "
+                      f"< 0.5, 假设同质化")
+        return {
+            "collapsed": collapsed,
+            "diversity_score": diversity,
+            "reason": reason,
+        }
+
+    # 路径 3: 无 graph 无 list → 不坍缩 (兜底)
+    return {"collapsed": False, "diversity_score": 1.0, "reason": None}
+
+
+def _selfcheck_rcb_feedback() -> None:
+    """RCB 顶层认知反馈函数的最小自检 — assert-based, 无框架无 fixture."""
+    # darwin_ratchet_check: continue / pivot / counterexample / stop 四路
+    act, st = darwin_ratchet_check(8.0, 0.6, 0, 3)
+    assert act == "continue", f"expected continue, got {act}"
+    act, st = darwin_ratchet_check(8.0, 0.6, 3, 3)
+    assert act == "pivot", f"expected pivot, got {act}"
+    assert st["stagnation_count"] == 0, "pivot 应重置 stagnation"
+    act, st = darwin_ratchet_check(1.0, 0.1, 3, 3)
+    assert act == "stop", f"expected stop, got {act}"
+    act, st = darwin_ratchet_check(5.0, 0.1, 3, 3)
+    assert act == "counterexample", f"expected counterexample, got {act}"
+    assert st["stagnation_count"] == 0, "counterexample 应重置 stagnation"
+    assert st["speculator_hint"] and "counterexample" in st["speculator_hint"].lower()
+
+    # classify_stall: history-based
+    assert classify_stall([], []) == "pivot"
+    assert classify_stall([1.0, 1.0, 1.0], [0.5]) == "stop"
+    assert classify_stall([5.0, 5.1, 4.9], [0.1]) == "counterexample"
+    assert classify_stall([5.0, 5.1, 4.9], [0.6]) == "pivot"
+    assert classify_stall([5.0, 5.1, 4.9], [0.7, 0.7, 0.5, 0.4]) == "counterexample"
+
+    # metacog_check_completion: 4 层 + passed
+    r = metacog_check_completion("no derivation here", "/nonexistent/path")
+    assert r["passed"] is False
+    assert "derivation_chain_coverage" in r
+    assert r["repro_evidence"] < 0.5
+    r2 = metacog_check_completion(
+        "derivation: foo[1] ref: bar cite: baz see: qux [2] [3] [4] [5]",
+        "/nonexistent/path",
+        derivation_chain=["derivation: foo"],
+    )
+    assert r2["derivation_chain_coverage"] >= 0.5
+    assert r2["evidence_strength"] >= 0.5
+
+    # metacog_check_topology_collapse: 三路径
+    r3 = metacog_check_topology_collapse()
+    assert r3["collapsed"] is False and r3["diversity_score"] == 1.0
+    r4 = metacog_check_topology_collapse(hypothesis_list=[])
+    assert r4["collapsed"] is True  # 空 list 视为坍缩
+    r5 = metacog_check_topology_collapse(hypothesis_list=[
+        type("H", (), {"statement": "a"})(),
+        type("H", (), {"statement": "a"})(),
+        type("H", (), {"statement": "a"})(),
+    ])
+    assert r5["collapsed"] is True and r5["diversity_score"] < 0.5
+    r6 = metacog_check_topology_collapse(hypothesis_list=[
+        type("H", (), {"statement": "a"})(),
+        type("H", (), {"statement": "b"})(),
+        type("H", (), {"statement": "c"})(),
+    ])
+    assert r6["collapsed"] is False and r6["diversity_score"] == 1.0
+    print("rcb_feedback selfcheck ok")
 
 
 
@@ -2603,6 +2975,157 @@ def _selfcheck() -> None:
         print("CognitiveLoop selfcheck OK (3/3: basic flow + stuck protection + invalid action)")
 
     asyncio.run(run_test())
+
+
+# ── P4 Task 24: RCB → autoloop _learn 顶层 wrapper ──────────────────────────
+# AutoloopEngine._learn 依赖 self.memory / self._get_evolution() / self._iteration /
+# self._last_persona 等 engine 状态, RCB 不实例化 engine. 抽顶层函数只暴露 RCB
+# 需要的部分: long-term memory + persona_history + cross_task_store.
+# ponytail: 不接 evolution.evolve_from_rewards / Beta 信念更新 / skill abstraction —
+#   这些依赖 engine 内部状态 (hypothesis_graph / _last_applied_patches), RCB 路径
+#   没有这些对象. 升级路径: RCB 实例化轻量 AutoloopEngine 后直接调 _learn.
+
+
+def learn_from_rcb(
+    mem_mgr: Any,
+    hypothesis: str,
+    validation: dict[str, Any],
+    persona_name: str = "default",
+    run_id: str | None = None,
+    cross_task_store: Any = None,
+    domain: str = "unknown",
+) -> dict[str, Any]:
+    """RCB Step 3 finalize 写长期记忆 + persona_history + cross_task_store.
+
+    AutoloopEngine._learn 的最小子集 — 只做 memory writes, 不接 evolution /
+    skill abstraction / Beta 信念更新 (那些依赖 engine 内部状态).
+
+    Args:
+        mem_mgr: MemoryManager 实例 (rcb_runner run() 创建). None 时跳过 memory 写.
+        hypothesis: 本轮 hypothesis / report 摘要 (str)
+        validation: dict, 至少含 tests_passed / r_phys / darwin_score
+        persona_name: persona id, 给 persona_history 聚合用
+        run_id: 通常 = ws.name, 给 cross-task db 索引用
+        cross_task_store: CrossTaskStore 实例, None 跳过 cross-task 写
+        domain: task domain, 给 cross-task 隔离用
+
+    Returns:
+        dict: {memory_written, persona_written, cross_task_written, summary}
+    """
+    result = {
+        "memory_written": False,
+        "persona_written": False,
+        "cross_task_written": False,
+        "summary": "",
+    }
+    if not hypothesis:
+        return result
+
+    # darwin_score / r_phys 从 validation 取, 没有就用默认
+    r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
+    darwin = (
+        validation.get("darwin_score", 0.5)
+        if isinstance(validation, dict)
+        else 0.5
+    )
+    tests_passed = (
+        validation.get("tests_passed", darwin >= 0.5)
+        if isinstance(validation, dict)
+        else darwin >= 0.5
+    )
+    # importance: r_phys 优先, 没有就用 darwin
+    importance = 0.6 if r_phys is None else min(0.9, float(r_phys))
+    if r_phys is None and darwin is not None:
+        importance = min(0.9, max(0.1, float(darwin)))
+    status = "supported" if tests_passed else "refuted"
+
+    # 1. long-term memory: iteration_result
+    if mem_mgr is not None:
+        try:
+            mem_content = f"RCB finalize: {hypothesis[:200]}"
+            if r_phys is not None:
+                mem_content += f"\nr_phys: {r_phys}"
+            mem_content += f"\ndarwin: {darwin}, status: {status}"
+            tags = [
+                "rcb",
+                "autoloop_learn",
+                f"persona:{persona_name}",
+                f"r_phys:{r_phys}" if r_phys is not None else "r_phys:none",
+            ]
+            try:
+                mem_mgr.remember_typed(
+                    content=mem_content,
+                    memory_type="iteration_result",
+                    run_id=run_id,
+                    persona_id=persona_name,
+                    status=status,
+                    importance=importance,
+                    tier="mid",
+                    tags=tags,
+                    source="rcb_learn_from_rcb",
+                )
+                result["memory_written"] = True
+            except Exception:
+                # 老接口 fallback
+                mem_mgr.remember(
+                    content=mem_content,
+                    category="autoloop_iteration",
+                    importance=importance,
+                    tier="mid",
+                    tags=tags,
+                )
+                result["memory_written"] = True
+        except Exception as exc:
+            logger.debug("learn_from_rcb memory write failed: %s", exc)
+
+        # 2. persona_history (给 _pick_hypothesis_persona 查)
+        try:
+            _ph_content = (
+                f"Persona: {persona_name}, r_phys: {r_phys}, "
+                f"darwin: {darwin}, status: {status}"
+            )
+            mem_mgr.remember_typed(
+                content=_ph_content,
+                memory_type="persona_history",
+                run_id=run_id,
+                persona_id=persona_name,
+                status=status,
+                importance=importance,
+                tier="mid",
+                tags=["rcb", f"persona:{persona_name}"],
+                source="rcb_learn_from_rcb",
+            )
+            result["persona_written"] = True
+        except Exception as exc:
+            logger.debug("learn_from_rcb persona_history write failed: %s", exc)
+
+    # 3. cross_task_store: 高 darwin entry 给后续同 domain task 作 prior
+    if cross_task_store is not None and darwin is not None and darwin >= 0.5:
+        try:
+            cross_task_store.append({
+                "simplex_id": f"rcb:{run_id or 'unknown'}:finalize",
+                "task_id": run_id or "unknown",
+                "domain": domain,
+                "iteration": 0,
+                "ts": "",
+                "role": "rcb_finalize",
+                "attempted": hypothesis[:200],
+                "found": str(validation.get("found", ""))[:200],
+                "evidence": [],
+                "darwin_score": float(darwin),
+                "supported_ratio": 0.0,
+                "cochain_type": "legacy",
+            })
+            result["cross_task_written"] = True
+        except Exception as exc:
+            logger.debug("learn_from_rcb cross_task_store write failed: %s", exc)
+
+    result["summary"] = (
+        f"memory={result['memory_written']} "
+        f"persona={result['persona_written']} "
+        f"cross_task={result['cross_task_written']}"
+    )
+    return result
 
 
 if __name__ == "__main__":

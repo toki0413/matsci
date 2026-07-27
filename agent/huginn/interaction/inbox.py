@@ -589,5 +589,32 @@ if __name__ == "__main__":
         print("10. inbox_approval_fn → deny OK")
 
         print("ALL CHECKS PASSED")
+
+        # 11. P2-5 自动 fallback 集成: CodeAct approval 无 resume_event 时
+        # 自动转 inbox (验证 inbox_approval_fn 在 code_act_loop 的集成契约)
+        from huginn.agent.code_act_loop import _assess_risk, _mark_standing_rule
+        from huginn.interaction.inbox import inbox_approval_fn, KIND_APPROVAL
+
+        async def _autofallback_test():
+            # 模拟 CodeAct 场景: agent 无 _approval_resume event (unattended)
+            # → inbox_approval_fn 被调用, 人类从外部 resolve
+            store_auto = InboxStore(ws / "inbox_auto.json")
+            fn = inbox_approval_fn(
+                store_auto, "s_auto", tool_call_id="tc_auto_1"
+            )
+            # 异步 resolve (模拟人类从 IM/外部 surface 回答)
+            async def _resolve_later():
+                await _asyncio.sleep(0.05)
+                pending = store_auto.pending("s_auto")
+                assert pending, "approval should be parked in inbox"
+                assert pending[0].kind == KIND_APPROVAL
+                store_auto.resolve(pending[0].id, "allow")
+            _asyncio.ensure_future(_resolve_later())
+            action, payload = await fn("print('hi')", "medium", "test")
+            assert action == "approve", f"expected approve, got {action}"
+            assert payload is None
+        _asyncio.run(_autofallback_test())
+        print("11. P2-5 auto-fallback integration OK")
+        print("ALL CHECKS PASSED (with P2-5 integration)")
     finally:
         shutil.rmtree(ws, ignore_errors=True)

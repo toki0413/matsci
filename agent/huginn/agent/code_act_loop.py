@@ -364,7 +364,12 @@ Remember: one code block per turn, then stop and wait for the execution result."
             "after_translation), cognitive_map_transform(map_id, op, **params) "
             "-> new_map_id (op in rotate/translate/supercell/remove_atom/"
             "add_atom/swap_atoms), cognitive_map_to_text(map_id, max_atoms=50) "
-            "-> str. SE(3) equivariant: rotations preserve distances/angles."
+            "-> str. SE(3) equivariant: rotations preserve distances/angles. "
+            "cognitive_map_se3_act(map_id, euler_angles=[rx,ry,rz], "
+            "translation=[tx,ty,tz], order='XYZ', degrees=True) -> dict "
+            "{text, coords, species, n_atoms} applies SE(3) group action "
+            "simultaneously to text <point3d> and 3D coords (semidirect "
+            "product (M×V)⋊SE(3) engineering entry)."
         )
     return prompt
 
@@ -422,6 +427,7 @@ def _build_namespace(
                 namespace["cognitive_map_query"] = _cm.cognitive_map_query
                 namespace["cognitive_map_transform"] = _cm.cognitive_map_transform
                 namespace["cognitive_map_to_text"] = _cm.cognitive_map_to_text
+                namespace["cognitive_map_se3_act"] = _cm.cognitive_map_se3_act
             else:
                 logger.warning(
                     "structure_cognitive_map_tool: pymatgen/scipy not installed, "
@@ -696,14 +702,52 @@ async def run_code_act_turn(
                     # 这里用 yield + 等待 agent._approval_resume event 的模式.
                     resume_event = getattr(agent, "_approval_resume", None)
                     resume_decision: ApprovalDecision | None = None
-                    yield {
-                        "type": "approval_request",
-                        "code": code,
-                        "risk": risk,
-                        "reason": risk_reason,
-                        "turn": turn,
-                    }
-                    if resume_event is not None:
+
+                    # P2-5 自动 fallback: 无 resume_event (调用方没接 approval 信号)
+                    # 时, 自动转 inbox 跨会话队列. attended session (有 WS handler)
+                    # 会设 _approval_resume, unattended 不会 → 自动走 inbox.
+                    if resume_event is None and os.environ.get(
+                        "HUGINN_APPROVAL_MODE", ""
+                    ) != "disable":
+                        try:
+                            from huginn.interaction.inbox import (
+                                get_inbox_store,
+                                inbox_approval_fn,
+                            )
+                            # 用 code 的 hash 做 tool_call_id (CodeAct 没有原生
+                            # tool_call_id), 让同 code 重试时复用 inbox item
+                            import hashlib as _hl
+                            tc_id = f"codeact_{_hl.sha256(code.encode()).hexdigest()[:16]}"
+                            inbox_fn = inbox_approval_fn(
+                                get_inbox_store(),
+                                session_id,
+                                tool_call_id=tc_id,
+                            )
+                            yield {
+                                "type": "approval_request",
+                                "code": code,
+                                "risk": risk,
+                                "reason": risk_reason,
+                                "turn": turn,
+                                "routed_to": "inbox",
+                            }
+                            action, payload = await inbox_fn(code, risk, risk_reason)
+                            resume_decision = (action, payload)
+                        except Exception:
+                            logger.debug(
+                                "inbox fallback failed, conservative deny",
+                                exc_info=True,
+                            )
+                            resume_decision = None
+
+                    if resume_decision is None and resume_event is not None:
+                        yield {
+                            "type": "approval_request",
+                            "code": code,
+                            "risk": risk,
+                            "reason": risk_reason,
+                            "turn": turn,
+                        }
                         # 调用方 set event 后把决策放进 agent._approval_decision
                         await resume_event.wait()
                         resume_decision = getattr(agent, "_approval_decision", None)
