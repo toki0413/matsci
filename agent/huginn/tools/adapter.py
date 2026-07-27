@@ -466,12 +466,17 @@ class ToolAdapter:
                 data = {"result": result.data}
             else:
                 data = {"error": result.error or "Unknown error"}
-                # 暴露 stderr/stdout 帮助 agent 自调试 (RCB 场景尤其重要)
-                # ponytail: 之前只有 "Unknown error", agent 无法 debug. 加 error_detail.
-                if getattr(result, "stderr", None):
-                    data["error_detail"] = result.stderr[-2000:]
-                elif getattr(result, "stdout", None):
-                    data["error_detail"] = result.stdout[-2000:]
+                # 兜底: 从 data 字典里抓 stderr/stdout 作为 error_detail.
+                # 之前用 getattr(result, "stderr") 是死代码 — ToolResult 没这字段.
+                # bash_tool/code_tool 把 stderr 放在 data 里, 这里抽出来给 agent 看.
+                # ponytail: data 可能是 dict 或 None, 只在 dict 路径抽.
+                _data_obj = result.data if isinstance(result.data, dict) else None
+                if _data_obj:
+                    _stderr = _data_obj.get("stderr") or ""
+                    _stdout = _data_obj.get("stdout") or ""
+                    _tail = (_stderr or _stdout or "")[-2000:]
+                    if _tail and "error_detail" not in data:
+                        data["error_detail"] = _tail
             # ARGUS: tool 输出统一标 source_class, 下游 PhaseGate 可识别.
             # 顶层 _source_class 不进 LLM-visible content, 只作元数据.
             data["_source_class"] = "tool_output"
