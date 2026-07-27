@@ -70,6 +70,7 @@ def save_checkpoint(
     memory_cursor: str | None,
     target_chain_progress: dict[str, float],
     prospective_queue: list[str],
+    engine_state_digest: str | None = None,
 ) -> Checkpoint:
     """Persist a checkpoint for the given step, return the saved object."""
     cp = Checkpoint(
@@ -82,6 +83,7 @@ def save_checkpoint(
         prospective_queue=list(prospective_queue),
         audit_hash_head=_get_audit_hash_head(workspace),
         saved_at=time.time(),
+        engine_state_digest=engine_state_digest,
     )
     atomic_write_json(_checkpoint_path(workspace, task_id, step_id), asdict(cp))
     _prune_checkpoints(task_id, workspace)
@@ -224,6 +226,70 @@ def _get_audit_hash_head(workspace: Path) -> str:
             if h:
                 last = h
     return last
+
+
+# P1-4: Durable resume — detect unanswered trailing tool_calls from checkpointer.
+# Portions derived from OpenWorker (https://github.com/andrewyng/openworker)
+# MIT License, Copyright (c) 2024 Andrew Ng
+# Source: coworker/engine.py:268-292 `_unanswered_trailing_tool_calls`
+#
+# huginn 适配: openworker 用 self.messages (list[dict]), huginn 用 langgraph
+# checkpointer (SqliteSaver). 这里只做检测, 不重放 — langgraph 的 astream(None,
+# config) 会原生恢复 tool 执行. ponytail: 不改 langgraph 内部, 只读 state.
+def unanswered_trailing_tool_calls(checkpointer: Any, thread_id: str) -> list[dict]:
+    """从 checkpointer 读最近 thread state, 找 trailing AIMessage 的未应答 tool_calls.
+
+    返回 list of {id, name, args} dicts. 空列表表示无未应答 tool_calls
+    (state 不存在 / 最后一条不是 assistant / 所有 tool_calls 都已应答).
+
+    复用 OpenWorker engine.py:268-292 的逻辑, 适配 langgraph message 类型:
+    - answered_ids: 所有 ToolMessage 的 tool_call_id 集合
+    - 从末尾往前找最后一条 AIMessage, 检查其 tool_calls 是否都在 answered_ids 里
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        state = checkpointer.get(config)
+    except Exception:
+        logger.debug("unanswered_trailing_tool_calls: checkpointer.get failed", exc_info=True)
+        return []
+    if state is None:
+        return []
+    # langgraph state 结构: {"channel_values": {"messages": [...]}, ...}
+    # 兼容不同版本: 直接取 channel_values 或 flat state
+    channel_values = state.get("channel_values") if isinstance(state, dict) else None
+    messages = (
+        (channel_values or {}).get("messages")
+        if isinstance(channel_values, dict)
+        else state.get("messages") if isinstance(state, dict) else None
+    )
+    if not messages:
+        return []
+
+    # OpenWorker 逻辑: answered = {tool_call_id of all ToolMessage}
+    answered_ids: set[str] = set()
+    for msg in messages:
+        msg_type = getattr(msg, "type", None)
+        if msg_type == "tool":
+            tc_id = getattr(msg, "tool_call_id", None)
+            if tc_id:
+                answered_ids.add(tc_id)
+
+    # 从末尾往前找最后一条 AIMessage (跳过 tool/user/system)
+    # langchain AIMessage.type == "ai", OpenAI 格式 role == "assistant" — 都接
+    for msg in reversed(messages):
+        msg_type = getattr(msg, "type", None)
+        if msg_type not in ("ai", "assistant"):
+            continue
+        tool_calls = getattr(msg, "tool_calls", []) or []
+        unanswered: list[dict] = []
+        for tc in tool_calls:
+            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+            if tc_id and tc_id not in answered_ids:
+                name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
+                args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                unanswered.append({"id": tc_id, "name": name, "args": args or {}})
+        return unanswered
+    return []
 
 
 if __name__ == "__main__":
@@ -423,6 +489,77 @@ if __name__ == "__main__":
                     _os9.environ["HUGINN_USE_PERSISTENCE"] = _saved_persist
         finally:
             _eng_mod.AutoloopEngine = _orig_AE
+
+        # 10. P1-4: unanswered_trailing_tool_calls 检测逻辑
+        # 复用 OpenWorker engine.py:268-292 的契约, 适配 langgraph message 类型.
+        # 用 fake checkpointer (get 返回 channel_values.messages) 验证 5 个场景.
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        class _FakeCheckpointer:
+            def __init__(self, state):
+                self._state = state
+            def get(self, config):
+                return self._state
+
+        # 10a. state=None → 空列表
+        assert unanswered_trailing_tool_calls(_FakeCheckpointer(None), "t") == []
+        print("10a. unanswered: None state OK")
+
+        # 10b. 所有 tool_calls 已应答 → 空列表
+        msgs_answered = [
+            AIMessage(content="calling tool", tool_calls=[
+                {"id": "tc_1", "name": "search", "args": {"q": "GaN"}},
+            ]),
+            ToolMessage(content="result", tool_call_id="tc_1"),
+        ]
+        state_ans = {"channel_values": {"messages": msgs_answered}}
+        assert unanswered_trailing_tool_calls(_FakeCheckpointer(state_ans), "t") == []
+        print("10b. unanswered: all answered OK")
+
+        # 10c. 有未应答 tool_calls → 返回列表
+        msgs_pending = [
+            AIMessage(content="calling 2 tools", tool_calls=[
+                {"id": "tc_1", "name": "search", "args": {"q": "GaN"}},
+                {"id": "tc_2", "name": "calc", "args": {"x": 1}},
+            ]),
+            ToolMessage(content="result1", tool_call_id="tc_1"),
+            # tc_2 没有对应 ToolMessage
+        ]
+        state_pen = {"channel_values": {"messages": msgs_pending}}
+        pending = unanswered_trailing_tool_calls(_FakeCheckpointer(state_pen), "t")
+        assert len(pending) == 1, f"expected 1 pending, got {len(pending)}"
+        assert pending[0]["id"] == "tc_2"
+        assert pending[0]["name"] == "calc"
+        assert pending[0]["args"] == {"x": 1}
+        print("10c. unanswered: 1 pending tool_call OK")
+
+        # 10d. 最后一条是 ToolMessage → 找前面的 AIMessage
+        msgs_tool_trailing = [
+            AIMessage(content="calling", tool_calls=[
+                {"id": "tc_1", "name": "search", "args": {}},
+            ]),
+            ToolMessage(content="result1", tool_call_id="tc_1"),
+            # AIMessage 在 ToolMessage 之前, 已应答 → 空
+        ]
+        state_tt = {"channel_values": {"messages": msgs_tool_trailing}}
+        assert unanswered_trailing_tool_calls(_FakeCheckpointer(state_tt), "t") == []
+        print("10d. unanswered: trailing ToolMessage (AIMessage answered) OK")
+
+        # 10e. 最后一条是 HumanMessage → 空列表 (没 trailing AIMessage)
+        msgs_human_trailing = [
+            AIMessage(content="hi", tool_calls=[]),
+            HumanMessage(content="next question"),
+        ]
+        state_ht = {"channel_values": {"messages": msgs_human_trailing}}
+        assert unanswered_trailing_tool_calls(_FakeCheckpointer(state_ht), "t") == []
+        print("10e. unanswered: trailing HumanMessage OK")
+
+        # 10f. flat state (无 channel_values, 直接 messages) — 兼容性
+        state_flat = {"messages": msgs_pending}
+        pending_flat = unanswered_trailing_tool_calls(_FakeCheckpointer(state_flat), "t")
+        assert len(pending_flat) == 1
+        assert pending_flat[0]["id"] == "tc_2"
+        print("10f. unanswered: flat state compat OK")
 
         print("ALL CHECKS PASSED")
     finally:
