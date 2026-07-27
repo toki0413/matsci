@@ -689,6 +689,57 @@ class StreamingMixin:
 
     # ── The main chat loop ────────────────────────────────────────
 
+    async def resume_pending_turn(
+        self,
+        thread_id: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """P1-4: Durable resume — 恢复上次未完成的 turn (进程崩溃/重启后).
+
+        从 checkpointer 读 thread state, 检测 trailing AIMessage 的未应答
+        tool_calls. 有则调 graph.astream(None, config) 让 langgraph 原生恢复
+        tool 执行; 无则 yield resume_skipped.
+
+        复用 OpenWorker engine.py:250-266 `resume()` 的契约:
+        - 检测 unanswered trailing tool_calls
+        - 重放它们 (这里委托给 langgraph, 不手动重放)
+        - 继续模型 loop 完成剩余 turn
+
+        ponytail: 不改 langgraph 内部, 只在入口加 prelude. CodeAct 模式下
+        approval gate 的中断点没持久化 (在内存 event 里), 这个方法不覆盖 —
+        CodeAct 的 durable resume 需要 P2-5 Inbox 持久化 approval state.
+        """
+        from huginn.runtime.checkpoint import unanswered_trailing_tool_calls
+
+        tid = thread_id or getattr(self, "thread_id", None) or "default"
+        checkpointer = getattr(self, "checkpointer", None)
+        if checkpointer is None:
+            yield {"type": "resume_skipped", "reason": "no checkpointer configured"}
+            return
+
+        pending = unanswered_trailing_tool_calls(checkpointer, tid)
+        if not pending:
+            yield {"type": "resume_skipped", "reason": "no unanswered tool_calls"}
+            return
+
+        yield {
+            "type": "resume_started",
+            "thread_id": tid,
+            "pending_count": len(pending),
+            "tools": [p["name"] for p in pending],
+        }
+        config = {"configurable": {"thread_id": tid}}
+        # input=None: 让 langgraph 从 checkpoint 恢复, 不加新 user message
+        try:
+            async for chunk in self.build_graph().astream(None, config=config):
+                yield chunk
+        except Exception as exc:
+            yield {
+                "type": "resume_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            return
+        yield {"type": "resume_completed"}
+
     async def chat(
         self,
         message: str,
@@ -1216,7 +1267,10 @@ class StreamingMixin:
             # 真实研究) 都会误判: agent 反复跑 code_tool 是正常, 写报告反复用术语
             # ("band gap"/"MAE") Jaccard > 0.85 也正常. 升级: mode-aware detector,
             # 区分 "同 tool 同输入" (真死循环) vs "同 tool 不同输入" (正常迭代).
-            _skip_loop = os.environ.get("HUGINN_SKIP_LOOP_DETECTOR", "1").lower() in ("1", "true", "yes")
+            # 统一走 FeatureFlags 而非直接读 env var, 避免 RCBench 路径双配置冲突.
+            # FeatureFlags 读 HUGINN_FEATURE_LOOP_DETECTOR, rcb_runner 极端模式开 / 普通模式关.
+            from huginn.feature_flags import FeatureFlags
+            _skip_loop = not FeatureFlags.shared().is_enabled("loop_detector")
             if not _skip_loop:
                 turn_loop_detector = LoopDetector()
             else:
