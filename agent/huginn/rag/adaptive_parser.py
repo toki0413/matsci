@@ -10,6 +10,7 @@
 
 不依赖 lxml, 用纯 Python + sqlite3, 兼容 Playwright/Selenium 输出.
 """
+# Research-only: not wired into main loop. Kept for standalone experiments.
 
 from __future__ import annotations
 

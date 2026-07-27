@@ -136,6 +136,18 @@ agent/.huginn_memory/
 /diag_agent_*
 /_commit_msg*.txt
 
+# v17+ 临时 patch / selfcheck 脚本 (任意目录, 不只是 root)
+_v*_patch.py
+_v*_selfcheck.py
+
+# 外部参考源 (本地副本, 不进 git)
+/_external/
+
+# 跑分输出 (RCBench batch / 临时日志)
+/batch_results.json
+/out.txt
+/_score_only.py
+
 # Local pytest output dumps (CI generates pytest_output.txt)
 agent/pytest_*.txt
 agent/_bench_repro_report.json
