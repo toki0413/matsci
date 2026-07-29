@@ -747,6 +747,9 @@ class _RCBStep2Ctx:
     wall_expired_fn: Any = None
     # persona_name: run() 从 ws.name 推断后传入, _step2_execute 写 iteration_result 用.
     persona_name: str = "default"
+    # P3-7: run 开始的 ISO 时间戳, 传给 build_pmk_state 的 since 参数,
+    # 限定 KB query / Memory recall 只看本 run 之后的新知识.
+    run_start_iso: str | None = None
 
 
 async def _step2_execute(ctx: _RCBStep2Ctx) -> list:
@@ -2168,7 +2171,11 @@ LUCID review (mandatory after generating hypothesis):
             from huginn.autoloop.cognitive_loop import (
                 build_pmk_state, check_pause_decision,
             )
-            _pmk_state = build_pmk_state(persona, _last_step_eval, kb)
+            _pmk_state = build_pmk_state(
+                persona, _last_step_eval, kb,
+                since=ctx.run_start_iso,
+                mem_mgr=_mem_mgr,
+            )
             # P1-B: PMK 闭环反向边 — build_pmk_state 之前是只读快照, persona/
             # memory/kb 三路信号读完就丢. 现在把三路反向写回:
             #   1. PMK → persona.adaptive_layer (累计本轮 memory+kb 摘要)
@@ -3667,7 +3674,7 @@ async def _step3_adversarial(
         try:
             from huginn.autoloop.cognitive_loop import build_pmk_state
             _last_eval = evals_history[-1] if evals_history else None
-            _pmk = build_pmk_state(persona, _last_eval, kb)
+            _pmk = build_pmk_state(persona, _last_eval, kb, mem_mgr=mem_mgr)
             if _pmk:
                 _pmk_block = (
                     f"### PMK 三路立场 (Step 2 末态)\n"
@@ -4730,6 +4737,8 @@ async def run(workspace: str, extreme: bool = False) -> int:
     agent.refresh_tools_from_registry()
 
     # Step 2 setup + 循环抽到模块级函数 _step2_execute.
+    from datetime import datetime as _dt
+    _run_start_iso = _dt.now().isoformat()
     _step2_ctx = _RCBStep2Ctx(
         ws=ws, model=model, agent=agent, kb=kb,
         mem_mgr=_mem_mgr, persona=persona, kg=_kg,
@@ -4742,6 +4751,7 @@ async def run(workspace: str, extreme: bool = False) -> int:
         rcb_csm_advance_fn=_rcb_csm_advance,
         wall_expired_fn=_p5_wall_expired,
         persona_name=_persona_name,
+        run_start_iso=_run_start_iso,
     )
     _evals_history = await _step2_execute(_step2_ctx)  # 返回 _evals_history 供 Step 3 用
 
