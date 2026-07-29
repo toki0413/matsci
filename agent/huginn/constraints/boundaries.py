@@ -17,17 +17,13 @@ from huginn.constraints.reference import ConstraintResult
 class BoundaryState:
     """Current behavioral boundary of the Agent in a task context."""
 
-    allowed_executables: set[str] = field(default_factory=set)
-    max_timeout: float = 3600.0
     require_confirmation: bool = True
     max_retries: int = 3
     blocked_tools: set[str] = field(default_factory=set)
     blocked_scopes: set[str] = field(default_factory=set)
-
-    def allows(self, executable: str) -> bool:
-        if not self.allowed_executables:
-            return True
-        return executable in self.allowed_executables
+    # ponytail: allowed_executables/max_timeout/.allows() 删了 — 零生产读取,
+    # sandbox 链已有自己的 SandboxConfig 重复实现同语义. 真要加回时,
+    # 在 ToolAdapter pre-execution 检查里调 state.allows(tool.executable).
 
 
 class BoundaryEvolution:
