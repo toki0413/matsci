@@ -45,6 +45,17 @@ FULL_REVIEW_ORDER: list[str] = [
     "reviewer_4_logic",
 ]
 
+# IMRaD 7 维检查清单, 拼到 user prompt 里强制每个 reviewer 都过一遍
+# ponytail: 维度固定不参数化, 改维度直接改这里
+_IMRAD_CHECKLIST = """IMRaD 7-Dimension Checklist (apply to each manuscript):
+1. Introduction: gap clearly stated? contributions enumerated?
+2. Methods: reproducible? parameters justified? statistical tests specified?
+3. Results: effect size + CI reported (not just p-values)? negative results reported?
+4. Discussion: limitations stated? alternative explanations considered?
+5. Claims: correlation ≠ causation? simulation ≠ validation? significant ≠ important?
+6. Figures: captions self-contained? axes labeled with units?
+7. References: recent (last 2 years ≥30%)? foundational works cited? self-citation <15%?"""
+
 
 class ReviewCommitteeToolInput(BaseModel):
     paper_content: str = Field(
@@ -267,12 +278,17 @@ class ReviewCommitteeTool(HuginnTool):
             lines.append(f"目标期刊: {args.target_journal}")
         lines.append("")
         lines.append("=" * 60)
+        lines.append("【IMRaD 检查清单】")
+        lines.append("=" * 60)
+        lines.append(_IMRAD_CHECKLIST)
+        lines.append("")
+        lines.append("=" * 60)
         lines.append("【论文内容】")
         lines.append("=" * 60)
         lines.append(args.paper_content)
         lines.append("")
         lines.append("=" * 60)
-        lines.append("请开始审查。记住: 批评要尖锐直接并指向具体段落, 禁止讨好型套话, 禁止捏造文献, 写得好的地方也要公正指出。")
+        lines.append("请开始审查。先按你角色的视角审, 再逐条过 IMRaD 清单, 指出未通过项。批评要尖锐直接并指向具体段落, 禁止讨好型套话, 禁止捏造文献, 写得好的地方也要公正指出。")
         return "\n".join(lines)
 
     def _parse_editor_score(self, editor_report: str | None) -> int | None:

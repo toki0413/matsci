@@ -7,7 +7,8 @@ StandardsChecker 读取 JournalSpec 中定义的限制值, 对标题/摘要/正�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 from huginn.academic.journal_db import (
     JournalSpec,
@@ -24,6 +25,7 @@ class CheckResult:
     message: str              # 结果描述
     suggestion: str = ""      # 修改建议
     severity: str = "error"   # error | warning | info
+    details: dict = field(default_factory=dict)  # 结构化补充数据, 不破坏旧调用
 
 
 def _count_words(text: str) -> int:
@@ -39,6 +41,78 @@ def _count_chars(text: str) -> int:
 def _count_chinese_chars(text: str) -> int:
     """统计中文字符数 (CJK 统一表意区)."""
     return sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+
+
+# 数字引用标记: [1] [2] [1-3] [12-15], 不吃 [1,2] 这种逗号分隔
+# ponytail: 不处理 [1,2,3] 多重逗号引用, 遇到拆成多次单引即可
+_NUMBERED_CITATION_RE = re.compile(r"\[(\d+)(?:-(\d+))?\]")
+
+
+def _expand_citation_range(start: str, end: str | None) -> list[int]:
+    """展开引用区间: [1] -> [1], [1-3] -> [1,2,3]."""
+    s = int(start)
+    if end is None:
+        return [s]
+    e = int(end)
+    # 极少有反向写法, 兜底交换
+    if e < s:
+        s, e = e, s
+    return list(range(s, e + 1))
+
+
+def check_citation_reference_match(body: str, references: list[str]) -> CheckResult:
+    """检查正文引用标记 [1] [2-3] 与参考文献列表的匹配度.
+
+    返回 details 里塞:
+      - unmatched_citations: 正文里引用了但 references 里没有的编号
+      - unused_references: references 里有但正文没引用的编号
+      - total_citations: 正文总引用数 (去重后)
+      - total_references: 参考文献数
+    """
+    cited: set[int] = set()
+    for m in _NUMBERED_CITATION_RE.finditer(body):
+        cited.update(_expand_citation_range(m.group(1), m.group(2)))
+
+    # references 默认按出现顺序从 1 编号
+    ref_set = set(range(1, len(references) + 1))
+
+    unmatched = sorted(cited - ref_set)
+    unused = sorted(ref_set - cited)
+
+    passed = not unmatched and not unused
+    parts = [f"正文引用 {len(cited)} 个编号, 参考文献 {len(references)} 条"]
+    if unmatched:
+        parts.append(f"未匹配引用 {unmatched}")
+    if unused:
+        parts.append(f"未被引用 {unused}")
+
+    suggestion = ""
+    if unmatched:
+        suggestion += f"补 references 至 {max(unmatched)} 条或修正正文引用 {unmatched}; "
+    if unused:
+        suggestion += f"在正文补引 {unused} 或删除多余 references"
+    suggestion = suggestion.rstrip("; ")
+
+    if unmatched:
+        severity = "error"
+    elif unused:
+        severity = "warning"
+    else:
+        severity = "info"
+
+    return CheckResult(
+        check_name="citation_reference_match",
+        passed=passed,
+        message="; ".join(parts),
+        suggestion=suggestion,
+        severity=severity,
+        details={
+            "unmatched_citations": unmatched,
+            "unused_references": unused,
+            "total_citations": len(cited),
+            "total_references": len(references),
+        },
+    )
 
 
 class StandardsChecker:
@@ -656,3 +730,19 @@ class StandardsChecker:
                 "新化合物表征: " + "/".join(spec.new_compound_characterization)
             )
         return items
+
+
+if __name__ == "__main__":
+    # 最小自检: range 展开 + 匹配逻辑
+    body = "前面[1]说了, 然后[2-3]也提到, 顺带[5]引用"
+    refs = ["r1", "r2", "r3", "r4"]  # 编号 1-4
+    r = check_citation_reference_match(body, refs)
+    assert r.details["total_citations"] == 4, r.details
+    assert r.details["unmatched_citations"] == [5], r.details
+    assert r.details["unused_references"] == [4], r.details
+    assert r.passed is False
+    # 完全匹配
+    ok = check_citation_reference_match("见[1]和[2-2]", ["a", "b"])
+    assert ok.passed and ok.details["total_citations"] == 2, ok.details
+    print("self-check ok")
+
