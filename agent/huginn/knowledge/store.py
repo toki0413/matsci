@@ -555,7 +555,7 @@ class KnowledgeBase:
             from gptcache.processor.pre import get_prompt
             from gptcache.similarity_evaluation import SearchDistanceEvaluation
 
-            onnx = Onnx(model_name="all-MiniLM-L6-v2")
+            onnx = Onnx(model_name=EMBED_MODEL)
             data_manager = manager_factory(
                 "sqlite,faiss",
                 data_dir=str(self.root / "semantic_cache"),

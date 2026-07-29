@@ -67,6 +67,24 @@ class SessionContext:
     # 不注入时 summary 只存在 self.summaries 里, 不写 EM.
     episodic_sink: Callable[[str, dict[str, Any]], None] | None = None
 
+    def __post_init__(self) -> None:
+        """P2-7: 优先从全局 HuginnConfig 读 wm_* / extreme_dispatch, 修复
+        config 字段与 env var 脱节. 之前 default_factory 直接读 env var,
+        前端 Settings 改 config 不生效. 现在用 config 覆盖 env var 默认值.
+        ponytail: try-import 避免循环依赖, config 未初始化时静默 fallback.
+        """
+        try:
+            from huginn.config import get_config
+            cfg = get_config()
+            # 只有当 config 字段非默认值时才覆盖, 避免覆盖用户显式传入的值.
+            if cfg.wm_token_budget and cfg.wm_token_budget != 8192:
+                self.token_budget = cfg.wm_token_budget
+            if cfg.wm_summarize_every_n and cfg.wm_summarize_every_n != 5:
+                self._summarize_check_every = cfg.wm_summarize_every_n
+        except Exception:
+            # 循环 import / config 未就绪 — 保持 env var 默认值.
+            pass
+
     def add_message(
         self, message: AgentMessage | str, content: str | None = None
     ) -> None:

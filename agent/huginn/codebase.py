@@ -10,7 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-EMBED_MODEL = "all-MiniLM-L6-v2"
+# 统一 embedding model 常量, 避免散落定义漂移. 见 knowledge.store.EMBED_MODEL.
+from huginn.knowledge.store import EMBED_MODEL
+
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 
