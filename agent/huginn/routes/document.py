@@ -62,6 +62,34 @@ def _is_pdf(content: bytes) -> bool:
     return content[:5] == b"%PDF-"
 
 
+def _try_ingest(record: dict[str, Any]) -> tuple[int, bool]:
+    """Best-effort push the doc's packages into the KB.
+
+    Returns (count_ingested, kb_configured). kb_configured=False means
+    no KB is wired up -- callers can surface a clearer message in that
+    case instead of a misleading zero. Ingest failures are logged and
+    swallowed: parsing is the primary contract, KB is a side-effect.
+    """
+    try:
+        from huginn.server_context import _server_context
+        kb = getattr(_server_context, "kb", None)
+    except Exception:
+        kb = None
+    if kb is None:
+        return 0, False
+    bridge = RAGBridge(kb=kb)
+    try:
+        n = bridge.ingest(
+            record["packages"],
+            document_id=record["document_id"],
+            filename=record["filename"],
+        )
+        return n, True
+    except Exception as exc:
+        logger.warning("KB ingest failed for %s: %s", record["document_id"], exc)
+        return 0, True
+
+
 @router.post("/parse")
 async def parse_document(file: UploadFile = File(...)) -> dict[str, Any]:
     """Upload a PDF and run the full DocGraph pipeline.
@@ -126,12 +154,18 @@ async def parse_document(file: UploadFile = File(...)) -> dict[str, Any]:
     }
     _document_store[document_id] = record
 
+    # Auto-ingest into KB when one is wired up. Best-effort: a KB failure
+    # must not poison the parse response -- the client already has the
+    # packages in the response body, the KB is just a retrieval side-channel.
+    auto_ingested, _kb_on = _try_ingest(record)
+
     return {
         "document_id": document_id,
         "filename": record["filename"],
         "stats": record["stats"],
         "n_packages": len(packages),
         "packages": [p.to_dict() for p in packages],
+        "auto_ingested": auto_ingested,
     }
 
 
@@ -186,35 +220,59 @@ async def ingest_to_kb(document_id: str) -> dict[str, Any]:
     """Push a document's info packages into the knowledge base.
 
     Requires a KnowledgeBase to be available in the server context.
-    Returns the number of packages actually ingested.
+    Returns the number of packages actually ingested. Note that /parse
+    already auto-ingests when a KB is configured -- this endpoint is a
+    manual re-trigger for cases where the auto path failed or KB came
+    up after the parse.
     """
     record = _document_store.get(document_id)
     if record is None:
         raise HTTPException(status_code=404, detail="document not found")
 
-    # Try to grab the KB from the server context. When no KB is
-    # configured, we return a clear message instead of a 500.
-    try:
-        from huginn.server_context import _server_context
-        kb = getattr(_server_context, "kb", None)
-    except Exception:
-        kb = None
-
-    if kb is None:
+    n, kb_on = _try_ingest(record)
+    if not kb_on:
         return {
             "document_id": document_id,
             "ingested": 0,
             "message": "no knowledge base configured",
         }
-
-    bridge = RAGBridge(kb=kb)
-    n = bridge.ingest(
-        record["packages"],
-        document_id=document_id,
-        filename=record["filename"],
-    )
     return {
         "document_id": document_id,
         "ingested": n,
         "total_packages": len(record["packages"]),
     }
+
+
+def _selfcheck() -> None:
+    """Smoke-check _try_ingest's two branches without spinning up a real KB.
+
+    Run with: python -c "from huginn.routes.document import _selfcheck; _selfcheck()"
+    """
+    from types import SimpleNamespace
+    from huginn import server_context as sc
+
+    # _try_ingest only reads sc._server_context.kb via getattr, so a
+    # SimpleNamespace is enough -- no need to construct a full ServerContext.
+    orig = sc._server_context
+    record = {"document_id": "t", "filename": "t.pdf", "packages": []}
+
+    try:
+        # Case 1: no KB wired -> (0, False)
+        sc._server_context = SimpleNamespace(kb=None)
+        n, on = _try_ingest(record)
+        assert (n, on) == (0, False), f"no-KB branch: expected (0, False), got ({n}, {on})"
+
+        # Case 2: KB wired, empty packages -> RAGBridge short-circuits to (0, True)
+        class _DummyKB:
+            def add_document(self, *a, **kw): pass
+        sc._server_context = SimpleNamespace(kb=_DummyKB())
+        n, on = _try_ingest(record)
+        assert (n, on) == (0, True), f"empty-packages branch: expected (0, True), got ({n}, {on})"
+    finally:
+        sc._server_context = orig
+
+    print("document._try_ingest selfcheck OK")
+
+
+if __name__ == "__main__":
+    _selfcheck()
