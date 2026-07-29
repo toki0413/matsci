@@ -25,6 +25,13 @@ from huginn.academic.journal_db import (
 )
 from huginn.academic.paper_tool import PaperTool, PaperToolInput
 from huginn.academic.standards_checker import CheckResult, StandardsChecker
+from huginn.academic.thesis_audit_tool import (
+    AuditDenominator,
+    AuditValidationError,
+    ThesisAuditInput,
+    ThesisAuditOutput,
+    ThesisAuditTool,
+)
 
 __all__ = [
     "JOURNAL_DATABASE",
@@ -42,4 +49,9 @@ __all__ = [
     "DeliAutoResearchTool",
     "ResearchStage",
     "ResearchState",
+    "AuditDenominator",
+    "AuditValidationError",
+    "ThesisAuditInput",
+    "ThesisAuditOutput",
+    "ThesisAuditTool",
 ]
