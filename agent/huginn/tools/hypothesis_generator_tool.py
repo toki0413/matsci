@@ -19,7 +19,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -43,9 +43,13 @@ _WORKFLOW_TEMPLATES: list[str] = [
     "ht_screening",
 ]
 
+# 假设证据状态: pending 默认, 由后续验证流程更新为 verified / unsupported
+_EvidenceStatus = Literal["verified", "pending", "unsupported"]
+
 _HYPOTHESIS_SYSTEM_PROMPT = """你是材料科学假设生成专家. 基于给定的研究主题、文献摘要和研究空白, 生成可测试的科学假设.
 
 每个假设必须包含:
+- hypothesis_id: 假设编号, 格式 H1, H2, ... (按生成顺序递增, 上限 H5)
 - statement: 假设的清晰陈述 (一句话)
 - rationale: 提出该假设的依据, 要引用具体的研究空白
 - testable_prediction: 可被计算/实验验证的预测, 要具体到可观测量
@@ -59,7 +63,7 @@ _HYPOTHESIS_SYSTEM_PROMPT = """你是材料科学假设生成专家. 基于给�
 输出严格 JSON, 不要 markdown 代码块标记, 不要任何解释文字. 格式:
 {
   "hypotheses": [
-    {"statement": "...", "rationale": "...", "testable_prediction": "...", "required_data": "..."}
+    {"hypothesis_id": "H1", "statement": "...", "rationale": "...", "testable_prediction": "...", "required_data": "..."}
   ]
 }"""
 
@@ -73,6 +77,16 @@ _WORKFLOW_MAPPING_SYSTEM_PROMPT = (
     '{"structure_file": "...", "functional": "PBE"}\n'
     "- expected_observable: 该 workflow 能给出的可观测结果, 用来检验假设\n"
     "- falsification_criterion: 什么结果能证伪该假设 (具体判据)\n\n"
+    "Problem Type → Baseline Routing (映射前必须先定问题类型):\n"
+    "- Prediction (regression/classification): 先用可解释模型 "
+    "(Gaussian Process / symbolic regression), 数据 >10k 才考虑神经网络\n"
+    "- Causal inference: 先建 DAG, 用 do-calculus 或 IV 方法\n"
+    "- Clustering: 先定 distance metric + linkage, 再选算法\n"
+    "- Retrieval: 先定 similarity metric + corpus, 再选 embedding 模型\n"
+    "- Anomaly detection: 先定 'normal' 分布, 再选算法\n"
+    "- Mechanism elucidation: 必须有 first-principles 约束, ML 只作 surrogate\n\n"
+    "Rule: problem type MUST be stated before workflow mapping. "
+    "'Apply XGBoost' without problem type is rejected.\n\n"
     "如果用户指定了 target_workflow, 全部映射到那个模板 (args 仍按假设调整).\n"
     "输出严格 JSON, 不要 markdown 代码块. 格式:\n"
     "{\n"
@@ -131,6 +145,9 @@ class HypothesisGeneratorTool(HuginnTool):
         # 1. 检索文献
         papers, literature_summary = await self._search_literature(query, context)
 
+        # 1b. 文献阈值门禁: 决定生成模式 + 警告, 不阻断流程
+        lit_mode, lit_warnings = self._check_literature_threshold(len(papers))
+
         # 2. 识别研究空白
         research_gaps = await self._identify_gaps(
             args.research_topic, papers, context
@@ -146,13 +163,15 @@ class HypothesisGeneratorTool(HuginnTool):
                 error=f"初始化 LLM 客户端失败: {exc}",
             )
 
-        # 4. LLM 生成假设
+        # 4. LLM 生成假设 (带文献门禁模式)
         hypotheses = await self._generate_hypotheses(
             args.research_topic,
             literature_summary,
             research_gaps,
             args.max_hypotheses,
             model,
+            mode=lit_mode,
+            warnings=lit_warnings,
         )
 
         # 4b. 排序: novelty + feasibility + kb_relevance 三维打分
@@ -169,6 +188,9 @@ class HypothesisGeneratorTool(HuginnTool):
         data: dict[str, Any] = {
             "research_topic": args.research_topic,
             "literature_summary": literature_summary,
+            "literature_count": len(papers),
+            "literature_mode": lit_mode,
+            "literature_warnings": lit_warnings,
             "research_gaps": research_gaps,
             "hypotheses": hypotheses,
             "workflow_proposals": workflow_proposals,
@@ -470,6 +492,8 @@ class HypothesisGeneratorTool(HuginnTool):
         research_gaps: dict[str, Any],
         max_hypotheses: int,
         model: Any,
+        mode: str = "standard",
+        warnings: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -481,6 +505,14 @@ class HypothesisGeneratorTool(HuginnTool):
             f"{json.dumps(gaps, ensure_ascii=False, indent=2)}\n\n"
             f"请生成不超过 {max_hypotheses} 条可测试的科学假设."
         )
+        # 文献门禁模式提示: deep 模式允许引用方法学论文, 不足时强制标 limitation
+        if mode == "deep":
+            user_prompt += (
+                "\n文献量充足 (>50), 进入 deep 模式: 允许在 rationale 里引用方法学论文"
+                "支撑假设的设计依据."
+            )
+        if warnings:
+            user_prompt += "\n文献门禁警告:\n- " + "\n- ".join(warnings)
         messages = [
             SystemMessage(content=_HYPOTHESIS_SYSTEM_PROMPT),
             HumanMessage(content=user_prompt),
@@ -489,8 +521,8 @@ class HypothesisGeneratorTool(HuginnTool):
         parsed = self._parse_json(content)
         if parsed and isinstance(parsed.get("hypotheses"), list):
             return [
-                self._normalize_hypothesis(h)
-                for h in parsed["hypotheses"][:max_hypotheses]
+                self._normalize_hypothesis(h, idx=i)
+                for i, h in enumerate(parsed["hypotheses"][:max_hypotheses])
                 if isinstance(h, dict)
             ]
         # LLM 没给合法 JSON, 兜底用 gap_analysis 的空白拼几条规则型假设
@@ -590,12 +622,54 @@ class HypothesisGeneratorTool(HuginnTool):
             return None
 
     @staticmethod
-    def _normalize_hypothesis(h: dict[str, Any]) -> dict[str, Any]:
+    def _check_literature_threshold(papers_count: int) -> tuple[str, list[str]]:
+        """文献阈值门禁: 按检索回的论文数决定生成模式 + 警告.
+
+        返回 (mode, warnings):
+        - <15:   standard + literature_insufficient 警告 (不阻断, 建议放宽 query)
+        - 15-30: standard, 无警告
+        - 31-50: standard + 提示可进 deep
+        - >50:   deep, 允许引用方法学论文
+
+        ponytail: papers_count 是检索回的条数, 不去重不过滤相关性,
+        实际有效文献数 ≤ 该值; 后续验证流程应重新核对.
+        """
+        if papers_count < 15:
+            return "standard", [
+                f"literature_insufficient: 仅 {papers_count} 篇 (<15), "
+                "建议放宽 query 重检; 继续生成但需在假设 rationale 里标注"
+                "文献覆盖不足的 limitation"
+            ]
+        if papers_count <= 30:
+            return "standard", []
+        if papers_count <= 50:
+            return "standard", [
+                f"literature_count={papers_count} (31-50), standard 模式可用, "
+                "文献量充足可考虑切到 deep 模式 (允许引用方法学论文)"
+            ]
+        return "deep", [
+            f"literature_count={papers_count} (>50), 进入 deep 模式, "
+            "允许引用方法学论文"
+        ]
+
+    @staticmethod
+    def _normalize_hypothesis(
+        h: dict[str, Any], idx: int = 0
+    ) -> dict[str, Any]:
+        # hypothesis_id: LLM 应给 H1-H5, 没给或格式错就按 idx 递增兜底
+        raw_id = str(h.get("hypothesis_id") or "").strip()
+        if not re.match(r"^H\d+$", raw_id):
+            raw_id = f"H{idx + 1}"
         return {
+            "hypothesis_id": raw_id,
             "statement": str(h.get("statement", "")),
             "rationale": str(h.get("rationale", "")),
             "testable_prediction": str(h.get("testable_prediction", "")),
             "required_data": str(h.get("required_data", "")),
+            # 默认 pending, 由后续 evidence_fusion / validate 流程更新
+            "evidence_status": "pending",
+            # 默认 0, 由后续验证流程按实际支撑文献数更新
+            "literature_count": 0,
         }
 
     @staticmethod
@@ -617,14 +691,17 @@ class HypothesisGeneratorTool(HuginnTool):
     ) -> list[dict[str, Any]]:
         """LLM 不可用时, 从 gap_analysis 的空白里拼几条规则型假设兜底."""
         out: list[dict[str, Any]] = []
-        for g in gaps[:max_h]:
+        for i, g in enumerate(gaps[:max_h]):
             desc = g.get("description", "")
             out.append(
                 {
+                    "hypothesis_id": f"H{i + 1}",
                     "statement": f"针对 '{topic}' 的研究空白待验证: {desc}",
                     "rationale": desc,
                     "testable_prediction": "",
                     "required_data": "",
+                    "evidence_status": "pending",
+                    "literature_count": 0,
                 }
             )
         return out

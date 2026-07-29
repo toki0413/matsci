@@ -160,6 +160,7 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.model3d_tool", "Model3DTool"),
     ("huginn.tools.browser_tool", "BrowserTool"),
     ("huginn.tools.review_committee_tool", "ReviewCommitteeTool"),
+    ("huginn.academic.thesis_audit_tool", "ThesisAuditTool"),
     ("huginn.tools.hypothesis_generator_tool", "HypothesisGeneratorTool"),
     ("huginn.tools.materials_autoresearch_tool", "MaterialsAutoResearchTool"),
     ("huginn.tools.nuwa_persona_tool", "NuwaPersonaTool"),

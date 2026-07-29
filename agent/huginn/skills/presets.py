@@ -2860,3 +2860,52 @@ EXPERIMENT_DESIGN = register_skill(
         tags=["doe", "power_analysis", "factorial", "randomization", "experiment"],
     )
 )
+
+# --- Audit Skills ---
+
+THESIS_AUDIT = register_skill(
+    SkillDefinition(
+        name="thesis_audit",
+        description=(
+            "Lightweight thesis audit: denominator ledger → coverage matrix → "
+            "issue library → completion gate. 4-phase workflow skipping MinerU. "
+            "9 coverage states (pass/issue/needs_factcheck/...). "
+            "Use on markdown manuscript text."
+        ),
+        category="analysis",
+        domain="general",
+        stage="reporting",
+        function="validate",
+        parameters=[
+            SkillParameter(
+                "content", "str", "Manuscript markdown text", required=True,
+            ),
+            SkillParameter(
+                "mode", "str", "Audit mode: quick (regex only) | full (LLM)",
+                default="full",
+            ),
+            SkillParameter(
+                "focus_areas", "list", "Optional focus areas (chapter names)",
+                default=None, required=False,
+            ),
+        ],
+        steps=[
+            SkillStep(
+                name="audit_manuscript",
+                tool="thesis_audit_tool",
+                input_mapping={
+                    "content": "$content",
+                    "mode": "$mode",
+                    "focus_areas": "$focus_areas",
+                },
+                output_key="audit_result",
+                on_failure="abort",
+            ),
+        ],
+        required_tools=["thesis_audit_tool"],
+        tags=["audit", "thesis", "manuscript", "compliance", "evidence-grounded"],
+        references=[
+            "https://github.com/TashanGKD/tashan-research-skills (thesis-audit-reviewer)"
+        ],
+    )
+)
