@@ -1223,15 +1223,61 @@ class LammpsTool(HuginnTool):
                     result["msd_warnings"] = list(self._msd_warnings)
                     self._msd_warnings = []
 
-            # Compute RDF if 2+ frames
+            # Compute g(r,t): RDF 时间序列, 每帧一个, 看结构弛豫过程
             if (
                 frames
                 and len(frames) >= 1
                 and all("x" in a for a in frames[0]["atoms"])
             ):
-                rdf = self._compute_rdf(frames[-1])
-                if rdf:
-                    result["rdf"] = rdf
+                # 采样帧数限制: 大轨迹取均匀采样避免 O(n_frames * n_atoms²) 爆炸
+                max_rdf_frames = 20
+                if len(frames) <= max_rdf_frames:
+                    sample_frames = frames
+                else:
+                    idx = [int(round(i * (len(frames) - 1) / (max_rdf_frames - 1)))
+                           for i in range(max_rdf_frames)]
+                    sample_frames = [frames[i] for i in idx]
+                rdf_series = []
+                for fi, frame in enumerate(sample_frames):
+                    rdf = self._compute_rdf(frame)
+                    if rdf:
+                        rdf_series.append({
+                            "frame_index": idx[fi] if len(frames) > max_rdf_frames else fi,
+                            "timestep": frame.get("timestep", idx[fi] if len(frames) > max_rdf_frames else fi),
+                            **rdf,
+                        })
+                if rdf_series:
+                    result["rdf_series"] = rdf_series
+                    # 末帧 RDF 保留兼容老字段
+                    result["rdf"] = rdf_series[-1]
+
+            # VACF + Green-Kubo 扩散系数: 第一性原理方法, 比 Einstein 关系
+            # 在短时模拟上更准. 需要速度列 (vx vy vz).
+            if (
+                frames
+                and len(frames) > 1
+                and all("vx" in a and "vy" in a and "vz" in a
+                        for a in frames[0]["atoms"])
+            ):
+                vacf = self._compute_vacf(frames)
+                if vacf:
+                    result["vacf"] = vacf
+                    gk = self._green_kubo_diffusion(vacf)
+                    if gk is not None:
+                        result["diffusion_green_kubo"] = gk
+                    # P3: 把 VACF 注册为标准化物理时序, 让 engine 收集后注入 prompt.
+                    # data 格式: [(timestep, vacf_value), ...] — engine 算趋势判断
+                    # 系统动力学 (衰减=扩散型, 振荡=束缚态, 平=平衡).
+                    result["_physical_timeseries"] = [{
+                        "name": "VACF",
+                        "unit": "Å²/ps²",
+                        "data": [
+                            (d.get("timestep", i), d.get("vacf", 0.0))
+                            for i, d in enumerate(vacf)
+                        ],
+                        "meaning": "velocity autocorrelation <v(0)·v(t)>",
+                        "source": "lammps",
+                    }]
 
         except Exception as e:
             result["error"] = str(e)
@@ -1429,6 +1475,93 @@ class LammpsTool(HuginnTool):
 
             r_values = ((r_edges[:-1] + r_edges[1:]) / 2).tolist()
             return {"r": r_values, "g": g.tolist(), "bins": bins, "r_max": r_max}
+        except Exception:
+            return None
+
+    def _compute_vacf(self, frames: list[dict]) -> list[dict] | None:
+        """速度自相关函数 (VACF): <v(0)·v(t)>.
+
+        VACF 是 Green-Kubo 扩散系数积分的核心. 与 MSD 互补:
+        - MSD (Einstein): 长时极限 D = MSD/(6t), 需要长轨迹
+        - VACF (Green-Kubo): D = (1/3) ∫₀^∞ <v(0)·v(t)> dt, 短时模拟更准
+
+        实现要点:
+        - 参考速度 v(0) 取 frame[0], 每帧算 <v_i(0)·v_i(t)>_i 均值
+        - dt 从相邻 timestep 差推断 (假设等间隔)
+        - 速度列必须存在 (vx vy vz), 没有返回 None
+        """
+        try:
+            import numpy as np
+
+            if not frames or len(frames) < 2:
+                return None
+            n_atoms = len(frames[0]["atoms"])
+            if n_atoms == 0:
+                return None
+
+            # 参考速度 v(0)
+            v0 = np.array([[a["vx"], a["vy"], a["vz"]]
+                           for a in frames[0]["atoms"]], dtype=np.float64)
+            # shape: (n_atoms, 3)
+
+            vacf_data: list[dict] = []
+            for fi, frame in enumerate(frames):
+                v = np.array([[a["vx"], a["vy"], a["vz"]]
+                              for a in frame["atoms"]], dtype=np.float64)
+                # <v(0)·v(t)>: 对所有原子和三个方向求均
+                dot = (v0 * v).sum(axis=1)  # (n_atoms,)
+                vacf_t = float(dot.mean())
+                vacf_data.append({
+                    "frame_index": fi,
+                    "timestep": frame.get("timestep", fi),
+                    "vacf": vacf_t,
+                })
+
+            # 标准化: C(t) / C(0) 方便跨体系比较
+            c0 = vacf_data[0]["vacf"]
+            if abs(c0) > 1e-12:
+                for d in vacf_data:
+                    d["vacf_normalized"] = d["vacf"] / c0
+            else:
+                for d in vacf_data:
+                    d["vacf_normalized"] = 0.0
+
+            return vacf_data
+        except Exception:
+            return None
+
+    def _green_kubo_diffusion(self, vacf_data: list[dict]) -> float | None:
+        """Green-Kubo 扩散系数: D = (1/3) ∫₀^∞ C(t) dt.
+
+        C(t) = <v(0)·v(t)>, 积分到轨迹末尾.
+        3D 体系中 <v_x²> = k_B T / m, D = (1/3) ∫ C(t) dt.
+
+        实现用梯形法离散积分. 单位:
+        - 速度: Å/ps (LAMMPS real+metal units 默认) → D: Å²/ps
+        - 速度: Å/fs (LAMMPS real units, dt=fs) → D: Å²/fs, ×1e3 → Å²/ps
+
+        不自动做单位转换, 调用方根据 LAMMPS units 判断.
+        ponytail: 等间隔假设, 非等间隔用 numpy.trapz(x=timesteps).
+        """
+        try:
+            if not vacf_data or len(vacf_data) < 2:
+                return None
+
+            # 从 timestep 差推断 dt
+            t0 = vacf_data[0]["timestep"]
+            t1 = vacf_data[1]["timestep"]
+            dt = t1 - t0
+            if dt <= 0:
+                return None
+
+            # 梯形法积分 C(t) dt, 除以 3 (3D)
+            vacf = [d["vacf"] for d in vacf_data]
+            integral = 0.0
+            for i in range(1, len(vacf)):
+                integral += 0.5 * (vacf[i] + vacf[i - 1]) * dt
+
+            d_gk = integral / 3.0
+            return float(d_gk)
         except Exception:
             return None
 

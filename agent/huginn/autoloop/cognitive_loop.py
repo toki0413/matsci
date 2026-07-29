@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 # 取 [-10:], cycle_detect O(n²) 在 1000 可接受, count/reversed/len 都 O(n)).
 # ponytail: 环境变量覆盖, 极限模式可调大. 升级路径: deque + 专用 tail_n().
 _MAX_ACTION_HIST = int(os.environ.get("HUGINN_ACTION_HIST_MAX", "1000"))
-
+# 迭代历史栈上限: 50 轮足够回溯一个完整 autoresearch run 的试错路径
+_MAX_ITER_HIST = int(os.environ.get("HUGINN_ITER_HIST_MAX", "50"))
 
 def _extract_tests_passed(validation: Any) -> bool:
     """从 validation 结果里抽 tests_passed 布尔, 给 validate→learn 门用.
@@ -78,6 +79,9 @@ class LoopState:
     action_history: list[str] = field(default_factory=list)
     # 基模自主性: decide 返回的 rationale (供 reflect 评估)
     last_rationale: str = ""
+    # 迭代历史栈: 每轮 push 一份 {iter, hypothesis, plan, result, validation, action}
+    # 让 N 轮能看到 N-2 及更早的探索, 避免重复试错. 上限 _MAX_ITER_HIST.
+    iteration_history: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -1169,6 +1173,17 @@ class CognitiveLoopMixin:
             self._last_run_failure_pattern = self._load_failure_pattern()
         except Exception:
             logger.debug("load failure pattern failed", exc_info=True)
+        # P2: 加载上 run 探索摘要 — 跟 failure_pattern 互补, 存探索路径而非失败数据.
+        self._prev_run_context: str = ""
+        try:
+            self._prev_run_context = self._load_prev_run_context()
+        except Exception:
+            logger.debug("load prev run_context failed (non-fatal)", exc_info=True)
+        # P3: 物理时序数据收集 — 任何工具可通过 result["_physical_timeseries"]
+        # 返回标准化时序 (name/unit/data/meaning/source), engine 收集后注入
+        # decider/validate prompt, 让 agent 推理系统的时间演化结构.
+        # VACF/Green-Kubo 是 MD 的实例, 但化学反应动力学/信号衰减等同样适用.
+        self._physical_timeseries: list[dict] = []
 
         if goal is not None and goal.status == "pending":
             goal.status = "active"
@@ -1282,6 +1297,159 @@ class CognitiveLoopMixin:
             f"window fail rate={rate:.2f} "
             f"(n={snap.get('window_size', 0)})"
         )
+
+    def _persist_run_context(
+        self, run_id: str, objective: str, cog: dict, state: LoopState,
+    ) -> None:
+        """P2: run 结束时存探索摘要 — hypothesis/findings/inconclusive.
+
+        跟 _persist_failure_pattern 互补: failure_pattern 只存失败数据,
+        run_context 存"探索了什么/发现了什么/什么没定论", 让下 run 的 decider
+        能看到上 run 的完整探索路径, 避免重复探索相同 hypothesis.
+        ponytail: 复用 longterm.store, JSON 序列化. 升级路径: 独立 run_log 表.
+        """
+        # 从 cog 提取探索摘要 — 都是已有字段, 不引入新状态
+        _hyp = (cog.get("hypothesis") or "")[:300]
+        _plan = cog.get("plan") or {}
+        _plan_mode = _plan.get("mode", "") if isinstance(_plan, dict) else ""
+        _val = cog.get("validation") or {}
+        _tests_ok = _extract_tests_passed(_val)
+        # 从 iteration_history 提取关键发现 — 最后几轮的 hypothesis + val_status
+        _hist = getattr(state, "iteration_history", []) or []
+        _recent = _hist[-5:] if _hist else []
+        # inconclusive: val_status="failed" 但没 stop, 说明方向可能对但缺数据
+        _inconclusive = [
+            {"iter": h.get("iter"), "action": h.get("action"),
+             "advice": (h.get("advice") or "")[:100]}
+            for h in _recent if h.get("val_status") == "failed"
+        ]
+        snapshot = {
+            "run_id": run_id,
+            "objective": (objective or "")[:200],
+            "hypothesis": _hyp,
+            "plan_mode": _plan_mode,
+            "outcome": "completed" if _tests_ok else "inconclusive",
+            "iterations": state.iteration,
+            "recent_steps": [
+                {"iter": h.get("iter"), "action": h.get("action"),
+                 "val": h.get("val_status")}
+                for h in _recent
+            ],
+            "inconclusive": _inconclusive,
+        }
+        try:
+            content = json.dumps(snapshot, ensure_ascii=False)
+            self.memory.remember(
+                content=content,
+                category="run_context",
+                tags=["run_context", run_id],
+                importance=0.5,
+                tier="mid",
+            )
+        except Exception:
+            logger.debug("run_context store failed (non-fatal)", exc_info=True)
+
+    def _load_prev_run_context(self) -> str:
+        """P2: 加载上 run 的探索摘要, 返回人类可读文本供 decider prompt 注入.
+
+        返回空串表示无历史或加载失败. ponytail: 只取最近 1 条, 不做聚合.
+        """
+        try:
+            results = self.memory.recall(
+                query="",
+                category="run_context",
+                top_k=1,
+            )
+        except Exception:
+            return ""
+        if not results:
+            return ""
+        entry = results[0] if isinstance(results, list) else results
+        content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
+        if not content:
+            return ""
+        try:
+            snap = json.loads(content)
+        except (ValueError, TypeError):
+            return ""
+        parts = [
+            f"hypothesis: {(snap.get('hypothesis') or '')[:120]}",
+            f"plan: {snap.get('plan_mode', 'none')}",
+            f"outcome: {snap.get('outcome', 'unknown')}",
+            f"iters: {snap.get('iterations', '?')}",
+        ]
+        _incon = snap.get("inconclusive") or []
+        if _incon:
+            parts.append(
+                "inconclusive: " + "; ".join(
+                    f"iter{i.get('iter')}:{(i.get('advice') or '')[:50]}"
+                    for i in _incon[:2]
+                )
+            )
+        return " | ".join(parts)
+
+    @staticmethod
+    def _extract_timeseries(result: Any) -> list[dict]:
+        """P3: 从工具执行结果提取物理时序数据.
+
+        工具通过 result["_physical_timeseries"] 显式返回标准化时序:
+        [{"name": "VACF", "unit": "Å²/ps²", "data": [(t, v), ...],
+          "meaning": "velocity autocorrelation", "source": "lammps"}, ...]
+        ponytail: 不自动扫描结果结构 (每个工具格式不同, 脆弱). 工具显式 opt-in.
+        """
+        if result is None:
+            return []
+        # 支持两种返回形式: dict 直接含 key, 或 dict 含 "result" 子 dict
+        _candidates = []
+        if isinstance(result, dict):
+            _candidates.append(result)
+            _sub = result.get("result")
+            if isinstance(_sub, dict):
+                _candidates.append(_sub)
+        for _c in _candidates:
+            _ts = _c.get("_physical_timeseries")
+            if isinstance(_ts, list) and _ts:
+                return _ts
+        return []
+
+    def _format_timeseries_context(self) -> str:
+        """P3: 格式化已收集的物理时序数据, 供 decider/validate prompt 注入.
+
+        让 agent 看到本轮收集了哪些时序数据、其物理含义、值域范围 —
+        不注入完整数据 (太长), 只给摘要让 agent 决定是否需要深入分析.
+        ponytail: 每条时序一行摘要. 升级路径: 调 LLM 做趋势分类 (衰减/振荡/收敛).
+        """
+        _ts_list = getattr(self, "_physical_timeseries", None) or []
+        if not _ts_list:
+            return ""
+        lines = []
+        for _ts in _ts_list[-5:]:  # 最近 5 条, 防 prompt 膨胀
+            _name = _ts.get("name", "unknown")
+            _unit = _ts.get("unit", "")
+            _meaning = _ts.get("meaning", "")
+            _source = _ts.get("source", "")
+            _data = _ts.get("data") or []
+            _n = len(_data)
+            if _n == 0:
+                continue
+            # 算首末值 + 趋势 (升/降/平)
+            _first = _data[0][1] if isinstance(_data[0], (list, tuple)) and len(_data[0]) >= 2 else None
+            _last = _data[-1][1] if isinstance(_data[-1], (list, tuple)) and len(_data[-1]) >= 2 else None
+            _trend = ""
+            if _first is not None and _last is not None:
+                _diff = _last - _first
+                if abs(_diff) < 1e-9:
+                    _trend = "flat"
+                elif _diff > 0:
+                    _trend = "rising"
+                else:
+                    _trend = "decaying"
+            lines.append(
+                f"  {_name} ({_source}): {_n} pts, unit={_unit}, "
+                f"trend={_trend or '?'}. meaning: {_meaning}"
+            )
+        return "\n".join(lines) if lines else ""
+
     async def _decide_next_action_llm(
         self, state: LoopState, cog: dict, obs: dict,
     ) -> ActionDecision | None:
@@ -1385,6 +1553,24 @@ class CognitiveLoopMixin:
             _window_str = f"building ({len(_vwin)}/{_wsize})"
         # 700 万步场景: 跨 run 失败模式. 让 LLM 知道上 run 主要卡在哪类失败.
         _last_pattern = (getattr(self, "_last_run_failure_pattern", "") or "").strip()
+        # P2: 上 run 探索摘要 — hypothesis/findings/inconclusive, 避免重复探索.
+        _prev_ctx = (getattr(self, "_prev_run_context", "") or "").strip()
+        # P3: 物理时序数据摘要 — 让 agent 看到本轮收集的时序数据趋势,
+        # 推理系统动力学 (扩散/束缚/平衡). 空则不注入.
+        _ts_ctx = self._format_timeseries_context()
+
+        # P0: 迭代历史栈 — 让 LLM 看到前几轮的试错路径, 避免重复探索.
+        # ponytail: 只取最近 5 轮, 每轮一行 compact, 超 5 轮的旧记录在 state 里但不进 prompt.
+        _hist = state.iteration_history[-5:] if state.iteration_history else []
+        _hist_lines = []
+        for _h in _hist:
+            _hist_lines.append(
+                f"  iter{_h.get('iter', '?')}: {_h.get('action', '?')} "
+                f"({_h.get('val_status', 'none')})"
+                + (f" [{_h.get('plan_mode')}]" if _h.get('plan_mode') else "")
+                + (f" → {_h.get('advice', '')[:80]}" if _h.get('redirect') else "")
+            )
+        _hist_block = "\n".join(_hist_lines) if _hist_lines else "  (none)"
 
         return f"""You are the cognitive controller of a research agent. Choose the next action.
 
@@ -1409,6 +1595,15 @@ State:
 Validation details: {val_detail or 'none'}
 Speculator hints: {spec_hint or 'none'}
 Last reflection advice: {state.redirect_reason or 'none'}
+
+Previous iterations (avoid repeating failed paths):
+{_hist_block}
+
+Previous run context (what was explored last run):
+{_prev_ctx or 'none'}
+
+Physical time series collected this run:
+{_ts_ctx or 'none'}
 
 Actions:
 - observe: re-perceive environment (context stale / need fresh data)
@@ -2057,6 +2252,19 @@ Respond JSON only:
                     cog["phases"].append(phase)
                     cog["completed_steps"] += 1
                     cog["execution_result"] = phase.result
+                    # P3: 从工具结果收集物理时序数据 — 任何工具都可通过
+                    # result["_physical_timeseries"] 返回标准化时序, engine 收集后
+                    # 注入 decider/validate prompt, 让 agent 推理系统动力学.
+                    # ponytail: 不自动扫描结果结构 (脆弱), 工具显式 opt-in.
+                    try:
+                        _ts_list = self._extract_timeseries(phase.result)
+                        if _ts_list:
+                            self._physical_timeseries.extend(_ts_list)
+                            # 上限防膨胀: 保留最近 20 条时序
+                            if len(self._physical_timeseries) > 20:
+                                del self._physical_timeseries[: -20]
+                    except Exception:
+                        logger.debug("timeseries collect failed (non-fatal)", exc_info=True)
                     # v10: 下沉 run() L1567-1577 plan 完成标记.
                     _plan_id = cog["plan"].get("plan_id") if isinstance(cog["plan"], dict) else None
                     if _plan_id:
@@ -2520,6 +2728,33 @@ Respond JSON only:
                     except Exception:
                         logger.debug("v10 F3 darwin_ratchet failed (non-fatal)", exc_info=True)
 
+            # P0: 迭代历史栈 — push 当前轮快照, 让 N 轮后的 decider/validate
+            # 能看到 N-k 轮的 hypothesis/plan/result, 避免重复试错.
+            # ponytail: 字段都从 cog 取, 不引入新状态. 截断长字段防 prompt 膨胀.
+            try:
+                _snapshot = {
+                    "iter": state.iteration,
+                    "action": action,
+                    "hypothesis": (cog.get("hypothesis") or "")[:200],
+                    "plan_mode": (cog.get("plan") or {}).get("mode", "") if isinstance(cog.get("plan"), dict) else "",
+                    "exec_ok": cog.get("execution_result") is not None,
+                    "val_status": (
+                        "passed" if _extract_tests_passed(cog.get("validation") or {})
+                        else "failed" if cog.get("validation") else "none"
+                    ),
+                    "redirect": redirect,
+                    "advice": (advice or "")[:200],
+                }
+                state.iteration_history.append(_snapshot)
+                if len(state.iteration_history) > _MAX_ITER_HIST:
+                    # ponytail: 保留最近 _MAX_ITER_HIST 轮, 旧的丢弃. 50 轮够回溯一个完整 autoresearch run.
+                    del state.iteration_history[: -_MAX_ITER_HIST]
+                # 镜像到 self, 让 _validate (engine.py) 在下轮 validate 时能读到历史.
+                # _validate 作为 phase 函数没有 state 参数, 只能走 self.
+                self._iteration_history = state.iteration_history
+            except Exception:
+                logger.debug("iteration_history push failed (non-fatal)", exc_info=True)
+
             # P15: 周期 save — flag off 时 no-op, iteration % save_every == 0 才真写.
             # refute 在 _learn 内发生, reflect 末尾的周期 save 会在 ≤save_every 步内捕获.
             self._maybe_save_engine_state(reason="periodic")
@@ -2542,6 +2777,14 @@ Respond JSON only:
             max_repeated_actions=3,
         )
         state = await loop.run(LoopState(max_iterations=max_iterations))
+
+        # P2: 跨 run 上下文持久化 — 存探索摘要, 让下 run decider 知道上 run 探索了什么.
+        # ponytail: 复用 longterm, category="run_context" 跟 failure_pattern 分开存.
+        # cog 此时包含完整 run 的 hypothesis/plan/validation, finalize 前快照.
+        try:
+            self._persist_run_context(run_id, objective, cog, state)
+        except Exception:
+            logger.debug("persist run_context failed (non-fatal)", exc_info=True)
 
         # finalize — 复用 run() 的收尾 (含 _report)
         return await self._finalize_run(
