@@ -41,6 +41,13 @@ from huginn.provenance.pipeline import (
 # ── 新增: Sim-to-Real 校正因子表 ────────────────────────────────
 from huginn.provenance.correction import CorrectionEntry, CorrectionTable
 
+# ── 新增: DAG 可视化 (压缩后注入上下文, 防止 agent 丢全局视图) ──
+from huginn.provenance.dag_visualizer import (
+    to_mermaid_for_context,
+    visualize_dag,
+    visualize_timeline,
+)
+
 __all__ = [
     # Legacy FAIR provenance
     "ProvenanceLogger",
@@ -67,4 +74,8 @@ __all__ = [
     # New: sim-to-real correction
     "CorrectionEntry",
     "CorrectionTable",
+    # New: DAG visualization
+    "to_mermaid_for_context",
+    "visualize_dag",
+    "visualize_timeline",
 ]

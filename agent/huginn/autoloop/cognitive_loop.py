@@ -2804,6 +2804,19 @@ Respond JSON only:
                 # 镜像到 self, 让 _validate (engine.py) 在下轮 validate 时能读到历史.
                 # _validate 作为 phase 函数没有 state 参数, 只能走 self.
                 self._iteration_history = state.iteration_history
+
+                # P0-1: episodic memory 分片存储, 防止长程任务单文件膨胀.
+                # EpisodicShardWriter 按 iter 分片 + gzip 归档, 跨 shard 查询走 Reader.
+                try:
+                    if not hasattr(self, "_episodic_writer") or self._episodic_writer is None:
+                        from huginn.memory.episodic_shard import EpisodicShardWriter
+                        self._episodic_writer = EpisodicShardWriter(
+                            workspace=self.workspace,
+                            task_id=str(self._run_id),
+                        )
+                    self._episodic_writer.append(state.iteration, _snapshot)
+                except Exception:
+                    logger.debug("episodic shard write failed (non-fatal)", exc_info=True)
             except Exception:
                 logger.debug("iteration_history push failed (non-fatal)", exc_info=True)
 
