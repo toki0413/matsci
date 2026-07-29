@@ -90,6 +90,12 @@ class SkillDefinition:
     # 平台相关字段（when_to_use / paths / model / effort / 原始正文等）。
     # 导入器把外来格式里 Huginn 没有的字段塞这里，导出时再取出来。
     metadata: dict[str, Any] = field(default_factory=dict)
+    # 材料科学领域分类: catalysis / battery / mechanics / general 等, 可选
+    domain: str | None = None
+    # 研究阶段: hypothesis / computation / analysis / reporting, 可选
+    stage: str | None = None
+    # 功能分类: search / design / predict / validate, 可选
+    function: str | None = None
 
     def to_prompt(self) -> str:
         """Generate a natural language description for the LLM."""
@@ -97,8 +103,14 @@ class SkillDefinition:
             f"Skill: {self.name}",
             f"Description: {self.description}",
             f"Category: {self.category}",
-            "Parameters:",
         ]
+        if self.domain:
+            lines.append(f"Domain: {self.domain}")
+        if self.stage:
+            lines.append(f"Stage: {self.stage}")
+        if self.function:
+            lines.append(f"Function: {self.function}")
+        lines.append("Parameters:")
         for p in self.parameters:
             req = "(required)" if p.required else f"(default: {p.default})"
             lines.append(f"  - {p.name}: {p.type} — {p.description} {req}")

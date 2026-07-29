@@ -126,6 +126,7 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.sci.pytorch_train_tool", "PyTorchTrainTool"),
     ("huginn.tools.sci.gnn_tool", "GNNTool"),
     ("huginn.tools.sci.pybamm_tool", "PyBaMMTool"),
+    ("huginn.tools.sci.stat_tests_tool", "StatTestsTool"),
     ("huginn.tools.descriptor_tool", "DescriptorTool"),
     ("huginn.tools.rdkit_tool", "RDKitTool"),
     ("huginn.tools.fep_tool", "FEPTool"),
