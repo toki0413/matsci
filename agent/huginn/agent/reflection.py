@@ -325,20 +325,27 @@ class ReflectionMixin:
                 )
                 self._csm.request_confirmation(reflection.confirm_type or "continue")
 
-            # 反思驱动的 mode 切换: should_switch_mode + suggested_mode 时切到目标 mode.
-            # 之前算出该切但不切 → agent 永远停在当前 mode, 自适应闭环断裂.
-            # ponytail: 1 行调用 set_mode, ValueError 静默 (suggested_mode 非法时降级).
+            # 反思驱动的 cognitive mode 切换: should_switch_mode + suggested_mode 时切.
+            # P1-6: 之前调 self.set_mode() 只接受 chat/research/plan, 但 suggested_mode
+            # 是 "discover"/"construct" (CognitiveMode), 永远 ValueError 被静默吞 → 闭环断裂.
+            # 现在改调 session_state.switch_cognitive_mode, 走正确的接收者.
             if reflection.should_switch_mode and reflection.suggested_mode:
                 try:
-                    self.set_mode(reflection.suggested_mode)
+                    from huginn.session_state import CognitiveMode
+
+                    target = CognitiveMode(reflection.suggested_mode)
+                    self._session_state.switch_cognitive_mode(
+                        target,
+                        reason=f"reflection after {tr.get('tool_name', 'unknown')}",
+                    )
                     logger.info(
-                        "reflection switched mode -> %s (tool=%s)",
-                        reflection.suggested_mode,
+                        "reflection switched cognitive mode -> %s (tool=%s)",
+                        target.value,
                         tr.get("tool_name", "unknown"),
                     )
                 except (ValueError, AttributeError):
                     logger.debug(
-                        "set_mode(%s) failed — invalid suggested_mode",
+                        "switch_cognitive_mode(%s) failed",
                         reflection.suggested_mode,
                         exc_info=True,
                     )

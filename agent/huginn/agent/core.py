@@ -385,6 +385,11 @@ class HuginnAgent(
         self.skills = skill_executor
 
         self._tool_adapter = ToolAdapter()
+        # P1-1: constraints BoundaryState 之前生产路径不注入, 所有 boundary 守卫被 None 短路.
+        # 现在挂 session 级 BoundaryState, SafetyOperator 评测出 block 级失败后能收紧 require_confirmation.
+        from huginn.constraints.boundaries import BoundaryState
+
+        self._boundary_state = BoundaryState()
         # 反向引用: 让 ToolAdapter._serialize 能把 _visual_base64 存到 agent 实例
         self._tool_adapter._agent_ref = self
         tool_summarizer = self._make_summarizer()
@@ -671,6 +676,7 @@ class HuginnAgent(
                 compression_max_tokens=self.compression_max_tokens,
                 permission_config=self._permission_config,
                 approval_callback=self._approval_callback,
+                boundary_state=self._boundary_state,
             )
         else:
             lc_tool = tool
@@ -732,6 +738,7 @@ class HuginnAgent(
                     compression_max_tokens=self.compression_max_tokens,
                     permission_config=self._permission_config,
                     approval_callback=self._approval_callback,
+                    boundary_state=self._boundary_state,
                 )
             else:
                 lc_tool = tool
