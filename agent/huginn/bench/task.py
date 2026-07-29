@@ -24,6 +24,9 @@ class BenchmarkTask:
     reference: str | None = None
     # 是否代码题 (judge 会评估 code_quality 维度)
     is_code_task: bool = False
+    # B3: 视觉能力标签 — 标注该 task 考察的视觉原子能力 (PerceptionBench 分类法)
+    # 值域: count/attr/hallu/fgr/depth/none. runner 按此分组统计失败模式.
+    visual_capability_tag: str = "none"
 
     def evaluate(self, output: str) -> TaskResult:
         """Run the evaluator and return a scored result.
@@ -64,6 +67,10 @@ class TaskResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     # 数值奖励通道: evaluator 返回 3 元组时填充, 2 元组时留 None
     score: float | None = None
+    # B2: re-ask consistency 标记 — 两次回答不一致时不计入正确率分母
+    unreliable: bool = False
+    # B3: 视觉失败模式标签 (继承自 task.visual_capability_tag)
+    visual_capability_tag: str = "none"
 
 
 def contains_any(keywords: list[str]) -> Callable[[str], tuple[bool, str]]:

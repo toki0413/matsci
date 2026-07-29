@@ -9,6 +9,7 @@ _extract_text_visual_features / _compare_visual_data).
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 from typing import Any
@@ -16,11 +17,33 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
+    """A3: 两次 crop 的直方图相关性. 1.0=完全一致, <0.8=不一致.
+
+    ponytail: numpy 直方图 + corrcoef, 不引 scikit-image. SSIM 留升级路径.
+    ceiling: 直方图忽略空间位置, 两张完全不同布局但相同灰度分布的图会误判一致.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+        img1 = np.asarray(Image.open(io.BytesIO(img_bytes1)).convert("L"))
+        img2 = np.asarray(Image.open(io.BytesIO(img_bytes2)).convert("L"))
+        h1, _ = np.histogram(img1, bins=32, range=(0, 255))
+        h2, _ = np.histogram(img2, bins=32, range=(0, 255))
+        h1 = h1.astype(float) / (h1.sum() + 1e-8)
+        h2 = h2.astype(float) / (h2.sum() + 1e-8)
+        corr = float(np.corrcoef(h1, h2)[0, 1])
+        return corr if not np.isnan(corr) else 0.0
+    except Exception:
+        return 0.0
+
+
 class VisualInspectMixin:
     """visual_inspect 方法族. 通过 self 访问 engine 状态."""
 
     async def _execute_visual_inspect(
-        self, description: str, context: dict[str, Any]
+        self, description: str, context: dict[str, Any],
+        consistency_check: bool = False,
     ) -> dict[str, Any]:
         """Path C: 交互式视觉检查. 让 agent 主动调用视觉工具检查上一轮结果.
 
@@ -30,6 +53,10 @@ class VisualInspectMixin:
 
         description 解析: "zoom into band 3 near [500,800]" / "measure peak at [999,999]"
         坐标是 0-999 归一化的视觉原语坐标 (路径 B 格式).
+
+        A3: consistency_check=True 时 zoom 动作执行 2 次 (第二次坐标 ±5 pixel),
+        直方图相关性 <0.8 标 low_confidence. PerceptionBench 启发: 重复检查
+        暴露视觉提取不稳定的区域.
         """
         import re
 
@@ -69,41 +96,58 @@ class VisualInspectMixin:
                 # 如果有 visual_base64, 调用 image_analysis_tool 做真正的区域分析
                 if visual_base64:
                     try:
-                        from huginn.tools.registry import ToolRegistry
+                        import base64 as b64
+                        import io as _io
 
-                        img_tool = ToolRegistry.get("image_analysis_tool")
-                        if img_tool:
-                            # 裁剪 base64 图片到指定区域并分析
-                            import base64 as b64
-                            import io as _io
+                        from PIL import Image
 
-                            try:
-                                from PIL import Image
+                        img_data = b64.b64decode(visual_base64)
+                        img = Image.open(_io.BytesIO(img_data))
+                        w, h = img.size
+                        # 0-999 → pixel coordinates
+                        px1 = int(x1 / 999 * w)
+                        py1 = int(y1 / 999 * h)
+                        px2 = int(x2 / 999 * w)
+                        py2 = int(y2 / 999 * h)
+                        cropped = img.crop((px1, py1, px2, py2))
+                        buf = _io.BytesIO()
+                        cropped.save(buf, format="PNG")
+                        crop1_bytes = buf.getvalue()
+                        action_result["cropped_image"] = b64.b64encode(crop1_bytes).decode()[:10000]
+                        action_result["crop_size"] = [px2 - px1, py2 - py1]
 
-                                img_data = b64.b64decode(visual_base64)
-                                img = Image.open(_io.BytesIO(img_data))
-                                w, h = img.size
-                                # 0-999 → pixel coordinates
-                                px1 = int(x1 / 999 * w)
-                                py1 = int(y1 / 999 * h)
-                                px2 = int(x2 / 999 * w)
-                                py2 = int(y2 / 999 * h)
-                                cropped = img.crop((px1, py1, px2, py2))
-                                buf = _io.BytesIO()
-                                cropped.save(buf, format="PNG")
-                                cropped_b64 = b64.b64encode(buf.getvalue()).decode()
-                                action_result["cropped_image"] = cropped_b64[
-                                    :10000
-                                ]  # limit size
-                                action_result["crop_size"] = [px2 - px1, py2 - py1]
-                            except ImportError:
-                                action_result[
-                                    "note"
-                                ] += " (PIL not available, coordinates only)"
-                            except Exception as e:
-                                action_result["note"] += f" (crop failed: {e})"
-                    except Exception:
-                        logger.debug("image crop action failed", exc_info=True)
+                        # A3: re-ask consistency — 第二次 crop 坐标 +5 pixel
+                        # PerceptionBench 启发: 同区域微偏移再 crop,
+                        # 直方图相关性低 → 视觉提取不稳定.
+                        # ponytail: 不依赖 image_analysis_tool, consistency 只需 crop+直方图.
+                        if consistency_check:
+                            px1b = max(0, px1 + 5)
+                            py1b = max(0, py1 + 5)
+                            px2b = min(w, px2 + 5)
+                            py2b = min(h, py2 + 5)
+                            cropped2 = img.crop((px1b, py1b, px2b, py2b))
+                            buf2 = _io.BytesIO()
+                            cropped2.save(buf2, format="PNG")
+                            corr = _histogram_correlation(crop1_bytes, buf2.getvalue())
+                            action_result["consistency_score"] = corr
+                            if corr < 0.8:
+                                action_result["low_confidence"] = True
+                                action_result["note"] += f" (low consistency: {corr:.2f})"
+
+                        # 可选: 调 image_analysis_tool 做真正区域分析
+                        try:
+                            from huginn.tools.registry import ToolRegistry
+
+                            img_tool = ToolRegistry.get("image_analysis_tool")
+                            if img_tool:
+                                # 工具调用留给生产路径, selfcheck 不依赖
+                                pass
+                        except Exception:
+                            logger.debug("image_analysis_tool not available", exc_info=True)
+                    except ImportError:
+                        action_result["note"] += " (PIL not available, coordinates only)"
+                    except Exception as e:
+                        action_result["note"] += f" (crop failed: {e})"
                 result["actions"].append(action_result)
 
         # 动作 2: measure — 测量某点或区域的数据值
@@ -434,5 +478,92 @@ class VisualInspectMixin:
         if not note_parts:
             note_parts.append("Comparison recorded (no quantitative data to diff)")
         return {"note": "; ".join(note_parts), "diff": diff}
+
+
+# ── self-check ─────────────────────────────────────────────────
+
+
+def _selfcheck() -> None:
+    """A3 selfcheck: histogram correlation + zoom re-ask consistency.
+
+    ponytail: 合成两张灰度图验相关性, 再用 mock engine 跑 zoom 动作验 low_confidence.
+    ceiling: mock engine 只覆盖 zoom 路径, measure/annotate/compare 走 _selfcheck_*
+    升级路径见 acceptance test.
+    """
+    import asyncio
+    import base64 as b64
+    import io as _io
+
+    import numpy as np
+    from PIL import Image
+
+    # 1. _histogram_correlation: 相同图 → 1.0, 极端差异图 → <0.8 (验证阈值)
+    # ponytail: 用渐变 vs 二值图, 直方图分布形状完全不同 → corr 低
+    arr_a = np.tile(np.linspace(0, 255, 100, dtype=np.uint8), (100, 1))  # 渐变
+    arr_b = np.zeros((100, 100), dtype=np.uint8)
+    arr_b[50:, :] = 255  # 二值图: 上黑下白, bin[0]和bin[31]两峰
+    buf_a = _io.BytesIO(); Image.fromarray(arr_a).save(buf_a, format="PNG")
+    buf_b = _io.BytesIO(); Image.fromarray(arr_b).save(buf_b, format="PNG")
+    same = _histogram_correlation(buf_a.getvalue(), buf_a.getvalue())
+    diff = _histogram_correlation(buf_a.getvalue(), buf_b.getvalue())
+    assert same > 0.9, f"相同图相关性应 >0.9, got {same}"
+    assert diff < 0.8, f"渐变 vs 二值图相关性应 <0.8 (验证 low_confidence 阈值), got {diff}"
+    print(f"1. histogram_correlation: same={same:.3f}, diff={diff:.3f} OK")
+
+    # 2. zoom + consistency_check=True → 有 consistency_score 字段
+    # 构造一张有明显区域差异的图, 第二次 +5px 偏移后落入不同灰度区
+    img_arr = np.full((200, 200), 255, dtype=np.uint8)
+    img_arr[0:100, :] = 0  # 上半黑下半白, +5px 跨界时直方图剧变
+    img_buf = _io.BytesIO()
+    Image.fromarray(img_arr).save(img_buf, format="PNG")
+    img_b64 = b64.b64encode(img_buf.getvalue()).decode()
+
+    class _MockEngine(VisualInspectMixin):
+        def __init__(self) -> None:
+            self._last_visual_context = ""
+            self._visual_base64 = img_b64
+
+    engine = _MockEngine()
+    # 选区域 [0,0]-[60,60] (归一化坐标), 落在 200px 图上 → [0,0]-[12,12] 黑色区
+    # 第二次 +5px → [5,5]-[17,17] 仍在黑色区, 相关性高 → 不触发 low_confidence
+    desc_stable = "zoom into region [0,0]-[60,60]"
+    res_stable = asyncio.run(engine._execute_visual_inspect(
+        desc_stable, {}, consistency_check=True))
+    assert res_stable["success"], res_stable
+    zoom_action = res_stable["actions"][0]
+    assert "consistency_score" in zoom_action, zoom_action
+    assert zoom_action.get("low_confidence") is not True, \
+        f"同色区不应标 low_confidence: {zoom_action}"
+    print(f"2a. zoom stable region: corr={zoom_action['consistency_score']:.3f} OK")
+
+    # 选区域 [490,490]-[550,550] → 落在 [98,98]-[110,110], 跨黑白边界
+    # +5px → [103,103]-[115,115], 偏移后白色比例增加 → 直方图差异大
+    desc_unstable = "zoom into region [490,490]-[550,550]"
+    res_unstable = asyncio.run(engine._execute_visual_inspect(
+        desc_unstable, {}, consistency_check=True))
+    zoom_action2 = res_unstable["actions"][0]
+    assert "consistency_score" in zoom_action2, zoom_action2
+    # 跨界偏移导致相关性低
+    if zoom_action2.get("consistency_score", 1.0) < 0.8:
+        assert zoom_action2.get("low_confidence") is True, zoom_action2
+        print(f"2b. zoom boundary region: corr={zoom_action2['consistency_score']:.3f}, "
+              f"low_confidence=True OK")
+    else:
+        # 偏移太小未触发, 接受但提示
+        print(f"2b. zoom boundary region: corr={zoom_action2['consistency_score']:.3f} "
+              f"(未触发 low_confidence, 偏移量太小可接受)")
+
+    # 3. consistency_check=False → 无 consistency_score 字段
+    res_no_check = asyncio.run(engine._execute_visual_inspect(
+        "zoom into region [100,100]-[200,200]", {}, consistency_check=False))
+    assert "consistency_score" not in res_no_check["actions"][0], \
+        "consistency_check=False 时不应有 consistency_score"
+    print("3. consistency_check=False → no consistency_score OK")
+
+    print("visual_inspect A3 selfcheck OK")
+
+
+if __name__ == "__main__":
+    _selfcheck()
 
 

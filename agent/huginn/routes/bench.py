@@ -19,8 +19,9 @@ async def bench_run(params: dict[str, Any]) -> dict[str, Any]:
     try:
         categories = params.get("categories")
         evolve = bool(params.get("evolve", False))
+        re_ask = bool(params.get("re_ask", False))
         runner = BenchmarkRunner(logger=ExecutionLogger())
-        report = runner.run(evolve=evolve, categories=categories)
+        report = runner.run(evolve=evolve, categories=categories, re_ask=re_ask)
         return {
             "success": True,
             "report": {
@@ -29,7 +30,9 @@ async def bench_run(params: dict[str, Any]) -> dict[str, Any]:
                 "passed": report.passed,
                 "failed": report.failed,
                 "skipped": report.skipped,
+                "unreliable": report.unreliable,
                 "metrics": report.metrics,
+                "visual_failure_summary": report.visual_failure_summary,
                 "results": [
                     {
                         "task_id": r.task_id,
@@ -37,6 +40,8 @@ async def bench_run(params: dict[str, Any]) -> dict[str, Any]:
                         "passed": r.passed,
                         "reason": r.reason,
                         "exec_time_seconds": r.exec_time_seconds,
+                        "unreliable": r.unreliable,
+                        "visual_capability_tag": r.visual_capability_tag,
                     }
                     for r in report.results
                 ],
