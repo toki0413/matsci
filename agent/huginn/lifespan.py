@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from huginn.config import get_config
-from huginn.pet import configure_pet
+from huginn.pet import configure_pet, get_pet_bus
 from huginn.server_core import (
     _CODEBASE_AVAILABLE,
     _KB_AVAILABLE,
@@ -466,7 +466,9 @@ async def lifespan(app: FastAPI):
             logger.info(f"[Codebase] Warning: could not initialize codebase index: {e}")
     try:
         cfg = get_config()
-        configure_pet(cfg.pet_name, cfg.pet_personality)
+        # 先 load 恢复 gamification (level/xp/hunger), 再 configure 覆盖 name/personality/accessories
+        get_pet_bus().load_state()
+        configure_pet(cfg.pet_name, cfg.pet_personality, accessories=cfg.pet_accessories)
     except Exception as e:
         logger.info(f"[Pet] Warning: could not configure pet: {e}")
 
