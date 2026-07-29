@@ -2732,3 +2732,131 @@ SCENARIO_TOOL_SELECTOR = register_skill(
         tags=["meta", "scenario", "tool_selection", "routing"],
     )
 )
+
+
+# --- 统计分析 & 实验设计 Skills ---
+
+STATISTICAL_ANALYSIS = register_skill(
+    SkillDefinition(
+        name="statistical_analysis",
+        description=(
+            "Confirmatory statistical tests: describe, t-test, paired t, "
+            "Mann-Whitney, ANOVA, Kruskal-Wallis, chi-square, correlation, "
+            "and multiple comparison correction. Auto-checks assumptions "
+            "(Shapiro + Levene) and falls back to non-parametric."
+        ),
+        category="analysis",
+        parameters=[
+            SkillParameter(
+                "action", "str",
+                "describe|ttest|paired|mannwhitney|anova|kruskal|chi2|corr|correct",
+                required=True,
+            ),
+            SkillParameter(
+                "data", "list",
+                "按 action 不同: [[group,value]] / [[x,y]] / [[row counts]] / [p-values]",
+                required=True,
+            ),
+            SkillParameter("equal_var", "bool", "ttest 假定等方差", default=False),
+            SkillParameter("method", "str", "corr 方法: pearson|spearman", default="pearson"),
+            SkillParameter("correction", "str", "correct 方法: bonferroni|holm|fdr_bh", default="holm"),
+            SkillParameter("alpha", "float", "显著性水平", default=0.05),
+            SkillParameter("posthoc", "bool", "anova 附 Tukey HSD", default=False),
+        ],
+        steps=[
+            SkillStep(
+                name="run_stat_test",
+                tool="stat_tests_tool",
+                input_mapping={
+                    "action": "$action",
+                    "data": "$data",
+                    "equal_var": "$equal_var",
+                    "method": "$method",
+                    "correction": "$correction",
+                    "alpha": "$alpha",
+                    "posthoc": "$posthoc",
+                },
+                output_key="stat_result",
+                on_failure="abort",
+            ),
+        ],
+        required_tools=["stat_tests_tool"],
+        tags=["statistics", "hypothesis_testing", "effect_size", "analysis"],
+    )
+)
+
+EXPERIMENT_DESIGN = register_skill(
+    SkillDefinition(
+        name="experiment_design",
+        description=(
+            "Experiment design workflow: power analysis → design matrix "
+            "generation → run-order randomization"
+        ),
+        category="computation",
+        parameters=[
+            SkillParameter(
+                "factors", "list", "因子列表 (每个含 name/levels 或 low/high)",
+                required=True,
+            ),
+            SkillParameter(
+                "design_action", "str",
+                "设计类型: factorial|fractional|orthogonal|rsm",
+                default="factorial",
+            ),
+            SkillParameter(
+                "design_type", "str",
+                "子类型: full/half/quarter/L8/L16/L9/L27/CCD/Box-Behnken",
+                default="",
+            ),
+            SkillParameter(
+                "test_type", "str", "power 检验类型: ttest|anova|chisq", default="ttest",
+            ),
+            SkillParameter("effect_size", "float", "效应量", default=0.5),
+            SkillParameter("alpha", "float", "显著性水平", default=0.05),
+            SkillParameter("power_target", "float", "目标功效", default=0.80),
+            SkillParameter("n_groups", "int", "组数 (anova power)", default=2),
+            SkillParameter("seed", "int", "随机种子", default=None, required=False),
+        ],
+        steps=[
+            SkillStep(
+                name="power_analysis",
+                tool="doe_tool",
+                input_mapping={
+                    "action": "'power'",
+                    "test_type": "$test_type",
+                    "effect_size": "$effect_size",
+                    "alpha": "$alpha",
+                    "power_target": "$power_target",
+                    "n_groups": "$n_groups",
+                },
+                output_key="power_result",
+                on_failure="continue",
+            ),
+            SkillStep(
+                name="generate_design_matrix",
+                tool="doe_tool",
+                input_mapping={
+                    "action": "$design_action",
+                    "factors": "$factors",
+                    "design_type": "$design_type",
+                    "seed": "$seed",
+                },
+                output_key="design_matrix_result",
+                on_failure="abort",
+            ),
+            SkillStep(
+                name="randomize_run_order",
+                tool="doe_tool",
+                input_mapping={
+                    "action": "'randomize'",
+                    "design_matrix": "$design_matrix_result.design_matrix",
+                    "seed": "$seed",
+                },
+                output_key="randomized_design",
+                on_failure="skip",
+            ),
+        ],
+        required_tools=["doe_tool"],
+        tags=["doe", "power_analysis", "factorial", "randomization", "experiment"],
+    )
+)

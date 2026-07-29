@@ -25,3 +25,10 @@ def get_torch_device() -> str:
     """
     return os.environ.get("HUGINN_TORCH_DEVICE", "cpu")
 
+
+# 统计检验工具导出 — scipy/statsmodels 不可用时静默跳过, 不拖累整个 sci 包
+try:
+    from huginn.tools.sci.stat_tests_tool import StatTestsTool
+except ImportError:
+    pass
+
