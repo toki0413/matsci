@@ -12,6 +12,7 @@ interface MetricsState {
   provider: string;
   tps: number | null;
   ttft: number | null;
+  costUsd: number | null;
 }
 
 // Parse a single numeric value out of a Prometheus line like:
@@ -20,6 +21,20 @@ function parsePrometheusValue(text: string, metricName: string): number {
   const re = new RegExp(`^${metricName}\\s+([\\d.]+)`, "m");
   const m = text.match(re);
   return m ? parseFloat(m[1]) : 0;
+}
+
+// Sum a labeled gauge across all label values. Matches both labeled
+// (`name{...} val`) and unlabeled (`name val`) forms. Used for cost
+// which is partitioned by model — we want the grand total.
+function parseLabeledGaugeSum(text: string, metricName: string): number | null {
+  const re = new RegExp(`^${metricName}(?:\\{[^}]*\\})?\\s+([\\d.eE+-]+)`, "gm");
+  let sum = 0, hit = false;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    sum += parseFloat(m[1]);
+    hit = true;
+  }
+  return hit ? sum : null;
 }
 
 // Histogram 暴露为 {name}_sum{labels} VALUE + {name}_count{labels} VALUE.
@@ -49,6 +64,7 @@ export function MetricsBar() {
     provider: "",
     tps: null,
     ttft: null,
+    costUsd: null,
   });
   const [visible, setVisible] = useState(false);
 
@@ -71,6 +87,7 @@ export function MetricsBar() {
           provider: health?.provider || health?.config?.provider || "",
           tps: parseHistogramAvg(metricsText, "huginn_llm_tps"),
           ttft: parseHistogramAvg(metricsText, "huginn_llm_ttft_seconds"),
+          costUsd: parseLabeledGaugeSum(metricsText, "huginn_llm_cost_usd"),
         };
 
         setMetrics(next);
@@ -105,6 +122,12 @@ export function MetricsBar() {
         <span className="flex items-center gap-1">
           <span>📊</span>
           <span>{formatTokens(metrics.tokens)} tokens</span>
+        </span>
+      )}
+      {metrics.costUsd != null && metrics.costUsd > 0 && (
+        <span className="flex items-center gap-1" title="Accumulated LLM cost (USD)">
+          <span>💸</span>
+          <span>${metrics.costUsd < 0.01 ? metrics.costUsd.toFixed(4) : metrics.costUsd.toFixed(2)}</span>
         </span>
       )}
       {metrics.tps != null && (

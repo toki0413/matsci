@@ -19,6 +19,27 @@ logger = logging.getLogger(__name__)
 # Role names that must never be summarized or dropped.
 _PROTECTED_ROLES = {"system"}
 
+# A3.3: Anthropic thinking block types — 含这些块的 AIMessage 永不裁剪.
+# signature 字段是 Anthropic 服务端验证 extended thinking 完整性的凭证,
+# 丢了后续回合会 400. redacted_thinking 同理 (安全推理的 encrypted blob).
+_THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
+
+
+def _has_thinking_blocks(msg: Any) -> bool:
+    """检查消息 content 是否含 thinking / redacted_thinking 块.
+
+    Anthropic extended thinking 响应的 AIMessage.content 是 list[dict],
+    每个块带 type 字段. 含 thinking 块的消息带 signature, 裁剪后丢 signature
+    → 后续回合 400 invalid_request_error.
+    """
+    content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+    if not isinstance(content, list):
+        return False
+    for block in content:
+        if isinstance(block, dict) and block.get("type") in _THINKING_BLOCK_TYPES:
+            return True
+    return False
+
 
 def _msg_role(msg: Any) -> str:
     if isinstance(msg, dict):
@@ -86,6 +107,7 @@ def compact_messages(
 
     # 分离 root messages — 这部分永不被 drop, 也不被 tool clearing 影响
     # F3: 双路标 root — 位置 (keep_root_n) ∪ 内容 marker (root_content_markers)
+    # A3.3: 含 thinking/redacted_thinking 块的 AIMessage 也进 root — 丢 signature 会 400.
     root_indices: set[int] = set()
     if keep_root_n > 0 and len(messages) > keep_root_n:
         root_indices.update(range(min(keep_root_n, len(messages))))
@@ -96,6 +118,12 @@ def compact_messages(
             content = _msg_content(m)
             if any(marker in content for marker in root_content_markers):
                 root_indices.add(i)
+    # A3.3: thinking block 保护 — 扫一遍剩余消息, 含 thinking 块的也进 root.
+    for i, m in enumerate(messages):
+        if i in root_indices:
+            continue
+        if _has_thinking_blocks(m):
+            root_indices.add(i)
 
     if root_indices:
         root_messages = [m for i, m in enumerate(messages) if i in root_indices]
@@ -587,4 +615,48 @@ if __name__ == "__main__":
         tc["id"] for m in out3 if isinstance(m, AIMessage) for tc in m.tool_calls
     }
     assert answered <= called, f"orphan tool ids {answered - called} in {[_msg_role(m) for m in out3]}"
-    print("context self-check OK (3 cases)")
+
+    # A3.3: thinking block 保护 — 含 thinking/redacted_thinking 块的 AIMessage 永不裁剪.
+    thinking_ai = AIMessage(content=[
+        {"type": "thinking", "thinking": "let me reason...", "signature": "sig_abc"},
+        {"type": "text", "text": "the answer is 42"},
+    ])
+    redacted_ai = AIMessage(content=[
+        {"type": "redacted_thinking", "data": "encrypted_blob"},
+        {"type": "text", "text": "result"},
+    ])
+    plain_ai = AIMessage(content="just text, no thinking")
+    # _has_thinking_blocks
+    assert _has_thinking_blocks(thinking_ai) is True
+    assert _has_thinking_blocks(redacted_ai) is True
+    assert _has_thinking_blocks(plain_ai) is False
+    assert _has_thinking_blocks(HumanMessage(content="user msg")) is False
+    assert _has_thinking_blocks({"role": "assistant", "content": "string"}) is False
+    assert _has_thinking_blocks({"role": "assistant", "content": [{"type": "text", "text": "hi"}]}) is False
+    assert _has_thinking_blocks({"role": "assistant", "content": [{"type": "thinking", "thinking": "x"}]}) is True
+
+    # compact_messages: thinking block 消息在极小 budget 下仍被保留
+    msgs4 = [
+        HumanMessage(content="task"),
+        thinking_ai,
+        plain_ai,
+        HumanMessage(content="latest question"),
+    ]
+    out4 = compact_messages(msgs4, budget_tokens=10, keep_last_n=1, tool_result_ttl=0)
+    # thinking_ai 必须在结果里 (signature 不能丢)
+    assert any(
+        _has_thinking_blocks(m) for m in out4
+    ), f"thinking block AIMessage was dropped: {[_msg_role(m) for m in out4]}"
+    # redacted_thinking 同理
+    msgs5 = [
+        HumanMessage(content="task"),
+        redacted_ai,
+        plain_ai,
+        HumanMessage(content="q"),
+    ]
+    out5 = compact_messages(msgs5, budget_tokens=10, keep_last_n=1, tool_result_ttl=0)
+    assert any(
+        _has_thinking_blocks(m) for m in out5
+    ), f"redacted_thinking block AIMessage was dropped: {[_msg_role(m) for m in out5]}"
+
+    print("context self-check OK (5 cases, A3.3 thinking block protection verified)")
