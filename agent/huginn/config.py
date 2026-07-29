@@ -346,6 +346,10 @@ class HuginnConfig:
     mp_api_key: str | None = None
     oqmd_api_key: str | None = None
 
+    # MinerU 文献解析 API keys (VLM 版面解析服务, 非LLM provider).
+    # 多 key 轮询: MINERU_API_KEYS="k1,k2,k3" 或 HuginnConfig.mineru_api_keys=[...]
+    mineru_api_keys: list[str] = field(default_factory=list)
+
     # HPC / remote execution settings
     execution_backend: Literal["local", "remote"] = "local"
     container_runtime: Literal[
@@ -695,6 +699,10 @@ class HuginnConfig:
             lammps_executable=os.environ.get("LAMMPS_EXECUTABLE"),
             mp_api_key=os.environ.get("MP_API_KEY") or None,
             oqmd_api_key=os.environ.get("OQMD_API_KEY") or None,
+            mineru_api_keys=[
+                k.strip() for k in os.environ.get("MINERU_API_KEYS", "").split(",")
+                if k.strip()
+            ],
             execution_backend=os.environ.get("HUGINN_EXECUTION_BACKEND", "local").lower(),  # type: ignore[arg-type]
             container_runtime=os.environ.get("HUGINN_CONTAINER_RUNTIME", "none").lower(),  # type: ignore[arg-type]
             container_image=os.environ.get("HUGINN_CONTAINER_IMAGE") or None,
@@ -935,6 +943,7 @@ class HuginnConfig:
             "ollama_host": self.ollama_host,
             "mp_api_key": mask(self.mp_api_key),
             "oqmd_api_key": mask(self.oqmd_api_key),
+            "mineru_api_keys": [mask(k) for k in self.mineru_api_keys],
             "vasp_executable": self.vasp_executable,
             "lammps_executable": self.lammps_executable,
             "execution_backend": self.execution_backend,

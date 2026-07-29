@@ -560,6 +560,8 @@ _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
     "hunyuan": "HUNYUAN_API_KEY",
     "minimax": "MINIMAX_API_KEY",
     "openai-compatible": "OPENAI_API_KEY",
+    # MinerU 文献解析服务 (非 LLM provider, 复用 pick_api_key 做轮询)
+    "mineru": "MINERU_API_KEY",
     # Local presets don't need real keys — fill any non-empty string
     "lm-studio": "",
     "llama-cpp": "",
@@ -590,6 +592,16 @@ _CLOUD_PROVIDERS: set[str] = {
     "hunyuan",
     "minimax",
 }
+
+# A2: Anthropic 2026 beta header 集合 (5 项).
+# 不含互斥的 agent-memory-2026-07-22 / managed-agents-2026-04-01.
+_ANTHROPIC_BETA_2026: tuple[str, ...] = (
+    "interleaved-thinking-2025-05-14",
+    "context-management-2025-06-27",
+    "extended-cache-ttl-2025-04-11",
+    "prompt-caching-scope-2026-01-05",
+    "claude-code-20250219",
+)
 
 
 def is_local_provider(provider: str, base_url: str | None = None) -> bool:
@@ -647,7 +659,28 @@ def _create_openai_compatible(
         kwargs["max_tokens"] = max_tokens
     _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
     kwargs["request_timeout"] = _llm_request_timeout()
-    return ChatOpenAI(**kwargs)
+    return ChatOpenAI(**_with_usage_cb(kwargs))
+
+
+def _get_usage_cb() -> Any:
+    """懒加载 UsageCallback 单例. langchain 没装时返回 None."""
+    try:
+        from huginn.routes.metrics import get_usage_callback
+        return get_usage_callback()
+    except Exception:
+        return None
+
+
+def _with_usage_cb(kwargs: dict, cb: Any = None) -> dict:
+    """把 UsageCallback 塞进 kwargs['callbacks'], 不覆盖调用方传的 callbacks."""
+    if cb is None:
+        cb = _get_usage_cb()
+    if cb is None:
+        return kwargs
+    cbs = kwargs.get("callbacks") or []
+    if cb not in cbs:
+        kwargs["callbacks"] = [*cbs, cb]
+    return kwargs
 
 
 def create_langchain_model(
@@ -661,6 +694,10 @@ def create_langchain_model(
 ) -> Any:
     """Create a LangChain chat model instance for the given provider."""
     provider = provider.lower().strip()  # type: ignore[assignment]
+
+    # UsageCallback: 挂在每个 model 上, on_llm_end 自动抽 token usage 计费.
+    # 一处注入覆盖所有 call site (graph/CodeAct/reflection), 比手动调 track_llm_usage 可靠.
+    _usage_cb = _get_usage_cb()
 
     # openai-compatible requires explicit model + base_url.
     if provider == "openai-compatible":
@@ -698,11 +735,23 @@ def create_langchain_model(
             "model": model,
             "api_key": key,
             "temperature": temperature,
+            # A2: 5 项 2026 beta header. 不含互斥的 agent-memory/managed-agents.
+            "default_headers": {
+                "anthropic-beta": ",".join(_ANTHROPIC_BETA_2026),
+            },
+            # A4: 服务端 context management — clear_tool_results 让 Anthropic
+            # 自动 compaction, 与 huginn 客户端 compact_messages 的 tool_result_ttl 协同.
+            # 该字段需配合 beta header context-management-2025-06-27 才生效.
+            "context_management": {
+                "tools": [
+                    {"type": "context_tool", "name": "clear_tool_results_20250818"}
+                ]
+            },
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatAnthropic(**kwargs)
+        return ChatAnthropic(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider in ("openai", "vllm", "local"):
         try:
@@ -738,18 +787,15 @@ def create_langchain_model(
             )
             kwargs["extra_body"] = extra_body
         kwargs["request_timeout"] = _llm_request_timeout()
-        return ChatOpenAI(**kwargs)
+        return ChatOpenAI(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider == "ollama":
         try:
             from langchain_ollama import ChatOllama
         except ImportError as err:
             raise ImportError("pip install langchain-ollama") from err
-        return ChatOllama(
-            model=model,
-            base_url=base_url or "http://localhost:11434",
-            temperature=temperature,
-        )
+        _ollama_kwargs = {"model": model, "base_url": base_url or "http://localhost:11434", "temperature": temperature}
+        return ChatOllama(**_with_usage_cb(_ollama_kwargs, _usage_cb))
 
     if provider == "deepseek":
         try:
@@ -769,7 +815,7 @@ def create_langchain_model(
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
         kwargs["request_timeout"] = _llm_request_timeout()
-        return ChatOpenAI(**kwargs)
+        return ChatOpenAI(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider == "google-genai":
         try:
@@ -783,7 +829,7 @@ def create_langchain_model(
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatGoogleGenerativeAI(**kwargs)
+        return ChatGoogleGenerativeAI(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider == "openrouter":
         try:
@@ -803,7 +849,7 @@ def create_langchain_model(
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
         kwargs["request_timeout"] = _llm_request_timeout()
-        return ChatOpenAI(**kwargs)
+        return ChatOpenAI(**_with_usage_cb(kwargs, _usage_cb))
 
     if provider in _DOMESTIC_OPENAI_COMPATIBLE:
         return _create_openai_compatible(
@@ -823,13 +869,14 @@ def create_langchain_model(
             from langchain_openai import ChatOpenAI
         except ImportError as err:
             raise ImportError("pip install langchain-openai") from err
-        return ChatOpenAI(
-            model=model,
-            api_key=api_key or "not-needed",
-            base_url=resolved_base_url,
-            temperature=temperature,
-            request_timeout=_llm_request_timeout(),
-        )
+        _lmstudio_kwargs = {
+            "model": model,
+            "api_key": api_key or "not-needed",
+            "base_url": resolved_base_url,
+            "temperature": temperature,
+            "request_timeout": _llm_request_timeout(),
+        }
+        return ChatOpenAI(**_with_usage_cb(_lmstudio_kwargs, _usage_cb))
 
     if provider == "nvidia":
         try:
@@ -841,7 +888,7 @@ def create_langchain_model(
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
-        return ChatNVIDIA(**kwargs)
+        return ChatNVIDIA(**_with_usage_cb(kwargs, _usage_cb))
 
     raise ValueError(
         f"Unsupported provider: {provider}. "
