@@ -245,6 +245,68 @@ def _check_lammps_vacf_registers_timeseries():
     print("[ok] P3 lammps_tool VACF → _physical_timeseries 提取")
 
 
+def _check_lammps_msd_rdf_registers_timeseries():
+    """P3: lammps_tool MSD + RDF 峰位 也注册为 _physical_timeseries.
+
+    之前只有 VACF 走 cognition 通道; MSD/RDF 算了但躺在 result 里 agent
+    看不到趋势. 现在三路独立注册, 无速度列时也能进 PMK.
+    """
+    from huginn.autoloop.engine import AutoloopEngine
+    _extract = AutoloopEngine._extract_timeseries
+
+    # Fake result: 有 MSD + RDF series, 无 VACF (模拟无速度列的 dump)
+    _msd = [{"timestep": 0, "msd": 0.0}, {"timestep": 100, "msd": 1.0},
+            {"timestep": 200, "msd": 4.0}]
+    _rdf_series = [
+        {"timestep": 0, "r": [1.0, 2.0, 3.0], "g": [0.0, 5.0, 1.0]},
+        {"timestep": 200, "r": [1.0, 2.0, 3.0], "g": [0.0, 3.0, 2.0]},
+    ]
+
+    # 复现 lammps_tool 里 _physical_timeseries 的三路注册逻辑
+    _ts: list[dict] = []
+    # MSD branch
+    _ts.append({
+        "name": "MSD", "unit": "Å²",
+        "data": [(d.get("timestep", i), d.get("msd", 0.0))
+                 for i, d in enumerate(_msd)],
+        "meaning": "mean squared displacement", "source": "lammps",
+    })
+    # RDF first-peak branch
+    peak_data = []
+    for fi, fr in enumerate(_rdf_series):
+        g, r = fr.get("g"), fr.get("r")
+        if not (g and r and len(g) == len(r) and len(g) > 0):
+            continue
+        peak_idx = max(range(len(g)), key=lambda k: g[k])
+        peak_data.append((fr.get("timestep", fi), r[peak_idx]))
+    if peak_data:
+        _ts.append({
+            "name": "RDF_first_peak", "unit": "Å",
+            "data": peak_data,
+            "meaning": "RDF first peak position", "source": "lammps",
+        })
+    # VACF branch — 不构造 (无速度列)
+    _result = {"msd": _msd, "rdf_series": _rdf_series, "_physical_timeseries": _ts}
+
+    extracted = _extract(_result)
+    names = [t["name"] for t in extracted]
+    assert "MSD" in names, "MSD 时序应注册"
+    assert "RDF_first_peak" in names, "RDF 峰位时序应注册"
+    assert "VACF" not in names, "无速度列时不应有 VACF 时序"
+
+    # MSD 趋势: rising (0→1→4)
+    msd_ts = next(t for t in extracted if t["name"] == "MSD")
+    assert msd_ts["data"] == [(0, 0.0), (100, 1.0), (200, 4.0)], "MSD data 应正确"
+    assert msd_ts["unit"] == "Å²"
+
+    # RDF 峰位: 第一帧峰位 r=2.0 (g=[0,5,1] argmax=1→r=2.0), 末帧峰位 r=2.0 (g=[0,3,2] argmax=1→r=2.0)
+    rdf_ts = next(t for t in extracted if t["name"] == "RDF_first_peak")
+    assert rdf_ts["data"] == [(0, 2.0), (200, 2.0)], f"RDF 峰位应为 (0,2.0)(200,2.0), got {rdf_ts['data']}"
+    assert rdf_ts["unit"] == "Å"
+
+    print("[ok] P3 lammps_tool MSD + RDF_first_peak → _physical_timeseries (无 VACF 也能注册)")
+
+
 def main():
     _check_run_context_persist_load()
     _check_decider_prompt_prev_run()
@@ -252,6 +314,7 @@ def main():
     _check_format_timeseries()
     _check_decider_prompt_timeseries()
     _check_lammps_vacf_registers_timeseries()
+    _check_lammps_msd_rdf_registers_timeseries()
     _check_learn_from_rcb_run_context()
     print("\nALL CHECKS PASSED")
 
