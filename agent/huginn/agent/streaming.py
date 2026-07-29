@@ -1261,7 +1261,10 @@ class StreamingMixin:
                 _rec_limit = budget_override.recursion_limit
             else:
                 _mc = self._max_tool_calls or 50
-                _rec_limit = max(250, _mc * 5)
+                # P1-5: 之前 max(250, _mc*5) 覆盖了 mode 联动 — research/extreme
+                # 模式期望 500/400 recursion, 实际拿到 250. 现在取两者最大值,
+                # 既保证 max_tool_calls 空间, 又让 mode 联动真正生效.
+                _rec_limit = max(self._effective_recursion_limit(), _mc * 5)
             config = {
                 "configurable": {"thread_id": thread_id},
                 "recursion_limit": _rec_limit,
