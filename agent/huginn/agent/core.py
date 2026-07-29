@@ -893,36 +893,9 @@ class HuginnAgent(
                             "MAE 49.93K vs paper's LOOCV MAE 13K, gap explained by...'). Substituting the core "
                             "method without justification scores 0."
                         )
-                    # 方案 A: Time-Aware — deadline env 由 rcb_huginn.py main set.
-                    _deadline = float(os.environ.get("HUGINN_RCB_DEADLINE", "0") or 0)
-                    if _deadline > 0:
-                        _remain = _deadline - _time.time()
-                        _total = float(os.environ.get("HUGINN_RCB_TIMEOUT", "0") or 0)
-                        if _remain < 300:
-                            _extra_hints.append(
-                                f"⏰ TIME BUDGET LOW: ~{int(_remain)}s remaining. "
-                                "STOP training / long-running compute NOW. "
-                                "Write report/report.md immediately with current results. "
-                                "An honest partial report beats a perfect report that never gets written."
-                            )
-                        elif _remain < 600:
-                            _extra_hints.append(
-                                f"⏰ Time check: ~{int(_remain)}s remaining. "
-                                "Begin wrapping up — finalize figures and start writing report.md."
-                            )
-                        # 方案 D: Stage-Gated — 过 50% timeout 且没 report 时,
-                        # 提醒 agent 写 partial report (可后续更新). 跟 <600s /
-                        # <300s 形成 3 级阶梯: 50% → begin draft, 600s → wrap up,
-                        # 300s → stop & write. ponytail: 只在没 report 时提醒,
-                        # 已有 report 不打扰.
-                        elif (_total > 0 and _remain < _total * 0.5
-                              and not _rpt_path.exists()):
-                            _extra_hints.append(
-                                f"⏰ Past 50% time budget (~{int(_remain)}s left). "
-                                "Consider writing a PARTIAL report/report.md now with current "
-                                "results — you can update it later. This protects against "
-                                "timeout losing all intermediate work."
-                            )
+                    # P3-2: 删除 HUGINN_RCB_DEADLINE 死分支 — setter (rcb_huginn.py)
+                    # 不存在, _deadline 永远 0.0, 整段 if _deadline > 0 是死代码.
+                    # 升级路径: rcb_runner.py 入口 setdefault HUGINN_RCB_DEADLINE 后恢复.
                     # 方案 C: Negative Result — 扫 outputs/*.json 找低分指标,
                     # 注入 "写 negative result 分析" hint. 不阻塞, 只提醒.
                     if not _rpt_path.exists() and (_cwd / "outputs").exists():
