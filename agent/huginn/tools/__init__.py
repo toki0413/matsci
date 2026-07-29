@@ -50,6 +50,7 @@ _CORE_MODULES = [
     ("huginn.tools.web_search_tool", "WebSearchTool"),
     ("huginn.tools.agentic_search_tool", "AgenticSearchTool"),
     ("huginn.tools.literature_tool", "LiteratureTool"),
+    ("huginn.tools.literature_tool", "LiteraturePipelineTool"),
     ("huginn.tools.orchestrate_tool", "OrchestrateTool"),
     ("huginn.tools.skill_tool", "SkillTool"),
     ("huginn.tools.memory_tool", "RememberTool"),

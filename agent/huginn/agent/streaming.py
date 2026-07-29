@@ -57,6 +57,27 @@ _DEFAULT_ROOT_MARKERS = (
     "## Report Coverage Compass;## Intuitive Gamer"
 )
 
+# A3: 流式 watchdog — 空闲超时后中止流式, 走非流式 ainvoke 降级.
+# 60s 默认值覆盖大多数 LLM 首 token 延迟 + 中间停顿. 调高无意义, 调低误杀.
+_STREAM_IDLE_TIMEOUT = float(os.environ.get("HUGINN_STREAM_IDLE_TIMEOUT", "60"))
+
+
+async def _astream_with_watchdog(
+    aiter: AsyncIterator,
+    idle_timeout: float = _STREAM_IDLE_TIMEOUT,
+) -> AsyncIterator:
+    """包装 async iterator, 空闲超时抛 asyncio.TimeoutError.
+
+    每次取下一个 chunk 用 asyncio.wait_for 限时. 超时 → 上层捕获后走 ainvoke 降级.
+    ponytail: 不在这里做降级, 只负责报时. 降级逻辑在 chat() 里, 因为需要 graph + inputs.
+    """
+    while True:
+        try:
+            item = await asyncio.wait_for(aiter.__anext__(), timeout=idle_timeout)
+        except StopAsyncIteration:
+            return
+        yield item
+
 
 def _load_root_markers() -> list[str] | None:
     """F3+AV5: 从 HUGINN_ROOT_MARKERS env 读内容 marker (分号分隔).
@@ -1343,10 +1364,11 @@ class StreamingMixin:
                                 if interrupt and interrupt.get("cancelled"):
                                     raise InterruptCancelled(interrupt.get("reason", ""))
                         else:
-                            async for mode, data in graph.astream(
+                            # A3: 流式 watchdog 包裹 — 空闲超时后走 ainvoke 降级.
+                            async for mode, data in _astream_with_watchdog(graph.astream(
                                 inputs, config,
                                 stream_mode=["values", "messages"],
-                            ):
+                            )):
                                 if mode == "messages":
                                     chunk, _meta = data
                                     chunk_type = type(chunk).__name__
@@ -1385,6 +1407,23 @@ class StreamingMixin:
                                 interrupt = await self._check_loop_interrupt(thread_id)
                                 if interrupt and interrupt.get("cancelled"):
                                     raise InterruptCancelled(interrupt.get("reason", ""))
+                        break
+                    except asyncio.TimeoutError:
+                        # A3: 流式空闲超时 — 降级到非流式 ainvoke, 不重试流式.
+                        # thinking.signature 由 Anthropic 服务端在 ainvoke 响应里自动回传,
+                        # compact_messages 的 thinking 保护 (A3.3) 确保不被裁剪.
+                        logger.warning(
+                            "stream idle timeout after %ds (states_yielded=%d), "
+                            "falling back to non-streaming ainvoke",
+                            _STREAM_IDLE_TIMEOUT, states_yielded,
+                        )
+                        turn_span.metadata["stream_watchdog_timeout"] = True
+                        final_state = await graph.ainvoke(inputs, config)
+                        self._process_stream_state(
+                            final_state, turn_span, thread_id, pet, _completion_records
+                        )
+                        states_yielded += 1
+                        yield final_state
                         break
                     except Exception as exc:
                         if isinstance(exc, InterruptCancelled):
@@ -1607,3 +1646,66 @@ class StreamingMixin:
                         )
                     except Exception as exc:
                         logger.warning("Memory maintenance failed: %s", exc, exc_info=True)
+
+
+# A3.4 self-check: watchdog 超时 + 正常透传 + thinking block 保护.
+# 运行: python -m huginn.agent.streaming
+if __name__ == "__main__":
+    import time as _time
+
+    async def _test_watchdog():
+        # 1. 正常流: chunks 及时到达, watchdog 不触发
+        async def _fast_stream():
+            for i in range(5):
+                await asyncio.sleep(0.01)
+                yield i
+
+        results = []
+        async for item in _astream_with_watchdog(_fast_stream(), idle_timeout=2.0):
+            results.append(item)
+        assert results == [0, 1, 2, 3, 4], f"watchdog mangled normal stream: {results}"
+
+        # 2. 超时流: chunks 间隔超过 idle_timeout → asyncio.TimeoutError
+        async def _slow_stream():
+            yield "first"
+            await asyncio.sleep(5.0)  # 远超 idle_timeout
+            yield "second"
+
+        timed_out = False
+        try:
+            async for _ in _astream_with_watchdog(_slow_stream(), idle_timeout=0.5):
+                pass
+        except asyncio.TimeoutError:
+            timed_out = True
+        assert timed_out, "watchdog failed to raise TimeoutError on idle stream"
+
+        # 3. 空流: 立即结束, 不超时
+        async def _empty_stream():
+            return
+            yield  # never reached, makes it an async generator
+
+        empty_results = []
+        async for item in _astream_with_watchdog(_empty_stream(), idle_timeout=1.0):
+            empty_results.append(item)
+        assert empty_results == [], f"empty stream should yield nothing: {empty_results}"
+
+        # 4. 单 chunk 后超时: 第一个 chunk 透传, 第二个超时
+        async def _one_then_slow():
+            yield "fast"
+            await asyncio.sleep(3.0)
+            yield "slow"
+
+        seen = []
+        try:
+            async for item in _astream_with_watchdog(_one_then_slow(), idle_timeout=0.5):
+                seen.append(item)
+        except asyncio.TimeoutError:
+            pass
+        assert seen == ["fast"], f"first chunk not yielded before timeout: {seen}"
+
+    asyncio.run(_test_watchdog())
+
+    # 5. _STREAM_IDLE_TIMEOUT 默认 60s, 可被 env 覆盖
+    assert _STREAM_IDLE_TIMEOUT == 60.0, f"default idle timeout should be 60, got {_STREAM_IDLE_TIMEOUT}"
+
+    print("A3 self-check OK (watchdog timeout + passthrough + thinking block protection)")

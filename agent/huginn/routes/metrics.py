@@ -333,17 +333,53 @@ BELIEF_UPDATE_TOTAL = Counter(
 # doesn't have explicit cost data. ponytail: coarse rates, good enough
 # for cost dashboards — exact billing comes from the provider invoice.
 _MODEL_COST_RATES: dict[str, tuple[float, float]] = {
-    # (input_per_1m, output_per_1m) in USD
+    # (input_per_1m, output_per_1m) in USD. 2026 公开定价, ponytail: 粗粒度够看板用,
+    # 精确账单以 provider invoice 为准. 升级路径: 接 provider /v1/pricing API.
+    # OpenAI
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4-turbo": (10.00, 30.00),
+    "gpt-5": (5.00, 15.00),
+    "gpt-5-mini": (0.25, 2.00),
+    "o1": (15.00, 60.00),
+    "o3": (10.00, 40.00),
+    "o3-mini": (1.10, 4.40),
+    "o4-mini": (1.10, 4.40),
+    # Anthropic
     "claude-3-5-sonnet": (3.00, 15.00),
     "claude-3-5-haiku": (0.80, 4.00),
     "claude-3-opus": (15.00, 75.00),
+    "claude-3-7-sonnet": (3.00, 15.00),
+    "claude-sonnet-4": (3.00, 15.00),
+    "claude-opus-4": (15.00, 75.00),
+    "claude-haiku-4": (1.00, 5.00),
+    # Google
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-2.5-flash": (0.15, 0.60),
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-1.5-pro": (1.25, 5.00),
+    "gemini-1.5-flash": (0.075, 0.30),
+    # DeepSeek
     "deepseek-chat": (0.14, 0.28),
     "deepseek-reasoner": (0.55, 2.19),
-    "gemini-2.0-flash": (0.10, 0.40),
-    "gemini-1.5-pro": (1.25, 5.00),
+    # xAI
+    "grok-3": (3.00, 15.00),
+    "grok-3-mini": (0.20, 0.50),
+    # 国内 provider (人民币换算 USD, 1 USD ≈ 7.2 CNY)
+    "qwen-max": (1.60, 6.40),
+    "qwen-plus": (0.40, 1.20),
+    "qwen-turbo": (0.05, 0.20),
+    "qwen2.5": (0.00, 0.00),  # 本地 ollama, 免费
+    "doubao-pro": (0.11, 0.28),
+    "doubao-lite": (0.03, 0.06),
+    "moonshot-v1": (1.40, 5.60),
+    "glm-4": (0.70, 0.70),
+    "glm-4-flash": (0.00, 0.00),
+    "baichuan": (1.40, 1.40),
+    "yi-large": (2.80, 2.80),
+    # 本地推理 (免费, 0 USD)
+    "local-model": (0.00, 0.00),
+    "default": (0.00, 0.00),
 }
 
 
@@ -396,6 +432,68 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
             PROMPT_CACHE_MISSES_TOTAL.inc()
     except Exception:
         pass  # metrics are best-effort, never break the agent
+
+
+# ── UsageCallback ─────────────────────────────────────────────────────
+# LangChain BaseCallbackHandler: 挂在 create_langchain_model 出来的每个 model 上,
+# on_llm_end 自动抽 response_metadata 里的 token usage, 一处覆盖所有 call site
+# (graph / CodeAct / reflection / future 新增路径). 比 streaming.py 手动调
+# track_llm_usage 更可靠 — 之前 CodeAct/reflection 漏报就是手动接入的代价.
+# ponytail: 只用 on_llm_end, 不用 on_llm_start (不需要 thread 关联, /metrics 看总量).
+# 升级路径: 加 on_llm_start 记 run_id, 在 on_llm_end 关联到 turn 做 per-session 查询.
+_USAGE_CALLBACK_SINGLETON: Any = None
+
+
+def get_usage_callback() -> Any:
+    """返回 UsageCallback 单例. 懒加载, 首次调用时创建."""
+    global _USAGE_CALLBACK_SINGLETON
+    if _USAGE_CALLBACK_SINGLETON is not None:
+        return _USAGE_CALLBACK_SINGLETON
+
+    try:
+        from langchain_core.callbacks import BaseCallbackHandler
+        from langchain_core.outputs import LLMResult
+    except ImportError:
+        return None  # langchain 没装, 跳过
+
+    class UsageCallback(BaseCallbackHandler):
+        """抽 LLM response 的 token usage, 转发到 track_llm_usage.
+
+        LangChain 所有 ChatModel 在 ainvoke/astream 后都会触发 on_llm_end,
+        response.generations[0][0].message.response_metadata 里含 input_tokens
+        / output_tokens / cache_read_input_tokens 等字段 (provider 各异但
+        langchain 统一映射过). 一个 callback 覆盖全部 provider.
+        """
+
+        def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+            try:
+                for gen_list in response.generations or []:
+                    for g in gen_list:
+                        msg = getattr(g, "message", None)
+                        if msg is None:
+                            continue
+                        meta = getattr(msg, "response_metadata", {}) or {}
+                        if not isinstance(meta, dict):
+                            continue
+                        model = (
+                            meta.get("model_name")
+                            or meta.get("model")
+                            or getattr(msg, "name", "")
+                            or "unknown"
+                        )
+                        # response_metadata 形状随 provider 变: OpenAI 塞 usage 嵌套,
+                        # Anthropic 平铺, 这里都展平给 track_llm_usage
+                        stats: dict[str, Any] = dict(meta)
+                        usage = meta.get("usage")
+                        if isinstance(usage, dict):
+                            for k, v in usage.items():
+                                stats[f"usage_{k}"] = v
+                        track_llm_usage(str(model), stats)
+            except Exception:
+                pass  # best-effort, 不阻塞 agent
+
+    _USAGE_CALLBACK_SINGLETON = UsageCallback()
+    return _USAGE_CALLBACK_SINGLETON
 
 
 def track_tool_call(tool_name: str) -> None:
