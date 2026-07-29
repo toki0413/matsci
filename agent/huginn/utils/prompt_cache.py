@@ -37,7 +37,7 @@ class PromptCacheBuilder:
     cache on the provider side even without explicit markers.
     """
 
-    _SUPPORTED_PROVIDERS = {"anthropic", "claude", "kimi", "moonshot"}
+    _SUPPORTED_PROVIDERS = {"anthropic", "claude"}
 
     def __init__(
         self,
@@ -109,10 +109,10 @@ class PromptCacheBuilder:
             pass
 
     def _cache_control_kwargs(self) -> dict[str, Any]:
+        # Kimi/Moonshot 走 OpenAI 协议, Anthropic-style cache_control 会被静默忽略.
+        # ponytail: 在 provider 层注入 OpenAI 协议的 prompt_cache_key, 不在这里打标记.
         if "kimi" in self.provider or "moonshot" in self.provider:
-            # Kimi-style context caching uses the same ephemeral marker as
-            # Anthropic in most integrations; override here if needed.
-            return {"cache_control": {"type": "ephemeral"}}
+            return {}
         return {"cache_control": {"type": "ephemeral"}}
 
     def _static_prefix(self) -> list[BaseMessage]:
@@ -201,3 +201,18 @@ class PromptCacheBuilder:
         return self.build_state_modifier() + self.build_input_messages(
             memory_text, user_message, kg_text=kg_text, kb_text=kb_text
         )
+
+
+if __name__ == "__main__":
+    # A1 self-check: Kimi/Moonshot 不打 cache_control, Anthropic 保留.
+    b = PromptCacheBuilder("sys", [], cache_control=True)
+    b.set_provider("kimi")
+    assert b._cache_control_kwargs() == {}, "kimi must not carry cache_control"
+    assert not b._provider_supports_cache_control(), "kimi must not support cache_control"
+    b.set_provider("moonshot")
+    assert b._cache_control_kwargs() == {}, "moonshot must not carry cache_control"
+    assert not b._provider_supports_cache_control(), "moonshot must not support cache_control"
+    b.set_provider("anthropic")
+    assert b._cache_control_kwargs() == {"cache_control": {"type": "ephemeral"}}, "anthropic keeps cache_control"
+    assert b._provider_supports_cache_control(), "anthropic must support cache_control"
+    print("A1 self-check OK")

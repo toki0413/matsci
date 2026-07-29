@@ -5507,11 +5507,10 @@ Please modify the code to address this task."""
                     logger.debug("pre_plan_grill import failed, GRILL prompt 跳过")
             if sys_prompt:
                 sys_msg = SystemMessage(content=sys_prompt)
-                # 静态 system prompt 跨调用不变, 给 Anthropic/Kimi 打 cache 标记
+                # 静态 system prompt 跨调用不变, 给 Anthropic 打 cache 标记.
+                # Kimi/Moonshot 走 OpenAI 协议, cache_control 无效, 不打标记.
                 _ident = f"{type(llm).__name__}{getattr(llm, 'model', '')}".lower()
-                if any(
-                    k in _ident for k in ("anthropic", "claude", "kimi", "moonshot")
-                ):
+                if any(k in _ident for k in ("anthropic", "claude")):
                     sys_msg.additional_kwargs["cache_control"] = {"type": "ephemeral"}
                 messages.append(sys_msg)
         # Controllable thinking effort: 按 current phase 注入思考深度指令.
