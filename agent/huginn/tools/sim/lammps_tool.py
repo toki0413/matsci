@@ -1265,19 +1265,61 @@ class LammpsTool(HuginnTool):
                     gk = self._green_kubo_diffusion(vacf)
                     if gk is not None:
                         result["diffusion_green_kubo"] = gk
-                    # P3: 把 VACF 注册为标准化物理时序, 让 engine 收集后注入 prompt.
-                    # data 格式: [(timestep, vacf_value), ...] — engine 算趋势判断
-                    # 系统动力学 (衰减=扩散型, 振荡=束缚态, 平=平衡).
-                    result["_physical_timeseries"] = [{
-                        "name": "VACF",
-                        "unit": "Å²/ps²",
-                        "data": [
-                            (d.get("timestep", i), d.get("vacf", 0.0))
-                            for i, d in enumerate(vacf)
-                        ],
-                        "meaning": "velocity autocorrelation <v(0)·v(t)>",
+
+            # P3: 把物理时序统一注册为标准化通道, 让 cognition loop 收集后注入 prompt.
+            # 每条时序: {name, unit, data: [(t, v), ...], meaning, source}.
+            # engine 算 trend (rising/decaying/flat) 判动力学 regime:
+            #   - VACF decaying + MSD rising → 扩散型 (同一物理两种表征, 可交叉验证)
+            #   - VACF 振荡 + MSD flat → 束缚态
+            #   - RDF 峰位漂移 → 结构弛豫/相变 (与 VACF 解耦的独立维度)
+            _ts: list[dict] = []
+            if result.get("msd"):
+                _ts.append({
+                    "name": "MSD",
+                    "unit": "Å²",
+                    "data": [
+                        (d.get("timestep", i), d.get("msd", 0.0))
+                        for i, d in enumerate(result["msd"])
+                    ],
+                    "meaning": "mean squared displacement <Δr²>",
+                    "source": "lammps",
+                })
+            if result.get("rdf_series"):
+                # RDF 是 g(r) 曲线每帧一条, 提取第一峰位置 (argmax g) 作为标量趋势 —
+                # 峰位漂移直接对应结构弛豫. ponytail: argmax 取最高峰, 对液体/固体
+                # 第一峰通常就是最高峰; 多峰体系升级路径是找第一个局部最大.
+                peak_data: list[tuple] = []
+                for fi, fr in enumerate(result["rdf_series"]):
+                    g = fr.get("g") or (fr.get("rdf") or {}).get("g")
+                    r = fr.get("r") or (fr.get("rdf") or {}).get("r")
+                    if not (g and r and len(g) == len(r) and len(g) > 0):
+                        continue
+                    try:
+                        peak_idx = max(range(len(g)), key=lambda k: g[k])
+                        peak_data.append((fr.get("timestep", fi), r[peak_idx]))
+                    except (ValueError, TypeError):
+                        continue
+                if peak_data:
+                    _ts.append({
+                        "name": "RDF_first_peak",
+                        "unit": "Å",
+                        "data": peak_data,
+                        "meaning": "RDF first peak position (structural relaxation)",
                         "source": "lammps",
-                    }]
+                    })
+            if result.get("vacf"):
+                _ts.append({
+                    "name": "VACF",
+                    "unit": "Å²/ps²",
+                    "data": [
+                        (d.get("timestep", i), d.get("vacf", 0.0))
+                        for i, d in enumerate(result["vacf"])
+                    ],
+                    "meaning": "velocity autocorrelation <v(0)·v(t)>",
+                    "source": "lammps",
+                })
+            if _ts:
+                result["_physical_timeseries"] = _ts
 
         except Exception as e:
             result["error"] = str(e)
