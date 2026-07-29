@@ -736,9 +736,20 @@ class VisionDescribeTool(HuginnTool):
     ) -> ToolResult:
         input_data = args if isinstance(args, VisionDescribeInput) else VisionDescribeInput(**args)
         try:
+            # P1-4: 量化类图像 (XRD/SEM/TEM/谱/峰/颗粒) 自动开启 A1 Hallu 检测.
+            # 之前 check_consistency 默认 False, 生产路径永不触发 — agent 瞎蒙无感知.
+            check_consistency = input_data.check_consistency
+            if not check_consistency:
+                q_lower = (input_data.question or "").lower()
+                if any(kw in q_lower for kw in (
+                    "xrd", "sem", "tem", "谱", "峰", "颗粒", "分布", "晶格", "d-spacing",
+                    "fft", "particle", "lattice", "diffraction",
+                )):
+                    check_consistency = True
+
             result = describe_image(
                 input_data.image_path, input_data.question,
-                check_consistency=input_data.check_consistency,
+                check_consistency=check_consistency,
             )
             if input_data.output_path and result.get("available"):
                 import json

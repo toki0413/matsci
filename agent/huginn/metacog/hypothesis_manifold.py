@@ -203,28 +203,31 @@ class HypothesisManifold:
         if h.h_id in self._hyp:
             raise ValueError(f"duplicate h_id: {h.h_id}")
         self._hyp[h.h_id] = h
-        # B1: 增量更新 R 矩阵 — 新 key 加入后重算 QR.
+        # B1: 新 key 加入后标记 R 矩阵需要重算 (lazy).
+        # ponytail: 之前每次 add 都全量 QR, O(m·n²) 无收益开销 —
+        # 实际 n=2~3 远低于 _SUBSPACE_K=200, 投影路径永不触发.
         new_keys = [k for k in h.predictions if k not in self._keys]
         if new_keys:
             self._keys.extend(new_keys)
-            self._rebuild_R()
+            self._R_dirty = True
 
     def _rebuild_R(self) -> None:
         """重算 QR 分解的 R 矩阵 (基于当前所有 hypothesis 的 predictions).
 
-        ponytail: 每次 add 都全量重算, O(m·n²) — n 是 key 数, m 是 hypothesis 数.
-        升级路径: n > 200 时用增量 QR 更新 (Givens rotation) 或换 numpy.
+        ponytail: lazy — 只在 fisher_distance 真正需要投影路径时才算.
+        n > _SUBSPACE_K 时走投影, 否则 _R 保持 None 走原 O(n) 遍历.
         """
         if not self._keys or not self._hyp:
             self._R = None
+            self._R_dirty = False
             return
         # 把每个 hypothesis 的 predictions 向量按 _keys 顺序排列成矩阵行.
-        # 用作 QR 分解的输入. R 矩阵保留所有 hypothesis 张成的子空间结构.
         rows: list[list[float]] = []
         for h in self._hyp.values():
             rows.append([h.predictions.get(k, 0.0) for k in self._keys])
         _, R = _gram_schmidt_qr(rows)
         self._R = R
+        self._R_dirty = False
 
     def log_posterior(self, obs: Iterable[Observation]) -> dict[str, float]:
         """返回每个 hypothesis 的 log posterior (未归一化)."""
@@ -288,11 +291,15 @@ class HypothesisManifold:
         # 数值保证: k >= n 时 ||R^T d|| == ||d|| (R 列正交), 投影路径与遍历路径等价.
         # ponytail: 当前 huginn 场景 n 通常 2-3, 不会触发降维. 留 R 矩阵作为
         # n 增大时的 future hook — 升级路径: n > 200 时启用投影 + 增量 QR.
-        if self._R is not None and self._keys and len(self._keys) > _SUBSPACE_K:
-            diff = [h_i.predictions.get(k, 0.0) - h_j.predictions.get(k, 0.0) for k in self._keys]
-            projected = _matvec(self._R, diff)
-            d2 = sum(p * p for p in projected)
-            return math.sqrt(d2)
+        # P1-3: _rebuild_R 改 lazy — 只在真正需要投影路径 (n > _SUBSPACE_K) 时才算.
+        if self._keys and len(self._keys) > _SUBSPACE_K:
+            if self._R_dirty or self._R is None:
+                self._rebuild_R()
+            if self._R is not None:
+                diff = [h_i.predictions.get(k, 0.0) - h_j.predictions.get(k, 0.0) for k in self._keys]
+                projected = _matvec(self._R, diff)
+                d2 = sum(p * p for p in projected)
+                return math.sqrt(d2)
 
         # 原 O(n) 遍历 — n <= k 时的等价路径, 也是当前 huginn 场景的主路径.
         d2 = 0.0
