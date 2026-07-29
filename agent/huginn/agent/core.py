@@ -496,6 +496,21 @@ class HuginnAgent(
             getattr(self._permission_config, "plan_mode", False)
         )
 
+    def _effective_recursion_limit(self) -> int:
+        """根据 mode 和 extreme dispatch 返回 recursion_limit.
+
+        - research mode → 500 (长程探索)
+        - extreme dispatch 开启但非 research → 400 (极限模式跑长程, 250 不够)
+        - 普通 chat/plan → 250 (短程, 省计算)
+        ponytail: 三档够用, 不上配置. 升级: 暴露到 config.py.
+        """
+        import os
+        if self.is_research_mode():
+            return 500
+        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true"):
+            return 400
+        return 250
+
     def enter_plan_execution(self) -> None:
         """执行阶段临时开启 plan_mode (写工具强制 ASK), 不改 _mode 字段.
 
@@ -817,7 +832,9 @@ class HuginnAgent(
                     RateLimitMiddleware(),
                 ],
             ).with_config({
-                "recursion_limit": 500 if self.is_research_mode() else 250,
+                # research mode → 500; extreme dispatch 开启但非 research → 400
+                # (极限模式跑长程, 250 不够用). 普通 chat/plan 保持 250.
+                "recursion_limit": self._effective_recursion_limit(),
             })
 
             return self._agent_graph
