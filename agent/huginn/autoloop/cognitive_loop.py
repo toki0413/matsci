@@ -3368,6 +3368,37 @@ def learn_from_rcb(
         f"persona={result['persona_written']} "
         f"cross_task={result['cross_task_written']}"
     )
+
+    # P2 下沉: run_context 持久化 — 跟 _persist_run_context 同 schema,
+    # 让 RCB runner 和 cognitive loop 两条路径都存探索摘要, 下 run 都能加载.
+    # ponytail: 复用已有 mem_mgr, 同 category="run_context". 参数从已有签名来.
+    if mem_mgr is not None:
+        try:
+            _rc_snapshot = {
+                "run_id": run_id or "unknown",
+                "objective": hypothesis[:200],
+                "hypothesis": hypothesis[:300],
+                "plan_mode": "rcb",
+                "outcome": "completed" if tests_passed else "inconclusive",
+                "iterations": 0,
+                "recent_steps": [],
+                "inconclusive": [] if tests_passed else [
+                    {"iter": 0, "action": "rcb_finalize",
+                     "advice": f"darwin={darwin:.2f}, status={status}"}
+                ],
+                "source": "learn_from_rcb",
+            }
+            _rc_content = json.dumps(_rc_snapshot, ensure_ascii=False)
+            mem_mgr.remember(
+                content=_rc_content,
+                category="run_context",
+                tags=["run_context", run_id or "unknown"],
+                importance=0.5,
+                tier="mid",
+            )
+        except Exception:
+            logger.debug("learn_from_rcb run_context store failed (non-fatal)", exc_info=True)
+
     return result
 
 
