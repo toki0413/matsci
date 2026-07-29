@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from huginn.knowledge.store import EMBED_MODEL
 from huginn.utils.cache import TimedLRUCache
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def _embedding_model_cached() -> bool:
     """Check if ChromaDB's default ONNX model is already downloaded."""
-    cache_path = Path.home() / ".cache" / "chroma" / "onnx_models" / "all-MiniLM-L6-v2"
+    cache_path = Path.home() / ".cache" / "chroma" / "onnx_models" / EMBED_MODEL
     return cache_path.exists() and any(cache_path.iterdir())
 
 
