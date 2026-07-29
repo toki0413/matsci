@@ -101,11 +101,39 @@ class MaterialsDatabaseOutput(BaseModel):
     records: list[dict[str, Any]]
     saved_file: str | None = None
     warnings: list[str] = []
+    retrieval_contract: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Provenance for reproducibility: action/query/fields/limit + "
+            "endpoint + timestamp. Another agent should be able to replay "
+            "the lookup from this dict alone."
+        ),
+    )
 
 
 # batch_query 内部并发查 MP API 的最大并发数, MP 公开 API 限流比较紧,
 # 给 5 比较稳妥. 超过这个数的查询自动排队, 不会一次性把 API 打爆.
 _BATCH_CONCURRENCY = 5
+
+
+def _retrieval_contract(args: MaterialsDatabaseInput, endpoint: str = "") -> dict[str, Any]:
+    """Build a provenance dict so another agent can replay this lookup.
+
+    K-Dense database-lookup skill 的 retrieval-contract 模式: 记录 entity /
+    identifiers / constraints / expected_fields / exhaustive_vs_targeted,
+    让查询结果离开工具后仍可复现.
+    """
+    from datetime import datetime, timezone
+    return {
+        "action": args.action,
+        "query": args.query,
+        "fields": args.fields,
+        "limit": args.limit,
+        "mp_ids": args.mp_ids,
+        "formulas": args.formulas,
+        "endpoint": endpoint,
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
 
 
 class MaterialsDatabaseTool(HuginnTool):
@@ -232,6 +260,7 @@ class MaterialsDatabaseTool(HuginnTool):
             count=1,
             records=[record],
             warnings=[f"from local structure db, not live API: {args.query}"],
+            retrieval_contract=_retrieval_contract(args, "local_db"),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -331,6 +360,7 @@ class MaterialsDatabaseTool(HuginnTool):
             count=len(all_records),
             records=all_records,
             warnings=all_warnings,
+            retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -383,6 +413,7 @@ class MaterialsDatabaseTool(HuginnTool):
                     records=records,
                     saved_file=saved,
                     warnings=warnings,
+                    retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
                 )
                 return ToolResult(data=output.model_dump(exclude_none=True))
             else:  # pragma: no cover
@@ -393,6 +424,7 @@ class MaterialsDatabaseTool(HuginnTool):
             count=len(records),
             records=records,
             warnings=warnings,
+            retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -489,13 +521,15 @@ class MaterialsDatabaseTool(HuginnTool):
                     records=records,
                     saved_file=saved,
                     warnings=warnings,
+                    retrieval_contract=_retrieval_contract(args, "http://oqmd.org/oqmdapi"),
                 )
                 return ToolResult(data=output.model_dump(exclude_none=True))
             else:  # pragma: no cover
                 raise ValueError(f"Unknown action: {args.action}")
 
         output = MaterialsDatabaseOutput(
-            source="oqmd", count=len(records), records=records, warnings=warnings
+            source="oqmd", count=len(records), records=records, warnings=warnings,
+            retrieval_contract=_retrieval_contract(args, "http://oqmd.org/oqmdapi"),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -622,6 +656,7 @@ class MaterialsDatabaseTool(HuginnTool):
         output = MaterialsDatabaseOutput(
             source="aflow", count=len(records), records=records,
             warnings=[] if records else [f"No AFLOW results for: {target}"],
+            retrieval_contract=_retrieval_contract(args, "http://aflowlib.org"),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 
@@ -731,6 +766,7 @@ class MaterialsDatabaseTool(HuginnTool):
         output = MaterialsDatabaseOutput(
             source="nomad", count=len(records), records=records,
             warnings=[] if records else [f"No NOMAD results for: {target}"],
+            retrieval_contract=_retrieval_contract(args, "https://nomad-lab.eu/prod/rae/api"),
         )
         return ToolResult(data=output.model_dump(exclude_none=True))
 

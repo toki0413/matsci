@@ -83,6 +83,8 @@ def _skill_summary(skill: SkillDefinition) -> dict:
             for p in skill.parameters
         ],
         "required_tools": list(skill.required_tools),
+        "required_env_vars": list(skill.required_env_vars),
+        "references": list(skill.references),
         "steps": [
             {
                 "name": s.name,
