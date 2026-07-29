@@ -1,9 +1,7 @@
-"""CodeAct 沙箱安全机制.
+"""CodeAct 沙箱安全机制 (权威定义).
 
-把 CodeAct 模式的工具过滤、安全 builtins、import 白名单、防失控阈值抽到
-独立模块, 作为可复用的权威定义. agent/huginn/agent/code_act_loop.py 里有
-同名内联实现, 保留不动以避免回归; 未来重构时让 code_act_loop.py 引用本
-模块即可 (升级路径, 不是本次 spec 范围).
+CodeAct 模式的工具过滤、安全 builtins、import 白名单、防失控阈值集中在这.
+agent/code_act_loop.py 引用本模块, 不再保留内联副本.
 
 天花板 (ponytail):
 - import 白名单是保守的, 升级路径是加白名单而非全禁. 每加一个模块都要
@@ -18,6 +16,7 @@
 from __future__ import annotations
 
 import builtins
+import os
 from typing import Any
 
 # 不注入 CodeAct 沙箱的工具集.
@@ -53,10 +52,10 @@ _MAX_TURNS = 15
 _DEGRADE_AFTER_ERRORS = 3
 
 # 危险内置函数, 从 safe builtins 里移除.
-# ponytail: 严格按 task 要求只去这 5 个; code_act_loop.py 的内联版本多去了
-# globals/locals, 那是它的局部加严, 本模块不强制同步.
+# code_act_loop.py 原内联版本多去了 globals/locals, 统一到这里 — 防止
+# exec'd 代码通过 globals()/locals() 拿到宿主 namespace 逃逸.
 _DANGEROUS_BUILTINS = frozenset(
-    {"__import__", "exec", "eval", "compile", "open"}
+    {"__import__", "exec", "eval", "compile", "open", "globals", "locals"}
 )
 
 
@@ -102,7 +101,20 @@ def safe_import(
 
     白名单外模块直接 raise ImportError, 让 exec'd 代码把 ImportError 当普通
     代码错误处理 (计入 degrade 阈值).
+
+    两个 opt-in 模块走 env var 放行 (从 code_act_loop.py 迁移):
+    - atomworld: 需 HUGINN_USE_ATOMWORLD=1
+    - cognitive_map / structure_cognitive_map: 需 HUGINN_USE_COGNITIVE_MAP=1
     """
+    # AtomWorld — flag-off 时即使装了也不让 import
+    if name == "atomworld":
+        if os.environ.get("HUGINN_USE_ATOMWORLD", "0") != "1":
+            raise ImportError("import of 'atomworld' requires HUGINN_USE_ATOMWORLD=1")
+        return builtins.__import__(name, globals, locals, fromlist, level)
+    # Structure Cognitive Map — 同理, agent 应走 namespace 函数而非直 import
+    if name in ("cognitive_map", "structure_cognitive_map"):
+        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
+            raise ImportError("import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1")
     root = name.split(".")[0]
     if root not in _ALLOWED_IMPORTS:
         raise ImportError(
@@ -142,10 +154,10 @@ if __name__ == "__main__":
     tuples_out = filter_tools_for_code_act(tuples_in)
     assert len(tuples_out) == 1 and tuples_out[0][0] == "math_tool"
 
-    # 2. 危险 builtins 被移除
+    # 2. 危险 builtins 被移除 (含 globals/locals, 防止 namespace 逃逸)
     sb = make_safe_builtins()
     assert sb["__import__"] is safe_import, "__import__ must be replaced by safe_import"
-    for danger in ("exec", "eval", "compile", "open"):
+    for danger in ("exec", "eval", "compile", "open", "globals", "locals"):
         assert danger not in sb, f"{danger} should be removed from safe builtins"
 
     # 3. safe_import 白名单外模块被拦截
@@ -163,6 +175,31 @@ if __name__ == "__main__":
     # 子模块按 root 判: numpy.fft 也走 numpy 白名单
     # (不实际 import, 只验证 root 判断逻辑不漏)
     assert "numpy".split(".")[0] in _ALLOWED_IMPORTS
+
+    # 3b. opt-in 模块: flag-off 时被拦截, flag-on 时放行
+    os.environ.pop("HUGINN_USE_ATOMWORLD", None)
+    try:
+        safe_import("atomworld")
+        raise AssertionError("atomworld should be blocked without HUGINN_USE_ATOMWORLD=1")
+    except ImportError:
+        pass
+    os.environ["HUGINN_USE_ATOMWORLD"] = "1"
+    # flag-on 时不抛 ImportError (模块可能没装, 那是 ImportError 不是白名单拦截)
+    try:
+        safe_import("atomworld")
+    except ImportError as e:
+        # 区分: 白名单拦截的 msg 含 "requires", 没装的 msg 不含
+        assert "requires" not in str(e), f"atomworld should pass whitelist with flag on: {e}"
+    finally:
+        os.environ.pop("HUGINN_USE_ATOMWORLD", None)
+
+    os.environ.pop("HUGINN_USE_COGNITIVE_MAP", None)
+    for cm_name in ("cognitive_map", "structure_cognitive_map"):
+        try:
+            safe_import(cm_name)
+            raise AssertionError(f"{cm_name} should be blocked without HUGINN_USE_COGNITIVE_MAP=1")
+        except ImportError:
+            pass
 
     # 4. check_degrade(3) 返回 True
     assert check_degrade(0) is False

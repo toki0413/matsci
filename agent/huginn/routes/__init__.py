@@ -34,6 +34,7 @@ from huginn.routes.hpc import router as hpc_router
 from huginn.routes.credentials import router as credentials_router
 from huginn.routes.interaction import router as interaction_router
 from huginn.routes.knowledge import router as knowledge_router
+from huginn.routes.kg import router as kg_router
 from huginn.routes.metrics import router as metrics_router
 from huginn.routes.provenance import router as provenance_router
 from huginn.routes.mcp import router as mcp_router
@@ -81,6 +82,8 @@ ALL_ROUTERS = [
     planner_router,
     codebase_router,
     knowledge_router,
+    # 知识图谱: stats / graph / query / search / mermaid (P0-2 修复: 之前整路由未注册)
+    kg_router,
     tools_router,
     search_router,
     events_router,

@@ -622,9 +622,14 @@ class StreamingMixin:
                 logger.debug("pipeline context block skipped", exc_info=True)
 
             prov_block = ""
+            dag_block = ""
             try:
                 from huginn.provenance.registry import ProvenanceRegistry
-                prov_block = ProvenanceRegistry.shared().to_context_block()
+                reg = ProvenanceRegistry.shared()
+                prov_block = reg.to_context_block()
+                # P1-1: 压缩后注入 DAG mermaid, 防止 agent 丢文件产出关系全局视图
+                from huginn.provenance import to_mermaid_for_context
+                dag_block = to_mermaid_for_context(reg)
             except Exception:
                 logger.debug("provenance context block skipped", exc_info=True)
 
@@ -640,7 +645,7 @@ class StreamingMixin:
             except Exception:
                 logger.debug("task state context block skipped", exc_info=True)
 
-            if not pipeline_block and not task_block and not ended_at_tool:
+            if not pipeline_block and not task_block and not ended_at_tool and not dag_block:
                 return
 
             parts = ["[System] Continue if you have next steps."]
@@ -648,6 +653,8 @@ class StreamingMixin:
                 parts.append(pipeline_block)
             if prov_block:
                 parts.append(prov_block)
+            if dag_block:
+                parts.append(f"### File DAG (recent):\n```mermaid\n{dag_block}\n```")
             if task_block:
                 parts.append(task_block)
             parts.append(

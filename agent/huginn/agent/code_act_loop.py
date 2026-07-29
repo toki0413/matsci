@@ -26,6 +26,10 @@ import time
 from datetime import datetime
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from huginn.security.code_act_sandbox import (
+    _BLOCKED_TOOLS,
+    make_safe_builtins,
+)
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext
@@ -33,16 +37,6 @@ from huginn.utils.async_bridge import run_async
 
 logger = logging.getLogger(__name__)
 
-
-# Tools we never inject into the CodeAct namespace.
-# - hpc_client / bash_tool / shell_tool / container_exec: external side effects
-#   that bypass the audit trail CodeAct sets up. Keep them on the tool_call
-#   track where langgraph + callbacks already trace them.
-# - code_tool: would let LLM spawn nested sandboxes from inside code_act,
-#   recursion footgun.
-_BLOCKED_TOOLS = frozenset(
-    {"hpc_client", "bash_tool", "shell_tool", "container_exec", "code_tool"}
-)
 
 # Hard ceiling on turns per CodeAct run. The paper shows median 6-8 steps on
 # M³ToolEval; 15 leaves headroom for exploration without runaway cost.
@@ -782,18 +776,12 @@ async def run_code_act_turn(
             try:
                 validate_code(code)
                 # ponytail: exec in restricted namespace. validate_code already
-                # rejected forbidden imports/builtins; we additionally strip
-                # __builtins__ to a safe subset. Ceiling: in-process exec shares
-                # the interpreter — a sufficiently clever payload could still
-                # escape via attribute traversal. Upgrade path: Docker sandbox
-                # with the same namespace, or E2B for hard isolation.
-                safe_builtins = {
-                    k: v
-                    for k, v in __builtins__.items()
-                    if k not in ("__import__", "exec", "eval", "compile", "open", "globals", "locals")
-                } if isinstance(__builtins__, dict) else dict(__builtins__)
-                safe_builtins["__import__"] = _safe_import
-                namespace["__builtins__"] = safe_builtins
+                # rejected forbidden imports/builtins; make_safe_builtins (from
+                # code_act_sandbox) strips dangerous builtins + swaps __import__.
+                # Ceiling: in-process exec shares the interpreter — a sufficiently
+                # clever payload could still escape via attribute traversal.
+                # Upgrade path: Docker sandbox with the same namespace, or E2B.
+                namespace["__builtins__"] = make_safe_builtins()
 
                 exec(compile(code, "<code_act>", "exec"), namespace)
             except RestrictedPythonError as exc:
@@ -846,48 +834,3 @@ async def run_code_act_turn(
         "type": "final",
         "content": f"[CodeAct] reached max turns ({_MAX_TURNS}). Last assistant message above.",
     }
-
-
-# A tiny import whitelist for the exec namespace. Anything not here raises
-# ImportError inside the exec'd code, which surfaces as a normal code error
-# (counted toward the degrade threshold).
-_ALLOWED_IMPORTS = frozenset(
-    {
-        "math",
-        "statistics",
-        "json",
-        "re",
-        "numpy",
-        "pandas",
-        "sympy",
-        "scipy",
-        "matplotlib",
-        "ase",
-        "pymatgen",
-    }
-)
-
-
-def _safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
-    """Replacement for __import__ inside the exec namespace."""
-    # AtomWorld is opt-in via HUGINN_USE_ATOMWORLD=1 — keeps flag-off behavior
-    # identical even if the package happens to be installed.
-    if name == "atomworld":
-        if os.environ.get("HUGINN_USE_ATOMWORLD", "0") != "1":
-            raise ImportError(
-                "import of 'atomworld' requires HUGINN_USE_ATOMWORLD=1"
-            )
-        return __import__(name, *args, **kwargs)
-    # Structure Cognitive Map is opt-in via HUGINN_USE_COGNITIVE_MAP=1.
-    # Agents should use the namespace functions, not import this name.
-    if name in ("cognitive_map", "structure_cognitive_map"):
-        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
-            raise ImportError(
-                "import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1"
-            )
-    if name not in _ALLOWED_IMPORTS:
-        raise ImportError(
-            f"import of {name!r} is not allowed in CodeAct mode; "
-            f"allowed: {sorted(_ALLOWED_IMPORTS)}"
-        )
-    return __import__(name, *args, **kwargs)
