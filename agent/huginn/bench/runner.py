@@ -363,6 +363,10 @@ class BenchmarkReport:
     results: list[TaskResult]
     metrics: dict[str, float] = field(default_factory=dict)
     evolution_report: dict[str, Any] | None = None
+    # B2: re-ask consistency 不一致计数
+    unreliable: int = 0
+    # B3: 视觉失败模式分组统计 {tag: {"passed": n, "failed": n, "unreliable": n}}
+    visual_failure_summary: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 class BenchmarkRunner:
@@ -385,14 +389,20 @@ class BenchmarkRunner:
         self,
         evolve: bool = False,
         categories: list[str] | None = None,
+        re_ask: bool = False,
     ) -> BenchmarkReport:
-        """Run all matching tasks and optionally trigger self-evolution."""
+        """Run all matching tasks and optionally trigger self-evolution.
+
+        B2: re_ask=True 时同一题跑 2 次 (第二次 prompt 加尾空格),
+        两次输出用 strict judge 比对, 不一致标 unreliable 不计入正确率分母.
+        PerceptionBench 启发: re-ask 暴露模型瞎蒙行为.
+        """
         run_id = uuid.uuid4().hex[:8]
         started = datetime.datetime.now().isoformat()
         register_all_tools()
 
         results: list[TaskResult] = []
-        passed = failed = skipped = 0
+        passed = failed = skipped = unreliable = 0
 
         for task in self.tasks:
             if categories and task.category not in categories:
@@ -406,11 +416,27 @@ class BenchmarkRunner:
                         passed=False,
                         reason="skipped: no API key configured",
                         output="",
+                        visual_capability_tag=task.visual_capability_tag,
                     )
                 )
                 continue
 
             result = self._run_task(task)
+            # B3: 传递 visual_capability_tag 到 result
+            result.visual_capability_tag = task.visual_capability_tag
+
+            # B2: re-ask consistency — 跑第二次, strict judge 比对
+            if re_ask and task.prompt and task.requires_api_key:
+                from dataclasses import replace
+                task2 = replace(task, prompt=task.prompt + " ")
+                result2 = self._run_task(task2)
+                if not self._check_re_ask_consistency(task.prompt, result.output, result2.output):
+                    result.unreliable = True
+                    unreliable += 1
+                    results.append(result)
+                    # unreliable 不计入 passed/failed 分母
+                    continue
+
             results.append(result)
             if result.passed:
                 passed += 1
@@ -418,11 +444,17 @@ class BenchmarkRunner:
                 failed += 1
 
         finished = datetime.datetime.now().isoformat()
+        # B2: pass_rate 分母排除 unreliable
+        reliable_count = len(results) - unreliable
         total_time = sum(r.exec_time_seconds + r.eval_time_seconds for r in results)
         metrics = {
-            "pass_rate": passed / len(results) if results else 0.0,
+            "pass_rate": passed / reliable_count if reliable_count > 0 else 0.0,
             "avg_task_time_seconds": total_time / len(results) if results else 0.0,
+            "unreliable_rate": unreliable / len(results) if results else 0.0,
         }
+
+        # B3: visual_capability_tag 分组统计
+        visual_failure_summary = self._summarize_by_visual_tag(results)
 
         evolution_report = None
         if evolve:
@@ -435,8 +467,9 @@ class BenchmarkRunner:
         if self.memory_manager is not None:
             try:
                 summary = (
-                    f"bench run_id={run_id} passed={passed}/{len(results)} "
-                    f"pass_rate={metrics['pass_rate']:.2%} evolve={evolve}"
+                    f"bench run_id={run_id} passed={passed}/{reliable_count} "
+                    f"pass_rate={metrics['pass_rate']:.2%} evolve={evolve} "
+                    f"unreliable={unreliable}"
                 )
                 if hasattr(self.memory_manager, "remember"):
                     self.memory_manager.remember(
@@ -464,7 +497,58 @@ class BenchmarkRunner:
             results=results,
             metrics=metrics,
             evolution_report=evolution_report,
+            unreliable=unreliable,
+            visual_failure_summary=visual_failure_summary,
         )
+
+    def _check_re_ask_consistency(
+        self, task_prompt: str, output1: str, output2: str
+    ) -> bool:
+        """B2: 用 strict judge 比对两次输出是否语义一致.
+
+        ponytail: 两次输出完全相同 → 直接 True, 不调 LLM.
+        不同 → 调 strict judge (以 output2 为 reference 判断 output1).
+        无 API key → fallback 到去除空格后字符串比较.
+        """
+        if output1.strip() == output2.strip():
+            return True
+        from .llm_judge import judge_task
+        rubric = judge_task(
+            task_prompt=task_prompt,
+            agent_output=output1,
+            reference=output2,
+            strict=True,
+        )
+        if rubric.reason.startswith(("无 API key", "judge 调用失败")):
+            # fallback: 去除首尾空格和标点后比较
+            import re as _re
+            norm1 = _re.sub(r"[\s,.]+", "", output1).lower()
+            norm2 = _re.sub(r"[\s,.]+", "", output2).lower()
+            return norm1 == norm2
+        return rubric.passed
+
+    def _summarize_by_visual_tag(
+        self, results: list[TaskResult]
+    ) -> dict[str, dict[str, int]]:
+        """B3: 按 visual_capability_tag 分组统计 passed/failed/unreliable.
+
+        PerceptionBench 分类法: count/attr/hallu/fgr/depth/none.
+        ponytail: 只统计非 none 的 tag, none 不进 summary.
+        """
+        summary: dict[str, dict[str, int]] = {}
+        for r in results:
+            tag = r.visual_capability_tag or "none"
+            if tag == "none":
+                continue
+            if tag not in summary:
+                summary[tag] = {"passed": 0, "failed": 0, "unreliable": 0}
+            if r.unreliable:
+                summary[tag]["unreliable"] += 1
+            elif r.passed:
+                summary[tag]["passed"] += 1
+            else:
+                summary[tag]["failed"] += 1
+        return summary
 
     def _has_api_key(self) -> bool:
         return bool(self.config.resolved_api_key)
@@ -601,6 +685,7 @@ class BenchmarkRunner:
             "passed": report.passed,
             "failed": report.failed,
             "skipped": report.skipped,
+            "unreliable": report.unreliable,
             "metrics": report.metrics,
             "results": [
                 {
@@ -610,11 +695,86 @@ class BenchmarkRunner:
                     "reason": r.reason,
                     "exec_time_seconds": r.exec_time_seconds,
                     "eval_time_seconds": r.eval_time_seconds,
+                    "unreliable": r.unreliable,
+                    "visual_capability_tag": r.visual_capability_tag,
                 }
                 for r in report.results
             ],
+            "visual_failure_summary": report.visual_failure_summary,
             "evolution_report": report.evolution_report,
         }
         target.write_text(
             json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+
+
+# ── self-check ─────────────────────────────────────────────────
+
+
+def _selfcheck() -> None:
+    """B2+B3 selfcheck: re-ask consistency + visual tag 分组统计.
+
+    ponytail: mock runner 验 _check_re_ask_consistency + _summarize_by_visual_tag.
+    不调真 LLM, 不跑真 agent.
+    ceiling: 没验 _run_task 真路径 (需真 agent + API key), 见 acceptance test.
+    """
+    import os
+
+    # 构造最小 runner (不调 __init__, 避免 HuginnConfig.from_env 副作用)
+    runner = BenchmarkRunner.__new__(BenchmarkRunner)
+
+    # B2.1: 两次输出完全相同 → consistent
+    assert runner._check_re_ask_consistency("test", "16", "16") is True, \
+        "相同输出应 consistent"
+    print("1. re-ask same output → consistent OK")
+
+    # B2.2: 两次输出不同 + 无 API key → fallback 字符串比较
+    orig_key = os.environ.pop("DEEPSEEK_API_KEY", None)
+    orig_key2 = os.environ.pop("HUGINN_API_KEY", None)
+    try:
+        # fallback: 去除空格标点后比较
+        consistent = runner._check_re_ask_consistency("test", "16.0", "16.0 ")
+        assert consistent is True, "空格差异 fallback 后应 consistent"
+        print("2a. re-ask whitespace diff + no key → consistent OK")
+
+        # 真不同 → fallback 后仍不同 → inconsistent
+        inconsistent = runner._check_re_ask_consistency("test", "16", "60")
+        assert inconsistent is False, "不同输出应 inconsistent"
+        print("2b. re-ask different output + no key → inconsistent OK")
+    finally:
+        if orig_key: os.environ["DEEPSEEK_API_KEY"] = orig_key
+        if orig_key2: os.environ["HUGINN_API_KEY"] = orig_key2
+
+    # B3.1: visual_capability_tag 分组统计
+    from .task import TaskResult as TR
+    mock_results = [
+        TR(task_id="t1", category="vis", passed=True, reason="", output="",
+           visual_capability_tag="count"),
+        TR(task_id="t2", category="vis", passed=False, reason="", output="",
+           visual_capability_tag="count"),
+        TR(task_id="t3", category="vis", passed=False, reason="", output="",
+           visual_capability_tag="hallu", unreliable=True),
+        TR(task_id="t4", category="vis", passed=True, reason="", output="",
+           visual_capability_tag="depth"),
+        TR(task_id="t5", category="math", passed=True, reason="", output="",
+           visual_capability_tag="none"),  # none 不进 summary
+    ]
+    summary = runner._summarize_by_visual_tag(mock_results)
+    assert "count" in summary, f"count tag 应在 summary: {summary}"
+    assert summary["count"] == {"passed": 1, "failed": 1, "unreliable": 0}, summary["count"]
+    assert summary["hallu"] == {"passed": 0, "failed": 0, "unreliable": 1}, summary["hallu"]
+    assert summary["depth"] == {"passed": 1, "failed": 0, "unreliable": 0}, summary["depth"]
+    assert "none" not in summary, "none tag 不应进 summary"
+    print(f"3. visual tag 分组统计: {summary} OK")
+
+    # B3.2: 全 none tag → 空 summary
+    all_none = [TR(task_id="t1", category="math", passed=True, reason="", output="")]
+    empty_summary = runner._summarize_by_visual_tag(all_none)
+    assert empty_summary == {}, f"全 none 应空 summary: {empty_summary}"
+    print("4. all none tag → empty summary OK")
+
+    print("runner B2+B3 selfcheck OK")
+
+
+if __name__ == "__main__":
+    _selfcheck()

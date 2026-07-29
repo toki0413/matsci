@@ -2266,7 +2266,15 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             result = await self._execute_skill(plan, context)
         elif mode == "visual_inspect":
             # Path C: interactive visual inspection using existing visual tools
-            result = await self._execute_visual_inspect(description, context)
+            # A3: plan/context 里带 consistency_check=True 时开启 re-ask 一致性检查
+            consistency = bool(
+                context.get("consistency_check")
+                or "consistency_check" in plan.lower()
+                or "re-ask" in plan.lower()
+            )
+            result = await self._execute_visual_inspect(
+                description, context, consistency_check=consistency
+            )
         else:
             raise ValueError(f"Unknown plan mode: {mode}")
 
