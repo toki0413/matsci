@@ -252,7 +252,68 @@ def main():
     _check_format_timeseries()
     _check_decider_prompt_timeseries()
     _check_lammps_vacf_registers_timeseries()
+    _check_learn_from_rcb_run_context()
     print("\nALL CHECKS PASSED")
+
+
+def _check_learn_from_rcb_run_context():
+    """P2 下沉: learn_from_rcb 存 run_context, RCB runner 路径也覆盖."""
+    from unittest.mock import MagicMock
+    from huginn.autoloop.cognitive_loop import learn_from_rcb
+
+    mem_mgr = MagicMock()
+    # validation: tests_passed=True (completed)
+    _val = {"tests_passed": True, "darwin_score": 0.7, "r_phys": 0.8}
+    result = learn_from_rcb(
+        mem_mgr=mem_mgr,
+        hypothesis="Fe diffuses at high T",
+        validation=_val,
+        persona_name="default",
+        run_id="rcb_test01",
+        domain="alloy",
+    )
+    assert result["memory_written"], "memory 应写入"
+    # 检查 run_context 被存 — remember 被调多次 (iteration_result + persona_history + run_context)
+    _calls = mem_mgr.remember.call_args_list + mem_mgr.remember_typed.call_args_list
+    _rc_calls = [c for c in _calls
+                 if c.kwargs.get("category") == "run_context"
+                 or c.kwargs.get("memory_type") == "run_context"]
+    # remember(category="run_context") 应至少 1 次
+    _found = False
+    for c in _calls:
+        if c.kwargs.get("category") == "run_context":
+            _found = True
+            _content = c.kwargs.get("content", "")
+            _snap = json.loads(_content)
+            assert _snap["run_id"] == "rcb_test01"
+            assert _snap["outcome"] == "completed"  # tests_passed=True
+            assert _snap["plan_mode"] == "rcb"
+            assert _snap["source"] == "learn_from_rcb"
+            assert "Fe diffuses" in _snap["hypothesis"]
+            break
+    assert _found, "learn_from_rcb 应存 run_context category"
+
+    # tests_passed=False → inconclusive
+    mem_mgr2 = MagicMock()
+    _val2 = {"tests_passed": False, "darwin_score": 0.3}
+    learn_from_rcb(
+        mem_mgr=mem_mgr2,
+        hypothesis="test inconclusive",
+        validation=_val2,
+        run_id="rcb_test02",
+    )
+    for c in mem_mgr2.remember.call_args_list:
+        if c.kwargs.get("category") == "run_context":
+            _snap2 = json.loads(c.kwargs.get("content", "{}"))
+            assert _snap2["outcome"] == "inconclusive"
+            assert len(_snap2["inconclusive"]) == 1
+            break
+
+    # mem_mgr=None → 不崩溃, run_context 跳过
+    _r = learn_from_rcb(mem_mgr=None, hypothesis="x", validation={})
+    assert _r["memory_written"] is False
+
+    print("[ok] P2 下沉 learn_from_rcb → run_context (RCB + cognitive loop 双覆盖)")
 
 
 if __name__ == "__main__":
