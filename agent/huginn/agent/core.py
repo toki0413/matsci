@@ -446,8 +446,24 @@ class HuginnAgent(
             self._agent_graph = None
             if mode == "research":
                 self._phase_manager.reset(ResearchPhase.LITERATURE)
+                # 极限模式联动: research 跑长程 (recursion_limit=500), 需要开
+                # trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
+                import os
+                if not hasattr(self, "_extreme_dispatch_saved"):
+                    self._extreme_dispatch_saved = os.environ.get(
+                        "HUGINN_EXTREME_DISPATCH"
+                    )
+                os.environ["HUGINN_EXTREME_DISPATCH"] = "1"
             elif old == "research":
                 self._phase_manager.reset(ResearchPhase.OPEN)
+                # 退出 research: 恢复 HUGINN_EXTREME_DISPATCH 原值
+                import os
+                saved = getattr(self, "_extreme_dispatch_saved", None)
+                if saved is None:
+                    os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
+                else:
+                    os.environ["HUGINN_EXTREME_DISPATCH"] = saved
+                self._extreme_dispatch_saved = None
             # plan mode 联动 permission_config: 写工具强制 ASK
             # 之前 /plan slash 只改 _mode 不改 permission_config, 导致 UI 提示与实际行为不一致.
             perm_cfg = getattr(self, "_permission_config", None)
