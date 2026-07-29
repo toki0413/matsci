@@ -83,6 +83,8 @@ class SkillDefinition:
     parameters: list[SkillParameter] = field(default_factory=list)
     steps: list[SkillStep] = field(default_factory=list)
     required_tools: list[str] = field(default_factory=list)
+    required_env_vars: list[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
     estimated_cost: dict[str, float] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     # 平台相关字段（when_to_use / paths / model / effort / 原始正文等）。
@@ -100,6 +102,12 @@ class SkillDefinition:
         for p in self.parameters:
             req = "(required)" if p.required else f"(default: {p.default})"
             lines.append(f"  - {p.name}: {p.type} — {p.description} {req}")
+        if self.required_tools:
+            lines.append(f"Required tools: {', '.join(self.required_tools)}")
+        if self.required_env_vars:
+            lines.append(f"Required env vars: {', '.join(self.required_env_vars)}")
+        if self.references:
+            lines.append(f"References: {', '.join(self.references)}")
         lines.append("Steps:")
         for i, s in enumerate(self.steps, 1):
             lines.append(f"  {i}. {s.name} ({s.tool})")
