@@ -26,10 +26,11 @@ SUITES = [
 @click.option("--evolve", is_flag=True, help="Run evolution cycle after benchmarking (general only)")
 @click.option("--categories", "-c", help="Comma-separated categories to run (general only)")
 @click.option("--max-tasks", "-n", type=int, default=None, help="Limit task count (for mmlu/sciq/arc)")
+@click.option("--re-ask", is_flag=True, help="B2: re-ask consistency")
 @click.option("--output", "-o", default="bench_report.json", help="Report output path")
 @click.pass_obj
 def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
-          max_tasks: int | None, output: str) -> None:
+          max_tasks: int | None, re_ask: bool, output: str) -> None:
     """Run benchmark suite against Huginn agent (DeepSeek v4-flash)."""
     ds = get_design_system()
     cfg = (
@@ -70,7 +71,11 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
 
     ds.dialog(title="Bench", content=f"[bold blue]Running suite: {suite} ({len(tasks)} tasks)[/bold blue]")
 
-    report = runner.run(evolve=evolve and suite == "general", categories=cats)
+    report = runner.run(
+        evolve=evolve and suite == "general",
+        categories=cats,
+        re_ask=re_ask,
+    )
     report_path = ctx.workspace / output
     runner.save_report(report, report_path)
 
