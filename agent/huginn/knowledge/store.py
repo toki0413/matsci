@@ -678,11 +678,20 @@ class KnowledgeBase:
         return result
 
 
-    def add_document(self, filename: str, content: bytes) -> dict[str, Any]:
+    def add_document(
+        self,
+        filename: str,
+        content: bytes,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Ingest a document, chunk it, and store embeddings.
 
         Markdown / PDF 文档按章节结构分块, 每块带 section 元数据.
         纯文本退回固定长度分块. 同时自动打领域标签写入 metadata.
+
+        ``extra_metadata`` 透传到每个 chunk 的 metadata, 用于上层 (如
+        StructureChunker) 已经抽出的结构化信息 — 否则会被这里的二次
+        分块默默丢弃. dict/list 会被 json 序列化, 跟 add_text 一致.
         """
         doc_id = uuid.uuid4().hex[:12]
         text = _extract_text(filename, content)
@@ -714,6 +723,13 @@ class KnowledgeBase:
                 meta["domain_tags"] = domain_str
             if sub_domain_str:
                 meta["sub_domain_tags"] = sub_domain_str
+            # 上层传入的结构化元数据 (如 structure_info), 覆盖到每个 chunk
+            if extra_metadata:
+                for k, v in extra_metadata.items():
+                    if isinstance(v, (list, dict)):
+                        meta[k] = json.dumps(v, ensure_ascii=False)
+                    else:
+                        meta[k] = str(v) if v is not None else ""
             metadatas.append(meta)
 
         self.collection.add(
@@ -821,6 +837,9 @@ class KnowledgeBase:
             docs[doc_id] = {
                 "doc_id": doc_id,
                 "filename": meta.get("filename", "unknown"),
+                # _score_document_value 的 recency 维度需要 created_at
+                # 之前 list 路径不带此字段, 导致三维评分退化成两维
+                "created_at": meta.get("created_at", ""),
             }
         return sorted(docs.values(), key=lambda d: d["filename"])
 
@@ -938,13 +957,13 @@ class KnowledgeBase:
 
     def query_with_dedup(
         self, text: str, top_k: int = 5, domain: str | None = None,
-        similarity_threshold: float = 0.85
+        similarity_threshold: float = 0.85, since: str | None = None,
     ) -> list[dict[str, Any]]:
         """带去重的检索: 相似度 > threshold 的 chunk 只保留第一个.
         解决分块重叠导致的近似重复段落问题.
         """
         # 多捞 2x 候选, 去重后截断到 top_k
-        raw = self.query(text, top_k=top_k * 2, domain=domain)
+        raw = self.query(text, top_k=top_k * 2, domain=domain, since=since)
         if not raw or len(raw) <= 1:
             return raw
 
@@ -974,17 +993,20 @@ class KnowledgeBase:
         return kept
 
     def query(
-        self, text: str, top_k: int = 5, domain: str | None = None
+        self, text: str, top_k: int = 5, domain: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve top-k relevant chunks for a query.
 
         domain 不为 None 时只返回该领域的文档块 (按 metadata.domain 过滤).
+        since 不为 None 时 (ISO 8601) 只返回 created_at >= since 的块,
+            用于 autoresearch 场景限定到本轮/本会话写入的知识窗口.
         """
         if not text.strip():
             return []
 
-        # 语义缓存优先: 相近的 query 直接复用历史结果 (不过滤 domain 的时候才走)
-        if domain is None and self._semantic_cache is not None:
+        # 语义缓存优先: 相近的 query 直接复用历史结果 (不过滤 domain/since 的时候才走)
+        if domain is None and since is None and self._semantic_cache is not None:
             try:
                 hit = self._semantic_cache.get(prompt=text.strip())
                 if hit is not None:
@@ -992,13 +1014,20 @@ class KnowledgeBase:
             except Exception:
                 logger.debug("get failed", exc_info=True)  # 缓存查询出错不影响正常流程
 
-        cache_key = (text.strip(), top_k, domain)
+        cache_key = (text.strip(), top_k, domain, since)
         cached = self._query_cache.get(cache_key)
         if cached is not None:
             return cached
 
         embedding = self.model.encode([text]).tolist()
-        where_filter = {"domain": domain} if domain else None
+        # P1: since 过滤走 ChromaDB $and where_filter, 跟 domain 同路径.
+        # ponytail: 不在 Python 层 post-filter — 会破坏 n_results 候选池大小.
+        _conds: list[dict[str, Any]] = []
+        if domain:
+            _conds.append({"domain": domain})
+        if since:
+            _conds.append({"created_at": {"$gte": since}})
+        where_filter = {"$and": _conds} if len(_conds) > 1 else (_conds[0] if _conds else None)
         # 向量候选扩到 2x top_k, 给 RRF 融合留重叠空间; 最终在下面截断回 top_k
         results = self.collection.query(
             query_embeddings=embedding,

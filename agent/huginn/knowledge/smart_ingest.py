@@ -194,13 +194,36 @@ class SmartIngester:
                 return await self.ingest_text(filename, content)
 
             # 把结构化摘要 + 原始文本都入库
-            all_texts = []
+            # 聚合 StructureChunker 抽出的 structure_info (空间群/晶格/原子数),
+            # 之前直接 add_document 会被内部二次分块默默丢掉 — 现在走 extra_metadata 透传
+            all_texts: list[str] = []
+            structure_info: dict[str, Any] = {}
+            fmt = ""
             for chunk in chunks:
                 all_texts.append(chunk.text if hasattr(chunk, "text") else str(chunk))
+                cmeta = getattr(chunk, "metadata", {}) or {}
+                si = cmeta.get("structure_info")
+                if isinstance(si, dict):
+                    structure_info.update(si)
+                if not fmt:
+                    fmt = cmeta.get("format", "")
 
             combined = f"# Structure: {filename}\n\n"
             combined += "\n\n---\n\n".join(all_texts)
-            result = self.kb.add_document(filename, combined.encode("utf-8"))
+
+            ingest_meta: dict[str, Any] = {
+                "source": "smart_ingest",
+                "file_type": "structure",
+                "element_type": "structure",
+            }
+            if fmt:
+                ingest_meta["format"] = fmt
+            if structure_info:
+                ingest_meta["structure_info"] = structure_info
+
+            result = self.kb.add_document(
+                filename, combined.encode("utf-8"), extra_metadata=ingest_meta
+            )
             result["smart_ingest"] = True
             result["structure_aware"] = True
             result["n_chunks"] = len(all_texts)

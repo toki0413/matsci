@@ -470,6 +470,8 @@ class HuginnConfig:
     # Pet customization
     pet_name: str = "渡鸦"
     pet_personality: Literal["cheerful", "nerdy", "calm", "sassy"] = "cheerful"
+    # 前端 SettingsPanel 会读写这个数组, 之前白名单放行但无字段 → 静默丢失
+    pet_accessories: list[str] = field(default_factory=list)
 
     # 统一 opt-out 开关层, 见 huginn/feature_flags.py
     # 这里只存配置文件里的覆盖值, 运行时 toggle 不写回这里
@@ -997,6 +999,7 @@ class HuginnConfig:
             "max_tokens": self.max_tokens,
             "pet_name": self.pet_name,
             "pet_personality": self.pet_personality,
+            "pet_accessories": list(self.pet_accessories),
             "feature_flags": dict(self.feature_flags),
             "config_version": self.config_version,
             "extreme_dispatch": self.extreme_dispatch,

@@ -238,9 +238,7 @@ class StructureChunker(BaseChunker):
     Extracts structural metadata (space group, lattice parameters, atom count)
     and chunks by logical sections (header, symmetry, positions, etc.).
     """
-    
-    CIF_BLOCK_RE = re.compile(r'(data_\w+|loop_|_cell_[a-z_]+|_symmetry_[a-z_]+|_atom_[a-z_]+)', re.IGNORECASE)
-    
+
     async def chunk(self, text: str, **kwargs) -> list[Chunk]:
         # Detect format
         if text.strip().startswith("data_"):
