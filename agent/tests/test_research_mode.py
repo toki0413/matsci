@@ -82,6 +82,47 @@ class TestModeSwitching:
         assert HuginnAgent.is_research_mode(agent) is False
 
 
+class TestExtremeDispatchLinkage:
+    """research mode ↔ HUGINN_EXTREME_DISPATCH 联动 (断层修复)."""
+
+    def test_enter_research_enables_extreme_dispatch(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "research")
+        import os
+        assert os.environ.get("HUGINN_EXTREME_DISPATCH") == "1", \
+            "research mode 应自动开启 HUGINN_EXTREME_DISPATCH"
+
+    def test_exit_research_restores_extreme_dispatch(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "research")
+        HuginnAgent.set_mode(agent, "chat")
+        import os
+        assert "HUGINN_EXTREME_DISPATCH" not in os.environ, \
+            "退出 research 后应恢复 (原值未设 → 删除)"
+
+    def test_exit_research_restores_preexisting_value(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "0")
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "research")
+        import os
+        assert os.environ["HUGINN_EXTREME_DISPATCH"] == "1"
+        HuginnAgent.set_mode(agent, "chat")
+        assert os.environ["HUGINN_EXTREME_DISPATCH"] == "0", \
+            "退出 research 后应恢复原值 '0'"
+
+    def test_research_to_research_no_double_save(self, monkeypatch):
+        # chat → research → research (no-op, 第二次不重写 saved)
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "research")
+        saved1 = agent._extreme_dispatch_saved
+        # 第二次 set_mode("research") 因 mode == _mode 不进入分支, 无影响
+        HuginnAgent.set_mode(agent, "research")
+        assert agent._extreme_dispatch_saved is saved1
+
+
 # ── System prompt enhancement ────────────────────────────────────
 
 
