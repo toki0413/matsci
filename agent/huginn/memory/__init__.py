@@ -1,5 +1,6 @@
 """Memory and knowledge management package."""
 
+from huginn.memory.episodic_shard import EpisodicShardReader, EpisodicShardWriter
 from huginn.memory.index import build_memory_index, get_topic_file_path
 from huginn.memory.longterm import (
     LongTermMemory,
@@ -32,4 +33,6 @@ __all__ = [
     "get_topic_file_path",
     "store_stable_principle",
     "load_stable_principles",
+    "EpisodicShardWriter",
+    "EpisodicShardReader",
 ]
