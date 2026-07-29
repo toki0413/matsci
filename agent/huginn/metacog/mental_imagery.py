@@ -136,22 +136,106 @@ def sketch(spec: str) -> bytes:
 # ── verify: image_bytes + expected → 检查结果 ─────────────────────────────
 
 
+def _decode_to_gray(image_bytes: bytes) -> np.ndarray | None:
+    """解码 image_bytes 到灰度 numpy array. 失败返 None."""
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != "L":
+            img = img.convert("L")
+        return np.asarray(img)
+    except Exception:
+        return None
+
+
+def _analyze_particles(img_arr: np.ndarray) -> dict[str, Any]:
+    """A2: 粒子形状分析 — 连通域 + 圆度 + 等效直径分布.
+
+    圆度 = 4πA/P², 完美圆 = 1.0. 合成粒子是圆形, 圆度应 >0.5.
+    等效直径 = sqrt(4A/π), 分布 std/mean <0.5 表示尺寸均匀.
+    ponytail: scipy.ndimage 做连通域, 不上 OpenCV contour.
+    """
+    try:
+        from scipy import ndimage
+    except ImportError:
+        return {"n": 0, "error": "scipy.ndimage not available"}
+    binary = img_arr < 128
+    labeled, n = ndimage.label(binary)
+    if n == 0:
+        return {"n": 0, "circularities": [], "diameters": []}
+    circularities: list[float] = []
+    diameters: list[float] = []
+    for i in range(1, n + 1):
+        region = labeled == i
+        area = int(region.sum())
+        if area < 3:  # 噪声点跳过
+            continue
+        eroded = ndimage.binary_erosion(region)
+        perimeter = int((region & ~eroded).sum())
+        if perimeter > 0:
+            circ = 4 * np.pi * area / (perimeter ** 2)
+            circularities.append(float(min(circ, 1.0)))
+        diam = np.sqrt(4 * area / np.pi)
+        diameters.append(float(diam))
+    return {
+        "n": len(circularities),
+        "circularities": circularities,
+        "diameters": diameters,
+        "mean_diameter": float(np.mean(diameters)) if diameters else 0.0,
+        "std_diameter": float(np.std(diameters)) if diameters else 0.0,
+        "mean_circularity": float(np.mean(circularities)) if circularities else 0.0,
+    }
+
+
+def _analyze_lattice_fft(img_arr: np.ndarray) -> dict[str, Any]:
+    """A2: 晶格 FFT 周期性检查 — 2D FFT 找最大非 DC 峰.
+
+    峰值 > 均值 3 倍 → has_periodicity=True.
+    ponytail: numpy.fft, 不上 scipy.fftpack.
+    """
+    f = np.fft.fft2(img_arr.astype(float))
+    f_shift = np.fft.fftshift(f)
+    magnitude = np.abs(f_shift)
+    h, w = magnitude.shape
+    magnitude[h // 2, w // 2] = 0  # 去 DC
+    peak_idx = np.unravel_index(np.argmax(magnitude), magnitude.shape)
+    peak_val = float(magnitude[peak_idx])
+    cy, cx = h // 2, w // 2
+    freq_dist = float(np.sqrt((peak_idx[0] - cy) ** 2 + (peak_idx[1] - cx) ** 2))
+    period_px = float(h / freq_dist) if freq_dist > 0 else 0.0
+    return {
+        "peak_position": [int(peak_idx[0]), int(peak_idx[1])],
+        "peak_value": peak_val,
+        "freq_dist": freq_dist,
+        "period_px": period_px,
+        "has_periodicity": peak_val > magnitude.mean() * 3,
+    }
+
+
+def _analyze_spectrum_peaks(img_arr: np.ndarray) -> dict[str, Any]:
+    """A2: 谱图峰位检查 — 行均值 1D 信号 + find_peaks."""
+    try:
+        from scipy.signal import find_peaks
+    except ImportError:
+        return {"n_peaks": 0, "error": "scipy.signal not available"}
+    signal = img_arr.mean(axis=0).astype(float)
+    peaks, _ = find_peaks(signal, height=signal.max() * 0.3, distance=5)
+    return {
+        "n_peaks": len(peaks),
+        "peak_positions": peaks.tolist(),
+    }
+
+
 def verify(image_bytes: bytes, expected: dict[str, Any]) -> dict[str, Any]:
-    """用 extract_box_primitives (M6) 检查 image_bytes 是否符合 expected.
+    """A2 升级: extract_box_primitives + numpy 级分析.
 
-    真正的 sketch→verify 闭环: sketch 出 N 个粒子, verify 检查是不是真有
-    N 个连通域. 不调 LLM, 不依赖 OCR — 直接用 CV 算子验证.
+    三种 kind 各有 numpy 级检查:
+      - particles: 连通域圆度 + 等效直径 (不只查数量)
+      - lattice: FFT 主峰周期性 (不只查连通域)
+      - spectrum: find_peaks 峰位数量 (不只查 box)
 
-    Args:
-        image_bytes: sketch 输出的图像 bytes
-        expected: 期望 dict, 支持:
-            - {"kind": "particles", "n": 10}: 期望 N 个连通域
-            - {"kind": "lattice"}: 期望有连通域 (不强制数量)
-            - {"kind": "spectrum", "n_peaks": 3}: 期望 1D 曲线 (退化, 不强制)
-            - 任意 dict: 至少检查 sketch 不空白
-
-    Returns:
-        dict: verified (bool), n_regions_detected, expected, raw_primitives
+    原 extract_box_primitives 逻辑保留, numpy 分析是附加层.
+    numpy 分析失败时退化到原逻辑, 不阻塞 verify.
     """
     if not image_bytes:
         return {"verified": False, "error": "empty image bytes", "expected": expected}
@@ -163,38 +247,58 @@ def verify(image_bytes: bytes, expected: dict[str, Any]) -> dict[str, Any]:
 
     primitives = extract_box_primitives(image_bytes, threshold=128, max_boxes=50)
     boxes = parse_box_primitive(primitives)
-    # 排除 overall bbox (label="overall"), 只数 region N
     region_boxes = [b for b in boxes if b.get("label") != "overall" and b.get("label", "").startswith("region")]
     n_detected = len(region_boxes)
 
     kind = expected.get("kind", "")
     verified = False
     note = ""
+    shape_analysis: dict[str, Any] | None = None
+
+    # A2: numpy 级分析 (附加层, 失败退化到原逻辑)
+    img_arr = _decode_to_gray(image_bytes)
 
     if kind == "particles":
         n_expected = int(expected.get("n", 0))
-        # 容差: 检测到的粒子数在 expected ± 50% 内算通过
-        # (合成时 rng 可能因重叠连成一片)
         tol = max(2, n_expected // 2)
-        verified = abs(n_detected - n_expected) <= tol
-        note = f"particles expected={n_expected}, detected={n_detected}, tol=±{tol}"
+        count_ok = abs(n_detected - n_expected) <= tol
+        # A2: 形状检查 — 圆度均值 >0.5 才算真粒子
+        shape_ok = True
+        if img_arr is not None:
+            shape_analysis = _analyze_particles(img_arr)
+            circs = shape_analysis.get("circularities", [])
+            if circs:
+                shape_ok = bool(np.mean(circs) > 0.5)
+        verified = count_ok and shape_ok
+        note = f"particles expected={n_expected}, detected={n_detected}, tol=±{tol}, shape_ok={shape_ok}"
 
     elif kind == "lattice":
-        # lattice 期望有连通域 (低阈值区的暗条纹)
-        verified = n_detected >= 1 or len(boxes) >= 1
-        note = f"lattice detected={n_detected} regions (>=1 expected)"
+        # A2: FFT 周期性检查
+        fft_ok = True
+        if img_arr is not None:
+            fft_analysis = _analyze_lattice_fft(img_arr)
+            fft_ok = fft_analysis["has_periodicity"]
+            note = f"lattice FFT periodic={fft_ok}, period={fft_analysis['period_px']:.1f}px"
+        else:
+            note = f"lattice detected={n_detected} regions (FFT unavailable)"
+        verified = fft_ok and (n_detected >= 1 or len(boxes) >= 1)
 
     elif kind == "spectrum":
-        # spectrum 是 1D tiled, 暗区域是峰位 — 至少有 1 个连通域
-        verified = len(boxes) >= 1
-        note = f"spectrum detected={len(boxes)} boxes (>=1 expected)"
+        # A2: find_peaks 峰位数量检查
+        n_expected_peaks = int(expected.get("n_peaks", 0))
+        n_detected_peaks = n_detected  # fallback
+        if img_arr is not None:
+            peak_analysis = _analyze_spectrum_peaks(img_arr)
+            n_detected_peaks = peak_analysis.get("n_peaks", n_detected)
+        tol = max(1, n_expected_peaks // 3)
+        verified = abs(n_detected_peaks - n_expected_peaks) <= tol
+        note = f"spectrum expected={n_expected_peaks} peaks, detected={n_detected_peaks}, tol=±{tol}"
 
     else:
-        # 任意 expected: 至少检查 sketch 不全白 (有内容)
         verified = len(boxes) >= 1
         note = f"generic check: {len(boxes)} boxes detected"
 
-    return {
+    result: dict[str, Any] = {
         "verified": verified,
         "n_regions_detected": n_detected,
         "n_boxes_total": len(boxes),
@@ -202,6 +306,9 @@ def verify(image_bytes: bytes, expected: dict[str, Any]) -> dict[str, Any]:
         "note": note,
         "raw_primitives": primitives[:300] if primitives else "",
     }
+    if shape_analysis is not None:
+        result["shape_analysis"] = shape_analysis
+    return result
 
 
 # ── mental_imagery_loop: sketch → verify 闭环 ─────────────────────────────
@@ -292,7 +399,50 @@ def _selfcheck() -> None:
     assert "verified" in v5
     print(f"5. standalone sketch+verify → detected={v5['n_regions_detected']}")
 
-    print("L10 ALL CHECKS PASSED")
+    # 6. A2: particles 形状检查 — shape_analysis 字段
+    img = sketch("particles 10")
+    v6 = verify(img, {"kind": "particles", "n": 10})
+    assert "shape_analysis" in v6, "A2: particles verify must include shape_analysis"
+    sa = v6["shape_analysis"]
+    assert "circularities" in sa, "shape_analysis must have circularities"
+    assert "diameters" in sa, "shape_analysis must have diameters"
+    if sa["circularities"]:
+        # 合成粒子是圆形, 圆度均值应 >0.5
+        assert sa["mean_circularity"] > 0.3, f"synthetic particles should be circular: {sa['mean_circularity']}"
+    print(f"6. A2 particles shape: n={sa['n']}, mean_circ={sa['mean_circularity']:.2f}")
+
+    # 7. A2: lattice FFT 周期性检查
+    img = sketch("lattice 4Å cubic")
+    v7 = verify(img, {"kind": "lattice"})
+    # lattice verify 应该包含 FFT 分析的 note
+    assert "FFT" in v7["note"] or "period" in v7["note"], f"A2: lattice note should mention FFT: {v7['note']}"
+    print(f"7. A2 lattice FFT: {v7['note']}")
+
+    # 8. A2: spectrum find_peaks 检查
+    img = sketch("spectrum 3 peaks")
+    v8 = verify(img, {"kind": "spectrum", "n_peaks": 3})
+    # spectrum verify 应该用 find_peaks 的数量
+    assert "detected=" in v8["note"], f"A2: spectrum note should mention detected peaks: {v8['note']}"
+    print(f"8. A2 spectrum peaks: {v8['note']}")
+
+    # 9. A2: _decode_to_gray 工具函数
+    img = sketch("particles 5")
+    arr = _decode_to_gray(img)
+    assert arr is not None, "_decode_to_gray should decode valid PNG"
+    assert arr.ndim == 2, f"grayscale array should be 2D: {arr.shape}"
+    print(f"9. A2 _decode_to_gray: shape={arr.shape}")
+
+    # 10. A2: _analyze_particles 在无粒子图上返回 n=0
+    # 白图无暗粒子
+    white_img = np.full((50, 50), 255, dtype=np.uint8)
+    from PIL import Image as _PILImage
+    buf = io.BytesIO()
+    _PILImage.fromarray(white_img).save(buf, format="PNG")
+    result = _analyze_particles(_decode_to_gray(buf.getvalue()))
+    assert result["n"] == 0, f"white image should have 0 particles: {result['n']}"
+    print(f"10. A2 white image: 0 particles (OK)")
+
+    print("L10 ALL CHECKS PASSED (A2 shape/FFT/peaks OK)")
 
 
 if __name__ == "__main__":

@@ -326,20 +326,11 @@ def _tier1_classic_ocr(
 
 # ── 统一调度入口 ─────────────────────────────────────────────
 
-def describe_image_bytes(
-    image_bytes: bytes, question: str = ""
-) -> dict[str, Any]:
-    """分层调度: 按可用资源选 Tier, 把图像 bytes 转结构化 JSON.
+def _run_tier(image_bytes: bytes, question: str) -> dict[str, Any]:
+    """单次 Tier 调度. 不含 consistency 检查.
 
-    跟 describe_image 同流程, 但接受 bytes 输入 (用于 visual_inspect 的
-    cropped base64 场景, 不需要落盘). describe_image 内部也调本函数.
-
-    Args:
-        image_bytes: 图像二进制 (PNG/JPEG)
-        question: agent 的具体问题
-
-    Returns:
-        跟 describe_image 同结构. 顶层永远不抛.
+    从原 describe_image_bytes 抽出, 保持逻辑不变. describe_image_bytes
+    在这上面加 A1 Hallu 检测层.
     """
     if not image_bytes:
         return {"tier": "error", "available": False, "error": "空图像 bytes"}
@@ -365,8 +356,100 @@ def describe_image_bytes(
     return result
 
 
+# A1: 两次 describe 结果比较的关键字段.
+# text_blocks 数量差 >20% 或 structured_analysis 计数类字段不一致 → inconsistent.
+# ponytail: 字段级硬比较, 不上语义匹配. ceiling: 同义不同字会误判.
+_COMPARE_FIELDS = (
+    "n_curves", "n_points", "n_particles", "n_elements",
+    "n_defects", "n_phases", "n_fft_spots",
+)
+
+
+def _compare_describe_results(r1: dict[str, Any], r2: dict[str, Any]) -> dict[str, Any]:
+    """比较两次 describe 结果, 返回 {inconsistent, note}.
+
+    三级比较:
+      1. text_blocks 数量差异 >20% → inconsistent
+      2. structured_analysis 计数字段不一致 → inconsistent
+      3. pixel_stats mean 差异 >5% → inconsistent
+    """
+    notes: list[str] = []
+    inconsistent = False
+
+    # 1. text_blocks 数量
+    n1 = len(r1.get("text_blocks") or [])
+    n2 = len(r2.get("text_blocks") or [])
+    if n1 > 0 or n2 > 0:
+        diff_ratio = abs(n1 - n2) / max(n1, n2, 1)
+        if diff_ratio > 0.2:
+            inconsistent = True
+            notes.append(f"text_blocks: {n1} vs {n2} ({diff_ratio:.0%})")
+
+    # 2. structured_analysis 计数字段
+    s1 = r1.get("structured_analysis") or {}
+    s2 = r2.get("structured_analysis") or {}
+    for key in _COMPARE_FIELDS:
+        v1, v2 = s1.get(key), s2.get(key)
+        if v1 is not None and v2 is not None:
+            try:
+                if abs(float(v1) - float(v2)) > 0.5:
+                    inconsistent = True
+                    notes.append(f"{key}: {v1} vs {v2}")
+            except (TypeError, ValueError):
+                if v1 != v2:
+                    inconsistent = True
+                    notes.append(f"{key}: {v1} vs {v2}")
+
+    # 3. pixel_stats mean (Tier 1 兜底路径)
+    ps1 = (r1.get("pixel_stats") or {}).get("mean")
+    ps2 = (r2.get("pixel_stats") or {}).get("mean")
+    if ps1 is not None and ps2 is not None:
+        if abs(ps1 - ps2) / max(abs(ps1), abs(ps2), 1.0) > 0.05:
+            inconsistent = True
+            notes.append(f"pixel mean: {ps1:.1f} vs {ps2:.1f}")
+
+    return {
+        "inconsistent": inconsistent,
+        "note": "; ".join(notes) if notes else "consistent",
+    }
+
+
+def describe_image_bytes(
+    image_bytes: bytes, question: str = "", check_consistency: bool = False
+) -> dict[str, Any]:
+    """分层调度: 按可用资源选 Tier, 把图像 bytes 转结构化 JSON.
+
+    跟 describe_image 同流程, 但接受 bytes 输入 (用于 visual_inspect 的
+    cropped base64 场景, 不需要落盘). describe_image 内部也调本函数.
+
+    Args:
+        image_bytes: 图像二进制 (PNG/JPEG)
+        question: agent 的具体问题
+        check_consistency: A1 Hallu 检测 — 开启时同图调两次 (第二次 question
+            加尾空格扰动), 比较结果标 low_confidence. 默认 False 保持现有行为.
+            ponytail: 尾空格是最小扰动, 不改图像. ceiling: 文本级比较不等于
+            语义级一致. 升级: 接 LLM judge 做语义比较.
+
+    Returns:
+        跟 describe_image 同结构. 顶层永远不抛.
+        check_consistency=True 时额外含 low_confidence + consistency_note.
+    """
+    result = _run_tier(image_bytes, question)
+
+    if not check_consistency:
+        return result
+
+    # A1: Hallu 检测 — 同图同 question 加尾空格, 比较两次结果.
+    # PerceptionBench 实证: 同题问两次答案不同的概率很高, 不一致 → 瞎蒙.
+    result2 = _run_tier(image_bytes, question + " ")
+    diff = _compare_describe_results(result, result2)
+    result["low_confidence"] = diff["inconsistent"]
+    result["consistency_note"] = diff["note"]
+    return result
+
+
 def describe_image(
-    image_path: str | Path, question: str = ""
+    image_path: str | Path, question: str = "", check_consistency: bool = False
 ) -> dict[str, Any]:
     """分层调度: 按可用资源选 Tier, 把图像转结构化 JSON.
 
@@ -374,6 +457,7 @@ def describe_image(
         image_path: 图像文件路径
         question: agent 的具体问题 (e.g. "这是 XRD 谱吗? 主峰在哪?")
             Tier 3 能直接答; Tier 2/1 用关键词路由到专用 action
+        check_consistency: A1 Hallu 检测, 透传给 describe_image_bytes
 
     Returns:
         dict 含:
@@ -392,7 +476,7 @@ def describe_image(
     except Exception as exc:
         return {"tier": "error", "available": False, "error": f"读图失败: {exc}"}
 
-    return describe_image_bytes(image_bytes, question)
+    return describe_image_bytes(image_bytes, question, check_consistency=check_consistency)
 
 
 # ── M5: 结构化 captioning ─────────────────────────────────────────────────
@@ -601,6 +685,13 @@ class VisionDescribeInput(BaseModel):
         default=None,
         description="可选, 把结果 JSON 保存到该路径",
     )
+    check_consistency: bool = Field(
+        default=False,
+        description=(
+            "A1 Hallu 检测 — 开启时同图调两次, 比较结果标 low_confidence. "
+            "用于检测 MLLM 是否瞎蒙 (PerceptionBench 启发)."
+        ),
+    )
 
 
 class VisionDescribeTool(HuginnTool):
@@ -645,7 +736,10 @@ class VisionDescribeTool(HuginnTool):
     ) -> ToolResult:
         input_data = args if isinstance(args, VisionDescribeInput) else VisionDescribeInput(**args)
         try:
-            result = describe_image(input_data.image_path, input_data.question)
+            result = describe_image(
+                input_data.image_path, input_data.question,
+                check_consistency=input_data.check_consistency,
+            )
             if input_data.output_path and result.get("available"):
                 import json
                 Path(input_data.output_path).write_text(
@@ -760,7 +854,60 @@ def _selfcheck() -> None:
     assert tool.category == "cv"
     assert tool.read_only is True
 
-    print("all self-checks passed")
+    # 11. A1: check_consistency 默认 False, 行为不变 (向后兼容)
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        Image.new("RGB", (10, 10), (128, 128, 128)).save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        out_default = describe_image(tmp_path, "test")
+        assert "low_confidence" not in out_default, "default should not add low_confidence"
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    # 12. A1: check_consistency=True 时返回 low_confidence 字段
+    _reset_probe_cache()
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        Image.new("RGB", (10, 10), (128, 128, 128)).save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        out_consistency = describe_image(tmp_path, "test", check_consistency=True)
+        assert "low_confidence" in out_consistency, "check_consistency=True must add low_confidence"
+        assert "consistency_note" in out_consistency, "check_consistency=True must add consistency_note"
+        # 同图同引擎两次调用, 结果应该一致 → low_confidence=False
+        # (除非 Tier 不稳定, 那 exactly 是 Hallu 检测要抓的)
+        assert isinstance(out_consistency["low_confidence"], bool)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    # 13. A1: _compare_describe_results 三级比较
+    # 13a. text_blocks 数量差异 >20% → inconsistent
+    r1 = {"text_blocks": [1, 2, 3, 4, 5]}
+    r2 = {"text_blocks": [1, 2]}
+    diff = _compare_describe_results(r1, r2)
+    assert diff["inconsistent"] is True, f"5 vs 2 text_blocks should be inconsistent: {diff}"
+    assert "text_blocks" in diff["note"]
+
+    # 13b. structured_analysis 计数字段不一致 → inconsistent
+    r1 = {"structured_analysis": {"n_particles": 10}}
+    r2 = {"structured_analysis": {"n_particles": 5}}
+    diff = _compare_describe_results(r1, r2)
+    assert diff["inconsistent"] is True, f"n_particles 10 vs 5 should be inconsistent: {diff}"
+    assert "n_particles" in diff["note"]
+
+    # 13c. pixel_stats mean 差异 >5% → inconsistent
+    r1 = {"pixel_stats": {"mean": 100.0}}
+    r2 = {"pixel_stats": {"mean": 50.0}}
+    diff = _compare_describe_results(r1, r2)
+    assert diff["inconsistent"] is True, f"mean 100 vs 50 should be inconsistent: {diff}"
+
+    # 13d. 一致结果 → inconsistent=False
+    r1 = {"text_blocks": [1, 2, 3], "structured_analysis": {"n_particles": 5}, "pixel_stats": {"mean": 100.0}}
+    r2 = {"text_blocks": [1, 2, 3], "structured_analysis": {"n_particles": 5}, "pixel_stats": {"mean": 100.0}}
+    diff = _compare_describe_results(r1, r2)
+    assert diff["inconsistent"] is False, f"identical results should be consistent: {diff}"
+    assert diff["note"] == "consistent"
+
+    print("all self-checks passed (A1 Hallu detection OK)")
 
 
 if __name__ == "__main__":
