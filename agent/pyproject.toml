@@ -25,10 +25,10 @@ classifiers = [
 keywords = ["llm", "agent", "materials-science", "dft", "molecular-dynamics", "fea", "cfd"]
 dependencies = [
     "pydantic>=2.0",
-    "langchain>=0.3.0",
-    "langchain-core>=0.3.0",
-    "langchain-openai>=0.2.0",
-    "langgraph>=0.2.0",
+    "langchain>=1.3.9",
+    "langchain-core>=1.3.3",
+    "langchain-openai>=1.1.14",
+    "langgraph>=0.3.15",
     "deepagents>=0.5.0",
     "click>=8.0",
     "rich>=13.0",
@@ -73,7 +73,7 @@ benchmark = [
 # 科研图表 skill: AI 绘图 prompt 编译器 (论文/图注 -> Nano Banana/Qwen Image/GPT Image prompt).
 # 克隆到 huginn/plugins/science-skills/skills/happy_figure/ 即生效, 无 Python 依赖.
 # Flint MCP server (交互式 web 图表副通道): npx -y flint-chart-mcp, 配置见项目根 .mcp.json.
-rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.13.3", "easyocr>=1.7", "pytesseract>=0.3"]
+rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.14.2", "easyocr>=1.7", "pytesseract>=0.3"]
 tooluniverse = ["tooluniverse"]
 
 [project.scripts]
