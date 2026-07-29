@@ -47,6 +47,11 @@ def _make_agent_stub(
     stub._phase_manager.tool_filter.return_value = None
     stub._phase_manager.prompt_prefix.return_value = ""
 
+    # 绑定 mode 查询方法 (set_mode 会重置 _phase_manager, 但 is_research_mode 只读 _mode)
+    stub.is_research_mode = HuginnAgent.is_research_mode.__get__(stub)
+    stub.is_plan_mode = HuginnAgent.is_plan_mode.__get__(stub)
+    stub._permission_config = MagicMock(plan_mode=False)
+
     return stub
 
 
@@ -121,6 +126,44 @@ class TestExtremeDispatchLinkage:
         # 第二次 set_mode("research") 因 mode == _mode 不进入分支, 无影响
         HuginnAgent.set_mode(agent, "research")
         assert agent._extreme_dispatch_saved is saved1
+
+
+class TestRecursionLimit:
+    """_effective_recursion_limit 三档: chat/plan=250, extreme=400, research=500."""
+
+    def test_chat_mode_default_250(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="chat")
+        assert HuginnAgent._effective_recursion_limit(agent) == 250
+
+    def test_plan_mode_default_250(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="plan")
+        assert HuginnAgent._effective_recursion_limit(agent) == 250
+
+    def test_research_mode_500(self, monkeypatch):
+        # set_mode("research") 会自动设 extreme=1, 但 research 优先级更高
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "research")
+        assert HuginnAgent._effective_recursion_limit(agent) == 500
+
+    def test_extreme_dispatch_chat_400(self, monkeypatch):
+        # chat mode 手动开 extreme → 400 (不是 250 也不是 500)
+        monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "1")
+        agent = _make_agent_stub(mode="chat")
+        assert HuginnAgent._effective_recursion_limit(agent) == 400
+
+    def test_extreme_dispatch_plan_400(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "1")
+        agent = _make_agent_stub(mode="plan")
+        assert HuginnAgent._effective_recursion_limit(agent) == 400
+
+    def test_research_overrides_extreme(self, monkeypatch):
+        # research + extreme 同时开 → 500 (research 优先)
+        monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "1")
+        agent = _make_agent_stub(mode="research")
+        assert HuginnAgent._effective_recursion_limit(agent) == 500
 
 
 # ── System prompt enhancement ────────────────────────────────────
