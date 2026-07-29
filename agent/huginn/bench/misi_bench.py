@@ -36,6 +36,22 @@ MISI_TASKS = [
     "pocket_ligand_hbond",   # T9 口袋-配体氢键
 ]
 
+# B3: MiSI task → PerceptionBench 视觉原子能力分类.
+# T1/T2/T3/T5/T6 纯 3D 空间变换 → depth
+# T4/T9 氢键识别 → attr (化学属性)
+# T7/T8 精细定位 → fgr (fine-grained recognition)
+MISI_TASK_TAG: dict[str, str] = {
+    "translation": "depth",
+    "rotation": "depth",
+    "zooming": "depth",
+    "residue_ligand_hbond": "attr",
+    "translation_rotation": "depth",
+    "rotation_rotation": "depth",
+    "ligand_docking": "fgr",
+    "interaction_location": "fgr",
+    "pocket_ligand_hbond": "attr",
+}
+
 
 class MISISubtask:
     """MiSI-Bench 微观空间智能子任务 — 分子结构 3D 空间推理.
@@ -123,6 +139,7 @@ class MISISubtask:
             per_task[task_id] = {
                 "accuracy": success / n if n > 0 else 0.0,
                 "n": n,
+                "visual_capability_tag": MISI_TASK_TAG.get(task_id, "none"),
             }
             all_results.extend(results)
 
@@ -132,7 +149,22 @@ class MISISubtask:
             "mean_accuracy": success_total / n_total if n_total > 0 else 0.0,
             "n_total": n_total,
         }
-        return {"per_task": per_task, "overall": overall}
+        # B3: 按 PerceptionBench 分类做分组统计, 跟 BenchmarkRunner.visual_failure_summary 对齐
+        visual_failure_summary: dict[str, dict[str, int]] = {}
+        for task_id, stats in per_task.items():
+            tag = stats.get("visual_capability_tag", "none")
+            if tag == "none":
+                continue
+            if tag not in visual_failure_summary:
+                visual_failure_summary[tag] = {"passed": 0, "failed": 0, "unreliable": 0}
+            n_pass = int(stats["accuracy"] * stats["n"])
+            visual_failure_summary[tag]["passed"] += n_pass
+            visual_failure_summary[tag]["failed"] += stats["n"] - n_pass
+        return {
+            "per_task": per_task,
+            "overall": overall,
+            "visual_failure_summary": visual_failure_summary,
+        }
 
 
 def _evaluate_task(task_id: str, predicted: str, row: dict) -> bool:
@@ -211,6 +243,17 @@ def _selfcheck() -> None:
         assert _evaluate_task("translation", "", {"answer": "A"}) is False
         assert _evaluate_task("translation", "A", {}) is False
         print("3. _evaluate_task 分流 OK")
+
+        # 4. B3: MISI_TASK_TAG 覆盖所有 task, 值域合法
+        valid_tags = {"count", "attr", "hallu", "fgr", "depth", "none"}
+        for tid in MISI_TASKS:
+            tag = MISI_TASK_TAG.get(tid, "none")
+            assert tag in valid_tags, f"task {tid} tag={tag} 不在合法值域"
+        # 抽查分类映射
+        assert MISI_TASK_TAG["translation"] == "depth"
+        assert MISI_TASK_TAG["residue_ligand_hbond"] == "attr"
+        assert MISI_TASK_TAG["ligand_docking"] == "fgr"
+        print(f"4. MISI_TASK_TAG 覆盖 {len(MISI_TASKS)} task, 值域合法 OK")
 
     finally:
         os.environ["HUGINN_USE_MISI"] = orig_flag
