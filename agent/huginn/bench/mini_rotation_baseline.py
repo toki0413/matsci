@@ -555,7 +555,16 @@ async def run_baseline(n_questions: int = 5, hard: bool = False) -> dict[str, An
         status = "OK" if r.get("correct") else "FAIL"
         print(f"  [{status}] {r['id']}: ans={r.get('answer','')!r}")
     return {"flag": flag_state, "mode": mode, "results": results,
-            "n_correct": n_correct, "n_total": n, "success_rate": rate}
+            "n_correct": n_correct, "n_total": n, "success_rate": rate,
+            # B3: 3D 空间旋转推理 → depth 类 (PerceptionBench 分类)
+            "visual_capability_tag": "depth",
+            "visual_failure_summary": {
+                "depth": {
+                    "passed": n_correct,
+                    "failed": n - n_correct,
+                    "unreliable": 0,
+                }
+            }}
 
 
 def _parse_args() -> argparse.Namespace:
