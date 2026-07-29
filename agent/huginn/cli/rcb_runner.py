@@ -4026,10 +4026,8 @@ async def run(workspace: str, extreme: bool = False) -> int:
         # 默认 86400s (1 天), env var 可覆盖到更高. 非 extreme 模式保持 7200s 兼容.
         os.environ.setdefault("HUGINN_PERSISTENT_GOAL_MODE", "1")
         os.environ.setdefault("HUGINN_RCB_TIMEOUT", "86400")
-        # P4 Task 26.7: extreme 模式可选启用 Swarm 跨进程调度 (默认关, 兼容现有 benchmark).
-        # HUGINN_RCB_SWARM=1 时 subagent_tool 的 dispatch_parallel 走 HuginnSwarm backend.
-        # HUGINN_SWARM_DISTRIBUTED=1 时进一步切到 Redis/Postgres 跨进程队列.
-        os.environ.setdefault("HUGINN_RCB_SWARM", "0")
+        # P3-2: 删除 HUGINN_RCB_SWARM setdefault — dispatch_parallel 实际只走
+        # asyncio.gather, 从不查这个 flag. HUGINN_SWARM_DISTRIBUTED 保留 (跨进程队列).
         os.environ.setdefault("HUGINN_SWARM_DISTRIBUTED", "0")
         cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
         print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)

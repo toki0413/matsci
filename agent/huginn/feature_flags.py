@@ -27,6 +27,10 @@ class FeatureFlags:
     """统一 opt-out 开关层. 默认全开, 用户可关."""
 
     # 所有可关的功能, 默认全 True (privacy_* 三个除外, 互斥)
+    # P3-2: 删除 9 个 is_enabled() 从未被调用的废开关 (least_effort_path,
+    # data_postprocess_rule, tool_cache, parallel_executor, scenario_tool,
+    # benchmark, uq_propagate, circuit_breaker, health_dashboard) — 对应
+    # feature 全部已硬接线或模块未接入, flag 设了等于没设.
     _DEFAULTS: dict[str, bool] = {
         "speculator": True,            # 投机执行 (意图预测+工具预热)
         "provenance": True,            # 计算快照
@@ -34,18 +38,10 @@ class FeatureFlags:
         "clarification": True,         # 主动提问
         "personalization": True,       # 学习用户通信风格
         "loop_detector": True,         # 循环检测
-        "least_effort_path": True,     # prompt 决策树
-        "data_postprocess_rule": True, # 数据后处理规则
-        "tool_cache": True,            # 工具缓存
-        "parallel_executor": True,     # 并行执行
-        "scenario_tool": True,         # 场景预设
-        "benchmark": True,             # 文献基准对比
-        "uq_propagate": True,          # 误差传播 GUM
-        "circuit_breaker": True,       # 熔断器
-        "health_dashboard": True,      # 健康仪表盘
         "system_health_monitor": True,  # 系统资源监控 (CPU/内存/磁盘)
         "system_health_auto_fix": False,  # 监控发现异常后自动熔断 (默认关, 只报告)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
+        # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
         "privacy_redact": False,       # 脱敏后发云端
         "privacy_local_only": False,   # 完全本地, 不发云端
@@ -59,18 +55,9 @@ class FeatureFlags:
         "clarification": "agent 主动向用户提问",
         "personalization": "学习用户通信风格",
         "loop_detector": "对话循环检测",
-        "least_effort_path": "prompt 决策树 (最短路径)",
-        "data_postprocess_rule": "数据后处理规则",
-        "tool_cache": "工具结果缓存",
-        "parallel_executor": "并行工具执行",
-        "scenario_tool": "场景预设",
-        "benchmark": "文献基准对比",
-        "uq_propagate": "误差传播 (GUM)",
-        "circuit_breaker": "熔断器",
-        "health_dashboard": "健康仪表盘",
         "system_health_monitor": "系统资源监控 (CPU/内存/磁盘)",
         "system_health_auto_fix": "监控异常后自动熔断工具 (默认关)",
-        "privacy_off": "隐私级别: off (不脱敏, 默认)",
+        "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
     }
