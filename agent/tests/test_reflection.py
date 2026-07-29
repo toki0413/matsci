@@ -44,8 +44,9 @@ def test_success_with_physics_errors():
     # Physics errors count as a failure worth evolving from.
     assert result.should_evolve is True
     assert result.evolve_signal == "failure"
-    assert result.should_switch_mode is True
-    assert result.suggested_mode == "discover"
+    # P2-6 belief-driven: 单次失败不立即切 mode, 要攒够窗口 (>=3) 才算.
+    # 之前硬规则 here 期望 should_switch_mode=True, 与新 belief 逻辑冲突.
+    assert result.should_switch_mode is False
     assert result.needs_user_input is True
     assert result.confirm_type == "replan"
 
@@ -106,18 +107,22 @@ def test_plan_step_completed():
 
 
 def test_construct_to_discover_on_failure():
+    # P2-6 belief-driven: 单次失败不切, 攒满 3 次且失败率>50% 才切.
     reflector = TaskReflector()
     state = UnifiedSessionState()
     state.cognitive_mode = CognitiveMode.CONSTRUCT
 
+    # 头两次失败, 窗口不足, 不切.
+    reflector.reflect("vasp_tool", {"success": False, "error": "crash 1"}, session_state=state)
+    reflector.reflect("vasp_tool", {"success": False, "error": "crash 2"}, session_state=state)
+
+    # 第三次失败: 窗口 [F,F,F], fail_rate=1.0 > 0.5, 在 construct → 切 discover.
     result = reflector.reflect(
         "vasp_tool",
         {"success": False, "error": "job crashed"},
         session_state=state,
     )
 
-    # A failure mid-construction should push us back onto the discovery
-    # chain to look for alternatives.
     assert result.should_switch_mode is True
     assert result.suggested_mode == "discover"
     assert result.evolve_signal == "failure"
