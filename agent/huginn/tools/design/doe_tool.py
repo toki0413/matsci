@@ -127,7 +127,7 @@ _FRACTIONAL_DESIGNS: dict[tuple[int, int], tuple[list[tuple[int, ...]], str]] = 
 
 
 class DOEInput(BaseModel):
-    action: Literal["factorial", "fractional", "orthogonal", "rsm", "randomize"] = Field(
+    action: Literal["factorial", "fractional", "orthogonal", "rsm", "randomize", "power"] = Field(
         ..., description="实验设计动作类型"
     )
     factors: list[dict[str, Any]] = Field(
@@ -151,6 +151,26 @@ class DOEInput(BaseModel):
     design_matrix: list[dict[str, Any]] | None = Field(
         default=None, description="已有实验矩阵 (randomize 动作用)",
     )
+    # ── power action 字段 ──
+    effect_size: float | None = Field(default=None, description="效应量 (Cohen's d / f / w)")
+    test_type: Literal["ttest", "anova", "chisq"] = Field(
+        default="ttest", description="power 计算的检验类型"
+    )
+    alpha: float = Field(default=0.05, ge=0.0, le=1.0, description="显著性水平 (power 用)")
+    power_target: float = Field(default=0.80, ge=0.0, le=1.0, description="目标功效")
+    n_groups: int = Field(default=2, ge=2, description="组数 (anova power)")
+    n_bins: int = Field(default=4, ge=2, description="类别数 (chisq power)")
+    sample_ratio: float = Field(default=1.0, gt=0, description="两组样本量比 (ttest power)")
+    # ── randomize 分配字段 (alloc_design 不为 None 时走分配模式) ──
+    n_units: int | None = Field(default=None, description="待分配单元数")
+    alloc_design: Literal["simple", "block", "stratified", "cluster"] | None = Field(
+        default=None, description="分配设计类型"
+    )
+    arms: list[str] | None = Field(default=None, description="臂名列表")
+    block_size: int = Field(default=2, description="区组内每臂重复数 (block)")
+    strata: dict[str, int] | None = Field(default=None, description="层名: 单元数 (stratified)")
+    alloc_ratio: list[int] | None = Field(default=None, description="分配比 (stratified)")
+    clusters: list[str] | None = Field(default=None, description="整群列表 (cluster)")
 
 
 def _factor_levels(f: dict[str, Any]) -> list[Any]:
@@ -202,6 +222,8 @@ class DOETool(HuginnTool):
                 return self._rsm(args)
             if args.action == "randomize":
                 return self._randomize_action(args)
+            if args.action == "power":
+                return self._power(args)
             raise ValueError(f"未知 action: {args.action}")
         except Exception as exc:
             return ToolResult(data=None, success=False, error=f"DOE 工具失败: {exc}")
@@ -539,11 +561,15 @@ class DOETool(HuginnTool):
                 half_ranges.append((high_f - low_f) / 2.0)
         return centers, half_ranges
 
-    # ── 随机化已有方案 ────────────────────────────────────────────
+    # ── 随机化已有方案 / 分配方案 ────────────────────────────────
     def _randomize_action(self, args: DOEInput) -> ToolResult:
+        # 分配模式: alloc_design 不为 None 时走处理分配, 不碰 design_matrix
+        if args.alloc_design is not None:
+            return self._alloc(args)
+
         matrix = args.design_matrix
         if not matrix:
-            raise ValueError("randomize 动作需要传入 design_matrix")
+            raise ValueError("randomize 动作需要传入 design_matrix 或 alloc_design")
         n = len(matrix)
         rng = random.Random(args.seed)
         order = list(range(n))
@@ -563,3 +589,149 @@ class DOETool(HuginnTool):
             },
             success=True,
         )
+
+    # ── 功效/样本量计算 ────────────────────────────────────────
+    def _power(self, args: DOEInput) -> ToolResult:
+        """a-priori 样本量计算, 包装 statsmodels power 类."""
+        import math as _math
+        from statsmodels.stats.power import (
+            FTestAnovaPower,
+            GofChisquarePower,
+            TTestIndPower,
+        )
+
+        if args.effect_size is None or args.effect_size == 0:
+            raise ValueError("effect_size 不能为 0 (无穷样本)，请基于文献/预实验给非零值")
+        effect = abs(args.effect_size)  # 双侧检验只看绝对值
+
+        if args.test_type == "ttest":
+            n1 = _math.ceil(TTestIndPower().solve_power(
+                effect_size=effect, alpha=args.alpha, power=args.power_target,
+                ratio=args.sample_ratio, alternative="two-sided",
+            ))
+            n2 = _math.ceil(n1 * args.sample_ratio)
+            return ToolResult(data={
+                "action": "power",
+                "test": "ttest",
+                "n_per_group": [n1, n2],
+                "total_n": n1 + n2,
+                "parameters": {"effect_size": effect, "alpha": args.alpha,
+                               "power": args.power_target, "ratio": args.sample_ratio},
+                "summary": f"两样本 t 检验: 组1 N={n1}, 组2 N={n2}, 总 N={n1+n2}",
+            }, success=True)
+
+        if args.test_type == "anova":
+            if args.n_groups < 2:
+                raise ValueError("anova power 至少需要 2 组")
+            n_total_f = FTestAnovaPower().solve_power(
+                effect_size=effect, alpha=args.alpha,
+                power=args.power_target, k_groups=args.n_groups,
+            )
+            per = _math.ceil(n_total_f / args.n_groups)
+            n_total = per * args.n_groups
+            return ToolResult(data={
+                "action": "power",
+                "test": "anova",
+                "n_per_group": per,
+                "total_n": n_total,
+                "parameters": {"effect_size": effect, "alpha": args.alpha,
+                               "power": args.power_target, "k_groups": args.n_groups},
+                "summary": f"ANOVA ({args.n_groups} 组): 每组 N={per}, 总 N={n_total}",
+            }, success=True)
+
+        # chisq
+        if args.n_bins < 2:
+            raise ValueError("chisq power 至少需要 2 个类别")
+        n = _math.ceil(GofChisquarePower().solve_power(
+            effect_size=effect, alpha=args.alpha,
+            power=args.power_target, n_bins=args.n_bins,
+        ))
+        return ToolResult(data={
+            "action": "power",
+            "test": "chisq",
+            "total_n": n,
+            "parameters": {"effect_size": effect, "alpha": args.alpha,
+                           "power": args.power_target, "n_bins": args.n_bins},
+            "summary": f"卡方检验: 总 N={n}",
+        }, success=True)
+
+    # ── 随机化分配方案 ─────────────────────────────────────────
+    def _alloc(self, args: DOEInput) -> ToolResult:
+        """简单/区组/分层/整群随机化分配, 纯 stdlib random."""
+        from collections import Counter
+
+        arms = args.arms or ["A", "B"]
+        if len(arms) < 1:
+            raise ValueError("arms 至少需要 1 个臂")
+        rng = random.Random(args.seed)
+        design = args.alloc_design
+
+        if design == "simple":
+            if not args.n_units or args.n_units < 1:
+                raise ValueError("simple 分配需要 n_units >= 1")
+            alloc = [(i + 1, rng.choice(arms)) for i in range(args.n_units)]
+            header = ["unit", "arm"]
+
+        elif design == "block":
+            if not args.n_units or args.n_units < 1:
+                raise ValueError("block 分配需要 n_units >= 1")
+            unit_block = []
+            for a in arms:
+                unit_block += [a] * args.block_size
+            alloc, i = [], 0
+            while len(alloc) < args.n_units:
+                b = unit_block[:]
+                rng.shuffle(b)
+                for a in b:
+                    if len(alloc) >= args.n_units:
+                        break
+                    i += 1
+                    alloc.append((i, a))
+            header = ["unit", "arm"]
+
+        elif design == "stratified":
+            if not args.strata:
+                raise ValueError("stratified 分配需要 strata={层名: 数量}")
+            ratio = args.alloc_ratio or [1] * len(arms)
+            if len(ratio) != len(arms):
+                raise ValueError(f"alloc_ratio 项数({len(ratio)}) 必须等于臂数({len(arms)})")
+            unit = []
+            for a, r in zip(arms, ratio):
+                unit += [a] * r
+            alloc = []
+            for stratum, cnt in args.strata.items():
+                i = 0
+                while i < cnt:
+                    b = unit[:]
+                    rng.shuffle(b)
+                    for a in b:
+                        if i >= cnt:
+                            break
+                        i += 1
+                        alloc.append((stratum, i, a))
+            header = ["stratum", "unit", "arm"]
+
+        elif design == "cluster":
+            if not args.clusters:
+                raise ValueError("cluster 分配需要 clusters 列表")
+            if len(args.clusters) < len(arms):
+                raise ValueError(f"整群数({len(args.clusters)}) 少于臂数({len(arms)})")
+            cl = args.clusters[:]
+            rng.shuffle(cl)
+            alloc = [(c, arms[i % len(arms)]) for i, c in enumerate(cl)]
+            header = ["cluster", "arm"]
+
+        else:
+            raise ValueError(f"未知 alloc_design: {design}")
+
+        balance = dict(Counter(r[-1] for r in alloc))
+        return ToolResult(data={
+            "action": "randomize",
+            "alloc_design": design,
+            "allocation": [list(r) for r in alloc],
+            "header": header,
+            "balance": balance,
+            "n_units": len(alloc),
+            "seed": args.seed,
+            "summary": f"{design} 随机化, seed={args.seed}, 各臂计数: {balance}",
+        }, success=True)

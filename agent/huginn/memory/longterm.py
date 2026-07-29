@@ -1458,6 +1458,166 @@ class LongTermMemory:
                 )
         return summary
 
+    # ── maybe_consolidate: 双门槛记忆整理 (research-dream dream 心智) ───────
+    # 时间门 7 天 + 累积门 50 条未归档 short tier. 7 天兜底: 时间到了累积未到
+    # 也强制整理 (防低频场景永远不整理). force=True 跳过所有门槛.
+    # 时间戳存 ~/.huginn/.last_consolidation (跟 db_path 同目录).
+    # ponytail: 不存 SQLite meta 表, 文件够用. 升级路径: 加 meta(key, val) 表.
+    _CONSOLIDATE_TIME_GATE_DAYS = 7
+    _CONSOLIDATE_COUNT_GATE = 50
+
+    def _last_consolidation_path(self) -> Path:
+        return self.db_path.parent / ".last_consolidation"
+
+    def _read_last_consolidation(self) -> datetime | None:
+        p = self._last_consolidation_path()
+        if not p.exists():
+            return None
+        try:
+            return datetime.fromisoformat(p.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            return None
+
+    def _write_last_consolidation(self) -> None:
+        p = self._last_consolidation_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(datetime.now().isoformat(), encoding="utf-8")
+        except OSError:
+            logger.debug("write .last_consolidation failed", exc_info=True)
+
+    def _llm_summarize_memories(self, prompt: str) -> str | None:
+        """调 LLM 合并短期记忆成摘要. 失败返回 None.
+        参考 step_verifier 的 LLM 调用方式 (create_langchain_model + invoke).
+        ponytail: provider/model 从 env 读, 不注入 client. 升级路径: 接受 llm 参数.
+        """
+        try:
+            from huginn.models.registry import create_langchain_model
+            from langchain_core.messages import HumanMessage
+        except ImportError:
+            logger.warning("maybe_consolidate: langchain 未安装, 跳过", exc_info=True)
+            return None
+        provider = os.environ.get("HUGINN_CONSOLIDATE_PROVIDER", "deepseek")
+        model_name = os.environ.get("HUGINN_CONSOLIDATE_MODEL") or None
+        try:
+            llm = create_langchain_model(
+                provider=provider,
+                model_name=model_name,
+                temperature=0.3,
+                max_tokens=1024,
+            )
+        except Exception:
+            logger.warning("maybe_consolidate: LLM 初始化失败", exc_info=True)
+            return None
+        try:
+            resp = llm.invoke([HumanMessage(content=prompt)])
+            return getattr(resp, "content", None) or str(resp)
+        except Exception:
+            logger.warning("maybe_consolidate: LLM invoke 失败", exc_info=True)
+            return None
+
+    def maybe_consolidate(self, force: bool = False) -> bool:
+        """双门槛触发记忆整理. 参考 research-dream 的 dream 心智.
+
+        - 时间门: 距上次整理 >= 7 天
+        - 累积门: 未归档 short tier 记录 >= 50 条
+        - 7 天兜底: 时间门到了, 累积门未到也强制整理 (只要有 short 记录)
+        - force=True 跳过所有门槛
+        - 整理: 拉所有未归档 short 记录 → LLM summarize → 写回一条 long → 原条目归档
+        - 失败静默 (LLM 调用失败返回 False, 不抛异常)
+        - 返回 True 表示触发了整理, False 表示未触发或失败
+        """
+        try:
+            last = self._read_last_consolidation()
+            now = datetime.now()
+            if last is None:
+                days_since = float("inf")
+            else:
+                days_since = (now - last).total_seconds() / 86400.0
+
+            # 拉未归档 short tier 记录 (一条 SQL 同时拿 count 和 rows)
+            with self._connect() as conn:
+                alive_where, alive_params = self._where_alive()
+                rows = conn.execute(
+                    f"SELECT id, content, tags, source, importance, category, created_at "
+                    f"FROM memories AS m WHERE {alive_where} AND tier = 'short' "
+                    f"ORDER BY created_at ASC",
+                    alive_params,
+                ).fetchall()
+            short_count = len(rows)
+
+            time_gate = days_since >= self._CONSOLIDATE_TIME_GATE_DAYS
+            count_gate = short_count >= self._CONSOLIDATE_COUNT_GATE
+
+            if not force:
+                # 双门槛: 时间 + 累积都满足; 7 天兜底: 时间到了累积未到也触发
+                if not time_gate:
+                    return False
+                if short_count == 0:
+                    # 时间到了但没东西可整理, 刷新时间戳避免每次都查
+                    self._write_last_consolidation()
+                    return False
+                # time_gate 已过且有 short 记录 → 触发 (count_gate 在 7 天已过时被 void)
+                _ = count_gate  # 保留语义, 实际 7 天兜底已覆盖
+
+            if short_count == 0:
+                # force=True 但没记录, 空转刷新时间戳
+                self._write_last_consolidation()
+                return False
+
+            # 拼 LLM prompt
+            items = []
+            for r in rows:
+                items.append(f"- [{r['id']}] (imp={r['importance']}, cat={r['category']}) {r['content']}")
+            prompt = (
+                f"把以下 {len(rows)} 条短期记忆合并成一份精简的长期摘要, "
+                f"保留关键事实/数值/结论, 去重去噪, 不超过 800 字:\n\n"
+                + "\n".join(items)
+            )
+
+            summary = self._llm_summarize_memories(prompt)
+            if not summary or not summary.strip():
+                return False
+
+            # 写回 long tier
+            from collections import Counter
+            max_imp = max((float(r["importance"]) for r in rows), default=0.5)
+            sources = [r["source"] for r in rows if r["source"]]
+            source = " | ".join(sources[:3]) if sources else "consolidation"
+            cats = [r["category"] for r in rows if r["category"]]
+            category = Counter(cats).most_common(1)[0][0] if cats else "fact"
+            try:
+                new_id = self.store(
+                    content=summary.strip(),
+                    category=category,
+                    tags=["consolidated"] + [r["id"] for r in rows[:10]],
+                    source=source,
+                    importance=max_imp,
+                    tier="long",
+                )
+            except Exception:
+                logger.warning("maybe_consolidate: store summary 失败", exc_info=True)
+                return False
+
+            # 原条目归档 (archived=1, _where_alive 自动过滤)
+            archived = 0
+            for r in rows:
+                try:
+                    if self.update_archived(r["id"], archived=True):
+                        archived += 1
+                except Exception:
+                    logger.debug("archive %s 失败", r["id"], exc_info=True)
+
+            self._write_last_consolidation()
+            logger.info(
+                "maybe_consolidate: %d 条 short → 1 条 long (%s), archived %d",
+                len(rows), new_id, archived,
+            )
+            return True
+        except Exception:
+            logger.warning("maybe_consolidate 异常", exc_info=True)
+            return False
+
     def lint(self, limit: int = 100, auto_fix: bool = False) -> dict[str, Any]:
         """LLM Wiki Lint: knowledge base health check.
 
