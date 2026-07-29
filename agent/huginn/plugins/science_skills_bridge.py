@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _BUNDLED_DIR = Path(__file__).parent / "science-skills"
-_SKIP_DIRS = {"scienceskillscommon", "uv", "workflow_skill_creator", "__pycache__"}
+_SKIP_DIRS = {"workflow_skill_creator", "__pycache__"}
 
 
 def _resolve_skills_dir() -> Path | None:
