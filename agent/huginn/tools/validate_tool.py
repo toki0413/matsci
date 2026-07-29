@@ -107,6 +107,10 @@ class ValidateToolInput(BaseModel):
         description="容差, 不传按性质自动定",
     )
     units: str | None = Field(default=None, description="单位标注")
+    method: str = Field(
+        default="",
+        description="DFT 计算方法 (PBE/LDA/HSE06/GGA), benchmark 时用于 apply sim-to-real correction",
+    )
 
 
 class ValidateTool(HuginnTool):
@@ -298,7 +302,27 @@ class ValidateTool(HuginnTool):
 
         ref_val = float(ref["value"])
         ref_unc = ref.get("uncertainty")
-        diff = computed_val - ref_val
+
+        # Sim-to-real correction: DFT 方法有系统偏差 (PBE bandgap 低估 ~50%,
+        # LDA 晶格常数低估 ~1-2%). 拿 CorrectionTable 修正后再判 verdict —
+        # 不然 PBE Si bandgap=0.61 vs 实验 1.12 永远是 discrepancy, 但这其实是
+        # 已知方法偏差, 不是计算错误.
+        corrected_val: float | None = None
+        correction_factor: float | None = None
+        if args.method and args.structure:
+            try:
+                from huginn.provenance.correction import CorrectionTable
+                table = CorrectionTable.shared()
+                factor = table.get_avg_correction_factor(args.structure, prop, args.method)
+                if factor is not None and abs(factor - 1.0) > 1e-6:
+                    correction_factor = factor
+                    corrected_val = computed_val * factor
+            except Exception:
+                pass
+
+        # verdict 基于修正后的值 (如果有), 否则原始计算值
+        verdict_base = corrected_val if corrected_val is not None else computed_val
+        diff = verdict_base - ref_val
         # 参考值为 0 时相对误差没意义, 返回 None
         rel_err = abs(diff) / abs(ref_val) * 100.0 if ref_val != 0 else None
 
@@ -324,6 +348,11 @@ class ValidateTool(HuginnTool):
                 "action": "benchmark",
                 "property": prop,
                 "computed": {"value": computed_val, "uncertainty": computed_unc},
+                "corrected": (
+                    {"value": corrected_val, "correction_factor": correction_factor,
+                     "method": args.method}
+                    if corrected_val is not None else None
+                ),
                 "reference": {
                     "value": ref_val,
                     "uncertainty": ref_unc,
@@ -514,3 +543,47 @@ class ValidateTool(HuginnTool):
             },
             success=True,
         )
+
+
+def _selfcheck() -> None:
+    """Smoke-check sim-to-real correction in benchmark path.
+
+    Run with: python -c "from huginn.tools.validate_tool import _selfcheck; _selfcheck()"
+    """
+    import asyncio
+
+    tool = ValidateTool()
+
+    async def _run():
+        # Case 1: 不传 method → corrected=None, 行为不变
+        args1 = ValidateToolInput(
+            action="benchmark", property="band_gap", structure="Si",
+            computed_value=0.61, reference_source="experimental",
+        )
+        r1 = await tool.call(args1)
+        assert r1.data["corrected"] is None, "无 method 时不应有 corrected"
+        # 0.61 vs 1.12 → rel_err ~45%, verdict 应是 discrepancy (PBE 已知偏差)
+        assert r1.data["verdict"] == "discrepancy", f"无修正时 Si PBE bandgap 应是 discrepancy, got {r1.data['verdict']}"
+
+        # Case 2: 传 method=PBE → apply correction (factor ≈ 1.83), verdict 改善
+        args2 = ValidateToolInput(
+            action="benchmark", property="band_gap", structure="Si",
+            computed_value=0.61, method="PBE", reference_source="experimental",
+        )
+        r2 = await tool.call(args2)
+        assert r2.data["corrected"] is not None, "PBE + Si 应有 corrected"
+        assert r2.data["corrected"]["method"] == "PBE"
+        corrected_v = r2.data["corrected"]["value"]
+        # 0.61 * (1.12/0.61) ≈ 1.12
+        assert abs(corrected_v - 1.12) < 0.05, f"corrected 应 ≈ 1.12, got {corrected_v}"
+        assert r2.data["verdict"] != "discrepancy", f"修正后 verdict 应改善, got {r2.data['verdict']}"
+        return r1, r2
+
+    r1, r2 = asyncio.run(_run())
+    print(f"validate_tool correction selfcheck OK")
+    print(f"  无修正: computed=0.61 → verdict={r1.data['verdict']}, rel_err={r1.data['relative_error']:.1f}%")
+    print(f"  PBE修正: computed=0.61 → corrected={r2.data['corrected']['value']:.3f}, verdict={r2.data['verdict']}, rel_err={r2.data['relative_error']:.1f}%")
+
+
+if __name__ == "__main__":
+    _selfcheck()
