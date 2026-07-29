@@ -382,15 +382,24 @@ def build_pmk_state(
     kb: Any,
     *,
     top_k: int = 2,
+    since: str | None = None,
+    mem_mgr: Any = None,
+    timeseries_ctx: str | None = None,
 ) -> dict[str, str] | None:
     """AV4: PMK 三路立场状态构建共享函数.
 
     persona: PersonaManager 返回的对象或 dict, 取 description.
     last_step_eval: 上一步 StepEvaluation, 取 pmk_feedback 中 Memory 段.
     kb: 知识库, 用 last_step_eval.attempted 查 top_k hits 取前 200 字.
-    返回 {"persona","memory","kb"} 或 None (全空时).
+    since: 时序窗口 — KB query 和 Memory recall 都限定到该时间之后,
+        让 PMK 聚焦本轮/本会话的新知识, 避免旧文献值跟新实验冲突被误判.
+    mem_mgr: MemoryManager, 传入时补一次 recall(since=...) 作为 M 路时序补充.
+    timeseries_ctx: P3 物理时序摘要文本, 传入时作为第四路 "timeseries" 加入.
+        让 PMK 一致性检查能感知系统动力学趋势 (比如 VACF 衰减但 persona
+        说束缚态 → 冲突). ponytail: 纯文本, 跟其他路同格式.
+    返回 {"persona","memory","kb"[,"timeseries"]} 或 None (全空时).
     rcb_runner (P0-A) 和 autoloop reflect_fn (AV2) 都调这个.
-    ponytail: 三段文本拼接, 不上 LLM 抽取; 升级路径接 LLM 立场抽取.
+    ponytail: 三/四段文本拼接, 不上 LLM 抽取; 升级路径接 LLM 立场抽取.
     """
     try:
         _persona_text = ""
@@ -408,11 +417,25 @@ def build_pmk_state(
                 if _seg.lower().startswith("memory:"):
                     _mem_text = _seg[len("memory:"):].strip()
                     break
+        # 时序结合: M 路补 recall(since=...) — 让 PMK 看到本会话新写入的记忆,
+        # 不只是 last_step_eval 的 pmk_feedback. ponytail: 失败静默, 不阻塞 PMK.
+        if mem_mgr is not None and since:
+            try:
+                _ts_mem = mem_mgr.recall_for_prompt(
+                    getattr(last_step_eval, "attempted", "") or "",
+                    max_entries=2, since=since,
+                )
+                if _ts_mem:
+                    _mem_text = (_mem_text + " | recent: " + _ts_mem[:200]).strip()
+            except Exception:
+                pass
         _kb_text = ""
         if kb is not None and last_step_eval is not None:
             try:
                 _kb_hits = kb.query(
-                    getattr(last_step_eval, "attempted", "") or "", top_k=top_k)
+                    getattr(last_step_eval, "attempted", "") or "",
+                    top_k=top_k, since=since,
+                )
                 if _kb_hits:
                     _kb_text = " ".join(
                         str(h.get("content", "") if isinstance(h, dict) else h)
@@ -420,12 +443,18 @@ def build_pmk_state(
                     )[:200]
             except Exception:
                 pass
-        if _persona_text or _mem_text or _kb_text:
-            return {
-                "persona": _persona_text,
-                "memory": _mem_text,
-                "kb": _kb_text,
-            }
+        _result: dict[str, str] = {}
+        if _persona_text:
+            _result["persona"] = _persona_text
+        if _mem_text:
+            _result["memory"] = _mem_text
+        if _kb_text:
+            _result["kb"] = _kb_text
+        # P3 结合: 物理时序作为第四路 (PMKT) — 让一致性检查感知系统动力学.
+        if timeseries_ctx:
+            _result["timeseries"] = timeseries_ctx
+        if _result:
+            return _result
     except Exception as exc:
         logger.debug("AV4 build_pmk_state failed: %s", exc)
     return None
@@ -438,6 +467,7 @@ def check_pause_decision(
     fired_intentions: list | None,
     pmk_state: dict[str, str] | None,
     grill_state: dict | None = None,
+    iteration_history: list[dict] | None = None,
 ) -> tuple[bool, str, list]:
     """AV4: should_pause_for_decision 共享包装.
 
@@ -448,6 +478,10 @@ def check_pause_decision(
     grill_state (P0 grill-me) 由 caller 在 plan_check 阶段构造:
     {"has_grilled": bool, "ambiguity_score": float, "tier": str,
      "scene_tag": str, "plan_is_empty": bool}.
+
+    iteration_history (P0 时序结合): 传入时检查 PMK 冲突是否在最近几轮重复
+    出现 — 重复冲突升级为 pause, 避免 agent 重复陷入同样的 PMK 障碍.
+    ponytail: 只看 redirect 标记, 不解析 advice 文本. 升级路径: advice 相似度.
     """
     try:
         from huginn.runtime.task_lifecycle import (
@@ -460,6 +494,16 @@ def check_pause_decision(
             pmk_state=pmk_state,
             grill_state=grill_state,
         )
+        # P0 时序结合: 如果本轮 PMK 冲突触发 pause, 检查 iteration_history 里
+        # 最近 5 轮是否有重复 redirect — 重复说明 agent 陷入循环, 升级 reason.
+        if _pause and iteration_history:
+            _recent = iteration_history[-5:]
+            _redirect_count = sum(1 for h in _recent if h.get("redirect"))
+            if _redirect_count >= 3:
+                _reason = (
+                    f"{_reason} | repeated PMK conflict ({_redirect_count}/5 "
+                    f"recent iterations redirected) — likely stuck in loop"
+                )
         return bool(_pause), str(_reason or ""), list(_opts or [])
     except Exception as exc:
         logger.debug("AV4 check_pause_decision failed: %s", exc)
@@ -1140,6 +1184,9 @@ class CognitiveLoopMixin:
         run_id = f"loop_{uuid.uuid4().hex[:8]}"
         self._run_start_time = time.time()
         self._objective = objective
+        # PMK 时序结合: run 开始时间作为 since 窗口, 让 PMK 的 M/K 路只看
+        # 本 run 写入的新知识, 避免旧文献值跟新实验冲突被误判.
+        self._run_start_iso = datetime.now().isoformat()
 
         from huginn.provenance import ProvenanceLogger, ProvenanceRecord
 
@@ -2608,12 +2655,17 @@ Respond JSON only:
                     except Exception:
                         pass
                     _pmk_state = build_pmk_state(
-                        _persona_obj, _step_eval, self._get_kb() if hasattr(self, "_get_kb") else None,
+                        _persona_obj, _step_eval,
+                        self._get_kb() if hasattr(self, "_get_kb") else None,
+                        since=getattr(self, "_run_start_iso", None),
+                        mem_mgr=getattr(self, "memory", None),
+                        timeseries_ctx=self._format_timeseries_context() or None,
                     )
                     _pause, _reason, _opts = check_pause_decision(
                         self._evals_history, [],
                         self._get_kb() if hasattr(self, "_get_kb") else None,
                         None, _pmk_state,
+                        iteration_history=getattr(state, "iteration_history", None),
                     )
                     if _pause:
                         logger.warning("autoloop pause signal (no human): %s", _reason)

@@ -328,26 +328,47 @@ def _pmk_subjects_similar(sub1: str, sub2: str) -> bool:
 def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
     """PMK 三路立场一致性检查 — Čech H¹ proxy.
 
-    pmk_state: {"persona": str, "memory": str, "kb": str, "deviation": str}
+    pmk_state: {"persona": str, "memory": str, "kb": str, "deviation": str,
+                "timeseries": str (可选, P3 结合)}
     返回 (is_inconsistent, reason). 不一致 = 至少两路对同一 subject 显式对立.
 
     判定规则 (规则版, 不调 LLM):
-    1. 提取三路 stance + subject
+    1. 提取各路 stance + subject (含 timeseries 路, P3 结合)
     2. 若两路 stance 为 oppose 且 subject 相似 (token 重合) → 冲突
     3. 若一路 recommend X, 另一路 oppose X 且 subject 相似 → 冲突
     4. neutral 不参与冲突
-    5. 三路全 neutral → 一致
+    5. 全 neutral → 一致
 
     ponytail: subject 相似用 token 重合度, 不上 embedding. 升级路径: embedding cosine.
+    timeseries 路用 trend 关键词 (rising/decaying/flat) 作为 subject, 让物理
+    动力学趋势能跟 persona/memory/kb 立场冲突 (比如 VACF decaying 但 persona
+    说 "束缚态" → 冲突). ponytail: 简单关键词匹配, 不解析物理含义.
     """
     if not pmk_state:
         return (False, "")
+
+    # P3 结合: timeseries 路从 trend 关键词构造 stance.
+    # decaying → oppose "束缚/stable/bound", recommend "扩散/diffusion"
+    # rising → oppose "稳定/stable", recommend "增长/increase"
+    # ponytail: 关键词匹配, 不调 LLM. 升级路径: 物理含义解析.
+    _ts_text = pmk_state.get("timeseries", "") or ""
+    _ts_stance = ("neutral", "")
+    if _ts_text:
+        _ts_lower = _ts_text.lower()
+        if "decaying" in _ts_lower:
+            _ts_stance = ("oppose", "束缚 stable bound")
+        elif "rising" in _ts_lower:
+            _ts_stance = ("oppose", "稳定 stable")
+        elif "flat" in _ts_lower:
+            _ts_stance = ("recommend", "平衡 equilibrium")
 
     stances = {
         source: _extract_pmk_stance(text)
         for source, text in pmk_state.items()
         if source in ("persona", "memory", "kb")
     }
+    if _ts_stance[0] != "neutral":
+        stances["timeseries"] = _ts_stance
     # 过滤掉 neutral
     active = {src: (st, sub) for src, (st, sub) in stances.items() if st != "neutral"}
     if len(active) < 2:
