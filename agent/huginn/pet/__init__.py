@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -76,9 +77,11 @@ class PetMood(StrEnum):
     WORKING = "working"
     SUCCESS = "success"
     ERROR = "error"
-    SLEEPING = "sleeping"
     HAPPY = "happy"
-    HUNGRY = "hungry"
+    # 工具降级成功时用 (adapter.py:760) — 之前引用未定义成员被静默吞
+    NEUTRAL = "neutral"
+    # ponytail: SLEEPING/HUNGRY 删了 — 后端从不发布这两个 mood,
+    # 前端 Pet.tsx 自己按 idle/hunger 算 sleeping/hungry, 不依赖后端枚举
 
 
 @dataclass
@@ -102,6 +105,20 @@ XP_PER_LEVEL_BASE = 100
 XP_PER_SUCCESS = 15
 HUNGER_DECAY_PER_MIN = 4
 MOOD_DECAY_PER_MIN = 2
+
+# pet_personality 之前只是展示标签 — 现在按人格调整 feed/stroke 交互消息
+_PET_PHRASES: dict[str, dict[str, str]] = {
+    "cheerful": {"feed": "Fed! Feeling good.", "stroke": "That feels nice!"},
+    "nerdy": {
+        "feed": "Nutrients acquired. Cognitive throughput stable.",
+        "stroke": "Dopamine increment observed. Acknowledged.",
+    },
+    "calm": {"feed": "Thank you. I'm content.", "stroke": "Mmm, peaceful."},
+    "sassy": {
+        "feed": "Took you long enough. Acceptable.",
+        "stroke": "I suppose that's tolerable.",
+    },
+}
 
 
 def _xp_for_level(level: int) -> int:
@@ -136,6 +153,7 @@ class PetState:
         name: str | None = None,
         personality: str | None = None,
         avatar: str | None = None,
+        accessories: list[str] | None = None,
     ) -> None:
         if name:
             self.name = name
@@ -143,6 +161,9 @@ class PetState:
             self.personality = personality
         if avatar is not None:
             self.avatar = avatar
+        # config.pet_accessories 灌入运行时态, 之前 configure 不接受这个参数
+        if accessories is not None:
+            self.accessories = list(accessories)
 
     def update(self, event: PetEvent) -> None:
         self.mood = event.mood
@@ -249,6 +270,51 @@ class PetState:
             "accessories": self.accessories,
         }
 
+    # ── 持久化 ──────────────────────────────────────────────
+    # 只存 gamification 字段 (level/xp/hunger/happiness/accessories/name/personality),
+    # mood/active_tasks/recent_events 是运行时态, 重启后重新计算.
+    _PERSIST_KEYS = (
+        "name", "personality", "experience", "level",
+        "hunger", "happiness", "accessories",
+    )
+
+    def save(self, path: "Path | None" = None) -> None:
+        """把 gamification 状态写到 JSON, best-effort 不抛."""
+        import json
+        target = path or _pet_state_path()
+        if target is None:
+            return
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            payload = {k: getattr(self, k) for k in self._PERSIST_KEYS}
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(target)
+        except Exception:
+            pass
+
+    def load(self, path: "Path | None" = None) -> None:
+        """从 JSON 恢复 gamification 状态, best-effort 不抛."""
+        import json
+        target = path or _pet_state_path()
+        if target is None or not target.exists():
+            return
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            for k in self._PERSIST_KEYS:
+                if k in payload:
+                    setattr(self, k, payload[k])
+        except Exception:
+            pass
+
+
+def _pet_state_path():
+    """返回 pet 状态持久化路径, 未配置 cache dir 返回 None."""
+    base = os.environ.get("HUGINN_CACHE_DIR")
+    if base:
+        return Path(base) / "pet_state.json"
+    return Path.home() / ".huginn" / "pet_state.json"
+
 
 class PetEventBus:
     """Async publish/subscribe bus for pet events."""
@@ -306,26 +372,44 @@ class PetEventBus:
         name: str | None = None,
         personality: str | None = None,
         avatar: str | None = None,
+        accessories: list[str] | None = None,
     ) -> None:
-        self._state.configure(name, personality, avatar=avatar)
+        self._state.configure(name, personality, avatar=avatar, accessories=accessories)
+        self._state.save()
+
+    def _phrase(self, key: str) -> str:
+        """按 personality 取交互话术, 未知人格退回 cheerful."""
+        return _PET_PHRASES.get(self._state.personality, _PET_PHRASES["cheerful"])[key]
 
     def feed(self, amount: int = 25) -> None:
         """Feed the pet."""
         self._state.feed(amount)
-        self.publish(PetMood.HAPPY, "Fed! Feeling good.")
+        self.publish(PetMood.HAPPY, self._phrase("feed"))
+        self._state.save()
 
     def pet_stroke(self, amount: int = 15) -> None:
         """Pet the pet."""
         self._state.pet_stroke(amount)
-        self.publish(PetMood.HAPPY, "That feels nice!")
+        self.publish(PetMood.HAPPY, self._phrase("stroke"))
+        self._state.save()
 
     def toggle_accessory(self, accessory_id: str) -> None:
         """Toggle an accessory."""
         self._state.toggle_accessory(accessory_id)
+        self._state.save()
 
     def reset_progress(self) -> None:
         """Reset gamification progress."""
         self._state.reset_progress()
+        self._state.save()
+
+    def save_state(self) -> None:
+        """持久化当前 pet 状态到磁盘."""
+        self._state.save()
+
+    def load_state(self) -> None:
+        """从磁盘恢复 pet 状态."""
+        self._state.load()
 
     @property
     def state(self) -> PetState:
@@ -348,9 +432,10 @@ def configure_pet(
     name: str | None = None,
     personality: str | None = None,
     avatar: str | None = None,
+    accessories: list[str] | None = None,
 ) -> None:
     """Configure the global pet name and personality."""
-    get_pet_bus().configure(name, personality, avatar=avatar)
+    get_pet_bus().configure(name, personality, avatar=avatar, accessories=accessories)
 
 
 def feed_pet(amount: int = 25) -> None:

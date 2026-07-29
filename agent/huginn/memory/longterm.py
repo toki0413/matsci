@@ -928,6 +928,7 @@ class LongTermMemory:
         formula: str | None = None,
         user_id: str | None = None,
         path: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve alive memories matching query (FTS5 + optional semantic).
 
@@ -939,6 +940,9 @@ class LongTermMemory:
             to top_k * 3 so path-near matches that FTS ranked low still
             make it into the candidate pool. When omitted, the original
             tier/importance ordering is preserved unchanged.
+        since: when supplied (ISO 8601 string), only memories with
+            created_at >= since are returned. Useful for querying only
+            recent knowledge within an autoresearch iteration window.
         """
         results = []
         alive_where, alive_params = self._where_alive()
@@ -965,6 +969,11 @@ class LongTermMemory:
             if formula:
                 sql += " AND m.formula = ?"
                 params.append(formula)
+            if since:
+                # P1: 时间范围查询 — 只返回 created_at >= since 的记忆.
+                # autoresearch 场景: 查询本轮/本会话新写入的知识, 避免旧记忆干扰.
+                sql += " AND m.created_at >= ?"
+                params.append(since)
             if query:
                 fts_matched = False
                 # Try FTS5 first for proper tokenized matching

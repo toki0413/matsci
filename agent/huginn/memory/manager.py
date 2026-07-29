@@ -139,12 +139,15 @@ class MemoryManager:
         top_k: int = 5,
         material_filter: dict[str, str] | None = None,
         path: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search long-term memory. material_filter 可按 formula/category 过滤材料记忆.
 
         path: optional lookup path — when set, results are re-ranked by
             _path_rank so memories at or near this path win over equally
             scoring global memories. See LongTermMemory.retrieve.
+        since: optional ISO 8601 timestamp — when set, only memories
+            created at or after this time are returned.
         """
         formula = None
         cat = category
@@ -161,6 +164,7 @@ class MemoryManager:
             semantic=self.config.enable_semantic_search,
             formula=formula,
             path=path,
+            since=since,
         )
 
     def recall_for_prompt(
@@ -168,9 +172,12 @@ class MemoryManager:
         query: str,
         max_entries: int = 3,
         material_filter: dict[str, str] | None = None,
+        since: str | None = None,
     ) -> str:
         """Format recalled memories for injection into LLM prompt."""
-        results = self.recall(query, top_k=max_entries, material_filter=material_filter)
+        results = self.recall(
+            query, top_k=max_entries, material_filter=material_filter, since=since,
+        )
 
         # M: typed memory 叠加在 FTS5 之上. 按 memory_type 优先级拉结构化记录,
         # 跟 FTS5 结果按 content 去重, typed 优先保留. ponytail: 不替换 FTS5,

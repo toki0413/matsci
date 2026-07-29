@@ -19,6 +19,32 @@ EDGE_TYPE_METHOD_DEP = "method_dep"
 EDGE_TYPE_CAUSAL_DEP = "causal_dep"
 
 
+def _filter_by_since(result: dict[str, Any], since: str) -> dict[str, Any]:
+    """Drop episode nodes older than `since` from a graph query result.
+
+    Non-episode nodes (Material/Tool/Method/...) represent stable project
+    entities, not temporal events, so they are always kept. Edges that
+    referenced dropped nodes are removed too.
+    ponytail: post-filter instead of pushing into GraphQuery — keeps the
+    community-aware BFS path unchanged. Upgrade path: push into GraphQuery
+    when since-filtering becomes the default mode.
+    """
+    kept_nodes = []
+    dropped_ids: set[str] = set()
+    for n in result.get("nodes", []):
+        if n.get("type") == NODE_TYPE_EPISODE:
+            ts = n.get("timestamp", "")
+            if ts and ts < since:
+                dropped_ids.add(n["id"])
+                continue
+        kept_nodes.append(n)
+    kept_edges = [
+        e for e in result.get("edges", [])
+        if e.get("source") not in dropped_ids and e.get("target") not in dropped_ids
+    ]
+    return {"nodes": kept_nodes, "edges": kept_edges}
+
+
 class ProjectKnowledgeGraph:
     """A local, persistent knowledge graph for a workspace."""
 
@@ -187,12 +213,25 @@ class ProjectKnowledgeGraph:
             return "\n".join(nx.generate_gml(self._graph))
         return nx.node_link_data(self._graph, edges="links")
 
-    def query(self, seed: str, depth: int = 1, top_k: int = 10) -> dict[str, Any]:
-        """Query the graph for seed entities and return a subgraph."""
+    def query(
+        self, seed: str, depth: int = 1, top_k: int = 10,
+        since: str | None = None,
+    ) -> dict[str, Any]:
+        """Query the graph for seed entities and return a subgraph.
+
+        since: optional ISO 8601 timestamp — when set, episode nodes
+            (and their dependency edges) with timestamp < since are
+            excluded from the result. Non-episode nodes are always kept
+            since they represent stable project entities, not temporal
+            events. Useful for scoping graph context to a recent window.
+        """
         from huginn.kg.query import GraphQuery
 
         q = GraphQuery(self._graph)
-        return q.community_aware_query(seed, depth=depth, top_k=top_k)
+        result = q.community_aware_query(seed, depth=depth, top_k=top_k)
+        if since:
+            result = _filter_by_since(result, since)
+        return result
 
     def hybrid_retrieve(
         self,
@@ -460,12 +499,15 @@ class ProjectKnowledgeGraph:
             )
 
     def query_episode_path(
-        self, step_id: int, direction: str = "backward"
+        self, step_id: int, direction: str = "backward",
+        since: str | None = None,
     ) -> list[dict]:
         """Walk the episode DAG backward (predecessors) or forward (successors).
 
         Returns episode node attribute dicts sorted by step_id. The start
         node is included. Missing start or invalid direction → empty list.
+        since: optional ISO 8601 timestamp — when set, episodes with
+            timestamp < since are dropped from the walk result.
         """
         if direction not in ("backward", "forward"):
             return []
@@ -495,6 +537,9 @@ class ProjectKnowledgeGraph:
                 dict(self._graph.nodes[n])
                 for n in visited
                 if self._graph.nodes[n].get("type") == NODE_TYPE_EPISODE
+                and (since is None
+                     or not self._graph.nodes[n].get("timestamp", "")
+                     or self._graph.nodes[n].get("timestamp", "") >= since)
             ]
         episodes.sort(key=lambda d: d.get("step_id", 0))
         return episodes
