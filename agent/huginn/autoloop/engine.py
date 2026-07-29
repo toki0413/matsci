@@ -824,18 +824,20 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         except Exception:
             return []
 
-    def _build_memory_text(self, query: str) -> str:
+    def _build_memory_text(self, query: str, since: str | None = None) -> str:
         """检索长期记忆, 把跨会话的教训/发现拼成 prompt 上下文块.
         Memory 之前只写不读 — _learn 写入的迭代记录和失败教训,
         下轮 hypothesize/plan 完全看不到. 这个函数闭合了 memory 读回环.
-        查询失败/空结果返回空串, 不影响 prompt."""
+        查询失败/空结果返回空串, 不影响 prompt.
+        since: 可选 ISO 8601 时间戳, 只召回该时间之后写入的记忆.
+            autoresearch 场景用于限定到本轮/本会话的知识窗口."""
         if not query:
             return ""
         parts: list[str] = []
         mem = getattr(self, "memory", None)
         if mem is not None:
             try:
-                text = mem.recall_for_prompt(query, max_entries=3)
+                text = mem.recall_for_prompt(query, max_entries=3, since=since)
                 if text:
                     parts.append(text)
             except Exception:
@@ -884,12 +886,17 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             match = trajectory_match(current, history, min_similarity=0.4)
             if match is None:
                 self._last_traj_match_doc_id = None
+                self._last_traj_match_run_id = None
                 return ""
-            # 记下 doc_id 供 _learn 调 update_pattern_confidence (C3).
-            # ponytail: trajectory_match 返回 history_id, 不直接是 KB doc_id.
-            # 真要闭环需要从 history_id 反查 KB doc_id, 这里先记 history_id,
-            # _learn 暂不调 update_pattern_confidence (留给升级路径).
-            self._last_traj_match_doc_id = match.get("history_id")
+            # C3 闭环: 记下 run_id 供 _learn 反查 KB doc_id 调 update_pattern_confidence.
+            # _traj_run_ids 是 _load_trajectory_action_history 填充的平行数组,
+            # history_id 是它的索引.
+            hid = match.get("history_id")
+            self._last_traj_match_doc_id = hid
+            run_ids = getattr(self, "_traj_run_ids", [])
+            self._last_traj_match_run_id = (
+                run_ids[hid] if hid is not None and hid < len(run_ids) else None
+            )
             advice = (
                 f"### Trajectory Match (PM layer)\n"
                 f"Current phase sequence matches history[{match['history_id']}] "
@@ -901,6 +908,7 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             return advice
         except Exception:
             self._last_traj_match_doc_id = None
+            self._last_traj_match_run_id = None
             return ""
 
     def _ensure_target_chains(self) -> list:
@@ -3672,12 +3680,17 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         每个 trajectory.json 的 spans 里 phase 名就是 action. 抽出来给
         trajectory_match 当 history 用 (VF2 子图同构 prefix 匹配).
 
+        额外填充 self._traj_run_ids (平行数组), 供 _learn 用 run_id 反查 KB
+        做 ±ε 反馈 (C3 闭环).
+
         ponytail: 只读最近 limit 个文件, 不做全量索引. 升级路径: KB 索引 + 元数据过滤.
         """
         traj_dir = self.workspace / ".huginn" / "trajectories"
         if not traj_dir.exists():
+            self._traj_run_ids = []
             return []
         history: list[list[str]] = []
+        run_ids: list[str] = []
         try:
             files = sorted(
                 traj_dir.glob("*.json"),
@@ -3685,6 +3698,7 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                 reverse=True,
             )[:limit]
         except Exception:
+            self._traj_run_ids = []
             return []
         for f in files:
             try:
@@ -3700,6 +3714,9 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             actions = [a for a in actions if a]
             if len(actions) >= 2:
                 history.append(actions)
+                # 文件名 stem = run_id (cognitive_loop save_trajectory 用 run_id 命名)
+                run_ids.append(f.stem)
+        self._traj_run_ids = run_ids
         return history
 
     def _check_stuck(self, action_history: list[str]) -> dict[str, Any] | None:
@@ -3967,6 +3984,24 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                 exc_info=True,
             )
 
+        # P0: 迭代历史栈注入 — 让 validate 看到前几轮的 hypothesis/val_status,
+        # 判断当前结果是否在重复已失败的路径. ponytail: 从 self 镜像读, 最近 5 轮.
+        _iter_hist = getattr(self, "_iteration_history", None) or []
+        _prev_block = ""
+        if _iter_hist:
+            _lines = []
+            for _h in _iter_hist[-5:]:
+                _lines.append(
+                    f"  iter{_h.get('iter', '?')}: {_h.get('action', '?')} "
+                    f"({_h.get('val_status', 'none')})"
+                    + (f" [{_h.get('plan_mode')}]" if _h.get('plan_mode') else "")
+                    + (f" → {_h.get('advice', '')[:80]}" if _h.get('redirect') else "")
+                )
+            _prev_block = (
+                "\nPrevious iterations (avoid re-validating already-failed paths):\n"
+                + "\n".join(_lines) + "\n"
+            )
+
         prompt = (
             "You are a verification model. Score the quality of this agent output "
             "from 0.0 to 1.0.\n"
@@ -3980,7 +4015,7 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             "Also describe failure mode (Dream Layer insight: how it crashes = new discovery):\n"
             "- If this hypothesis is WRONG, in what specific way would it fail?\n"
             "- What would the system look like if the opposite were true?\n"
-            f"{collapse_hint}{memory_hint}\n\n"
+            f"{collapse_hint}{memory_hint}{_prev_block}\n\n"
             f"Agent output:\n{snippet}\n\n"
             "Respond with ONLY a JSON object: "
             '{"score": <float>, "evidence_score": <float 0-1>, '
@@ -4687,6 +4722,39 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             await self._synthesize_self_goal_if_ready()
         except Exception:
             logger.debug("self-goal synthesis hook failed", exc_info=True)
+
+        # C3 闭环: 本轮如果命中过 trajectory_match, 按 validation 结果做 ±ε.
+        # spec (layered_memory_spec.md:124) 设计的闭环, 之前只开了一半
+        # (extract_and_store_pattern 在 goal_achieved 时 +ε), 缺 -ε 反馈.
+        # 用 run_id 反查 KB doc_id (metadata.run_id), 调 update_pattern_confidence.
+        _traj_run_id = getattr(self, "_last_traj_match_run_id", None)
+        if _traj_run_id:
+            try:
+                kb = self._get_kb()
+                if kb and hasattr(kb, "collection"):
+                    data = kb.collection.get(
+                        where={"source": "trajectory_pattern"},
+                        include=["metadatas"],
+                    )
+                    doc_id = None
+                    for meta in (data.get("metadatas") or []):
+                        if meta.get("run_id") == _traj_run_id:
+                            doc_id = meta.get("doc_id")
+                            break
+                    if doc_id:
+                        from huginn.knowledge.trajectory_pattern import (
+                            update_pattern_confidence,
+                        )
+                        _tests_ok = bool(
+                            validation.get("tests_passed")
+                            if isinstance(validation, dict) else False
+                        )
+                        update_pattern_confidence(kb, doc_id, success=_tests_ok)
+            except Exception:
+                logger.debug("C3 trajectory confidence update failed", exc_info=True)
+            # 清掉本轮 match 标记, 下轮重新记
+            self._last_traj_match_run_id = None
+            self._last_traj_match_doc_id = None
 
         # D2: 返回 summary, 让 caller 写 cog["last_learn_summary"]
         return {
