@@ -18,7 +18,9 @@ iteration's prompt carries "mode X not allowed at tier Y, use Z instead".
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+
+from dataclasses import dataclass, field
 from typing import Literal
 
 PlanMode = Literal["coder", "workflow", "explore"]
@@ -80,4 +82,55 @@ class ProgressiveBudget:
         )
 
 
-__all__ = ["IterationBudget", "ProgressiveBudget", "PlanMode"]
+class BudgetExhausted(Exception):
+    """Token/cost 预算耗尽 — agent loop 应捕获并优雅停止.
+
+    硬上限 (hard_limit_tokens / hard_limit_cost) 触发; 软上限只算信号不算刹车.
+    """
+
+
+@dataclass
+class TokenBudget:
+    """LLM 调用的 token + cost 硬刹车预算.
+
+    每次 LLM 调用后调 update(usage_tokens, usage_cost) 累加. 超硬上限抛
+    BudgetExhausted, agent loop 捕获后 save_engine_state 保存进度再停.
+    默认值 (10M tokens / $50) 足够大多数短任务, 长任务/极限模式调 env 覆盖.
+
+    ponytail: soft_limit 只存不用 (留给上层 warning), 硬上限才刹车.
+    """
+
+    hard_limit_tokens: int = field(
+        default_factory=lambda: int(os.environ.get("HUGINN_TOKEN_BUDGET", "10000000"))
+    )
+    soft_limit_tokens: int = -1  # <0 = 取 hard_limit 的 80%
+    hard_limit_cost: float = field(
+        default_factory=lambda: float(os.environ.get("HUGINN_COST_BUDGET", "50.0"))
+    )
+    current_tokens: int = 0
+    current_cost: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.soft_limit_tokens < 0:
+            self.soft_limit_tokens = int(self.hard_limit_tokens * 0.8)
+
+    def update(self, usage_tokens: int, usage_cost: float) -> None:
+        """累加用量; 超任一硬上限抛 BudgetExhausted."""
+        self.current_tokens += int(usage_tokens)
+        self.current_cost += float(usage_cost)
+        if self.is_exhausted():
+            raise BudgetExhausted(
+                f"token budget exhausted: "
+                f"tokens={self.current_tokens}/{self.hard_limit_tokens} "
+                f"cost={self.current_cost:.4f}/{self.hard_limit_cost:.4f}"
+            )
+
+    def is_exhausted(self) -> bool:
+        """超任一硬上限返回 True."""
+        return (
+            self.current_tokens > self.hard_limit_tokens
+            or self.current_cost > self.hard_limit_cost
+        )
+
+
+__all__ = ["IterationBudget", "ProgressiveBudget", "PlanMode", "TokenBudget", "BudgetExhausted"]

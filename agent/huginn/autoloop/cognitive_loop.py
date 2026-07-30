@@ -2983,6 +2983,8 @@ Respond JSON only:
             # P15: 周期 save — flag off 时 no-op, iteration % save_every == 0 才真写.
             # refute 在 _learn 内发生, reflect 末尾的周期 save 会在 ≤save_every 步内捕获.
             self._maybe_save_engine_state(reason="periodic")
+            # P2-5: 跟周期 save 同节奏清超时 pending inbox item.
+            self._maybe_expire_inbox()
 
             return ReflectionResult(
                 should_continue=True,

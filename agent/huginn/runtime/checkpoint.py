@@ -20,6 +20,7 @@ from pathlib import Path
 from huginn.utils.common import atomic_write_json
 
 from huginn.events.audit_log import verify_audit_chain
+from huginn.runtime.trace_context import get_trace_id as _get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,8 @@ class Checkpoint:
     # P15: EngineState 的 8 位 hash, resume 时跟重算的 digest 比对, 防 drift.
     # None 表示该 checkpoint 没绑 engine_state (老格式 / 持久化未启用), 跳过校验.
     engine_state_digest: str | None = None
+    # P2-6: 统一 trace_id, save 时从 TraceContext 读.
+    trace_id: str = ""
 
 
 def _checkpoint_dir(workspace: Path, task_id: str) -> Path:
@@ -84,6 +87,7 @@ def save_checkpoint(
         audit_hash_head=_get_audit_hash_head(workspace),
         saved_at=time.time(),
         engine_state_digest=engine_state_digest,
+        trace_id=_get_trace_id() or "",
     )
     atomic_write_json(_checkpoint_path(workspace, task_id, step_id), asdict(cp))
     _prune_checkpoints(task_id, workspace)

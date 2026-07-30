@@ -26,6 +26,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.runtime.trace_context import get_trace_id as _get_trace_id
+
 
 @dataclass
 class AuditEvent:
@@ -40,6 +42,7 @@ class AuditEvent:
     output_hash: str | None = None
     prev_hash: str = ""  # hash chain for tamper evidence
     signature: str | None = None  # HMAC-SHA256 signature
+    trace_id: str = ""  # P2-6: 统一 trace_id, 从 TraceContext 读
 
 
 class AuditLogger:
@@ -167,6 +170,7 @@ class AuditLogger:
             "input_hash": input_hash,
             "output_hash": output_hash,
             "prev_hash": self._last_hash,
+            "trace_id": _get_trace_id() or "",
         }
 
         # Sign the canonical JSON (no signature field)
@@ -185,6 +189,7 @@ class AuditLogger:
             output_hash=output_hash,
             prev_hash=self._last_hash,
             signature=sig or None,
+            trace_id=event_dict["trace_id"],
         )
 
         line = json.dumps(event_dict, sort_keys=True, default=str)
