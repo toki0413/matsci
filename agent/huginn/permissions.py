@@ -34,6 +34,31 @@ DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
     r"git\s+clean\s+-fd",       # git clean -fd
 ]
 
+# Read-only tool names — SSE chat 路径用来区分“可 auto_approve”和“需 ASK”.
+# ponytail: frozenset 常量, O(1) 查找, 不引新依赖.
+READ_ONLY_TOOLS: frozenset[str] = frozenset({
+    "read_file", "list_dir", "grep", "glob", "search",
+    "codebase_search", "search_codebase", "ls", "find",
+    "cat", "head", "tail",
+})
+
+# Write / exec tool names — 显式标记, SSE 路径下不 auto_approve.
+# 未列在 READ_ONLY_TOOLS 里的工具默认就返回 False, 这个集合留着做可观测性 / 未来显式校验.
+WRITE_EXEC_TOOLS: frozenset[str] = frozenset({
+    "file_write", "file_edit", "vasp_tool", "lammps_tool",
+    "code_act", "bash", "shell", "subprocess",
+    "git_commit", "git_push",
+})
+
+
+def is_read_only_tool(tool_name: str) -> bool:
+    """Return True if the tool is a read-only operation safe to auto-approve.
+
+    SSE chat 路径用这个函数收窄 auto_approve 范围: 只读工具直接放行,
+    写/执行工具仍走 ASK 确认. 未知名默认 False — 按非只读处理.
+    """
+    return tool_name in READ_ONLY_TOOLS
+
 # Default permission rules for material science tools
 # Note: science_* tools (science-skills bridge) are auto-approved via wildcard
 # prefix matching in PermissionConfig.get_mode() — no entries needed here.

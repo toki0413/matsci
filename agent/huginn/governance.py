@@ -237,6 +237,14 @@ class GovernanceFacade:
         If constraints fail and auto_rollback=True, the action is rolled back.
         """
         self._ensure_initialized()
+        # Log rollback availability — let the user know if compensation
+        # safety net is actually wired up.
+        rollback_ready = self._rollback_available()
+        logger.info(f"[gov] rollback available: {rollback_ready}")
+        if not rollback_ready:
+            logger.warning(
+                "[gov] rollback not configured, execute without compensation safety net"
+            )
         audit_id = uuid.uuid4().hex[:12]
         timestamp = time.time()
 
@@ -376,30 +384,49 @@ class GovernanceFacade:
 
         return at.verifiability.verify(exec_ctx)
 
-    # ── Core: rollback ──────────────────────────────────────────
+    # ── Core: rollback ─────────────────────────────────────────────────────
 
-    def rollback(self, audit_id: str) -> bool:
-        """Roll back a previously executed action by audit_id."""
+    def _rollback_available(self) -> bool:
+        """Check if rollback is properly configured before promising it.
+
+        rollback needs provenance registry (to look up the audit entry and
+        its handler) AND snapshot manager (to revert file state). Either
+        missing means rollback can not fulfill its contract — better to
+        report upfront than silently fail.
+        """
+        self._ensure_initialized()
+        return self._provenance is not None and self._snapshot_mgr is not None
+
+    def rollback(self, audit_id: str) -> tuple[bool, str]:
+        """Roll back a previously executed action by audit_id.
+
+        Returns (success, reason). reason is "ok" on success, or an error
+        code like "rollback_not_configured" / "no_rollback_mechanism".
+        """
         self._ensure_initialized()
 
-        # Find the audit entry
+        if not self._rollback_available():
+            logger.warning("[gov] rollback not configured — provenance/snapshot module missing")
+            return False, "rollback_not_configured"
+
+        # Find the audit entry via provenance
         if self._provenance:
             try:
                 entry = self._provenance.lookup(audit_id)
                 if entry and entry.get("rollback_handler"):
-                    return entry["rollback_handler"](entry.get("context", {}))
+                    return entry["rollback_handler"](entry.get("context", {})), "ok"
             except Exception as e:
                 logger.debug(f"[gov] provenance rollback failed: {e}")
 
         # Fall back to snapshot manager
         if self._snapshot_mgr:
             try:
-                return self._snapshot_mgr.revert(audit_id)
+                return self._snapshot_mgr.revert(audit_id), "ok"
             except Exception as e:
                 logger.debug(f"[gov] snapshot rollback failed: {e}")
 
         logger.warning(f"[gov] no rollback mechanism for audit_id={audit_id}")
-        return False
+        return False, "no_rollback_mechanism"
 
     # ── Query: audit trail ──────────────────────────────────────
 

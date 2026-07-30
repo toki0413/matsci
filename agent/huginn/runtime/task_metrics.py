@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from huginn.utils.common import atomic_write_json
+from huginn.runtime.trace_context import get_trace_id as _get_trace_id
 
 
 @dataclass
@@ -36,6 +37,8 @@ class TaskMetrics:
     # 用于跨领域统计 + 领域包切换. 不强制 LLM 填, 缺失=unknown.
     # ponytail: 字符串标签而非 enum, 避免维护领域枚举. 升级路径: 领域包注册表.
     domain_label: str = "unknown"
+    # P2-6: 统一 trace_id, save 时从 TraceContext 读.
+    trace_id: str = ""
 
 
 def _metrics_path(workspace: Path) -> Path:
@@ -108,7 +111,9 @@ def update_metrics(
 def save_metrics(task_metrics: TaskMetrics, workspace: Path) -> Path:
     """落盘到 workspace/.huginn/task_metrics.json, 原子写, 返回路径."""
     path = _metrics_path(workspace)
-    atomic_write_json(path, asdict(task_metrics))
+    # P2-6: 序列化时附 trace_id (调用方已设则保留, 否则从 TraceContext 读).
+    tm = replace(task_metrics, trace_id=task_metrics.trace_id or _get_trace_id() or "")
+    atomic_write_json(path, asdict(tm))
     return path
 
 
