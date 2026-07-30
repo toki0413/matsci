@@ -33,6 +33,7 @@ import asyncio
 import json
 import os
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -47,6 +48,7 @@ KIND_PLAN = "plan"  # agent 提交 plan 等批准
 
 STATE_PENDING = "pending"
 STATE_RESOLVED = "resolved"
+STATE_EXPIRED = "expired"  # TTL 到期, expire_pending 置此状态
 
 # pending item 出现在哪. INLINE = attended session 直接在 composer 答 (服务端
 # parked, 重连重发, 不进跨会话列表). INBOX = session 设成 Unattended, 进跨会话
@@ -99,6 +101,10 @@ class InboxItem:
     multi: bool = False  # 允许选多个 option
     # Kind-specific payload (directory: suggested path/writable; plan: plan text; …).
     data: dict[str, Any] = field(default_factory=dict)
+    # P2-5 TTL: pending item 超时自动 expire, 防 unattended session 永久阻塞.
+    # 默认 24h; created_at_ts 是 epoch float (跟 created_at ISO str 并存, 各司其职).
+    ttl_seconds: float = 86400.0
+    created_at_ts: float = field(default_factory=time.time)
 
 
 class InboxStore:
@@ -344,11 +350,38 @@ class InboxStore:
                 closed += 1
         return closed
 
+    def expire_pending(self, session_id: "str | None" = None) -> int:
+        """TTL 到期的 pending item 置 expired, 释放挂起的 waiter.
+
+        返回过期条数. 超时判断: time.time() - created_at_ts > ttl_seconds.
+        ponytail: 只动 pending 的, 已 resolved 的不动. expire 后 waiter 拿到
+        resolution="expired" (inbox_approval_fn 走 deny 兜底, 安全默认).
+        """
+        now = time.time()
+        expired = 0
+        with self._lock:
+            for item in list(self._items.values()):
+                if item.state != STATE_PENDING:
+                    continue
+                if session_id is not None and item.session_id != session_id:
+                    continue
+                if now - item.created_at_ts > item.ttl_seconds:
+                    item.state = STATE_EXPIRED
+                    item.resolution = "expired"
+                    expired += 1
+            if expired:
+                self._save()
+        # 释放挂起的 waiter (跟 resolve 同范式), 否则 await store.wait 会永远挂
+        for item in self._items.values():
+            if item.state == STATE_EXPIRED and item.id in self._waiters:
+                self._waiters[item.id].set()
+        return expired
+
     async def wait(self, item_id: str) -> str:
         """Await an item's resolution; returns the resolution string. Approver
         用这个挂起 agent 直到人类从任意 surface 回答."""
         item = self._items.get(item_id)
-        if item is not None and item.state == STATE_RESOLVED:
+        if item is not None and item.state in (STATE_RESOLVED, STATE_EXPIRED):
             return item.resolution or ""
         ev = self._waiters.setdefault(item_id, asyncio.Event())
         await ev.wait()

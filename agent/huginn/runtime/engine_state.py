@@ -4,8 +4,9 @@
 原子写到 <workspace>/.huginn/engine_state/<run_id>.json, crash 后通过
 resume_from_state=<run_id> 恢复, 维持 persona-memory-knowledge 循环连续.
 
-HUGINN_USE_PERSISTENCE=1 启用, 默认 off. Flag off 时 save/load 完全跳过,
-现有 run_cognitive 行为 100% 不变.
+默认开 (crash-safe resume). HUGINN_DISABLE_PERSISTENCE=1 可显式关闭;
+HUGINN_USE_PERSISTENCE 仍兼容 (=1 显式开 / =0 显式关). flag off 时 save/load
+完全跳过.
 
 Layout:
   <workspace>/.huginn/engine_state/<run_id>.json       — EngineState
@@ -21,17 +22,54 @@ from pathlib import Path
 from typing import Any
 
 from huginn.utils.common import atomic_write_json
+from huginn.runtime.trace_context import get_trace_id as _get_trace_id
 
-# 跟随 P12/P13/P14 的 env flag 风格, 默认 off.
+# 跟随 P12/P13/P14 的 env flag 风格, 默认开 (crash-safe resume).
 # ponytail: 不读 settings, 不加配置文件 — env var 跟现有 flag 一致.
 _PERSISTENCE_FLAG = "HUGINN_USE_PERSISTENCE"
+_DISABLE_FLAG = "HUGINN_DISABLE_PERSISTENCE"
 _SAVE_EVERY_FLAG = "HUGINN_ENGINE_STATE_SAVE_EVERY"
 _DEFAULT_SAVE_EVERY = 10
 
 
 def use_persistence() -> bool:
-    """HUGINN_USE_PERSISTENCE=1 才开. 默认 off."""
-    return os.environ.get(_PERSISTENCE_FLAG, "0") == "1"
+    """是否开启 EngineState 持久化. 默认开.
+
+    优先级: HUGINN_USE_PERSISTENCE 显式设值 > HUGINN_DISABLE_PERSISTENCE > 默认 True.
+    - HUGINN_USE_PERSISTENCE=1 显式开 / =0 显式关 (兼容老 flag)
+    - 都不设时默认开, 但 HUGINN_DISABLE_PERSISTENCE=1 可关 (反向 flag)
+    """
+    if _PERSISTENCE_FLAG in os.environ:
+        return os.environ[_PERSISTENCE_FLAG] == "1"
+    if os.environ.get(_DISABLE_FLAG) == "1":
+        return False
+    return True
+
+
+def latest_run_id(workspace: str | Path) -> str | None:
+    """返回最新 engine_state snapshot 的 run_id (按 mtime), 无则 None.
+
+    用于 autoloop 默认 resume: 不传 resume_from_state 时自动找最新 checkpoint.
+    ponytail: 按 mtime 排序, 不解析内容 — 最新落盘的就是最新.
+    """
+    if not use_persistence():
+        return None
+    d = _engine_state_dir(workspace)
+    if not d.exists():
+        return None
+    try:
+        candidates = sorted(
+            d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        if not candidates:
+            return None
+        return candidates[0].stem
+    except Exception:
+        import logging
+        logging.getLogger(__name__).debug(
+            "latest_run_id scan failed (non-fatal)", exc_info=True,
+        )
+        return None
 
 
 def save_every_steps() -> int:
@@ -112,6 +150,8 @@ class EngineState:
     # meta
     run_id: str = ""
     saved_at: float = 0.0
+    # P2-6: 统一 trace_id, save 时从 TraceContext 读, 串联 audit/checkpoint/metrics.
+    trace_id: str = ""
 
 
 def _engine_state_dir(workspace: str | Path) -> Path:
@@ -133,7 +173,11 @@ def _snapshot_engine(engine: Any, run_id: str) -> EngineState:
     ponytail: 不做 isinstance(engine, AutoloopEngine) 检查 — duck typing 够.
     """
     defaults = EngineState()
-    kwargs: dict[str, Any] = {"run_id": run_id, "saved_at": time.time()}
+    kwargs: dict[str, Any] = {
+        "run_id": run_id,
+        "saved_at": time.time(),
+        "trace_id": _get_trace_id() or "",
+    }
     for f in _ENGINE_FIELDS:
         kwargs[f] = getattr(engine, f, getattr(defaults, f))
     return EngineState(**kwargs)
@@ -234,6 +278,7 @@ def load_engine_state(
             )
         kwargs["run_id"] = data.get("run_id", run_id)
         kwargs["saved_at"] = data.get("saved_at", 0.0)
+        kwargs["trace_id"] = data.get("trace_id", "")
         return EngineState(**kwargs)
     except Exception:
         import logging

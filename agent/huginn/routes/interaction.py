@@ -32,6 +32,7 @@ from huginn.interaction.progress import get_progress_tracker
 from huginn.interaction.streaming import StreamInterceptor
 from huginn.routes.schemas import ChatRequest
 from huginn.server_core import get_agent_factory
+from huginn.permissions import READ_ONLY_TOOLS, PermissionMode
 
 router = APIRouter(tags=["interaction"])
 
@@ -85,10 +86,13 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
                     thinking=req.thinking,
                     max_tokens=req.max_tokens,
                 )
-                # sidecar serve 模式: 放行 ASK 工具, 但危险命令模式检查
-                # 仍在 adapter._check_permission 里生效, rm -rf / 这类
-                # 即使 auto_approve_all=True 也会被拦下
-                agent._permission_config.auto_approve_all = True
+                # sidecar serve 模式: 不再全放行 ASK 工具.
+                # 只对只读工具 (read_file/grep/glob 等) auto_approve,
+                # 写/执行工具 (file_write/vasp_tool/lammps_tool 等) 仍走 ASK 确认.
+                # 危险命令模式检查仍在 adapter._check_permission 里生效, rm -rf / 这类
+                # 会被拦下要求确认, 不受 auto_approve 影响.
+                for _tool_name in READ_ONLY_TOOLS:
+                    agent._permission_config.set_mode(_tool_name, PermissionMode.AUTO)
 
                 final_text = ""
                 try:

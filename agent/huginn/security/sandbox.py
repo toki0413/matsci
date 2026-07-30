@@ -122,8 +122,15 @@ class SandboxResult:
 class SandboxExecutor:
     """Execute subprocess commands inside a security sandbox."""
 
-    def __init__(self, config: SandboxConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: SandboxConfig | None = None,
+        profile: str = "light",
+    ) -> None:
         self.config = config or SandboxConfig()
+        # Task 1.2: 软沙箱按 profile 限内存 (POSIX RLIMIT_AS), 跚 Docker 档位对齐.
+        # light=2g/standard=8g/heavy=16g, 复用 docker_sandbox._PROFILES 的 mem 字段.
+        self.profile = profile
         # HUGINN_SANDBOX_RELAX=1 关闭 strict_work_dir (兼容老用户)
         if os.environ.get("HUGINN_SANDBOX_RELAX") == "1":
             self.config.strict_work_dir = False
@@ -332,6 +339,24 @@ class SandboxExecutor:
             #   这里只在 cmd[0] 是 POSIX coreutil 时翻译, 参数透传 (可能不兼容但至少不卡).
             cmd = ["cmd", "/c", _mapped, *cmd[1:]]
 
+        # Task 1.2: POSIX 软沙箱补 RLIMIT_AS 内存上限 (按 profile, 跚 Docker 档位对齐).
+        # Windows 跳过 (resource 模块不支持 RLIMIT_AS). save/restore 父进程 limit,
+        # 避免污染 agent 自身内存上限. ponytail: try/except 包裹, 失败不阻塞.
+        _saved_rlimit_as = None
+        if os.name != "nt":
+            try:
+                import resource as _resource
+                _mem = _profile_mem_bytes(self.profile)
+                if _mem and _mem > 0:
+                    _saved_rlimit_as = _resource.getrlimit(_resource.RLIMIT_AS)
+                    _resource.setrlimit(_resource.RLIMIT_AS, (_mem, _mem))
+            except Exception:
+                import logging
+                logging.getLogger(__name__).debug(
+                    "setrlimit(RLIMIT_AS, profile=%s) failed (non-fatal)",
+                    self.profile, exc_info=True,
+                )
+
         try:
             result = subprocess.run(
                 cmd,
@@ -354,6 +379,14 @@ class SandboxExecutor:
                 command=cmd,
                 dry_run=False,
             )
+        finally:
+            # 恢复父进程 limit, 避免子进程内存上限反过来卡死 agent 自身.
+            if _saved_rlimit_as is not None:
+                try:
+                    import resource as _resource
+                    _resource.setrlimit(_resource.RLIMIT_AS, _saved_rlimit_as)
+                except Exception:
+                    pass
 
         # Truncate oversized output
         stdout = result.stdout or ""
@@ -390,45 +423,90 @@ class SandboxExecutor:
         return hashlib.sha256(data).hexdigest()[:16]
 
 
+def _profile_mem_bytes(profile: str) -> int | None:
+    """profile -> 内存上限 (bytes). 复用 docker_sandbox._PROFILES 的 mem 字段.
+
+    light=2g/standard=8g/heavy=16g, 跚 Docker 容器档位对齐.
+    ponytail: lazy import docker_sandbox 取 _PROFILES, 解析 "2g"/"512m" 字符串;
+      import 失败 (docker SDK 缺) 时用本地 fallback, 值跟 _PROFILES 同步.
+    """
+    _FALLBACK_GB = {"light": 2, "standard": 8, "heavy": 16}
+    try:
+        from huginn.security.docker_sandbox import _PROFILES
+        mem_str = _PROFILES.get(profile or "light", _PROFILES["light"])[0]
+        mem_str = mem_str.strip().lower()
+        if mem_str.endswith("g"):
+            return int(float(mem_str[:-1]) * 1024 * 1024 * 1024)
+        if mem_str.endswith("m"):
+            return int(float(mem_str[:-1]) * 1024 * 1024)
+        return int(float(mem_str))
+    except Exception:
+        gb = _FALLBACK_GB.get(profile or "light", 2)
+        return gb * 1024 * 1024 * 1024
+
+
 def create_sandbox(
     config: SandboxConfig | None = None,
-    prefer_docker: bool = False,
+    prefer_docker: bool = True,
     docker_image: str = "python:3.12-slim",
     profile: str = "light",
 ) -> SandboxExecutor | "DockerSandboxExecutor":  # type: ignore[name-defined]
     """根据环境自动选择沙箱后端。
 
-    - prefer_docker=True 且 Docker 可用 → DockerSandboxExecutor
+    - prefer_docker=True (默认) 且 Docker 可用 → DockerSandboxExecutor
+    - Docker 不可用 → warn log + 自动退回 SandboxExecutor (subprocess 软沙箱), 不 fatal
     - 否则 → SandboxExecutor（subprocess 软沙箱）
 
-    也可以通过环境变量 HUGINN_DOCKER_SANDBOX=1 启用 Docker 沙箱，
-    效果等同 prefer_docker=True。
+    环境变量:
+    - HUGINN_DOCKER_SANDBOX=1 等同 prefer_docker=True (老开关, 保留)
+    - HUGINN_USE_DOCKER=0 显式回退 subprocess (兼容无 Docker 部署); =1 显式开
 
     profile: light/standard/heavy 三档配额, 控制 Docker 容器的 mem/cpu/disk/timeout.
     调用方按任务类型选 (绘图=light, VASP/LAMMPS=standard, 大体系 DFT=heavy).
     """
     cfg = config or SandboxConfig()
+    _log = __import__("logging").getLogger(__name__)
 
     # 环境变量开关，方便运维侧不改代码就切后端
-    env_enabled = os.environ.get("HUGINN_DOCKER_SANDBOX") == "1"
-    want_docker = prefer_docker or env_enabled
+    # HUGINN_USE_DOCKER 显式设值优先 (0=强制 subprocess, 1=强制 docker);
+    # HUGINN_DOCKER_SANDBOX=1 是老开关, 等同显式开; 都不设时跟 prefer_docker 默认走.
+    use_docker_env = os.environ.get("HUGINN_USE_DOCKER")
+    if use_docker_env == "0":
+        want_docker = False
+    elif use_docker_env == "1" or os.environ.get("HUGINN_DOCKER_SANDBOX") == "1":
+        want_docker = True
+    else:
+        want_docker = prefer_docker
 
     if want_docker:
         # 延迟 import，避免 docker SDK 没装时整个 sandbox 模块都加载不了
         try:
             from huginn.security.docker_sandbox import DockerSandboxExecutor
         except Exception:
-            return SandboxExecutor(cfg)
+            _log.warning(
+                "docker_sandbox import failed, falling back to subprocess "
+                "sandbox (profile=%s)", profile, exc_info=True,
+            )
+            return SandboxExecutor(cfg, profile=profile)
 
         try:
             docker_executor = DockerSandboxExecutor(image=docker_image, config=cfg, profile=profile)
         except Exception:
             # 构造失败也别让上层挂掉
-            return SandboxExecutor(cfg)
+            _log.warning(
+                "DockerSandboxExecutor init failed, falling back to "
+                "subprocess sandbox (profile=%s)", profile, exc_info=True,
+            )
+            return SandboxExecutor(cfg, profile=profile)
 
         if docker_executor.is_available():
             return docker_executor
-        # Docker 不可用就静默回退
-        return SandboxExecutor(cfg)
+        # Docker daemon 不可用 → warn + 退回 subprocess (不 fatal)
+        _log.warning(
+            "Docker daemon unavailable, falling back to subprocess sandbox "
+            "(profile=%s). Set HUGINN_USE_DOCKER=0 to silence this.",
+            profile,
+        )
+        return SandboxExecutor(cfg, profile=profile)
 
-    return SandboxExecutor(cfg)
+    return SandboxExecutor(cfg, profile=profile)
