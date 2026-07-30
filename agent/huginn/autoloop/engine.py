@@ -26,6 +26,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.autoloop.budget import BudgetExhausted, TokenBudget
+
 logger = logging.getLogger(__name__)
 
 
@@ -479,20 +481,29 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
 
         # P15: crash-safe resume. flag off / snapshot 缺失时静默跳过, 行为不变.
         # ponytail: 用 duck typing, 不做 isinstance 检查; 失败 log warning 不抛.
-        if resume_from_state:
+        # Task 2.2: 未显式传 resume_from_state 时, 默认尝试加载最新 checkpoint
+        # (按 mtime). 加载失败不 fatal, warn 后从零开始.
+        _resume_id = resume_from_state
+        if not _resume_id:
+            try:
+                from huginn.runtime.engine_state import latest_run_id
+                _resume_id = latest_run_id(self.workspace)
+            except Exception:
+                _resume_id = None
+        if _resume_id:
             try:
                 from huginn.runtime.engine_state import (
                     apply_state_to_engine, load_engine_state, use_persistence,
                     _hypothesis_graph_path,
                 )
                 if use_persistence():
-                    state = load_engine_state(resume_from_state, self.workspace)
+                    state = load_engine_state(_resume_id, self.workspace)
                     if state is not None:
                         apply_state_to_engine(state, self)
                         # hypothesis_graph 单独恢复 (refuted 状态跨 session 必须保留)
                         try:
                             loaded_graph = self.hypothesis_graph.load(
-                                _hypothesis_graph_path(self.workspace, resume_from_state)
+                                _hypothesis_graph_path(self.workspace, _resume_id)
                             )
                             if loaded_graph is not None:
                                 self.hypothesis_graph = loaded_graph
@@ -503,18 +514,18 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                             )
                         logger.info(
                             "resumed engine from run_id=%s: iteration=%d persona=%s",
-                            resume_from_state, state._iteration,
+                            _resume_id, state._iteration,
                             state._last_persona or "(none)",
                         )
                     else:
                         logger.info(
                             "resume requested but no snapshot for run_id=%s, "
-                            "starting fresh", resume_from_state,
+                            "starting fresh", _resume_id,
                         )
             except Exception:
                 logger.warning(
                     "resume_from_state=%s failed, starting fresh",
-                    resume_from_state, exc_info=True,
+                    _resume_id, exc_info=True,
                 )
 
         # P1-4 / P2-6 自动触发: resume_from_state 恢复完后, 检测 WakeStore
@@ -538,6 +549,9 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         self._mcmc_accept_count = 0
         self._mcmc_step_count = 0
         self._mcmc_chains: dict[int, dict] = {}
+        # P2-7: token/cost 硬刹车预算. 每次 LLM 调用后 update, 超硬上限抛 BudgetExhausted.
+        # 默认 10M tokens / $50, 长任务/极限模式用 HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 覆盖.
+        self._token_budget: TokenBudget = TokenBudget()
 
     def _maybe_save_engine_state(
         self, *, force: bool = False, reason: str = "",
@@ -577,6 +591,54 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             logger.warning(
                 "_maybe_save_engine_state failed (non-fatal)", exc_info=True,
             )
+
+    def _maybe_expire_inbox(self) -> None:
+        """P2-5: 周期清理超时 pending inbox item, 防 unattended session 永久阻塞.
+
+        跟 _maybe_save_engine_state 同节奏调 (复用 save_every_steps 的 N).
+        inbox 不可用 (None / import 失败) 时静默跳过 — 不阻塞主循环.
+        ponytail: 失败只 log debug, 不抛.
+        """
+        try:
+            from huginn.interaction.inbox import get_inbox_store
+            store = get_inbox_store()
+            if store is None:
+                return
+            expired = store.expire_pending()
+            if expired:
+                logger.debug(
+                    "inbox expire_pending dropped %d timed-out items (iter=%d)",
+                    expired, self._iteration,
+                )
+        except Exception:
+            logger.debug("_maybe_expire_inbox failed (non-fatal)", exc_info=True)
+
+    def _track_llm_usage(self, usage_meta) -> None:
+        """P2-7: 从 langchain usage_metadata 累加 token/cost 到 _token_budget.
+
+        usage_meta 是 langchain BaseMessage.usage_metadata (dict | None),
+        含 input_tokens / output_tokens / total_tokens. 不同 provider 填充程度不一,
+        缺字段按 0 处理. 超硬上限时先 force save engine_state (可 resume) 再抛.
+        ponytail: cost 是粗估 ($3/M input + $15/M output, Claude-ish 混合),
+        只作硬刹车 guardrail, 不作账单. 解析失败不阻塞主循环.
+        """
+        if not usage_meta:
+            return
+        try:
+            input_tokens = int(usage_meta.get("input_tokens", 0) or 0)
+            output_tokens = int(usage_meta.get("output_tokens", 0) or 0)
+            total = input_tokens + output_tokens
+            cost = (
+                input_tokens / 1_000_000.0 * 3.0
+                + output_tokens / 1_000_000.0 * 15.0
+            )
+            self._token_budget.update(total, cost)
+        except BudgetExhausted:
+            # 超硬上限: 先保存进度 (可 resume), 再抛 — agent loop 优雅停止而非继续烧钱.
+            self._maybe_save_engine_state(force=True, reason="budget_exhausted")
+            raise
+        except Exception:
+            logger.debug("token budget tracking failed (non-fatal)", exc_info=True)
 
     def _get_evolution(self):
         """懒加载 EvolutionEngine, 避免实例化时就拉起日志和规则文件。"""
@@ -5618,12 +5680,18 @@ Please modify the code to address this task."""
         _cb = _progress_cb.get(None)
         if _cb is None or not hasattr(llm, "astream") or not _autoloop_streaming_enabled():
             response = await llm.ainvoke(messages)
+            self._track_llm_usage(getattr(response, "usage_metadata", None))
             return str(response.content)
         # 流式: 累积 content, 同时推 thinking chunk 到 WS
         parts: list[str] = []
+        _usage_meta = None
         try:
             async for chunk in llm.astream(messages):
                 _delta = ""
+                # P2-7: 末 chunk 常带 usage_metadata, 累加到 token budget.
+                _um = getattr(chunk, "usage_metadata", None)
+                if _um:
+                    _usage_meta = _um
                 # langchain BaseMessageChunk: chunk.content 是 str 或 list
                 if hasattr(chunk, "content"):
                     if isinstance(chunk.content, str):
@@ -5644,11 +5712,13 @@ Please modify the code to address this task."""
                         })
                     except Exception:
                         pass  # cb 失败不阻塞 LLM
+            self._track_llm_usage(_usage_meta)
             return "".join(parts)
         except Exception as e:
             # 流式失败回退 ainvoke (某些 provider astream 实现有 bug)
             logger.debug("astream failed, fallback to ainvoke: %s", e)
             response = await llm.ainvoke(messages)
+            self._track_llm_usage(getattr(response, "usage_metadata", None))
             return str(response.content)
 
     def _build_curiosity_block(self) -> str:
