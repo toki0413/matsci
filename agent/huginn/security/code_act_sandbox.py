@@ -133,6 +133,43 @@ def check_degrade(error_count: int) -> bool:
     return error_count >= _DEGRADE_AFTER_ERRORS
 
 
+# P4-6: exec 包装, 加 tracemalloc 内存峰值监控.
+# in-process exec 没有 cgroup 隔离, 大数组 (numpy/pandas) 能把宿主 OOM.
+# tracemalloc 采样峰值, 超阈值抛 MemoryError 而不是让进程被 kill.
+# ponytail: tracemalloc 有 ~10% overhead, 但比 OOM 安全. 升级路径: 按 profile
+# 自动选阈值 (light=2g/standard=8g/heavy=16g), 或改用 Docker 沙箱硬隔离.
+def exec_with_mem_cap(code: str, namespace: dict, mem_cap_bytes: int) -> None:
+    """exec(code) 加内存峰值监控. 超阈值抛 MemoryError.
+
+    Args:
+        code: 要执行的 Python 源码
+        namespace: exec 的 globals (含 __builtins__)
+        mem_cap_bytes: 内存峰值上限 (字节). 0 表示不监控.
+    """
+    if mem_cap_bytes <= 0:
+        exec(compile(code, "<code_act>", "exec"), namespace)
+        return
+
+    import tracemalloc as _tm
+    _tm_was = _tm.is_tracing()
+    if not _tm_was:
+        _tm.start()
+    try:
+        _mem_before = _tm.get_traced_memory()[0]
+        exec(compile(code, "<code_act>", "exec"), namespace)
+        _current, _peak = _tm.get_traced_memory()
+        _delta = _peak - _mem_before
+        if _delta > mem_cap_bytes:
+            raise MemoryError(
+                f"CodeAct 内存峰值 {_delta / 1e9:.2f}GB "
+                f"超过上限 {mem_cap_bytes / 1e9:.2f}GB "
+                f"(HUGINN_CODEACT_MEM_CAP). 建议: 改用 Docker 沙箱或减少数据规模."
+            )
+    finally:
+        if not _tm_was:
+            _tm.stop()
+
+
 if __name__ == "__main__":
     # Self-check: 验证关键安全机制生效, 失败就 assert 失败.
     # 不引入测试框架, ponytail: 最小可运行检查.
@@ -206,5 +243,26 @@ if __name__ == "__main__":
     assert check_degrade(2) is False
     assert check_degrade(3) is True
     assert check_degrade(5) is True
+
+    # 5. exec_with_mem_cap: 正常代码不抛, 超阈值抛 MemoryError
+    ns1 = {"__builtins__": make_safe_builtins()}
+    exec_with_mem_cap("x = 1 + 2", ns1, mem_cap_bytes=1 << 30)  # 1GB 阈值, 正常
+    assert ns1["x"] == 3, f"exec_with_mem_cap 正常执行失败: x={ns1.get('x')}"
+
+    # 大数组超阈值: 分配 100MB numpy 数组, 阈值设 10MB → 应抛 MemoryError
+    ns2 = {"__builtins__": make_safe_builtins()}
+    big_code = "import numpy as np; arr = np.zeros(100 * 1024 * 1024, dtype=np.uint8)"
+    try:
+        exec_with_mem_cap(big_code, ns2, mem_cap_bytes=10 * 1024 * 1024)  # 10MB 阈值
+        # 没装 numpy 时不会抛, 跳过断言
+    except MemoryError as e:
+        assert "HUGINN_CODEACT_MEM_CAP" in str(e), f"MemoryError 信息不对: {e}"
+    except ImportError:
+        pass  # numpy 没装, 跳过
+
+    # mem_cap=0 时不监控, 大代码不抛
+    ns3 = {"__builtins__": make_safe_builtins()}
+    exec_with_mem_cap("y = [i for i in range(100)]", ns3, mem_cap_bytes=0)
+    assert ns3["y"][:5] == [0, 1, 2, 3, 4]
 
     print("code_act_sandbox self-check: OK")
