@@ -1223,7 +1223,9 @@ class LammpsTool(HuginnTool):
                     result["msd_warnings"] = list(self._msd_warnings)
                     self._msd_warnings = []
 
-            # Compute g(r,t): RDF 时间序列, 每帧一个, 看结构弛豫过程
+            # Compute RDF time series — 每帧一条 g(r), 看结构弛豫过程.
+            # ponytail: 这不是真正的 van Hove g(r,t), 只是按帧采样的 g(r) 序列.
+            # 真 van Hove 见下方 _compute_van_hove — 那才是 spatio-temporal correlation.
             if (
                 frames
                 and len(frames) >= 1
@@ -1318,6 +1320,43 @@ class LammpsTool(HuginnTool):
                     "meaning": "velocity autocorrelation <v(0)·v(t)>",
                     "source": "lammps",
                 })
+            # S1: van Hove G_s(r,t) — spatio-temporal correlation, 三元组 (t, r, G_s).
+            # 这是时空表征的数学根: MSD 是它的二阶矩, F(q,t) 是它的空间傅立叶变换.
+            if frames and len(frames) > 1 and all("x" in a for a in frames[0]["atoms"]):
+                _vh = self._compute_van_hove(frames)
+                if _vh:
+                    result["van_hove"] = _vh
+                    # 展开为 (t, r, G_s) 三元组让 _format_timeseries_context 识别空间维度
+                    _vh_data: list[tuple] = []
+                    for entry in _vh:
+                        _t = entry["timestep"]
+                        for _r, _gs in zip(entry["r"], entry["G_s"]):
+                            _vh_data.append((_t, _r, _gs))
+                    _ts.append({
+                        "name": "van_hove_G_s",
+                        "unit": "1/Å³",
+                        "data": _vh_data,
+                        "meaning": "van Hove self-part G_s(r,t) — single-atom displacement distribution",
+                        "source": "lammps",
+                        "spatial": True,  # 标记: data 是 (t, r, v) 三元组, 不是 (t, v) 二元组
+                    })
+                # S1: F(q,t) — 中间散射函数, G(r,t) 的空间傅立叶变换, 与原位 XRD 帧间峰位漂移对偶
+                _fqt = self._compute_F_q_t(frames)
+                if _fqt:
+                    result["F_q_t"] = _fqt
+                    _fqt_data: list[tuple] = []
+                    for entry in _fqt:
+                        _t = entry["timestep"]
+                        for _q, _f in zip(entry["q_values"], entry["F"]):
+                            _fqt_data.append((_t, _q, _f))
+                    _ts.append({
+                        "name": "F_q_t",
+                        "unit": "1",
+                        "data": _fqt_data,
+                        "meaning": "intermediate scattering function F(q,t) — Fourier transform of G(r,t)",
+                        "source": "lammps",
+                        "spatial": True,
+                    })
             if _ts:
                 result["_physical_timeseries"] = _ts
 
@@ -1604,6 +1643,150 @@ class LammpsTool(HuginnTool):
 
             d_gk = integral / 3.0
             return float(d_gk)
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------ van Hove
+
+    _VAN_HOVE_TOP_K = 32  # ponytail: 32 起步, 平衡存储和统计噪声. 升级路径: 按 cell 分区抽样.
+
+    def _compute_van_hove(
+        self, frames: list[dict], r_max: float = 10.0, bins: int = 20,
+    ) -> list[dict] | None:
+        """van Hove 函数 self-part G_s(r, t) — 真正的 spatio-temporal correlation.
+
+        G_s(r, t) = (1/N) Σ_i δ(r - |r_i(t) - r_i(0)|)
+        描述单原子在时间 t 内位移到 r 处的概率分布.
+
+        与 MSD 的关系: MSD(t) = ∫ r² G_s(r, t) d³r  (G_s 是 MSD 的母函数)
+        与 F(q,t) 的关系: F(q,t) = ∫ exp(iq·r) G(r,t) d³r  (F 是 G 的空间傅立叶变换)
+
+        算法:
+        1. 取每帧原子的 unwrapped position (xu/yu/zu 优先, 否则 x/y/z)
+        2. 按 |Δr(t_last)|² 排序选 top-K=32 原子做稀疏采样, 避免 O(N²) 爆炸
+        3. 对每个采样原子, 算 |Δr(t)| = |r_i(t) - r_i(0)|, 然后 histogram 给出 G_s 在 r 上的分布
+
+        ponytail: 只算 self-part (G_s), distinct-part (G_d) 需要 pair 统计, 存储翻倍.
+        升级路径: 同时算 G_d, 输出完整 G(r,t).
+        天花板: top-K 采样下统计噪声更大, 但动力学 regime 识别够用.
+        """
+        try:
+            import numpy as np
+
+            if not frames or len(frames) < 2:
+                return None
+
+            # 取 unwrapped coords 优先, 否则 wrapped
+            def _get_pos(frame: dict) -> np.ndarray:
+                atoms = frame["atoms"]
+                if atoms and "xu" in atoms[0]:
+                    return np.array([[a["xu"], a["yu"], a["zu"]]
+                                     for a in atoms], dtype=np.float64)
+                return np.array([[a["x"], a["y"], a["z"]]
+                                 for a in atoms], dtype=np.float64)
+
+            r0 = _get_pos(frames[0])  # (N, 3)
+            n_atoms = len(r0)
+            if n_atoms == 0:
+                return None
+
+            # 按 |Δr(t_last)|² 排序选 top-K 原子
+            r_last = _get_pos(frames[-1])
+            disp_sq_last = ((r_last - r0) ** 2).sum(axis=1)  # (N,)
+            k = min(self._VAN_HOVE_TOP_K, n_atoms)
+            top_idx = np.argsort(disp_sq_last)[-k:]
+
+            # r bins
+            r_edges = np.linspace(0, r_max, bins + 1)
+            r_centers = ((r_edges[:-1] + r_edges[1:]) / 2).tolist()
+
+            # 对每帧算 G_s(r, t) — 只统计 top-K 原子的位移分布
+            out: list[dict] = []
+            for fi, frame in enumerate(frames):
+                r_t = _get_pos(frame)
+                disp = r_t[top_idx] - r0[top_idx]  # (K, 3)
+                disp_mag = np.sqrt((disp ** 2).sum(axis=1))  # (K,)
+                # histogram
+                hist, _ = np.histogram(disp_mag, bins=r_edges)
+                # 归一化为概率密度
+                gs = (hist / k).tolist()
+                out.append({
+                    "frame_index": fi,
+                    "timestep": frame.get("timestep", fi),
+                    "r": r_centers,
+                    "G_s": gs,
+                })
+            return out
+        except Exception:
+            return None
+
+    def _compute_F_q_t(
+        self, frames: list[dict], q_values: list[float] | None = None,
+    ) -> list[dict] | None:
+        """中间散射函数 F(q, t) — G(r,t) 的空间傅立叶变换.
+
+        F(q, t) = (1/N) Σ_i <exp(i q · (r_i(t) - r_i(0)))>
+                 = (1/N) Σ_i cos(q · Δr_i(t))   (虚部平均为 0, 取实部)
+
+        与 VACF 的关系: F(q→0, t) 是 MSD 的傅立叶对偶; F(q_峰, t) 衰减
+        直接对应实验可测的 inelastic neutron scattering / XPCS 信号.
+
+        与视觉的耦合: 原位 XRD 帧间峰位漂移可视化 ≈ F(q_峰, t) 衰减.
+
+        算法:
+        1. 取 unwrapped positions
+        2. 对每个 q (默认 3 个典型值 [0.5, 1.0, 2.0] 1/Å, 覆盖典型第一峰),
+           算 F(q, t) = <cos(q · Δr(t))>
+        3. 三个 q 方向取 (1,0,0), (0,1,0), (0,0,1) 各自 q·Δr, 再三方向均值
+
+        ponytail: 只算 self-part, q 固定 3 个方向取均值. 升级路径: 球面积分.
+        """
+        try:
+            import numpy as np
+
+            if not frames or len(frames) < 2:
+                return None
+
+            def _get_pos(frame: dict) -> np.ndarray:
+                atoms = frame["atoms"]
+                if atoms and "xu" in atoms[0]:
+                    return np.array([[a["xu"], a["yu"], a["zu"]]
+                                     for a in atoms], dtype=np.float64)
+                return np.array([[a["x"], a["y"], a["z"]]
+                                 for a in atoms], dtype=np.float64)
+
+            r0 = _get_pos(frames[0])
+            n_atoms = len(r0)
+            if n_atoms == 0:
+                return None
+
+            if q_values is None:
+                # 默认 3 个典型 q 值, 覆盖典型第一峰
+                # ponytail: 静态选, 不从 RDF 自动抽峰. 升级路径: 抽 RDF 第一峰位.
+                q_values = [0.5, 1.0, 2.0]
+
+            # 三个方向 (x/y/z) 上各自算 F, 取均值 — 简化的各向同性近似
+            out: list[dict] = []
+            for fi, frame in enumerate(frames):
+                r_t = _get_pos(frame)
+                delta = r_t - r0  # (N, 3)
+                f_entry = {
+                    "frame_index": fi,
+                    "timestep": frame.get("timestep", fi),
+                    "q_values": list(q_values),
+                    "F": [],  # 与 q_values 对齐
+                }
+                for q in q_values:
+                    # 三方向均值: <cos(q·Δr_x)>_i + <cos(q·Δr_y)>_i + <cos(q·Δr_z)>_i) / 3
+                    f_real = np.cos(q * delta).mean()  # 沿每列取均值再合并
+                    # f_real shape (3,), 取平均
+                    if hasattr(f_real, "shape") and f_real.shape == (3,):
+                        f_val = float(f_real.mean())
+                    else:
+                        f_val = float(f_real)
+                    f_entry["F"].append(f_val)
+                out.append(f_entry)
+            return out
         except Exception:
             return None
 

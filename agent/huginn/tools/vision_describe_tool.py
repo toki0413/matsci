@@ -479,6 +479,134 @@ def describe_image(
     return describe_image_bytes(image_bytes, question, check_consistency=check_consistency)
 
 
+# ── S3: 多图序列 (in-situ / 原位 / 反应序列) ─────────────────────────────
+
+
+# 帧间一致性阈值 — 超过任一阈值标 low_inter_frame_consistency
+# ponytail: 经验阈值. 升级路径: 按图像类型 (XRD/SEM/TEM) 自适应阈值.
+_INTER_FRAME_HIST_CORR_THRESHOLD = 0.8   # 相邻帧直方图相关 < 0.8 → 不一致
+_INTER_FRAME_TEXT_DELTA_THRESHOLD = 0.5   # text_blocks 数量变化 > 50% → 不一致
+_INTER_FRAME_FIELD_DELTA_THRESHOLD = 0.5  # structured_analysis 字段数变化 > 50% → 不一致
+
+
+def _hist_correlation(h1: list[float], h2: list[float]) -> float:
+    """两个直方图的 Pearson 相关 — 越接近 1 越相似.
+
+    ponytail: numpy 不可用时降级到纯 Python 实现.
+    """
+    if not h1 or not h2 or len(h1) != len(h2):
+        return 0.0
+    n = len(h1)
+    s1 = sum(h1)
+    s2 = sum(h2)
+    if s1 == 0 or s2 == 0:
+        return 0.0
+    m1 = [v / s1 for v in h1]
+    m2 = [v / s2 for v in h2]
+    mean1 = sum(m1) / n
+    mean2 = sum(m2) / n
+    num = sum((m1[i] - mean1) * (m2[i] - mean2) for i in range(n))
+    den1 = sum((m1[i] - mean1) ** 2 for i in range(n)) ** 0.5
+    den2 = sum((m2[i] - mean2) ** 2 for i in range(n)) ** 0.5
+    if den1 == 0 or den2 == 0:
+        return 0.0
+    return num / (den1 * den2)
+
+
+def describe_image_sequence(
+    image_paths: list[str], question: str = "",
+    check_consistency: bool = True,
+) -> dict[str, Any]:
+    """S3: 多图序列视觉描述 + 帧间一致性检测.
+
+    对每帧单独 describe_image (复用单图路径), 然后做相邻帧一致性检测:
+      - pixel_stats.histogram 相关 (峰值漂移代理)
+      - text_blocks 数量变化 (内容变化代理)
+      - structured_analysis 字段数变化 (结构化信息变化代理)
+    任一指标超阈值标 low_inter_frame_consistency=True + inconsistency_reasons.
+
+    与 S1 时空表征的耦合: 原位 XRD 帧间峰位漂移可视化 ≈ F(q,t) 衰减
+    (G(r,t) 的空间傅立叶变换). 让 agent 能跨"视觉帧"和"MD 模拟时序"
+    做同一物理量的交叉验证.
+
+    ponytail: 复用单图 describe, 不重新实现. 帧间一致性 3 指标够用,
+    升级路径: 加 LLM 跨帧问答一致性.
+    """
+    if not image_paths:
+        return {"tier": "error", "available": False, "error": "image_paths 为空"}
+
+    # 单帧走原单图路径 (保留一致性检测语义)
+    if len(image_paths) == 1:
+        return describe_image(image_paths[0], question, check_consistency=check_consistency)
+
+    # 多帧: 每帧单独 describe
+    per_frame: list[dict[str, Any]] = []
+    for i, p in enumerate(image_paths):
+        r = describe_image(p, question, check_consistency=False)  # 帧内不再开 A1, 跨帧才是重点
+        r["frame_index"] = i
+        per_frame.append(r)
+
+    # 帧间一致性: 相邻两两比较
+    inter_frame_issues: list[str] = []
+    pair_results: list[dict] = []
+    for i in range(1, len(per_frame)):
+        prev = per_frame[i - 1]
+        curr = per_frame[i]
+        issues: list[str] = []
+
+        # 1. histogram 相关
+        prev_hist = ((prev.get("pixel_stats") or {}).get("histogram") or [])
+        curr_hist = ((curr.get("pixel_stats") or {}).get("histogram") or [])
+        if prev_hist and curr_hist:
+            corr = _hist_correlation(prev_hist, curr_hist)
+            if corr < _INTER_FRAME_HIST_CORR_THRESHOLD:
+                issues.append(f"hist_corr={corr:.3f}<{_INTER_FRAME_HIST_CORR_THRESHOLD}")
+
+        # 2. text_blocks 数量变化
+        prev_n = len(prev.get("text_blocks") or prev.get("text") or [])
+        curr_n = len(curr.get("text_blocks") or curr.get("text") or [])
+        if prev_n > 0:
+            delta = abs(curr_n - prev_n) / prev_n
+            if delta > _INTER_FRAME_TEXT_DELTA_THRESHOLD:
+                issues.append(f"text_n_delta={delta:.3f}>{_INTER_FRAME_TEXT_DELTA_THRESHOLD}")
+
+        # 3. structured_analysis 字段数变化
+        prev_sa = prev.get("structured_analysis") or {}
+        curr_sa = curr.get("structured_analysis") or {}
+        if isinstance(prev_sa, dict) and isinstance(curr_sa, dict) and prev_sa:
+            prev_nf = len(prev_sa)
+            curr_nf = len(curr_sa)
+            delta_f = abs(curr_nf - prev_nf) / prev_nf
+            if delta_f > _INTER_FRAME_FIELD_DELTA_THRESHOLD:
+                issues.append(f"field_n_delta={delta_f:.3f}>{_INTER_FRAME_FIELD_DELTA_THRESHOLD}")
+
+        pair_results.append({
+            "frame_pair": (i - 1, i),
+            "issues": issues,
+            "ok": len(issues) == 0,
+        })
+        if issues:
+            inter_frame_issues.append(f"pair({i-1},{i}): " + ", ".join(issues))
+
+    return {
+        "tier": "multi_frame_sequence",
+        "available": True,
+        "n_frames": len(per_frame),
+        "per_frame": per_frame,
+        "inter_frame_consistency": {
+            "pairs": pair_results,
+            "issues": inter_frame_issues,
+            "low_inter_frame_consistency": len(inter_frame_issues) > 0,
+            "inconsistency_reasons": inter_frame_issues,
+        },
+        # 视觉-时空耦合提示: 让 agent 知道这跟 F(q,t) 衰减对偶
+        "physical_coupling_hint": (
+            "原位 XRD 帧间峰位漂移可视化 ≈ F(q,t) 中间散射函数衰减 — "
+            "若同时有 lammps _physical_timeseries F_q_t 数据, 可交叉验证."
+        ),
+    }
+
+
 # ── M5: 结构化 captioning ─────────────────────────────────────────────────
 
 
@@ -674,6 +802,17 @@ def caption_image_bytes(
 
 class VisionDescribeInput(BaseModel):
     image_path: str = Field(..., description="图像文件路径")
+    image_paths: list[str] = Field(
+        default_factory=list,
+        description=(
+            "S3: 多图序列 (in-situ XRD / 原位 TEM / 反应序列). "
+            "非空时走 describe_image_sequence 多图路径, image_path 被忽略. "
+            "对每帧单独 describe, 再做帧间一致性检测 — "
+            "相邻帧的 pixel_stats 直方图相关 + text_blocks 数量变化 + structured_analysis 字段数变化, "
+            "任一指标超阈值标 low_inter_frame_consistency. "
+            "原位 XRD 帧间峰位漂移可视化 ≈ F(q,t) 衰减 (与 lammps _physical_timeseries 时空对偶)."
+        ),
+    )
     question: str = Field(
         default="",
         description=(
@@ -736,6 +875,25 @@ class VisionDescribeTool(HuginnTool):
     ) -> ToolResult:
         input_data = args if isinstance(args, VisionDescribeInput) else VisionDescribeInput(**args)
         try:
+            # S3: image_paths 非空走多图序列路径 (in-situ XRD / 原位 TEM)
+            if input_data.image_paths:
+                result = describe_image_sequence(
+                    input_data.image_paths, input_data.question,
+                    check_consistency=True,  # 多图默认开跨帧一致性
+                )
+                if input_data.output_path and result.get("available"):
+                    import json
+                    Path(input_data.output_path).write_text(
+                        json.dumps(result, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                success = bool(result.get("available"))
+                return ToolResult(
+                    data=result,
+                    success=success,
+                    error=None if success else result.get("error", "unknown"),
+                )
+
             # P1-4: 量化类图像 (XRD/SEM/TEM/谱/峰/颗粒) 自动开启 A1 Hallu 检测.
             # 之前 check_consistency 默认 False, 生产路径永不触发 — agent 瞎蒙无感知.
             check_consistency = input_data.check_consistency
