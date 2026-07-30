@@ -252,3 +252,113 @@ class PermissionChecker:
             reason += f" ({', '.join(reasons)})"
 
         return PermissionResult(mode=PermissionMode.ASK, reason=reason)
+
+
+# ── P4-2: Standing Rules — (tool, target) 维度常驻授权 ──────────
+#
+# OpenWorker 的 Standing Rules 按 tool→target 授权, e.g. "允许 file_write_tool
+# 写 /tmp/*". approve_always 后记录, 下次同 tool+target 自动放行, 不再调
+# approval_callback.
+#
+# CodeAct 路径 (code_act_loop.py) 已有简化版 (frozenset(called_tools) 组合维度),
+# 这里给 tool_call 路径用 (tool, target) 精细维度. 两者独立, 不强行统一 —
+# CodeAct 场景 args 从代码解析太重, 组合维度够用; tool_call 场景 args 明确,
+# 可走 target 维度.
+#
+# target 提取: 从 args 的 file_path/path/working_dir 字段取, 无 target 时用 "*".
+# target 做 fnmatch 匹配, e.g. grant("file_write_tool", "/tmp/*") 后,
+# is_granted("file_write_tool", "/tmp/foo.txt") 返回 True.
+#
+# ponytail: 进程级单例, 不持久化 (重启清空). 升级路径: 持久化到 config.
+
+
+class StandingRulesStore:
+    """(tool, target) 维度常驻授权. 线程安全."""
+
+    def __init__(self) -> None:
+        import threading
+        self._lock = threading.Lock()
+        # session_id → {(tool_name, target_pattern)}
+        self._rules: dict[str, set[tuple[str, str]]] = {}
+
+    def grant(
+        self, session_id: str, tool_name: str, target_pattern: str = "*"
+    ) -> None:
+        """记录一条 standing rule. target_pattern 支持 fnmatch."""
+        with self._lock:
+            self._rules.setdefault(session_id, set()).add((tool_name, target_pattern))
+
+    def is_granted(
+        self, session_id: str, tool_name: str, target: str = "*"
+    ) -> bool:
+        """检查是否命中 standing rule. target 做 fnmatch 匹配."""
+        with self._lock:
+            rules = self._rules.get(session_id, set())
+        for r_tool, r_pattern in rules:
+            if r_tool != tool_name:
+                continue
+            if r_pattern == "*" or fnmatch.fnmatch(target, r_pattern):
+                return True
+        return False
+
+    def reset(self, session_id: str | None = None) -> None:
+        """清空. 传 session_id 只清该 session."""
+        with self._lock:
+            if session_id is None:
+                self._rules.clear()
+            else:
+                self._rules.pop(session_id, None)
+
+    def list_rules(self, session_id: str | None = None) -> list[dict]:
+        """列出 standing rules (可观测性用)."""
+        with self._lock:
+            if session_id is None:
+                return [
+                    {"session_id": sid, "tool": t, "target": p}
+                    for sid, rules in self._rules.items()
+                    for t, p in rules
+                ]
+            return [
+                {"session_id": session_id, "tool": t, "target": p}
+                for t, p in self._rules.get(session_id, set())
+            ]
+
+
+_singleton: StandingRulesStore | None = None
+_singleton_lock = None
+
+
+def _get_lock():
+    global _singleton_lock
+    if _singleton_lock is None:
+        import threading
+        _singleton_lock = threading.Lock()
+    return _singleton_lock
+
+
+def get_standing_rules_store() -> StandingRulesStore:
+    """进程级单例."""
+    global _singleton
+    if _singleton is None:
+        with _get_lock():
+            if _singleton is None:
+                _singleton = StandingRulesStore()
+    return _singleton
+
+
+def reset_standing_rules_store() -> None:
+    """测试用: 清空单例."""
+    global _singleton
+    with _get_lock():
+        _singleton = None
+
+
+def extract_target_from_args(args: dict | None) -> str:
+    """从 tool args 提取 target path. 无 target 返回 "*"."""
+    if not args:
+        return "*"
+    for key in ("file_path", "path", "working_dir", "output_path", "target"):
+        val = args.get(key)
+        if val and isinstance(val, str):
+            return val
+    return "*"
