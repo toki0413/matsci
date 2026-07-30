@@ -247,6 +247,39 @@ async def resolve_clarification_by_thread(
     return {"success": ok, "agent_id": agent_id, "thread_id": thread_id}
 
 
+# ── Inbox: 跨会话人类注意力队列 (P4-1) ──────────────────────────
+# autoloop pause 时创建 question item, 外部 surface (desktop/IM/mobile)
+# 通过这两个端点列出 + resolve. agent loop 端 await store.wait 挂起.
+
+
+@router.get("/inbox")
+async def list_inbox(
+    session_id: str | None = None,
+    state: str | None = None,
+) -> dict[str, Any]:
+    """列出 Inbox items. ?session_id=&state=pending 过滤."""
+    from dataclasses import asdict
+    from huginn.interaction.inbox import get_inbox_store
+    store = get_inbox_store()
+    items = store.list(session_id=session_id, state=state)
+    return {"success": True, "count": len(items), "items": [asdict(i) for i in items]}
+
+
+@router.post("/inbox/{item_id}/resolve")
+async def resolve_inbox_item(item_id: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Resolve 一个 Inbox item. body: {"resolution": "A: 换方法"}.
+
+    first-responder-wins: 已 resolved 的 item 返回 success=False.
+    """
+    resolution = str(params.get("resolution", ""))
+    if not resolution:
+        return {"success": False, "error": "resolution is required"}
+    from huginn.interaction.inbox import get_inbox_store
+    store = get_inbox_store()
+    ok = store.resolve(item_id, resolution)
+    return {"success": ok, "item_id": item_id}
+
+
 # ── 进度展示 ─────────────────────────────────────────────────────
 
 
