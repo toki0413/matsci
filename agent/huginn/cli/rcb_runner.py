@@ -3479,7 +3479,51 @@ def _write_directive_rejection(
     }
     with _rej_path.open("a", encoding="utf-8") as _f:
         _f.write(json.dumps(_entry, ensure_ascii=False) + "\n")
+# G28: parse MAE/R2/RMSE/accuracy claims from report.md, compare to outputs/.
+# flag >10% deviation, breaks LLM critique circular reasoning.
+# ponytail: regex extract, no LLM. ceiling: semantic parse needs LLM.
+_METRIC_RE = re.compile(
+    r"\b(MAE|RMSE|R2|R²|MSE|accuracy|loss|F1|AUC|RMS)\b\s*[:=]\s*"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)",
+    re.IGNORECASE,
+)
 
+
+def _recompute_report_metrics(report_text: str, ws: Path) -> list[dict]:
+    """Compare report claimed metrics vs outputs/ actual, return >10% deviation flags."""
+    flags: list[dict] = []
+    claimed = {m.group(1).upper(): float(m.group(2))
+               for m in _METRIC_RE.finditer(report_text)}
+    if not claimed:
+        return flags
+    outputs_dir = ws / "outputs"
+    if not outputs_dir.exists():
+        return flags
+    actual: dict[str, float] = {}
+    for f in outputs_dir.rglob("*"):
+        if not f.is_file() or f.suffix not in (".txt", ".json", ".csv", ".md"):
+            continue
+        try:
+            txt = f.read_text(encoding="utf-8", errors="ignore")
+            for m in _METRIC_RE.finditer(txt):
+                k = m.group(1).upper()
+                if k not in actual:
+                    actual[k] = float(m.group(2))
+        except Exception:
+            continue
+    for k, claim_val in claimed.items():
+        if k not in actual:
+            continue
+        ref = actual[k]
+        if abs(ref) < 1e-12:
+            continue
+        dev = abs(claim_val - ref) / abs(ref)
+        if dev > 0.10:
+            flags.append({
+                "metric": k, "claimed": claim_val, "actual": ref,
+                "deviation_pct": round(dev * 100, 1),
+            })
+    return flags
 
 async def _step3_adversarial(
     ws: Path,
@@ -3959,6 +4003,8 @@ async def run(
     mcmc_steps: int = 7_000_000,
     mcmc_chains: int = 4,
     mcmc_checkpoint_interval: int = 10_000,
+    mcmc_se3: bool = False,
+    mcmc_se3_angle_sigma: float = 30.0,
 ) -> int:
     ws = Path(workspace).resolve()
     # Task 4.1: --mcmc-mode 走独立 MCMC 路径, 不跑 RCB agent 主循环.
@@ -3968,6 +4014,8 @@ async def run(
             ws=ws, task_id=ws.name, mode=mcmc_mode,
             n_steps=mcmc_steps, n_chains=mcmc_chains,
             checkpoint_interval=mcmc_checkpoint_interval,
+            se3_enabled=mcmc_se3,
+            se3_angle_sigma=mcmc_se3_angle_sigma,
         )
     instructions = ws / "INSTRUCTIONS.md"
     if not instructions.exists():
@@ -5797,6 +5845,9 @@ async def _run_mcmc_mode(
     n_steps: int,
     n_chains: int,
     checkpoint_interval: int,
+    *,
+    se3_enabled: bool = False,
+    se3_angle_sigma: float = 30.0,
 ) -> int:
     """Task 4.1+4.2: 纯 MCMC 模式入口 — 不跑 RCB agent 主循环.
 
@@ -5820,6 +5871,40 @@ async def _run_mcmc_mode(
         print(f"[mcmc-{mode}] manifold init failed or <2 hypotheses",
               file=sys.stderr)
         return 1
+
+    # SE(3): load cognitive_maps from engine_state, register with hypotheses.
+    # ponytail: no cognitive_map -> se3_enabled=True safely degrades to fisher
+    #   (because _has_structure returns False for all hypotheses).
+    if se3_enabled:
+        try:
+            from huginn.runtime.engine_state import load_engine_state as _les
+            from huginn.metacog.structure_cognitive_map import (
+                StructureCognitiveMap as _SCM,
+            )
+            _est = _les(task_id, ws)
+            _cmaps = getattr(_est, "cognitive_maps", {}) if _est else {}
+            if _cmaps:
+                # Map each cognitive_map to a hypothesis by matching h_id.
+                # ponytail: simple 1:1 mapping by index; upgrade: explicit
+                #   structure_id assignment via UI or hypothesis metadata.
+                _h_ids = list(_hypo_manifold._hyp)
+                for _i, (_mid, _mdict) in enumerate(_cmaps.items()):
+                    if _i >= len(_h_ids):
+                        break
+                    try:
+                        _cm = _SCM.from_engine_state_dict(_mdict)
+                        _hypo_manifold.register_structure(
+                            _h_ids[_i], _mid, _cm)
+                    except Exception:
+                        pass
+                print(f"[mcmc-{mode}] SE(3) loaded {len(_hypo_manifold._structure_maps)} "
+                      f"cognitive_map(s) for structure-guided proposal", flush=True)
+            else:
+                print(f"[mcmc-{mode}] SE(3) enabled but no cognitive_maps found, "
+                      f"degrading to fisher", flush=True)
+        except Exception as _e:
+            print(f"[mcmc-{mode}] SE(3) cognitive_map load failed: {_e}, "
+                  f"degrading to fisher", flush=True)
 
     # 读 observations — 主循环 _iter_observations 跨轮累积, 这里从盘上恢复
     obs_path = ws / ".huginn" / "observations.jsonl"
@@ -5895,6 +5980,8 @@ async def _run_mcmc_mode(
                 obs_list, current,
                 rng=_engine._mcmc_rng,
                 cached_log_p_current=cached_log_p,
+                se3_enabled=se3_enabled,
+                se3_angle_sigma=se3_angle_sigma,
             )
             if current != prev:
                 _engine._mcmc_accept_count += 1
@@ -5950,6 +6037,8 @@ async def _run_mcmc_mode(
         n_chains=n_chains,
         n_steps_per_chain=n_per_chain,
         checkpoint_interval=checkpoint_interval,
+        se3_enabled=se3_enabled,
+        se3_angle_sigma=se3_angle_sigma,
         on_chain_checkpoint=_on_chain_checkpoint,
     )
 
@@ -5989,6 +6078,16 @@ def main() -> None:
         default=int(os.environ.get("HUGINN_MCMC_CHECKPOINT_INTERVAL", "10000")),
         help="checkpoint 落盘间隔 (步)",
     )
+    parser.add_argument(
+        "--mcmc-se3", action="store_true",
+        default=os.environ.get("HUGINN_MCMC_SE3", "0") == "1",
+        help="SE(3) 群作用引导 MCMC proposal (需 cognitive_map, 无则退化到 fisher)",
+    )
+    parser.add_argument(
+        "--mcmc-se3-angle-sigma", type=float,
+        default=float(os.environ.get("HUGINN_MCMC_SE3_ANGLE_SIGMA", "30.0")),
+        help="SE(3) proposal 旋转角度高斯标准差 (度, 默认 30)",
+    )
     args = parser.parse_args()
 
     rc = asyncio.run(run(
@@ -5998,6 +6097,8 @@ def main() -> None:
         mcmc_steps=args.mcmc_steps,
         mcmc_chains=args.mcmc_chains,
         mcmc_checkpoint_interval=args.mcmc_checkpoint_interval,
+        mcmc_se3=args.mcmc_se3,
+        mcmc_se3_angle_sigma=args.mcmc_se3_angle_sigma,
     ))
     sys.exit(rc)
 

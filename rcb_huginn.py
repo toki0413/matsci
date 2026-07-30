@@ -612,6 +612,11 @@ def main():
             final = "" if rc == 0 else f"rcb_runner.run exited rc={rc}"
     except asyncio.TimeoutError:
         final = f"[TIMEOUT after {args.timeout}s]"
+    except Exception as _rcb_e:
+        import traceback as _tb
+        _tb_str = _tb.format_exc()
+        final = f"[RCB ERROR: {type(_rcb_e).__name__}: {_rcb_e}]\n{_tb_str[-500:]}"
+        print(final, file=sys.stderr, flush=True)
     elapsed = round(time.time() - start)
 
     report_path = workspace / "report" / "report.md"
