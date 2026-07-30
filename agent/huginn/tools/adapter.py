@@ -271,7 +271,9 @@ class ToolAdapter:
                 os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", str(max_tool_output_tokens))
             )
 
-        def _check_permission(input_data: BaseModel) -> tuple[bool, str | None]:
+        def _check_permission(
+            input_data: BaseModel, session_id: str = "default"
+        ) -> tuple[bool, str | None]:
             """Return (approved, reason_or_none).
 
             Dangerous-command patterns are checked FIRST, before any
@@ -332,6 +334,18 @@ class ToolAdapter:
             if mode == PermissionMode.DENY:
                 return False, f"Tool '{name}' is blocked by permission policy"
 
+            # P4-2: Standing rules — (tool, target) 维度常驻授权.
+            # ASK 模式下先查 standing rules, 命中则放行 (不调 approval_callback).
+            # HUGINN_STANDING_RULES=1 启用, 默认 off (向后兼容).
+            if os.environ.get("HUGINN_STANDING_RULES") == "1":
+                from huginn.permissions import (
+                    extract_target_from_args, get_standing_rules_store,
+                )
+                _target = extract_target_from_args(args)
+                _store = get_standing_rules_store()
+                if _store.is_granted(session_id, name, _target):
+                    return True, None
+
             reasons: list[str] = []
             try:
                 if tool.is_destructive(input_data):
@@ -354,6 +368,14 @@ class ToolAdapter:
 
             if approval_callback is not None:
                 if approval_callback(name, reason):
+                    # P4-2: approval 通过后记录 standing rule, 下次同 tool+target 自动放行.
+                    # HUGINN_STANDING_RULES=1 启用, 默认 off.
+                    if os.environ.get("HUGINN_STANDING_RULES") == "1":
+                        from huginn.permissions import (
+                            extract_target_from_args, get_standing_rules_store,
+                        )
+                        _target = extract_target_from_args(args)
+                        get_standing_rules_store().grant(session_id, name, _target)
                     return True, None
                 return False, f"User denied: {reason}"
 
@@ -699,7 +721,8 @@ class ToolAdapter:
             ``router`` is the ToolCallRouter (may be None).
             """
             # 1. Permission
-            approved, reason = _check_permission(input_data)
+            _sid = getattr(context, "session_id", None) or "default" if context else "default"
+            approved, reason = _check_permission(input_data, session_id=_sid)
             if not approved:
                 output = {"error": reason or f"Tool '{tool.name}' was denied"}
                 _audit(input_data, output, approved=False, reason=reason)
