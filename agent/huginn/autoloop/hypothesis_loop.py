@@ -2159,6 +2159,15 @@ class HypothesisMixin:
 
             if self._should_imaginate():
                 known = self._recent_failed_hypotheses()
+                # P4-5: Carnot 循环做功 W = Δ(belief space 体积).
+                # forget_then_generate 前后 idea_count 差值作为 belief_space_delta 代理.
+                # ponytail: 0 维代理, 不真算 belief space 体积. 升级路径: 用 hypothesis
+                # graph 节点/边数变化, 或 embedding 空间 PCA 体积变化.
+                _pre_ideas = 0
+                try:
+                    _pre_ideas = len(self.hypothesis_graph.all_nodes())
+                except Exception:
+                    pass
                 result = gen.forget_then_generate(
                     source_problem=str(source_problem)[:500],
                     source_domain=str(source_domain),
@@ -2166,6 +2175,16 @@ class HypothesisMixin:
                     known_solutions=known,
                     model=None,
                 )
+                _post_ideas = 0
+                try:
+                    _post_ideas = len(self.hypothesis_graph.all_nodes())
+                except Exception:
+                    pass
+                try:
+                    from huginn.metacog.cognitive_heat_engine import get_heat_engine
+                    get_heat_engine().record_work(float(_post_ideas - _pre_ideas))
+                except Exception:
+                    logger.debug("record_work failed (non-fatal)", exc_info=True)
             else:
                 result = gen.run(
                     source_problem=str(source_problem)[:500],

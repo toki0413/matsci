@@ -346,10 +346,11 @@ def _self_check() -> None:
     h = eng3.health_check()
     assert h["status"] == "chaotic", f"应该 chaotic, 实际 {h['status']}"
 
-    # 6. 健康状态: conservative
+    # 6. 健康状态: conservative (η 低 + Re 低)
+    # η = 1 - T_cold/T_hot, 要 η < 0.1 需 T_cold/T_hot > 0.9
     eng4 = CognitiveHeatEngine()
     eng4.update_T_hot(0.2)
-    eng4.update_T_cold(0.15, 1.5)
+    eng4.update_T_cold(0.19, 1.5)  # η = 1 - 0.19/0.2 = 0.05 < 0.1
     eng4.update_kinematics(1, 1, 5000)  # Re = 1/5 = 0.2 < 2
     h4 = eng4.health_check()
     assert h4["status"] == "conservative", f"应该 conservative, 实际 {h4['status']}"
@@ -359,9 +360,9 @@ def _self_check() -> None:
     eng5.idea_history = [5] * 10
     assert abs(eng5.intermittency_kurtosis()) < 0.1, "匀速 kurtosis 应该 0"
 
-    # 8. 间歇性 kurtosis (爆发 → 正)
+    # 8. 间歇性 kurtosis (爆发 → 正). 单次爆发 [0,0,...,0,10] excess kurtosis ≈ 5.1
     eng6 = CognitiveHeatEngine()
-    eng6.idea_history = [0, 0, 0, 0, 20, 0, 0, 0, 0, 20]
+    eng6.idea_history = [0, 0, 0, 0, 0, 0, 0, 0, 0, 10]
     assert eng6.intermittency_kurtosis() > 1.0, "爆发 kurtosis 应该 >1"
 
     print("CognitiveHeatEngine self-check: 8/8 PASSED")
