@@ -4346,11 +4346,15 @@ async def run(workspace: str, extreme: bool = False) -> int:
         }
         _all_registered = set(_TR.list_tools())
         _step2_filter.update(_all_registered - _RCB_STEP1_NEVER)
+        # blocked list 也作用于 hardcode 列表 — 否则 subagent_tool 在 line 4316
+        # hardcode 进 _step2_filter, env var block 不掉, agent 嵌套调 subagent
+        # 死等 SandboxBackendProtocol 拒绝的 execute. ponytail: 一行差集, 复用同一 set.
+        _step2_filter -= _RCB_STEP1_NEVER
         print(
             f"[P0-A] extreme 白名单全量开放: "
             f"{len(_all_registered)} registered, "
             f"{len(_RCB_STEP1_NEVER)} blocked, "
-            f"{len(_all_registered - _RCB_STEP1_NEVER)} exposed",
+            f"{len(_step2_filter)} exposed",
             flush=True)
     _step1_filter = {
         "file_read_tool", "glob", "grep", "web_search_tool",
