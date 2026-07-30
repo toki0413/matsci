@@ -141,6 +141,7 @@ class CognitiveLoop:
         output_writer: Any | None = None,
         max_iterations: int = 20,
         max_repeated_actions: int = 3,  # 死循环防护: 连续重复 action 超过此数 → stop
+        turn_timeout: float | None = None,  # P4-3: 单 turn 超时 (秒), None 不限时
     ) -> None:
         self._observe = observe_fn
         self._decide = decide_fn
@@ -149,6 +150,9 @@ class CognitiveLoop:
         self._output_writer = output_writer
         self._max_iterations = max_iterations
         self._max_repeated_actions = max_repeated_actions
+        # P4-3: TurnEngine 特性 — turn 级超时. execute 钩子最可能卡住 (DFT/MD 计算),
+        # 超时后跳过该 turn, 不阻塞后续. None 时向后兼容 (不限时).
+        self._turn_timeout = turn_timeout
 
     async def run(self, initial_state: LoopState | None = None) -> LoopState:
         """主循环: observe → decide → execute → reflect, 直到 should_stop 或 max_iter.
@@ -169,6 +173,10 @@ class CognitiveLoop:
             except Exception as e:
                 logger.warning("observe failed: %s", e)
                 observation = {}
+
+            # P4-3: 钩子间中断检查 — observe 后 should_stop 可能被外部设
+            if state.should_stop:
+                break
 
             # 2. decide — 选下一个 action (LLM 自主或规则)
             try:
@@ -212,10 +220,33 @@ class CognitiveLoop:
                     state.should_stop = True
                     break
 
+            # P4-3: 钩子间中断检查 — decide 后 should_stop 可能被外部设
+            if state.should_stop:
+                break
+
             # 3. execute_action — 跑 LLM 选的 action
+            # P4-3: turn 级超时保护. execute 最可能卡住 (DFT/MD/HPC 计算),
+            # 超时后跳过该 turn, 不阻塞后续. None 时不限时 (向后兼容).
             try:
-                result = await self._execute(state, decision)
+                if self._turn_timeout is not None:
+                    import asyncio as _aio
+                    result = await _aio.wait_for(
+                        self._execute(state, decision),
+                        timeout=self._turn_timeout,
+                    )
+                else:
+                    result = await self._execute(state, decision)
                 state.last_action_result = result
+            except TimeoutError as e:
+                logger.warning(
+                    "execute_action '%s' timed out after %ss, skipping turn",
+                    decision.action, self._turn_timeout,
+                )
+                state.last_action_result = None
+                state.redirect_reason = (
+                    f"turn timeout: {decision.action} 超过 {self._turn_timeout}s"
+                )
+                state.should_redirect = True
             except Exception as e:
                 logger.warning("execute_action '%s' failed: %s", decision.action, e)
                 state.last_action_result = None

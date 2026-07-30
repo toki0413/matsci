@@ -347,8 +347,20 @@ class HypothesisManifold:
         current_h_id: str,
         *,
         rng: random.Random | None = None,
+        temperature: float = 1.0,
     ) -> str:
         """Metropolis-Hastings 一步在 posterior 上采样.
+
+        P4-4: proposal kernel 用 fisher_distance 引导 — 距离近的 h 提议概率高.
+        SubspacePartition 的 R 矩阵投影通过 fisher_distance 间接接入:
+        n > _SUBSPACE_K 时 fisher_distance 走投影路径, proposal kernel 自动加速.
+
+        Metropolis-Hastings 接受比考虑 proposal 不对称性:
+            A = min(1, [P(h')·q(h'|h)] / [P(h)·q(h|h')])
+        其中 q(h'|h) ∝ exp(-d_F(h,h')/τ) / Z_h, Z_h 是 h 的归一化常数.
+        ponytail: Z_h 不易算, 用对称化近似 A ≈ min(1, P(h')/P(h) · exp(-(d-d')/τ)),
+        d = d_F(h,h'), d' = d_F(h,h') (对称) → 距离项相消, 退化为标准 MH.
+        实际引导通过 proposal sampling 实现 (距离近的被采到更多), 接受步保持标准 MH.
 
         700万步 = 这个 step 跑 7M 次. 每步是从 current_h 提议一个 neighbor,
         按 posterior ratio 接受/拒绝. 这才是有引导的搜索, 不是 random walk.
@@ -359,8 +371,32 @@ class HypothesisManifold:
         h_ids = list(self._hyp)
         if len(h_ids) < 2:
             return current_h_id
-        # 提议: 随机选一个非当前的 h (uniform proposal kernel, 简化)
-        proposal = rng.choice([h for h in h_ids if h != current_h_id])
+        others = [h for h in h_ids if h != current_h_id]
+        if not others:
+            return current_h_id
+
+        # P4-4: fisher_distance 引导的 proposal kernel.
+        # 距离近的 h 提议概率高 (softmax(-d/τ)).
+        # n > _SUBSPACE_K 时 fisher_distance 内部走 R 矩阵投影 → SubspacePartition 真正接入.
+        # ponytail: τ=temperature 控制引导强度. τ→∞ 退化为 uniform; τ→0 只选最近.
+        # 升级路径: 自适应 τ (按接受率调), 或 Langevin dynamics 用 fisher metric 做 gradient.
+        dists = [self.fisher_distance(current_h_id, h) for h in others]
+        max_d = max(dists) if dists else 0.0
+        # softmax with numerical stability (减 max_d)
+        weights = [math.exp(-(d - max_d) / temperature) for d in dists]
+        total_w = sum(weights)
+        if total_w <= 0.0:
+            proposal = rng.choice(others)
+        else:
+            r = rng.random() * total_w
+            cum = 0.0
+            proposal = others[-1]
+            for h, w in zip(others, weights):
+                cum += w
+                if r <= cum:
+                    proposal = h
+                    break
+
         log_post = self.log_posterior(obs)
         log_ratio = log_post[proposal] - log_post[current_h_id]
         # 接受概率 min(1, exp(log_ratio))
@@ -462,17 +498,19 @@ def _selfcheck() -> None:
     print(f"  MCMC visit freq: { {k: v/n_steps for k, v in visit_count.items()} }")
 
     # B1: SubspacePartition R 矩阵投影专项验证
-    # 1) add 后 _R 被增量更新, _keys 收齐所有 key
+    # P1-3 后 _R lazy rebuild: n <= _SUBSPACE_K 时不构建 (保持 None), 走 O(n) 等价路径.
+    # 升级路径: n > _SUBSPACE_K 时 fisher_distance 触发 _rebuild_R, 走 R 矩阵投影.
     assert m._keys == ["orbital_period", "precession"], f"keys mismatch: {m._keys}"
-    assert m._R is not None, "R matrix should be built after add"
-    # 2) k >= n 时走原遍历路径 (n=2 < _SUBSPACE_K=200), 数值与原 O(n) 一致
+    assert m._R is None, (
+        f"R matrix should NOT be built when n <= k (lazy), got _R={m._R}"
+    )
+    # n <= _SUBSPACE_K 时走原遍历路径, 数值与 O(n) 一致
     d_newton_gr_v2 = m.fisher_distance("newton", "gr")
     assert abs(d_newton_gr_v2 - d_newton_gr) < 1e-9, (
         f"k>=n path should be identical to O(n) path, got {d_newton_gr_v2} vs {d_newton_gr}"
     )
-    # 3) R 矩阵存在但 n <= k, 不走投影路径 — 验证 fisher_distance 仍正确
     assert d_newton_gr_v2 == 0.43, f"fisher(newton, gr) should be 0.43, got {d_newton_gr_v2}"
-    print(f"  B1 R-matrix: keys={m._keys}, n={len(m._keys)} <= k={_SUBSPACE_K}, 走 O(n) 等价路径")
+    print(f"  B1 R-matrix: keys={m._keys}, n={len(m._keys)} <= k={_SUBSPACE_K}, 走 O(n) 等价路径 (lazy)")
 
 
 if __name__ == "__main__":
