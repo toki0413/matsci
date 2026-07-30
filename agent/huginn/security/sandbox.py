@@ -394,6 +394,7 @@ def create_sandbox(
     config: SandboxConfig | None = None,
     prefer_docker: bool = False,
     docker_image: str = "python:3.12-slim",
+    profile: str = "light",
 ) -> SandboxExecutor | "DockerSandboxExecutor":  # type: ignore[name-defined]
     """根据环境自动选择沙箱后端。
 
@@ -402,6 +403,9 @@ def create_sandbox(
 
     也可以通过环境变量 HUGINN_DOCKER_SANDBOX=1 启用 Docker 沙箱，
     效果等同 prefer_docker=True。
+
+    profile: light/standard/heavy 三档配额, 控制 Docker 容器的 mem/cpu/disk/timeout.
+    调用方按任务类型选 (绘图=light, VASP/LAMMPS=standard, 大体系 DFT=heavy).
     """
     cfg = config or SandboxConfig()
 
@@ -417,7 +421,7 @@ def create_sandbox(
             return SandboxExecutor(cfg)
 
         try:
-            docker_executor = DockerSandboxExecutor(image=docker_image, config=cfg)
+            docker_executor = DockerSandboxExecutor(image=docker_image, config=cfg, profile=profile)
         except Exception:
             # 构造失败也别让上层挂掉
             return SandboxExecutor(cfg)

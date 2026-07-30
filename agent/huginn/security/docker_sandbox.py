@@ -38,6 +38,38 @@ except Exception as e:  # pragma: no cover - 看环境
     _DOCKER_IMPORT_ERR = f"{type(e).__name__}: {e}"
 
 
+# ── 三档沙箱配额 (profile) ──────────────────────────────────────
+# 竞品调研后的默认值. 调用方按任务类型选 profile, 不传默认 light.
+# ponytail: 三档够覆盖科研工作流, 不做连续配置 — 多一个自由度多一处出错.
+# 升级路径: profile 从 env var 读, 或按 tool constraint_scope 自动选.
+_PROFILES: dict[str, tuple[str, str, str | None, float]] = {
+    # profile: (memory, cpu_str, disk_tmpfs, timeout_s)
+    "light":    ("2g",  "2.0", None,   3600.0),    # 绘图/数据分析/cif 解析
+    "standard": ("8g",  "4.0", "20g", 21600.0),    # 中等 VASP/LAMMPS/ML 推理
+    "heavy":    ("16g", "8.0", "50g", 172800.0),   # 大体系 DFT/长 MD/finetune
+}
+
+
+def _resolve_profile(
+    profile: str | None,
+    explicit_mem: str | None,
+    explicit_cpu: float | None,
+    explicit_disk: str | None,
+    explicit_timeout: float | None,
+) -> tuple[str, str, str | None, float]:
+    """从 profile + 显式 override 算出最终 (mem, cpu_str, disk, timeout).
+
+    显式参数非 None 时覆盖 profile 的对应字段.
+    ponytail: profile 是字符串, 不引入 enum — 减少一个 import 依赖.
+    """
+    p = _PROFILES.get(profile or "light", _PROFILES["light"])
+    mem = explicit_mem or p[0]
+    cpu_str = str(explicit_cpu) if explicit_cpu is not None else p[1]
+    disk = explicit_disk if explicit_disk is not None else p[2]
+    timeout = explicit_timeout if explicit_timeout is not None else p[3]
+    return mem, cpu_str, disk, timeout
+
+
 class DockerSandboxExecutor:
     """Docker 容器沙箱 — 在隔离容器里执行命令。
 
@@ -52,22 +84,35 @@ class DockerSandboxExecutor:
         work_dir: str = "/workspace",
         mount_root: str | None = None,
         network: str = "none",
-        memory_limit: str = "2g",
-        cpu_limit: float = 2.0,
-        timeout: float = 3600.0,
+        memory_limit: str | None = None,
+        cpu_limit: float | None = None,
+        timeout: float | None = None,
         read_only: bool = False,
         config: SandboxConfig | None = None,
+        profile: str = "light",
+        disk_limit: str | None = None,
     ) -> None:
+        # profile 优先, 显式参数覆盖 profile 对应字段.
+        # ponytail: 老代码传 memory_limit="2g" 仍工作 — _resolve_profile 走 None 路径.
+        _mem, _cpu_str, _disk, _timeout = _resolve_profile(
+            profile, memory_limit, cpu_limit, disk_limit, timeout,
+        )
         self.image = image
         self.work_dir = work_dir
         # 宿主机挂载根目录，None 时用当前 cwd
         self.mount_root = mount_root
         self.network = network
-        self.memory_limit = memory_limit
-        self.cpu_limit = cpu_limit
-        self.default_timeout = timeout
+        self.memory_limit = _mem
+        # cpu_limit 老字段保留 (float), 但 docker SDK 用 nano_cpus 整数纳秒
+        self.cpu_limit = float(_cpu_str)
+        self.default_timeout = _timeout
         self.read_only = read_only
         self.config = config or SandboxConfig()
+        # P4-6: 磁盘配额 — tmpfs 挂 work_dir, 限制容器可写磁盘大小.
+        # None 时不挂 tmpfs (老 light 行为, 用宿主磁盘). standard/heavy 默认挂.
+        self.disk_limit = _disk
+        # profile 透传, 方便观测/日志
+        self.profile = profile or "light"
 
         # 没装 SDK 也要能构造，run() 时再降级
         self._client: Any = None
@@ -180,12 +225,24 @@ class DockerSandboxExecutor:
         # nano_cpus 用整数纳秒表达 CPU 配额，docker SDK 接受这个参数
         nano_cpus = int(self.cpu_limit * 1e9)
 
+        # P4-6: tmpfs 挂 /workspace 限制可写磁盘大小.
+        # disk_limit=None 时不挂 tmpfs (light 默认行为, 兼容老配置).
+        # ponytail: tmpfs 是内存支持的, 不会吃宿主磁盘, 但会占 mem_limit 额度 —
+        # 写满 tmpfs 时进程收到 ENOSPC, 比吃满宿主盘安全.
+        tmpfs: dict[str, str] = {}
+        if self.disk_limit:
+            # docker tmpfs 接受 size=Nm/Ng 格式. /workspace 用 tmpfs,
+            # 原始 host 挂载仍保留 (work_dir 同一挂载点, tmpfs 会覆盖).
+            # 实际上 tmpfs 优先级高于 bind mount, 所以 work_dir 走 tmpfs.
+            # ponytail: 如果需要 host 文件可见, 升级路径是 /workspace 内挂 /workspace/host.
+            tmpfs = {self.work_dir: f"size={self.disk_limit}"}
+
         # detach=True 先拿到 container 对象，自己轮询状态 + 超时杀容器。
         # containers.run 的 detach=False 模式下 SDK 自己读 socket，超时也杀不掉容器。
         container: Any = None
         try:
-            container = self._client.containers.run(
-                self.image,
+            run_kwargs: dict[str, Any] = dict(
+                image=self.image,
                 command=cmd,
                 volumes=volumes,
                 working_dir=self.work_dir,
@@ -197,6 +254,9 @@ class DockerSandboxExecutor:
                 stdout=True,
                 stderr=True,
             )
+            if tmpfs:
+                run_kwargs["tmpfs"] = tmpfs
+            container = self._client.containers.run(**run_kwargs)
         except APIError as e:
             return SandboxResult(
                 success=False,
@@ -303,3 +363,50 @@ class DockerSandboxExecutor:
             command=cmd,
             dry_run=False,
         )
+
+
+if __name__ == "__main__":
+    # P4-6 自检: 验证 profile 解析 + tmpfs 配置 + 显式 override
+    # ponytail: 不真跑 docker (CI 没装), 只验证参数解析逻辑.
+
+    # 1. 默认 profile=light → 2g/2cpu/无 tmpfs/1h
+    exe = DockerSandboxExecutor()
+    assert exe.memory_limit == "2g", f"light mem: {exe.memory_limit}"
+    assert exe.cpu_limit == 2.0, f"light cpu: {exe.cpu_limit}"
+    assert exe.disk_limit is None, f"light disk: {exe.disk_limit}"
+    assert exe.default_timeout == 3600.0, f"light timeout: {exe.default_timeout}"
+    assert exe.profile == "light"
+
+    # 2. standard → 8g/4cpu/20g tmpfs/6h
+    exe_s = DockerSandboxExecutor(profile="standard")
+    assert exe_s.memory_limit == "8g", f"standard mem: {exe_s.memory_limit}"
+    assert exe_s.cpu_limit == 4.0, f"standard cpu: {exe_s.cpu_limit}"
+    assert exe_s.disk_limit == "20g", f"standard disk: {exe_s.disk_limit}"
+    assert exe_s.default_timeout == 21600.0, f"standard timeout: {exe_s.default_timeout}"
+
+    # 3. heavy → 16g/8cpu/50g tmpfs/48h
+    exe_h = DockerSandboxExecutor(profile="heavy")
+    assert exe_h.memory_limit == "16g", f"heavy mem: {exe_h.memory_limit}"
+    assert exe_h.cpu_limit == 8.0, f"heavy cpu: {exe_h.cpu_limit}"
+    assert exe_h.disk_limit == "50g", f"heavy disk: {exe_h.disk_limit}"
+    assert exe_h.default_timeout == 172800.0, f"heavy timeout: {exe_h.default_timeout}"
+
+    # 4. 显式参数覆盖 profile
+    exe_o = DockerSandboxExecutor(profile="light", memory_limit="4g", timeout=7200.0)
+    assert exe_o.memory_limit == "4g", f"override mem: {exe_o.memory_limit}"
+    assert exe_o.cpu_limit == 2.0, f"keep profile cpu: {exe_o.cpu_limit}"
+    assert exe_o.default_timeout == 7200.0, f"override timeout: {exe_o.default_timeout}"
+
+    # 5. _resolve_profile 纯函数: unknown profile 走 light 默认
+    m, c, d, t = _resolve_profile("unknown", None, None, None, None)
+    assert m == "2g" and c == "2.0" and d is None and t == 3600.0, (
+        f"unknown profile should fall back to light: {m, c, d, t}"
+    )
+
+    # 6. _resolve_profile: 显式 None 不覆盖 (None 是"未传"语义)
+    m2, c2, d2, t2 = _resolve_profile("standard", None, 6.0, None, None)
+    assert m2 == "8g", f"profile mem 保持: {m2}"
+    assert c2 == "6.0", f"显式 cpu 覆盖: {c2}"
+    assert d2 == "20g", f"profile disk 保持: {d2}"
+
+    print("docker_sandbox profile self-check: OK")

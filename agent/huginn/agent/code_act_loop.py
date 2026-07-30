@@ -782,8 +782,13 @@ async def run_code_act_turn(
                 # clever payload could still escape via attribute traversal.
                 # Upgrade path: Docker sandbox with the same namespace, or E2B.
                 namespace["__builtins__"] = make_safe_builtins()
+                # P4-6: exec 用 wrapper 加 tracemalloc 内存峰值监控
+                # 超阈值抛 MemoryError 而不是让进程 OOM 被杀. 阈值从 env 读, 默认 2GB.
+                # ponytail: tracemalloc 有 ~10% overhead, 但比 OOM 安全.
+                from huginn.security.code_act_sandbox import exec_with_mem_cap as _exec_cap
+                _mem_cap_bytes = int(os.environ.get("HUGINN_CODEACT_MEM_CAP", "2147483648"))
 
-                exec(compile(code, "<code_act>", "exec"), namespace)
+                _exec_cap(code, namespace, _mem_cap_bytes)
             except RestrictedPythonError as exc:
                 error = f"RestrictedPython: {exc}"
             except Exception as exc:  # noqa: BLE001 — exec surface is unbounded
