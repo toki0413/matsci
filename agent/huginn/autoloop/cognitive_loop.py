@@ -1568,6 +1568,9 @@ class CognitiveLoopMixin:
 
         让 agent 看到本轮收集了哪些时序数据、其物理含义、值域范围 —
         不注入完整数据 (太长), 只给摘要让 agent 决定是否需要深入分析.
+
+        S1 时空扩展: data 支持 (t, v) 二元组 和 (t, r, v) 三元组两种格式,
+        由 _ts["spatial"] 标记区分. 三元组走空间分布分支, 算空间展宽随时间的演化.
         ponytail: 每条时序一行摘要. 升级路径: 调 LLM 做趋势分类 (衰减/振荡/收敛).
         """
         _ts_list = getattr(self, "_physical_timeseries", None) or []
@@ -1580,10 +1583,43 @@ class CognitiveLoopMixin:
             _meaning = _ts.get("meaning", "")
             _source = _ts.get("source", "")
             _data = _ts.get("data") or []
+            _is_spatial = _ts.get("spatial", False)
             _n = len(_data)
             if _n == 0:
                 continue
-            # 算首末值 + 趋势 (升/降/平)
+
+            if _is_spatial and isinstance(_data[0], (list, tuple)) and len(_data[0]) >= 3:
+                # 三元组 (t, r, v) — 时空联合表征
+                _t_first = _data[0][0]
+                _t_last = _data[-1][0]
+                # 取每帧的最大 v 位置 (r_peak), 看峰位漂移 (structural relaxation)
+                _frames: dict = {}
+                for _t, _r, _v in _data:
+                    _frames.setdefault(_t, []).append((_r, _v))
+                _peak_drift = 0.0
+                _peak_v_decay = 0.0
+                _peak_list: list[tuple] = []
+                for _t in sorted(_frames.keys()):
+                    _pts = _frames[_t]
+                    _peak = max(_pts, key=lambda x: x[1])
+                    _peak_list.append((_t, _peak[0], _peak[1]))
+                if len(_peak_list) >= 2:
+                    _peak_drift = _peak_list[-1][1] - _peak_list[0][1]
+                    _peak_v_decay = _peak_list[-1][2] - _peak_list[0][2]
+                _trend = (
+                    f"peak_drift={_peak_drift:+.3f}, "
+                    f"v_decay={_peak_v_decay:+.3f}"
+                )
+                _n_t = len(_frames)
+                _n_r = len(_data) // max(_n_t, 1)
+                lines.append(
+                    f"  {_name} ({_source}): {_n_t}t × {_n_r}r pts, unit={_unit}, "
+                    f"trend={_trend}. meaning: {_meaning} "
+                    f"(spatio-temporal)"
+                )
+                continue
+
+            # 二元组 (t, v) — 标量时序
             _first = _data[0][1] if isinstance(_data[0], (list, tuple)) and len(_data[0]) >= 2 else None
             _last = _data[-1][1] if isinstance(_data[-1], (list, tuple)) and len(_data[-1]) >= 2 else None
             _trend = ""
