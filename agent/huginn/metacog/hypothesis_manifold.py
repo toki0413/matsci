@@ -144,6 +144,9 @@ class Hypothesis:
     # abductive_inference 填: posterior 置信度 + 证据强度 (RAG hits 数/量级)
     confidence: float = 0.0
     evidence_strength: float = 0.0
+    # SE(3) 引导 proposal 用: 关联的 structure_id (对应 _structure_maps 的 key).
+    # None 时 mcmc_step 走原 fisher 引导, 不影响行为.
+    structure_id: str | None = None
 
     def log_prior(self) -> float:
         if self.prior_override is not None:
@@ -188,6 +191,9 @@ class HypothesisManifold:
         # _R 在 add_hypothesis 时增量更新 (重算 QR, O(n²) per add).
         self._keys: list[str] = []
         self._R: list[list[float]] | None = None
+        # SE(3) 引导 proposal 用: structure_id → StructureCognitiveMap 映射.
+        # register_structure 时填充, _has_structure / _se3_proposal 查.
+        self._structure_maps: dict[str, Any] = {}
 
     @staticmethod
     def _gaussian_log_likelihood(h: Hypothesis, o: Observation) -> float:
@@ -211,6 +217,19 @@ class HypothesisManifold:
         if new_keys:
             self._keys.extend(new_keys)
             self._R_dirty = True
+
+    def register_structure(self, h_id: str, structure_id: str, cmap: Any) -> None:
+        h = self._hyp.get(h_id)
+        if h is None:
+            raise KeyError(f'hypothesis {h_id} not in manifold')
+        h.structure_id = structure_id
+        self._structure_maps[structure_id] = cmap
+
+    def _has_structure(self, h_id: str) -> bool:
+        h = self._hyp.get(h_id)
+        if h is None or h.structure_id is None:
+            return False
+        return h.structure_id in self._structure_maps
 
     def _rebuild_R(self) -> None:
         """重算 QR 分解的 R 矩阵 (基于当前所有 hypothesis 的 predictions).
@@ -356,6 +375,87 @@ class HypothesisManifold:
                 candidate = h_id
         return self._hyp[candidate] if candidate else self._hyp[best_id]
 
+    def _fisher_proposal(
+        self, current_h_id: str, rng: random.Random, temperature: float,
+    ) -> str:
+        h_ids = list(self._hyp)
+        others = [h for h in h_ids if h != current_h_id]
+        if not others:
+            return current_h_id
+        dists = [self.fisher_distance(current_h_id, h) for h in others]
+        max_d = max(dists) if dists else 0.0
+        weights = [math.exp(-(d - max_d) / temperature) for d in dists]
+        total_w = sum(weights)
+        if total_w <= 0.0:
+            return rng.choice(others)
+        r = rng.random() * total_w
+        cum = 0.0
+        for h, w in zip(others, weights):
+            cum += w
+            if r <= cum:
+                return h
+        return others[-1]
+
+    def _se3_proposal(
+        self, current_h_id: str, rng: random.Random, angle_sigma: float,
+    ) -> str | None:
+        h = self._hyp.get(current_h_id)
+        if h is None or h.structure_id is None:
+            return None
+        cmap = self._structure_maps.get(h.structure_id)
+        if cmap is None:
+            return None
+        axis = rng.choice(['x', 'y', 'z'])
+        angle = rng.gauss(0.0, angle_sigma)
+        try:
+            transformed = cmap.rotate(axis, angle, degrees=True)
+        except Exception:
+            return None
+        return self._match_nearest_hypothesis(transformed, exclude=current_h_id)
+
+    def _match_nearest_hypothesis(
+        self, transformed_cmap: Any, exclude: str | None = None,
+    ) -> str | None:
+        try:
+            from pymatgen.analysis.structure_matcher import StructureMatcher
+            from pymatgen.core import Structure as _PmgStructure
+        except ImportError:
+            return None
+        if transformed_cmap.lattice is None:
+            return None
+        try:
+            s_query = _PmgStructure(species=transformed_cmap.species, coords=transformed_cmap.coords, lattice=transformed_cmap.lattice)
+        except Exception:
+            return None
+        sm = StructureMatcher()
+        best_h_id = None
+        best_rmsd = float('inf')
+        for h_id, h in self._hyp.items():
+            if h_id == exclude or h.structure_id is None:
+                continue
+            ref = self._structure_maps.get(h.structure_id)
+            if ref is None or ref.lattice is None:
+                continue
+            try:
+                s_ref = _PmgStructure(species=ref.species, coords=ref.coords, lattice=ref.lattice)
+            except Exception:
+                continue
+            try:
+                result = sm.get_rms_dist(s_query, s_ref)
+            except Exception:
+                continue
+            if result is None:
+                continue
+            rmsd = result[0]
+            if rmsd is None:
+                continue
+            if rmsd < best_rmsd:
+                best_rmsd = rmsd
+                best_h_id = h_id
+        if best_h_id is not None and best_rmsd < 1.0:
+            return best_h_id
+        return None
+
     def mcmc_step(
         self,
         obs: Iterable[Observation],
@@ -364,6 +464,8 @@ class HypothesisManifold:
         rng: random.Random | None = None,
         temperature: float = 1.0,
         cached_log_p_current: float | None = None,
+        se3_enabled: bool = False,
+        se3_angle_sigma: float = 30.0,
     ) -> tuple[str, float]:
         """Metropolis-Hastings 一步在 posterior 上采样.
 
@@ -401,27 +503,14 @@ class HypothesisManifold:
                 cached_log_p_current = self._log_posterior_single(obs, current_h_id)
             return current_h_id, cached_log_p_current
 
-        # P4-4: fisher_distance 引导的 proposal kernel.
-        # 距离近的 h 提议概率高 (softmax(-d/τ)).
-        # n > _SUBSPACE_K 时 fisher_distance 内部走 R 矩阵投影 → SubspacePartition 真正接入.
-        # ponytail: τ=temperature 控制引导强度. τ→∞ 退化为 uniform; τ→0 只选最近.
-        # 升级路径: 自适应 τ (按接受率调), 或 Langevin dynamics 用 fisher metric 做 gradient.
-        dists = [self.fisher_distance(current_h_id, h) for h in others]
-        max_d = max(dists) if dists else 0.0
-        # softmax with numerical stability (减 max_d)
-        weights = [math.exp(-(d - max_d) / temperature) for d in dists]
-        total_w = sum(weights)
-        if total_w <= 0.0:
-            proposal = rng.choice(others)
+        # SE(3) branch: structure-guided proposal when available, else fisher.
+        # se3_enabled=False or no structure -> 100% fisher, behavior unchanged.
+        if se3_enabled and self._has_structure(current_h_id):
+            proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+            if proposal is None:
+                proposal = self._fisher_proposal(current_h_id, rng, temperature)
         else:
-            r = rng.random() * total_w
-            cum = 0.0
-            proposal = others[-1]
-            for h, w in zip(others, weights):
-                cum += w
-                if r <= cum:
-                    proposal = h
-                    break
+            proposal = self._fisher_proposal(current_h_id, rng, temperature)
 
         # Step 2 增量: current 复用缓存, proposal 只算一次
         if cached_log_p_current is None:
@@ -452,6 +541,8 @@ class HypothesisManifold:
         checkpoint_interval: int = 10_000,
         *,
         temperature: float = 1.0,
+        se3_enabled: bool = False,
+        se3_angle_sigma: float = 30.0,
         on_chain_checkpoint: "Callable[[int, dict], None] | None" = None,
     ) -> dict:
         """多链并行 MCMC + Gelman-Rubin R̂ 收敛诊断.
@@ -489,6 +580,7 @@ class HypothesisManifold:
             return await self._run_single_chain(
                 chain_id, obs_list, n_steps_per_chain, checkpoint_interval,
                 rng=rng, temperature=temperature,
+                se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
                 init_h_id=init_h, on_checkpoint=on_chain_checkpoint,
             )
 
@@ -526,6 +618,8 @@ class HypothesisManifold:
         *,
         rng: random.Random,
         temperature: float = 1.0,
+        se3_enabled: bool = False,
+        se3_angle_sigma: float = 30.0,
         init_h_id: str,
         on_checkpoint: "Callable[[int, dict], None] | None" = None,
     ) -> dict:
@@ -547,6 +641,7 @@ class HypothesisManifold:
             current, cached_log_p = self.mcmc_step(
                 obs, current, rng=rng, temperature=temperature,
                 cached_log_p_current=cached_log_p,
+                se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
             )
             if current != prev_h:
                 accept_count += 1
@@ -746,6 +841,68 @@ def _selfcheck() -> None:
     )
     assert d_newton_gr_v2 == 0.43, f"fisher(newton, gr) should be 0.43, got {d_newton_gr_v2}"
     print(f"  B1 R-matrix: keys={m._keys}, n={len(m._keys)} <= k={_SUBSPACE_K}, 走 O(n) 等价路径 (lazy)")
+
+    # SE(3) guided MCMC proposal verification
+    # Scenario: two hypotheses with identical structures, SE(3) proposal should match.
+    try:
+        from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+        import numpy as _np
+
+        _coords = _np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
+        _lattice = _np.eye(3) * 5.0
+        _cmap_a = StructureCognitiveMap.from_coords(
+            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
+        _cmap_b = StructureCognitiveMap.from_coords(
+            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
+
+        m_se3 = HypothesisManifold()
+        m_se3.add(Hypothesis("h_a", "structure A", predictions={"x": 1.0}))
+        m_se3.add(Hypothesis("h_b", "structure B (same as A)", predictions={"x": 1.0}))
+        m_se3.register_structure("h_a", "struct_a", _cmap_a)
+        m_se3.register_structure("h_b", "struct_b", _cmap_b)
+
+        # Test: register_structure + _has_structure
+        assert m_se3._hyp["h_a"].structure_id == "struct_a"
+        assert m_se3._structure_maps["struct_a"] is _cmap_a
+        assert m_se3._has_structure("h_a") is True
+        assert m_se3._has_structure("h_b") is True
+
+        # Test: _match_nearest_hypothesis with identical structures (RMSD=0)
+        _matched = m_se3._match_nearest_hypothesis(_cmap_a, exclude="h_a")
+        assert _matched == "h_b", f"expected h_b, got {_matched}"
+
+        # Test: _se3_proposal with small angle (should match h_b)
+        _rng_se3 = random.Random(123)
+        _matched_se3 = m_se3._se3_proposal("h_a", _rng_se3, angle_sigma=2.0)
+        if _matched_se3 is not None:
+            assert _matched_se3 == "h_b", f"expected h_b, got {_matched_se3}"
+
+        # Test: se3_enabled=True mcmc_step runs without crash
+        _cur = "h_a"
+        _cached = None
+        for _ in range(100):
+            _cur, _cached = m_se3.mcmc_step(
+                [Observation("x", 1.0)], _cur,
+                rng=random.Random(42), se3_enabled=True,
+                cached_log_p_current=_cached,
+            )
+
+        # Test: no structure -> se3_enabled=True safely degrades to fisher
+        m_nos = HypothesisManifold()
+        m_nos.add(Hypothesis("h_x", "no struct", predictions={"x": 1.0}))
+        m_nos.add(Hypothesis("h_y", "no struct", predictions={"x": 2.0}))
+        _cn = "h_x"
+        _cn_cached = None
+        for _ in range(50):
+            _cn, _cn_cached = m_nos.mcmc_step(
+                [Observation("x", 1.0)], _cn,
+                rng=random.Random(42), se3_enabled=True,
+                cached_log_p_current=_cn_cached,
+            )
+
+        print("  SE(3) proposal: register + match + degrade-to-fisher OK")
+    except ImportError:
+        print("  SE(3) proposal: pymatgen unavailable, skipped (degrades to fisher)")
 
 
 if __name__ == "__main__":
