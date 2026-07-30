@@ -49,6 +49,12 @@ os.environ.setdefault("HUGINN_HEALTH_MONITOR", "0")
 # 反而每 fork 跑完整 sub-agent (k=3 时 3x agent 调用), iter 1 光分叉就 22 分钟.
 # ponytail: 复现任务确定性高, 单轨迹够用. ceiling: 创意探索任务可开.
 os.environ.setdefault("HUGINN_RCB_FORK_ENABLED", "0")
+
+# block subagent_tool: subagent 内部想调 execute 但被 SandboxBackendProtocol
+# 拒绝, 转而嵌套调 sub-sub-agent 死等. Physics_000 iter 1 卡死根因.
+# agent 改用 file_read_tool + write_file_tool 直接做 PDF 提取, 不损失能力.
+# ponytail: 复现任务工具齐全, 不需要 subagent 并行. ceiling: 多视角探索任务可开.
+os.environ.setdefault("HUGINN_RCB_BLOCKED_TOOLS", "subagent_tool")
 # file_read_tool 默认限制在 cwd 下, 但 agent 可能传绝对路径读 data/
 os.environ.setdefault("HUGINN_ALLOW_UNRESTRICTED_READ", "1")
 # code_tool/bash_tool 需要本地执行后端, 否则 get_executor() 直接拒绝
