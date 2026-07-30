@@ -626,6 +626,79 @@ class CognitiveLoopMixin:
 
     pass  # methods migrated from engine.py via P3 slim-down
 
+    async def _await_human_decision_via_inbox(
+        self, reason: str, options: list[dict], step_id: int
+    ) -> str | None:
+        """P4-1: 把 pause 决策路由到 Inbox, 真挂起等人类响应.
+
+        创建 question item (带 quick-reply options), await store.wait 挂起.
+        人类从任意 surface (desktop/IM/mobile) resolve 后, 返回答案文本.
+
+        TaskLifecycle 同步记录 pause_for_decision → resume 状态转换,
+        持久化到 .huginn/task_lifecycle.json, 重启后可读回.
+
+        返回 None 表示 Inbox 不可用 (调用方退化到 hint 注入).
+        """
+        try:
+            from huginn.interaction.inbox import get_inbox_store
+            from huginn.runtime.task_lifecycle import (
+                DecisionRequest, TaskLifecycle, TaskState,
+                save_task_lifecycle, load_task_lifecycle,
+            )
+        except ImportError:
+            logger.debug("P4-1 inbox/task_lifecycle import failed, fallback to hint")
+            return None
+
+        run_id = str(getattr(self, "_run_id", None) or "autoloop")
+        session_id = f"autoloop:{run_id}"
+
+        # 加载或创建 TaskLifecycle, 复用已有记录 (durable resume)
+        lifecycle = load_task_lifecycle(run_id, self.workspace)
+        if lifecycle is None:
+            lifecycle = TaskLifecycle(task_id=run_id)
+        if lifecycle.state == TaskState.CREATED:
+            lifecycle.transition(TaskState.RUNNING)
+
+        # 构造 quick-reply 选项 (Inbox question 要 list[str])
+        quick_replies = [
+            f"{o.get('id', '?')}: {o.get('label', '')}" for o in options
+        ] or ["继续", "停止", "修改计划"]
+
+        dr = DecisionRequest(
+            step_id=step_id,
+            question=reason,
+            options=options,
+            context_summary=f"autoloop iter {getattr(self, '_iteration', '?')}, run {run_id}",
+        )
+        lifecycle.pause_for_decision(dr)
+        save_task_lifecycle(lifecycle, self.workspace)
+
+        # 创建 Inbox question item, 按 (session, tool_call_id) 幂等
+        store = get_inbox_store()
+        item = store.add_question(
+            session_id=session_id,
+            title=reason[:120],
+            body=f"Step {step_id} pause: {reason}\n\nOptions:\n" + "\n".join(quick_replies),
+            options=quick_replies,
+            allow_text=True,
+            tool_call_id=f"pause:{run_id}:{step_id}",
+        )
+
+        logger.info(
+            "P4-1 autoloop paused, waiting human decision: %s (item=%s)",
+            reason[:80], item.id,
+        )
+
+        # 真挂起等人类响应
+        resolution = await store.wait(item.id)
+
+        # resume lifecycle
+        lifecycle.resume(answer=resolution)
+        save_task_lifecycle(lifecycle, self.workspace)
+
+        logger.info("P4-1 autoloop resumed, answer: %s", str(resolution)[:80])
+        return resolution
+
 # === 自检 ===
 
     def _run_phase(self, name: str, fn, *args) -> LoopPhase:
@@ -2668,17 +2741,37 @@ Respond JSON only:
                         iteration_history=getattr(state, "iteration_history", None),
                     )
                     if _pause:
-                        logger.warning("autoloop pause signal (no human): %s", _reason)
-                        self._speculator_hint = (
-                            (self._speculator_hint + f"\n[PAUSE] {_reason}\n").strip()
-                        )
-                        # H4: GRILL pause → 进入 grill 模式, 下次 _llm_chat 注入
-                        # GRILL_SYSTEM_PROMPT_CN. 之前 pause 后只 auto-resume,
-                        # LLM 看不到 grill 约束, "一次一问" 形同虚设.
+                        # GRILL pause → 进入 grill 模式 (多轮交互, 不走 Inbox 单次挂起)
                         if "GRILL" in _reason and not self._grill_active:
                             self._grill_active = True
                             self._grill_turns = 0
                             logger.info("GRILL mode activated: %s", _reason)
+                            self._speculator_hint = (
+                                (self._speculator_hint + f"\n[PAUSE] {_reason}\n").strip()
+                            )
+                        elif os.environ.get("HUGINN_AUTOLOOP_HUMAN_PAUSE", "0") == "1":
+                            # P4-1: 真挂起等人类响应 (跨会话 Inbox). 默认 off,
+                            # 无人值守走 hint 退化. HUGINN_AUTOLOOP_HUMAN_PAUSE=1 启用.
+                            _step_id = len(self._evals_history)
+                            _answer = await self._await_human_decision_via_inbox(
+                                _reason, _opts, _step_id
+                            )
+                            if _answer:
+                                self._speculator_hint = (
+                                    self._speculator_hint
+                                    + f"\n[PAUSE] {_reason}\n[USER] {_answer}\n"
+                                ).strip()
+                            else:
+                                # Inbox 不可用, 退化到 hint
+                                self._speculator_hint = (
+                                    self._speculator_hint + f"\n[PAUSE] {_reason}\n"
+                                ).strip()
+                        else:
+                            # 无人值守: pause 退化为 hint 注入 (原路径)
+                            logger.warning("autoloop pause signal (no human): %s", _reason)
+                            self._speculator_hint = (
+                                self._speculator_hint + f"\n[PAUSE] {_reason}\n"
+                            ).strip()
                 except Exception:
                     logger.debug("AV2 should_pause_for_decision failed", exc_info=True)
 
