@@ -1045,11 +1045,29 @@ LUCID review (mandatory after generating hypothesis):
     # v15 Task 4: 上一轮 observations, 给 _build_posterior_guided_hint 用.
     # iter 0 时为空 (还没跑过), iter 1+ 持有上一轮的 observations.
     _iter_observations: list = []
-    # P1-A: MCMC 当前 h_id — 跨 iter 保持, 每 _mcmc_interval 步跑一次 mcmc_step.
+    # P1-A: MCMC 状态 — 跨 iter 保持, 每 _mcmc_interval 步跑一次 mcmc_step.
     # 之前 mcmc_step 只在 _selfcheck 调, 主循环从不调, manifold 是静态的.
     # ponytail: MCMC 是 advisory only, 不强制 agent 用 MCMC 选的 h.
-    _mcmc_current: str | None = None
+    # rcb_runner 不接 AutoloopEngine, 用 SimpleNamespace 当 holder 让 save_engine_state 能拉到字段
+    import random as _mcmc_random
+    import types as _mcmc_types
+    _mcmc_engine = _mcmc_types.SimpleNamespace(
+        _mcmc_current=None,
+        _mcmc_rng=_mcmc_random.Random(
+            int(os.environ.get("HUGINN_MCMC_SEED", "42"))),
+        _mcmc_rng_state=None,
+        _mcmc_accept_count=0,
+        _mcmc_step_count=0,
+        _mcmc_chains={},
+        _iteration=0,
+        workspace=ws,
+        hypothesis_graph=None,
+    )
+    # Step 2: 跨步缓存 current 的 log_posterior, 拒绝时复用避免重算
+    _mcmc_cached_log_p: float | None = None
     _mcmc_interval = int(os.environ.get("HUGINN_MCMC_INTERVAL", "5"))
+    _mcmc_ckpt_interval = int(os.environ.get(
+        "HUGINN_MCMC_CHECKPOINT_INTERVAL", "10000"))
     # P1-C: 完成度审计周期触发 — 之前 metacog_check_completion 只在 agent 声称
     # TASK COMPLETE 时跑, 长任务里 agent 一直不说完成 → 审计门永不跑.
     # ponytail: advisory only, 不阻断. 结果写 cognitive_evidence.md.
@@ -2507,30 +2525,50 @@ LUCID review (mandatory after generating hypothesis):
                 and _iter_n % _mcmc_interval == 0):
             try:
                 # 初始化 _mcmc_current: 用本轮 best_h_id (posterior 最高的)
-                if _mcmc_current is None and "_iter_best_h_id" in dir() \
+                if _mcmc_engine._mcmc_current is None \
+                        and "_iter_best_h_id" in dir() \
                         and _iter_best_h_id is not None:
-                    _mcmc_current = _iter_best_h_id
-                if _mcmc_current is not None and len(_hypo_manifold._hyp) >= 2:
-                    _mcmc_prev = _mcmc_current
-                    _mcmc_current = _hypo_manifold.mcmc_step(
-                        _iter_observations, _mcmc_current)
-                    _mcmc_accepted = (_mcmc_current != _mcmc_prev)
-                    try:
-                        _mcmc_llh = _hypo_manifold.log_posterior(
-                            _iter_observations).get(_mcmc_current, 0.0)
-                    except Exception:
-                        _mcmc_llh = 0.0
+                    _mcmc_engine._mcmc_current = _iter_best_h_id
+                if _mcmc_engine._mcmc_current is not None \
+                        and len(_hypo_manifold._hyp) >= 2:
+                    _mcmc_prev = _mcmc_engine._mcmc_current
+                    # Step 2: 增量路径 — cached_log_p 跨步复用, 不再调 log_posterior 全量
+                    _next_h, _next_log_p = _hypo_manifold.mcmc_step(
+                        _iter_observations, _mcmc_engine._mcmc_current,
+                        rng=_mcmc_engine._mcmc_rng,
+                        cached_log_p_current=_mcmc_cached_log_p,
+                    )
+                    _mcmc_engine._mcmc_current = _next_h
+                    _mcmc_cached_log_p = _next_log_p
+                    _mcmc_accepted = (_mcmc_engine._mcmc_current != _mcmc_prev)
+                    if _mcmc_accepted:
+                        _mcmc_engine._mcmc_accept_count += 1
+                    _mcmc_engine._mcmc_step_count += 1
+                    _mcmc_engine._iteration = _iter_n
+                    _mcmc_llh = _next_log_p  # mcmc_step 已返回, 不再重算
                     print(
                         f"[mcmc] iter {_iter_n}: "
                         f"{'accepted' if _mcmc_accepted else 'rejected'} "
-                        f"h={_mcmc_current} llh={_mcmc_llh:.3f}",
+                        f"h={_mcmc_engine._mcmc_current} llh={_mcmc_llh:.3f}",
                         flush=True)
-                    # 包装成 dict 给 _write_cognitive_evidence 的 mcmc_info
                     _mcmc_current_info = {
                         "accepted": _mcmc_accepted,
-                        "h_id": _mcmc_current,
+                        "h_id": _mcmc_engine._mcmc_current,
                         "llh": _mcmc_llh,
                     }
+                    # 周期 checkpoint — 每 HUGINN_MCMC_CHECKPOINT_INTERVAL 步落盘
+                    # ponytail: save_engine_state 直接调, 失败只 warn 不阻塞 MCMC
+                    if _mcmc_ckpt_interval > 0 and \
+                            _mcmc_engine._mcmc_step_count % _mcmc_ckpt_interval == 0:
+                        try:
+                            from huginn.runtime.engine_state import save_engine_state
+                            _mcmc_engine._mcmc_rng_state = \
+                                _mcmc_engine._mcmc_rng.getstate()
+                            save_engine_state(_mcmc_engine, _task_id, ws)
+                        except Exception:
+                            print(
+                                "[mcmc] checkpoint save failed (non-fatal)",
+                                flush=True)
                 else:
                     _mcmc_current_info = None
             except Exception as _mcmc_e:
@@ -3913,8 +3951,24 @@ async def _step3_adversarial(
     return _final_verdict
 
 
-async def run(workspace: str, extreme: bool = False) -> int:
+async def run(
+    workspace: str,
+    extreme: bool = False,
+    *,
+    mcmc_mode: str | None = None,
+    mcmc_steps: int = 7_000_000,
+    mcmc_chains: int = 4,
+    mcmc_checkpoint_interval: int = 10_000,
+) -> int:
     ws = Path(workspace).resolve()
+    # Task 4.1: --mcmc-mode 走独立 MCMC 路径, 不跑 RCB agent 主循环.
+    # 不传时 mcmc_mode=None, 下面走原 RCB 逻辑 100% 不变.
+    if mcmc_mode is not None:
+        return await _run_mcmc_mode(
+            ws=ws, task_id=ws.name, mode=mcmc_mode,
+            n_steps=mcmc_steps, n_chains=mcmc_chains,
+            checkpoint_interval=mcmc_checkpoint_interval,
+        )
     instructions = ws / "INSTRUCTIONS.md"
     if not instructions.exists():
         print(f"ERROR: {instructions} not found", file=sys.stderr)
@@ -5710,6 +5764,176 @@ def self_check_v14_all() -> None:
     print("v14 ALL Phase 1-4 comprehensive self-check PASSED")
 
 
+async def _run_mcmc_mode(
+    ws: Path,
+    task_id: str,
+    mode: str,
+    n_steps: int,
+    n_chains: int,
+    checkpoint_interval: int,
+) -> int:
+    """Task 4.1+4.2: 纯 MCMC 模式入口 — 不跑 RCB agent 主循环.
+
+    single: 单链 N 步, standard 沙箱, 每 checkpoint_interval 步落盘
+    multi:  K 链并行 (asyncio.gather 在 manifold 内部), 每链 N//K 步, R̂ 诊断
+    """
+    import random as _mcmc_random
+    import types as _mcmc_types
+    from huginn.metacog.hypothesis_manifold import Observation
+    from huginn.runtime.engine_state import save_engine_state
+    from huginn.security.sandbox import create_sandbox
+
+    # 复用 RCB 路径的 manifold 初始化 — 优先从盘上加载, 没有就建 generic
+    _instr_path = ws / "INSTRUCTIONS.md"
+    _hypo_manifold = _init_hypothesis_manifold(
+        ws=ws, task_id=task_id, checklist="",
+        instructions=_instr_path if _instr_path.exists() else "",
+        scan_text="", model=None, task_ctx="",
+    )
+    if _hypo_manifold is None or len(_hypo_manifold._hyp) < 2:
+        print(f"[mcmc-{mode}] manifold init failed or <2 hypotheses",
+              file=sys.stderr)
+        return 1
+
+    # 读 observations — 主循环 _iter_observations 跨轮累积, 这里从盘上恢复
+    obs_path = ws / ".huginn" / "observations.jsonl"
+    obs_list: list = []
+    if obs_path.exists():
+        for _line in obs_path.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if not _line:
+                continue
+            try:
+                _o = json.loads(_line)
+                obs_list.append(Observation(
+                    name=_o["name"], value=_o["value"],
+                    sigma=_o.get("sigma", 1.0),
+                ))
+            except Exception:
+                pass
+    if not obs_list:
+        print(f"[mcmc-{mode}] no observations in {obs_path}, cannot run MCMC",
+              file=sys.stderr)
+        return 1
+
+    # engine holder — 跟主循环 L1054 一致, 让 save_engine_state 能拉到 _mcmc_* 字段
+    _engine = _mcmc_types.SimpleNamespace(
+        _mcmc_current=None,
+        _mcmc_rng=_mcmc_random.Random(
+            int(os.environ.get("HUGINN_MCMC_SEED", "42"))),
+        _mcmc_rng_state=None,
+        _mcmc_accept_count=0,
+        _mcmc_step_count=0,
+        _mcmc_chains={},
+        _iteration=0,
+        workspace=ws,
+        hypothesis_graph=None,
+    )
+
+    if mode == "single":
+        # 单链: 一个 standard 沙箱 (8GB/4cpu/6h), MCMC 在主进程跑
+        _sandbox = create_sandbox(profile="standard")
+        print(f"[mcmc-single] sandbox profile=standard, "
+              f"steps={n_steps}, ckpt_interval={checkpoint_interval}",
+              flush=True)
+
+        # resume: 尝试加载已有 checkpoint, 有就从断点继续
+        from huginn.runtime.engine_state import load_engine_state
+        _resume_state = load_engine_state(task_id, ws)
+        if _resume_state is not None and _resume_state._mcmc_step_count > 0:
+            _engine._mcmc_current = _resume_state._mcmc_current
+            _engine._mcmc_accept_count = _resume_state._mcmc_accept_count
+            _engine._mcmc_step_count = _resume_state._mcmc_step_count
+            if _resume_state._mcmc_rng_state is not None:
+                _engine._mcmc_rng.setstate(_resume_state._mcmc_rng_state)
+            print(f"[mcmc-single] resume from step={_engine._mcmc_step_count} "
+                  f"current={_engine._mcmc_current} "
+                  f"accept={_engine._mcmc_accept_count}", flush=True)
+
+        # 初始 current: resume 优先, 否则 abductive_inference, 最后随机
+        current = _engine._mcmc_current
+        if current is None:
+            try:
+                _abd = _hypo_manifold.abductive_inference(obs_list)
+                current = _abd.h_id if _abd else None
+            except Exception:
+                current = None
+            if current is None:
+                current = _mcmc_random.Random(42).choice(list(_hypo_manifold._hyp))
+
+        cached_log_p: float | None = None
+        _start_step = _engine._mcmc_step_count + 1
+        for step in range(_start_step, n_steps + 1):
+            prev = current
+            current, cached_log_p = _hypo_manifold.mcmc_step(
+                obs_list, current,
+                rng=_engine._mcmc_rng,
+                cached_log_p_current=cached_log_p,
+            )
+            if current != prev:
+                _engine._mcmc_accept_count += 1
+            _engine._mcmc_step_count += 1
+            _engine._mcmc_current = current
+            _engine._iteration = step
+
+            if checkpoint_interval > 0 and step % checkpoint_interval == 0:
+                try:
+                    _engine._mcmc_rng_state = _engine._mcmc_rng.getstate()
+                    save_engine_state(_engine, task_id, ws)
+                    print(f"[mcmc-single] ckpt step={step} current={current} "
+                          f"accept={_engine._mcmc_accept_count}", flush=True)
+                except Exception as _e:
+                    print(f"[mcmc-single] ckpt failed: {_e}", flush=True)
+
+        _rate = _engine._mcmc_accept_count / _engine._mcmc_step_count if _engine._mcmc_step_count > 0 else 0.0
+        print(f"[mcmc-single] done: total_steps={_engine._mcmc_step_count} "
+              f"accept_rate={_rate:.3f}", flush=True)
+        return 0
+
+    # multi 模式
+    n_per_chain = max(1, n_steps // n_chains)
+    _cpu = os.cpu_count() or 1
+    _max_concurrent = min(n_chains, _cpu)
+    # 每链一个 standard 容器; n_chains > cpu_count 时实际是协程级切换
+    _sandboxes = [create_sandbox(profile="standard") for _ in range(n_chains)]
+    print(f"[mcmc-multi] {n_chains} sandboxes (profile=standard), "
+          f"cpu_count={_cpu}, max_concurrent={_max_concurrent}, "
+          f"steps_per_chain={n_per_chain}", flush=True)
+    # ponytail: mcmc_multi_chain 内部 asyncio.gather 已并行, semaphore 没法
+    #   注入 (要改 manifold 签名). n_chains > cpu_count 时是协程级切换不是
+    #   真并行. 升级路径: ProcessPool + 每链独立进程, semaphore 限并发进程数.
+    #   见 hypothesis_manifold.py L444 注释.
+
+    def _on_chain_checkpoint(chain_id: int, state: dict) -> None:
+        # 多链 checkpoint: 每链 state 存 _mcmc_chains, 整体落盘一次
+        _engine._mcmc_chains[chain_id] = state
+        _engine._mcmc_current = state.get("current")
+        _engine._mcmc_accept_count = state.get("accept_count", 0)
+        _engine._mcmc_step_count = state.get("step", 0)
+        _engine._mcmc_rng_state = state.get("rng_state")
+        try:
+            save_engine_state(_engine, task_id, ws)
+            print(f"[mcmc-multi] chain {chain_id} ckpt at step "
+                  f"{state.get('step')}", flush=True)
+        except Exception as _e:
+            print(f"[mcmc-multi] chain {chain_id} ckpt failed: {_e}",
+                  flush=True)
+
+    result = await _hypo_manifold.mcmc_multi_chain(
+        obs_list,
+        n_chains=n_chains,
+        n_steps_per_chain=n_per_chain,
+        checkpoint_interval=checkpoint_interval,
+        on_chain_checkpoint=_on_chain_checkpoint,
+    )
+
+    _r_hat = result.get("r_hat", float("nan"))
+    print(f"[mcmc-multi] done: r_hat={_r_hat:.4f} "
+          f"converged={result.get('converged')} "
+          f"accept_rates={result.get('accept_rates')}", flush=True)
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Huginn RCB runner")
     parser.add_argument("--workspace", required=True, help="RCB workspace path")
@@ -5717,9 +5941,38 @@ def main() -> None:
         "--extreme", action="store_true",
         help="v6 极限模式: thinking=high, max_tool_calls=300, context_budget=200K",
     )
+    # Task 4.1: MCMC 多模式入口 — 不传 --mcmc-mode 走原 RCB 路径, 100% 不变.
+    # env var 回退: CLI 未传时读 HUGINN_MCMC_*
+    parser.add_argument(
+        "--mcmc-mode", choices=["single", "multi"],
+        default=os.environ.get("HUGINN_MCMC_MODE"),
+        help="MCMC 模式: single=单链, multi=多链+R-hat. 不传走原 RCB 路径",
+    )
+    parser.add_argument(
+        "--mcmc-steps", type=int,
+        default=int(os.environ.get("HUGINN_MCMC_STEPS", "7000000")),
+        help="MCMC 总步数 (multi 模式下每链 steps//chains)",
+    )
+    parser.add_argument(
+        "--mcmc-chains", type=int,
+        default=int(os.environ.get("HUGINN_MCMC_CHAINS", "4")),
+        help="多链数 (仅 multi 模式)",
+    )
+    parser.add_argument(
+        "--mcmc-checkpoint-interval", type=int,
+        default=int(os.environ.get("HUGINN_MCMC_CHECKPOINT_INTERVAL", "10000")),
+        help="checkpoint 落盘间隔 (步)",
+    )
     args = parser.parse_args()
 
-    rc = asyncio.run(run(args.workspace, extreme=args.extreme))
+    rc = asyncio.run(run(
+        args.workspace,
+        extreme=args.extreme,
+        mcmc_mode=args.mcmc_mode,
+        mcmc_steps=args.mcmc_steps,
+        mcmc_chains=args.mcmc_chains,
+        mcmc_checkpoint_interval=args.mcmc_checkpoint_interval,
+    ))
     sys.exit(rc)
 
 
