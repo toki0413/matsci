@@ -4470,8 +4470,15 @@ async def run(
                 msgs = chunk.get("messages", [])
                 if not msgs:
                     continue
-                last = msgs[-1]
-                if not isinstance(last, AIMessage):
+                # LLM 偶尔直接调 tool 不输出文本, msgs[-1] 是 ToolMessage.
+                # 从后往前找最后一条 AIMessage, 取其 content. ponytail: 倒序扫描,
+                # ceiling: 累积所有 AIMessage content (多轮 tool 调用中间文本).
+                last = None
+                for _m in reversed(msgs):
+                    if isinstance(_m, AIMessage):
+                        last = _m
+                        break
+                if last is None:
                     continue
                 content = getattr(last, "content", "")
                 if content:
@@ -4546,7 +4553,26 @@ async def run(
         f"and will be used in Step 3's substitution audit and sanity check.\n\n"
         f"Task instructions:\n{prompt}"
     )
+    # Step 1 LLM 偶尔返空 (deepseek-v4-pro 不稳定), 重试一次避免 checklist=0
+    # 导致 Step 3 adversarial_critique 被 skip. ponytail: 只对 step1 重试, 其他
+    # step 空响应让 agent 自己在后续 iter 补. ceiling: 指数退避 + 更多次重试.
     checklist = await _stream_chat(step1_prompt, "step1")
+    if not checklist.strip():
+        print("[step1] 空响应, 重试一次...", flush=True)
+        checklist = await _stream_chat(step1_prompt, "step1_retry")
+    # 二级 fallback: LLM 连续两次空响应 (卡在 tool call 不出文本),
+    # 用无 tool 的直接 prompt 强制输出 checklist. ponytail: fresh_history=True
+    # 避免 tool call 历史干扰. ceiling: 独立 thread + 禁用 tool_filter.
+    if not checklist.strip():
+        print("[step1] 仍为空, 强制直接输出 checklist (无 tool)...", flush=True)
+        _force_prompt = (
+            "Based on the task instructions below, output a METHODOLOGY CHECKLIST "
+            "as a numbered list. Do NOT call any tools. Just output the checklist text directly.\n\n"
+            "For each component, label [EXACT], [VARIANT], or [EXACT-CACHED].\n"
+            "Include key quantitative metrics with baseline values.\n\n"
+            f"Task instructions:\n{prompt}"
+        )
+        checklist = await _stream_chat(_force_prompt, "step1_force", fresh_history=True)
     print(f"\n[checklist extracted: {len(checklist)} chars]\n", flush=True)
 
     # G29: checklist 永驻 system_prompt — 写入 stable_principles (source="checklist"),
