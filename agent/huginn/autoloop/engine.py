@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import time
 import uuid
@@ -527,6 +528,16 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         self._auto_wake_enabled = os.environ.get(
             "HUGINN_AUTO_WAKE", "1"
         ) == "1"
+
+        # MCMC 状态 (单链) — 长程采样断点续跑, _maybe_save_engine_state 周期落盘
+        # rcb_runner 路径不经过 AutoloopEngine, 那边自己持 holder 对象
+        self._mcmc_current: str | None = None
+        self._mcmc_rng = random.Random(
+            int(os.environ.get("HUGINN_MCMC_SEED", "42")))
+        self._mcmc_rng_state: tuple | None = None
+        self._mcmc_accept_count = 0
+        self._mcmc_step_count = 0
+        self._mcmc_chains: dict[int, dict] = {}
 
     def _maybe_save_engine_state(
         self, *, force: bool = False, reason: str = "",

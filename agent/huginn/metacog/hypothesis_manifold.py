@@ -33,6 +33,7 @@ Honest boundaries (ponytail: named ceilings + upgrade paths):
 from __future__ import annotations
 
 import math
+import os
 import random
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
@@ -240,6 +241,20 @@ class HypothesisManifold:
             out[h_id] = lp
         return out
 
+    def _log_posterior_single(self, obs: Iterable[Observation], h_id: str) -> float:
+        """单个 hypothesis 的 log posterior (未归一化), 与 log_posterior(obs)[h_id] 等价.
+
+        增量路径专用 — mcmc_step 每步只算 current + proposal 两个,
+        不再走全量 log_posterior (O(|H|×|O|) → O(|O|)).
+        """
+        h = self._hyp.get(h_id)
+        if h is None:
+            return float("-inf")
+        lp = h.log_prior()
+        for o in obs:
+            lp += self._log_lik(h, o)
+        return lp
+
     def posterior(self, obs: Iterable[Observation]) -> dict[str, float]:
         """归一化 posterior P(h | O)."""
         log_post = self.log_posterior(obs)
@@ -348,7 +363,8 @@ class HypothesisManifold:
         *,
         rng: random.Random | None = None,
         temperature: float = 1.0,
-    ) -> str:
+        cached_log_p_current: float | None = None,
+    ) -> tuple[str, float]:
         """Metropolis-Hastings 一步在 posterior 上采样.
 
         P4-4: proposal kernel 用 fisher_distance 引导 — 距离近的 h 提议概率高.
@@ -362,18 +378,28 @@ class HypothesisManifold:
         d = d_F(h,h'), d' = d_F(h,h') (对称) → 距离项相消, 退化为标准 MH.
         实际引导通过 proposal sampling 实现 (距离近的被采到更多), 接受步保持标准 MH.
 
+        Step 2 增量路径: 不再调 log_posterior(obs) 全量, 只算 current + proposal.
+        cached_log_p_current 由调用方跨步传入, 拒绝时复用 (省一次 _log_lik 全遍历).
+        接受时返回 proposal 的 log_p, 调用方下步直接复用 — 永远只算 1 次新 log_p.
+
         700万步 = 这个 step 跑 7M 次. 每步是从 current_h 提议一个 neighbor,
         按 posterior ratio 接受/拒绝. 这才是有引导的搜索, 不是 random walk.
 
-        Returns: next h_id (可能等于 current, 即拒绝提议).
+        Returns: (next_h_id, next_log_p) — 调用方下步传 cached_log_p_current=next_log_p.
         """
         rng = rng or random
+        # 物化一次, current + proposal 两次 _log_posterior_single 都要遍历
+        obs = list(obs)
         h_ids = list(self._hyp)
         if len(h_ids) < 2:
-            return current_h_id
+            if cached_log_p_current is None:
+                cached_log_p_current = self._log_posterior_single(obs, current_h_id)
+            return current_h_id, cached_log_p_current
         others = [h for h in h_ids if h != current_h_id]
         if not others:
-            return current_h_id
+            if cached_log_p_current is None:
+                cached_log_p_current = self._log_posterior_single(obs, current_h_id)
+            return current_h_id, cached_log_p_current
 
         # P4-4: fisher_distance 引导的 proposal kernel.
         # 距离近的 h 提议概率高 (softmax(-d/τ)).
@@ -397,12 +423,218 @@ class HypothesisManifold:
                     proposal = h
                     break
 
-        log_post = self.log_posterior(obs)
-        log_ratio = log_post[proposal] - log_post[current_h_id]
+        # Step 2 增量: current 复用缓存, proposal 只算一次
+        if cached_log_p_current is None:
+            log_p_current = self._log_posterior_single(obs, current_h_id)
+        else:
+            log_p_current = cached_log_p_current
+        log_p_proposal = self._log_posterior_single(obs, proposal)
+
+        log_ratio = (log_p_proposal - log_p_current) / temperature
         # 接受概率 min(1, exp(log_ratio))
         if math.log(rng.random()) < log_ratio:
-            return proposal
-        return current_h_id
+            return proposal, log_p_proposal
+        return current_h_id, log_p_current
+
+    # ── Step 3: 多链并行 + Gelman-Rubin 收敛诊断 ──────────────────
+    # 7M 步单链太慢, 标准 MCMC 做法是多链并行 + R̂ 诊断.
+    # 每链独立 rng + 独立 current + 独立 checkpoint, 单链崩溃不影响其他链.
+    # 跑完后用 Gelman-Rubin R̂ 判断收敛, R̂ < 1.1 视为收敛.
+    #
+    # ponytail: asyncio.gather 是协程级并行, CPU-bound 任务实际是串行.
+    # 真正的并行要 multiprocessing 或 Ray. 但 mcmc_step 是纯 Python 计算
+    # (没 IO), asyncio 也能跑通, 只是 wallclock 没加速. 升级路径: ProcessPool.
+    async def mcmc_multi_chain(
+        self,
+        obs: Iterable[Observation],
+        n_chains: int = 4,
+        n_steps_per_chain: int = 1_750_000,
+        checkpoint_interval: int = 10_000,
+        *,
+        temperature: float = 1.0,
+        on_chain_checkpoint: "Callable[[int, dict], None] | None" = None,
+    ) -> dict:
+        """多链并行 MCMC + Gelman-Rubin R̂ 收敛诊断.
+
+        Returns:
+            {
+                "chains": [[h_id, ...], ...],  # 每链样本 (burn-in 后, 降采样)
+                "r_hat": float,                # Gelman-Rubin R̂
+                "converged": bool,             # R̂ < 1.1
+                "accept_rates": [float, ...],  # 每链接受率
+            }
+        """
+        import asyncio
+
+        obs_list = list(obs)
+        if not self._hyp or n_chains < 1:
+            return {"chains": [], "r_hat": float("nan"), "converged": False, "accept_rates": []}
+
+        # 每链独立 rng + 独立 current
+        # 种子派生: chain_id * 7919 + base_seed. 7919 是质数, 避免相邻链种子相关.
+        base_seed = int(os.environ.get("HUGINN_MCMC_SEED", "42"))
+
+        async def _chain_runner(chain_id: int):
+            rng = random.Random(chain_id * 7919 + base_seed)
+            # current 初始化: 用 abductive_inference 给一个合理起点, 避免全从同一点开始
+            init_h = None
+            try:
+                abd = self.abductive_inference(obs_list)
+                init_h = abd.h_id if abd else None
+            except Exception:
+                init_h = None
+            if init_h is None:
+                h_ids = list(self._hyp)
+                init_h = rng.choice(h_ids)
+            return await self._run_single_chain(
+                chain_id, obs_list, n_steps_per_chain, checkpoint_interval,
+                rng=rng, temperature=temperature,
+                init_h_id=init_h, on_checkpoint=on_chain_checkpoint,
+            )
+
+        # return_exceptions=True: 单链崩溃返回 Exception 对象, 不影响其他链
+        results = await asyncio.gather(
+            *[_chain_runner(i) for i in range(n_chains)],
+            return_exceptions=True,
+        )
+
+        chains: list[list[str]] = []
+        accept_rates: list[float] = []
+        for r in results:
+            if isinstance(r, Exception):
+                # 降级路径: 崩溃的链不参与 R̂ 计算, 只 log
+                continue
+            chains.append(r["samples"])
+            accept_rates.append(r["accept_rate"])
+
+        r_hat = self._gelman_rubin(chains) if len(chains) >= 2 else float("nan")
+        converged = (not math.isnan(r_hat)) and r_hat < 1.1
+
+        return {
+            "chains": chains,
+            "r_hat": r_hat,
+            "converged": converged,
+            "accept_rates": accept_rates,
+        }
+
+    async def _run_single_chain(
+        self,
+        chain_id: int,
+        obs: list,
+        n_steps: int,
+        checkpoint_interval: int,
+        *,
+        rng: random.Random,
+        temperature: float = 1.0,
+        init_h_id: str,
+        on_checkpoint: "Callable[[int, dict], None] | None" = None,
+    ) -> dict:
+        """单链 MCMC 执行器. 复用 mcmc_step 的增量逻辑.
+
+        Returns: {"samples": [...], "accept_rate": float, "final_h": str}
+        """
+        current = init_h_id
+        cached_log_p: float | None = None
+        accept_count = 0
+        # burn-in: 前半段不采样本 (Markov 链未达稳态)
+        burn_in = n_steps // 2
+        # 降采样: 每 1000 步取 1 个, 避免样本自相关 + 节省内存
+        thin = 1000
+        samples: list[str] = []
+
+        for step in range(1, n_steps + 1):
+            prev_h = current
+            current, cached_log_p = self.mcmc_step(
+                obs, current, rng=rng, temperature=temperature,
+                cached_log_p_current=cached_log_p,
+            )
+            if current != prev_h:
+                accept_count += 1
+            if step > burn_in and step % thin == 0:
+                samples.append(current)
+
+            # 周期 checkpoint
+            if checkpoint_interval > 0 and step % checkpoint_interval == 0:
+                ckpt = {
+                    "chain_id": chain_id,
+                    "step": step,
+                    "current": current,
+                    "rng_state": rng.getstate(),
+                    "accept_count": accept_count,
+                }
+                if on_checkpoint is not None:
+                    try:
+                        on_checkpoint(chain_id, ckpt)
+                    except Exception:
+                        pass  # checkpoint 失败不阻塞链
+
+        accept_rate = accept_count / n_steps if n_steps > 0 else 0.0
+        return {
+            "samples": samples,
+            "accept_rate": accept_rate,
+            "final_h": current,
+        }
+
+    @staticmethod
+    def _gelman_rubin(chains: list[list[str]]) -> float:
+        """Gelman-Rubin R̂ 收敛诊断.
+
+        R̂ = sqrt(((n-1)*W + B/n) / W)
+        W = 链内方差均值 (每条链的样本方差取平均)
+        B = 链间方差 × n (链均值方差 × 链长)
+        n = 每链样本数
+
+        字符串 h_id → 数值: 用 h_id 在所有样本中的 rank (按首次出现顺序).
+        ponytail: rank 是序数, 不反映 log_posterior. 升级路径: 传 log_post 值.
+        """
+        if len(chains) < 2:
+            return float("nan")
+
+        # h_id → 数值映射 (按全样本首次出现顺序)
+        all_h: list[str] = []
+        seen: set[str] = set()
+        for c in chains:
+            for h in c:
+                if h not in seen:
+                    seen.add(h)
+                    all_h.append(h)
+        if not all_h:
+            return float("nan")
+        h_to_idx = {h: float(i) for i, h in enumerate(all_h)}
+
+        # 转数值 + 截到最短链长度 (R̂ 要求等长)
+        min_len = min(len(c) for c in chains)
+        if min_len < 2:
+            return float("nan")
+        num_chains = [[h_to_idx[h] for h in c[:min_len]] for c in chains]
+
+        m = len(num_chains)       # 链数
+        n = min_len               # 每链样本数
+
+        # 链均值
+        chain_means = [sum(c) / n for c in num_chains]
+        # 总均值
+        grand_mean = sum(chain_means) / m
+
+        # B: 链间方差 (× n)
+        B = n * sum((cm - grand_mean) ** 2 for cm in chain_means) / (m - 1) if m > 1 else 0.0
+        # W: 链内方差均值
+        W = 0.0
+        for c in num_chains:
+            cm = sum(c) / n
+            var = sum((x - cm) ** 2 for x in c) / (n - 1) if n > 1 else 0.0
+            W += var
+        W /= m
+
+        if W <= 0.0:
+            # 链内方差为 0 (所有链收敛到同一点), R̂ 视为收敛
+            return 1.0
+
+        # var_hat = ((n-1)/n) * W + (1/n) * B  (Gelman 2003, B 已经 × n)
+        # ponytail: 不做 df 修正, 升级路径: rank-normalized R̂ (Vehtari 2021)
+        var_hat = ((n - 1) * W + B) / n if n > 0 else W
+        r_hat = math.sqrt(var_hat / W) if W > 0 else 1.0
+        return r_hat
 
 
 # ---------- Self-check ----------
@@ -474,12 +706,15 @@ def _selfcheck() -> None:
     )
 
     # Test 5: MCMC 在 posterior 上采样, 多步后访问 GR 的频率 ≈ posterior(GR)
+    # Step 2: 用 cached_log_p_current 跨步缓存, 验证增量路径与全量路径等价
     rng = random.Random(42)
     current = "newton"
+    cached_log_p: float | None = None  # 首步 None, 之后复用上步返回值
     visit_count = {"newton": 0, "gr": 0, "epicycle": 0}
     n_steps = 10000
     for _ in range(n_steps):
-        current = m.mcmc_step(obs, current, rng=rng)
+        current, cached_log_p = m.mcmc_step(
+            obs, current, rng=rng, cached_log_p_current=cached_log_p)
         visit_count[current] += 1
     # 频率应近似 posterior (GR 应该是 dominant)
     assert visit_count["gr"] > visit_count["epicycle"], (

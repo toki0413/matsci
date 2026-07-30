@@ -62,6 +62,11 @@ _ENGINE_FIELDS: tuple[str, ...] = (
     # QW1: 视觉记忆 + 持久化 (跟 P15 EngineState 集成)
     "_visual_primitives_history",
     "_image_embeddings",
+    # MCMC 单链状态 — 长程采样断点续跑, 多链 _mcmc_chains 走 cognitive_maps 同范式单独处理
+    "_mcmc_current",
+    "_mcmc_rng_state",
+    "_mcmc_accept_count",
+    "_mcmc_step_count",
 )
 
 
@@ -92,6 +97,15 @@ class EngineState:
     # QW1: 跨 session image embeddings (image_id -> embedding vector).
     # ceiling: 只存 embedding, 不存原图. 升级路径接 perception/image_index 持久化.
     _image_embeddings: dict[str, list[float]] = field(default_factory=dict)
+    # MCMC 单链状态 — 长程采样断点续跑, _maybe_save_engine_state 周期落盘
+    _mcmc_current: str | None = None
+    # ponytail: getstate() 返回 tuple, JSON round-trip 后变 list, setstate 前需转回 tuple
+    _mcmc_rng_state: tuple | None = None
+    _mcmc_accept_count: int = 0
+    _mcmc_step_count: int = 0
+    # MCMC 多链状态 (链 id → {current, rng_state, accept_count, step_count})
+    # 不在 _ENGINE_FIELDS 里, 跟 cognitive_maps 同范式单独处理 — dict[int,dict] 的 int key 经 JSON 变 str
+    _mcmc_chains: dict[int, dict] = field(default_factory=dict)
     # P1: Structure Cognitive Map 持久化 (HUGINN_USE_COGNITIVE_MAP=1 时填充).
     # 不是 engine 实例属性, 不在 _ENGINE_FIELDS 里, save 时单独从 tool registry 拉.
     cognitive_maps: dict[str, dict] = field(default_factory=dict)
@@ -152,6 +166,8 @@ def save_engine_state(
                 logging.getLogger(__name__).debug(
                     "cognitive_maps serialization failed (non-fatal)", exc_info=True,
                 )
+        # MCMC 多链状态 — 跟 cognitive_maps 同范式, 单独从 engine 拉
+        state._mcmc_chains = getattr(engine, "_mcmc_chains", {})
         atomic_write_json(_engine_state_path(workspace, run_id), asdict(state))
         # hypothesis_graph 同步落盘 — refuted/supported 状态跨 session 必须保留.
         # graph.save 自己处理 flag off (返 None) 和异常 (返 None).
@@ -195,6 +211,27 @@ def load_engine_state(
         kwargs = {f: data.get(f, getattr(defaults, f)) for f in _ENGINE_FIELDS}
         # cognitive_maps 不在 _ENGINE_FIELDS 里 (不是 engine 实例属性), 单独读.
         kwargs["cognitive_maps"] = data.get("cognitive_maps", {})
+        # _mcmc_chains: JSON 把 int key 变 str, 这里转回来.
+        # 每链的 rng_state 也要 list → tuple (跟顶层 _mcmc_rng_state 同问题).
+        _raw_chains = data.get("_mcmc_chains", {})
+        _chains_out: dict[int, dict] = {}
+        for k, v in _raw_chains.items():
+            cid = int(k)
+            if isinstance(v, dict):
+                _rng = v.get("rng_state")
+                if isinstance(_rng, list) and len(_rng) == 3:
+                    v["rng_state"] = (int(_rng[0]), tuple(_rng[1]), _rng[2])
+            _chains_out[cid] = v
+        kwargs["_mcmc_chains"] = _chains_out
+        # _mcmc_rng_state: random.getstate() 返回 tuple, JSON round-trip 变 list.
+        # random.setstate() 只吃 tuple, 不转回会抛 TypeError.
+        _raw_rng = kwargs.get("_mcmc_rng_state")
+        if isinstance(_raw_rng, list) and len(_raw_rng) == 3:
+            kwargs["_mcmc_rng_state"] = (
+                int(_raw_rng[0]),
+                tuple(_raw_rng[1]),
+                _raw_rng[2],
+            )
         kwargs["run_id"] = data.get("run_id", run_id)
         kwargs["saved_at"] = data.get("saved_at", 0.0)
         return EngineState(**kwargs)
@@ -222,6 +259,16 @@ def apply_state_to_engine(state: EngineState, engine: Any) -> None:
                 "apply_state_to_engine setattr %s failed (non-fatal)", f,
                 exc_info=True,
             )
+    # _mcmc_chains 不在 _ENGINE_FIELDS 里 (跟 cognitive_maps 同范式单独处理),
+    # 但它是 engine 实例属性, 需写回
+    try:
+        setattr(engine, "_mcmc_chains", getattr(state, "_mcmc_chains", {}))
+    except Exception:
+        import logging
+        logging.getLogger(__name__).debug(
+            "apply_state_to_engine setattr _mcmc_chains failed (non-fatal)",
+            exc_info=True,
+        )
 
 
 def engine_state_digest(state: EngineState) -> str:
@@ -365,6 +412,28 @@ def _selfcheck() -> None:
         d3 = engine_state_digest(s3)
         assert d3 != d1, "digest should differ for different state"
         print("6. engine_state_digest stable + distinct OK")
+
+        # ── 场景 7: MCMC 字段 round-trip + _mcmc_chains int key ─────
+        eng._mcmc_current = "h_mcmc_42"
+        eng._mcmc_accept_count = 17
+        eng._mcmc_step_count = 100
+        eng._mcmc_rng_state = (3, tuple(range(625)), None)
+        eng._mcmc_chains = {0: {"current": "h0"}, 1: {"current": "h1"}}
+        save_engine_state(eng, "loop_mcmc", ws)
+        loaded_mcmc = load_engine_state("loop_mcmc", ws)
+        assert loaded_mcmc._mcmc_current == "h_mcmc_42"
+        assert loaded_mcmc._mcmc_accept_count == 17
+        assert loaded_mcmc._mcmc_step_count == 100
+        # int key 经 JSON round-trip 后仍是 int (load 时转回)
+        assert loaded_mcmc._mcmc_chains == {
+            0: {"current": "h0"}, 1: {"current": "h1"}}, \
+            f"mcmc_chains int key broken: {loaded_mcmc._mcmc_chains}"
+        # apply_state_to_engine 写回 _mcmc_chains
+        eng4 = _FakeEngine()
+        apply_state_to_engine(loaded_mcmc, eng4)
+        assert eng4._mcmc_current == "h_mcmc_42"
+        assert eng4._mcmc_chains == {0: {"current": "h0"}, 1: {"current": "h1"}}
+        print("7. MCMC fields round-trip + int key OK")
 
         print("ALL CHECKS PASSED")
     finally:
