@@ -3678,7 +3678,14 @@ async def _step3_adversarial(
     # ponytail: 单独 _step3 后缀, 不污染 Step 1/2 thread. 升级: 修 checkpointer
     # 的 history restorer 自动过滤 dangling tool_calls (留后续).
     _step3_tid = f"rcb_{ws.name}_step3"
-    await stream_chat_fn(step3_prompt, "step3", tid=_step3_tid, fresh_history=True)
+    # Step 3 stream_chat_fn 异常不能炸整个 run — v5/v7 都死在这里, LLM 调用
+    # 抛异常 (timeout/recursion limit/dangling tool_calls 400) → 冒泡到 run()
+    # → 跳过所有评分逻辑 → 0 分. 兜底: 记录异常, 继续走 retry loop + 评分.
+    try:
+        await stream_chat_fn(step3_prompt, "step3", tid=_step3_tid, fresh_history=True)
+    except Exception as _e:
+        import traceback as _tb
+        print(f"[step3] stream_chat_fn failed: {_e}\n{_tb.format_exc()}", flush=True)
 
     # v14 Task 8: Step3→Step2 回退通道 (拓扑许可动力学)
     # 重新 critique 看 agent 修没修好; 仍 fix_needed + β_1>0 + gap 类型匹配
