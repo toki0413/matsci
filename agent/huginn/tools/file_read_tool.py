@@ -84,6 +84,17 @@ class FileReadTool(HuginnTool):
         if not path.is_file():
             return ToolResult(data=None, success=False, error=f"Not a file: {path}")
 
+        max_size = input_data.max_size_bytes or int(
+            os.environ.get(
+                "HUGINN_FILE_READ_MAX_SIZE_BYTES", str(DEFAULT_MAX_SIZE_BYTES)
+            )
+        )
+        max_tokens = input_data.max_output_tokens or int(
+            os.environ.get(
+                "HUGINN_FILE_READ_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS)
+            )
+        )
+
         # PDF 走 KB 的 pymupdf + OCR 链, 不走 read_text(errors="replace").
         # 旧版 read_text 产 256KB 乱码, 留在消息历史里 get_buffer_string
         # MemoryError (v16 崩溃根因). KB 的 _extract_text 用 pymupdf 提取
@@ -92,8 +103,9 @@ class FileReadTool(HuginnTool):
             try:
                 from huginn.knowledge.store import _extract_text
                 content = path.read_bytes()
+                # pymupdf 流式提取, 不受 max_size 限制 — 输出靠 max_tokens 截断.
+                # PDF 原始 2.3MB 但提取后文本通常 <100KB.
                 pdf_text = _extract_text(str(path), content)
-                # 截断到 token 上限, PDF 可能很长
                 if pdf_text:
                     lines = pdf_text.splitlines()
                     selected, was_truncated = self._apply_token_cap(
@@ -121,17 +133,6 @@ class FileReadTool(HuginnTool):
                     success=False,
                     error=f"PDF extraction failed: {e}",
                 )
-
-        max_size = input_data.max_size_bytes or int(
-            os.environ.get(
-                "HUGINN_FILE_READ_MAX_SIZE_BYTES", str(DEFAULT_MAX_SIZE_BYTES)
-            )
-        )
-        max_tokens = input_data.max_output_tokens or int(
-            os.environ.get(
-                "HUGINN_FILE_READ_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS)
-            )
-        )
 
         try:
             size = path.stat().st_size
