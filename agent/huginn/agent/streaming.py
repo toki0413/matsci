@@ -303,15 +303,9 @@ class StreamingMixin:
         if cache_stats:
             self._last_cache_stats = cache_stats
             turn_span.metadata.update(cache_stats)
-            # Wire token usage + cost to Prometheus
-            try:
-                from huginn.routes.metrics import track_llm_usage
-                track_llm_usage(
-                    getattr(self, "config", None) and self.config.model or "unknown",
-                    cache_stats,
-                )
-            except Exception:
-                logger.debug("metrics track_llm_usage failed", exc_info=True)
+            # token/cost 计数走 UsageCallback.on_llm_end (挂在每个 ChatOpenAI 上),
+            # 这里不再重复调 track_llm_usage — 修复 Bug 2 后两条路径都读得到
+            # token_usage, 同一调用会双计数. pet/span 是 streaming 独有, 保留.
             pet.publish(
                 PetMood.SUCCESS,
                 "Turn complete",
