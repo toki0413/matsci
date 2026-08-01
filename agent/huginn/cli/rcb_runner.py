@@ -3737,8 +3737,11 @@ async def _step3_adversarial(
             # fresh thread 避免累积 — finalize 只需当前 report + critique verdict.
             # 之前用 _step3_tid 会累积 step3 + step3_retry 历史 → 1.6M tokens 超限.
             _finalize_tid = f"rcb_{ws.name}_step3_finalize"
-            await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_finalize_tid,
-                                 fresh_history=True)
+            try:
+                await stream_chat_fn(_finalize_prompt, "step3_finalize", tid=_finalize_tid,
+                                     fresh_history=True)
+            except Exception as _e:
+                print(f"[step3_finalize] stream_chat_fn failed: {_e}", flush=True)
             break
 
         _retry_count += 1
@@ -3886,8 +3889,12 @@ async def _step3_adversarial(
         # fresh_history=True: 不拉 ConversationTree 历史, 避免 Step 2 的
         # 1M+ tokens 累积. retry prompt 已注入 PMK/KB/state/critique 全部 state.
         _retry_tid = f"rcb_{ws.name}_step3_retry{_retry_count}"
-        await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid,
-                             fresh_history=True)
+        try:
+            await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid,
+                                 fresh_history=True)
+        except Exception as _e:
+            print(f"[step3_retry {_retry_count}] stream_chat_fn failed: {_e}", flush=True)
+            break
         # 记录 cross-retry memory: 算 report diff, 下次 retry 注入.
         # retry1 改了 +X/-Y 行, retry2 看到后试不同策略 (不重蹈覆辙).
         try:
