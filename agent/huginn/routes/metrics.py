@@ -401,27 +401,76 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
     Safe to call with partial/empty stats — no-ops on missing fields.
     """
     try:
-        input_tokens = int(stats.get("input_tokens", 0) or stats.get("usage_input_tokens", 0) or 0)
-        output_tokens = int(stats.get("output_tokens", 0) or stats.get("usage_output_tokens", 0) or 0)
-        cache_read = int(stats.get("cache_read_input_tokens", 0) or 0)
-        cache_creation = int(stats.get("cache_creation_input_tokens", 0) or 0)
+        input_tokens = int(
+            stats.get("input_tokens", 0)
+            or stats.get("usage_input_tokens", 0)
+            or stats.get("usage_prompt_tokens", 0)
+            or stats.get("prompt_tokens", 0)
+            or 0
+        )
+        output_tokens = int(
+            stats.get("output_tokens", 0)
+            or stats.get("usage_output_tokens", 0)
+            or stats.get("usage_completion_tokens", 0)
+            or stats.get("completion_tokens", 0)
+            or 0
+        )
+        # cache 字段 provider 各异:
+        #   Anthropic: cache_read_input_tokens / cache_creation_input_tokens
+        #   DeepSeek:  prompt_cache_hit_tokens / prompt_cache_miss_tokens
+        #   (langchain 把 usage.* 展平成 usage_prompt_cache_hit_tokens)
+        cache_read = int(
+            stats.get("cache_read_input_tokens", 0)
+            or stats.get("usage_prompt_cache_hit_tokens", 0)
+            or stats.get("prompt_cache_hit_tokens", 0)
+            or 0
+        )
+        cache_creation = int(
+            stats.get("cache_creation_input_tokens", 0)
+            or stats.get("usage_prompt_cache_miss_tokens", 0)
+            or stats.get("prompt_cache_miss_tokens", 0)
+            or 0
+        )
 
-        # Total input = fresh input + cache reads (already billed at cache rate)
-        total_input = input_tokens + cache_read + cache_creation
+        # provider 语义不同, 必须分路径算:
+        #   DeepSeek:  prompt_tokens = hit + miss (prompt_tokens 已含 cache)
+        #   Anthropic: input_tokens 是 fresh (不含 cache_read/creation)
+        # 旧代码统一按 Anthropic 算, DeepSeek 分母 = hit+miss+prompt_tokens 翻倍,
+        # 97% 命中率显示成 49%. miss 也不是 cache_creation (无 1.25x 创建费).
+        _ds_cache = bool(
+            stats.get("prompt_cache_hit_tokens")
+            or stats.get("usage_prompt_cache_hit_tokens")
+            or stats.get("prompt_cache_miss_tokens")
+            or stats.get("usage_prompt_cache_miss_tokens")
+        )
+        if _ds_cache:
+            total_input = input_tokens  # prompt_tokens 已含 hit+miss
+            _cache_total = cache_read + cache_creation
+        else:
+            total_input = input_tokens + cache_read + cache_creation
+            _cache_total = total_input
+
         if total_input:
             LLM_TOKENS_TOTAL.labels(model=model, kind="prompt").inc(total_input)
         if output_tokens:
             LLM_TOKENS_TOTAL.labels(model=model, kind="completion").inc(output_tokens)
 
-        # Cost: cache reads are ~10% of normal input cost
         cost_in, cost_out = _lookup_cost(model)
         if cost_in or cost_out:
-            cost = (
-                input_tokens / 1_000_000 * cost_in
-                + cache_read / 1_000_000 * cost_in * 0.1
-                + cache_creation / 1_000_000 * cost_in * 1.25
-                + output_tokens / 1_000_000 * cost_out
-            )
+            if _ds_cache:
+                # DeepSeek miss 是正常 input 价 (不是 1.25x creation)
+                cost = (
+                    cache_read / 1_000_000 * cost_in * 0.1
+                    + cache_creation / 1_000_000 * cost_in
+                    + output_tokens / 1_000_000 * cost_out
+                )
+            else:
+                cost = (
+                    input_tokens / 1_000_000 * cost_in
+                    + cache_read / 1_000_000 * cost_in * 0.1
+                    + cache_creation / 1_000_000 * cost_in * 1.25
+                    + output_tokens / 1_000_000 * cost_out
+                )
             if cost > 0:
                 LLM_COST_USD.labels(model=model).inc(cost)
 
@@ -430,6 +479,15 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
             PROMPT_CACHE_HITS_TOTAL.inc()
         if cache_creation > 0 or (total_input > 0 and cache_read == 0 and cache_creation == 0):
             PROMPT_CACHE_MISSES_TOTAL.inc()
+
+        # 打印 cache 命中率到 stdout, RCBench 跑分时能直接在 log 里看到
+        if total_input > 0 and (cache_read or cache_creation):
+            _hit_pct = cache_read / _cache_total * 100 if _cache_total > 0 else 0
+            print(
+                f"[cache] {model}: hit={cache_read} miss={cache_creation} "
+                f"fresh={input_tokens} ({_hit_pct:.0f}% hit)",
+                flush=True,
+            )
     except Exception:
         pass  # metrics are best-effort, never break the agent
 
@@ -481,13 +539,22 @@ def get_usage_callback() -> Any:
                             or getattr(msg, "name", "")
                             or "unknown"
                         )
-                        # response_metadata 形状随 provider 变: OpenAI 塞 usage 嵌套,
-                        # Anthropic 平铺, 这里都展平给 track_llm_usage
+                        # response_metadata 形状随 provider 变:
+                        #   OpenAI/DeepSeek: token_usage 嵌套 (含 prompt_cache_hit_tokens)
+                        #   Anthropic: 平铺 cache_read_input_tokens
+                        #   其他: usage 嵌套
                         stats: dict[str, Any] = dict(meta)
-                        usage = meta.get("usage")
+                        usage = meta.get("usage") or meta.get("token_usage")
                         if isinstance(usage, dict):
                             for k, v in usage.items():
                                 stats[f"usage_{k}"] = v
+                        # debug: 首次调用打印完整 stats keys, 确认 cache 字段是否到位
+                        if not getattr(self, "_debug_printed", False):
+                            self._debug_printed = True
+                            print(
+                                f"[cache-debug] model={model} stats_keys={list(stats.keys())}",
+                                flush=True,
+                            )
                         track_llm_usage(str(model), stats)
             except Exception:
                 pass  # best-effort, 不阻塞 agent
