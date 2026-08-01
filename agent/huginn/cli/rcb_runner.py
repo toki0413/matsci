@@ -4479,7 +4479,10 @@ async def run(
                     print(content, flush=True)
                     ai_text = content
         except Exception as e:
-            print(f"ERROR [{step_label}]: {e}", file=sys.stderr)
+            # 打 stdout 不打 stderr — _AsyncTee 只重定向 stdout, stderr 不进日志,
+            # Step 1 三次空响应的异常就被吞了, 看起来像"LLM 没响应".
+            import traceback as _tb
+            print(f"ERROR [{step_label}]: {e}\n{_tb.format_exc()}", flush=True)
         return ai_text
 
     # RCB 3-step 映射 CSM: Step1→S1_DISCOVER, Step2→S4_CONSTRUCT, Step3→S6+S7 (Task 18)
@@ -4605,7 +4608,9 @@ async def run(
             (ws / "INSTRUCTIONS.md").read_text(encoding="utf-8")[:2000]
             if (ws / "INSTRUCTIONS.md").exists() else ""
         )
-        _target_chains = await build_target_chains(
+        # build_target_chains 是同步函数, 旧版 await list 报 "object list can't
+        # be used in 'await' expression". 去掉 await.
+        _target_chains = build_target_chains(
             _checklist_items, kb, model, _task_ctx,
         )
         _tc_entry = {
