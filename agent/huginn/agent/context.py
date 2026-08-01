@@ -34,7 +34,12 @@ class ContextMixin:
     _TOOL_RETRIEVAL_TOP_K = 15
 
     def _effective_system_prompt(self) -> str:
-        """Base system prompt + mode prefix + phase prefix + env context."""
+        """Base system prompt + mode prefix + env context + phase prefix (tail).
+
+        phase prefix 放末尾: 前面是静态层 (system_prompt + env + principles),
+        DeepSeek context cache 命中前面; phase 切换只让末尾几行重算.
+        旧版 phase prefix 放开头, phase 一变整个 KV cache 作废.
+        """
         if self._mode == "research":
             base = (
                 "RESEARCH MODE: You are conducting systematic scientific research.\n"
@@ -48,8 +53,6 @@ class ContextMixin:
         else:
             base = self.system_prompt
 
-        prefix = self._phase_manager.prompt_prefix()
-        base = f"{prefix}\n\n{base}" if prefix else base
         base = (
             f"{base}\n\n"
             "You can request a phase transition by including "
@@ -77,36 +80,45 @@ class ContextMixin:
                 base = f"{base}\n\n# Project Memory\n{agents_md}"
         except Exception:
             logger.debug("context injection skipped", exc_info=True)
-        # User taste profile — injected each turn so the agent adjusts
-        # its answer style to the user's thinking preferences.
-        try:
-            from huginn.personalization import get_taste_directive
+        # User taste profile — session 级缓存, 只在首次调时读 JSON.
+        # taste profile 只在用户填问卷时变, session 内稳定.
+        taste = getattr(self, "_cached_taste", None)
+        if taste is None and not getattr(self, "_taste_loaded", False):
+            try:
+                from huginn.personalization import get_taste_directive
+                taste = get_taste_directive() or ""
+            except Exception:
+                logger.warning("taste profile injection failed", exc_info=True)
+                taste = ""
+            self._cached_taste = taste
+            self._taste_loaded = True
+        if taste:
+            base = f"{base}\n\n# User Taste Profile\n{taste}"
 
-            taste = get_taste_directive()
-            if taste:
-                base = f"{base}\n\n# User Taste Profile\n{taste}"
-        except Exception:
-            logger.warning("taste profile injection failed", exc_info=True)
-
-        # Hint about missing simulation backends so the LLM doesn't
-        # waste turns calling tools that will just error.
-        try:
-            import shutil as _shutil
-            _missing = []
-            for _name, _exes in [
-                ("VASP", ["vasp", "vasp_std", "vasp_gam"]),
-                ("LAMMPS", ["lmp", "lmp_serial", "lammps"]),
-                ("CP2K", ["cp2k"]),
-            ]:
-                if not any(_shutil.which(e) for e in _exes):
-                    _missing.append(_name)
-            if _missing:
-                base += (
-                    f"\n\nNote: {', '.join(_missing)} not installed locally. "
-                    "Answer parameter questions from knowledge."
-                )
-        except Exception:
-            logger.debug("tool availability check failed", exc_info=True)
+        # missing backends — session 级缓存, 只在首次调时跑 6 次 shutil.which.
+        # backends 只在装软件时变, session 内稳定.
+        _missing = getattr(self, "_cached_missing_backends", None)
+        if _missing is None and not getattr(self, "_backends_checked", False):
+            try:
+                import shutil as _shutil
+                _missing = []
+                for _name, _exes in [
+                    ("VASP", ["vasp", "vasp_std", "vasp_gam"]),
+                    ("LAMMPS", ["lmp", "lmp_serial", "lammps"]),
+                    ("CP2K", ["cp2k"]),
+                ]:
+                    if not any(_shutil.which(e) for e in _exes):
+                        _missing.append(_name)
+            except Exception:
+                logger.debug("tool availability check failed", exc_info=True)
+                _missing = []
+            self._cached_missing_backends = _missing
+            self._backends_checked = True
+        if _missing:
+            base += (
+                f"\n\nNote: {', '.join(_missing)} not installed locally. "
+                "Answer parameter questions from knowledge."
+            )
 
         # STABLE_PRINCIPLES: S7 自修改回流进来的 persona 原则. 闭合
         # persona→behavior→memory→knowledge→persona 回路 (G8 加法).
@@ -139,6 +151,12 @@ class ContextMixin:
                     return built
             except Exception:
                 logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
+
+        # phase prefix 放末尾: 前面静态层稳定, DeepSeek context cache 命中前面,
+        # phase 切换只让末尾几行重算. 旧版放开头, phase 一变整个 KV cache 作废.
+        prefix = self._phase_manager.prompt_prefix()
+        if prefix:
+            base = f"{base}\n\n{prefix}"
 
         return base
 
@@ -376,7 +394,10 @@ class ContextMixin:
             ):
                 if key in meta:
                     stats[key] = meta[key]
-            usage = meta.get("usage")
+            # DeepSeek 把 token usage 放在 "token_usage", OpenAI/Anthropic 放 "usage".
+            # 旧版只读 "usage" → DeepSeek 主调用 (astream) 的 cache 字段全漏,
+            # track_llm_usage 拿不到 hit/miss, [cache] 日志只报 sub-call.
+            usage = meta.get("usage") or meta.get("token_usage")
             if isinstance(usage, dict):
                 for k, v in usage.items():
                     stats[f"usage_{k}"] = v

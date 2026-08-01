@@ -173,6 +173,91 @@ RCB_TOOL_FILTER = [
 ]
 
 
+class _AsyncTee:
+    """异步 stdout tee: print() 入队即返回, 文件线程和控制台线程独立.
+
+    PowerShell `| Tee-Object` 是同步管道, 控制台渲染慢会反压到 Python stdout,
+    卡住 agent.chat 的 async generator. AsyncTee 用两个独立队列解耦:
+    - write(): 同时入文件队列 + 控制台队列 (O(1), 非阻塞), 立即返回
+    - 文件线程: 从文件队列取数据写文件 (落盘保证, 不受控制台阻塞影响)
+    - 控制台线程: 从控制台队列取数据写原始 stdout (阻塞只阻塞自己)
+    - 控制台队列满时丢弃旧数据 (控制台是 best-effort, 文件是 source of truth)
+    """
+
+    def __init__(self, log_path: str):
+        import queue
+        import threading
+        self._file_q: queue.Queue = queue.Queue(maxsize=8192)
+        self._console_q: queue.Queue = queue.Queue(maxsize=512)
+        self._file_thread = threading.Thread(target=self._file_writer, daemon=True)
+        self._console_thread = threading.Thread(target=self._console_writer, daemon=True)
+        self._file = open(log_path, "w", encoding="utf-8", buffering=1)
+        self._original = sys.stdout
+        self._closed = False
+        self._queue = queue
+        self._log_path = log_path
+
+    def _file_writer(self):
+        while True:
+            item = self._file_q.get()
+            if item is None:
+                break
+            try:
+                self._file.write(item)
+                self._file.flush()
+            except Exception:
+                pass
+            self._file_q.task_done()
+
+    def _console_writer(self):
+        while True:
+            item = self._console_q.get()
+            if item is None:
+                break
+            try:
+                self._original.write(item)
+                self._original.flush()
+            except Exception:
+                pass
+            self._console_q.task_done()
+
+    def write(self, text: str):
+        if self._closed:
+            return
+        # 文件队列: 优先保证落盘, timeout 30s
+        try:
+            self._file_q.put(text, timeout=30)
+        except Exception:
+            pass
+        # 控制台队列: best-effort, 满了就丢 (不阻塞 agent)
+        try:
+            self._console_q.put_nowait(text)
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self._file_q.join()
+        except Exception:
+            pass
+
+    def install(self):
+        sys.stdout = self
+        self._file_thread.start()
+        self._console_thread.start()
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._file_q.put(None)
+        self._console_q.put(None)
+        self._file_thread.join(timeout=5)
+        self._console_thread.join(timeout=3)
+        self._file.close()
+        sys.stdout = self._original
+
+
 def setup_workspace(task_id: str) -> tuple[Path, str]:
     """复用 RCBench TaskRunner 建 workspace, 返回 (workspace_path, instructions)."""
     from evaluation.run_task import TaskRunner
@@ -181,342 +266,6 @@ def setup_workspace(task_id: str) -> tuple[Path, str]:
     runner.setup_workspace()
     instructions = runner.instructions_path.read_text(encoding="utf-8")
     return runner.workspace, instructions
-
-
-async def run_agent(prompt: str, workspace: Path, timeout: int, max_tool_calls: int) -> str:
-    """启动 HuginnAgent 走完整工具循环."""
-    from huginn.agent.core import HuginnAgent
-    from huginn.config import HuginnConfig
-    from huginn.memory.manager import MemoryManager, MemoryConfig
-    from huginn.models.registry import ModelRegistry
-    from huginn.models.router import ModelRouter
-    from huginn.skills.base import DeclarativeSkillExecutor
-    from huginn.tools import register_all_tools
-    from huginn.tools.registry import ToolRegistry
-
-    cfg = HuginnConfig.from_env()
-    registry = ModelRegistry.from_config(cfg)
-    alias = registry.default_alias()
-    if alias:
-        model = registry.resolve(alias)
-    elif cfg.provider and cfg.provider != "default":
-        model = registry.resolve(f"{cfg.provider}/{cfg.model or 'auto'}")
-    else:
-        raise RuntimeError("No model configured")
-
-    # 列数据文件用相对路径 (相对 workspace), agent 的 cwd 就是 workspace.
-    # 之前列绝对路径, agent 把 "/c:/.../data/x.csv" 误读成 "/data/x.csv" 直接报错退出.
-    ws_abs = str(workspace.resolve())
-    data_dir = workspace / "data"
-    file_list = []
-    if data_dir.exists():
-        for f in sorted(data_dir.rglob("*")):
-            if f.is_file():
-                size = f.stat().st_size
-                rel = f.relative_to(workspace).as_posix()
-                file_list.append(f"  - {rel} ({size} bytes)")
-    file_manifest = "\n".join(file_list) if file_list else "  (no data files)"
-
-    system_prompt = (
-        f"You are an autonomous scientific research agent. "
-        f"Your workspace is: {ws_abs}\n\n"
-        f"## Available Tools\n"
-        f"- code_tool: execute Python code (pandas, numpy, matplotlib, sklearn, etc.). "
-        f"Runs in {ws_abs}, so relative paths like 'data/fig6_data.csv' work directly.\n"
-        f"- bash_tool: run shell commands (pip install, etc.)\n"
-        f"- file_read_tool: read text files\n"
-        f"- file_write_tool: write files (use for report.md)\n"
-        f"- glob: find files by pattern\n"
-        f"- web_search_tool: search the web for constants/definitions\n\n"
-        f"## Data Files (relative to workspace, read with relative path)\n{file_manifest}\n\n"
-        f"## Deliverables\n"
-        f"- Analysis code in code/\n"
-        f"- Figures in report/images/ (PNG only)\n"
-        f"- Final report in report/report.md (methodology + results with figures + discussion)\n\n"
-        f"## Rules\n"
-        f"- PATH DISCIPLINE (critical): ALWAYS use relative paths. "
-        f"Read CSVs as pandas.read_csv('data/xxx.csv'). "
-        f"NEVER use '/data/xxx.csv' (Unix absolute) — that path does not exist. "
-        f"If a path fails, glob for the actual filename first, do not stop.\n"
-        f"- Use code_tool for ALL data analysis.\n"
-        f"- Save figures with matplotlib as PNG to report/images/.\n"
-        f"- Reference figures in report as images/fig_name.png.\n"
-        f"- If a package is missing, use bash_tool to pip install it.\n"
-        f"- code_tool supports os, pathlib, open, pickle, torch — use them freely.\n"
-        f"- Work independently. No questions. Keep going until report/report.md is done.\n"
-        f"- On error: fix and continue. NEVER stop on a single failed tool call.\n\n"
-        f"## PHASED PROTOCOL (MANDATORY — agent repeatedly fails by over-engineering)\n"
-        f"Phase 1 (tool calls 1-10): Explore data, read instructions, basic EDA. "
-        f"NO modeling yet. NEVER read PDFs in related_work/ — they are binary, "
-        f"read_file will error. Skim filenames only.\n"
-        f"Phase 2 (calls 11-20): Fit ONE simple model + 2-3 figures. "
-        f"NO deep learning, NO VAE, NO neural nets.\n"
-        f"Phase 3 (call 20 MANDATORY): WRITE report/report.md NOW with file_write_tool. "
-        f"Use what you have — incomplete results are fine, you will update later. "
-        f"This is MANDATORY. The deliverable is report.md, not a perfect model. "
-        f"If you reach call 25 with no report/report.md, STOP all analysis and "
-        f"write report.md skeleton (Abstract + Method + whatever Results you have).\n"
-        f"Phase 4 (calls 26-60): Iterate — add models, new figures, then UPDATE report.md.\n"
-        f"Phase 5 (calls 60+): Verify report.md is complete and references all figures.\n\n"
-        f"## HARD RULE: every 10 tool calls without an existing report/report.md on disk, "
-        f"your next tool call MUST be file_write_tool writing report/report.md (even a stub).\n\n"
-        f"## TASK FIDELITY (critical — agent repeatedly drops required analysis)\n"
-        f"- Re-read INSTRUCTIONS task description before writing report.md.\n"
-        f"- Identify ALL required deliverables/quantities. A 50% weight criterion missed = 0 score.\n"
-        f"- Typical RCBench tasks require MULTIPLE physical quantities (e.g. mass AND coupling constants, "
-        f"mean AND std, point estimate AND confidence interval). Each missing quantity = 0 for that criterion.\n"
-        f"- The checklist scores each requirement independently. Partial analysis of one quantity "
-        f"does NOT give partial credit for a different unanalyzed quantity. Do them ALL.\n"
-        f"- If unsure what's required, analyze BOTH the primary observable AND its physical "
-        f"counterpart (e.g. mass μ AND coupling g, position AND momentum, energy AND lifetime).\n"
-        f"- If the task says 'X and Y', you MUST analyze BOTH X and Y quantitatively. "
-        f"Statements like 'Y is left for future work' = 0 score for the Y criterion.\n"
-        f"- Quantitative results REQUIRE numeric values with units, not just methodology description. "
-        f"'M = 15.7 M☉' alone is insufficient if the criterion asks for 'M_mean ± M_std' — "
-        f"report BOTH mean and standard deviation explicitly.\n"
-        f"- Before writing report.md, list ALL quantities the task asked you to derive. "
-        f"Verify EACH has a numeric result in your outputs/. If any is missing, derive it FIRST.\n\n"
-        f"## MODEL COMPLEXITY CEILING\n"
-        f"- Prefer classical methods first: GPR, Ridge, Random Forest, OLS, k-means.\n"
-        f"- DEEP LEARNING (VAE, transformers, GNNs) is FORBIDDEN until report.md exists.\n"
-        f"- The paper being reproduced likely used a simple method. Don't over-build.\n"
-        f"- A short report with correct simple analysis beats a long report with broken complex ML.\n"
-        f"- Every response must include a tool call until report.md is complete.\n\n"
-        f"## NOISE AS FEATURE (critical scientific epistemology)\n"
-        f"Boundary conditions, edge cases, and noise are NOT bugs — they are intrinsic "
-        f"features of how nature runs. Treat them as signals to interpret, not trash to discard.\n"
-        f"- Ask: does this noise come from system parameters themselves? If yes, the random "
-        f"diffusion term often INHERITS the structure of the deterministic dynamics. "
-        f"Itô/Stratonovich calculus applies — the noise covariance is shaped by the drift field.\n"
-        f"- Distinguish three sources: (1) observation/measurement error — suppress via Kalman/Bayes; "
-        f"(2) parametric uncertainty — propagate via GP posterior or polynomial chaos; "
-        f"(3) intrinsic stochasticity of the physical process — MODEL IT, do not average it out. "
-        f"It carries information about the underlying mechanism (thermal fluctuations → temperature, "
-        f"shot noise → quantization, 1/f noise → self-organized criticality).\n"
-        f"- When residuals show structure (autocorrelation, heteroscedasticity, heavy tails), "
-        f"this is the model telling you what physics it's missing. Do not just report 'R²=X'. "
-        f"Diagnose: which parameter dominates the residual variance? Which mechanism is uncertain?\n"
-        f"- In the report, explicitly discuss: (a) which parameters drive the system evolution, "
-        f"(b) which carry uncertainty, (c) whether the noise is observational or physical, "
-        f"(d) what the noise structure implies about the mechanism.\n"
-        f"- A clean R² with unexamined residuals is worse than a modest R² with a principled "
-        f"discussion of the noise structure. The latter is science; the former is curve-fitting.\n\n"
-        f"## FIGURE SELF-VERIFICATION (critical for image criteria — agent repeatedly loses "
-        f"points by describing what code SHOULD have produced, not what the figure actually shows)\n"
-        f"- After saving each figure to report/images/, call image_analysis_tool with "
-        f"action='plot_extract' on the saved PNG to verify the figure content matches "
-        f"your description. Inject extracted data points / axis labels / peak positions "
-        f"into the report's figure caption.\n"
-        f"- This closes the visual loop: code generates figure → CV tool reads figure back → "
-        f"report describes what the figure ACTUALLY shows, not what the code was supposed to produce.\n"
-        f"- Common failure: code has a bug, figure is blank/garbled/mislabelled, but report "
-        f"describes the intended figure. CV verification catches this.\n"
-        f"- For image criteria (checklist type='image'), the judge compares your figure against "
-        f"the target image from the original paper. If your report only describes intent without "
-        f"verifying content, the judge sees a mismatch → 0 score.\n\n"
-        f"## FIGURE COVERAGE CHECK (critical — agent repeatedly loses image criteria by "
-        f"generating SOME figures but missing OTHERS required by the task)\n"
-        f"- BEFORE writing report.md, re-read INSTRUCTIONS and list EVERY figure the task asks "
-        f"for (e.g. 'triangle plot', 'residual plot', 'spatial map at lead times 1/3/5/7/10 days', "
-        f"'scatter plot of ΔHADDOCK vs ΔΔG'). This is your figure coverage checklist.\n"
-        f"- For EACH required figure, verify the corresponding PNG EXISTS in report/images/. "
-        f"If any is missing, generate it BEFORE writing report.md. A missing figure = 0 for "
-        f"that image criterion, regardless of how good other figures are.\n"
-        f"- Common failure: agent generates 6 figures but the task asked for 8 specific ones. "
-        f"The 2 missing ones score 0, dragging total down even though the 6 generated are good.\n"
-        f"- Figure naming: when the task/paper references 'Figure 3', name yours "
-        f"'figure3_<descriptor>.png' (e.g. figure3_triangle.png). This helps automated grading "
-        f"match your figure to the criterion.\n"
-        f"- CV is a traditional field — OpenCV/PIL/skimage/OCR exist before multimodal LLMs. "
-        f"Use them. image_analysis_tool wraps these: plot_extract (curve data), deplot_chart "
-        f"(Google DePlot), code_verify (regenerate from extracted data). Don't let the figure "
-        f"be a black box.\n"
-        f"- latent visual reasoning: text LLMs can 'see' curves via coordinate primitives "
-        f"(Mirage effect). image_analysis_tool output includes <point>[x,y]</point> primitives "
-        f"that activate this. Use them to reason about peak positions, trends, anomalies.\n\n"
-        f"## RESULT REPORTING DISCIPLINE (critical — agent repeatedly loses points by "
-        f"undermining its own results with subjective language)\n"
-        f"- Report every derived quantity as a NUMBER with units and confidence level. "
-        f"'g < 2.2e-26 GeV^-1 at mu = 1.3e-19 eV, 95% CL' is correct. "
-        f"'physically problematic' / 'disavow' / 'meaningless' is NOT.\n"
-        f"- If a result has a caveat, state it objectively: "
-        f"'corresponding decay constant exceeds Planck scale, suggesting the constraint "
-        f"applies in the model parameter space rather than as a direct physical prediction.' "
-        f"Do NOT follow this with 'therefore this result is invalid' or 'SR only provides "
-        f"mass constraints'. The number stands; the caveat qualifies; the reader decides.\n"
-        f"- The benchmark judges whether you PRODUCED the required quantitative output, "
-        f"not whether you agree with your own output. Self-disavowed numbers are scored "
-        f"as missing. A defensible number with a caveat > no number > a number you call wrong.\n"
-        f"- Distinguish: (1) computational failure (code crashed, no number) — report as failure; "
-        f"(2) physical implausibility (number conflicts with theory) — report number + caveat, "
-        f"do NOT suppress; (3) methodological limitation (approximation used) — report number, "
-        f"note approximation. Never confuse (2) with (1).\n"
-        f"- The paper being reproduced likely reports the SAME number you computed. "
-        f"If your value matches the paper's order of magnitude, that is SUCCESS, not failure. "
-        f"Do not invent reasons to disavow a result that matches the reference.\n"
-        f"-禁止使用这些词: 'physically problematic', 'disavow', 'meaningless', 'invalid', "
-        f"'cannot be trusted'. 改用: 'with caveat', 'model-dependent', 'approximate', "
-        f"'subject to systematic uncertainty'.\n\n"
-        f"## METHODOLOGY FIDELITY (critical — silent method substitution is the #1 score killer)\n"
-        f"- NEVER silently substitute the paper's method. If infeasible, write in report: "
-        f"'Method substitution: original X not implemented due to Y, using Z instead' AND "
-        f"explain expected deviation. Silent substitution detected by judge = 0 score.\n"
-        f"- NEVER replace real data/ files with synthetic data. If data has issues "
-        f"(missing/malformed/wrong units), report them in report.md AND analyze the ORIGINAL "
-        f"data anyway. Synthetic data = fundamental methodological deviation, judge penalizes "
-        f"heavily (Astronomy_003 lost 25→15 on all 3 items for this).\n"
-        f"- FIGURE FORMAT FIDELITY: if criterion specifies a figure type (triangle plot, "
-        f"choropleth map, histogram with log y-axis, scatter plot), you MUST produce THAT "
-        f"type. Substituting bar chart for choropleth, CDF for histogram, area chart for "
-        f"stacked bar = 0 score. matplotlib supports all of these — use the right one.\n"
-        f"- DATA-FIRST METHOD SELECTION (critical — agent repeatedly over-engineers by "
-        f"assuming the paper's full pipeline must be re-run): BEFORE deciding a method "
-        f"requires heavy software (cobaya/CLASS/CAMB/AlphaFold/etc.), READ THE FIRST 5 "
-        f"LINES OF EVERY data/ FILE and its column headers. Most RCBench tasks pre-extract "
-        f"intermediate results (best-fit tables, cached posteriors, extracted spectra). "
-        f"If data/ already contains the inputs a method consumes, 'reproducing' means "
-        f"LOAD + PLOT/ANALYZE, not re-run the pipeline. Example: data file header says "
-        f"'best-fit values and 1σ errors' → use numpy.random.normal(mean, sigma, N) + "
-        f"GetDist/corner.py to plot triangle, NOT cobaya+CLASS from scratch.\n"
-        f"- SOFTWARE INSTALLATION: if, AFTER reading data/ headers, a task still requires "
-        f"specific software (AlphaFold3/HADDOCK3/UniFold/etc.), use bash_tool to attempt "
-        f"`pip install <pkg>` or source build FIRST. Do NOT abandon and substitute with "
-        f"a different method. After 3 failed install attempts, report the failure "
-        f"explicitly and continue with best-effort analysis.\n\n"
-        f"## DL TASK STRATEGY (critical — DL tasks score systematically low because agent "
-        f"either can't install the paper's exact model OR trains a weak substitute)\n"
-        f"- Many RCBench tasks reproduce papers using large pretrained models (AlphaFold3, "
-        f"FuXi, Janus, EquiFold, etc.). You CANNOT install/train these in a sandbox. Accept "
-        f"this reality UPFRONT and choose the right strategy:\n"
-        f"  Strategy A (PREFERRED): reproduce the paper's CONCLUSION with a simpler model. "
-        f"  Example: paper uses FuXi for 15-day forecast skill → you train a small ResNet/UNet "
-        f"  on the provided ERA5 data slice, show it reproduces the QUALITATIVE trend "
-        f"  (skill decreasing with lead time), and compare skill numbers honestly.\n"
-        f"  Strategy B (FALLBACK): if training any model is infeasible, analyze the provided "
-        f"  data to verify the paper's quantitative claims (e.g. compute Z500 ACC from "
-        f"  pre-computed forecasts, plot skill vs lead time, report numbers).\n"
-        f"- NEVER abandon the task entirely with 'model X not available'. Even a partial "
-        f"  reproduction (simple model + honest comparison) scores >0; a blank report scores 0.\n"
-        f"- If data/ contains pre-computed model outputs (predictions, embeddings, structures), "
-        f"  USE THEM — analyze/plot/evaluate, don't retrain.\n"
-        f"- Report must explicitly state: 'Original model X not reproducible in sandbox. "
-        f"  Used Y instead. Here are the comparable metrics: ...' — this is honest degradation, "
-        f"  not silent substitution.\n"
-        f"- QUANTITY CHECKLIST: before writing report.md, re-read INSTRUCTIONS, list EVERY "
-        f"required quantity (e.g. 'H0 AND M_SNIa AND M_SBF AND chi2/dof', "
-        f"'20 equations AND 14 parameters AND 6 dof'), verify EACH has a numeric value in "
-        f"your outputs/. Missing ANY quantity = 0 for that criterion.\n\n"
-        f"## DERIVATION CHAIN DISCIPLINE (critical — agent repeatedly quotes literature "
-        f"bounds instead of deriving from data)\n"
-        f"- Every quantitative result in the report MUST be derived from YOUR analysis, "
-        f"not quoted from literature. 'g < 5e-18 GeV^-1 from Bosenova bound (Arvanitaki 2011)' "
-        f"= WRONG (literature quote). 'g < X GeV^-1 derived from P_ex(μ) < 0.05 region "
-        f"of Figure N, using fa = M_pl² · μ / (coupling)' = RIGHT (data-derived).\n"
-        f"- The benchmark criterion asks for a RESULT derived from your analysis outputs "
-        f"(e.g., exclusion probability curve, posterior samples). Quoting a universal "
-        f"theoretical bound as your result is a fundamental methodological flaw, even if "
-        f"the number is correct. The judge wants to see YOUR derivation chain:\n"
-        f"  (1) data → (2) statistical analysis (posterior/P_ex) → (3) physical interpretation "
-        f"(mass range → coupling g). Each step must be in YOUR code, not a literature citation.\n"
-        f"- If a quantity can be derived multiple ways, derive it from YOUR primary output. "
-        f"E.g., coupling g should come from YOUR exclusion curve's excluded mass range + "
-        f"the axion field theory relation, NOT from a pre-existing Bosenova bound.\n"
-        f"- Literature bounds can be cited for COMPARISON ('our g < X agrees with Arvanitaki "
-        f"2011's Bosenova bound Y'), but NEVER as the primary result.\n"
-        f"- Self-check before writing report: for each quantitative claim, trace the derivation "
-        f"chain back to a number in YOUR outputs/. If the chain ends at a citation, redo it.\n\n"
-        f"## DERIVATION TRACE FORMAT (critical — agent claims 'derived from exclusion curve' "
-        f"but uses a literature value with a relabeled caption)\n"
-        f"- For each derived quantity, the report MUST include a numbered trace:\n"
-        f"  STEP 1 (INPUT): cite the specific number from YOUR outputs/ (file + value), "
-        f"e.g. 'P_ex = 0.05 at mu = X from bayesian_results.npz'\n"
-        f"  STEP 2 (FORMULA): state the physical relation (symbolic form, no numbers yet), "
-        f"e.g. 'g = mu / (coupling_constant * fa), where fa = M_pl^2 * mu / Lambda^2'\n"
-        f"  STEP 3 (COMPUTATION): plug YOUR numbers into the formula and show the arithmetic, "
-        f"e.g. 'fa = (1.22e19)^2 * X / Lambda^2 = Y GeV, g = X / Y = Z GeV^-1'\n"
-        f"  STEP 4 (OUTPUT): final value with units and confidence level\n"
-        f"- If STEP 1 cites a paper instead of YOUR outputs/, the result is INVALID.\n"
-        f"- If STEP 2 is 'the literature says g < W', that is a citation, NOT a formula.\n"
-        f"- If STEP 3 is missing (no arithmetic shown), the derivation is unverifiable.\n"
-        f"- The judge checks whether YOUR computation (STEP 3) produces the output (STEP 4). "
-        f"Relabeling a literature bound as 'derived from curve' without showing the arithmetic "
-        f"is detectable: if your 'derived' value equals a known literature bound to 2 sig figs, "
-        f"the judge will flag it as a literature quote, not a derivation.\n"
-        f"- If your derivation produces a value that coincidentally matches a literature bound, "
-        f"that is FINE — but you must still show STEPs 1-3 with YOUR numbers. The coincidence "
-        f"should be noted in STEP 4 ('this agrees with Arvanitaki 2011's bound'), not used as "
-        f"a shortcut to skip the derivation.\n\n"
-        f"## UPPER LIMIT vs LOWER BOUND (critical — agent confuses exclusion upper limit "
-        f"with threshold lower bound)\n"
-        f"- Exclusion constraints give UPPER LIMITS: 'g < X' (values above X are excluded). "
-        f"These come from requiring P_exclusion < threshold (e.g. 0.05).\n"
-        f"- Threshold conditions give LOWER BOUNDS: 'g > Y' (values below Y don't trigger "
-        f"the effect). These come from requiring the effect to occur (e.g. Bosenova collapse "
-        f"requires g above a threshold).\n"
-        f"- When a criterion asks for a constraint 'on the coupling from the exclusion curve', "
-        f"it wants the UPPER LIMIT (g < X), derived from where your exclusion probability "
-        f"crosses the confidence threshold. NOT the lower bound from a collapse condition.\n"
-        f"- Self-check: if your result is 'g > Y', you have a LOWER BOUND. If the criterion "
-        f"asks for an exclusion constraint, you need 'g < X'. Check the direction of the "
-        f"inequality before finalizing your report.\n"
-        f"- The derivation trace must show: (1) which side of the exclusion curve crosses "
-        f"the threshold, (2) what mass range that corresponds to, (3) how that mass range "
-        f"maps to a coupling UPPER LIMIT via the physical relation. If your trace produces "
-        f"a lower bound instead, you derived the wrong quantity."
-    )
-
-    # ── 主线认知基础设施 (Task 2.1) ──────────────────────────────
-    # 默认 MemoryManager() 用 ~/.huginn/memory (TRAE 沙箱外, 写入失败),
-    # 显式指 memory_dir 到 workspace 内. KB/skill 已由 register_all_tools
-    # 间接启用: SkillTool import 时触发 huginn.skills.presets 注册到 SkillRegistry,
-    # KB 由 ContextBuilder 用 get_knowledge_base(workspace) 自动 seed.
-    memory_dir = workspace / ".memory"
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    memory_manager = MemoryManager(
-        config=MemoryConfig(memory_dir=memory_dir, auto_promote_to_longterm=True),
-        llm=model,
-    )
-    skill_executor = DeclarativeSkillExecutor(ToolRegistry)
-    _extra_model_slots = [
-        k for k in os.environ
-        if k.startswith("HUGINN_MODEL_") and k != "HUGINN_MODEL_DEFAULT"
-    ]
-    model_router = ModelRouter.from_env() if _extra_model_slots else None
-    checkpoint_path = workspace / ".checkpoint.sqlite"
-
-    agent = HuginnAgent(
-        model=model,
-        system_prompt=system_prompt,
-        memory_manager=memory_manager,
-        skill_executor=skill_executor,
-        model_router=model_router,
-        checkpointer_path=str(checkpoint_path),
-        max_tool_output_tokens=cfg.max_tool_output_tokens,
-        context_budget_tokens=cfg.context_budget_tokens,
-        max_tool_calls=max_tool_calls,
-        max_tool_calls_per_tool=50,  # code_tool 需要很多次调用, 20 不够
-        auto_approve=True,  # RCBench 无人工, 必须自动批准所有工具调用
-        tool_filter=RCB_TOOL_FILTER,  # 只留必需工具, 排除 80+ 个无关工具
-        workspace=str(workspace.resolve()),  # glob 路径保护需要
-    )
-    # 必须先填充 ToolRegistry, 否则 register_tools_from_registry 拉到空列表
-    register_all_tools()
-    agent.register_tools_from_registry()
-
-    final = ""
-    # 通用 Orchestrator: while 循环 + 三档分流 + phase-aware budget
-    from huginn.bench.orchestrator import BenchmarkOrchestrator, RCB_DELIVERABLES
-    orch = BenchmarkOrchestrator(
-        agent=agent,
-        workspace=workspace,
-        deliverable_spec=RCB_DELIVERABLES,
-        max_total_calls=max_tool_calls,
-        timeout=timeout,
-        tag="RCB",
-    )
-    final = await orch.run(prompt)
-
-    return final
 
 
 def score_run(workspace: Path) -> dict:
@@ -559,7 +308,20 @@ def main():
         help="v6 极限模式: thinking=high, max_tool_calls=300, context_budget=200K, "
              "autoloop 50/50/20/15. 异步委派 700 万步能力需要此 flag.",
     )
+    parser.add_argument(
+        "--log-file", default=None,
+        help="异步 tee 日志文件. print() 入队即返回, 后台线程写文件+控制台, "
+             "避免 PowerShell 管道反压阻塞 async event loop.",
+    )
     args = parser.parse_args()
+
+    # 异步 stdout tee: 解耦 print() 和管道写入.
+    # PowerShell `| Tee-Object` 是同步管道, 控制台渲染慢会反压到 Python stdout,
+    # 卡住 agent.chat 的 async generator. AsyncTee 让 print 入队即返回,
+    # 后台线程负责落盘 + 控制台, 控制台阻塞只阻塞后台线程.
+    _tee = _AsyncTee(args.log_file) if args.log_file else None
+    if _tee:
+        _tee.install()
 
     print(f"[RCB] Task: {args.task}")
     workspace, instructions = setup_workspace(args.task)
@@ -597,19 +359,11 @@ def main():
     )
     _mode_tag = "EXTREME" if args.extreme else "normal"
     print(f"[RCB] Starting agent (mode={_mode_tag}, timeout={args.timeout}s)")
-    # v14 特性 (HintCoordinator / Meta-Trace / betti / Step3->Step2 回退) 在
-    # rcb_runner.run() 里. 默认走 v14 路径.
-    # BenchmarkOrchestrator 的 DeliverableSpec / _triage_prompt 已被 rcb_runner
-    # 复用 (iter>=1 注入 missing deliverable 提示). run_agent legacy 路径保留
-    # 作对照 (HUGINN_RCB_LEGACY=1), 不再是默认.
-    _legacy = os.environ.get("HUGINN_RCB_LEGACY", "0").lower() in ("1", "true", "yes")
+    # 默认走 rcb_runner.run() (extreme 模式). legacy run_agent 已删除.
     try:
-        if _legacy:
-            final = asyncio.run(run_agent(instructions, workspace, args.timeout, args.max_tool_calls))
-        else:
-            from huginn.cli.rcb_runner import run as _rcb_run
-            rc = asyncio.run(asyncio.wait_for(_rcb_run(str(workspace), extreme=args.extreme), timeout=args.timeout))
-            final = "" if rc == 0 else f"rcb_runner.run exited rc={rc}"
+        from huginn.cli.rcb_runner import run as _rcb_run
+        rc = asyncio.run(asyncio.wait_for(_rcb_run(str(workspace), extreme=args.extreme), timeout=args.timeout))
+        final = "" if rc == 0 else f"rcb_runner.run exited rc={rc}"
     except asyncio.TimeoutError:
         final = f"[TIMEOUT after {args.timeout}s]"
     except Exception as _rcb_e:
@@ -650,6 +404,8 @@ def main():
     }
     (workspace / "_huginn_meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
 
+    if _tee:
+        _tee.close()
     return 0 if report_exists else 1
 
 
