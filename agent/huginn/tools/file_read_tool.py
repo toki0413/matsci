@@ -19,20 +19,6 @@ from huginn.utils.tokens import rough_token_count_for_text
 DEFAULT_MAX_SIZE_BYTES = 256 * 1024
 DEFAULT_MAX_OUTPUT_TOKENS = 25000
 
-# 二进制文件后缀 — read_text(errors="replace") 产出的乱码毫无用处还爆内存.
-# agent 读 PDF 时乱码留在消息历史里, get_buffer_string 序列化时 MemoryError.
-# ponytail: 后缀判断, 不读文件头. 天花板: 误判无后缀的二进制文件; 升级路径
-# 读前 8 字节做 magic number 检测.
-_BINARY_SUFFIXES = frozenset({
-    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp",
-    ".zip", ".gz", ".tar", ".7z", ".rar", ".bz2", ".xz",
-    ".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
-    ".mp4", ".avi", ".mov", ".mp3", ".wav", ".flac",
-    ".pyc", ".pyo", ".class", ".jar",
-    ".npy", ".npz", ".pkl", ".pt", ".pth", ".ckpt",
-    ".db", ".sqlite", ".sqlite3",
-})
-
 
 class FileReadToolInput(BaseModel):
     action: Literal["read"] = Field(default="read")
@@ -98,18 +84,43 @@ class FileReadTool(HuginnTool):
         if not path.is_file():
             return ToolResult(data=None, success=False, error=f"Not a file: {path}")
 
-        # 二进制文件拒绝读取 — read_text(errors="replace") 产出乱码, 留在消息
-        # 历史里会让 get_buffer_string MemoryError (v16 崩溃根因).
-        if path.suffix.lower() in _BINARY_SUFFIXES:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    f"{path.suffix} is a binary format, file_read_tool only reads text. "
-                    "For PDFs: use search_tool to find the paper online, or grep_tool "
-                    "to extract uncompressed text streams."
-                ),
-            )
+        # PDF 走 KB 的 pymupdf + OCR 链, 不走 read_text(errors="replace").
+        # 旧版 read_text 产 256KB 乱码, 留在消息历史里 get_buffer_string
+        # MemoryError (v16 崩溃根因). KB 的 _extract_text 用 pymupdf 提取
+        # 真正文本, 扫描件 fallback 到 OCR.
+        if path.suffix.lower() == ".pdf":
+            try:
+                from huginn.knowledge.store import _extract_text
+                content = path.read_bytes()
+                pdf_text = _extract_text(str(path), content)
+                # 截断到 token 上限, PDF 可能很长
+                if pdf_text:
+                    lines = pdf_text.splitlines()
+                    selected, was_truncated = self._apply_token_cap(
+                        lines, 1, max_tokens, ".pdf"
+                    )
+                    numbered = "\n".join(
+                        f"{i + 1:4d}  {line}" for i, line in enumerate(selected)
+                    )
+                    msg = f"Read PDF ({len(pdf_text)} chars extracted)."
+                    if was_truncated:
+                        msg += f" Truncated to stay under {max_tokens} tokens."
+                    return ToolResult(
+                        data={
+                            "file_path": str(path),
+                            "total_lines": len(lines),
+                            "start_line": 1,
+                            "content": numbered,
+                            "message": msg,
+                        },
+                        success=True,
+                    )
+            except Exception as e:
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"PDF extraction failed: {e}",
+                )
 
         max_size = input_data.max_size_bytes or int(
             os.environ.get(
