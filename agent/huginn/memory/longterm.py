@@ -1890,6 +1890,9 @@ class LongTermMemory:
 # RCB/benchmark 也要保留 (memory_manager 在 bench 里是 None).
 STABLE_PRINCIPLES_PATH = Path(".huginn/stable_principles.jsonl")
 
+# mtime 缓存: load_stable_principles 用, store 时置 None 失效
+_STABLE_PRINCIPLES_CACHE: tuple[Any, list[str]] | None = None
+
 # G30: 全局 stable_principles 路径 — 跨任务/跨 RCB workspace 复用.
 # RCB runner 把 HUGINN_CACHE_DIR 重定向到 ws/.huginn_cache, STABLE_PRINCIPLES_PATH
 # 是相对路径跟着 cwd 走, 每个任务独立. 全局路径固定在 ~/.huginn/, 任务间共享.
@@ -1975,6 +1978,8 @@ def store_stable_principle(principle: str, source: str = "S7_self_modify") -> No
     让下一任务 init 时能 load 到本任务的修正.
     G44: HUGINN_MULTI_AGENT=True 时加排他锁, 防止多 agent 并发写损坏文件.
     """
+    global _STABLE_PRINCIPLES_CACHE
+    _STABLE_PRINCIPLES_CACHE = None  # 失效 mtime 缓存
     STABLE_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
     record = {"principle": principle, "source": source, "timestamp": time.time()}
     line = json.dumps(record, ensure_ascii=False) + "\n"
@@ -1998,13 +2003,27 @@ def load_stable_principles() -> list[str]:
 
     G30: 合并读本地 + 全局, 去重保序. 全局让上一任务的 S7 修正对本任务可见.
     G44: HUGINN_MULTI_AGENT=True 时加共享锁, 防止读到写一半的内容.
+    mtime 缓存: 文件没变直接返回上次结果, 省掉 JSON 解析 + 锁开销.
     """
-    seen: set[str] = set()
-    principles: list[str] = []
+    global _STABLE_PRINCIPLES_CACHE
     paths = [STABLE_PRINCIPLES_PATH]
-    # G30: 全局路径在继承开关开时一起读
     if _inherit_enabled():
         paths.append(_GLOBAL_PRINCIPLES_PATH)
+
+    # mtime 检查: 全部路径都没变 → 直接返回缓存
+    try:
+        current_sig = tuple(
+            (str(p), p.stat().st_mtime if p.exists() else 0) for p in paths
+        )
+        if _STABLE_PRINCIPLES_CACHE is not None:
+            cached_sig, cached_val = _STABLE_PRINCIPLES_CACHE
+            if cached_sig == current_sig:
+                return cached_val
+    except OSError:
+        pass  # stat 失败走原路径重读
+
+    seen: set[str] = set()
+    principles: list[str] = []
     for path in paths:
         if not path.exists():
             continue
@@ -2021,6 +2040,7 @@ def load_stable_principles() -> list[str]:
             if p not in seen:
                 seen.add(p)
                 principles.append(p)
+    _STABLE_PRINCIPLES_CACHE = (current_sig, principles)
     return principles
 
 
