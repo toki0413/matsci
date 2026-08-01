@@ -1157,6 +1157,7 @@ class ContextBuilder:
             # (memory/kg/kb/trace/emotion/plan...), 破坏 DeepSeek context cache
             # prefix hash → 命中率卡在 50%. 合并进 user message 让 prefix 只剩
             # system + history (稳定), 动态 context 跟 user 一起走 (本来每turn就变).
+            from langchain_core.messages import HumanMessage
             _ctx_text = "\n\n".join(ctx_parts)
             if messages and isinstance(messages[-1], HumanMessage):
                 _orig = messages[-1].content
