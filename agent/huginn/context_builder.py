@@ -1152,11 +1152,18 @@ class ContextBuilder:
             ctx_parts.append(goal_text)
 
         if ctx_parts:
-            from langchain_core.messages import SystemMessage
-            messages.insert(-1, SystemMessage(
-                content="\n\n".join(ctx_parts),
-                id="ctx_block",
-            ))
+            # ctx_block 合并进 user message, 不单独插 SystemMessage.
+            # 旧版 insert(-1) 在 user message 前插 SystemMessage, 内容每turn变
+            # (memory/kg/kb/trace/emotion/plan...), 破坏 DeepSeek context cache
+            # prefix hash → 命中率卡在 50%. 合并进 user message 让 prefix 只剩
+            # system + history (稳定), 动态 context 跟 user 一起走 (本来每turn就变).
+            _ctx_text = "\n\n".join(ctx_parts)
+            if messages and isinstance(messages[-1], HumanMessage):
+                _orig = messages[-1].content
+                messages[-1] = HumanMessage(
+                    content=f"{_ctx_text}\n\n---\n\n{_orig}",
+                    id=getattr(messages[-1], "id", None),
+                )
 
         return messages
 

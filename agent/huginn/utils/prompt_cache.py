@@ -178,16 +178,25 @@ class PromptCacheBuilder:
         if history_messages:
             messages.extend(history_messages)
 
+        # memory/kg/kb 合并进 user message, 不单独插 SystemMessage.
+        # 旧版各自插 SystemMessage 在 history 和 user 之间, 内容每turn变
+        # (检索结果不同), 破坏 DeepSeek context cache prefix hash.
+        # 合并进 user message 让 prefix = system + history (稳定).
+        _dyn_parts: list[str] = []
         if memory_text:
-            messages.append(SystemMessage(content=memory_text, id="ctx_memory"))
-
+            _dyn_parts.append(memory_text)
         if kg_text:
-            messages.append(SystemMessage(content=kg_text, id="ctx_kg"))
-
+            _dyn_parts.append(kg_text)
         if kb_text:
-            messages.append(SystemMessage(content=kb_text, id="ctx_kb"))
+            _dyn_parts.append(kb_text)
 
-        messages.append(HumanMessage(content=user_message))
+        if _dyn_parts:
+            _dyn_text = "\n\n".join(_dyn_parts)
+            messages.append(HumanMessage(
+                content=f"{_dyn_text}\n\n---\n\n{user_message}"
+            ))
+        else:
+            messages.append(HumanMessage(content=user_message))
         return messages
 
     def build_full_messages(
