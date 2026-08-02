@@ -464,11 +464,20 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
 
     def apply_heuristic_fix(
-        self, tool_name: str, tool_input: dict[str, Any], error: str
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        error: str,
+        min_confidence: float = 0.0,
     ) -> dict[str, Any] | None:
-        """Check if we have a learned fix for this error and apply it."""
+        """Check if we have a learned fix for this error and apply it.
+
+        min_confidence: 低于此置信度的规则跳过. 写入门槛 0.3, 注入门槛应更高.
+        """
         for rule in self.rules:
             if rule.rule_type != "heuristic_fix":
+                continue
+            if rule.confidence < min_confidence:
                 continue
             if rule.trigger.startswith(f"{tool_name}|") and self._error_matches(
                 rule.trigger.split("|", 1)[1], error
@@ -477,7 +486,11 @@ class EvolutionEngine:
                 # 命中即落盘, 否则 usage_count 只在内存, 跨 session 丢.
                 # 规则库上限 100 条, 写盘微秒级, 工具失败频率低, 可接受.
                 self._save_rules()
-                return self._parse_fix_action(rule.action, tool_input)
+                fix = self._parse_fix_action(rule.action, tool_input)
+                if fix:
+                    fix["confidence"] = rule.confidence
+                    fix["rule_id"] = rule.rule_id
+                return fix
         return None
 
     def get_relevant_skills(self, query: str) -> list[SkillTemplate]:

@@ -244,12 +244,23 @@ class ReflectionMixin:
                                 tr.get("tool_name", ""),
                                 tr.get("tool_input", tr.get("args", {})),
                                 str(_content),
+                                min_confidence=0.5,
                             )
                             if _fix:
                                 logger.info(
                                     "evolved fix hit: tool=%s desc=%s",
                                     tr.get("tool_name", ""),
                                     _fix.get("description", "")[:80],
+                                )
+                                # 软注入: 命中高置信度规则, 把修复建议作为 system 消息
+                                # 让下轮 LLM 显式看到. 之前只 log, agent 看不到 ->
+                                # 同 session 重复犯同类错误 (gap 分析: 13 次/session).
+                                self._session_state.add_message(
+                                    "system",
+                                    f"Evolved fix (rule={_fix.get('rule_id','')}, "
+                                    f"confidence={_fix.get('confidence',0):.2f}): "
+                                    f"{_fix.get('description','')[:200]}. "
+                                    "Apply this fix in your next action.",
                                 )
                         except Exception:
                             logger.debug(
