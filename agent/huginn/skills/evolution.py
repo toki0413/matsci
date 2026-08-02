@@ -47,7 +47,11 @@ _TRACKED_PARAMS = frozenset(
     {"action", "encut", "ediff", "kpoints", "functional", "basis_set",
      "method", "timestep", "temperature", "prec", "xc", "ecutwfc",
      "max_scf", "mixing_beta", "pseudo_potential"}
-)
+) | {
+    # 通用工具参数 — 让 evolution 对非 DFT/MD 工具也能积累 belief
+    "file_path", "query", "command", "pattern", "code",
+    "path", "content", "search", "directory", "url",
+}
 
 # Minimum observations before a belief shows up in context (avoids noise)
 _MIN_SAMPLES = 2

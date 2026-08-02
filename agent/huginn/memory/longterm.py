@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -1971,15 +1972,53 @@ def _stable_principles_lock(path: Path, exclusive: bool = True):
         f.close()
 
 
-def store_stable_principle(principle: str, source: str = "S7_self_modify") -> None:
+_BAD_PATTERNS = [
+    re.compile(r"Tool '\w+' encountered an issue", re.IGNORECASE),
+    re.compile(r"avoid tool failure: .* encountered an issue", re.IGNORECASE),
+]
+
+_ACTION_VERBS = {"avoid", "address", "use", "verify", "check", "ensure", "prefer",
+                 "always", "never", "if", "when", "before", "after", "validate"}
+
+
+def _validate_principle(principle: str, existing: list[str] | None = None) -> bool:
+    """校验 stable_principle 质量, 拒绝噪声/重复."""
+    p = principle.strip()
+    if len(p) < 10 or len(p) > 500:
+        return False
+    for pat in _BAD_PATTERNS:
+        if pat.search(p):
+            return False
+    words = set(p.lower().split())
+    if not words & _ACTION_VERBS:
+        return False
+    # ponytail: Jaccard 去重 O(n) 扫描已有条目, n 通常 <50 够用;
+    # 升级路径: n 上千改 MinHash.
+    if existing:
+        for ex in existing:
+            ex_words = set(ex.lower().split())
+            if not ex_words:
+                continue
+            inter = len(words & ex_words)
+            union = len(words | ex_words)
+            if union and inter / union > 0.7:
+                return False
+    return True
+
+
+def store_stable_principle(principle: str, source: str = "S7_self_modify") -> bool:
     """追加一条 stable_principle. 每行 {principle, source, timestamp}.
 
     G30: 同时写到本地 STABLE_PRINCIPLES_PATH 和全局 _GLOBAL_PRINCIPLES_PATH,
     让下一任务 init 时能 load 到本任务的修正.
     G44: HUGINN_MULTI_AGENT=True 时加排他锁, 防止多 agent 并发写损坏文件.
+    返回 True 表示写入, False 表示被质量门槛拒绝.
     """
     global _STABLE_PRINCIPLES_CACHE
     _STABLE_PRINCIPLES_CACHE = None  # 失效 mtime 缓存
+    existing = load_stable_principles()
+    if not _validate_principle(principle, existing):
+        return False
     STABLE_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
     record = {"principle": principle, "source": source, "timestamp": time.time()}
     line = json.dumps(record, ensure_ascii=False) + "\n"
@@ -1996,6 +2035,7 @@ def store_stable_principle(principle: str, source: str = "S7_self_modify") -> No
         except Exception:
             # 全局路径不可写不阻断本地写入
             pass
+    return True
 
 
 def load_stable_principles() -> list[str]:
@@ -2042,6 +2082,31 @@ def load_stable_principles() -> list[str]:
                 principles.append(p)
     _STABLE_PRINCIPLES_CACHE = (current_sig, principles)
     return principles
+
+
+def cleanup_stable_principles() -> int:
+    """一次性清理 stable_principles.jsonl 中的噪声. 返回清理后剩余数量."""
+    path = STABLE_PRINCIPLES_PATH
+    if not path.exists():
+        return 0
+    lines = path.read_text(encoding="utf-8").splitlines()
+    kept = []
+    seen = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            p = json.loads(line)["principle"]
+        except (json.JSONDecodeError, KeyError):
+            continue
+        if _validate_principle(p, seen):
+            kept.append(line)
+            seen.append(p)
+    with _stable_principles_lock(path, exclusive=True):
+        path.write_text("\n".join(kept) + "\n" if kept else "", encoding="utf-8")
+    global _STABLE_PRINCIPLES_CACHE
+    _STABLE_PRINCIPLES_CACHE = None
+    return len(kept)
 
 
 # seeds 仅走 RAG (knowledge/store.py)，不直接进 system_prompt

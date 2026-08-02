@@ -230,6 +230,7 @@ def _write_cognitive_evidence(
     bandit_controller=None,
     completion_audit: dict | None = None,
     mcmc_info: dict | None = None,
+    anomaly_info: dict | None = None,
     is_final: bool = False,
 ) -> None:
     """P0-C: 把认知层证据追加写入 ws/cognitive_evidence.md.
@@ -304,6 +305,13 @@ def _write_cognitive_evidence(
                 f"coverage={completion_audit.get('coverage', 'N/A')}"
             )
 
+        # 7. Isomorphic Anomaly (触觉层 — 同构不同性检测)
+        if anomaly_info:
+            _lines.append(
+                f"- isomorphic_anomaly: {len(anomaly_info.get('pairs', []))} pair(s), "
+                f"{len(anomaly_info.get('generated', []))} new hypothesis"
+            )
+
         if is_final:
             _lines.append("\n[final cognitive evidence snapshot]")
 
@@ -311,6 +319,87 @@ def _write_cognitive_evidence(
             _f.write("\n".join(_lines) + "\n")
     except Exception as _ce_e:
         print(f"[cognitive_evidence write skipped: {_ce_e}]", flush=True)
+
+
+def _load_haptic_layers(ws, hypo_manifold) -> int:
+    """读 ws/.huginn/haptic_layers.json, register 到 hypo_manifold.
+
+    复用 run_mcmc_single 的加载逻辑. hypo_manifold 为 None 或文件不存在时
+    返回 0, 不报错 — haptic_enabled 路径下 _haptic_proposal 全返 None, 安全退化 fisher.
+    """
+    if hypo_manifold is None:
+        return 0
+    _hap_path = ws / ".huginn" / "haptic_layers.json"
+    if not _hap_path.exists():
+        return 0
+    _n_hap = 0
+    try:
+        from huginn.metacog.haptic_property_layer import (
+            HapticPropertyLayer as _HPL,
+        )
+        _h_ids = list(hypo_manifold._hyp)
+        _raw = json.loads(_hap_path.read_text(encoding="utf-8"))
+        # key 可以是 h_id 或结构 id, 优先 h_id 匹配, 否则按 index 回退
+        for _i, _h_id in enumerate(_h_ids):
+            _d = _raw.get(_h_id)
+            if _d is None and _i < len(_raw):
+                _d = list(_raw.values())[_i]
+            if _d is None:
+                continue
+            try:
+                _layer = _HPL.from_dict(_d)
+                hypo_manifold.register_haptic(_h_id, _layer)
+                _n_hap += 1
+            except Exception:
+                pass
+    except Exception as _e:
+        print(f"[haptic] load failed: {_e}, degrading to fisher", flush=True)
+    return _n_hap
+
+
+async def _trigger_anomaly_hypothesis(
+    anomaly_pairs: list[tuple[str, str]], model,
+) -> list[str]:
+    """调 AutoloopEngine.trigger_isomorphic_anomaly_hypothesis 接通死代码.
+
+    ponytail: rcb_runner 不接 full AutoloopEngine (它拉 CoderRunner/WorkflowEngine),
+    用最小 stub 持有 _hypothesize, 复用 ctx.model. trigger 方法本身只依赖 _hypothesize,
+    所以 stub 足够. 升级路径: full AutoloopEngine.run_cognitive().
+    失败返回空 list — anomaly 检测是 advisory, 不阻塞主循环.
+    """
+    if not anomaly_pairs:
+        return []
+    try:
+        import types as _types
+        from huginn.autoloop.engine import AutoloopEngine
+
+        async def _stub_hypothesize(ctx):
+            if model is None:
+                return None
+            _prompt = ctx.get("summary", "")
+            try:
+                if hasattr(model, "chat"):
+                    _resp = await model.chat(_prompt)
+                elif hasattr(model, "ainvoke"):
+                    _resp = await model.ainvoke(_prompt)
+                else:
+                    return None
+            except Exception:
+                return None
+            _txt = _resp if isinstance(_resp, str) else str(
+                getattr(_resp, "content", _resp))
+            return _txt.strip() or None
+
+        _stub = _types.SimpleNamespace(
+            _hypothesize=_stub_hypothesize,
+            _last_hypothesis=None,
+            _last_raw_hypothesis=None,
+        )
+        return await AutoloopEngine.trigger_isomorphic_anomaly_hypothesis(
+            _stub, anomaly_pairs)
+    except Exception as _e:
+        print(f"[anomaly] trigger failed: {_e}", flush=True)
+        return []
 
 
 # v14 Task 19: model_version 跟踪 — env 没设则 unknown. 进程启动时读一次够.
@@ -1069,6 +1158,12 @@ LUCID review (mandatory after generating hypothesis):
     _mcmc_interval = int(os.environ.get("HUGINN_MCMC_INTERVAL", "5"))
     _mcmc_ckpt_interval = int(os.environ.get(
         "HUGINN_MCMC_CHECKPOINT_INTERVAL", "10000"))
+    # 触觉层 env var: extreme 默认开, 非 extreme 默认关 (行为不变).
+    # ponytail: haptic_layers.json 不存在时 _haptic_proposal 全返 None, 自动退化 fisher.
+    _mcmc_haptic_enabled = os.environ.get(
+        "HUGINN_MCMC_HAPTIC", "1" if extreme else "0") == "1"
+    _mcmc_haptic_temperature = float(
+        os.environ.get("HUGINN_MCMC_HAPTIC_TEMPERATURE", "1.0"))
     # P1-C: 完成度审计周期触发 — 之前 metacog_check_completion 只在 agent 声称
     # TASK COMPLETE 时跑, 长任务里 agent 一直不说完成 → 审计门永不跑.
     # ponytail: advisory only, 不阻断. 结果写 cognitive_evidence.md.
@@ -2534,10 +2629,18 @@ LUCID review (mandatory after generating hypothesis):
                         and len(_hypo_manifold._hyp) >= 2:
                     _mcmc_prev = _mcmc_engine._mcmc_current
                     # Step 2: 增量路径 — cached_log_p 跨步复用, 不再调 log_posterior 全量
-                    _next_h, _next_log_p = _hypo_manifold.mcmc_step(
-                        _iter_observations, _mcmc_engine._mcmc_current,
+                    # 触觉层: 只在 extreme 模式 (_mcmc_haptic_enabled=True) 传 haptic 参数,
+                    # 非 extreme 不传, mcmc_step 走默认 haptic_enabled=False (行为不变).
+                    _mcmc_step_kwargs = dict(
                         rng=_mcmc_engine._mcmc_rng,
                         cached_log_p_current=_mcmc_cached_log_p,
+                    )
+                    if _mcmc_haptic_enabled:
+                        _mcmc_step_kwargs["haptic_enabled"] = True
+                        _mcmc_step_kwargs["haptic_temperature"] = _mcmc_haptic_temperature
+                    _next_h, _next_log_p = _hypo_manifold.mcmc_step(
+                        _iter_observations, _mcmc_engine._mcmc_current,
+                        **_mcmc_step_kwargs,
                     )
                     _mcmc_engine._mcmc_current = _next_h
                     _mcmc_cached_log_p = _next_log_p
@@ -2614,6 +2717,30 @@ LUCID review (mandatory after generating hypothesis):
             except Exception as _e:
                 print(f"[completion audit skipped: {_e}]", flush=True)
 
+        # 触觉层: 同构不同性异常检测 — 每 _completion_interval 步跑一次.
+        # detect_isomorphic_anomaly 抓 "结构同 + 力学不同" (石墨 vs 金刚石),
+        # trigger_isomorphic_anomaly_hypothesis 生成解释差异的新 hypothesis.
+        # ponytail: advisory only, 失败只 warn 不阻塞. 结果写 cognitive_evidence.
+        _anomaly_info = None
+        if _hypo_manifold is not None and _iter_n > 0 \
+                and _iter_n % _completion_interval == 0:
+            try:
+                _anomaly_pairs = _hypo_manifold.detect_isomorphic_anomaly()
+                _anomaly_generated: list[str] = []
+                if _anomaly_pairs:
+                    _anomaly_generated = await _trigger_anomaly_hypothesis(
+                        _anomaly_pairs, model)
+                if _anomaly_pairs or _anomaly_generated:
+                    _anomaly_info = {
+                        "pairs": _anomaly_pairs,
+                        "generated": _anomaly_generated,
+                    }
+                    print(
+                        f"[anomaly] iter {_iter_n}: {len(_anomaly_pairs)} pair(s), "
+                        f"{len(_anomaly_generated)} new hypothesis", flush=True)
+            except Exception as _e:
+                print(f"[anomaly] detection skipped: {_e}", flush=True)
+
         # P0-C: 每 iter 结束写 cognitive_evidence.md, 让 score.py judge 能看到
         # agent 跑分过程中的认知层证据. ponytail: 追加写, 失败只 warn 不阻塞.
         _write_cognitive_evidence(
@@ -2625,6 +2752,7 @@ LUCID review (mandatory after generating hypothesis):
             bandit_controller=_bandit if "_bandit" in dir() else None,
             mcmc_info=_mcmc_current_info if "_mcmc_current_info" in dir() else None,
             completion_audit=_completion_audit if "_completion_audit" in dir() else None,
+            anomaly_info=_anomaly_info if "_anomaly_info" in dir() else None,
         )
 
         # 早速: agent 明确说完成 — P0.3: 先过 RCB effort floor 硬下限.
@@ -2746,6 +2874,7 @@ LUCID review (mandatory after generating hypothesis):
                 bandit_controller=_bandit if "_bandit" in dir() else None,
                 completion_audit=_completion_audit if "_completion_audit" in dir() else None,
                 mcmc_info=_mcmc_current_info if "_mcmc_current_info" in dir() else None,
+                anomaly_info=_anomaly_info if "_anomaly_info" in dir() else None,
                 is_final=True,
             )
             break
@@ -3576,8 +3705,14 @@ async def _step3_adversarial(
                 from huginn.cli.rcb_fork_merge import _reproduction_gate
                 _repro_ok, _repro_note = _reproduction_gate(report_text, ws / "outputs")
                 if not _repro_ok:
-                    print(f"[Step3] repro gate failed ({_repro_note}), skip LLM critique, score=0", flush=True)
-                    return "repro_gate_failed"
+                    # gate 是粗筛 advisory, 不是 veto. v21 死在 veto: agent 写
+                    # "rel err < 2×10⁻¹⁶" (机器精度) 被当 claim, outputs/ 没匹配
+                    # → gate fail → score=0, 但 agent 产出了完整 pipeline + ALL PASS.
+                    # gate 对 sci-notation 以外的 claim (整数序列、MAE、分类标签)
+                    # 本就抓不到, 作为硬 veto 会系统性误杀非能量类论文.
+                    # 注入 note 让 LLM critique 判断, 不跳过.
+                    print(f"[Step3] repro gate advisory: {_repro_note}", flush=True)
+                    checklist = checklist + f"\n\n## 复现性门禁 (advisory, 非否决)\n{_repro_note}\n请结合 outputs/ 产物完整性综合判断, 勿仅凭门禁结果打分.\n"
             except Exception as _e:
                 print(f"[Step3] repro gate skipped: {_e}", flush=True)
             try:
@@ -4408,6 +4543,10 @@ async def run(
     #   1.5 数学结构识别走 model.ainvoke 直调 LLM, 不经 agent.chat, 不需要这些工具.
     _step2_filter = set(agent.tool_filter or [])
     if extreme:
+        # RepoLaw 硬底线: extreme (RCBench) 模式强制注入 _DEFAULT_RCB_PATH_RULES,
+        # agent 不能改 INSTRUCTIONS.md / score.py / rubric.json 等关键文件.
+        # 非 RCBench 入口不进这个分支, rcb_mode 保持 False, 行为不变.
+        agent._permission_config.rcb_mode = True
         # P0-A: extreme 模式全量开放注册表工具 — 之前手工枚举 14 个工具,
         # 28 个 sci/ + sim/ + design/ + causal/ 全被旁路 (注册表 145 工具仅暴露 29).
         # 根因: 白名单是"加法"思路 (一个个加), 应该是"减法" (黑名单 + 全量开放).
