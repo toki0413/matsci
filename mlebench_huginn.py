@@ -315,7 +315,10 @@ def setup_workspace(competition_id: str, workspace: Path, synthetic: bool) -> di
             print("[MLE] Falling back to no data; agent will have to generate its own.")
         else:
             print(f"[MLE] Generating synthetic data for {competition_id}...")
-            private = workspace / "_private"
+            # P0-2: private 目录移出 workspace, agent 不可读.
+            # 之前 workspace/_private/test.csv 让 agent 能直接读标签作弊.
+            # SandboxExecutor 限制在 workspace 内, 放 workspace.parent 即可隔离.
+            private = workspace.parent / f"_mle_private_{workspace.name}"
             gen_fn(data_ws, private)
             meta["private_dir"] = str(private.resolve())
             print(f"[MLE] Synthetic data: {sum(1 for _ in data_ws.iterdir())} public files")
