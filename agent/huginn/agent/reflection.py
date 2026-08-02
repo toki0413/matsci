@@ -202,8 +202,7 @@ class ReflectionMixin:
 
         # ponytail: RCB/benchmark 场景 skip CSM transition — 无人工 subprocess,
         # CSM attention prompt 是 noise 还触发不必要 compaction. 升级: mode-aware.
-        if os.environ.get("HUGINN_SKIP_CSM", "").lower() in ("1", "true", "yes"):
-            return
+        _skip_csm = os.environ.get("HUGINN_SKIP_CSM", "").lower() in ("1", "true", "yes")
 
         for tr in self._session_state.tool_results_this_turn:
             try:
@@ -236,6 +235,27 @@ class ReflectionMixin:
                     _new_rules = []
                     if reflection.evolve_signal == "failure":
                         _new_rules = ev_engine.evolve_from_failures()
+                        # 应用断点: 对当前失败尝试 apply_heuristic_fix.
+                        # post-turn 不重试工具 (LLM 已看到错误并决策), 只让规则
+                        # usage_count++ 度量命中, 验证闭环接通. fix description
+                        # 留作观测, 软注入已由 build_evolution_rules 负责.
+                        try:
+                            _fix = ev_engine.apply_heuristic_fix(
+                                tr.get("tool_name", ""),
+                                tr.get("tool_input", tr.get("args", {})),
+                                str(_content),
+                            )
+                            if _fix:
+                                logger.info(
+                                    "evolved fix hit: tool=%s desc=%s",
+                                    tr.get("tool_name", ""),
+                                    _fix.get("description", "")[:80],
+                                )
+                        except Exception:
+                            logger.debug(
+                                "apply_heuristic_fix in reflection failed",
+                                exc_info=True,
+                            )
                     elif reflection.evolve_signal == "success":
                         _new_rules = ev_engine.evolve_from_successes()
                     # G7: evolution 学新规则后让 CSM 重新探索 (新规则可能改路径)
@@ -252,6 +272,8 @@ class ReflectionMixin:
                     logger.debug("evolution trigger failed", exc_info=True)
 
             # Drive the cognitive state machine with the reflection result.
+            if _skip_csm:
+                continue
             try:
                 sig_type = reflection.to_transition_signal()
                 if sig_type:
