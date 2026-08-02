@@ -255,6 +255,12 @@ class StreamingMixin:
                             tool_name=tc.get("name", "unknown"),
                             input_args=tc.get("args", {}),
                         )
+                        # 缓存 tool_input, 供 ToolMessage 的 add_tool_result 用
+                        _tc_id = tc.get("id")
+                        if _tc_id:
+                            if not hasattr(self, "_pending_tool_inputs"):
+                                self._pending_tool_inputs = {}
+                            self._pending_tool_inputs[_tc_id] = tc.get("args", {})
                 if records is not None:
                     records.append(
                         {
@@ -285,6 +291,9 @@ class StreamingMixin:
                         }
                     )
                 try:
+                    _tool_input = getattr(self, "_pending_tool_inputs", {}).pop(
+                        msg.tool_call_id, {}
+                    )
                     self._session_state.add_tool_result(
                         {
                             "tool_name": getattr(msg, "name", None) or "unknown",
@@ -293,6 +302,7 @@ class StreamingMixin:
                                 isinstance(msg.content, str)
                                 and msg.content.startswith("Error")
                             ),
+                            "tool_input": _tool_input,
                         }
                     )
                 except Exception:
