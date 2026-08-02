@@ -3046,6 +3046,13 @@ def _report_coverage_compass(ws: Path, checklist: str) -> str:
     lines = [
         f"## Report Coverage Compass ({cov_pct}% — {len(covered)}/{total} checklist keywords found in report.md)",
     ]
+    # P0-5: 拦截 "Expected" 占位表 — 无产物支撑的数值声明.
+    # audit 06: 零执行仍虚构 Bader 电荷; RCB judge 高频评语 "placeholder results".
+    if "expected" in report_text and ("placeholder" in report_text or "tbd" in report_text
+                                       or "not yet" in report_text or "n/a" in report_text):
+        lines.append("⚠ WARNING: report.md contains 'Expected'/'placeholder'/'TBD' — "
+                     "these are NOT results. Replace with actual executed metrics or "
+                     "declare the gap honestly. Judge scores placeholder content as 0.")
     if covered:
         lines.append(f"Covered: {', '.join(sorted(covered))}")
     if missing:

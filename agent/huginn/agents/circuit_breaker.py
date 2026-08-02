@@ -67,6 +67,12 @@ class CircuitBreaker:
         self._half_open_max = half_open_max
         self._lock = threading.RLock()
         self._states: dict[str, _BreakerState] = {}
+        # P0-7: 只读工具永久豁免 — file_read_tool 误触发熔断 (audit 08) 导致
+        # agent 无法读文件自救. 只读工具不会因环境问题持续失败, 熔断它们无意义.
+        self._readonly_exempt = frozenset({
+            "file_read_tool", "glob", "grep", "list_dir",
+            "web_search_tool", "recall_context_tool",
+        })
 
     @classmethod
     def shared(cls) -> CircuitBreaker:
@@ -96,6 +102,9 @@ class CircuitBreaker:
 
     def can_call(self, tool_name: str) -> bool:
         """能不能调这个工具。closed/half_open(限额内) 放行，open 拦下。"""
+        # P0-7: 只读工具永久豁免, 不走熔断逻辑
+        if tool_name in self._readonly_exempt:
+            return True
         with self._lock:
             st = self._get_state(tool_name)
             self._refresh(st)

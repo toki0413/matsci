@@ -5046,10 +5046,19 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             self.workspace / f"huginn_autoloop_report_{report_data['run_id']}.md"
         )
         report_content = self._render_report(report_data)
-        if kb_text:
-            report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
-        if report_narrative:
-            report_content += "\n\n## Research Report\n\n" + report_narrative + "\n"
+        # P0-5: 无数据硬门 — exec_summary 为空 = 本循环未执行任何计算.
+        # 禁止虚构 Results/Discussion, 强制声明零执行 (audit 06: 零执行仍虚构 Bader 电荷).
+        if not exec_summary.strip():
+            report_content += (
+                "\n\n## Execution Status\n\n"
+                "**本循环未执行任何计算。** 上述 Results/Discussion 无产物支撑, "
+                "不应作为结论引用。需要重新执行工具调用获取真实数据。\n"
+            )
+        else:
+            if kb_text:
+                report_content += "\n\n## Domain Knowledge References\n\n" + kb_text + "\n"
+            if report_narrative:
+                report_content += "\n\n## Research Report\n\n" + report_narrative + "\n"
         report_path.write_text(report_content, encoding="utf-8")
 
         return str(report_path)

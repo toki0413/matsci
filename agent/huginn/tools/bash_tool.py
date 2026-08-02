@@ -174,10 +174,10 @@ class BashTool(HuginnTool):
                     return dispatched
 
         # Use the Rust sandbox runner when the compiled extension is available.
-        # ponytail: HUGINN_NO_RUST_SANDBOX=1 跳过 Rust sandbox — 它在某些场景
-        # (RDKit+sklearn GPR) 会静默崩溃返回空 stderr, 导致 "Unknown error".
-        # 升级: 修 Rust 侧的崩溃根因 (可能 fork/exec 或内存限制).
-        if os.environ.get("HUGINN_NO_RUST_SANDBOX", "").lower() not in ("1", "true", "yes"):
+        # P0-7: 默认关闭 — Rust sandbox 在 RDKit+sklearn GPR 等场景静默崩溃
+        # 返回空 stderr, 导致 "Unknown error" (audit 08: 8 个出分单元 62.5% 有
+        # 工具层直接背书). 显式 HUGINN_USE_RUST_SANDBOX=1 才启用.
+        if os.environ.get("HUGINN_USE_RUST_SANDBOX", "").lower() in ("1", "true", "yes"):
             try:
                 from huginn_ext.sandbox import (
                     run_sandboxed,  # type: ignore[import-not-found]
