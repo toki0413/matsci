@@ -474,6 +474,9 @@ class EvolutionEngine:
                 rule.trigger.split("|", 1)[1], error
             ):
                 rule.usage_count += 1
+                # 命中即落盘, 否则 usage_count 只在内存, 跨 session 丢.
+                # 规则库上限 100 条, 写盘微秒级, 工具失败频率低, 可接受.
+                self._save_rules()
                 return self._parse_fix_action(rule.action, tool_input)
         return None
 
@@ -575,9 +578,16 @@ class EvolutionEngine:
         return patches.get(tool)
 
     def _error_matches(self, pattern: str, error: str) -> bool:
-        """Check if an error matches a learned pattern."""
-        # Simple substring matching, can be enhanced with embeddings
-        return pattern.lower() in error.lower() or error.lower() in pattern.lower()
+        """Check if an error matches a learned pattern.
+
+        pattern 已经是泛化后的 (含 <path>/<num> 占位符).
+        把 error 也泛化后再比较, 否则 "File 'X' not found" 永远不匹配
+        "File '<path>' not found".
+        """
+        from .logger import _generalize_error
+
+        gen_error = _generalize_error(error)
+        return pattern.lower() in gen_error.lower() or gen_error.lower() in pattern.lower()
 
     def _parse_fix_action(
         self, action: str, original_input: dict[str, Any]

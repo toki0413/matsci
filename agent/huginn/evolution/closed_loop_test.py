@@ -85,6 +85,39 @@ def test_success_to_skill_to_retrieval() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_pattern_generalization() -> None:
+    """两个不同文件路径的同类错误应归到同一条规则, 而非各生成一条."""
+    from huginn.evolution.logger import _generalize_error
+
+    e1 = "Error: File '/tmp/missing.cif' not found"
+    e2 = "Error: File '/data/other.csv' not found"
+    assert _generalize_error(e1) == _generalize_error(e2), (
+        "不同路径应泛化到同一模式"
+    )
+
+    # 端到端: 两次不同路径的失败只产出 1 条规则, 第三次不同路径也能命中
+    logger, tmp = _fresh_logger()
+    try:
+        for path in ["/tmp/a.cif", "/data/b.csv", "/home/c.txt"]:
+            logger.log_tool_call(
+                session_id="s1",
+                tool_name="read_file",
+                tool_input={"file_path": path},
+                error=f"Error: File '{path}' not found",
+            )
+        engine = EvolutionEngine(logger=logger)
+        rules = engine.evolve_from_failures()
+        assert len(rules) == 1, f"3 条不同路径应只产 1 条规则, got {len(rules)}"
+        # 第四个新路径也该命中
+        fix = engine.apply_heuristic_fix(
+            "read_file", {"file_path": "/new/x.pkl"},
+            "Error: File '/new/x.pkl' not found",
+        )
+        assert fix is not None, "新路径应命中泛化后的规则"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_principle_quality_gate() -> None:
     """质量门槛: 拒同义反复, 拒超长噪声, 放行合理原则."""
     # 同义反复 — 命中 _BAD_PATTERNS
@@ -100,11 +133,87 @@ def test_principle_quality_gate() -> None:
     ) is True
 
 
+def test_usage_count_persistence() -> None:
+    """apply_heuristic_fix 命中后 usage_count 应持久化, 重 load 不丢.
+
+    修 engine.py: apply_heuristic_fix 命中后调 _save_rules, 否则跨 session 丢.
+    """
+    logger, tmp = _fresh_logger()
+    try:
+        for _ in range(2):
+            logger.log_tool_call(
+                session_id="s1",
+                tool_name="read_file",
+                tool_input={"file_path": "/tmp/x.cif"},
+                error="File '/tmp/x.cif' not found",
+            )
+        engine = EvolutionEngine(logger=logger)
+        engine.evolve_from_failures()
+        # 命中一次, usage_count 应该 1
+        fix = engine.apply_heuristic_fix(
+            "read_file", {"file_path": "/tmp/x.cif"},
+            "File '/tmp/x.cif' not found",
+        )
+        assert fix is not None, "规则应命中"
+        assert engine.rules[0].usage_count == 1, (
+            f"usage_count 应 1, got {engine.rules[0].usage_count}"
+        )
+        # 重新 load, usage_count 不丢 (验证 _save_rules 生效)
+        engine2 = EvolutionEngine(logger=logger)
+        assert engine2.rules[0].usage_count == 1, (
+            f"重 load 后 usage_count 应 1, got {engine2.rules[0].usage_count}"
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_kwargs_generalization() -> None:
+    """不同 content/command 值的 kwargs 错误应归到同一条规则.
+
+    修 logger.py: _generalize_error 抽象 with kwargs {...} 块.
+    不修的话 file_write_tool 每个不同 content = 独立规则, bash_tool 每个不同 command = 独立规则.
+    """
+    from huginn.evolution.logger import _generalize_error
+
+    # file_write_tool: 不同 content 值应泛化到同一模式
+    e1 = "Error invoking tool 'file_write_tool' with kwargs {'content': '#!/usr/bin/python3\nprint(\"a\")'} with error: invalid"
+    e2 = "Error invoking tool 'file_write_tool' with kwargs {'content': 'import numpy as np\nprint(1)'} with error: invalid"
+    assert _generalize_error(e1) == _generalize_error(e2), (
+        f"不同 content 应泛化到同一模式\n  e1={_generalize_error(e1)}\n  e2={_generalize_error(e2)}"
+    )
+
+    # bash_tool: 不同 command 值应泛化到同一模式
+    e3 = 'Error invoking tool \'bash_tool\' with kwargs {\'command\': \'["ls", "-la"]\'} with error:\n command: Input should be a valid list'
+    e4 = 'Error invoking tool \'bash_tool\' with kwargs {\'command\': \'["pwd"]\'} with error:\n command: Input should be a valid list'
+    assert _generalize_error(e3) == _generalize_error(e4), (
+        f"不同 command 应泛化到同一模式\n  e3={_generalize_error(e3)}\n  e4={_generalize_error(e4)}"
+    )
+
+    # 端到端: 3 个不同 content 的失败只产 1 条规则
+    logger, tmp = _fresh_logger()
+    try:
+        for content in ["print('a')", "import os", "x = 1"]:
+            logger.log_tool_call(
+                session_id="s1",
+                tool_name="file_write_tool",
+                tool_input={"content": content},
+                error=f"Error invoking tool 'file_write_tool' with kwargs {{'content': '{content}'}} with error: invalid",
+            )
+        engine = EvolutionEngine(logger=logger)
+        rules = engine.evolve_from_failures()
+        assert len(rules) == 1, f"3 条不同 content 应只产 1 条规则, got {len(rules)}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     tests = [
         ("failure -> rule -> application", test_failure_to_rule_to_application),
         ("success -> skill -> retrieval", test_success_to_skill_to_retrieval),
+        ("pattern generalization", test_pattern_generalization),
         ("principle quality gate", test_principle_quality_gate),
+        ("usage_count persistence", test_usage_count_persistence),
+        ("kwargs generalization", test_kwargs_generalization),
     ]
     passed = 0
     for name, fn in tests:

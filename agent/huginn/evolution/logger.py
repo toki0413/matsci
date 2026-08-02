@@ -5,10 +5,31 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# 把错误消息里的具体路径/数字/标识符抽象成占位符, 让同类错误归到同一模式.
+# 之前用 error[:80] 做键, 每个文件路径 = 独立规则, 49 条规则全部 usage_count=0.
+_PATH_RE = re.compile(r"['\"]?(?:/[^\s'\"]+|[A-Za-z]:\\[^\s'\"]*)['\"]?")
+_NUM_RE = re.compile(r"\b\d+\b")
+_HEX_RE = re.compile(r"\b[0-9a-f]{8,}\b", re.IGNORECASE)
+# tool 调用失败时 error 里会嵌入 kwargs {...} (tool_input 的 repr).
+# 不抽象的话, 每个具体 content/command 值 = 独立规则, 同类错误分裂.
+# 匹配 "with kwargs {" 到 "with error:" 或字符串末尾, DOTALL 跨行.
+_KWARGS_RE = re.compile(r"with kwargs \{.*?(?=with error:|$)", re.DOTALL)
+
+
+def _generalize_error(msg: str) -> str:
+    """把具体错误消息抽象成模式: 路径→<path>, 数字→<num>, hex→<hex>, kwargs→<input>."""
+    s = _PATH_RE.sub("<path>", msg)
+    s = _NUM_RE.sub("<num>", s)
+    s = _HEX_RE.sub("<hex>", s)
+    s = _KWARGS_RE.sub("with kwargs <input>", s)
+    # 截断到 120 字符, 留多点上下文但不超过模式边界
+    return s[:120]
 
 
 @dataclass
@@ -173,19 +194,24 @@ class ExecutionLogger:
     # ------------------------------------------------------------------
 
     def get_failure_patterns(self, min_count: int = 2) -> list[dict[str, Any]]:
-        """Extract recurring failure patterns."""
+        """Extract recurring failure patterns.
+
+        把路径/数字/hex 抽象成占位符, 让 "File 'X' not found" 和
+        "File 'Y' not found" 归到同一模式. 之前用 error[:80] 做键,
+        49 条规则全部 usage_count=0.
+        """
         from collections import Counter
 
         failures = [r for r in self._tool_calls if not r.success]
         patterns = Counter()
         for f in failures:
-            key = f"{f.tool_name}|{f.error_message[:80]}"
+            key = f"{f.tool_name}|{_generalize_error(f.error_message)}"
             patterns[key] += 1
         return [
             {
                 "pattern": p,
                 "tool": p.split("|")[0],
-                "error": p.split("|")[1],
+                "error": p.split("|", 1)[1],
                 "count": c,
             }
             for p, c in patterns.most_common()
