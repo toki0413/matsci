@@ -460,7 +460,9 @@ class BenchmarkRunner:
         if evolve:
             from huginn.evolution.engine import EvolutionEngine
 
-            engine = EvolutionEngine(logger=self.logger)
+            # 无参构造: 用默认全局 logger, rules 写到 ~/.huginn/logs/evolution_rules.json
+            # 跟 agent 运行时读同一份, 避免 bench 产出的 rules 被孤立
+            engine = EvolutionEngine()
             evolution_report = engine.run_full_evolution_cycle()
 
         # 落 memory (可选). memory 故障不能拖死 bench, 静默吞掉.

@@ -366,10 +366,11 @@ class TestInternalGenerators:
     def test_parse_fix_action_json(self, tmp_path, logger):
         engine = EvolutionEngine(logger)
         merged = engine._parse_fix_action('{"ALGO": "Normal"}', {"ENCUT": 400})
-        assert merged == {"ENCUT": 400, "ALGO": "Normal"}
+        # JSON 解析后若无 description, 补 str(parsed) 作为 description; 不再合并 tool_input
+        assert merged == {"ALGO": "Normal", "description": "{'ALGO': 'Normal'}"}
 
     def test_parse_fix_action_non_json(self, tmp_path, logger):
         engine = EvolutionEngine(logger)
         merged = engine._parse_fix_action("increase memory", {"ENCUT": 400})
-        assert merged["ENCUT"] == 400
-        assert merged["__evolution_fix"] == "increase memory"
+        # 纯文本 action 直接当 description
+        assert merged == {"description": "increase memory"}

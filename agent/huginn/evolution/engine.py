@@ -74,10 +74,13 @@ class EvolutionEngine:
 
     def __init__(
         self,
-        logger: ExecutionLogger,
+        logger: ExecutionLogger | None = None,
         rules_path: str | None = None,
         skills_path: str | None = None,
     ):
+        # 无参时走全局默认 logger (~/.huginn/logs/), 跟 agent 运行时同一份 rules
+        if logger is None:
+            logger = ExecutionLogger()
         self.logger = logger
         self.rules_path = (
             Path(rules_path)
@@ -534,15 +537,18 @@ class EvolutionEngine:
             if "thermo" in error_lower or "temperature" in error_lower:
                 return '{"fix_nvt": "check_damping", "timestep": "reduce"}'
 
-        # General fixes
+        # 通用 fix — action 必须含 description, 否则 _try_evolved_fix 拿不到可重跑的描述
+        if "not found" in error_lower or "no such file" in error_lower:
+            return '{"description": "re-check file path and try alternative locations"}'
+        if "permission denied" in error_lower or "access" in error_lower:
+            return '{"description": "verify permissions and try alternative approach"}'
         if "timeout" in error_lower:
-            return '{"timeout": "increase", "resource": "check"}'
-        if "permission" in error_lower or "access" in error_lower:
-            return '{"permissions": "check", "path": "verify"}'
-        if "file" in error_lower and (
-            "not found" in error_lower or "missing" in error_lower
-        ):
-            return '{"files": "check_existence", "paths": "verify"}'
+            return '{"description": "retry with smaller scope or increased timeout"}'
+
+        # 通用工具 fallback: 至少给个带上下文的 description
+        if tool.lower() in ("read_file", "edit_file", "bash_tool", "ls", "file_write_tool"):
+            # ponytail: error 截 200 字符防 token 爆炸; 含双引号时 _parse_fix_action 的 fallback 兜底
+            return f'{{"description": "retry {tool} with corrected input after checking error: {error[:200]}"}}'
 
         return None
 
@@ -574,14 +580,21 @@ class EvolutionEngine:
         return pattern.lower() in error.lower() or error.lower() in pattern.lower()
 
     def _parse_fix_action(
-        self, action: str, tool_input: dict[str, Any]
+        self, action: str, original_input: dict[str, Any]
     ) -> dict[str, Any]:
-        """Parse a fix action string and merge with existing input."""
+        """Parse fix action string into a tool input dict.
+
+        保证返回的 dict 一定含 description, 让 _try_evolved_fix 能拿到可重跑的描述.
+        """
         try:
-            fix = json.loads(action)
-            merged = dict(tool_input)
-            merged.update(fix)
-            return merged
-        except json.JSONDecodeError:
-            # If not valid JSON, treat as text instruction
-            return {**tool_input, "__evolution_fix": action}
+            parsed = json.loads(action)
+        except (json.JSONDecodeError, TypeError):
+            # 不是 JSON, 当作 description 字符串
+            return {"description": action}
+
+        if isinstance(parsed, dict):
+            if "description" not in parsed:
+                parsed["description"] = str(parsed)
+            return parsed
+
+        return {"description": str(parsed)}

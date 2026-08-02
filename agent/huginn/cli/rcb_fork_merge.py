@@ -198,14 +198,50 @@ def _collect_artifact_numbers(d: Path | None, cap: int = 200_000) -> list[float]
                     for k in z.files:
                         a = np.asarray(z[k], dtype=float).ravel()
                         nums.extend(a[: cap - len(nums)].tolist())
-            elif p.suffix in (".json", ".txt", ".csv"):
-                nums.extend(
-                    float(m.group(0))
-                    for m in _SCI_E.finditer(p.read_text(errors="replace"))
+            elif p.suffix == ".json":
+                # JSON 里的数字大部分是普通浮点 (0.004, 0.951057), 不是
+                # sci-notation. 旧版只用 _SCI_E 正则抓, 漏掉 99% 的真实
+                # 计算结果 → artifacts 只有 2 个值 → claim 匹配概率 ~0.
+                # 用 json.loads 递归收集所有 int/float.
+                _walk_json_numbers(
+                    json.loads(p.read_text(errors="replace")), nums, cap,
                 )
+            elif p.suffix in (".txt", ".csv"):
+                # 文本类仍用正则 (无结构保证), 但抓普通数字也抓 sci-notation.
+                for m in _ANY_NUMBER.finditer(p.read_text(errors="replace")):
+                    if len(nums) >= cap:
+                        break
+                    try:
+                        nums.append(float(m.group(0)))
+                    except (ValueError, OverflowError):
+                        continue
         except Exception:
             continue
     return [x for x in nums if math.isfinite(x)]
+
+
+def _walk_json_numbers(obj: Any, out: list[float], cap: int) -> None:
+    """递归收集 JSON 里所有 int/float 值."""
+    if len(out) >= cap:
+        return
+    if isinstance(obj, bool):
+        return
+    if isinstance(obj, (int, float)):
+        out.append(float(obj))
+    elif isinstance(obj, list):
+        for x in obj:
+            _walk_json_numbers(x, out, cap)
+            if len(out) >= cap:
+                return
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            _walk_json_numbers(v, out, cap)
+            if len(out) >= cap:
+                return
+
+
+# 普通数字 (含 sci-notation): 0.004, 0.951057, 8.617e-05, -0.042, 1, 55
+_ANY_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
 
 def _reproduction_gate(

@@ -271,6 +271,7 @@ class AgentConfig:
                 privacy_redact_secrets=config.privacy_redact_secrets,
                 privacy_block_on_secrets=config.privacy_block_on_secrets,
                 auto_approve=config.auto_approve,
+                approval_callback=config.approval_callback,
             ),
             telemetry=AgentTelemetryConfig(
                 telemetry_enabled=config.telemetry_enabled,

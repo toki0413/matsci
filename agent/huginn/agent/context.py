@@ -127,7 +127,7 @@ class ContextMixin:
         try:
             from huginn.memory import load_stable_principles
 
-            _principles = load_stable_principles()
+            _principles = load_stable_principles()[:5]
             if _principles:
                 base += "\n\n## STABLE_PRINCIPLES\n"
                 base += "\n".join(f"- {p}" for p in _principles) + "\n"

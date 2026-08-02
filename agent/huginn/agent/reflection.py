@@ -225,7 +225,7 @@ class ReflectionMixin:
                         session_id=self._session_state.session_id
                         or "default",
                         tool_name=tr.get("tool_name", ""),
-                        tool_input={},
+                        tool_input=tr.get("tool_input", tr.get("args", {})),
                         result=_content
                         if reflection.tool_succeeded
                         else None,
