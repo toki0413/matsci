@@ -76,7 +76,7 @@ MLE_DELIVERABLES = DeliverableSpec(checks=[
 
 SAB_DELIVERABLES = DeliverableSpec(checks=[
     ("pred_*.py",  "pred_*.py"),
-    ("pred_*.txt", "pred_*.txt"),
+    # P0-3: 删 pred_*.txt — SAB 任务从未要求, 之前强制 agent 造无意义文件.
 ])
 
 # HLE 无 deliverable 检查 (单题问答), Orchestrator 退化为单次 chat

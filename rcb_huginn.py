@@ -401,6 +401,10 @@ def main():
         "duration_seconds": elapsed,
         "report_exists": report_exists,
         "final_output_preview": final[:500] if final else "",
+        # P0-6: 模型配置显性化
+        "agent_model": os.environ.get("HUGINN_MODEL", "unknown"),
+        "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
+        "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
     }
     (workspace / "_huginn_meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
 
