@@ -101,6 +101,9 @@ class StructureCognitiveMap:
     lattice: np.ndarray | None = None
     adjacency: dict[int, list[int]] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # 触觉层: 近场力学属性 (弹性/声子/表面能/热/密度). 触觉是内在属性,
+    # SE(3) 变换 (rotate/translate) 不改变它 — _clone_with 经 replace 自动传递.
+    haptic: Any = None  # HapticPropertyLayer | None
 
     # ── 构造 ──────────────────────────────────────────────
 
@@ -371,9 +374,11 @@ class StructureCognitiveMap:
         new_species = [str(sp) for sp in s.species]
         # lattice 不变, 重建 adjacency
         adj = _build_adjacency_cart(new_coords, self.lattice, _DEFAULT_CUTOFF)
+        # 触觉是内在属性, supercell (几何缩放) 不改变力学响应
         return StructureCognitiveMap(species=new_species, coords=new_coords,
                                      lattice=self.lattice.copy(), adjacency=adj,
-                                     metadata={**self.metadata, "op": "supercell", "scale": (sa, sb, sc)})
+                                     metadata={**self.metadata, "op": "supercell", "scale": (sa, sb, sc)},
+                                     haptic=self.haptic)
 
     def remove_atom(self, index: int) -> "StructureCognitiveMap":
         """返回移除指定原子后的新 map."""
@@ -757,9 +762,21 @@ class StructureCognitiveMap:
     # ── internals ──────────────────────────────────────────
 
     def _clone_with(self, **changes) -> "StructureCognitiveMap":
-        """复制 + 修改字段. 用 dataclasses.replace."""
+        """复制 + 修改字段. 用 dataclasses.replace.
+
+        haptic 字段不在 changes 里时, replace 自动从 self 拷贝 — 所以
+        rotate/translate/move_* 等 SE(3) 变换天然保持触觉层.
+        """
         from dataclasses import replace
         return replace(self, **changes)
+
+    def with_haptic(self, layer) -> "StructureCognitiveMap":
+        """返回带触觉层的新实例 (immutable). 原 map 不变.
+
+        触觉是材料的内在属性, 跟几何 (coords/lattice) 解耦 — 这就是
+        with_haptic 独立于 rotate/translate 的原因.
+        """
+        return self._clone_with(haptic=layer)
 
     def _check_index(self, i: int) -> None:
         if i < 0 or i >= len(self.species):
