@@ -278,7 +278,8 @@ class TestRuntimeApplication:
         fixed = engine.apply_heuristic_fix(
             "vasp_tool", {"ENCUT": 400}, "electronic convergence failed"
         )
-        assert fixed == {"ENCUT": 400, "ALGO": "Normal"}
+        # _parse_fix_action 保证返回 dict 含 description, 不再合并 tool_input
+        assert fixed == {"ALGO": "Normal", "description": "{'ALGO': 'Normal'}"}
 
     def test_apply_heuristic_fix_no_match(self, tmp_path, logger):
         engine = EvolutionEngine(logger)
@@ -349,7 +350,9 @@ class TestInternalGenerators:
     def test_generate_heuristic_fix_general(self, tmp_path, logger):
         engine = EvolutionEngine(logger)
         assert "timeout" in engine._generate_heuristic_fix("generic_tool", "timeout")
-        assert "files" in engine._generate_heuristic_fix("generic_tool", "file not found")
+        # 通用 fix 现在返回带 description 的 JSON, 不再是无意义的 {"files": "check_existence"}
+        result = engine._generate_heuristic_fix("generic_tool", "file not found")
+        assert result is not None and "description" in result
 
     def test_generate_prompt_patch_for_tool(self, tmp_path, logger):
         engine = EvolutionEngine(logger)
