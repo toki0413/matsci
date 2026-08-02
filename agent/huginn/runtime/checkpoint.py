@@ -43,6 +43,9 @@ class Checkpoint:
     engine_state_digest: str | None = None
     # P2-6: 统一 trace_id, save 时从 TraceContext 读.
     trace_id: str = ""
+    # P4 NonAuthoritativeProvenance: 保存时的 auto_approve 状态, resume 时恢复.
+    # None = 旧格式 checkpoint (无此字段), resume 时用新进程 config 默认值不覆盖.
+    auto_approve: bool | None = None
 
 
 def _checkpoint_dir(workspace: Path, task_id: str) -> Path:
@@ -74,6 +77,7 @@ def save_checkpoint(
     target_chain_progress: dict[str, float],
     prospective_queue: list[str],
     engine_state_digest: str | None = None,
+    auto_approve: bool | None = None,
 ) -> Checkpoint:
     """Persist a checkpoint for the given step, return the saved object."""
     cp = Checkpoint(
@@ -88,6 +92,7 @@ def save_checkpoint(
         saved_at=time.time(),
         engine_state_digest=engine_state_digest,
         trace_id=_get_trace_id() or "",
+        auto_approve=auto_approve,
     )
     atomic_write_json(_checkpoint_path(workspace, task_id, step_id), asdict(cp))
     _prune_checkpoints(task_id, workspace)
@@ -120,13 +125,22 @@ def list_checkpoints(task_id: str, workspace: Path) -> list[Checkpoint]:
     return out
 
 
-def resume_from_checkpoint(checkpoint: Checkpoint, workspace: Path) -> int:
+def resume_from_checkpoint(
+    checkpoint: Checkpoint,
+    workspace: Path,
+    agent: Any = None,
+) -> int:
     """Verify audit chain + head match, return next step_id (step_id + 1).
 
     Raises RuntimeError if the chain is broken or the head has moved since
     the checkpoint was saved. The head check is the tamper signal: a
     checkpoint saved mid-crash has its head match the on-disk head; any
     post-save mutation (legitimate or hostile) breaks the match.
+
+    If ``agent`` is provided and ``checkpoint.auto_approve`` is not None
+    (new-format checkpoint), restore the saved auto_approve state onto
+    ``agent._permission_config.auto_approve_all``. Old-format checkpoints
+    (auto_approve is None) leave the agent's current config untouched.
     """
     audit_path = _audit_jsonl_path(workspace)
     if not verify_audit_chain(audit_path):
@@ -137,6 +151,10 @@ def resume_from_checkpoint(checkpoint: Checkpoint, workspace: Path) -> int:
             f"audit head mismatch: checkpoint={checkpoint.audit_hash_head[:16]} "
             f"current={current[:16]}"
         )
+    if agent is not None and checkpoint.auto_approve is not None:
+        _perm = getattr(agent, "_permission_config", None)
+        if _perm is not None:
+            _perm.auto_approve_all = checkpoint.auto_approve
     return checkpoint.step_id + 1
 
 

@@ -101,7 +101,7 @@ def metacog_segment(metacog_state: str) -> str:
     try:
         from huginn.memory import load_stable_principles
 
-        principles = load_stable_principles()
+        principles = load_stable_principles()[:5]
         if principles:
             parts.append("### STABLE_PRINCIPLES")
             parts.extend(f"- {p}" for p in principles)

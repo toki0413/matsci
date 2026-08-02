@@ -8,7 +8,8 @@ P14 spec: 把 4 处失败记录合并到统一 record_outcome / distill / recomm
 - distill(run_id=None): 蒸馏 STABLE_PRINCIPLE
 - recommend(hypothesis_context) -> Recommendation: 推荐
 
-HUGINN_USE_EVOLUTION_MANAGER=1 启用. 默认 off, 走原分散路径.
+HUGINN_USE_EVOLUTION_MANAGER=0 或 HUGINN_DISABLE_EVOLUTION_MANAGER=1 显式关闭.
+默认 on.
 
 ponytail: 单例 (跟 SkillEvolutionLayer.shared() 风格一致), 不新建引擎.
 """
@@ -22,10 +23,17 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 _FLAG = "HUGINN_USE_EVOLUTION_MANAGER"
+_DISABLE_FLAG = "HUGINN_DISABLE_EVOLUTION_MANAGER"
 
 
 def _use_evolution_manager() -> bool:
-    return os.environ.get(_FLAG, "0") == "1"
+    # 显式关闭
+    if os.environ.get(_DISABLE_FLAG, "0") == "1":
+        return False
+    # 兼容旧 flag: HUGINN_USE_EVOLUTION_MANAGER=0 显式关闭
+    if os.environ.get(_FLAG, "1") == "0":
+        return False
+    return True
 
 
 @dataclass

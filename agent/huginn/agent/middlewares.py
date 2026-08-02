@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import logging
+import mimetypes
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,14 +28,56 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
     middleware patches at the wrap_model_call layer instead.
     """
 
+    def __init__(self, model_name: str = "") -> None:
+        # 按 model capability 决定是否剥离 multimodal block.
+        # DeepSeek-v4-flash 是 vision=False, 剥离; GPT-5.6/Claude/Gemini 是
+        # vision=True, 保留 image_url 让多模态 model 直接看图.
+        # 旧版一刀切剥离所有非 text block, 砍掉了多模态 model 的 vision 能力.
+        self._model_name = model_name
+        self._strip_multimodal = self._compute_strip_flag(model_name)
+
+    @staticmethod
+    def _compute_strip_flag(model_name: str) -> bool:
+        if not model_name:
+            # 未知 model — fail-closed 剥离, 避免不支持 vision 的 model 400.
+            return True
+        try:
+            from huginn.models.registry import get_model_capabilities
+            caps = get_model_capabilities(model_name)
+            # vision=True → 保留; vision=False → 剥离; 未知名 → fail-closed 剥离
+            return not caps.vision
+        except Exception:
+            return True
+
     def _patch_messages(self, messages: list) -> list:
         if not messages:
             return messages
-        # 先剥离 file/非 text multimodal block — DeepSeek 等纯文本 model
-        # 不支持 type=file, deepagents read_file 读 PDF/binary 会返回
-        # {"type": "file", "base64": ...} block, 直接发给 DeepSeek 触发 400.
-        # 转成 text 占位让 model 知道这里有个文件但内容不可见.
+        # 剥离 file/非 text multimodal block — 仅对 vision=False 的 model.
+        # vision=True 的 model (GPT-5.6/Claude/Gemini/deepseek-v4-pro) 保留
+        # image_url block 直接看图. DeepSeek-v4-flash 等纯文本 model 剥离
+        # 成 text 占位, 避免 400.
+        if not self._strip_multimodal:
+            # 多模态 model — 只做 tool call 修复, 不碰 content blocks
+            # ponytail: 旧代码调 _fix_tool_messages (从未定义, AttributeError),
+            # 生产没炸是因为 core.py 默认 model_name="" → fail-closed 走 strip 分支.
+            # 改调 _reorder_tool_messages — 不碰 content, image_url 原样保留.
+            return self._reorder_tool_messages(messages)
         patched = list(messages)
+        # 双保险去重: streaming.py 入口层已注入 [CV context] 时, middleware 不重复
+        # 提取, image block 退回 [content omitted]. 扫 str content 和 list[text block].
+        _cv_already = False
+        for _m in patched:
+            _c = getattr(_m, "content", None)
+            if isinstance(_c, str) and "[CV context]" in _c:
+                _cv_already = True
+                break
+            if isinstance(_c, list):
+                for _b in _c:
+                    if isinstance(_b, dict) and "[CV context]" in str(_b.get("text", "")):
+                        _cv_already = True
+                        break
+                if _cv_already:
+                    break
         _changed_blocks = False
         for _i, _msg in enumerate(patched):
             _content = getattr(_msg, "content", None)
@@ -42,20 +88,18 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             for _block in _content:
                 if isinstance(_block, dict) and _block.get("type") not in ("text", None):
                     _btype = _block.get("type", "unknown")
-                    _mime = _block.get("mime_type", "")
-                    _b64 = _block.get("base64", "") or ""
-                    _new_blocks.append({
-                        "type": "text",
-                        "text": f"[{_btype} content omitted: mime={_mime}, {len(_b64)} chars base64 — model does not support multimodal]",
-                    })
+                    if _btype in ("image_url", "image"):
+                        # vision=False: image block 交给 CV 工作流提取结构化视觉特征,
+                        # 而不是删成占位. 视觉工作流是给文本 LLM 补 vision 能力的
+                        # 工程通道, 不是辅助. CV 失败/已注入时降级 [content omitted].
+                        _new_blocks.append(self._cv_text_for_block(_block, _cv_already))
+                    else:
+                        # 非 image 的非 text block (file 等) 仍走原占位逻辑
+                        _new_blocks.append(self._omitted_block(_block))
                     _msg_changed = True
                 else:
                     _new_blocks.append(_block)
             if _msg_changed:
-                # LangChain message 是 immutable (Pydantic frozen=True),
-                # 旧版 _msg.content = _new_blocks 抛 ValidationError 被
-                # except 吞掉 → image_url block 原封不动发给 DeepSeek → 400.
-                # 用 model_copy(update=) 造新 msg 替换 list 里的旧 msg.
                 try:
                     patched[_i] = _msg.model_copy(update={"content": _new_blocks})
                     _changed_blocks = True
@@ -96,6 +140,93 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             patched = rebuilt
             _changed_blocks = True
         return patched if _changed_blocks else messages
+
+    @staticmethod
+    def _omitted_block(block: dict) -> dict:
+        """原 [content omitted] 占位 — CV 失败/已注入/非 image block 时用."""
+        _btype = block.get("type", "unknown")
+        _mime = block.get("mime_type", "")
+        _b64 = block.get("base64", "") or ""
+        return {
+            "type": "text",
+            "text": f"[{_btype} content omitted: mime={_mime}, {len(_b64)} chars base64 — model does not support multimodal]",
+        }
+
+    @staticmethod
+    def _parse_data_url(url: str) -> tuple[str, str]:
+        """拆 data:{mime};base64,{payload} → (mime, payload). 失败返回 ('', '')."""
+        if not url.startswith("data:") or "," not in url:
+            return "", ""
+        _header, _, _payload = url.partition(",")
+        # header 形如 "data:image/png;base64"
+        _rest = _header[5:]
+        _mime = _rest.split(";", 1)[0] if ";" in _rest else _rest
+        return _mime, _payload
+
+    def _cv_text_for_block(self, block: dict, cv_already: bool) -> dict:
+        """vision=False: image block → [CV context] text, 失败/已注入降级 omitted.
+
+        工程视觉通道原则: vision=False 模型靠 CV 提取结构化视觉特征补 vision
+        能力, 不是删成占位. streaming.py 已注入 [CV context] 时跳过避免重复;
+        CV 失败/空返回降级占位不阻塞主流程; base64 解码的临时文件用完即删.
+        """
+        # 双保险: streaming.py 入口层已注入 → middleware 不重复提取
+        if cv_already:
+            return self._omitted_block(block)
+
+        image_path: str | None = None
+        _is_tmp = False
+        _url_obj = block.get("image_url")
+        if isinstance(_url_obj, dict) and isinstance(_url_obj.get("url"), str):
+            _mime, _b64 = self._parse_data_url(_url_obj["url"])
+            if _b64:
+                try:
+                    _raw = base64.b64decode(_b64)
+                except Exception:
+                    _raw = None
+                if _raw is not None:
+                    _ext = mimetypes.guess_extension(_mime) or ".png"
+                    try:
+                        _tf = tempfile.NamedTemporaryFile(
+                            suffix=_ext, prefix="huginn_cv_", delete=False,
+                        )
+                        _tf.write(_raw)
+                        _tf.close()
+                        image_path = _tf.name
+                        _is_tmp = True
+                    except Exception:
+                        image_path = None
+        # image_path block (非 OpenAI 标准, 但有些路径会塞): 直接取路径不解码
+        if image_path is None:
+            _p = block.get("image_path")
+            if isinstance(_p, str) and _p:
+                image_path = _p
+
+        if image_path is None:
+            return self._omitted_block(block)
+
+        try:
+            try:
+                from huginn.vision.router import build_cv_context
+                _cv_text = build_cv_context(image_path)
+            except Exception as _exc:
+                logger.warning(
+                    "build_cv_context failed (%s); degrading to [content omitted]",
+                    _exc,
+                )
+                return self._omitted_block(block)
+            if not _cv_text:
+                logger.warning(
+                    "build_cv_context returned empty; degrading to [content omitted]"
+                )
+                return self._omitted_block(block)
+            return {"type": "text", "text": f"[CV context]\n{_cv_text}"}
+        finally:
+            if _is_tmp:
+                try:
+                    os.unlink(image_path)
+                except OSError:
+                    pass
 
     def _reorder_tool_messages(
         self, messages: list, force_cancel_orphans: bool = False,

@@ -909,6 +909,65 @@ class HypothesisManifold:
                     anomalies.append((a, b))
         return anomalies
 
+    @staticmethod
+    def _selfcheck_haptic_mainloop() -> None:
+        """自检: 触觉层接通主循环 — detect_isomorphic_anomaly + trigger.
+
+        构造 2 个 hypothesis + 1 对 isomorphic anomaly (结构同 haptic 不同),
+        验证 detect 返回非空 + trigger 能生成新 hypothesis (stub engine).
+        """
+        import asyncio
+        import types as _types
+        import numpy as _np
+        from huginn.metacog.haptic_property_layer import HapticPropertyLayer
+        from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+        from huginn.mechanics import ElasticTensor
+
+        # 石墨/金刚石: 同结构 (同 coords), 弹性天差地别 → 同构不同性
+        _coords = _np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
+        _lattice = _np.eye(3) * 5.0
+        _cmap_g = StructureCognitiveMap.from_coords(
+            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
+        _cmap_d = StructureCognitiveMap.from_coords(
+            species=["Si", "Si", "Si"], coords=_coords, lattice=_lattice)
+
+        _m = HypothesisManifold()
+        _m.add(Hypothesis("graphite", "graphite", predictions={"x": 1.0}))
+        _m.add(Hypothesis("diamond", "diamond", predictions={"x": 1.0}))
+        _m.register_structure("graphite", "s_g", _cmap_g)
+        _m.register_structure("diamond", "s_d", _cmap_d)
+        _m.register_haptic(
+            "graphite", HapticPropertyLayer(elastic=ElasticTensor(C=_np.eye(6) * 10.0)))
+        _m.register_haptic(
+            "diamond", HapticPropertyLayer(elastic=ElasticTensor(C=_np.eye(6) * 1000.0)))
+
+        # 1. detect_isomorphic_anomaly 抓到这对
+        _anom = _m.detect_isomorphic_anomaly()
+        assert _anom, f"anomaly not detected: {_anom}"
+        assert ("graphite", "diamond") in _anom, f"wrong pair: {_anom}"
+
+        # 2. trigger_isomorphic_anomaly_hypothesis 生成新 hypothesis (stub engine)
+        # ponytail: 不构造 full AutoloopEngine, 用 stub 持有 _hypothesize.
+        async def _run():
+            from huginn.autoloop.engine import AutoloopEngine
+
+            async def _stub_hyp(ctx):
+                return f"new hypothesis: {ctx['anomaly_pair']} structure-property mismatch"
+
+            _stub = _types.SimpleNamespace(
+                _hypothesize=_stub_hyp,
+                _last_hypothesis=None,
+                _last_raw_hypothesis=None,
+            )
+            return await AutoloopEngine.trigger_isomorphic_anomaly_hypothesis(
+                _stub, _anom)
+
+        _generated = asyncio.run(_run())
+        assert _generated, f"trigger should generate hypothesis: {_generated}"
+        assert len(_generated) == 1, f"expected 1 hypothesis, got {len(_generated)}"
+
+        print("  haptic mainloop: detect_isomorphic_anomaly + trigger OK")
+
 
 # ---------- Self-check ----------
 

@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from huginn.crypto import CryptoVault, EncryptedConfig, KeyManager
 
@@ -401,6 +401,9 @@ class HuginnConfig:
 
     # Agent behavior
     auto_approve: bool = False
+    # approval_callback 不进 to_dict/from_dict (Callable 不可序列化),
+    # 仅在进程内传递给子 agent, 让 ASK 模式有回调可走而非卡死.
+    approval_callback: Callable[[str, str], bool] | None = None
     enable_exploration: bool = True
     max_parallel_branches: int = 5
     persona: str = "default"
@@ -611,6 +614,7 @@ class HuginnConfig:
             "kg_depth": self.kg_depth,
             "kg_top_k": self.kg_top_k,
             "auto_approve": self.auto_approve,
+            "approval_callback": self.approval_callback,
             "compression_max_tokens": self.tool_compression_max_tokens,
             "telemetry_enabled": self.telemetry_enabled,
             "memory_decay_enabled": self.memory_decay_enabled,
