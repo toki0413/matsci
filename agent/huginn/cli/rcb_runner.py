@@ -4033,6 +4033,8 @@ async def run(
     mcmc_checkpoint_interval: int = 10_000,
     mcmc_se3: bool = False,
     mcmc_se3_angle_sigma: float = 30.0,
+    mcmc_haptic: bool = False,
+    mcmc_haptic_temperature: float = 1.0,
 ) -> int:
     ws = Path(workspace).resolve()
     # Task 4.1: --mcmc-mode 走独立 MCMC 路径, 不跑 RCB agent 主循环.
@@ -4044,6 +4046,8 @@ async def run(
             checkpoint_interval=mcmc_checkpoint_interval,
             se3_enabled=mcmc_se3,
             se3_angle_sigma=mcmc_se3_angle_sigma,
+            haptic_enabled=mcmc_haptic,
+            haptic_temperature=mcmc_haptic_temperature,
         )
     instructions = ws / "INSTRUCTIONS.md"
     if not instructions.exists():
@@ -5837,6 +5841,8 @@ async def _run_mcmc_mode(
     *,
     se3_enabled: bool = False,
     se3_angle_sigma: float = 30.0,
+    haptic_enabled: bool = False,
+    haptic_temperature: float = 1.0,
 ) -> int:
     """Task 4.1+4.2: 纯 MCMC 模式入口 — 不跑 RCB agent 主循环.
 
@@ -5894,6 +5900,43 @@ async def _run_mcmc_mode(
         except Exception as _e:
             print(f"[mcmc-{mode}] SE(3) cognitive_map load failed: {_e}, "
                   f"degrading to fisher", flush=True)
+
+    # 触觉层: 从 .huginn/haptic_layers.json 加载力学属性, register 到 hypothesis.
+    # ponytail: 文件不存在或空 → _haptic_layers 保持空, haptic_enabled=True 时
+    #   _haptic_proposal 对所有 h_id 返回 None, 安全退化到 fisher.
+    #   升级路径: VASP static / ML potential / Materials MP 查询结果写进这个文件.
+    if haptic_enabled:
+        _hap_path = ws / ".huginn" / "haptic_layers.json"
+        _n_hap = 0
+        if _hap_path.exists():
+            try:
+                from huginn.metacog.haptic_property_layer import (
+                    HapticPropertyLayer as _HPL,
+                )
+                _h_ids = list(_hypo_manifold._hyp)
+                _raw = json.loads(_hap_path.read_text(encoding="utf-8"))
+                # key 可以是 h_id 或结构 id, 优先 h_id 匹配, 否则按 index 回退
+                for _i, _h_id in enumerate(_h_ids):
+                    _d = _raw.get(_h_id)
+                    if _d is None and _i < len(_raw):
+                        _d = list(_raw.values())[_i]
+                    if _d is None:
+                        continue
+                    try:
+                        _layer = _HPL.from_dict(_d)
+                        _hypo_manifold.register_haptic(_h_id, _layer)
+                        _n_hap += 1
+                    except Exception:
+                        pass
+            except Exception as _e:
+                print(f"[mcmc-{mode}] haptic load failed: {_e}, "
+                      f"degrading to fisher", flush=True)
+        if _n_hap > 0:
+            print(f"[mcmc-{mode}] haptic loaded {_n_hap} layer(s) for "
+                  f"haptic-guided proposal", flush=True)
+        else:
+            print(f"[mcmc-{mode}] haptic enabled but no layers in "
+                  f"{_hap_path}, degrading to fisher", flush=True)
 
     # 读 observations — 主循环 _iter_observations 跨轮累积, 这里从盘上恢复
     obs_path = ws / ".huginn" / "observations.jsonl"
@@ -5971,6 +6014,8 @@ async def _run_mcmc_mode(
                 cached_log_p_current=cached_log_p,
                 se3_enabled=se3_enabled,
                 se3_angle_sigma=se3_angle_sigma,
+                haptic_enabled=haptic_enabled,
+                haptic_temperature=haptic_temperature,
             )
             if current != prev:
                 _engine._mcmc_accept_count += 1
@@ -6028,6 +6073,8 @@ async def _run_mcmc_mode(
         checkpoint_interval=checkpoint_interval,
         se3_enabled=se3_enabled,
         se3_angle_sigma=se3_angle_sigma,
+        haptic_enabled=haptic_enabled,
+        haptic_temperature=haptic_temperature,
         on_chain_checkpoint=_on_chain_checkpoint,
     )
 
@@ -6077,6 +6124,16 @@ def main() -> None:
         default=float(os.environ.get("HUGINN_MCMC_SE3_ANGLE_SIGMA", "30.0")),
         help="SE(3) proposal 旋转角度高斯标准差 (度, 默认 30)",
     )
+    parser.add_argument(
+        "--mcmc-haptic", action="store_true",
+        default=os.environ.get("HUGINN_MCMC_HAPTIC", "0") == "1",
+        help="触觉 (近场力学) 引导 MCMC proposal (需 haptic_layers.json, 无则退化到 fisher)",
+    )
+    parser.add_argument(
+        "--mcmc-haptic-temperature", type=float,
+        default=float(os.environ.get("HUGINN_MCMC_HAPTIC_TEMPERATURE", "1.0")),
+        help="触觉引导 proposal softmax 温度 (tau, 默认 1.0, 大=趋随机, 小=趋贪心)",
+    )
     args = parser.parse_args()
 
     rc = asyncio.run(run(
@@ -6088,6 +6145,8 @@ def main() -> None:
         mcmc_checkpoint_interval=args.mcmc_checkpoint_interval,
         mcmc_se3=args.mcmc_se3,
         mcmc_se3_angle_sigma=args.mcmc_se3_angle_sigma,
+        mcmc_haptic=args.mcmc_haptic,
+        mcmc_haptic_temperature=args.mcmc_haptic_temperature,
     ))
     sys.exit(rc)
 

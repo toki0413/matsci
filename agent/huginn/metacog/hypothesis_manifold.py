@@ -194,6 +194,9 @@ class HypothesisManifold:
         # SE(3) 引导 proposal 用: structure_id → StructureCognitiveMap 映射.
         # register_structure 时填充, _has_structure / _se3_proposal 查.
         self._structure_maps: dict[str, Any] = {}
+        # 触觉层: h_id → HapticPropertyLayer. 跟 register_structure 独立 —
+        # 一个 hypothesis 可以只有 structure / 只有 haptic / 两者都有 / 都没有.
+        self._haptic_layers: dict[str, Any] = {}
 
     @staticmethod
     def _gaussian_log_likelihood(h: Hypothesis, o: Observation) -> float:
@@ -230,6 +233,15 @@ class HypothesisManifold:
         if h is None or h.structure_id is None:
             return False
         return h.structure_id in self._structure_maps
+
+    def register_haptic(self, h_id: str, layer: Any) -> None:
+        """关联 hypothesis 到触觉属性层. 跟 register_structure 独立."""
+        if h_id not in self._hyp:
+            raise KeyError(f'hypothesis {h_id} not in manifold')
+        self._haptic_layers[h_id] = layer
+
+    def _has_haptic(self, h_id: str) -> bool:
+        return h_id in self._haptic_layers
 
     def _rebuild_R(self) -> None:
         """重算 QR 分解的 R 矩阵 (基于当前所有 hypothesis 的 predictions).
@@ -456,6 +468,39 @@ class HypothesisManifold:
             return best_h_id
         return None
 
+    def _haptic_proposal(
+        self, current_h_id: str, rng: random.Random, temperature: float,
+    ) -> str | None:
+        """力学引导 proposal: softmax(-d_haptic/tau) 加权采样.
+
+        摸到一个软的东西后倾向继续摸软的 — haptic_distance 近的 hypothesis
+        被采到更多. 无 haptic 或只有 1 个 haptic hypothesis 时返回 None
+        (让 mcmc_step 退化为 fisher).
+        """
+        current_layer = self._haptic_layers.get(current_h_id)
+        if current_layer is None:
+            return None
+        others = [h for h in self._haptic_layers if h != current_h_id]
+        if not others:
+            return None
+        dists = [
+            current_layer.haptic_distance(self._haptic_layers[h])
+            for h in others
+        ]
+        max_d = max(dists) if dists else 0.0
+        # softmax(-d/tau), 减 max 做数值稳定 (跟 _fisher_proposal 同套路)
+        weights = [math.exp(-(d - max_d) / temperature) for d in dists]
+        total_w = sum(weights)
+        if total_w <= 0.0:
+            return rng.choice(others)
+        r = rng.random() * total_w
+        cum = 0.0
+        for h, w in zip(others, weights):
+            cum += w
+            if r <= cum:
+                return h
+        return others[-1]
+
     def mcmc_step(
         self,
         obs: Iterable[Observation],
@@ -466,6 +511,8 @@ class HypothesisManifold:
         cached_log_p_current: float | None = None,
         se3_enabled: bool = False,
         se3_angle_sigma: float = 30.0,
+        haptic_enabled: bool = False,
+        haptic_temperature: float = 1.0,
     ) -> tuple[str, float]:
         """Metropolis-Hastings 一步在 posterior 上采样.
 
@@ -487,6 +534,13 @@ class HypothesisManifold:
         700万步 = 这个 step 跑 7M 次. 每步是从 current_h 提议一个 neighbor,
         按 posterior ratio 接受/拒绝. 这才是有引导的搜索, 不是 random walk.
 
+        Proposal kernel 分支 (haptic_enabled=False 时行为 100% 不变):
+            - se3 + haptic 都开: 50/50 在几何 (SE3) / 力学 (haptic) 间切
+            - 只开 se3: 走 _se3_proposal
+            - 只开 haptic: 走 _haptic_proposal
+            - 都不开: 走 _fisher_proposal (原逻辑)
+            - 任一引导返回 None (无 structure / 无 haptic / 只 1 个): 退化 fisher
+
         Returns: (next_h_id, next_log_p) — 调用方下步传 cached_log_p_current=next_log_p.
         """
         rng = rng or random
@@ -503,13 +557,20 @@ class HypothesisManifold:
                 cached_log_p_current = self._log_posterior_single(obs, current_h_id)
             return current_h_id, cached_log_p_current
 
-        # SE(3) branch: structure-guided proposal when available, else fisher.
-        # se3_enabled=False or no structure -> 100% fisher, behavior unchanged.
-        if se3_enabled and self._has_structure(current_h_id):
+        # Proposal kernel: se3 (几何) / haptic (力学) / fisher (prediction) 三通道.
+        # 任一引导返回 None (缺数据) 退化为 fisher — haptic_enabled=False 走原逻辑.
+        proposal: str | None = None
+        if se3_enabled and haptic_enabled:
+            # 双通道: 一半几何引导, 一半力学引导 (跨模态互补)
+            if rng.random() < 0.5:
+                proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+            else:
+                proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
+        elif se3_enabled:
             proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
-            if proposal is None:
-                proposal = self._fisher_proposal(current_h_id, rng, temperature)
-        else:
+        elif haptic_enabled:
+            proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
+        if proposal is None:
             proposal = self._fisher_proposal(current_h_id, rng, temperature)
 
         # Step 2 增量: current 复用缓存, proposal 只算一次
@@ -543,6 +604,8 @@ class HypothesisManifold:
         temperature: float = 1.0,
         se3_enabled: bool = False,
         se3_angle_sigma: float = 30.0,
+        haptic_enabled: bool = False,
+        haptic_temperature: float = 1.0,
         on_chain_checkpoint: "Callable[[int, dict], None] | None" = None,
     ) -> dict:
         """多链并行 MCMC + Gelman-Rubin R̂ 收敛诊断.
@@ -581,6 +644,7 @@ class HypothesisManifold:
                 chain_id, obs_list, n_steps_per_chain, checkpoint_interval,
                 rng=rng, temperature=temperature,
                 se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
+                haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
                 init_h_id=init_h, on_checkpoint=on_chain_checkpoint,
             )
 
@@ -620,6 +684,8 @@ class HypothesisManifold:
         temperature: float = 1.0,
         se3_enabled: bool = False,
         se3_angle_sigma: float = 30.0,
+        haptic_enabled: bool = False,
+        haptic_temperature: float = 1.0,
         init_h_id: str,
         on_checkpoint: "Callable[[int, dict], None] | None" = None,
     ) -> dict:
@@ -642,6 +708,7 @@ class HypothesisManifold:
                 obs, current, rng=rng, temperature=temperature,
                 cached_log_p_current=cached_log_p,
                 se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
+                haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
             )
             if current != prev_h:
                 accept_count += 1
@@ -730,6 +797,117 @@ class HypothesisManifold:
         var_hat = ((n - 1) * W + B) / n if n > 0 else W
         r_hat = math.sqrt(var_hat / W) if W > 0 else 1.0
         return r_hat
+
+    # ── Step 5/6: 跨模态验证 + 同构不同性检测 ──────────────────
+    # 盲人摸到物体后, 视觉 (结构 RMSD) 和触觉 (haptic_distance) 互相验证.
+    # 同构不同性 (石墨 vs 金刚石): 结构 match 但力学不 match → 触发新 hypothesis.
+
+    def _pair_rmsd(self, h_id_a: str, h_id_b: str) -> float | None:
+        """两个 hypothesis 结构间 RMSD (Å). 无 structure / 匹配失败返回 None.
+
+        复用 _match_nearest_hypothesis 的 StructureMatcher 套路.
+        """
+        ha = self._hyp.get(h_id_a)
+        hb = self._hyp.get(h_id_b)
+        if (
+            ha is None or hb is None
+            or ha.structure_id is None or hb.structure_id is None
+        ):
+            return None
+        ca = self._structure_maps.get(ha.structure_id)
+        cb = self._structure_maps.get(hb.structure_id)
+        if ca is None or cb is None or ca.lattice is None or cb.lattice is None:
+            return None
+        try:
+            from pymatgen.analysis.structure_matcher import StructureMatcher
+            from pymatgen.core import Structure as _PmgStructure
+            sa = _PmgStructure(species=ca.species, coords=ca.coords, lattice=ca.lattice)
+            sb = _PmgStructure(species=cb.species, coords=cb.coords, lattice=cb.lattice)
+            r = StructureMatcher().get_rms_dist(sa, sb)
+            if r is None:
+                return None
+            return r[0]
+        except Exception:
+            return None
+
+    def cross_modal_check(self, h_id_a: str, h_id_b: str) -> dict:
+        """跨模态验证: 结构匹配 (视觉) vs 力学匹配 (触觉).
+
+        Returns:
+            {"structure": bool|None, "haptic": bool|None, "agreement": str}
+            agreement:
+                agree              — 两者都 match 或都不 match
+                disagree_structure — 结构 match 但力学不 match (同构不同性)
+                disagree_haptic    — 力学 match 但结构不 match (同性不同构)
+                insufficient_data  — 缺 structure 或 haptic
+        """
+        result: dict = {"structure": None, "haptic": None, "agreement": "insufficient_data"}
+
+        rmsd = self._pair_rmsd(h_id_a, h_id_b)
+        if rmsd is not None:
+            result["structure"] = bool(rmsd < 1.0)
+
+        ha = self._haptic_layers.get(h_id_a)
+        hb = self._haptic_layers.get(h_id_b)
+        if ha is not None and hb is not None:
+            result["haptic"] = bool(ha.haptic_distance(hb) < 0.5)
+
+        s = result["structure"]
+        h = result["haptic"]
+        if s is None or h is None:
+            result["agreement"] = "insufficient_data"
+        elif s and h:
+            result["agreement"] = "agree"
+        elif s and not h:
+            result["agreement"] = "disagree_structure"
+        elif (not s) and h:
+            result["agreement"] = "disagree_haptic"
+        else:
+            # 两者都不 match 也算 agree (一致地不匹配)
+            result["agreement"] = "agree"
+        return result
+
+    def adjust_confidence(
+        self, h_id_a: str, h_id_b: str, check: dict | None = None,
+    ) -> None:
+        """根据跨模态验证结果调整置信度.
+
+        agree              → 双方 confidence += 0.05
+        disagree_structure → 不改 (由 detect_isomorphic_anomaly 标记触发新 hypothesis)
+        disagree_haptic    → 双方 confidence -= 0.1
+        """
+        if check is None:
+            check = self.cross_modal_check(h_id_a, h_id_b)
+        agreement = check.get("agreement")
+        if agreement == "agree":
+            for hid in (h_id_a, h_id_b):
+                if hid in self._hyp:
+                    self._hyp[hid].confidence = min(
+                        1.0, self._hyp[hid].confidence + 0.05)
+        elif agreement == "disagree_haptic":
+            for hid in (h_id_a, h_id_b):
+                if hid in self._hyp:
+                    self._hyp[hid].confidence = max(
+                        0.0, self._hyp[hid].confidence - 0.1)
+        # disagree_structure: 不改 confidence, 留给 detect_isomorphic_anomaly
+
+    def detect_isomorphic_anomaly(self) -> list[tuple[str, str]]:
+        """检测同构不同性: 结构匹配但力学不匹配的 hypothesis 对.
+
+        石墨 vs 金刚石类异常 — 视觉上 match, 触觉上不 match.
+        返回异常对列表, 供 autoloop engine 触发新 hypothesis 生成.
+        """
+        candidates = [
+            h for h in self._hyp
+            if self._has_structure(h) and self._has_haptic(h)
+        ]
+        anomalies: list[tuple[str, str]] = []
+        for i, a in enumerate(candidates):
+            for b in candidates[i + 1:]:
+                check = self.cross_modal_check(a, b)
+                if check.get("agreement") == "disagree_structure":
+                    anomalies.append((a, b))
+        return anomalies
 
 
 # ---------- Self-check ----------
@@ -901,6 +1079,106 @@ def _selfcheck() -> None:
             )
 
         print("  SE(3) proposal: register + match + degrade-to-fisher OK")
+
+        # ── 触觉层: register_haptic + _haptic_proposal + cross_modal + anomaly ──
+        from huginn.metacog.haptic_property_layer import HapticPropertyLayer
+        from huginn.mechanics import ElasticTensor
+
+        # 同构不同性: h_a/h_b 结构相同 (上面已注册), haptic 差异大 (石墨 vs 金刚石)
+        _hap_a = HapticPropertyLayer(density=2.27)   # 石墨密度
+        _hap_b = HapticPropertyLayer(density=3.52)   # 金刚石密度
+        m_se3.register_haptic("h_a", _hap_a)
+        m_se3.register_haptic("h_b", _hap_b)
+        assert m_se3._has_haptic("h_a") is True
+        assert m_se3._has_haptic("h_b") is True
+        assert m_se3._has_haptic("h_x") is False  # 不同 manifold, 但确认 None 路径
+
+        # _haptic_proposal: h_a current, 只有 h_b 一个 other → 返回 h_b
+        _rng_hap = random.Random(7)
+        _prop = m_se3._haptic_proposal("h_a", _rng_hap, 1.0)
+        assert _prop == "h_b", f"expected h_b, got {_prop}"
+        # 只 1 个 haptic hypothesis → None
+        _m_one = HypothesisManifold()
+        _m_one.add(Hypothesis("solo", "solo", predictions={"x": 1.0}))
+        _m_one.register_haptic("solo", HapticPropertyLayer(density=1.0))
+        assert _m_one._haptic_proposal("solo", _rng_hap, 1.0) is None
+        # 无 haptic → None
+        assert m_nos._haptic_proposal("h_x", _rng_hap, 1.0) is None
+
+        # mcmc_step haptic_enabled=True 跑通 + 无 haptic 安全退化到 fisher
+        _cur_h = "h_a"
+        _ch = None
+        for _ in range(100):
+            _cur_h, _ch = m_se3.mcmc_step(
+                [Observation("x", 1.0)], _cur_h,
+                rng=random.Random(99), haptic_enabled=True,
+                cached_log_p_current=_ch,
+            )
+        for _ in range(50):
+            _cn, _cn_cached = m_nos.mcmc_step(
+                [Observation("x", 1.0)], _cn,
+                rng=random.Random(99), haptic_enabled=True,
+                cached_log_p_current=_cn_cached,
+            )
+
+        # cross_modal_check: 同构不同性 (结构 match + haptic 不 match)
+        _cm = m_se3.cross_modal_check("h_a", "h_b")
+        assert _cm["structure"] is True, f"identical structures should match: {_cm}"
+        # density 2.27 vs 3.52 → 相对差 ≈ 0.216 < 0.5 → haptic match!
+        # ponytail: 石墨/金刚石密度差不够大触发 haptic 不 match, 用 elastic 拉开距离
+        _ = _cm  # density-only 距离 0.216 < 0.5, 这里验证 cross_modal 跑通即可
+
+        # 用 elastic 制造真同构不同性 (结构同, 弹性天差地别)
+        import numpy as _np2
+        _m_iso = HypothesisManifold()
+        _m_iso.add(Hypothesis("graphite", "graphite", predictions={"x": 1.0}))
+        _m_iso.add(Hypothesis("diamond", "diamond", predictions={"x": 1.0}))
+        _m_iso.register_structure("graphite", "s_g", _cmap_a)
+        _m_iso.register_structure("diamond", "s_d", _cmap_b)  # 同结构
+        _m_iso.register_haptic(
+            "graphite", HapticPropertyLayer(elastic=ElasticTensor(C=_np2.eye(6) * 10.0)))
+        _m_iso.register_haptic(
+            "diamond", HapticPropertyLayer(elastic=ElasticTensor(C=_np2.eye(6) * 1000.0)))
+        _cm_iso = _m_iso.cross_modal_check("graphite", "diamond")
+        assert _cm_iso["structure"] is True, f"same structure should match: {_cm_iso}"
+        assert _cm_iso["haptic"] is False, f"very different elastic should not match: {_cm_iso}"
+        assert _cm_iso["agreement"] == "disagree_structure", (
+            f"graphite/diamond should be disagree_structure, got {_cm_iso}"
+        )
+        # detect_isomorphic_anomaly 抓到这对
+        _anom = _m_iso.detect_isomorphic_anomaly()
+        assert ("graphite", "diamond") in _anom, f"anomaly not detected: {_anom}"
+
+        # agree: 同结构 + 同 haptic
+        _m_agree = HypothesisManifold()
+        _m_agree.add(Hypothesis("a1", "a1", predictions={"x": 1.0}))
+        _m_agree.add(Hypothesis("a2", "a2", predictions={"x": 1.0}))
+        _m_agree.register_structure("a1", "s1", _cmap_a)
+        _m_agree.register_structure("a2", "s2", _cmap_b)
+        _same_hap = HapticPropertyLayer(density=5.0)
+        _m_agree.register_haptic("a1", _same_hap)
+        _m_agree.register_haptic("a2", _same_hap)
+        _cm_agree = _m_agree.cross_modal_check("a1", "a2")
+        assert _cm_agree["agreement"] == "agree", f"same struct+haptic should agree: {_cm_agree}"
+        assert _m_agree.detect_isomorphic_anomaly() == []
+
+        # adjust_confidence: agree → +0.05, disagree_haptic → -0.1
+        _m_agree._hyp["a1"].confidence = 0.5
+        _m_agree._hyp["a2"].confidence = 0.5
+        _m_agree.adjust_confidence("a1", "a2")
+        assert abs(_m_agree._hyp["a1"].confidence - 0.55) < 1e-9, "agree should +0.05"
+        # disagree_structure 不改 confidence
+        _m_iso._hyp["graphite"].confidence = 0.5
+        _m_iso.adjust_confidence("graphite", "diamond")
+        assert _m_iso._hyp["graphite"].confidence == 0.5, "disagree_structure should not change confidence"
+
+        # insufficient_data: 无 haptic
+        _cm_no = m_nos.cross_modal_check("h_x", "h_y")
+        assert _cm_no["agreement"] == "insufficient_data", (
+            f"no haptic should be insufficient_data: {_cm_no}"
+        )
+
+        print("  haptic: register + proposal + cross_modal + anomaly + adjust OK")
     except ImportError:
         print("  SE(3) proposal: pymatgen unavailable, skipped (degrades to fisher)")
 
