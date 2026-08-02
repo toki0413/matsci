@@ -244,10 +244,25 @@ class BenchmarkOrchestrator:
         return final
 
     def _has_code_no_output(self, missing: set[str]) -> bool:
-        """检查是否"代码齐全但无 outputs"模式."""
-        sub = self.workspace / "submission"
-        has_code = (sub / "reproduce.sh").exists() and bool(list(sub.glob("*.py")))
-        has_output_missing = any("outputs" in m for m in missing)
+        """检查是否"代码齐全但无 outputs"模式 — 通用判定, 不绑定目录结构.
+
+        之前硬编码 submission/reproduce.sh + *.py, SAB/RCB 形态永远匹配不到.
+        改为按 DeliverableSpec 自身的 pattern 分类: 代码类 (.py/.sh) 全齐 +
+        输出类 (.json/.png/.csv/report.md/outputs/) 缺失 = 执行闭环断裂.
+        """
+        checks = self.deliverable_spec.checks
+        code_pats = [p for _, p in checks if p.endswith((".py", ".sh"))]
+        output_pats = [
+            p for _, p in checks
+            if any(k in p for k in ("outputs", ".json", ".png", ".csv", "report.md"))
+        ]
+        if not code_pats or not output_pats:
+            return False
+        ws = Path(self.workspace)
+        has_code = any(list(ws.glob(p)) for p in code_pats)
+        has_output_missing = any(
+            not list(ws.glob(p)) for p in output_pats
+        )
         return has_code and has_output_missing
 
 
