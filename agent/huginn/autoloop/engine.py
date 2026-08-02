@@ -552,6 +552,10 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         # P2-7: token/cost 硬刹车预算. 每次 LLM 调用后 update, 超硬上限抛 BudgetExhausted.
         # 默认 10M tokens / $50, 长任务/极限模式用 HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 覆盖.
         self._token_budget: TokenBudget = TokenBudget()
+        # Step 8: latent space 对齐数据集. None = 还没用过 (懒加载, 跟 cognitive_map 同范式).
+        # 首次 _collect_alignment_pair 触发时从 <workspace>/.huginn/alignment_dataset.json 加载.
+        # ponytail: 全进程一份, JSON 落盘. ceiling: 多进程不共享, 升级路径接 SQLite.
+        self._alignment_dataset: Any = None
 
     def _maybe_save_engine_state(
         self, *, force: bool = False, reason: str = "",
@@ -590,6 +594,172 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         except Exception:
             logger.warning(
                 "_maybe_save_engine_state failed (non-fatal)", exc_info=True,
+            )
+        # Step 8: alignment_dataset 跟 engine_state 同节奏落盘
+        self._save_alignment_dataset()
+
+    def _alignment_dataset_path(self) -> Path:
+        """Step 8: AlignmentDataset 落盘路径 — <workspace>/.huginn/alignment_dataset.json."""
+        return self.workspace / ".huginn" / "alignment_dataset.json"
+
+    def _get_alignment_dataset(self):
+        """Step 8: 懒加载 AlignmentDataset, 首次调用时从磁盘 load (如果有).
+
+        返回 None 表示未启用 (没磁盘文件就 new 一个空集, 不主动写盘).
+        跟 cognitive_map 同范式: 不上 env flag, 是否真收集由 _collect_alignment_pair
+        里"能拿到 structure + haptic 才 add"的自然条件决定.
+        """
+        if self._alignment_dataset is not None:
+            return self._alignment_dataset
+        from huginn.metacog.alignment_dataset import AlignmentDataset
+        path = self._alignment_dataset_path()
+        if path.exists():
+            try:
+                self._alignment_dataset = AlignmentDataset.load(path)
+            except Exception:
+                logger.warning(
+                    "alignment_dataset load failed, starting fresh (non-fatal)",
+                    exc_info=True,
+                )
+                self._alignment_dataset = AlignmentDataset()
+        else:
+            self._alignment_dataset = AlignmentDataset()
+        return self._alignment_dataset
+
+    def _save_alignment_dataset(self) -> None:
+        """Step 8: 把 AlignmentDataset 落盘. 跟 engine_state 同节奏调.
+
+        ponytail: 失败只 log warning, 不抛 — dataset save 失败不该阻塞主循环.
+        数据集从未被触达 (None) 时直接跳过, 不创建空文件.
+        """
+        ds = getattr(self, "_alignment_dataset", None)
+        if ds is None:
+            return
+        try:
+            path = self._alignment_dataset_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            ds.save(path)
+        except Exception:
+            logger.warning(
+                "alignment_dataset save failed (non-fatal)", exc_info=True,
+            )
+
+    def _get_active_cognitive_map(self):
+        """Step 8: 拿当前活跃的 StructureCognitiveMap, 没有返 None.
+
+        ponytail: 取 structure_cognitive_map_tool._MAPS 最后一个 (最近创建的).
+        ceiling: 多 map 时不知道哪个对应当前 tool, 取最近的是启发式.
+        升级路径: tool 调用时把 map_id 写进 result, 这里按 id 取.
+        """
+        try:
+            from huginn.tools import structure_cognitive_map_tool as _cm
+            if not _cm._MAPS:
+                return None
+            return list(_cm._MAPS.values())[-1]
+        except Exception:
+            return None
+
+    def _extract_haptic_layer(self, execution_result: Any):
+        """Step 8: 从 execution_result 抽力学字段, 构 HapticPropertyLayer.
+
+        没力学字段返 None. 只看顶层 + result_data/parsed 嵌套一层 — 不递归,
+        不爬 stage_results. ponytail: 处理最常见格式 (elastic_tensor / bulk_modulus /
+        phonon_freqs / surface_energy / thermal), 其他格式让各 tool 自己 add.
+        ceiling: stage_results[*].output 里的力学字段抓不到, 升级路径递归扫.
+        """
+        if not isinstance(execution_result, dict):
+            return None
+        data = execution_result
+        # _validate / _literature_comparison 用的同款 fallback: result_data 优先, parsed 兜底
+        nested = data.get("result_data")
+        if isinstance(nested, dict):
+            data = nested
+        else:
+            nested = data.get("parsed")
+            if isinstance(nested, dict):
+                data = nested
+
+        # 力学字段 — 跟 validate_tool._run_elastic_validation 对齐
+        elastic_raw = data.get("elastic_tensor") or data.get("elastic_constants") or data.get("C")
+        bulk = data.get("bulk_modulus")
+        phonon = data.get("phonon_freqs") or data.get("phonon_frequencies")
+        surface = data.get("surface_energy")
+        thermal = data.get("thermal")
+
+        if not any(v is not None for v in (
+            elastic_raw, bulk, phonon, surface, thermal,
+        )):
+            return None
+
+        from huginn.metacog.haptic_property_layer import HapticPropertyLayer
+
+        elastic = None
+        if elastic_raw is not None:
+            try:
+                import numpy as np
+                from huginn.mechanics import ElasticTensor
+                C = np.array(elastic_raw, dtype=float)
+                if C.shape == (6, 6):
+                    elastic = ElasticTensor(C=C)
+            except Exception:
+                logger.debug(
+                    "elastic_tensor parse failed, skipping elastic field",
+                    exc_info=True,
+                )
+
+        phonon_arr = None
+        if phonon is not None:
+            try:
+                import numpy as np
+                phonon_arr = np.asarray(phonon, dtype=float)
+            except Exception:
+                pass
+
+        return HapticPropertyLayer(
+            elastic=elastic,
+            phonon_freqs=phonon_arr,
+            surface_energy=float(surface) if surface is not None else None,
+            thermal=thermal if isinstance(thermal, dict) else None,
+        )
+
+    def _collect_alignment_pair(
+        self, execution_result: Any, tool_name: str | None = None,
+    ) -> None:
+        """Step 8: tool 算出力学属性时, 自动收 (structure_vec, haptic_vec) 对.
+
+        触发条件: execution_result 含力学字段 + 当前有活跃 cognitive map.
+        两者缺一就跳过 — 没结构没法对齐, 没力学没必要对齐.
+
+        失败只 log warning, 不报错. 收集是 best-effort, 不能阻塞主循环.
+        ponytail: 不改 tool 返回格式, 不引新依赖. 升级路径: 各 tool 自己 add.
+        """
+        try:
+            haptic = self._extract_haptic_layer(execution_result)
+            if haptic is None:
+                return
+            structure = self._get_active_cognitive_map()
+            if structure is None:
+                return
+            from huginn.metacog.haptic_descriptor import HapticDescriptor
+            from huginn.metacog.structure_descriptor import StructureDescriptor
+            svec = StructureDescriptor().encode(structure)
+            hvec = HapticDescriptor().encode(haptic)
+            ds = self._get_alignment_dataset()
+            ds.add(
+                svec, hvec, "structure", "haptic",
+                metadata={
+                    "tool": tool_name or "unknown",
+                    "source": getattr(haptic, "source", "DFT"),
+                    "iteration": getattr(self, "_iteration", 0),
+                },
+            )
+            logger.debug(
+                "alignment pair collected: tool=%s iter=%d total=%d",
+                tool_name, getattr(self, "_iteration", 0), ds.count(),
+            )
+        except Exception:
+            logger.warning(
+                "alignment pair collection failed (non-fatal)", exc_info=True,
             )
 
     def _maybe_expire_inbox(self) -> None:
@@ -2073,6 +2243,54 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                 )
         return generated
 
+    # ── 对齐层: surprise 驱动发现 → 触发新 hypothesis ──────────────
+    # check_surprise 发现 "结构预测的力学跟实际力学对不上" 时, 调 _hypothesize
+    # 生成解释差异的新 hypothesis. ponytail: hypothesis_generator 不可用
+    # (无 model / _hypothesize 失败) 只 log warn 不 fatal.
+    async def trigger_alignment_surprise_hypothesis(
+        self, surprise_findings: list[tuple[str, float]],
+    ) -> list[str]:
+        """对齐 surprise → 触发新 hypothesis 生成.
+
+        Args:
+            surprise_findings: [(h_id, surprise_score), ...] — score > threshold.
+
+        Returns:
+            生成的 hypothesis 文本列表 (失败/不可用时为空).
+        """
+        if not surprise_findings:
+            return []
+        generated: list[str] = []
+        for h_id, score in surprise_findings:
+            logger.warning(
+                "surprise detected: score=%.2f on %s — "
+                "structure-haptic alignment violated, triggering new hypothesis",
+                score, h_id,
+            )
+            ctx = {
+                "summary": (
+                    f"Alignment surprise detected on hypothesis {h_id} "
+                    f"(surprise score={score:.2f}): the mechanical properties "
+                    f"deviate significantly from what the learned structure-haptic "
+                    f"alignment predicts. Generate a hypothesis explaining the mismatch "
+                    f"(e.g. structural phase transition, Kohn anomaly, or novel mechanism)."
+                ),
+                "h_id": h_id,
+                "surprise_score": score,
+            }
+            try:
+                new_hyp = await self._hypothesize(ctx)
+                if new_hyp:
+                    generated.append(new_hyp)
+                    self._last_hypothesis = new_hyp
+                    self._last_raw_hypothesis = new_hyp
+            except Exception:
+                logger.warning(
+                    "hypothesis_generator unavailable for surprise %s (score=%.2f), "
+                    "log only (non-fatal)", h_id, score, exc_info=True,
+                )
+        return generated
+
     def _metacog_check_effort_floor(self) -> tuple[bool, str]:
         """[deprecated] 旧的最小努力下限检查, 保留向后兼容.
 
@@ -2406,6 +2624,8 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
 
         # provenance: 记一次 tool call, mode 当工具名, plan 当输入参数
         self._record_provenance(mode, plan, result)
+        # Step 8: 力学结果自动收集到 AlignmentDataset (失败不阻塞主循环)
+        self._collect_alignment_pair(result, tool_name=mode)
         # 缓存给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result = {
             "_tool_name": mode,

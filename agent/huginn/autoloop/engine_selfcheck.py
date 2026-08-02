@@ -2623,7 +2623,110 @@ def run_selfcheck() -> None:
     _gs_mod7.get_goal_store = _orig_get_gs7
     import shutil as _sh7
     _sh7.rmtree(_tmpdir7, ignore_errors=True)
-    print("AutoloopEngine selfcheck OK (1-10 gating + G2 + C5 + C2 + C-budget + 9b/10b H2 + 11-68d)")
+
+    # ── Step 8: latent space 对齐数据收集 ──────────────────────────
+    # 验 _extract_haptic_layer / _collect_alignment_pair / _save_alignment_dataset
+    # 用 __new__ 绕过 __init__, 跟前面 _make_selfcheck_engine 同范式.
+    import numpy as _np8
+    import tempfile as _tf8
+    from pathlib import Path as _P8
+
+    _eng8 = AutoloopEngine.__new__(AutoloopEngine)
+    _eng8._iteration = 0
+    _eng8._alignment_dataset = None
+    _eng8.workspace = _P8(_tf8.mkdtemp(prefix="t8_ws_"))
+
+    # 8a: 非力学结果 -> _extract_haptic_layer 返 None
+    _none_haptic = _eng8._extract_haptic_layer({"band_gap": 1.5, "energy": -3.2})
+    assert _none_haptic is None, "8a: 非力学结果应返 None"
+    # 非dict / None 也安全
+    assert _eng8._extract_haptic_layer(None) is None, "8a: None 输入应返 None"
+    assert _eng8._extract_haptic_layer("string") is None, "8a: str 输入应返 None"
+    print("8a. _extract_haptic_layer 非力学结果 -> None OK")
+
+    # 8b: 顶层 elastic_tensor -> HapticPropertyLayer
+    _C = [[300, 50, 40, 0, 0, 0], [50, 200, 30, 0, 0, 0],
+          [40, 30, 150, 0, 0, 0], [0, 0, 0, 100, 0, 0],
+          [0, 0, 0, 0, 80, 0], [0, 0, 0, 0, 0, 60]]
+    _h = _eng8._extract_haptic_layer({
+        "elastic_tensor": _C, "surface_energy": 1.5,
+    })
+    assert _h is not None, "8b: elastic_tensor 应解析出 haptic"
+    assert _h.elastic is not None, "8b: elastic 应非 None"
+    assert _h.elastic.C.shape == (6, 6), "8b: C 应是 6x6"
+    assert _h.surface_energy == 1.5, "8b: surface_energy 应=1.5"
+    print("8b. _extract_haptic_layer 顶层 elastic_tensor OK")
+
+    # 8c: 嵌套 result_data 也能抽到
+    _h2 = _eng8._extract_haptic_layer({
+        "result_type": "elastic",
+        "result_data": {"elastic_tensor": _C, "bulk_modulus": 150},
+    })
+    assert _h2 is not None, "8c: 嵌套 result_data 应解析"
+    assert _h2.elastic is not None, "8c: 嵌套 elastic 应非 None"
+    print("8c. _extract_haptic_layer 嵌套 result_data OK")
+
+    # 8d: 没 cognitive map 时 _collect_alignment_pair 跳过 (dataset 仍 None)
+    _eng8._collect_alignment_pair({"elastic_tensor": _C}, tool_name="vasp_tool")
+    assert _eng8._alignment_dataset is None, "8d: 没 structure 不该建 dataset"
+    print("8d. _collect_alignment_pair 无 cognitive map -> 跳过 OK")
+
+    # 8e: _save_alignment_dataset 在 dataset=None 时 no-op (不创建文件)
+    _eng8._save_alignment_dataset()
+    assert not (_eng8.workspace / ".huginn" / "alignment_dataset.json").exists(), \
+        "8e: dataset=None 时不该写文件"
+    print("8e. _save_alignment_dataset None -> no-op OK")
+
+    # 8f: 有 cognitive map + 力学结果 -> 真收集
+    from huginn.metacog.structure_cognitive_map import StructureCognitiveMap as _SCM8
+    from huginn.tools import structure_cognitive_map_tool as _cm8
+    _m8 = _SCM8.from_coords(
+        species=["Na", "Cl"],
+        coords=_np8.array([[0.0, 0.0, 0.0], [2.8, 0.0, 0.0]]),
+        lattice=_np8.eye(3) * 5.6,
+        cutoff=3.0,
+    )
+    _orig_maps8 = _cm8._MAPS.copy()
+    _cm8._MAPS.clear()
+    _cm8._MAPS["test_map"] = _m8
+    try:
+        _eng8._collect_alignment_pair({"elastic_tensor": _C}, tool_name="vasp_tool")
+        assert _eng8._alignment_dataset is not None, "8f: 应已建 dataset"
+        _X, _Y = _eng8._alignment_dataset.get_pairs("structure", "haptic")
+        assert len(_X) == 1 and len(_Y) == 1, "8f: 应收集 1 对"
+        assert _X[0].shape == (16,), f"8f: structure_vec 应 16维, got {_X[0].shape}"
+        assert _Y[0].shape == (12,), f"8f: haptic_vec 应 12维, got {_Y[0].shape}"
+        # 第二次收集 -> 2 对
+        _eng8._collect_alignment_pair({"surface_energy": 2.0}, tool_name="ml_potential")
+        assert _eng8._alignment_dataset.count() == 2, "8f: 应收集 2 对"
+        print("8f. _collect_alignment_pair 真收集 OK (16d->12d, 2 对)")
+    finally:
+        _cm8._MAPS.clear()
+        _cm8._MAPS.update(_orig_maps8)
+
+    # 8g: save -> load round-trip (跟 _maybe_save_engine_state 同路径)
+    _eng8._save_alignment_dataset()
+    _path8 = _eng8.workspace / ".huginn" / "alignment_dataset.json"
+    assert _path8.exists(), "8g: 文件应已写"
+    from huginn.metacog.alignment_dataset import AlignmentDataset as _AD8
+    _ds8 = _AD8.load(_path8)
+    assert _ds8.count() == 2, f"8g: load 后应有 2 对, got {_ds8.count()}"
+    _X8, _Y8 = _ds8.get_pairs("structure", "haptic")
+    assert _X8.shape == (2, 16) and _Y8.shape == (2, 12), "8g: shape 不对"
+    print("8g. alignment_dataset save/load round-trip OK")
+
+    # 8h: 收集失败不抛 (异常 tool_result / 坏 elastic 格式都安全)
+    _eng8._collect_alignment_pair({"elastic_tensor": "not-a-matrix"}, tool_name="bad")
+    _eng8._collect_alignment_pair(None, tool_name="bad")
+    _eng8._collect_alignment_pair({"elastic_tensor": [[1, 2], [3, 4]]}, tool_name="bad")
+    # 没新增 (坏格式不该崩, 也不该加空对)
+    assert _eng8._alignment_dataset.count() == 2, "8h: 坏输入不该加对"
+    print("8h. _collect_alignment_pair 失败安全 (不抛, 不加空对) OK")
+
+    import shutil as _sh8
+    _sh8.rmtree(_eng8.workspace, ignore_errors=True)
+
+    print("AutoloopEngine selfcheck OK (1-10 gating + G2 + C5 + C2 + C-budget + 9b/10b H2 + 11-68d + 8a-8h Step8)")
 
 
 if __name__ == "__main__":

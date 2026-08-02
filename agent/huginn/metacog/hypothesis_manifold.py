@@ -197,6 +197,8 @@ class HypothesisManifold:
         # 触觉层: h_id → HapticPropertyLayer. 跟 register_structure 独立 —
         # 一个 hypothesis 可以只有 structure / 只有 haptic / 两者都有 / 都没有.
         self._haptic_layers: dict[str, Any] = {}
+        # 对齐函数: structure → haptic 的 GP 映射. None / not ready 时 proposal 退化.
+        self._alignment_fn: Any = None
 
     @staticmethod
     def _gaussian_log_likelihood(h: Hypothesis, o: Observation) -> float:
@@ -242,6 +244,10 @@ class HypothesisManifold:
 
     def _has_haptic(self, h_id: str) -> bool:
         return h_id in self._haptic_layers
+
+    def set_alignment_function(self, align_fn: Any) -> None:
+        """注入对齐函数 (structure → haptic GP). None 或 not ready 时 proposal 退化."""
+        self._alignment_fn = align_fn
 
     def _rebuild_R(self) -> None:
         """重算 QR 分解的 R 矩阵 (基于当前所有 hypothesis 的 predictions).
@@ -501,6 +507,58 @@ class HypothesisManifold:
                 return h
         return others[-1]
 
+    def _alignment_proposal(
+        self, current_h_id: str, rng: random.Random, temperature: float,
+    ) -> str | None:
+        """对齐引导 proposal: 用 AlignmentFunction 预测 haptic, softmax(-d/tau) 采样.
+
+        好处: 即使 candidate 没有实际力学数据, 也能用学到的对齐函数预测 haptic
+        来引导探索. 无 structure / 对齐函数未 ready / 只 1 个有 structure 的
+        hypothesis 时返回 None (让 mcmc_step 退化 fisher).
+        """
+        if self._alignment_fn is None or not self._alignment_fn.ready:
+            return None
+        h = self._hyp.get(current_h_id)
+        if h is None or h.structure_id is None:
+            return None
+        current_cmap = self._structure_maps.get(h.structure_id)
+        if current_cmap is None:
+            return None
+        try:
+            current_pred, _ = self._alignment_fn.predict(current_cmap)
+        except Exception:
+            return None
+        # 收集所有有 structure 的 candidate (排除 current), 预测各自 haptic
+        candidates: list[tuple[str, Any]] = []
+        for hid, hh in self._hyp.items():
+            if hid == current_h_id or hh.structure_id is None:
+                continue
+            cmap = self._structure_maps.get(hh.structure_id)
+            if cmap is None:
+                continue
+            try:
+                pred, _ = self._alignment_fn.predict(cmap)
+            except Exception:
+                continue
+            candidates.append((hid, pred))
+        if not candidates:
+            return None
+        # d = ||pred_i - pred_current||, 纯 Python 遍历 numpy array 不引 numpy
+        dists = [math.sqrt(float(sum(x * x for x in (pred - current_pred))))
+                 for _, pred in candidates]
+        max_d = max(dists) if dists else 0.0
+        weights = [math.exp(-(d - max_d) / temperature) for d in dists]
+        total_w = sum(weights)
+        if total_w <= 0.0:
+            return rng.choice([hid for hid, _ in candidates])
+        r = rng.random() * total_w
+        cum = 0.0
+        for (hid, _), w in zip(candidates, weights):
+            cum += w
+            if r <= cum:
+                return hid
+        return candidates[-1][0]
+
     def mcmc_step(
         self,
         obs: Iterable[Observation],
@@ -513,6 +571,8 @@ class HypothesisManifold:
         se3_angle_sigma: float = 30.0,
         haptic_enabled: bool = False,
         haptic_temperature: float = 1.0,
+        alignment_enabled: bool = False,
+        alignment_temperature: float = 1.0,
     ) -> tuple[str, float]:
         """Metropolis-Hastings 一步在 posterior 上采样.
 
@@ -534,12 +594,16 @@ class HypothesisManifold:
         700万步 = 这个 step 跑 7M 次. 每步是从 current_h 提议一个 neighbor,
         按 posterior ratio 接受/拒绝. 这才是有引导的搜索, 不是 random walk.
 
-        Proposal kernel 分支 (haptic_enabled=False 时行为 100% 不变):
+        Proposal kernel 分支 (alignment_enabled=False 时行为 100% 不变):
+            - alignment + se3 + haptic 三开: 33/33/34 几何/力学/对齐
+            - alignment + se3: 50/50 几何/对齐
+            - alignment + haptic: 50/50 力学/对齐
+            - 只 alignment: 走 _alignment_proposal (预测 haptic 引导)
             - se3 + haptic 都开: 50/50 在几何 (SE3) / 力学 (haptic) 间切
             - 只开 se3: 走 _se3_proposal
             - 只开 haptic: 走 _haptic_proposal
             - 都不开: 走 _fisher_proposal (原逻辑)
-            - 任一引导返回 None (无 structure / 无 haptic / 只 1 个): 退化 fisher
+            - 任一引导返回 None (无 structure / 无 haptic / 对齐未 ready): 退化 fisher
 
         Returns: (next_h_id, next_log_p) — 调用方下步传 cached_log_p_current=next_log_p.
         """
@@ -557,19 +621,46 @@ class HypothesisManifold:
                 cached_log_p_current = self._log_posterior_single(obs, current_h_id)
             return current_h_id, cached_log_p_current
 
-        # Proposal kernel: se3 (几何) / haptic (力学) / fisher (prediction) 三通道.
-        # 任一引导返回 None (缺数据) 退化为 fisher — haptic_enabled=False 走原逻辑.
+        # Proposal kernel: se3 (几何) / haptic (力学) / alignment (预测力学) / fisher.
+        # alignment_enabled + ready 时走三通道, 否则走原 se3+haptic 逻辑.
+        # 任一引导返回 None (缺数据) 退化为 fisher.
         proposal: str | None = None
-        if se3_enabled and haptic_enabled:
-            # 双通道: 一半几何引导, 一半力学引导 (跨模态互补)
-            if rng.random() < 0.5:
-                proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+        _align_ok = (alignment_enabled and self._alignment_fn is not None
+                     and self._alignment_fn.ready)
+        if _align_ok:
+            if se3_enabled and haptic_enabled:
+                # 三通道 33/33/34 — 几何 / 力学 / 对齐预测
+                _r = rng.random()
+                if _r < 0.33:
+                    proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+                elif _r < 0.66:
+                    proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
+                else:
+                    proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
+            elif se3_enabled:
+                if rng.random() < 0.5:
+                    proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+                else:
+                    proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
+            elif haptic_enabled:
+                if rng.random() < 0.5:
+                    proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
+                else:
+                    proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
             else:
+                proposal = self._alignment_proposal(current_h_id, rng, alignment_temperature)
+        else:
+            # 对齐未开或未 ready — 走原 se3 + haptic 逻辑 (行为不变)
+            if se3_enabled and haptic_enabled:
+                # 双通道: 一半几何引导, 一半力学引导 (跨模态互补)
+                if rng.random() < 0.5:
+                    proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+                else:
+                    proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
+            elif se3_enabled:
+                proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
+            elif haptic_enabled:
                 proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
-        elif se3_enabled:
-            proposal = self._se3_proposal(current_h_id, rng, se3_angle_sigma)
-        elif haptic_enabled:
-            proposal = self._haptic_proposal(current_h_id, rng, haptic_temperature)
         if proposal is None:
             proposal = self._fisher_proposal(current_h_id, rng, temperature)
 
@@ -606,6 +697,8 @@ class HypothesisManifold:
         se3_angle_sigma: float = 30.0,
         haptic_enabled: bool = False,
         haptic_temperature: float = 1.0,
+        alignment_enabled: bool = False,
+        alignment_temperature: float = 1.0,
         on_chain_checkpoint: "Callable[[int, dict], None] | None" = None,
     ) -> dict:
         """多链并行 MCMC + Gelman-Rubin R̂ 收敛诊断.
@@ -645,6 +738,8 @@ class HypothesisManifold:
                 rng=rng, temperature=temperature,
                 se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
                 haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
+                alignment_enabled=alignment_enabled,
+                alignment_temperature=alignment_temperature,
                 init_h_id=init_h, on_checkpoint=on_chain_checkpoint,
             )
 
@@ -686,6 +781,8 @@ class HypothesisManifold:
         se3_angle_sigma: float = 30.0,
         haptic_enabled: bool = False,
         haptic_temperature: float = 1.0,
+        alignment_enabled: bool = False,
+        alignment_temperature: float = 1.0,
         init_h_id: str,
         on_checkpoint: "Callable[[int, dict], None] | None" = None,
     ) -> dict:
@@ -709,6 +806,8 @@ class HypothesisManifold:
                 cached_log_p_current=cached_log_p,
                 se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
                 haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
+                alignment_enabled=alignment_enabled,
+                alignment_temperature=alignment_temperature,
             )
             if current != prev_h:
                 accept_count += 1
@@ -908,6 +1007,27 @@ class HypothesisManifold:
                 if check.get("agreement") == "disagree_structure":
                     anomalies.append((a, b))
         return anomalies
+
+    def check_surprise(self, h_id: str) -> float | None:
+        """检查 hypothesis 的 structure-haptic 对齐 surprise.
+
+        surprise = ||actual_haptic - predicted_haptic|| / ||uncertainty||
+        高 surprise = 结构预测的力学跟实际力学对不上 → 发现信号.
+        缺 structure / haptic / 对齐函数未 ready / predict 失败 → None.
+        """
+        if self._alignment_fn is None or not self._alignment_fn.ready:
+            return None
+        h = self._hyp.get(h_id)
+        if h is None or h.structure_id is None:
+            return None
+        cmap = self._structure_maps.get(h.structure_id)
+        layer = self._haptic_layers.get(h_id)
+        if cmap is None or layer is None:
+            return None
+        try:
+            return self._alignment_fn.surprise(cmap, layer)
+        except Exception:
+            return None
 
     @staticmethod
     def _selfcheck_haptic_mainloop() -> None:
