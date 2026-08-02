@@ -1164,6 +1164,9 @@ LUCID review (mandatory after generating hypothesis):
         "HUGINN_MCMC_HAPTIC", "1" if extreme else "0") == "1"
     _mcmc_haptic_temperature = float(
         os.environ.get("HUGINN_MCMC_HAPTIC_TEMPERATURE", "1.0"))
+    _mcmc_alignment_enabled = os.environ.get("HUGINN_MCMC_ALIGNMENT", "0") == "1"
+    _mcmc_alignment_temperature = float(
+        os.environ.get("HUGINN_MCMC_ALIGNMENT_TEMPERATURE", "1.0"))
     # P1-C: 完成度审计周期触发 — 之前 metacog_check_completion 只在 agent 声称
     # TASK COMPLETE 时跑, 长任务里 agent 一直不说完成 → 审计门永不跑.
     # ponytail: advisory only, 不阻断. 结果写 cognitive_evidence.md.
@@ -2638,6 +2641,9 @@ LUCID review (mandatory after generating hypothesis):
                     if _mcmc_haptic_enabled:
                         _mcmc_step_kwargs["haptic_enabled"] = True
                         _mcmc_step_kwargs["haptic_temperature"] = _mcmc_haptic_temperature
+                    if _mcmc_alignment_enabled:
+                        _mcmc_step_kwargs["alignment_enabled"] = True
+                        _mcmc_step_kwargs["alignment_temperature"] = _mcmc_alignment_temperature
                     _next_h, _next_log_p = _hypo_manifold.mcmc_step(
                         _iter_observations, _mcmc_engine._mcmc_current,
                         **_mcmc_step_kwargs,
@@ -4177,6 +4183,8 @@ async def run(
     mcmc_se3_angle_sigma: float = 30.0,
     mcmc_haptic: bool = False,
     mcmc_haptic_temperature: float = 1.0,
+    mcmc_alignment: bool = False,
+    mcmc_alignment_temperature: float = 1.0,
 ) -> int:
     ws = Path(workspace).resolve()
     # Task 4.1: --mcmc-mode 走独立 MCMC 路径, 不跑 RCB agent 主循环.
@@ -4190,6 +4198,8 @@ async def run(
             se3_angle_sigma=mcmc_se3_angle_sigma,
             haptic_enabled=mcmc_haptic,
             haptic_temperature=mcmc_haptic_temperature,
+            alignment_enabled=mcmc_alignment,
+            alignment_temperature=mcmc_alignment_temperature,
         )
     instructions = ws / "INSTRUCTIONS.md"
     if not instructions.exists():
@@ -5989,6 +5999,8 @@ async def _run_mcmc_mode(
     se3_angle_sigma: float = 30.0,
     haptic_enabled: bool = False,
     haptic_temperature: float = 1.0,
+    alignment_enabled: bool = False,
+    alignment_temperature: float = 1.0,
 ) -> int:
     """Task 4.1+4.2: 纯 MCMC 模式入口 — 不跑 RCB agent 主循环.
 
@@ -6084,6 +6096,82 @@ async def _run_mcmc_mode(
             print(f"[mcmc-{mode}] haptic enabled but no layers in "
                   f"{_hap_path}, degrading to fisher", flush=True)
 
+    # 对齐层: 从 .huginn/alignment_dataset.json 加载 (structure, haptic) 对,
+    # 数据量 >= 10 时自动 fit AlignmentFunction, 注入 manifold 引导 proposal.
+    # ponytail: 文件不存在 / 数据不足 / fit 失败 → _alignment_fn 保持 None,
+    #   alignment_enabled=True 时 _alignment_proposal 全返 None, 安全退化 fisher.
+    _alignment_dataset = None
+    if alignment_enabled:
+        _align_path = ws / ".huginn" / "alignment_dataset.json"
+        if _align_path.exists():
+            try:
+                from huginn.metacog.alignment_dataset import AlignmentDataset
+                from huginn.metacog.alignment import AlignmentFunction
+                from huginn.metacog.structure_descriptor import StructureDescriptor
+                from huginn.metacog.haptic_descriptor import HapticDescriptor
+
+                _alignment_dataset = AlignmentDataset.load(_align_path)
+                _n_pairs = _alignment_dataset.count("structure", "haptic")
+                if _n_pairs >= 10:
+                    _af = AlignmentFunction(
+                        StructureDescriptor(), HapticDescriptor(), min_samples=10)
+                    _af.fit(_alignment_dataset)
+                    if _af.ready:
+                        _hypo_manifold.set_alignment_function(_af)
+                        print(f"[mcmc-{mode}] alignment fitted on {_n_pairs} pairs, "
+                              f"alignment-guided proposal enabled", flush=True)
+                    else:
+                        print(f"[mcmc-{mode}] alignment fit returned not-ready "
+                              f"({_n_pairs} pairs), degrading to fisher", flush=True)
+                else:
+                    print(f"[mcmc-{mode}] alignment dataset has only {_n_pairs} pairs "
+                          f"(need >=10), degrading to fisher", flush=True)
+            except Exception as _e:
+                print(f"[mcmc-{mode}] alignment load/fit failed: {_e}, "
+                      f"degrading to fisher", flush=True)
+        else:
+            print(f"[mcmc-{mode}] alignment enabled but no dataset at "
+                  f"{_align_path}, degrading to fisher", flush=True)
+
+    # Surprise 检查: haptic + alignment 都 ready 时, 对每个有 structure+haptic
+    # 的 hypothesis 查 surprise. score > 2.0 触发新 hypothesis 生成 + 数据回流.
+    # ponytail: advisory only, 失败只 warn 不阻塞. model=None 时 trigger 走空.
+    if alignment_enabled and _alignment_dataset is not None:
+        try:
+            _surprise_findings: list[tuple[str, float]] = []
+            for _h_id in _hypo_manifold._hyp:
+                _sc = _hypo_manifold.check_surprise(_h_id)
+                if _sc is not None and _sc > 2.0:
+                    _surprise_findings.append((_h_id, _sc))
+            if _surprise_findings:
+                print(f"[mcmc-{mode}] surprise detected on "
+                      f"{len(_surprise_findings)} hypothesis(es)", flush=True)
+                # 数据回流: 把当前 (structure, haptic) 对存入 dataset
+                from huginn.metacog.structure_descriptor import StructureDescriptor as _SD
+                from huginn.metacog.haptic_descriptor import HapticDescriptor as _HD
+                _sd, _hd = _SD(), _HD()
+                for _h_id, _score in _surprise_findings:
+                    _h = _hypo_manifold._hyp.get(_h_id)
+                    if _h is None or _h.structure_id is None:
+                        continue
+                    _cmap = _hypo_manifold._structure_maps.get(_h.structure_id)
+                    _layer = _hypo_manifold._haptic_layers.get(_h_id)
+                    if _cmap is None or _layer is None:
+                        continue
+                    try:
+                        _alignment_dataset.add(
+                            _sd.encode(_cmap), _hd.encode(_layer),
+                            "structure", "haptic",
+                            metadata={"h_id": _h_id, "surprise": _score})
+                    except Exception:
+                        pass
+                try:
+                    _alignment_dataset.save(_align_path)
+                except Exception as _e:
+                    print(f"[mcmc-{mode}] dataset save failed: {_e}", flush=True)
+        except Exception as _e:
+            print(f"[mcmc-{mode}] surprise check failed: {_e}", flush=True)
+
     # 读 observations — 主循环 _iter_observations 跨轮累积, 这里从盘上恢复
     obs_path = ws / ".huginn" / "observations.jsonl"
     obs_list: list = []
@@ -6162,6 +6250,8 @@ async def _run_mcmc_mode(
                 se3_angle_sigma=se3_angle_sigma,
                 haptic_enabled=haptic_enabled,
                 haptic_temperature=haptic_temperature,
+                alignment_enabled=alignment_enabled,
+                alignment_temperature=alignment_temperature,
             )
             if current != prev:
                 _engine._mcmc_accept_count += 1
@@ -6221,6 +6311,8 @@ async def _run_mcmc_mode(
         se3_angle_sigma=se3_angle_sigma,
         haptic_enabled=haptic_enabled,
         haptic_temperature=haptic_temperature,
+        alignment_enabled=alignment_enabled,
+        alignment_temperature=alignment_temperature,
         on_chain_checkpoint=_on_chain_checkpoint,
     )
 
@@ -6280,6 +6372,16 @@ def main() -> None:
         default=float(os.environ.get("HUGINN_MCMC_HAPTIC_TEMPERATURE", "1.0")),
         help="触觉引导 proposal softmax 温度 (tau, 默认 1.0, 大=趋随机, 小=趋贪心)",
     )
+    parser.add_argument(
+        "--mcmc-alignment", action="store_true",
+        default=os.environ.get("HUGINN_MCMC_ALIGNMENT", "0") == "1",
+        help="对齐引导 proposal: 用 GP 预测 structure→haptic 引导 MCMC (需 alignment_dataset.json, 无则退化)",
+    )
+    parser.add_argument(
+        "--mcmc-alignment-temperature", type=float,
+        default=float(os.environ.get("HUGINN_MCMC_ALIGNMENT_TEMPERATURE", "1.0")),
+        help="对齐引导 proposal softmax 温度 (tau, 默认 1.0)",
+    )
     args = parser.parse_args()
 
     rc = asyncio.run(run(
@@ -6293,6 +6395,8 @@ def main() -> None:
         mcmc_se3_angle_sigma=args.mcmc_se3_angle_sigma,
         mcmc_haptic=args.mcmc_haptic,
         mcmc_haptic_temperature=args.mcmc_haptic_temperature,
+        mcmc_alignment=args.mcmc_alignment,
+        mcmc_alignment_temperature=args.mcmc_alignment_temperature,
     ))
     sys.exit(rc)
 
