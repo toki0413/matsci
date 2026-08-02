@@ -52,11 +52,19 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                 else:
                     _new_blocks.append(_block)
             if _msg_changed:
+                # LangChain message 是 immutable (Pydantic frozen=True),
+                # 旧版 _msg.content = _new_blocks 抛 ValidationError 被
+                # except 吞掉 → image_url block 原封不动发给 DeepSeek → 400.
+                # 用 model_copy(update=) 造新 msg 替换 list 里的旧 msg.
                 try:
-                    _msg.content = _new_blocks
+                    patched[_i] = _msg.model_copy(update={"content": _new_blocks})
                     _changed_blocks = True
                 except Exception:
-                    pass
+                    try:
+                        _msg.content = _new_blocks
+                        _changed_blocks = True
+                    except Exception:
+                        pass
 
         # 再重建 list 保证 ToolMessage 紧跟 AIMessage(tool_calls), 同时补 orphan.
         # DeepSeek 严格要求 assistant(tool_calls) 后面必须紧跟 tool messages

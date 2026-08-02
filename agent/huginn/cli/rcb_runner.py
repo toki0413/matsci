@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -3705,6 +3706,19 @@ async def _step3_adversarial(
     while True:
         if not report_path.exists() or not checklist:
             break
+        # deadline 检查: retry 很重 (agent 回 execute 模式重跑),
+        # 没时间预算感知会一直跑到外部 asyncio.wait_for 超时杀进程,
+        # 连评分都跑不到 (v20 死在这). 留 600s 给后续评分+manifest.
+        _rcb_deadline = os.environ.get("HUGINN_RCB_DEADLINE")
+        if _rcb_deadline:
+            try:
+                _remaining = float(_rcb_deadline) - time.time()
+                if _remaining < 600:
+                    print(f"[step3_retry: deadline in {_remaining:.0f}s, skip retry → score",
+                          flush=True)
+                    break
+            except (ValueError, TypeError):
+                pass
         try:
             _retry_report = report_path.read_text(encoding="utf-8")
             _retry_verdict_dict = await adversarial_critique(
@@ -4852,12 +4866,22 @@ async def run(
 
     # Step 2.5 + Step 3 抽到模块级函数 — 闭包 _stream_chat / _rcb_csm_advance 作参数传入.
     await _step2_5_report_fallback(ws, _stream_chat)
-    _step3_final_verdict = await _step3_adversarial(
-        ws, model, agent, checklist, _evals_history, _stream_chat, _rcb_csm_advance,
-        persona=persona, kb=kb,
-        mem_mgr=_mem_mgr, cross_task_store=_cross_task_store,
-        task_id=_task_id, persona_name=_persona_name,
-    )
+    # Step 3 整体兜底: retry/finalize 内部 try/except 只防单次调用崩溃, 但整个
+    # _step3_adversarial 仍可能因 OOM/系统杀进程等不可恢复异常退出. deliverables
+    # 已在磁盘上 (Step 2 产出), Step 3 失败不应阻塞评分 — 评分读 report.md/figures.
+    # v19/v20 都因 Step 3 崩溃没走到评分, agent 实际已产出完整 deliverables.
+    try:
+        _step3_final_verdict = await _step3_adversarial(
+            ws, model, agent, checklist, _evals_history, _stream_chat, _rcb_csm_advance,
+            persona=persona, kb=kb,
+            mem_mgr=_mem_mgr, cross_task_store=_cross_task_store,
+            task_id=_task_id, persona_name=_persona_name,
+        )
+    except Exception as _e:
+        import traceback as _tb
+        print(f"[step3] _step3_adversarial crashed: {_e}\n{_tb.format_exc()}",
+              flush=True)
+        _step3_final_verdict = "step3_crashed"
 
     # v14 Task 14: 跨 task Meta-Trace 累积. 把当前 task 的 meta_trace.jsonl
     # 全量灌进 cross_task_complex.db, 供后续同 domain task 作 prior 查询.
