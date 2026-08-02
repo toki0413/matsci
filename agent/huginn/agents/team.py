@@ -36,6 +36,18 @@ class TeamRole(enum.StrEnum):
     SYNTHESIZER = "synthesizer" # 合成器: 跨模型信息融合
 
 
+# NonAuthoritativeProvenance: 子 agent 是非权威来源, 不能继承主会话的
+# auto_approve_all 高权限. 按 role 限定工具子集, 避免子 agent 调危险工具.
+# None = 不限 (继承 profile 配置); list = 只给这些工具.
+# ceiling: 硬编码工具名, 工具改名时需同步更新. 升级: 从 ModelCaps 推导.
+_ROLE_TOOL_FILTER: dict["TeamRole", list[str] | None] = {
+    TeamRole.VISION: ["vision_describe", "image_analysis_tool", "file_read_tool"],
+    TeamRole.CRITIC: ["file_read_tool", "grep", "glob", "diff_tool"],
+    TeamRole.PLANNER: None,   # planner 需要全工具视野来规划
+    TeamRole.SYNTHESIZER: None,
+}
+
+
 # 角色 → 需要的能力 (按优先级排序)
 # 第一个 bool 是"必须满足", 后面是"加分项"
 ROLE_REQUIREMENTS: dict[TeamRole, tuple[set[str], set[str]]] = {
@@ -73,17 +85,36 @@ class TeamMember:
     _config: Any = None
 
     def get_agent(self) -> Any:
-        """延迟创建 agent 实例."""
+        """延迟创建 agent 实例.
+
+        NonAuthoritativeProvenance: 子 agent 不继承主会话的 auto_approve
+        高权限, 强制降级. 按 role 限定工具子集 (VISION 只给视觉+读文件,
+        CRITIC 只给只读工具). approval_callback 从 config 继承, 保证
+        ASK 模式有回调可走而非卡死.
+        """
         if self._agent is None:
+            import dataclasses
+
             from huginn.agent import HuginnAgent
 
             if self._config is None:
                 raise RuntimeError(
                     f"TeamMember '{self.name}' 没有关联 config, 无法创建 agent"
                 )
+            overrides: dict[str, Any] = {}
+            _filter = _ROLE_TOOL_FILTER.get(self.role)
+            if _filter is not None:
+                overrides["tool_filter"] = _filter
             self._agent = HuginnAgent.from_config(
-                self._config, profile_id=self.profile_id
+                self._config, profile_id=self.profile_id, **overrides
             )
+            # 强制降级: 子 agent 不继承主会话 auto_approve_all 高权限,
+            # 但保留 path_rules / rcb_mode 等其他权限设置.
+            _perm = getattr(self._agent, "_permission_config", None)
+            if _perm is not None:
+                self._agent._permission_config = dataclasses.replace(
+                    _perm, auto_approve_all=False
+                )
         return self._agent
 
 

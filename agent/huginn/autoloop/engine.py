@@ -2454,10 +2454,11 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             error_str = str(error_result.get("error", ""))
             fix = evolution.apply_heuristic_fix(tool_name, tool_input, error_str)
             if fix:
-                patched_desc = fix.get("description", str(tool_input))
-                return await self._execute_workflow(
-                    patched_desc, {"_evolved_fix": True}
-                )
+                patched_desc = fix.get("description")
+                if not patched_desc:
+                    logger.warning("evolved fix hit but no description, skipping")
+                    return None
+                return await self._execute_workflow(patched_desc, {"_evolved_fix": True})
         except Exception:
             logger.warning(
                 "error in _try_evolved_fix: apply_heuristic_fix failed", exc_info=True
