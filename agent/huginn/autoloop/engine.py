@@ -2028,6 +2028,51 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             )
         return self._metacog_completion_auditor
 
+    # ── 触觉层: 同构不同性 → 触发新 hypothesis ──────────────────
+    # detect_isomorphic_anomaly 发现 "结构同 + 力学不同" (石墨 vs 金刚石类) 时,
+    # 调 _hypothesize 生成解释差异的新 hypothesis. ponytail: hypothesis_generator
+    # 不可用 (无 model / _hypothesize 失败) 只 log warn 不 fatal.
+    async def trigger_isomorphic_anomaly_hypothesis(
+        self, anomaly_pairs: list[tuple[str, str]],
+    ) -> list[str]:
+        """同构不同性异常 → 触发新 hypothesis 生成.
+
+        Args:
+            anomaly_pairs: detect_isomorphic_anomaly 的返回值 [(h_a, h_b), ...].
+
+        Returns:
+            生成的 hypothesis 文本列表 (失败/不可用时为空).
+        """
+        if not anomaly_pairs:
+            return []
+        generated: list[str] = []
+        for h_a, h_b in anomaly_pairs:
+            logger.warning(
+                "isomorphic anomaly: structure matches but haptic differs "
+                "(%s vs %s) — triggering new hypothesis", h_a, h_b,
+            )
+            ctx = {
+                "summary": (
+                    f"Isomorphic anomaly detected between {h_a} and {h_b}: "
+                    "structures match (RMSD<1Å) but mechanical properties differ "
+                    "(haptic_distance>=0.5). Generate a hypothesis explaining the "
+                    "structure-property mismatch (e.g. graphite vs diamond)."
+                ),
+                "anomaly_pair": (h_a, h_b),
+            }
+            try:
+                new_hyp = await self._hypothesize(ctx)
+                if new_hyp:
+                    generated.append(new_hyp)
+                    self._last_hypothesis = new_hyp
+                    self._last_raw_hypothesis = new_hyp
+            except Exception:
+                logger.warning(
+                    "hypothesis_generator unavailable for anomaly %s/%s, "
+                    "log only (non-fatal)", h_a, h_b, exc_info=True,
+                )
+        return generated
+
     def _metacog_check_effort_floor(self) -> tuple[bool, str]:
         """[deprecated] 旧的最小努力下限检查, 保留向后兼容.
 
