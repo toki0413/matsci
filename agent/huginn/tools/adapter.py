@@ -499,6 +499,15 @@ class ToolAdapter:
                     _tail = (_stderr or _stdout or "")[-2000:]
                     if _tail and "error_detail" not in data:
                         data["error_detail"] = _tail
+                # P0-7: 静默失败检测 — success=False 且无 stderr/stdout/error_detail
+                # = 工具静默崩溃 (Rust sandbox 典型模式). 之前只返回 "Unknown error"
+                # 让 agent 耗死重试. 加可操作提示让 agent 换路径.
+                if not data.get("error_detail") and data.get("error") == "Unknown error":
+                    data["error"] = (
+                        "Unknown error (silent failure — no stderr/stdout captured). "
+                        "This is likely a sandbox/process crash, not a code bug. "
+                        "Try a different approach or tool."
+                    )
             # ARGUS: tool 输出统一标 source_class, 下游 PhaseGate 可识别.
             # 顶层 _source_class 不进 LLM-visible content, 只作元数据.
             data["_source_class"] = "tool_output"
@@ -752,7 +761,16 @@ class ToolAdapter:
             if budget is not None:
                 if not budget.record(tool.name):
                     _, budget_reason = budget.should_stop()
-                    output = {"error": f"工具调用预算耗尽: {budget_reason}", "_budget_exceeded": True}
+                    # P0-3: 加重置语义, 让 LLM 知道是本轮耗尽而非死刑.
+                    # 之前 "预算耗尽" 让 agent 误判 game over 直接交卷.
+                    output = {
+                        "error": (
+                            f"工具调用预算耗尽: {budget_reason}. "
+                            f"本轮预算已尽, 下轮重置. 请换工具或收尾, "
+                            f"不要放弃当前任务."
+                        ),
+                        "_budget_exceeded": True,
+                    }
                     _audit(input_data, output, approved=True, reason="budget_exceeded")
                     _publish(PetMood.ERROR, f"{tool.name} blocked by budget", {"reason": budget_reason})
                     return output, router

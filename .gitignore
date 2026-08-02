@@ -164,6 +164,8 @@ reproduce_quantum_waves.py
 
 # Third-party benchmark repos (kept local, not part of source)
 /ResearchClawBench/
+# P0-8 评分门禁修复需进版本控制, 其余 ResearchClawBench 内容仍本地
+!ResearchClawBench/_score_batch.py
 /ScienceAgentBench/
 /mle-bench/
 /preparedness/

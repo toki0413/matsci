@@ -792,8 +792,11 @@ class ContextBuilder:
             import os
             import json
 
-            base = os.environ.get("HUGINN_CACHE_DIR", ".huginn")
-            rules_path = Path(base) / "evolution_rules.json"
+            # 对齐 EvolutionEngine 写入路径 (logger.persist_dir / evolution_rules.json).
+            # logger.py: Path(HUGINN_CACHE_DIR or ~/.huginn) / "logs".
+            # 之前读 .huginn/ (相对CWD) 永远 miss 写侧的 ~/.huginn/logs/.
+            base = os.environ.get("HUGINN_CACHE_DIR") or str(Path.home() / ".huginn")
+            rules_path = Path(base) / "logs" / "evolution_rules.json"
             if not rules_path.exists():
                 return ""
 
