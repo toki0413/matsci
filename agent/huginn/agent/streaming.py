@@ -1432,7 +1432,27 @@ class StreamingMixin:
                             _STREAM_IDLE_TIMEOUT, states_yielded,
                         )
                         turn_span.metadata["stream_watchdog_timeout"] = True
-                        final_state = await graph.ainvoke(inputs, config)
+                        # A3-fix: ainvoke 也加超时. DeepSeek 高负载时首 token >60s 触发
+                        # 流式 watchdog, 但 ainvoke 的 HTTP 请求无默认 timeout → 永久挂起
+                        # → 4h 外部超时 kill 进程, meta.json 都来不及写.
+                        # 300s 覆盖 thinking=high 的长推理; 超时抛 TimeoutError 给上层重试.
+                        _ainvoke_timeout = float(os.environ.get(
+                            "HUGINN_AINVOKE_TIMEOUT",
+                            str(_STREAM_IDLE_TIMEOUT * 5),
+                        ))
+                        try:
+                            final_state = await asyncio.wait_for(
+                                graph.ainvoke(inputs, config),
+                                timeout=_ainvoke_timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "ainvoke also timed out after %ds, treating as retryable",
+                                _ainvoke_timeout,
+                            )
+                            raise asyncio.TimeoutError(
+                                f"both stream and ainvoke timed out (ainvoke={_ainvoke_timeout}s)"
+                            )
                         self._process_stream_state(
                             final_state, turn_span, thread_id, pet, _completion_records
                         )
@@ -1493,8 +1513,7 @@ class StreamingMixin:
                     # Sync any executing plan from PlanStore to session_state
                     self._sync_plan_from_store()
 
-                    # Run rules-based reflection on this turn's tool results
-                    self._run_post_turn_reflection()
+                    # reflection 已移到 finally 块, 确保timeout/取消也能跑
 
                     # Proactive pipeline suggestions
                     await self._maybe_inject_proactive_suggestion()
@@ -1548,6 +1567,17 @@ class StreamingMixin:
                 pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
                 raise
             finally:
+                # 反思闭环: 即使 timeout/取消, 也要跑 reflection 让 evolution 记录失败.
+                # 之前 reflection 在 try 块内, asyncio.wait_for 取消时直接跳过 ->
+                # RCB 跑分期间 tool_calls.jsonl 记录为 0, 规则 usage_count 不增长.
+                import sys as _sys
+                _n_trs = len(self._session_state.tool_results_this_turn)
+                print(f"[FINALLY-REFLECT] tool_results_this_turn={_n_trs}", file=_sys.stderr, flush=True)
+                try:
+                    if self._session_state.tool_results_this_turn:
+                        self._run_post_turn_reflection()
+                except Exception:
+                    logger.debug("finally reflection failed", exc_info=True)
                 # TPS 收尾: chunk_chars/4 ≈ tokens (latin). 写 turn_span + Prometheus.
                 if _tps_t_first is not None and _tps_chunk_chars > 0:
                     elapsed = time.monotonic() - _tps_t_first

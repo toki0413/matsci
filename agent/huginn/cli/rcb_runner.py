@@ -46,6 +46,11 @@ except OSError:
 
 logger = logging.getLogger(__name__)
 
+# 全局 agent 引用: asyncio.wait_for 取消 run() 时, rcb_huginn.py 入口能拿到
+# agent 实例再调一次 reflection, 确保 evolution 记录最后的 tool 失败.
+# ponytail: 不改 run() 签名, 用模块级变量. ceiling: 多任务并发跑会互相覆盖.
+_last_agent_for_reflection: Any = None
+
 # 在 import huginn 之前关掉秒级限流 — RCB 任务的 prompt 长 + 工具多,
 # 默认 5000 tokens/s 会在第一轮就超限. RCB 是离线评测, 不需要限流.
 os.environ.setdefault("HUGINN_RATE_LIMIT_ENABLED", "0")
@@ -4009,10 +4014,11 @@ async def _step3_adversarial(
             f"### Previous Critique Verdict: {_retry_verdict}\n"
             f"### Gap Type: {_retry_gap}\n"
             f"### Critique Summary:\n{_critique_summary}\n\n"
-            f"## Current Report (read report/report.md for full content)\n"
-            f"Report exists at report/report.md ({len(_retry_report)} chars).\n\n"
-            f"## Task: Return to EXECUTE mode. Re-run code_tool to fix the gap. "
-            f"OVERWRITE report/report.md after fix.\n"
+            f"## Current Report (full content below — DO NOT lose existing sections):\n"
+            f"{_retry_report}\n\n"
+            f"## Task: Return to EXECUTE mode. Re-run code_tool to fix the gap.\n"
+            f"UPDATE report/report.md after fix — keep all existing valid sections, "
+            f"only fix the gap identified above. DO NOT overwrite with a skeleton.\n"
             f"Retry attempt {_retry_count}/2."
         )
         # snapshot report before retry — 用于下次 loop 算 diff
@@ -4519,6 +4525,7 @@ async def run(
     except Exception as _e:
         print(f"[Persona] init warning: {_e}", flush=True)
 
+    global _last_agent_for_reflection
     agent = HuginnAgent(
         model=model,
         system_prompt=system_prompt,
@@ -4601,6 +4608,9 @@ async def run(
     # 否则 Step 2 解锁后 graph 还是 Step 1 的只读工具集.
     agent.refresh_tools_from_registry()
 
+    # 暴露 agent 给 rcb_huginn.py 入口, 超时取消后能再调一次 reflection.
+    _last_agent_for_reflection = agent
+
     # 3 步认知循环: 论文方法论提取 → 执行 → 自验证
     # ponytail: 不走 autoloop 7 阶段 (太重), 用 3 步循环治 3 个短板:
     #   Step 1 治 "不读论文就动手" — 强制先提取方法核心组件 + baseline 指标
@@ -4629,6 +4639,7 @@ async def run(
         论文图表路径若被 agent 引用就会触发. ponytail: 0 行额外配置.
         """
         ai_text = ""
+        _chat_gen = None
         try:
             # 扫 msg 里的图片路径 — 命中就透传给 VisionRouter
             _image_path = None
@@ -4645,10 +4656,11 @@ async def run(
                         _image_path = str(_p)
             except Exception:
                 pass  # 视觉接入是增强, 失败不阻塞文本路径
-            async for chunk in agent.chat(
+            _chat_gen = agent.chat(
                 msg, thread_id=tid or thread_id, image_path=_image_path,
                 include_history=not fresh_history,
-            ):
+            )
+            async for chunk in _chat_gen:
                 msgs = chunk.get("messages", [])
                 if not msgs:
                     continue
@@ -4671,6 +4683,28 @@ async def run(
             # Step 1 三次空响应的异常就被吞了, 看起来像"LLM 没响应".
             import traceback as _tb
             print(f"ERROR [{step_label}]: {e}\n{_tb.format_exc()}", flush=True)
+        finally:
+            # 显式 aclose chat generator, 触发 streaming.py chat() 的 finally 块.
+            # async for 被 CancelledError 中断时不自动 aclose, generator 悬挂等 GC,
+            # streaming.py 的 [FINALLY-REFLECT] 不跑 -> 反射链路断在第一层.
+            # aclose 让 GeneratorExit 在 generator 当前 await 点抛出, finally 执行.
+            if _chat_gen is not None:
+                try:
+                    await _chat_gen.aclose()
+                except Exception:
+                    pass
+            # 反思闭环: chat generator 被 asyncio.wait_for 取消时, streaming.py
+            # 的 finally 块不保证执行 (async generator aclose 依赖 GC). 在这里
+            # 显式调 reflection, 确保 tool 失败被 evolution 记录.
+            import sys as _sys
+            _n_trs = len(agent._session_state.tool_results_this_turn) if hasattr(agent, '_session_state') else -1
+            print(f"[RCB-FINALLY] entering, tool_results_this_turn={_n_trs}, has_reflection={hasattr(agent, '_run_post_turn_reflection')}", file=_sys.stderr, flush=True)
+            try:
+                if hasattr(agent, "_run_post_turn_reflection"):
+                    agent._run_post_turn_reflection()
+                    print("[RCB-FINALLY] reflection done", file=_sys.stderr, flush=True)
+            except Exception as _re:
+                print(f"[RCB-FINALLY] reflection error: {_re}", file=_sys.stderr, flush=True)
         return ai_text
 
     # RCB 3-step 映射 CSM: Step1→S1_DISCOVER, Step2→S4_CONSTRUCT, Step3→S6+S7 (Task 18)
@@ -4718,6 +4752,9 @@ async def run(
     _rcb_csm_advance("user_goal", {"goal": "understand problem and extract methodology"})
     step1_prompt = (
         f"Read the task instructions below AND explore related_work/ directory for reference papers.\n"
+        f"PDF reading: file_read_tool supports line_offset/n_lines for .pdf — read the paper in "
+        f"PAGES (offset through the file) to get the FULL Methods section, do NOT rely on web "
+        f"fetching. The reference papers are local in related_work/.\n"
         f"Extract a METHODOLOGY CHECKLIST from the paper:\n"
         f"1. Core method components (model architecture, training protocol, key algorithms).\n"
         f"   For EACH component, label it [EXACT] (must reproduce as-specified) or [VARIANT]\n"

@@ -49,6 +49,16 @@ try:
 except ImportError:
     pass
 
+# reasoner (R1) judge 输出含 <think>...</think>, str2dict 找不到 JSON 边界.
+try:
+    import structai.llm_api as _sai
+    _orig_str2dict = _sai.str2dict
+    _sai.str2dict = lambda s: _orig_str2dict(
+        s.split("</think>", 1)[-1] if "</think>" in s else s
+    )
+except ImportError:
+    pass
+
 # ponytail: snapshot 系统硬编码 ~/.huginn/snapshots, 不在 TRAE 沙箱允许列表.
 # 每次工具调用都报 PermissionError, 虽非致命但噪音大且拖慢 agent. 直接禁用.
 # hook 系统用 await cb(ctx) 调用, 必须返回 coroutine (async def), 不能用 lambda.
