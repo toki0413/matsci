@@ -4882,6 +4882,8 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             # C4: typed memory 默认 on, 同步写 failed_direction,
             # 让 _recent_failed_hypotheses 跨 session 能恢复 (不靠 hypothesis_graph).
             # ponytail: 不动 HypothesisNode setter, 在 _learn 里集中写, 最小改动.
+            # EvolutionManager 默认 ON 时跳过旧路径, 避免跟 record_outcome 双写
+            # FailedDirectionStore (record_outcome 内部已写). flag off 回退旧路径.
             try:
                 _fail_reason = (
                     validation.get("error")
@@ -4904,13 +4906,14 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                             "failure inversion failed, fallback to original reason",
                             exc_info=True,
                         )
-                self.memory.record_failed_direction(
-                    hypothesis_text=hypothesis[:200],
-                    reason=str(_fail_reason),
-                    run_id=getattr(self, "_run_id", "") or "",
-                    persona_id=getattr(self, "_last_persona", None),
-                    math_concept="",
-                )
+                if os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "1") != "1":
+                    self.memory.record_failed_direction(
+                        hypothesis_text=hypothesis[:200],
+                        reason=str(_fail_reason),
+                        run_id=getattr(self, "_run_id", "") or "",
+                        persona_id=getattr(self, "_last_persona", None),
+                        math_concept="",
+                    )
             except Exception:
                 logger.debug(
                     "record_failed_direction failed, fallback to legacy path",
@@ -5011,10 +5014,9 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                 exc_info=True,
             )
 
-        # P14: EvolutionManager.record_outcome — flag on 时把 outcome 统一记到
-        # FailedDirectionStore + SkillEvolutionLayer. flag off (默认) 不调,
-        # 走原分散路径 (P12 record_failed_direction + evolution.logger.log_tool_call).
-        if os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "0") == "1":
+        # P14: EvolutionManager.record_outcome — 默认 ON, 把 outcome 统一记到
+        # FailedDirectionStore + SkillEvolutionLayer. flag off 回退分散路径.
+        if os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "1") == "1":
             try:
                 from huginn.evolution.manager import EvolutionManager
 
