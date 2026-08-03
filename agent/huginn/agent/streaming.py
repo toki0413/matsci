@@ -61,6 +61,31 @@ _DEFAULT_ROOT_MARKERS = (
 # 60s 默认值覆盖大多数 LLM 首 token 延迟 + 中间停顿. 调高无意义, 调低误杀.
 _STREAM_IDLE_TIMEOUT = float(os.environ.get("HUGINN_STREAM_IDLE_TIMEOUT", "60"))
 
+# ainvoke 超时随 thinking 强度放宽 — 我们鼓励深度思考 (thinking=high) 却给
+# 固定 300s, 长推理一超就 kill, 自相矛盾. 按档位给足预算, 避免"三思而后行
+# 却被限时"的错配. ponytail: 离散档位映射, env 可覆盖. ceiling: 连续缩放需
+# 按 max_tokens / context 动态估算, 留作升级.
+def _thinking_scale_timeout() -> float:
+    t = os.environ.get("HUGINN_THINKING", "").lower()
+    if t in ("high", "deep", "max", "extreme"):
+        return 900.0
+    if t in ("medium", "med", "normal"):
+        return 600.0
+    return 300.0
+
+
+def _thinking_stream_idle() -> float:
+    """流式空闲超时也随 thinking 放宽 — 深度推理时首 token 前的 thinking 阶段
+    可能长时间无 content chunk, 60s 会误杀后降级 ainvoke. 与 ainvoke 超时同源,
+    但只有 ainvoke 的 1/5 (chunk 间空闲比整段推理短). ponytail: 离散档位.
+    """
+    t = os.environ.get("HUGINN_THINKING", "").lower()
+    if t in ("high", "deep", "max", "extreme"):
+        return 180.0
+    if t in ("medium", "med", "normal"):
+        return 120.0
+    return _STREAM_IDLE_TIMEOUT
+
 
 async def _astream_with_watchdog(
     aiter: AsyncIterator,
@@ -1379,10 +1404,15 @@ class StreamingMixin:
                                     raise InterruptCancelled(interrupt.get("reason", ""))
                         else:
                             # A3: 流式 watchdog 包裹 — 空闲超时后走 ainvoke 降级.
-                            async for mode, data in _astream_with_watchdog(graph.astream(
-                                inputs, config,
-                                stream_mode=["values", "messages"],
-                            )):
+                            # thinking=high 时首 token 前的深度推理可能 >60s 无 chunk,
+                            # 用随 thinking 放宽的空闲超时, 减少不必要的降级.
+                            async for mode, data in _astream_with_watchdog(
+                                graph.astream(
+                                    inputs, config,
+                                    stream_mode=["values", "messages"],
+                                ),
+                                idle_timeout=_thinking_stream_idle(),
+                            ):
                                 if mode == "messages":
                                     chunk, _meta = data
                                     chunk_type = type(chunk).__name__
@@ -1435,10 +1465,10 @@ class StreamingMixin:
                         # A3-fix: ainvoke 也加超时. DeepSeek 高负载时首 token >60s 触发
                         # 流式 watchdog, 但 ainvoke 的 HTTP 请求无默认 timeout → 永久挂起
                         # → 4h 外部超时 kill 进程, meta.json 都来不及写.
-                        # 300s 覆盖 thinking=high 的长推理; 超时抛 TimeoutError 给上层重试.
+                        # 超时随 thinking 强度放宽 (high→900s), 覆盖深度推理; env 可覆盖.
                         _ainvoke_timeout = float(os.environ.get(
                             "HUGINN_AINVOKE_TIMEOUT",
-                            str(_STREAM_IDLE_TIMEOUT * 5),
+                            str(_thinking_scale_timeout()),
                         ))
                         try:
                             final_state = await asyncio.wait_for(
