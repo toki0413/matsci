@@ -6326,6 +6326,123 @@ Please modify the code to address this task."""
             logger.debug("episodic replay failed (non-fatal)", exc_info=True)
             return ""
 
+    def _build_pmk_block(self, context: dict[str, Any]) -> str:
+        """PMK 三路立场注入决策上下文. flag off 或全空时返回空串.
+
+        接通死代码: build_pmk_state + build_pmk_text + _check_pmk_consistency.
+        INCONSISTENT 时追加 abductive hint + 写回 episodic shard (Step 2+3).
+        ponytail: hypothesize 和 plan 同一 iteration 都调本方法, side-effect
+        (hint append + episodic write) 只在首次调用跑一次, 避免重复污染.
+        """
+        if os.environ.get("HUGINN_PMK_INJECT", "0").lower() not in ("1", "true"):
+            return ""
+
+        try:
+            from huginn.autoloop.cognitive_loop import build_pmk_state
+            from huginn.runtime.task_lifecycle import _check_pmk_consistency
+
+            # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
+            persona_obj = None
+            try:
+                persona_obj = self._get_persona_manager().get("default")
+            except Exception:
+                pass
+
+            last_eval = self._evals_history[-1] if self._evals_history else None
+            kb = self._get_kb()
+            since = getattr(self, "_run_start_iso", None)
+
+            pmk_state = build_pmk_state(
+                persona_obj, last_eval, kb,
+                since=since,
+                mem_mgr=getattr(self, "memory", None),
+                timeseries_ctx=self._format_timeseries_context() or None,
+            )
+            if not pmk_state:
+                return ""
+
+            # 一致性检查 (Step 2 入口) — 含 timeseries 路, 比 build_pmk_text 内部
+            # 的 3 路检查更全. 这里的判定驱动 hint + shard side-effect.
+            is_inconsistent, reason = _check_pmk_consistency(pmk_state)
+
+            # side-effect 每 iteration 只跑一次: hypothesize + plan 都调本方法,
+            # 不 guard 会重复 append hint + 重复写 episodic entry.
+            cur_iter = getattr(self, "_iteration", 0)
+            if cur_iter != getattr(self, "_pmk_side_effect_iter", -1):
+                if is_inconsistent:
+                    conflict_hint = f"[PMK CONFLICT] {reason[:200]}"
+                    self._speculator_hint = (
+                        (self._speculator_hint + f"\n{conflict_hint}\n").strip()
+                        if self._speculator_hint else f"{conflict_hint}\n"
+                    )
+                    logger.info("PMK conflict detected: %s", reason[:100])
+                    self._write_pmk_conflict_to_episodic(pmk_state, reason)
+                self._pmk_side_effect_iter = cur_iter
+
+            # 格式化给 LLM 看 — 接通 build_pmk_text (死代码变活).
+            # build_pmk_text 不读 self 实例状态, 用 __new__ 绕过 __init__ (跟
+            # selfcheck 同模式). ponytail: build_pmk_text 内部再查一次一致性
+            # (只 3 路, 不含 timeseries), 标签可能跟上面的 is_inconsistent 略有
+            # 出入 — 接受, 不重写 build_pmk_text. 升级路径: 给它加 timeseries 参数.
+            try:
+                from huginn.context_builder import ContextBuilder
+                ctx = ContextBuilder.__new__(ContextBuilder)
+                pmk_text = ctx.build_pmk_text(
+                    persona=persona_obj,
+                    last_step_evaluation=last_eval,
+                    kb=kb,
+                )
+                if not pmk_text:
+                    pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
+            except Exception:
+                pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
+
+            return pmk_text
+
+        except Exception:
+            logger.debug("PMK block failed (non-fatal)", exc_info=True)
+            return ""
+
+    def _format_pmk_fallback(self, pmk_state: dict, inconsistent: bool) -> str:
+        """build_pmk_text 不可用时的降级格式化."""
+        label = "INCONSISTENT" if inconsistent else "consistent"
+        lines = [f"### PMK ({label})"]
+        for src in ("persona", "memory", "kb", "timeseries"):
+            if pmk_state.get(src):
+                lines.append(f"  {src}: {pmk_state[src][:150]}")
+        return "\n".join(lines) + "\n"
+
+    def _write_pmk_conflict_to_episodic(self, pmk_state: dict, reason: str):
+        """PMK 冲突写入 episodic shard, 下一轮 Memory 路可见. 失败非致命.
+
+        复用 reflect 阶段那套 _episodic_writer — 没有就提前建好缓存到 self,
+        reflect 检查到已存在会直接复用. 不调 flush_and_archive, 避免归档
+        live writer 正在写的 shard (会破坏其 _fh 状态, 丢后续 entry).
+        """
+        try:
+            iter_n = getattr(self, "_iteration", 0)
+            entry = {
+                "iter": iter_n,
+                "action": "pmk_conflict",
+                "pmk_conflict": reason[:300],
+                "pmk_state": {k: v[:200] for k, v in pmk_state.items()},
+                "val_status": "failed",
+                "mode": getattr(self, "_last_failure_mode", "") or "",
+                "phase": getattr(self, "_current_phase", "") or "",
+            }
+            writer = getattr(self, "_episodic_writer", None)
+            if writer is None:
+                from huginn.memory.episodic_shard import EpisodicShardWriter
+                writer = EpisodicShardWriter(
+                    workspace=self.workspace,
+                    task_id=str(getattr(self, "_run_id", None) or "default"),
+                )
+                self._episodic_writer = writer
+            writer.append(iter_n, entry)
+            logger.debug("PMK conflict written to episodic shard")
+        except Exception:
+            logger.debug("PMK conflict write to episodic failed (non-fatal)", exc_info=True)
+
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
         # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
@@ -6341,6 +6458,10 @@ Please modify the code to address this task."""
         replay_block = self._build_episodic_replay_block(context)
         if replay_block:
             hint_block = (hint_block + f"\n### Episodic Replay\n{replay_block}") if hint_block else f"\n### Episodic Replay\n{replay_block}"
+        # PMK 三路立场 + 一致性标签 (HUGINN_PMK_INJECT off 或全空时返空串, 不影响 prompt)
+        pmk_block = self._build_pmk_block(context)
+        if pmk_block:
+            hint_block = (hint_block + f"\n### PMK\n{pmk_block}") if hint_block else f"\n### PMK\n{pmk_block}"
         # P1 Task 6: curiosity bonus — self_model 里预测不准的簇, 喂给 hypothesize
         # 让 agent 主动 seek "哪类问题我长期搞不定", 而非等 stagnation 才 escape.
         # toggle HUGINN_CURIOSITY_HINT 默认 off, off 时 _build_curiosity_block 返空.
