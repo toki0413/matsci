@@ -238,6 +238,8 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 ("mem", mem_block),
                 ("pm", pm_block),
                 ("metacog", metacog_block),
+                # PMK 三路立场 + 一致性标签 (HUGINN_PMK_INJECT off 或全空时返空串)
+                ("pmk", self._build_pmk_block(context)),
                 ("skill", skill_hints + patch_hints),
                 ("composite", composite_block),
                 ("pipeline", pipeline_block),
