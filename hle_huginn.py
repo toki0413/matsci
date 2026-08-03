@@ -40,6 +40,16 @@ try:
 except ImportError:
     pass
 
+# reasoner (R1) judge 输出含 <think>...</think>, str2dict 找不到 JSON 边界.
+try:
+    import structai.llm_api as _sai
+    _orig_str2dict = _sai.str2dict
+    _sai.str2dict = lambda s: _orig_str2dict(
+        s.split("</think>", 1)[-1] if "</think>" in s else s
+    )
+except ImportError:
+    pass
+
 # ponytail: 去掉 file_write_tool — Windows 路径 bug, 答题用不到写文件.
 # 含图题: agent 内置 vision 路由 (huginn.vision) 会自动处理消息里的 image,
 # 不需要在 tool_filter 显式列; 但需要 image_index/visualize_tool 做后处理.

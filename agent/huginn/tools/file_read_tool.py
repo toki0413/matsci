@@ -108,20 +108,31 @@ class FileReadTool(HuginnTool):
                 pdf_text = _extract_text(str(path), content)
                 if pdf_text:
                     lines = pdf_text.splitlines()
+                    total = len(lines)
+                    # 支持 line_offset/n_lines 读 PDF 中间段落 — 之前固定从第 1 行
+                    # 截断, agent 读不到 Methods 中间部分, 只能反复 fetch 外部论文
+                    # (网络不稳定时崩溃). 现在 agent 可分页读完整 PDF.
+                    start = input_data.line_offset or 1
+                    end = (
+                        total + 1
+                        if input_data.n_lines is None
+                        else start + input_data.n_lines
+                    )
+                    selected = lines[start - 1 : end - 1]
                     selected, was_truncated = self._apply_token_cap(
-                        lines, 1, max_tokens, ".pdf"
+                        selected, start, max_tokens, ".pdf"
                     )
                     numbered = "\n".join(
-                        f"{i + 1:4d}  {line}" for i, line in enumerate(selected)
+                        f"{i + start:4d}  {line}" for i, line in enumerate(selected)
                     )
-                    msg = f"Read PDF ({len(pdf_text)} chars extracted)."
+                    msg = f"Read PDF ({len(pdf_text)} chars extracted, lines {start}-{start + len(selected) - 1} of {total})."
                     if was_truncated:
                         msg += f" Truncated to stay under {max_tokens} tokens."
                     return ToolResult(
                         data={
                             "file_path": str(path),
-                            "total_lines": len(lines),
-                            "start_line": 1,
+                            "total_lines": total,
+                            "start_line": start,
                             "content": numbered,
                             "message": msg,
                         },

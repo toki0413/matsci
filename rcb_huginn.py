@@ -366,20 +366,47 @@ def main():
         final = "" if rc == 0 else f"rcb_runner.run exited rc={rc}"
     except asyncio.TimeoutError:
         final = f"[TIMEOUT after {args.timeout}s]"
+        # 第三层反射防御: wait_for 取消 run() task, run() 内的 _stream_chat
+        # finally 块虽会执行, 但 CancelledError 传播链上 streaming.py 的
+        # async generator finally 不保证跑. 在入口拿全局 agent 再调一次,
+        # 确保 evolution 把最后的 tool 失败写进 tool_calls.jsonl.
+        try:
+            from huginn.cli.rcb_runner import _last_agent_for_reflection as _agent_ref
+            if _agent_ref is not None and hasattr(_agent_ref, "_run_post_turn_reflection"):
+                _agent_ref._run_post_turn_reflection()
+                print("[RCB-ENTRY] post-timeout reflection done", flush=True)
+        except Exception as _re:
+            print(f"[RCB-ENTRY] post-timeout reflection error: {_re}", flush=True)
     except Exception as _rcb_e:
         import traceback as _tb
         _tb_str = _tb.format_exc()
         final = f"[RCB ERROR: {type(_rcb_e).__name__}: {_rcb_e}]\n{_tb_str[-500:]}"
         print(final, file=sys.stderr, flush=True)
-    elapsed = round(time.time() - start)
-
-    report_path = workspace / "report" / "report.md"
-    report_exists = report_path.exists()
-    print(f"[RCB] Done in {elapsed}s. Report exists: {report_exists}")
-
-    if report_exists:
-        size = report_path.stat().st_size
-        print(f"[RCB] Report size: {size} bytes")
+    finally:
+        # meta.json 必须在 finally 写: asyncio.run 清理时可能挂起 (task 内
+        # ainvoke 无法立即取消), 外部 kill 后 L420 没机会执行.
+        elapsed = round(time.time() - start)
+        report_path = workspace / "report" / "report.md"
+        report_exists = report_path.exists()
+        print(f"[RCB] Done in {elapsed}s. Report exists: {report_exists}", flush=True)
+        if report_exists:
+            print(f"[RCB] Report size: {report_path.stat().st_size} bytes", flush=True)
+        meta = {
+            "task_id": args.task,
+            "agent_name": "Huginn",
+            "duration_seconds": elapsed,
+            "report_exists": report_exists,
+            "final_output_preview": (final[:500] if final else ""),
+            "agent_model": os.environ.get("HUGINN_MODEL", "unknown"),
+            "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
+            "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
+        }
+        try:
+            (workspace / "_huginn_meta.json").write_text(
+                json.dumps(meta, indent=2, ensure_ascii=False)
+            )
+        except Exception:
+            pass
 
     if args.score and report_exists:
         print("[RCB] Scoring...")
@@ -393,20 +420,6 @@ def main():
                     print(f"  [{item['type']}] w={item['weight']} score={item['score']} :: {item['content'][:80]}")
         except Exception as exc:
             print(f"[RCB] Scoring failed: {exc}")
-
-    # 写 meta
-    meta = {
-        "task_id": args.task,
-        "agent_name": "Huginn",
-        "duration_seconds": elapsed,
-        "report_exists": report_exists,
-        "final_output_preview": final[:500] if final else "",
-        # P0-6: 模型配置显性化
-        "agent_model": os.environ.get("HUGINN_MODEL", "unknown"),
-        "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
-        "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
-    }
-    (workspace / "_huginn_meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
 
     if _tee:
         _tee.close()
