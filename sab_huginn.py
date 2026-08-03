@@ -48,6 +48,17 @@ try:
 except ImportError:
     pass
 
+# reasoner (R1) judge 输出含 <think>...</think>, str2dict 找不到 JSON 边界.
+# 剥离 think 块, 只留 </think> 后的 JSON.
+try:
+    import structai.llm_api as _sai
+    _orig_str2dict = _sai.str2dict
+    _sai.str2dict = lambda s: _orig_str2dict(
+        s.split("</think>", 1)[-1] if "</think>" in s else s
+    )
+except ImportError:
+    pass
+
 # ponytail: 不含 file_write_tool/file_edit_tool — 它们在 Windows 上路径解析有 bug
 # (agent 传 /workspace/xxx 虚拟路径, 实际写到别处). 用 code_tool 的 open() 写文件更稳.
 SAB_TOOL_FILTER = [
@@ -276,8 +287,7 @@ async def run_agent(workspace: Path, meta: dict, timeout: int, max_tool_calls: i
 
 def score_submission(workspace: Path, meta: dict) -> dict:
     """LLM judge 评估 agent 生成的代码质量."""
-    from structai import LLMAgent
-    from huginn.config import HuginnConfig
+    from judge_helper import judge_score
 
     pred_name = f"pred_{meta['gold_program_name']}"
     pred_path = workspace / pred_name
@@ -286,28 +296,8 @@ def score_submission(workspace: Path, meta: dict) -> dict:
 
     code = pred_path.read_text(encoding="utf-8", errors="replace")
 
-    cfg = HuginnConfig.from_env()
-    judge = LLMAgent(
-        api_key=cfg.resolved_api_key or os.environ.get("JUDGE_API_KEY", ""),
-        api_base=cfg.base_url or os.environ.get("JUDGE_API_BASE", ""),
-        model_version=os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
-        system_prompt=(
-            "You are grading a scientific Python program. Score it on: "
-            "(1) correctness of approach, (2) output format adherence, "
-            "(3) code quality (error handling, readability), "
-            "(4) scientific soundness (noise handling, edge cases). "
-            "Be strict. The program cannot be executed (no real dataset), "
-            "so judge by code inspection."
-        ),
-        temperature=0,
-        max_tokens=400,
-        time_limit=120,
-        max_try=3,
-    )
-
     # P0-1: 不截断. 之前 code[:8000] 让 judge 只见 59.5% 文件,
-    # 评语"truncated/无main/未保存"全是测量伪影. judge max_tokens=400 限制了
-    # 输出长度, 输入侧不该再砍.
+    # 评语"truncated/无main/未保存"全是测量伪影.
     judge_input_chars = len(code)
     prompt = (
         f"## Task\n{meta['task_inst']}\n\n"
@@ -323,26 +313,27 @@ def score_submission(workspace: Path, meta: dict) -> dict:
         f"\"quality\": 0-20, \"science\": 0-20}}}}"
     )
 
-    try:
-        result = judge(
-            prompt,
-            return_example={
-                "reasoning": "str", "score": 0,
-                "breakdown": {"correctness": 0, "output": 0, "quality": 0, "science": 0},
-            },
-            max_try=2,
-        )
-        if isinstance(result, dict):
-            score = max(0, min(100, int(result.get("score", 0))))
-            reasoning = str(result.get("reasoning", ""))
-            breakdown = result.get("breakdown", {})
-        else:
-            score = 0
-            reasoning = "parse error"
-            breakdown = {}
-    except Exception as exc:
+    result = judge_score(
+        prompt,
+        system_prompt=(
+            "You are grading a scientific Python program. Score it on: "
+            "(1) correctness of approach, (2) output format adherence, "
+            "(3) code quality (error handling, readability), "
+            "(4) scientific soundness (noise handling, edge cases). "
+            "Be strict. The program cannot be executed (no real dataset), "
+            "so judge by code inspection."
+        ),
+        max_tokens=4096,
+        max_try=3,
+    )
+
+    if isinstance(result, dict):
+        score = max(0, min(100, int(result.get("score", 0))))
+        reasoning = str(result.get("reasoning", ""))
+        breakdown = result.get("breakdown", {})
+    else:
         score = 0
-        reasoning = f"judge error: {exc}"
+        reasoning = "judge returned None"
         breakdown = {}
 
     return {
@@ -351,6 +342,7 @@ def score_submission(workspace: Path, meta: dict) -> dict:
         "gold_program_name": meta["gold_program_name"],
         "pred_lines": len(code.splitlines()),
         "judge_input_chars": judge_input_chars,
+        "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-v4-flash"),
         "score": score,
         "breakdown": breakdown,
         "reasoning": reasoning[:2000],
