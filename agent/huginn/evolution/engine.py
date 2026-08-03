@@ -206,6 +206,35 @@ class EvolutionEngine:
                 self.rules.append(rule)
                 new_rules.append(rule)
 
+        # 桥 I: stable_principles → evolution rules. 蒸馏出的原则作为高置信度
+        # rule 注入规则库, 让 PMK/autoloop 消费 evolution_rules 时能感知到
+        # 长期原则. ponytail: 原则文本同时当 trigger 和 action, 不做语义拆分.
+        # ceiling: 纯文本匹配, 不捕捉原则的适用条件. 升级: LLM 抽 trigger/condition.
+        try:
+            from huginn.memory.longterm import load_stable_principles
+            _principles = load_stable_principles()
+        except Exception:
+            _principles = []
+        _existing_ids = {r.rule_id for r in self.rules}
+        _existing_triggers = {r.trigger for r in self.rules}
+        for i, p in enumerate(_principles):
+            if not p or not p.strip():
+                continue
+            _rid = f"principle_{i}_{hash(p) & 0xFFFFFFFF:x}"
+            if _rid in _existing_ids or p in _existing_triggers:
+                continue
+            rule = EvolutionRule(
+                rule_id=_rid,
+                rule_type="stable_principle",
+                trigger=p,
+                action=p,
+                source="stable_principles",
+                confidence=0.9,
+                tags=["stable_principle", "auto_promoted"],
+            )
+            self.rules.append(rule)
+            new_rules.append(rule)
+
         if new_rules:
             self._prune_rules()
             self._save_rules()
