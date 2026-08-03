@@ -5553,6 +5553,206 @@ If you genuinely can't find any blind spots (unlikely), output: NONE"""
 
         return results
 
+    # ── Next-step advisor (post-task recommend) ───────────────────
+    # 轻量: 任务完成后, 不是裁判姿态, 而是科研伴侣姿态给 2-3 个具体方向 + 一个自由出口.
+    # 触发条件 (任一满足):
+    #   - iteration_history 最近 5 轮里 failed 同一方向 >=2 次
+    #   - _physical_timeseries 有反常 (peak_drift 或 v_decay 绝对值 > 0.01)
+    #   - prev_run_context.outcome == inconclusive
+    # 没信号就静默, 符合"不竞争注意力"原则.
+    # 默认只写 memory (category=next_step_hint), HUMAN_PAUSE=1 才走 pause_for_decision.
+
+    _NEXT_STEP_ADVISOR_PROMPT = """你刚结束一段研究任务, 要给用户推荐下一步. 你不是裁判, 是科研伴侣.
+
+姿态原则:
+- 不说"你应该"、"建议你"、"最优选择"
+- 说"我注意到 X"、"这里可能值得 Y"、"你对 Z 有感觉吗"
+- 捕捉用户初发的模糊直觉, 不强迫收敛
+- 给 2-3 个具体选项 + 1 个"我自己有想法"的出口
+
+输入上下文:
+- 本轮假设: {hypothesis}
+- 本轮结果: {outcome}
+- iteration_history 反常点: {anomalies}
+- _physical_timeseries 反常: {ts_anomaly}
+- prev_run_context 尾巴: {prev_tail}
+
+输出格式 (markdown, 简洁, 总长 < 200 字):
+
+## 本轮看到
+- 一句话 outcome
+- 一句话反常点 (没有就省略)
+
+## 可能的下一步
+
+**A. 方向名**
+  基于: 信号来源
+  代价: cost_tier 或 walltime 估计
+  价值: 一句话
+  风险: 一句话
+
+**B. 方向名**
+  ...
+
+**C. 方向名**
+  ...
+
+**D. 我自己有想法**
+  你对某个方向有直觉吗? 哪怕还没成形也行.
+
+约束:
+- A/B/C 不能来自同一信号源
+- 至少一个"深化"方向 + 一个"横向"方向
+- 若有 _physical_timeseries 反常, 必须有一条推荐是"验证这个反常"
+- 若 prev_run_context.outcome = inconclusive, 必须有一条是"接着上轮尾巴"
+- D 永远是用户自由出口
+"""
+
+    def _has_post_task_signal(
+        self, state: Any, prev_outcome: str = "",
+    ) -> tuple[bool, str]:
+        """检查是否值得给用户推 next-step 推荐. 返回 (has_signal, reason).
+
+        ponytail: 三个触发条件, 任一满足即推. 升级路径: 加 LLM 判定信号质量.
+        """
+        # 1. iteration_history 最近 5 轮里 failed 同一方向 >=2 次
+        _hist = getattr(state, "iteration_history", []) or []
+        if _hist:
+            _recent = _hist[-5:]
+            _failed = [h for h in _recent if h.get("val_status") == "failed"]
+            if len(_failed) >= 2:
+                _modes = [h.get("plan_mode") or h.get("mode") or "" for h in _failed]
+                _mode_counts: dict[str, int] = {}
+                for m in _modes:
+                    _mode_counts[m] = _mode_counts.get(m, 0) + 1
+                _max_count = max(_mode_counts.values()) if _mode_counts else 0
+                if _max_count >= 2:
+                    return True, f"iteration_history: {_max_count}x failed in same mode"
+
+        # 2. _physical_timeseries 反常 (peak_drift 或 v_decay 绝对值 > 0.01)
+        _ts_list = getattr(self, "_physical_timeseries", []) or []
+        for _ts in _ts_list[-5:]:
+            if not _ts.get("spatial"):
+                continue
+            _data = _ts.get("data") or []
+            if len(_data) < 2:
+                continue
+            # 三元组 (t, r, v) — 算首末帧 peak v 差
+            _frames: dict = {}
+            for entry in _data:
+                if isinstance(entry, (list, tuple)) and len(entry) >= 3:
+                    _frames.setdefault(entry[0], []).append(entry[2])
+            if len(_frames) >= 2:
+                _ts_keys = sorted(_frames.keys())
+                _first_peak = max(_frames[_ts_keys[0]]) if _frames[_ts_keys[0]] else 0
+                _last_peak = max(_frames[_ts_keys[-1]]) if _frames[_ts_keys[-1]] else 0
+                if abs(_last_peak - _first_peak) > 0.01:
+                    return True, f"timeseries: peak_v decay {_last_peak - _first_peak:+.3f}"
+
+        # 3. prev_run_context.outcome == inconclusive
+        if prev_outcome == "inconclusive":
+            return True, "prev_run_context.outcome=inconclusive"
+
+        return False, ""
+
+    async def _advisor_post_task_recommend(
+        self, run_id: str, objective: str, cog: dict, state: Any,
+        prev_outcome: str = "",
+    ) -> None:
+        """任务完成后给用户推 next-step 推荐.
+
+        轻量: 默认只写 memory (category=next_step_hint), HUMAN_PAUSE=1 才走
+        pause_for_decision 让用户选.
+
+        ponytail: 不每次都推, 触发条件见 _has_post_task_signal. 升级路径:
+        让 LLM 判断信号质量, 避免低质推荐打扰用户.
+        """
+        try:
+            _has_signal, _reason = self._has_post_task_signal(state, prev_outcome)
+            if not _has_signal:
+                return
+
+            # 构造 prompt 上下文
+            _hypothesis = (cog.get("hypothesis") or "")[:300]
+            _outcome = prev_outcome or (
+                "completed" if (cog.get("validation") or {}).get("tests_passed")
+                else "inconclusive"
+            )
+
+            # iteration_history 反常点 (最近 5 轮 failed 方向)
+            _hist = getattr(state, "iteration_history", []) or []
+            _anomalies = ""
+            if _hist:
+                _recent_failed = [
+                    f"iter{h.get('iter')}: {h.get('advice', '')[:80]}"
+                    for h in _hist[-5:]
+                    if h.get("val_status") == "failed"
+                ]
+                if _recent_failed:
+                    _anomalies = "; ".join(_recent_failed[:3])
+
+            # _physical_timeseries 反常摘要
+            _ts_anomaly = ""
+            _ts_list = getattr(self, "_physical_timeseries", []) or []
+            if _ts_list:
+                _ts_ctx = self._format_timeseries_context()
+                if _ts_ctx:
+                    _ts_anomaly = _ts_ctx[:300]
+
+            # prev_run_context 尾巴
+            _prev_tail = (getattr(self, "_prev_run_context", "") or "")[:200]
+
+            prompt = self._NEXT_STEP_ADVISOR_PROMPT.format(
+                hypothesis=_hypothesis,
+                outcome=_outcome,
+                anomalies=_anomalies or "(none)",
+                ts_anomaly=_ts_anomaly or "(none)",
+                prev_tail=_prev_tail or "(none)",
+            )
+
+            response = await self._llm_chat(prompt, persona_name="reviewer", task="reasoning")
+            if not response or not response.strip():
+                return
+
+            # 写入 memory (category=next_step_hint) — 用户问"接下来呢"时召回
+            _mem = getattr(self, "memory", None)
+            if _mem is not None:
+                try:
+                    _mem.remember(
+                        content=response.strip(),
+                        category="next_step_hint",
+                        memory_type="next_step_hint",
+                        metadata={
+                            "run_id": run_id,
+                            "objective": objective[:200],
+                            "outcome": _outcome,
+                            "trigger_reason": _reason,
+                        },
+                    )
+                except Exception:
+                    logger.debug("next_step_hint memory write failed (non-fatal)", exc_info=True)
+
+            # HUMAN_PAUSE=1 时走 pause_for_decision 让用户选
+            _human_pause = os.environ.get("HUGINN_AUTOLOOP_HUMAN_PAUSE", "0") == "1"
+            if _human_pause:
+                _options = [
+                    {"id": "A", "label": "选 A 方向 (见推荐)", "pros": "深化本轮", "cons": "可能 local minimum"},
+                    {"id": "B", "label": "选 B 方向 (见推荐)", "pros": "横向探索", "cons": "换方向成本"},
+                    {"id": "C", "label": "选 C 方向 (见推荐)", "pros": "验证反常", "cons": "可能 false alarm"},
+                    {"id": "D", "label": "我自己有想法", "pros": "用户直觉", "cons": "需要用户输入"},
+                ]
+                _step_id = getattr(self, "_iteration", 0) or 0
+                try:
+                    await self._await_human_decision_via_inbox(
+                        f"本轮结束, 推荐下一步 (触发: {_reason}):\n\n{response[:500]}",
+                        _options, _step_id,
+                    )
+                except Exception:
+                    logger.debug("pause_for_decision failed (non-fatal)", exc_info=True)
+
+        except Exception:
+            logger.debug("_advisor_post_task_recommend failed (non-fatal)", exc_info=True)
+
     # ── Deviation log ─────────────────────────────────────────────
 
     def _log_deviation(
@@ -6071,6 +6271,61 @@ Please modify the code to address this task."""
             + "\n".join(_lines) + "\n"
         )
 
+    @property
+    def _episodic_replay(self):
+        """情景重放: 懒加载 + 只在 flag 打开时构建. 失败非致命.
+
+        先建 EpisodicIndexStore (读 shard + 编码), 再包一层 EpisodicReplay.
+        build 返 0 (没历史) 时直接放弃, 不留空壳.
+        """
+        if not hasattr(self, "_episodic_replay_obj"):
+            self._episodic_replay_obj = None
+            if os.environ.get("HUGINN_EPISODIC_REPLAY", "0").lower() in ("1", "true"):
+                try:
+                    from huginn.metacog.episodic_index import EpisodicIndexStore
+                    from huginn.metacog.episodic_replay import EpisodicReplay
+                    run_id = getattr(self, "_run_id", None) or "default"
+                    store = EpisodicIndexStore(self.workspace, str(run_id))
+                    if store.build() == 0:
+                        self._episodic_replay_obj = None
+                    else:
+                        self._episodic_replay_obj = EpisodicReplay(store)
+                except Exception:
+                    logger.debug(
+                        "episodic replay init failed (non-fatal)", exc_info=True
+                    )
+                    self._episodic_replay_obj = None
+        return self._episodic_replay_obj
+
+    def _build_episodic_replay_block(self, context: dict[str, Any]) -> str:
+        """cue-based 情景重放: 从索引采样最相似情境, 注入其 advice 给 decider.
+
+        flag off 或索引空时返回空串, 不影响现有流程.
+        """
+        replay = self._episodic_replay
+        if replay is None:
+            return ""
+        try:
+            cue = {
+                "iter": context.get("iter", 0),
+                "mode": context.get("mode", ""),
+                "phase": context.get("phase", ""),
+                "val_status": context.get("val_status", ""),
+                "structure_desc": context.get("structure_desc"),
+            }
+            replays = replay.replay(cue, top_k=3)
+            if not replays:
+                return ""
+            lines = [
+                f"[{r['replay_type']}] iter={r['iter']} val={r['val_status']} "
+                f"dist={r.get('distance', '?')}: {r['advice']}"
+                for r in replays
+            ]
+            return "\n".join(lines) + "\n"
+        except Exception:
+            logger.debug("episodic replay failed (non-fatal)", exc_info=True)
+            return ""
+
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
         # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
@@ -6082,6 +6337,10 @@ Please modify the code to address this task."""
                 "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
                 "(方法族/等价性陷阱/连通分量/缺口).\n"
             )
+        # episodic replay: 回溯最相似的成功/失败情境, 复用方法或避免同样的失败
+        replay_block = self._build_episodic_replay_block(context)
+        if replay_block:
+            hint_block = (hint_block + f"\n### Episodic Replay\n{replay_block}") if hint_block else f"\n### Episodic Replay\n{replay_block}"
         # P1 Task 6: curiosity bonus — self_model 里预测不准的簇, 喂给 hypothesize
         # 让 agent 主动 seek "哪类问题我长期搞不定", 而非等 stagnation 才 escape.
         # toggle HUGINN_CURIOSITY_HINT 默认 off, off 时 _build_curiosity_block 返空.
