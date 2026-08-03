@@ -397,6 +397,8 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         # 执行前预测, 执行后对比, 误差驱动探索. 升级路径: 训练真正的编码器+预测器.
         self._current_prediction: str = ""
         self._last_surprise: float = 0.0
+        # 桥 E: 最近一轮 apply_heuristic_fix 命中的 rule_id, 进 _snapshot 供 episodic replay.
+        self._last_rule_hit_id: str = ""
         # surprise 历史: 连续低 surprise = 心智模型已收敛, 可提前终止.
         # Chemputer 启发: Jaccard 稳定 = 反应完成; 这里 = 理解完成.
         # 每条存 (worst, cross_perturbation_std): std 高 = 测量噪声大, 需更严阈值.
@@ -2669,11 +2671,14 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         # H2: variant 失败不走 evolved_fix (P6 guard) — 直接回 bandit loop 记录
         if isinstance(error_result, dict) and error_result.get("_variant_id"):
             return None
+        # 桥 E: 默认未命中, 命中时覆盖. 放这儿让 variant/异常/miss 都清空.
+        self._last_rule_hit_id = ""
         try:
             evolution = self._get_evolution()
             error_str = str(error_result.get("error", ""))
             fix = evolution.apply_heuristic_fix(tool_name, tool_input, error_str)
             if fix:
+                self._last_rule_hit_id = fix.get("rule_id", "")
                 patched_desc = fix.get("description")
                 if not patched_desc:
                     logger.warning("evolved fix hit but no description, skipping")
@@ -4580,6 +4585,23 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                 "error in _learn: memory.remember iteration failed", exc_info=True
             )
 
+        # 桥 A: surprise → hypothesis 触发. 高 surprise 说明结构预测跟实际对不上,
+        # 喂回 _hypothesize 生成解释差异的新假设 (接通 trigger_alignment_surprise_hypothesis).
+        # flag HUGINN_ALIGNMENT_SURPRISE_TRIGGER 默认 off, off 时行为不变. 失败非致命.
+        # ponytail: 复用 _last_surprise (validate 已算好), 不重算. 阈值 2.0 跟 spec 对齐.
+        if os.environ.get("HUGINN_ALIGNMENT_SURPRISE_TRIGGER", "0").lower() in ("1", "true"):
+            _surprise = getattr(self, "_last_surprise", 0.0)
+            if _surprise > 2.0:
+                try:
+                    await self.trigger_alignment_surprise_hypothesis(
+                        [(hypothesis[:80], _surprise)]
+                    )
+                except Exception:
+                    logger.debug(
+                        "surprise → hypothesis trigger failed (non-fatal)",
+                        exc_info=True,
+                    )
+
         # 奖励回流: 把 R_phys 喂给 evolution engine, 驱动基于奖励的进化
         # 这是阶段4 单轨的核心闭环——物理校验分数真正影响 agent 后续行为
         if r_phys is not None:
@@ -6377,6 +6399,28 @@ Please modify the code to address this task."""
                     )
                     logger.info("PMK conflict detected: %s", reason[:100])
                     self._write_pmk_conflict_to_episodic(pmk_state, reason)
+                    # 桥 B: PMK 冲突 → evolution 触发. 把冲突作为一种"认知失败"
+                    # 喂给 evolution logger, 让 get_failure_patterns 能提取 PMK
+                    # 冲突模式 (≥2 次同类冲突就生成 heuristic 规则). 失败非致命,
+                    # 不破坏现有 pause 路径. ponytail: 复用 _get_evolution 懒加载.
+                    try:
+                        _evo = self._get_evolution()
+                        _evo.logger.log_tool_call(
+                            session_id=f"pmk_{cur_iter}",
+                            tool_name="pmk_conflict",
+                            tool_input={
+                                "reason": reason[:200],
+                                "pmk_state": {k: v[:100] for k, v in pmk_state.items()},
+                            },
+                            result=None,
+                            error=reason[:300],
+                        )
+                        _evo.evolve_from_failures()
+                    except Exception:
+                        logger.debug(
+                            "PMK → evolution bridge failed (non-fatal)",
+                            exc_info=True,
+                        )
                 self._pmk_side_effect_iter = cur_iter
 
             # 格式化给 LLM 看 — 接通 build_pmk_text (死代码变活).
