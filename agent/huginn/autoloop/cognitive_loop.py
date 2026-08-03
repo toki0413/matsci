@@ -61,6 +61,24 @@ def _extract_tests_passed(validation: Any) -> bool:
     return True
 
 
+def _snapshot_structure_desc(cog: dict) -> list[float]:
+    """从 cog 提取结构描述符, 缺失填 16 维全 0.
+
+    episodic 快照里带一份结构向量, 供后续按空间检索. 当前 cog 不存
+    StructureCognitiveMap, 所以现在基本回退全 0; 将来 cog 挂上 cmap 后
+    这段就是入口, 不用改调用方.
+    """
+    try:
+        from huginn.metacog.structure_descriptor import StructureDescriptor
+        cmap = cog.get("structure_cognitive_map") or cog.get("cmap") or cog.get("structure")
+        if cmap is None:
+            return [0.0] * 16
+        vec = StructureDescriptor().encode(cmap)
+        return [float(x) for x in vec]
+    except Exception:
+        return [0.0] * 16
+
+
 @dataclass
 class LoopState:
     """CognitiveLoop 的可观测状态 — observe 填, decide 读, reflect 更新.
@@ -2956,6 +2974,14 @@ Respond JSON only:
                     ),
                     "redirect": redirect,
                     "advice": (advice or "")[:200],
+                    # 新增内部状态, 供 episodic replay 按情境检索 (不只按时间线性回溯)
+                    "phase": getattr(self, "_current_phase", "") or "",
+                    "mode": getattr(self, "_last_failure_mode", "") or "",
+                    "hypothesis_id": (
+                        (cog.get("hypothesis_id") or "")[:64]
+                        or (hash(cog.get("hypothesis") or "") & 0xFFFFFFFF) % 10**8
+                    ),
+                    "structure_desc": _snapshot_structure_desc(cog),
                 }
                 state.iteration_history.append(_snapshot)
                 if len(state.iteration_history) > _MAX_ITER_HIST:
@@ -3008,10 +3034,28 @@ Respond JSON only:
         # P2: 跨 run 上下文持久化 — 存探索摘要, 让下 run decider 知道上 run 探索了什么.
         # ponytail: 复用 longterm, category="run_context" 跟 failure_pattern 分开存.
         # cog 此时包含完整 run 的 hypothesis/plan/validation, finalize 前快照.
+        _prev_outcome_for_advisor = ""
         try:
             self._persist_run_context(run_id, objective, cog, state)
+            # 推断 outcome 给 advisor 用 — tests_passed=True → completed, 否则 inconclusive
+            _val = cog.get("validation") or {}
+            if isinstance(_val, dict):
+                _prev_outcome_for_advisor = (
+                    "completed" if _val.get("tests_passed") else "inconclusive"
+                )
         except Exception:
             logger.debug("persist run_context failed (non-fatal)", exc_info=True)
+
+        # 轻量 next-step 推荐: 任务完成后, 科研伴侣姿态给 2-3 个方向 + 自由出口.
+        # 触发条件见 _has_post_task_signal; 无信号静默, 不竞争注意力.
+        # 默认只写 memory (category=next_step_hint), HUMAN_PAUSE=1 才走 pause_for_decision.
+        try:
+            await self._advisor_post_task_recommend(
+                run_id, objective, cog, state,
+                prev_outcome=_prev_outcome_for_advisor,
+            )
+        except Exception:
+            logger.debug("advisor_post_task_recommend failed (non-fatal)", exc_info=True)
 
         # finalize — 复用 run() 的收尾 (含 _report)
         return await self._finalize_run(
