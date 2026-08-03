@@ -492,6 +492,49 @@ def build_pmk_state(
                     )[:200]
             except Exception:
                 pass
+        # 桥 C: evolution_rules 作为 Knowledge 路 — 让 PMK 一致性检查能看到
+        # 历史教训, 不只 ChromaDB 检索. 路径对齐 context_builder.build_evolution_rules.
+        try:
+            _base = os.environ.get("HUGINN_CACHE_DIR") or str(Path.home() / ".huginn")
+            _rules_path = Path(_base) / "logs" / "evolution_rules.json"
+            if _rules_path.exists():
+                with _rules_path.open("r", encoding="utf-8") as _rf:
+                    _rules = json.load(_rf)
+                if isinstance(_rules, list):
+                    _top_rules = sorted(
+                        _rules, key=lambda r: r.get("confidence", 0), reverse=True
+                    )[:3]
+                    _lessons = [
+                        f"{r.get('rule_id','')}: "
+                        f"{r.get('action',{}).get('description','')[:80]}"
+                        for r in _top_rules
+                        if r.get("confidence", 0) > 0.3
+                    ]
+                    if _lessons:
+                        _kb_text = (
+                            "[learned_lessons] "
+                            + " | ".join(_lessons)
+                            + " | "
+                            + _kb_text
+                        ).strip(" |")
+        except Exception:
+            pass
+        # 桥 D: stable_principles 作为 Knowledge 路 — 蒸馏出的原则直接作为 KB 立场,
+        # 让 PMK 能检测 persona/memory 与长期原则的冲突. load_stable_principles 返回 list[str].
+        try:
+            from huginn.memory.longterm import load_stable_principles
+            _principles = load_stable_principles()
+            if _principles:
+                _p_texts = [str(p)[:80] for p in _principles[:3] if p]
+                if _p_texts:
+                    _kb_text = (
+                        "[stable_principles] "
+                        + " | ".join(_p_texts)
+                        + " | "
+                        + _kb_text
+                    ).strip(" |")
+        except Exception:
+            pass
         _result: dict[str, str] = {}
         if _persona_text:
             _result["persona"] = _persona_text
@@ -2982,6 +3025,10 @@ Respond JSON only:
                         or (hash(cog.get("hypothesis") or "") & 0xFFFFFFFF) % 10**8
                     ),
                     "structure_desc": _snapshot_structure_desc(cog),
+                    # 桥 E: surprise + rule_hit 进 episodic shard, replay 可按信号检索,
+                    # 不只按时间线性回溯. 缺失安全填 0.0 / "".
+                    "surprise": float(getattr(self, "_last_surprise", 0.0)),
+                    "rule_hit": getattr(self, "_last_rule_hit_id", "") or "",
                 }
                 state.iteration_history.append(_snapshot)
                 if len(state.iteration_history) > _MAX_ITER_HIST:
