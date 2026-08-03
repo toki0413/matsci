@@ -1082,6 +1082,60 @@ class LongTermMemory:
         results.sort(key=lambda r: 0 if _entry_has_reasoning(r) else 1)
         return results[:top_k]
 
+    def predict_via_analogy(
+        self,
+        query: dict,
+        top_k: int = 3,
+        similarity_threshold: float = 0.6,
+    ) -> dict[str, Any]:
+        """懒路 world model: 用 retrieve 做语义检索, 返回历史相似记忆当预测.
+
+        engine._build_world_model_block 期望这个格式:
+            {"prediction_type": "analogy", "analogy": [{"content","score"}]}
+        空结果返回 {"prediction_type": "none", "analogy": []}.
+
+        ponytail: 复用 retrieve (FTS5+vector+Ising/HiLS), 不重写检索.
+        retrieve 不暴露数值 score, 用 rank 衰减做 score 代理 (top=1.0, 递减).
+        ceiling: 非真正语义相似度, 是检索排序的代理. 升级路径: retrieve 直接
+        返回 vector cosine score (需改 retrieve 返回结构).
+        """
+        hypothesis = ""
+        if isinstance(query, dict):
+            hypothesis = str(query.get("hypothesis", "") or query.get("query", ""))
+        else:
+            hypothesis = str(query)
+        if not hypothesis.strip():
+            return {"prediction_type": "none", "analogy": []}
+
+        try:
+            rows = self.retrieve(
+                query=hypothesis[:200],
+                top_k=top_k,
+                semantic=self._enable_semantic,
+            )
+        except Exception:
+            logger.debug("predict_via_analogy retrieve failed", exc_info=True)
+            return {"prediction_type": "none", "analogy": []}
+
+        if not rows:
+            return {"prediction_type": "none", "analogy": []}
+
+        # rank 代理 score: 第 i 条 score = 1.0 - i * (0.5 / top_k), 范围 (0.5, 1.0].
+        # similarity_threshold 过滤掉排名靠后的弱匹配.
+        step = 0.5 / max(top_k, 1)
+        analogy: list[dict[str, Any]] = []
+        for i, row in enumerate(rows[:top_k]):
+            score = 1.0 - i * step
+            if score < similarity_threshold:
+                continue
+            analogy.append({
+                "content": str(row.get("content", ""))[:200],
+                "score": round(score, 3),
+            })
+        if not analogy:
+            return {"prediction_type": "none", "analogy": []}
+        return {"prediction_type": "analogy", "analogy": analogy}
+
     def _rejuvenate(self, entry_ids: list[str]) -> None:
         """Extend expiry on access for tiered memories (short/mid refresh their TTL)."""
         if not entry_ids:

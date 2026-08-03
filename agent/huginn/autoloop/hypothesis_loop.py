@@ -1686,11 +1686,32 @@ class HypothesisMixin:
         symreg_task = asyncio.create_task(self._symreg_hint(context))
         conjecture_hint = self._conjecture_hint(context)
         symreg_hint = await symreg_task
+        # 桥 K: EvolutionManager.recommend → avoid_directions 注入 prompt.
+        # 接通 recommend 死代码 (之前仅 selfcheck 调). 失败非致命, 不阻塞 hypothesize.
+        # ponytail: 避开方向作为 advisory hint, 不强制. ceiling: avoid_directions
+        # 是纯文本, 不做语义去重. 升级: embedding 相似度过滤重复方向.
+        evolution_hint = ""
+        try:
+            from huginn.evolution.manager import EvolutionManager
+            _mem = getattr(self, "memory", None)
+            _rec = EvolutionManager.shared(_mem).recommend(hypothesis_context=context)
+            if _rec.avoid_directions:
+                _avoid_lines = "\n".join(
+                    f"- {d[:100]}" for d in _rec.avoid_directions[:5]
+                )
+                evolution_hint = (
+                    "\n### Avoid Directions (evolution learned)\n"
+                    f"These directions previously failed, avoid repeating:\n{_avoid_lines}\n"
+                )
+        except Exception:
+            logger.debug("evolution recommend failed (non-fatal)", exc_info=True)
         prompt = self._build_hypothesis_prompt(context)
         if symreg_hint:
             prompt = f"{symreg_hint}\n{prompt}"
         if conjecture_hint:
             prompt = f"{conjecture_hint}\n{prompt}"
+        if evolution_hint:
+            prompt = f"{evolution_hint}\n{prompt}"
         # 按研究类型选 persona: MD 类用 md_expert, 默认走 dft_expert.
         # 这俩 persona 在 personas.py 内置, 直接取就行.
         persona_name = self._pick_hypothesis_persona(context)

@@ -478,6 +478,32 @@ def build_pmk_state(
                     _mem_text = (_mem_text + " | recent: " + _ts_mem[:200]).strip()
             except Exception:
                 pass
+        # 桥 H: M 路补 failed_directions — 让 PMK 一致性检查感知"persona 推荐
+        # 的方向 vs 已知失败方向"的冲突. 顺带接通 recall_procedural 死代码
+        # (procedural memory = stable_principles 关键词召回).
+        if mem_mgr is not None:
+            try:
+                _failed = mem_mgr.recall_failed_directions(limit=3)
+                if _failed:
+                    _f_lines = [
+                        f"{h[:60]} ({r[:40]})" for h, r, _ in _failed if h
+                    ]
+                    _mem_text = (
+                        _mem_text + " | failed_directions: "
+                        + " ; ".join(_f_lines)
+                    ).strip()
+            except Exception:
+                pass
+            try:
+                _attempted = getattr(last_step_eval, "attempted", "") or ""
+                _proc = mem_mgr.recall_procedural(_attempted, top_k=2)
+                if _proc:
+                    _mem_text = (
+                        _mem_text + " | procedural: "
+                        + " ; ".join(p[:60] for p in _proc)
+                    ).strip()
+            except Exception:
+                pass
         _kb_text = ""
         if kb is not None and last_step_eval is not None:
             try:
@@ -504,12 +530,18 @@ def build_pmk_state(
                     _top_rules = sorted(
                         _rules, key=lambda r: r.get("confidence", 0), reverse=True
                     )[:3]
-                    _lessons = [
-                        f"{r.get('rule_id','')}: "
-                        f"{r.get('action',{}).get('description','')[:80]}"
-                        for r in _top_rules
-                        if r.get("confidence", 0) > 0.3
-                    ]
+                    _lessons = []
+                    for r in _top_rules:
+                        if r.get("confidence", 0) <= 0.3:
+                            continue
+                        _act = r.get("action", "")
+                        # action 在 EvolutionRule 里是 str, 但历史数据可能是 dict.
+                        # 两种都处理, 不假设格式.
+                        if isinstance(_act, dict):
+                            _desc = str(_act.get("description", ""))[:80]
+                        else:
+                            _desc = str(_act)[:80]
+                        _lessons.append(f"{r.get('rule_id','')}: {_desc}")
                     if _lessons:
                         _kb_text = (
                             "[learned_lessons] "
