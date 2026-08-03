@@ -1710,6 +1710,9 @@ def run_selfcheck() -> None:
             # 61a: toggle on → mock 返 JSON 含 failure_reasoning →
             #      _invert_failure_trace 返回 [FAILURE TRACE] 结构化文本 →
             #      record_failed_direction 的 reason 字段是反推 trace (不是原 error)
+            # EvolutionManager 默认 ON 时跳过 record_failed_direction (走 record_outcome),
+            # 本测试测旧路径 failure inversion, 设 OFF 让旧路径跑.
+            _os61.environ["HUGINN_USE_EVOLUTION_MANAGER"] = "0"
             _os61.environ["HUGINN_FAILURE_INVERSION"] = "1"
             _captured_fd.clear()
 
@@ -1778,6 +1781,7 @@ def run_selfcheck() -> None:
         finally:
             _sub_mod61.SubagentDispatch = _orig_dispatch_cls61
             _os61.environ.pop("HUGINN_FAILURE_INVERSION", None)
+            _os61.environ.pop("HUGINN_USE_EVOLUTION_MANAGER", None)
     finally:
         _sh61.rmtree(_tmp61, ignore_errors=True)
 
