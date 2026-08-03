@@ -6293,6 +6293,23 @@ Please modify the code to address this task."""
             + "\n".join(_lines) + "\n"
         )
 
+    def _build_skill_context_block(self) -> str:
+        """SkillEvolutionLayer 信念注入 — 接通 get_skill_context 死代码.
+
+        把 skill evolution 从过往 trajectory 学到的参数信念 (成功率/置信度)
+        注入 hypothesis prompt, 让 agent 参考"之前哪些参数组合 work 过".
+        toggle HUGINN_SKILL_CONTEXT 默认 off, off 时返空串.
+        ceiling: 信念空间是 Beta 后验, 不直接是规则. 升级路径: Beta→rule 映射.
+        """
+        if os.environ.get("HUGINN_SKILL_CONTEXT", "0") != "1":
+            return ""
+        try:
+            from huginn.skills.evolution import SkillEvolutionLayer
+            return SkillEvolutionLayer.shared().get_skill_context()
+        except Exception:
+            logger.debug("skill context injection failed", exc_info=True)
+            return ""
+
     @property
     def _episodic_replay(self):
         """情景重放: 懒加载 + 只在 flag 打开时构建. 失败非致命.
@@ -6334,6 +6351,8 @@ Please modify the code to address this task."""
                 "phase": context.get("phase", ""),
                 "val_status": context.get("val_status", ""),
                 "structure_desc": context.get("structure_desc"),
+                # 桥 J: cue 带 surprise, 让 replay 能按 surprise 回溯高发现情境
+                "surprise": getattr(self, "_last_surprise", 0.0),
             }
             replays = replay.replay(cue, top_k=3)
             if not replays:
@@ -6473,6 +6492,8 @@ Please modify the code to address this task."""
                 "val_status": "failed",
                 "mode": getattr(self, "_last_failure_mode", "") or "",
                 "phase": getattr(self, "_current_phase", "") or "",
+                # 桥 J: surprise 进 episodic, replay 能按 surprise 回溯 PMK 冲突
+                "surprise": float(getattr(self, "_last_surprise", 0.0)),
             }
             writer = getattr(self, "_episodic_writer", None)
             if writer is None:
@@ -6741,6 +6762,7 @@ Hypothesis:""",
                 ("pm", pm_block),
                 ("metacog", metacog_block),
                 ("cluster", cluster_block),
+                ("skill", self._build_skill_context_block()),
                 ("hint", hint_block),
             ],
             "hypothesize",
