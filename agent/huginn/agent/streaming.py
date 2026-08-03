@@ -1453,36 +1453,52 @@ class StreamingMixin:
                                     raise InterruptCancelled(interrupt.get("reason", ""))
                         break
                     except asyncio.TimeoutError:
-                        # A3: 流式空闲超时 — 降级到非流式 ainvoke, 不重试流式.
-                        # thinking.signature 由 Anthropic 服务端在 ainvoke 响应里自动回传,
-                        # compact_messages 的 thinking 保护 (A3.3) 确保不被裁剪.
+                        # A3: 流式空闲超时 — 降级到流式收集, 不重试原流式.
+                        # 不用无进度的 ainvoke: 它只能猜一个固定时长, 长推理会误杀.
+                        # 这里用 _astream_with_watchdog 的"空闲超时"语义做进度感知 —
+                        # 只要模型还在产出 (reasoning 或 content chunk) 就不中断,
+                        # 只有完全空闲 (thinking 阶段也无 chunk 太久) 才终止.
+                        # 外层再套一个 thinking 缩放的总兜底, 防无限 thinking 循环.
                         logger.warning(
                             "stream idle timeout after %ds (states_yielded=%d), "
-                            "falling back to non-streaming ainvoke",
+                            "falling back to progress-aware stream collect",
                             _STREAM_IDLE_TIMEOUT, states_yielded,
                         )
                         turn_span.metadata["stream_watchdog_timeout"] = True
-                        # A3-fix: ainvoke 也加超时. DeepSeek 高负载时首 token >60s 触发
-                        # 流式 watchdog, 但 ainvoke 的 HTTP 请求无默认 timeout → 永久挂起
-                        # → 4h 外部超时 kill 进程, meta.json 都来不及写.
-                        # 超时随 thinking 强度放宽 (high→900s), 覆盖深度推理; env 可覆盖.
                         _ainvoke_timeout = float(os.environ.get(
                             "HUGINN_AINVOKE_TIMEOUT",
                             str(_thinking_scale_timeout()),
                         ))
+                        _collect_idle = _thinking_stream_idle()
+                        final_state = None
                         try:
+                            async def _collect():
+                                _st = None
+                                async for mode, data in _astream_with_watchdog(
+                                    graph.astream(
+                                        inputs, config,
+                                        stream_mode=["values", "messages"],
+                                    ),
+                                    idle_timeout=_collect_idle,
+                                ):
+                                    if mode == "values":
+                                        _st = data
+                                return _st
+
                             final_state = await asyncio.wait_for(
-                                graph.ainvoke(inputs, config),
-                                timeout=_ainvoke_timeout,
+                                _collect(), timeout=_ainvoke_timeout
                             )
                         except asyncio.TimeoutError:
                             logger.warning(
-                                "ainvoke also timed out after %ds, treating as retryable",
-                                _ainvoke_timeout,
+                                "fallback stream collect timed out (idle=%ds, total=%ds)",
+                                _collect_idle, _ainvoke_timeout,
                             )
                             raise asyncio.TimeoutError(
-                                f"both stream and ainvoke timed out (ainvoke={_ainvoke_timeout}s)"
+                                f"stream and fallback collect both timed out "
+                                f"(collect idle={_collect_idle}s, total={_ainvoke_timeout}s)"
                             )
+                        if final_state is None:
+                            raise RuntimeError("fallback stream collect produced no state")
                         self._process_stream_state(
                             final_state, turn_span, thread_id, pet, _completion_records
                         )
