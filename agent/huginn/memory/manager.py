@@ -1336,11 +1336,11 @@ class MemoryManager:
             logger.debug("distill_episodic_to_procedural 写入失败", exc_info=True)
             return None
 
-        # P14: EvolutionManager.distill — flag on 时同步把 failed_direction
+        # P14: EvolutionManager.distill — 默认 ON, 同步把 failed_direction
         # 蒸馏成 STABLE_PRINCIPLE (avoid persona X for math concept Y).
-        # flag off (默认) 不调, 走原 episodic 蒸馏路径.
+        # flag off 回退原 episodic 蒸馏路径.
         import os as _os
-        if _os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "0") == "1":
+        if _os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "1") == "1":
             try:
                 from huginn.evolution.manager import EvolutionManager
 
