@@ -269,9 +269,17 @@ huginn 已有遥测（`telemetry.py` TelemetrySpan + span 树 + 内存快照）�
 
 > **A3 落地（2026-08-04）**：`rcb_runner.py` 新增 `_extract_exact_components` / `_scan_implementation_traces` / `_parse_substitute_headers` / `_count_failed_attempts` / `_step2_substitution_audit` 五个函数，在 Step 2 结束后、Step 2.5 之前调用；audit 结果落盘 `ws/.huginn/step2_audit.json` 供 Step 3 / 评分器引用；PHASED PROTOCOL 里 "Phase 2: NO deep learning yet" 改为「按 paper 方法论选模型类」退役 MODEL COMPLEXITY CEILING。`--self-check-a3` 入口验证四个机械比对 helper，全 assert 通过。落点修正：`rcb_huginn.py:150-154` 已迁移到 `rcb_runner.py` system_prompt 段（路线图原引路径过时）。
 | A4 | Step-3 独立修复预算池：critique verdict≠pass 追加专用 50 次预算 | `agent/huginn/cli/rcb_runner.py:305-306` | 05 报告 R4（兑现对抗自审的最后一公里） |
+
+> **A4 落地（2026-08-04）**：`rcb_runner.py` 新增 `_build_retry_budget(extra_budget)`，根据 `extra_budget` 构造 `BudgetSpec(max_calls=N, recursion_limit=max(250, N*5))`；None/0/负数返回 None（不覆盖）。`_stream_chat` 接收 `extra_budget` 参数并传给 `agent.chat(budget_override=...)`；Step-3 retry 在 `verdict≠pass` 时注入 `extra_budget=50`（250 工具调用预算、500 recursion_limit），独立于 Step-1/2 预算，确保 critique 指出的 gap 有资源修复而不被原预算耗尽截断。`--self-check-a4` 4 个断言全通过（None/0/-5→None；50→BudgetSpec(50,250)；100→BudgetSpec(100,500)；公式 `max(250, n*5)`）。
 | A5 | 执行兜底泛化：`_has_code_no_output` 改为按 DeliverableSpec「代码类 glob 存在 + 输出类 glob 缺失」判定 | `agent/huginn/bench/orchestrator.py:228-233` | 07 报告建议 4 |
+
+> **A5 落地（2026-08-04）**：`orchestrator.py:252-272` `_has_code_no_output` 不再硬编码 `submission/reproduce.sh + *.py`，改为按 `deliverable_spec.checks` 自身 pattern 分类——code_pats 取 `.py/.sh` 结尾、output_pats 取含 `outputs/.json/.png/.csv/report.md` 的 pattern；任一代码类存在 + 任一输出类缺失 → 触发 `_execution_prompt()`。SAB/RCB 形态的 deliverable 现在也能进入执行兜底档。`_self_check()` 场景 2-3 间接验证（代码齐+输出缺→`_execution_prompt` 分支生效），orchestrator self-check OK。
 | A6 | 平凡基线闸门：提交前强制对照多数类/单特征/线性基线，低于基线必须回退到基线方案 | MLE/RCB 提交流程 | 01 报告建议 2 |
+
+> **A6 落地（2026-08-04）**：MLE-bench 抽出 `_compute_trivial_baseline(y, is_auc)` / `_is_below_baseline(score, baseline, tol=0.01)` 两函数（多数类=max(p,1-p)、AUC=0.5、非二值返回 NaN 跳过）；`grade_submission` 用新函数替换原内联逻辑，`below_baseline` / `baseline_note` 落 `_score.json` 可追溯。system prompt 加 `BASELINE GATE` 硬规则——CV < 多数类/AUC=0.5 必须回退到基线预测。RCB system prompt 加 `BASELINE COMPARISON` 规则——report.md 末尾必须含 `## Baseline Comparison` 表（Metric/Your Value/Paper Baseline/Δ/Status），低于 paper baseline >10% 加根因注解，3 次失败后标 'below baseline — fallback to paper reproduction'。`--self-check-a6` 入口验证 7 个断言（多数类/AUC/非二值/below 检测 5 边界），全 assert 通过。
 | A7 | RCB 启动前 30s 环境冒烟（bash/code 各跑一次 RDKit+sklearn 微型 GP + torch.load 真实文件），失败即 fail-fast 打印修复清单；7 个评测 setdefault 改强制赋值 | `agent/huginn/cli/rcb_runner.py:28-46` | 05 报告 R3 |
+
+> **A7 落地（2026-08-04）**：`rcb_runner.py` 已存在 `_rcb_smoke_test()`——RDKit (Chem.MolFromSmiles + Descriptors.MolWt) + sklearn GPR (fit+predict) + torch (randn+matmul) 三件套冒烟，失败打印修复清单 + `sys.exit(1)`；`main()` 入口在 `HUGINN_SKIP_SMOKE≠1` 时调用，30s 内完成。7 个评测关键 env var 从 `setdefault` 改为强制赋值（`os.environ[k]=v`），防外部 env 让 patch 失效：`HUGINN_RATE_LIMIT_ENABLED=0` / `HUGINN_ALLOW_LOCAL_BASH=1` / `HUGINN_RCB_CSM_SUBSET=1` / `HUGINN_NO_RUST_SANDBOX=1` / `HUGINN_COGNITIVE_LLM_DECIDER=0` / `HUGINN_HEALTH_MONITOR=0` / `HUGINN_FEATURE_LOOP_DETECTOR=false`。`--self-check-a7` 入口验证函数定义 + 7 个 env 强制赋值生效，全 assert 通过。
 
 **主线 B：验证文化（第 3–4 周）**
 | # | 动作 | 落点 | 依据 |
