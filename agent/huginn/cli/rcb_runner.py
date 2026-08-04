@@ -53,17 +53,18 @@ _last_agent_for_reflection: Any = None
 
 # 在 import huginn 之前关掉秒级限流 — RCB 任务的 prompt 长 + 工具多,
 # 默认 5000 tokens/s 会在第一轮就超限. RCB 是离线评测, 不需要限流.
-os.environ.setdefault("HUGINN_RATE_LIMIT_ENABLED", "0")
+# P1-A7: 7 个评测关键 patch 改强制赋值, 防外部 env 让 patch 失效.
+os.environ["HUGINN_RATE_LIMIT_ENABLED"] = "0"
 os.environ.setdefault("HUGINN_RATE_LIMIT_TOKENS_PER_TURN", "500000")
 # 允许本地沙箱执行 code_tool/bash_tool — RCB subprocess 没有 docker, 用本地 python
-os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
+os.environ["HUGINN_ALLOW_LOCAL_BASH"] = "1"
 # HUGINN_CACHE_DIR 可能被设成空串, 导致 LongTermMemory 用相对路径 memory.db,
 # 在 RCB workspace cwd 下 sqlite WAL 创建失败. 强制用绝对路径.
 if not os.environ.get("HUGINN_CACHE_DIR"):
     os.environ["HUGINN_CACHE_DIR"] = str(Path.home() / ".huginn")
 # RCB 场景用 CSM 子集: 3-step 映射 S1/S4/S6+S7, 不再全 skip (Task 18, R8 减法修正).
 # ponytail: S7 自修改仍走 (Task 2), 只跳过 compaction — 见 reflection.py L245.
-os.environ.setdefault("HUGINN_RCB_CSM_SUBSET", "1")
+os.environ["HUGINN_RCB_CSM_SUBSET"] = "1"
 # RCB 场景 compaction 保留前 2 条 root (task + Step 1 checklist) — 修同伦断裂 (σ₂)
 os.environ.setdefault("HUGINN_KEEP_ROOT_N", "2")
 # F3: σ₂ 半修补全 — 位置切片保不到 Step 1 checklist prompt (在 msgs[2:4]),
@@ -74,17 +75,17 @@ os.environ.setdefault(
     "## Methodology Checklist;## Selected Execution Plan;## Report Coverage Compass;## Intuitive Gamer",
 )
 # RCB 场景跳过 Rust sandbox — 它在 RDKit+sklearn GPR 场景静默崩溃返回空 stderr
-os.environ.setdefault("HUGINN_NO_RUST_SANDBOX", "1")
+os.environ["HUGINN_NO_RUST_SANDBOX"] = "1"
 # RCB 跑分关掉 LLM decider — 跑分需要确定性, run_cognitive 的规则版 decide_fn 已够用.
 # 生产路径 (deli_research/cli/routes) 不设这个变量, 默认开 LLM decider.
-os.environ.setdefault("HUGINN_COGNITIVE_LLM_DECIDER", "0")
+os.environ["HUGINN_COGNITIVE_LLM_DECIDER"] = "0"
 # RCB 场景关熔断器 — file_read_tool 误触发 circuit_open 阻止 agent 读文件 (σ₇)
-os.environ.setdefault("HUGINN_HEALTH_MONITOR", "0")
+os.environ["HUGINN_HEALTH_MONITOR"] = "0"
 # RCB 场景关循环检测 — agent 反复跑 code_tool 是正常行为, 误判为 loop (σ₈)
 # 统一走 FeatureFlags (streaming.py 已不读 HUGINN_SKIP_LOOP_DETECTOR, 此处保留向后兼容).
 # ponytail: 双写新旧 env var, 升级路径是删掉 HUGINN_SKIP_LOOP_DETECTOR 一行.
 os.environ.setdefault("HUGINN_SKIP_LOOP_DETECTOR", "1")
-os.environ.setdefault("HUGINN_FEATURE_LOOP_DETECTOR", "false")
+os.environ["HUGINN_FEATURE_LOOP_DETECTOR"] = "false"
 
 
 def _detect_gpu_safe() -> bool:
@@ -3653,6 +3654,21 @@ async def _step2_outputs_gate(
     }
 
 
+def _build_retry_budget(extra_budget: int | None) -> Any:
+    """A4: 构造 Step-3 retry 专用预算. 提到模块级便于 self-check.
+
+    ponytail: recursion_limit ≈ max_calls * 5 (streaming.py:1293 公式).
+    返回 None 表示不覆盖 (走 agent 全局 max_tool_calls).
+    """
+    if not extra_budget or extra_budget <= 0:
+        return None
+    from huginn.phases import BudgetSpec as _BS
+    return _BS(
+        max_calls=extra_budget,
+        recursion_limit=max(250, extra_budget * 5),
+    )
+
+
 async def _step2_5_report_fallback(
     ws: Path,
     stream_chat_fn,
@@ -4439,8 +4455,13 @@ async def _step3_adversarial(
         # 1M+ tokens 累积. retry prompt 已注入 PMK/KB/state/critique 全部 state.
         _retry_tid = f"rcb_{ws.name}_step3_retry{_retry_count}"
         try:
+            # A4: Step-3 verdict≠pass 追加专用 50 次预算 — 路线图 P1-A4 / 05 报告 R4.
+            # retry 本就是 fix_needed 时回退执行, 但默认用 agent 全局 max_tool_calls
+            # (150/300) — Step 2 已烧光, retry 没预算等于空跑. 专用 50 次预算池
+            # 让 agent 真有资源修 gap. ponytail: BudgetSpec 在 _stream_chat 内构造,
+            # 失败不影响 agent 全局配置.
             await stream_chat_fn(_retry_execute_prompt, "step3_retry", tid=_retry_tid,
-                                 fresh_history=True)
+                                 fresh_history=True, extra_budget=50)
         except Exception as _e:
             print(f"[step3_retry {_retry_count}] stream_chat_fn failed: {_e}", flush=True)
             break
@@ -4797,6 +4818,14 @@ async def run(
         "- Re-read INSTRUCTIONS before writing report. List ALL required quantities.\n"
         "- Each missing quantity = 0 for that criterion. Do them ALL.\n"
         "- Quantitative results REQUIRE numeric values with units, not methodology description.\n"
+        "- BASELINE COMPARISON (P1-A6): for every quantitative metric you report, include "
+        "a side-by-side comparison to the paper's baseline value (from your Step 1 checklist) "
+        "in a `## Baseline Comparison` table at the end of report.md. Columns: Metric / "
+        "Your Value / Paper Baseline / Δ / Status (match/better/worse). If your value is "
+        "WORSE than the paper baseline by >10%, add a one-line root-cause note. If you "
+        "can't match the baseline after 3 attempts, mark it 'below baseline — fallback to "
+        "paper reproduction' and ship the closest reproducible result. Submitting a metric "
+        "with no baseline column = treated as unvalidated.\n"
         "- DL tasks (AlphaFold3/FuXi/Janus): CANNOT install/train in sandbox. "
         "Check data/ for pre-computed model outputs (.nc/.pt) → EVALUATE not TRAIN. "
         "If training needed, use simpler model to reproduce qualitative trend. "
@@ -5012,7 +5041,8 @@ async def run(
     thread_id = f"rcb_{ws.name}"
 
     async def _stream_chat(msg: str, step_label: str, tid: str | None = None,
-                           fresh_history: bool = False) -> str:
+                           fresh_history: bool = False,
+                           extra_budget: int | None = None) -> str:
         """跑一轮 agent.chat, 流式打印 AIMessage, 返回最后的 AI 文本.
 
         tid: TFM 分叉用独立 thread 隔离 graph 内态 (历史从 ConversationTree
@@ -5023,6 +5053,11 @@ async def run(
         1M+ tokens 历史累积. 之前换 tid 没解决超限, 因为 ConversationTree
         是 agent 实例属性, thread_id 切换不影响它, history 照样被拉回来.
 
+        extra_budget: A4 — Step 3 verdict≠pass 时追加专用工具调用预算.
+            传 50 → 临时覆盖 max_tool_calls=50 + recursion_limit=250.
+            不影响 agent 全局配置, 仅本次 chat 生效. ponytail: BudgetSpec
+            来自 huginn.phases, streaming.py chat() 已原生支持 budget_override.
+
         视觉接入: msg 里含图片路径 (xxx.png/jpg/...) 时透传 image_path 给
         agent.chat, streaming.py 的 VisionRouter 自动接管 (CV 预分析 +
         visual primitives 注入). RCB 任务通常无图, 但 related_work/ 下的
@@ -5030,6 +5065,7 @@ async def run(
         """
         ai_text = ""
         _chat_gen = None
+        _budget_override = _build_retry_budget(extra_budget)
         try:
             # 扫 msg 里的图片路径 — 命中就透传给 VisionRouter
             _image_path = None
@@ -5049,6 +5085,7 @@ async def run(
             _chat_gen = agent.chat(
                 msg, thread_id=tid or thread_id, image_path=_image_path,
                 include_history=not fresh_history,
+                budget_override=_budget_override,
             )
             async for chunk in _chat_gen:
                 msgs = chunk.get("messages", [])
@@ -5871,6 +5908,40 @@ def self_check_a2() -> None:
         print(f"[CHECK A2.2] real metrics filter OK ({len(metrics)} files)")
 
     print("[CHECK A2] ALL ASSERTS PASSED")
+
+
+def self_check_a4() -> None:
+    """A4 self-check: 验证 Step-3 retry 专用预算构造逻辑.
+
+    ponytail: 不引框架, 全用 assert. 验证:
+      1. extra_budget=None / 0 / 负数 → None (不覆盖)
+      2. extra_budget=50 → BudgetSpec(max_calls=50, recursion_limit=250)
+      3. recursion_limit 公式: max(250, extra_budget * 5)
+    ponytail 上限: 不验证 agent.chat 是否真消费 budget_override — 那需要
+    mock agent + graph, 升级路径见 streaming.py chat() 的 budget_override 测试.
+    """
+    # 1. None / 0 / 负数 → None
+    assert _build_retry_budget(None) is None
+    assert _build_retry_budget(0) is None
+    assert _build_retry_budget(-5) is None
+    print("[CHECK A4.1] invalid budget → None OK")
+
+    # 2. extra_budget=50 → BudgetSpec(50, 250)
+    spec = _build_retry_budget(50)
+    assert spec is not None
+    assert spec.max_calls == 50, f"expected max_calls=50, got {spec.max_calls}"
+    assert spec.recursion_limit == 250, f"expected recursion_limit=250, got {spec.recursion_limit}"
+    print("[CHECK A4.2] extra_budget=50 → BudgetSpec(50, 250) OK")
+
+    # 3. recursion_limit 公式: max(250, extra_budget * 5)
+    #    extra_budget=100 → 500; extra_budget=10 → 250 (floor)
+    spec_100 = _build_retry_budget(100)
+    assert spec_100.recursion_limit == 500, f"expected 500, got {spec_100.recursion_limit}"
+    spec_10 = _build_retry_budget(10)
+    assert spec_10.recursion_limit == 250, f"expected 250 (floor), got {spec_10.recursion_limit}"
+    print("[CHECK A4.3] recursion_limit formula max(250, n*5) OK")
+
+    print("[CHECK A4] ALL ASSERTS PASSED")
 
 
 def self_check_v14_task1() -> None:
@@ -7113,6 +7184,31 @@ if __name__ == "__main__":
         # A2: outputs/ 产物门控 self-check.
         # 不依赖 RCB workspace, 纯函数验证 metrics 文件判定.
         self_check_a2()
+        sys.exit(0)
+    if "--self-check-a4" in sys.argv:
+        # A4: Step-3 retry 专用预算构造 self-check.
+        # 不依赖 RCB workspace, 纯函数验证 BudgetSpec 构造.
+        self_check_a4()
+        sys.exit(0)
+    if "--self-check-a7" in sys.argv:
+        # A7: RCB 环境冒烟 + 7 个评测 setdefault 改强制赋值 self-check.
+        # 验证 _rcb_smoke_test 函数定义 + 7 个关键 env 强制赋值生效 (防外部 env 覆盖).
+        assert callable(_rcb_smoke_test), "_rcb_smoke_test not defined"
+        _expected = {
+            "HUGINN_RATE_LIMIT_ENABLED": "0",
+            "HUGINN_ALLOW_LOCAL_BASH": "1",
+            "HUGINN_RCB_CSM_SUBSET": "1",
+            "HUGINN_NO_RUST_SANDBOX": "1",
+            "HUGINN_COGNITIVE_LLM_DECIDER": "0",
+            "HUGINN_HEALTH_MONITOR": "0",
+            "HUGINN_FEATURE_LOOP_DETECTOR": "false",
+        }
+        for k, v in _expected.items():
+            got = os.environ.get(k)
+            assert got == v, f"env {k}={got!r}, expected {v!r} (强制赋值失效?)"
+        print(f"[CHECK A7.1] _rcb_smoke_test defined OK")
+        print(f"[CHECK A7.2] 7 env vars force-assigned OK")
+        print(f"[CHECK A7] ALL ASSERTS PASSED")
         sys.exit(0)
     if "--self-check-v14-all" in sys.argv:
         # v14 Phase 1-4 全综合验收: Phase 1 (Task 1-10) + Phase 2/3/4 (Task 11-19).
