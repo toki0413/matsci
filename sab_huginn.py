@@ -70,6 +70,10 @@ SAB_TOOL_FILTER = [
     "web_search_tool",
     "subagent_tool",
     "plot_tool",       # 画图 (Arial 20pt+ 加粗)
+    # P1-B2: 恢复数学工具 — SAB 有物理/化学数值题, 量纲检查 + 符号推导直接拿分
+    "symbolic_math_tool",
+    "unit_tool",
+    "validate_tool",
 ]
 
 

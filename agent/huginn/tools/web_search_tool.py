@@ -165,6 +165,8 @@ class WebSearchTool(HuginnTool):
                     "error": "web_search circuit broken (连续失败过多)",
                     "hint": "搜索不可用, 请用 code_tool / materials_database_tool / 已有知识回答.",
                     "results": [],
+                    # P1-C4: 显式不可用信号, agent 据此切换策略而非死循环重试
+                    "search_unavailable": True,
                 },
                 success=False,
                 error="web_search circuit broken",
