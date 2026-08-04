@@ -207,6 +207,21 @@ Lesson: on small tabular datasets, sample size dominates model choice.
 500 samples couldn't support interaction engineering; 5000 can. The fix
 wasn't better regularization — it was more data.
 
+### 2.9b Metric-submission alignment check (P1-B5)
+
+Before diagnosing any CV-vs-test gap, confirm the two sides use the same
+metric. AUC tasks scored on hard labels (0/1) lose ~0.04 vs probability
+scores. The 0.11 gap in §2.8 was partly real overfitting, partly metric
+mismatch (CV accuracy vs test AUC). The self-improvement loop once
+misdiagnosed this as pure overfitting and固化 the wrong lesson.
+
+Checklist before writing "overfitting" in any post-mortem:
+1. What metric does the competition grade on? (read description.md / grade.py)
+2. What did CV compute? (accuracy? AUC? RMSE?)
+3. Are they the same? If not, the gap is metric mismatch, not overfitting.
+4. For AUC tasks: does submission.csv contain probabilities (n_unique > 2)
+   or hard labels (n_unique <= 2)? Hard labels cost ~0.04 AUC silently.
+
 ### 2.9 Scoring formula bug — `* 100` double-counting
 
 `paperbench_huginn.py` had `final_score = total_weighted / total_weight *
