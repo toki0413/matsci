@@ -104,6 +104,92 @@ async def _astream_with_watchdog(
         yield item
 
 
+def _strip_dangling_tool_calls(messages: list) -> int:
+    """C1: 剥掉 AIMessage 里没有对应 ToolMessage 的 dangling tool_calls.
+
+    返回剥掉的 tool_call 总数. 原地修改 messages 列表 (替换 AIMessage).
+    全 dangling 的 AIMessage 退化为纯 AIMessage (保留 content).
+
+    与 context_builder.conversation_tree_to_messages 的剥掉逻辑同源,
+    但作用在 _build_input_messages 返回的列表上 (checkpointer 直读路径).
+    """
+    if not messages:
+        return 0
+    # 收集所有 ToolMessage 的 tool_call_id
+    answered_ids: set[str] = set()
+    for m in messages:
+        if isinstance(m, ToolMessage):
+            tc_id = getattr(m, "tool_call_id", None)
+            if tc_id:
+                answered_ids.add(tc_id)
+    # 剥掉 AIMessage 里未应答的 tool_calls
+    n_stripped = 0
+    for i, m in enumerate(messages):
+        if not isinstance(m, AIMessage):
+            continue
+        tcs = getattr(m, "tool_calls", None)
+        if not tcs:
+            continue
+        kept = [tc for tc in tcs if tc.get("id") in answered_ids]
+        if len(kept) == len(tcs):
+            continue  # 全应答, 不动
+        n_stripped += len(tcs) - len(kept)
+        if kept:
+            # 部分剥掉: 保留已应答的
+            messages[i] = AIMessage(
+                content=m.content, tool_calls=kept, id=getattr(m, "id", None)
+            )
+        else:
+            # 全 dangling: 退化为纯 AIMessage
+            messages[i] = AIMessage(
+                content=m.content, tool_calls=[], id=getattr(m, "id", None)
+            )
+    return n_stripped
+
+
+def _c1_self_check() -> int:
+    """C1 self-check: 验证 _strip_dangling_tool_calls 三场景.
+
+    ponytail: 纯函数测试, 不依赖 LLM/checkpointer. ceiling: 不验发送路径集成.
+      升级路径: 跑真 agent, 故意造 dangling, 看 400 是否消失.
+    """
+    # 1. 全应答: 不动
+    msgs_ok = [
+        AIMessage(content="ok", tool_calls=[{"id": "tc1", "name": "f", "args": {}}]),
+        ToolMessage(content="r1", tool_call_id="tc1"),
+    ]
+    assert _strip_dangling_tool_calls(msgs_ok) == 0, "全应答不应剥掉"
+    assert len(msgs_ok[0].tool_calls) == 1, "全应答 tool_calls 不应变"
+
+    # 2. 全 dangling: 退化为纯 AIMessage
+    msgs_dangling = [
+        AIMessage(content="d", tool_calls=[{"id": "tc2", "name": "f", "args": {}}]),
+    ]
+    n = _strip_dangling_tool_calls(msgs_dangling)
+    assert n == 1, f"全 dangling 应剥掉 1, got {n}"
+    assert msgs_dangling[0].tool_calls == [], "全 dangling 应退化为空 tool_calls"
+    assert msgs_dangling[0].content == "d", "content 应保留"
+
+    # 3. 部分 dangling: 保留已应答的
+    msgs_partial = [
+        AIMessage(content="p", tool_calls=[
+            {"id": "tc3", "name": "f", "args": {}},
+            {"id": "tc4", "name": "g", "args": {}},
+        ]),
+        ToolMessage(content="r3", tool_call_id="tc3"),
+    ]
+    n = _strip_dangling_tool_calls(msgs_partial)
+    assert n == 1, f"部分 dangling 应剥掉 1, got {n}"
+    assert len(msgs_partial[0].tool_calls) == 1, "部分 dangling 应保留 1"
+    assert msgs_partial[0].tool_calls[0]["id"] == "tc3", "应保留已应答的 tc3"
+
+    print("[CHECK C1.1] all-answered: no strip OK")
+    print("[CHECK C1.2] all-dangling: degrade to pure AIMessage OK")
+    print("[CHECK C1.3] partial-dangling: keep answered, strip dangling OK")
+    print("[CHECK C1] ALL ASSERTS PASSED")
+    return 0
+
+
 def _load_root_markers() -> list[str] | None:
     """F3+AV5: 从 HUGINN_ROOT_MARKERS env 读内容 marker (分号分隔).
 
@@ -1137,6 +1223,20 @@ class StreamingMixin:
                 self._pending_synthetic_messages = []
                 logger.info("Injected %d synthetic Continue messages", len(synthetic_msgs))
 
+            # C1: 发送前配对校验 — 剥掉 dangling tool_calls 防 400 invalid_request.
+            # context_builder 的 conversation_tree_to_messages 已剥, 但 _build_input_messages
+            # 从 checkpointer 直读可能带 dangling. 这里是最后一道防线.
+            # ponytail: 裁剪而非补占位 — 补占位会让 LLM 以为工具执行了但结果丢失,
+            #   裁剪只保留已应答的 tool_calls, 语义更干净.
+            #   ceiling: 裁掉后 LLM 看不到"我曾想调工具"的意图, 可能重试.
+            #   升级路径: 补占位 ToolMessage(content="[context lost]") 保留意图.
+            _n_dangling = _strip_dangling_tool_calls(messages)
+            if _n_dangling:
+                logger.warning(
+                    "C1: stripped %d dangling tool_calls from %d messages "
+                    "(prevents 400 invalid_request)", _n_dangling, len(messages),
+                )
+
             try:
                 from huginn.privacy_guard import PrivacyGuard
 
@@ -1766,6 +1866,9 @@ class StreamingMixin:
 # A3.4 self-check: watchdog 超时 + 正常透传 + thinking block 保护.
 # 运行: python -m huginn.agent.streaming
 if __name__ == "__main__":
+    import sys as _sys
+    if "--self-check-c1" in _sys.argv:
+        _sys.exit(_c1_self_check())
     import time as _time
 
     async def _test_watchdog():
