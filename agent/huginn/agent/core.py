@@ -817,14 +817,19 @@ class HuginnAgent(
 
             system_message = self._effective_system_prompt()
 
-            # deepagents 内置 fs 工具 (ls/read_file/write_file/edit_file) 默认走
+            # deepagents 内置 fs 工具 (ls/read_file/write_file/edit_file/execute) 默认走
             # StateBackend — 虚拟内存 fs, write_file 返回成功但没落盘, agent 以为
-            # 写了 report.md 实际没有 (σ₁₀). 换 FilesystemBackend 落真盘;
+            # 写了 report.md 实际没有 (σ₁₀). 换 LocalShellBackend 落真盘 +
+            # 支持 execute 命令执行 (FilesystemBackend 不实现 SandboxBackendProtocol,
+            # 导致 execute 工具报 "backend does not support command execution").
             # virtual_mode=True 把 "/report.md" 映射进 root 且禁止路径逃逸.
-            from deepagents.backends import FilesystemBackend
+            # inherit_env=True 让 subprocess 有 PATH 等环境变量.
+            from deepagents.backends import LocalShellBackend
 
             fs_root = str(self.workspace) if self.workspace else None
-            fs_backend = FilesystemBackend(root_dir=fs_root, virtual_mode=True)
+            fs_backend = LocalShellBackend(
+                root_dir=fs_root, virtual_mode=True, inherit_env=True,
+            )
 
             self._agent_graph = create_deep_agent(
                 name="HuginnAgent",
