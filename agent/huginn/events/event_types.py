@@ -49,6 +49,13 @@ HEAT_ENGINE_HEALTH = "heat_engine.health"
 SESSION_START = "session.start"
 SESSION_END = "session.end"
 
+# ── Agent loop step retry ──────────────────────────────────────────
+# graph.stream() 失败被 except 块捕获并退避重试时发布. 对齐 Kimi Code 的
+# turn.step.retrying — 让 SSE 消费者 / audit log / 监控能看到重试, 而不是
+# 只有 logger.warning. data 字段: attempt / max_attempts / error_type /
+# error_message / wait_ms / states_yielded.
+STEP_RETRY = "agent.step.retrying"
+
 # Wildcard — subscribe to this to receive everything.
 ALL = "*"
 
@@ -63,4 +70,5 @@ ALL_TYPES = frozenset({
     QUALITY_CHECK,
     HEAT_ENGINE_HEALTH,
     SESSION_START, SESSION_END,
+    STEP_RETRY,
 })

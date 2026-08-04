@@ -170,6 +170,28 @@
 
 ---
 
+### 补遗：loop-level step retry 可观测性差距（2026-08-04 核实）
+
+**触发**：对标 Kimi Code `MoonshotAI/kimi-code` 的 `stepRetryService.ts`（`packages/agent-core-v2/src/agent/stepRetry/`），核实 huginn 错误恢复机制。
+
+**核实结论（推翻先前误判）**：
+- 先前对话曾判「huginn 缺 loop-level step retry」——**错误**。huginn 在 `agent/huginn/agent/streaming.py:1361-1580` 已有完整的 `while attempt < max_retries` step 重试循环，含错误分类（rate_limit / overloaded / transient / context_overflow）、退避抖动、529 风暴切 fallback model。
+- 先前对话曾判「错误恢复能力等价」——**不准确**。两者层级不同：Kimi 是 driver 重入队（`context.retry(driver, {at: 'head'})`），huginn 是 graph.stream() 重调；Kimi 把 `failedAttempts` 注册到 `IAgentStateService` 跨 step 持久，huginn 是局部变量。
+
+**真实差距（仅一条，可观测性）**：
+- huginn 重试时只 `logger.warning`，前端 / audit log / 监控看不见；Kimi 通过 `IEventBus.publish('turn.step.retrying')` 发结构化事件，带 `failedAttempt / nextAttempt / maxAttempts / delayMs / errorName / statusCode` 字段。
+
+**已落补丁（2026-08-04）**：
+- `events/event_types.py`：新增 `STEP_RETRY = "agent.step.retrying"` 并注册到 `ALL_TYPES`。
+- `agent/streaming.py:1554-1578`：在重试 except 块 `logger.warning` 后，`await EventBus.shared().publish(AgentEvent(...))` 发事件，字段对齐 Kimi（attempt / max_attempts / error_type / error_message / wait_ms / states_yielded）。best-effort，publish 失败不阻塞主流程。
+- `events/_selfcheck.py`：新增 `test_step_retry_event` 验证类型注册 + 发布订阅。
+
+**未做（ponytail 取舍）**：
+- 不照搬 Kimi 的 `IAgentStateService` 跨 step 持久化——huginn 的 `ServerContext` + fallback model 切换（`streaming.py:1520-1536`）已覆盖「连续失败切模型」场景，跨 step 计数持久化收益小、改动大。
+- 不照搬 Kimi 的 `registerLoopErrorHandler` 注册式插件——huginn 的 `while attempt` 循环已在线性代码里，改成插件式是架构稀释，违反第四节「收敛优于新增」。
+
+---
+
 ## 三、三阶段路线图
 
 > 阶段依赖（硬性 gate）：**P0 → P1**：测量可信（SAB 重评落地、medal 有效、评分门禁生效）+ 预算假耗尽消除。**P1 → P2**：可执行性硬门（占位交付 0 次、sanity gate 生效）+ 诚实评测信号（泄漏堵死、judge 异源）——转引 `analysis_20260717/00:127-128`，缺一不接进化。
