@@ -6375,6 +6375,61 @@ async def _run_mcmc_mode(
     return 0
 
 
+def _rcb_smoke_test() -> None:
+    """P1-A7: 启动前环境冒烟 — 跑 RDKit + sklearn GP + torch 微型测试.
+
+    RCB 三个出分任务 100% 命中工具链摩擦 (RDKit/sklearn/torch).
+    不先冒烟, agent 跑半小时后才在 bash_tool 里撞 ImportError, 预算烧光.
+    失败即 fail-fast 打印修复清单, 不进 async run.
+    """
+    import time as _t
+    t0 = _t.time()
+    failures: list[str] = []
+
+    # 1. RDKit — Material 类任务核心依赖
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Descriptors
+        mol = Chem.MolFromSmiles("c1ccccc1")
+        assert mol is not None, "MolFromSmiles returned None"
+        _ = Descriptors.MolWt(mol)
+    except Exception as e:
+        failures.append(f"RDKit: {e}. Fix: pip install rdkit")
+
+    # 2. sklearn GPR — Materials/Physics 建模主力
+    try:
+        import numpy as np
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        from sklearn.gaussian_process.kernels import RBF
+        X = np.random.randn(10, 3)
+        y = np.random.randn(10)
+        gpr = GaussianProcessRegressor(kernel=RBF(), n_restarts_optimizer=0)
+        gpr.fit(X, y)
+        _ = gpr.predict(np.random.randn(5, 3))
+    except Exception as e:
+        failures.append(f"sklearn GPR: {e}. Fix: pip install scikit-learn")
+
+    # 3. torch — GNN/VAE 类任务核心依赖
+    try:
+        import torch
+        t = torch.randn(3, 3)
+        _ = t @ t.T
+    except Exception as e:
+        failures.append(f"torch: {e}. Fix: pip install torch (CPU version: pip install torch --index-url https://download.pytorch.org/whl/cpu)")
+
+    if failures:
+        print("=" * 60)
+        print("SMOKE TEST FAILED — 环境冒烟未通过, 不启动 RCB run")
+        print("=" * 60)
+        for f in failures:
+            print(f"  FAIL: {f}")
+        print("\n修复后重试, 或用 HUGINN_SKIP_SMOKE=1 跳过 (风险自负)")
+        sys.exit(1)
+
+    elapsed = _t.time() - t0
+    print(f"[SMOKE] OK ({elapsed:.1f}s) — RDKit/sklearn/torch 就绪")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Huginn RCB runner")
     parser.add_argument("--workspace", required=True, help="RCB workspace path")
@@ -6435,6 +6490,11 @@ def main() -> None:
         help="对齐引导 proposal softmax 温度 (tau, 默认 1.0)",
     )
     args = parser.parse_args()
+
+    # P1-A7: 启动前 30s 环境冒烟 — RDKit+sklearn GP + torch 是 RCB 最常见的
+    # 工具链失败点. 失败即 fail-fast 打印修复清单, 不让 agent 跑半小时后才发现环境烂.
+    if os.environ.get("HUGINN_SKIP_SMOKE", "0") != "1":
+        _rcb_smoke_test()
 
     rc = asyncio.run(run(
         args.workspace,
