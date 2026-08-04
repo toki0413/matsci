@@ -3597,6 +3597,74 @@ def _scan_real_metrics(ws: Path) -> list[Path]:
     return out
 
 
+# P1-B4: report.md 数值标记 lint — 检测未标 [EXECUTED]/[EXPECTED]/[NOT EXECUTED] 的数值
+import re as _re_b4
+_B4_NUMERIC_RE = _re_b4.compile(r"\b\d+\.?\d*(?:[eE][-+]?\d+)?\b")
+_B4_MARKERS = ("[EXECUTED]", "[EXPECTED]", "[NOT EXECUTED]")
+
+
+def _lint_report_markers(report_path: Path) -> dict:
+    """B4: 扫描 report.md, 统计数值声明的标记情况.
+
+    返回 {total_numbers, tagged, untagged, untagged_samples, marker_counts}.
+    ponytail: 句子级扫描 — 数值所在句子含 marker 即算 tagged.
+      ceiling: 不区分 marker 是否真实 (agent 可能瞎标), 只检测存在性.
+      升级路径: 跟 outputs/ 文件交叉验证 [EXECUTED] 数值是否真有产物支撑.
+    """
+    if not report_path.exists():
+        return {
+            "total_numbers": 0, "tagged": 0, "untagged": 0,
+            "untagged_samples": [], "marker_counts": {},
+        }
+    try:
+        text = report_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return {
+            "total_numbers": 0, "tagged": 0, "untagged": 0,
+            "untagged_samples": [], "marker_counts": {},
+        }
+    # 按行扫描 (句子级太粗, 行级够用)
+    lines = text.splitlines()
+    total = 0
+    tagged = 0
+    untagged_samples: list[str] = []
+    marker_counts = {m: 0 for m in _B4_MARKERS}
+    for line in lines:
+        nums = _B4_NUMERIC_RE.findall(line)
+        if not nums:
+            continue
+        # 排除纯结构行 (markdown 表头/分隔符/列表标记)
+        stripped = line.strip()
+        if stripped.startswith(("|", "---", "##", "#", "- ", "* ")):
+            # 表格行和标题行的数值仍要检查, 但列表标记行宽松
+            pass
+        # 排除年份/版本号 (2007, v1.0) — 启发式: 4 位数字 1900-2099
+        real_nums = [
+            n for n in nums
+            if not (len(n) == 4 and n.isdigit() and 1900 <= int(n) <= 2099)
+        ]
+        if not real_nums:
+            continue
+        total += len(real_nums)
+        line_upper = line.upper()
+        has_marker = any(m in line_upper for m in _B4_MARKERS)
+        if has_marker:
+            tagged += len(real_nums)
+            for m in _B4_MARKERS:
+                if m in line_upper:
+                    marker_counts[m] += 1
+        else:
+            if len(untagged_samples) < 5:
+                untagged_samples.append(stripped[:120])
+    return {
+        "total_numbers": total,
+        "tagged": tagged,
+        "untagged": total - tagged,
+        "untagged_samples": untagged_samples,
+        "marker_counts": marker_counts,
+    }
+
+
 async def _step2_outputs_gate(
     ws: Path,
     stream_chat_fn,
@@ -4173,9 +4241,13 @@ async def _step3_adversarial(
         "Do NOT be lenient with yourself.\n\n"
         "## A. Sanity Check (do this FIRST — catches fabricated/impossible results)\n"
         "Read your report/report.md. Extract EVERY quantitative claim (MAE, R², accuracy, loss, etc.).\n"
-        "Compare each to the paper's baseline value from your Step 1 checklist.\n"
-        "Build a table: | Metric | Paper Value | Your Value | Better? |\n"
-        "If ANY of your metrics is BETTER than the paper's — that is a RED FLAG.\n"
+        "RECOMPUTE each claim via an independent computation path — do NOT trust your own previous text. "
+        "Call validate_tool (numerical cross-check) or symbolic_math_tool (closed-form re-derivation) "
+        "or code_tool (re-run the metric on outputs/ artifacts) for each claimed number. "
+        "P1-B3 hard rule: a claim that you cannot recompute independently is FABRICATED, treat it as 0. "
+        "Build a table: | Metric | Claimed | Recomputed (independent path) | Tool used | Match? |\n"
+        "If Claimed != Recomputed (>1% deviation), that is a RED FLAG — fix the number in report.md. "
+        "If ANY recomputed metric is BETTER than the paper's baseline, that is also a RED FLAG.\n"
         "Investigate why: data leakage? wrong train/test split? simplified geometry? fabricated?\n"
         "Fix the bug, or honestly document the discrepancy. "
         "Implausibly good results get ZERO from reviewers.\n\n"
@@ -4818,6 +4890,13 @@ async def run(
         "- Re-read INSTRUCTIONS before writing report. List ALL required quantities.\n"
         "- Each missing quantity = 0 for that criterion. Do them ALL.\n"
         "- Quantitative results REQUIRE numeric values with units, not methodology description.\n"
+        "- EXECUTED vs EXPECTED markers (P1-B4): EVERY numeric value in report.md MUST be "
+        "tagged with one of: [EXECUTED] (you ran the code and got this number from a real "
+        "output file), [EXPECTED] (the paper says this should be the value, you did NOT "
+        "verify it), [NOT EXECUTED] (you couldn't run this part). Example: 'R²=0.79 "
+        "[EXECUTED] (from outputs/r2.json)' vs 'training loss ≈ 0.3 [EXPECTED] (paper "
+        "Table 2)'. A numeric value with NO marker = treated as fabricated. The grader "
+        "lints report.md for untagged numbers and discounts them.\n"
         "- BASELINE COMPARISON (P1-A6): for every quantitative metric you report, include "
         "a side-by-side comparison to the paper's baseline value (from your Step 1 checklist) "
         "in a `## Baseline Comparison` table at the end of report.md. Columns: Metric / "
@@ -4965,7 +5044,8 @@ async def run(
             "self_observe",
             # G27: 数学工具解除 filter 屏蔽 — repro 数量级错误 (χ=1.0 vs 0.004) 的根因之一
             # 是四个外部适配器 tool_filter 把数学工具整体摘除 (audit 13 F1).
-            "symbolic_math_tool", "lean_tool", "validate_tool",
+            # P1-B2: 补 unit_tool — Material/Physics 量纲一致性检查的关键工具
+            "symbolic_math_tool", "lean_tool", "validate_tool", "unit_tool",
             # 视觉/子智能体工具 — 画图 + CV 验证 + 并行.
             # CUDA_VISIBLE_DEVICES="" 在 rcb_huginn.py 入口已设, 避免 cudnn 栈损坏.
             "plot_tool",             # Arial 20pt+ 加粗画图 (user rule)
@@ -7209,6 +7289,68 @@ if __name__ == "__main__":
         print(f"[CHECK A7.1] _rcb_smoke_test defined OK")
         print(f"[CHECK A7.2] 7 env vars force-assigned OK")
         print(f"[CHECK A7] ALL ASSERTS PASSED")
+        sys.exit(0)
+    if "--self-check-b3" in sys.argv:
+        # B3: critique 数值重算 self-check.
+        # 不依赖 RCB workspace, 纯源码字符串验证 (step3_prompt 在函数内部, 拼接复杂).
+        # ponytail: 直接 grep 自身源码验证注入. ceiling: 不验证 agent 是否真调 validate_tool.
+        #   升级路径: 跑真实 RCB 任务, 抓 transcript 看 step3 是否调 validate_tool.
+        _src = Path(__file__).read_text(encoding="utf-8")
+        # 1. step3_prompt 的 A 段含 RECOMPUTE 硬规则 (替代文本对照)
+        assert "RECOMPUTE each claim" in _src, "missing RECOMPUTE rule in step3_prompt A"
+        assert "P1-B3 hard rule" in _src, "missing P1-B3 hard rule marker"
+        # 2. 三个重算工具都列出 (validate_tool / symbolic_math_tool / code_tool)
+        for _t in ("validate_tool", "symbolic_math_tool", "code_tool"):
+            # step3_prompt A 段范围内必须出现
+            _idx_a = _src.find("## A. Sanity Check")
+            _idx_b = _src.find("## B. Substitution Audit")
+            assert _idx_a > 0 and _idx_b > _idx_a, "A/B section markers not found"
+            _a_section = _src[_idx_a:_idx_b]
+            assert _t in _a_section, f"tool {_t} not mentioned in A section"
+        # 3. 替代了原 "Compare each to the paper's baseline value" 文本对照
+        # ponytail: 只在 A 段范围内检查, 避免本 self-check 注释里的字符串误判.
+        _old_pattern = "Compare each to the paper's baseline value"
+        assert _old_pattern not in _a_section, \
+            "old text-comparison pattern still in A section, B3 replacement incomplete"
+        # 4. table 含 Claimed / Recomputed / Tool used / Match? 四列
+        _idx_a = _src.find("## A. Sanity Check")
+        _idx_b = _src.find("## B. Substitution Audit")
+        _a_section = _src[_idx_a:_idx_b]
+        for _col in ("Claimed", "Recomputed", "Tool used", "Match?"):
+            assert _col in _a_section, f"missing table column: {_col}"
+        print("[CHECK B3.1] RECOMPUTE rule injected in step3_prompt A")
+        print("[CHECK B3.2] 3 recompute tools listed (validate/symbolic/code)")
+        print("[CHECK B3.3] old text-comparison pattern removed")
+        print("[CHECK B3.4] recompute table has 4 cols (Claimed/Recomputed/Tool/Match)")
+        print("[CHECK B3] ALL ASSERTS PASSED")
+        sys.exit(0)
+    if "--self-check-b4" in sys.argv:
+        # B4: report.md 数值标记 lint self-check.
+        # 不依赖 RCB workspace, 用临时文件验证 _lint_report_markers 逻辑.
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write("# Report\n")
+            f.write("R²=0.79 [EXECUTED] (from outputs/r2.json)\n")
+            f.write("Training loss ≈ 0.3 [EXPECTED] (paper Table 2)\n")
+            f.write("Accuracy: 0.85 (no marker)\n")
+            f.write("In 2024 we ran 100 epochs\n")  # 年份应被排除
+            f.write("F1=0.62 [NOT EXECUTED]\n")
+            tmp_path = Path(f.name)
+        try:
+            r = _lint_report_markers(tmp_path)
+            assert r["total_numbers"] >= 4, f"应至少 4 个数值 (排除年份), got {r['total_numbers']}"
+            assert r["untagged"] >= 1, f"应至少 1 个未标记 (0.85), got {r['untagged']}"
+            assert r["marker_counts"]["[EXECUTED]"] == 1, r["marker_counts"]
+            assert r["marker_counts"]["[EXPECTED]"] == 1, r["marker_counts"]
+            assert r["marker_counts"]["[NOT EXECUTED]"] == 1, r["marker_counts"]
+            # 未标记样本应含 0.85
+            assert any("0.85" in s for s in r["untagged_samples"]), r["untagged_samples"]
+            print(f"[CHECK B4.1] total={r['total_numbers']} tagged={r['tagged']} untagged={r['untagged']}")
+            print(f"[CHECK B4.2] marker_counts={r['marker_counts']}")
+            print(f"[CHECK B4.3] untagged_samples={r['untagged_samples']}")
+            print(f"[CHECK B4] ALL ASSERTS PASSED")
+        finally:
+            tmp_path.unlink(missing_ok=True)
         sys.exit(0)
     if "--self-check-v14-all" in sys.argv:
         # v14 Phase 1-4 全综合验收: Phase 1 (Task 1-10) + Phase 2/3/4 (Task 11-19).

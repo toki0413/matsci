@@ -426,6 +426,78 @@ def _baseline_self_check() -> int:
     return 0
 
 
+def _b5_self_check() -> int:
+    """P1-B5 self-check: 验证 system prompt 含「指标-提交对齐」checklist + 顺序正确.
+
+    ponytail: 字符串包含 + 顺序断言. ceiling: 不验证 agent 是否真按 checklist 走.
+      升级路径: 跑真实 MLE 任务, 抓 transcript 看诊断路径是否先 metric-align 再 overfit.
+    """
+    import tempfile
+    from pathlib import Path as _P
+    with tempfile.TemporaryDirectory() as td:
+        ws = _P(td)
+        meta = {"id": "tabular-playground-series-may-2022", "description": "test"}
+        prompt = build_system_prompt(ws, meta, synthetic=True)
+
+    # 1. checklist 关键标记存在
+    assert "METRIC ALIGNMENT PRECHECK" in prompt, "missing METRIC ALIGNMENT PRECHECK marker"
+    # 2. 4 步 checklist 完整 (competition grade / CV compute / same / AUC tasks)
+    assert "competition grade" in prompt, "missing step 1: competition grade"
+    assert "CV compute" in prompt, "missing step 2: CV compute"
+    assert "Are they the same" in prompt, "missing step 3: same-metric check"
+    assert "AUC tasks" in prompt, "missing step 4: AUC hard-label check"
+    # 3. 顺序: PRECHECK 必须在 OVERFITTING GUARD 之前 (前置于 gap 诊断)
+    idx_precheck = prompt.find("METRIC ALIGNMENT PRECHECK")
+    idx_overfit = prompt.find("OVERFITTING GUARD")
+    assert idx_precheck > 0 and idx_overfit > 0, "markers not found"
+    assert idx_precheck < idx_overfit, \
+        f"PRECHECK must precede OVERFITTING GUARD (got {idx_precheck} vs {idx_overfit})"
+    # 4. 自进化回路警示存在 (避免固化错误 lesson)
+    assert "固化" in prompt or "self-improvement" in prompt.lower(), \
+        "missing self-improvement loop warning"
+    print("[CHECK B5.1] METRIC ALIGNMENT PRECHECK marker present")
+    print("[CHECK B5.2] 4-step checklist complete (grade/CV/same/AUC)")
+    print(f"[CHECK B5.3] order OK: PRECHECK@{idx_precheck} < OVERFITTING@{idx_overfit}")
+    print("[CHECK B5.4] self-improvement loop warning present")
+    print("[CHECK B5] ALL ASSERTS PASSED")
+    return 0
+
+
+def _b2_self_check() -> int:
+    """P1-B2 self-check: 验证 MLE tool_filter 含三数学工具 + prompt 含 COMPUTE RULE.
+
+    ponytail: 只验 MLE 自身. 其他三适配器 (SAB/PB/RCB) 各自跑同模式 self-check.
+      ceiling: 不验证 agent 是否真按 COMPUTE RULE 走.
+      升级路径: 跑真实任务, 抓 transcript 看 symbolic_math_tool/unit_tool 是否被调用.
+    """
+    # 1. tool_filter 含三个数学工具
+    required = {"symbolic_math_tool", "unit_tool", "validate_tool"}
+    missing = required - set(MLE_TOOL_FILTER)
+    assert not missing, f"MLE_TOOL_FILTER missing math tools: {missing}"
+    # 2. system prompt 含三个工具描述 + COMPUTE RULE 硬规则
+    import tempfile
+    from pathlib import Path as _P
+    with tempfile.TemporaryDirectory() as td:
+        ws = _P(td)
+        meta = {"id": "tabular-playground-series-may-2022", "description": "test"}
+        prompt = build_system_prompt(ws, meta, synthetic=True)
+    for tool in ("symbolic_math_tool", "unit_tool", "validate_tool"):
+        assert tool in prompt, f"system prompt missing tool description: {tool}"
+    assert "COMPUTE RULE" in prompt, "missing COMPUTE RULE hard rule"
+    assert "hard" in prompt.lower(), "COMPUTE RULE should be marked hard"
+    # 3. COMPUTE RULE 在 PHASED PROTOCOL 之前 (前置于任务执行)
+    idx_rule = prompt.find("COMPUTE RULE")
+    idx_phase = prompt.find("PHASED PROTOCOL")
+    assert idx_rule > 0 and idx_phase > 0, "markers not found"
+    assert idx_rule < idx_phase, \
+        f"COMPUTE RULE must precede PHASED PROTOCOL (got {idx_rule} vs {idx_phase})"
+    print("[CHECK B2.1] MLE_TOOL_FILTER has 3 math tools")
+    print("[CHECK B2.2] system prompt describes 3 math tools")
+    print("[CHECK B2.3] COMPUTE RULE hard rule present, precedes PHASED PROTOCOL")
+    print("[CHECK B2] ALL ASSERTS PASSED")
+    return 0
+
+
 def build_system_prompt(workspace: Path, meta: dict, synthetic: bool) -> str:
     """MLE-bench 指令 + Phased Protocol + NOISE AS FEATURE."""
     ws_abs = str(workspace.resolve())
@@ -457,7 +529,16 @@ def build_system_prompt(workspace: Path, meta: dict, synthetic: bool) -> str:
         f"- bash_tool: pip install, shell\n"
         f"- file_read_tool: read text files\n"
         f"- glob / grep\n"
-        f"- web_search_tool: search for context (NOT others' solutions — that's cheating)\n\n"
+        f"- web_search_tool: search for context (NOT others' solutions — that's cheating)\n"
+        f"- symbolic_math_tool: symbolic feature derivation — derive interaction terms "
+        f"(f_0*f_27, log(1+x)) symbolically before coding; verify gradients of custom losses\n"
+        f"- unit_tool: dimensional check on engineered features — catches silent feature scaling "
+        f"bugs (e.g. mixing raw counts with normalized rates without scaling)\n"
+        f"- validate_tool: numerical re-evaluation — re-compute CV score via independent path "
+        f"(different fold seed / different scorer call) before trusting it. Catches silent scorer bugs.\n"
+        f"COMPUTE RULE (P1-B2, hard): every CV score you report MUST be computed via code_tool, "
+        f"not estimated. 'I think accuracy is around 0.8' is not a score — run cross_val_score. "
+        f"Same for baseline numbers, feature correlations, gap diagnostics.\n\n"
         f"## PHASED PROTOCOL (anti-rabbit-hole)\n"
         f"Phase 1 (calls 1-8): Read description.md, list data/, do EDA (value counts, "
         f"missing values, target distribution). NO modeling yet.\n"
@@ -481,6 +562,19 @@ def build_system_prompt(workspace: Path, meta: dict, synthetic: bool) -> str:
         f"- MODEL CHOICE: for tabular data, gradient boosting (LightGBM/XGBoost) usually "
         f"beats RandomForest. Try LightGBM first (faster, better regularization via "
         f"min_child_samples/lambda_l1/lambda_l2). If not installed, `pip install lightgbm`.\n"
+        f"- METRIC ALIGNMENT PRECHECK (P1-B5): BEFORE diagnosing any CV-vs-test gap as "
+        f"overfitting, run this 4-step checklist — most 'overfitting' diagnoses are actually "
+        f"metric mismatch in disguise. (1) What metric does the competition grade on? Read "
+        f"description.md / grade.py and write down the exact name (ROC AUC / accuracy / RMSE "
+        f"/ logloss). (2) What did your CV compute? Inspect the scoring call in your training "
+        f"script (sklearn.metrics.roc_auc_score? accuracy_score?). (3) Are they the same? If "
+        f"CV computed accuracy but the competition grades AUC, the gap is metric mismatch, "
+        f"NOT overfitting — fix the CV scorer first. (4) For AUC tasks: verify "
+        f"submission.csv contains probabilities (n_unique > 2) not hard labels (n_unique <= 2). "
+        f"Hard labels cost ~0.04 AUC silently and look exactly like overfitting. "
+        f"Self-improvement loop note: a metric-mismatch gap misdiagnosed as overfitting will "
+        f"固化 the wrong lesson (over-regularize) — run this checklist before writing any "
+        f"post-mortem entry.\n"
         f"- OVERFITTING GUARD: always use cross-validation (StratifiedKFold n_splits=5). "
         f"If CV score >> test score, you're overfitting — reduce model complexity, add "
         f"regularization (max_depth, min_samples_leaf, L2), or use ensembling. Don't chase "
@@ -712,6 +806,10 @@ def main():
     parser = argparse.ArgumentParser(description="Run HuginnAgent on MLE-bench competition")
     if "--self-check-a6" in sys.argv:
         sys.exit(_baseline_self_check())
+    if "--self-check-b5" in sys.argv:
+        sys.exit(_b5_self_check())
+    if "--self-check-b2" in sys.argv:
+        sys.exit(_b2_self_check())
     parser.add_argument("--competition", required=True, help="MLE-bench competition id")
     parser.add_argument("--workspace", default=None, help="Workspace dir")
     parser.add_argument("--synthetic", action="store_true", help="Use synthetic data (smoke test)")
