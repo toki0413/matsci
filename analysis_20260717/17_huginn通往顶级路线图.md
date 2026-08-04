@@ -411,6 +411,36 @@ huginn 已有遥测（`telemetry.py` TelemetrySpan + span 树 + 内存快照）�
 - RCB 已扩：`agent/huginn/cli/rcb_runner.py:4941` 默认 150→400，极限 300→600。
 - PaperBench 150→600 + phase 预算通道接通：待办（N7 警告 C2 完成前不扩 PB 预算，现 C2 已完成可推进）。
 
+**C3 余（PaperBench 150→600）**
+- `paperbench_huginn.py:875-879` 默认 timeout 3600→21600, max-tool-calls 150→600.
+- phase 预算通道 (`_get_budget_override` → `proposed_budget`) 已通 (G34 落地), 不需改 phase 死代码, harness `max_total_calls` 外层截断, phase budget 单轮 recursion_limit.
+- N7 警告解除依据: C2 已完成 (VACUUM@100MB + 真修剪 RemoveMessage), checkpoint 崩溃修复到位.
+
+**C4（web 检索链修复）**
+- ddgs 迁移: `_search_ddgs` 双导入路径 (`from ddgs import DDGS` + `from duckduckgo_search import DDGS`), 已存在.
+- 多源兜底: Tavily → arxiv → ddgs → urllib, 4 级降级链, 已存在.
+- `search_unavailable` flag: 熔断时 `execute` 返回 `search_unavailable=True`, agent 据此切换策略, 已存在.
+- bench 前检索健康检查: 新增 `web_search_health_check` (轻量探测 arxiv API, 无 key 无 rate limit), 集成到 `_rcb_smoke_test` 第 4 项 (失败只 warn 不 fail, bench 可走降级路径).
+- 自检: `python agent/huginn/tools/web_search_tool.py --self-check-c4` (4 场景: 离线模式/熔断 flag/降级链存在/ddgs 双导入)
+
+**C5（7 个评测补丁下沉，部分）**
+- 根因修复: `agent/huginn/utils/runtime.py:42-45` `get_runtime_home()` 加 `.strip()` 处理空串 fallback. 之前 rcb_runner 要打补丁 `if not os.environ.get("HUGINN_CACHE_DIR")` 才不崩, 现根因已修.
+- 其余 6 个补丁是场景配置 (RCB 跑分需要确定性/无熔断/无循环检测), 非根因 bug, 保留 env var 方式但写明代价:
+
+| 补丁 | env var | 代价 | 是否根因修复 |
+|------|---------|------|-------------|
+| 限流关闭 | `HUGINN_RATE_LIMIT_ENABLED=0` | 生产环境不限流会撞 API rate limit | 否, 场景配置 (RCB prompt 长) |
+| 本地 bash | `HUGINN_ALLOW_LOCAL_BASH=1` | 无沙箱隔离, 代码可访问宿主 | 否, 场景配置 (RCB 无 docker) |
+| CACHE_DIR 防御 | `if not get("HUGINN_CACHE_DIR")` | — | **是**, `get_runtime_home()` 已修空串 |
+| CSM 子集 | `HUGINN_RCB_CSM_SUBSET=1` | 跳过部分 CSM step | 否, 场景配置 |
+| compaction root | `HUGINN_KEEP_ROOT_N=2` | 保留前 2 条 root | 否, 场景配置 |
+| Rust sandbox 关 | `HUGINN_NO_RUST_SANDBOX=1` | 无 Rust 沙箱, RDKit+sklearn 兼容 | 否, 场景配置 (Rust sandbox 兼容性) |
+| LLM decider 关 | `HUGINN_COGNITIVE_LLM_DECIDER=0` | 规则版 decide_fn 替代 LLM | 否, 场景配置 (跑分确定性) |
+| 熔断关 | `HUGINN_HEALTH_MONITOR=0` | 无健康监测, file_read 误触发消除 | 否, 场景配置 (熔断误判) |
+| 循环检测关 | `HUGINN_FEATURE_LOOP_DETECTOR=false` | 无循环检测, code_tool 反复跑不被拦 | 否, 场景配置 (循环检测误判) |
+
+  ponytail: 不做 toml 下沉 — 7 个补丁都是 env var 强制赋值, 生产路径不设这些 env 就是默认行为. toml 下沉会改 config schema + rcb_runner 大量代码, 收益有限 (场景差异不是 bug). 升级路径: 若未来要统一, 建在 HuginnConfig 加 `[benchmark]` 块, rcb_runner 从 cfg 读.
+
 **C7（file_write_tool Windows 路径修复 + 分块写入）**
 - `agent/huginn/tools/file_write_tool.py` 加 `os.path.normpath` 归一化反斜杠/盘符，`os.path.commonpath` 替代 `relative_to` 处理 `..` 和符号链接；>1MB 用 64KB 分块 write 避免 OOM。
 - `agent/huginn/agents/subagent.py` coder 恢复 `file_write_tool`（C7 修复后不再被 Windows 路径 bug 卡住）。
