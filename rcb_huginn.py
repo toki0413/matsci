@@ -391,6 +391,11 @@ def main():
         print(f"[RCB] Done in {elapsed}s. Report exists: {report_exists}", flush=True)
         if report_exists:
             print(f"[RCB] Report size: {report_path.stat().st_size} bytes", flush=True)
+        try:
+            from huginn.config import config_fingerprint
+            _config_hash = config_fingerprint()
+        except Exception:
+            _config_hash = "import_failed"
         meta = {
             "task_id": args.task,
             "agent_name": "Huginn",
@@ -400,6 +405,7 @@ def main():
             "agent_model": os.environ.get("HUGINN_MODEL", "unknown"),
             "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
             "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
+            "config_hash": _config_hash,
         }
         try:
             (workspace / "_huginn_meta.json").write_text(

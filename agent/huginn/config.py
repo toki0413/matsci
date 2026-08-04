@@ -1231,6 +1231,22 @@ class HuginnConfig:
         return changes
 
 
+def config_fingerprint() -> str:
+    """P0-6: 实跑配置指纹, 落盘到 _huginn_meta.json 用于审计.
+
+    hash 模型/provider/thinking/judge 等影响行为的关键 env, 让历史分数可溯源到具体配置.
+    """
+    import hashlib
+    parts = [
+        os.environ.get("HUGINN_MODEL", ""),
+        os.environ.get("HUGINN_PROVIDER", ""),
+        os.environ.get("HUGINN_THINKING", ""),
+        os.environ.get("JUDGE_MODEL_NAME", ""),
+        os.environ.get("HUGINN_MAX_TOOL_OUTPUT_TOKENS", ""),
+    ]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
 @dataclass
 class CoderSettings:
     """Settings for autonomous coder mode."""

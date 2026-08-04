@@ -345,7 +345,8 @@ def score_submission(workspace: Path, meta: dict) -> dict:
         "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-v4-flash"),
         "score": score,
         "breakdown": breakdown,
-        "reasoning": reasoning[:2000],
+        # P0-1: 保留 2000+ 字符, judge max_tokens=4096 足以产出长评语
+        "reasoning": reasoning[:4000],
     }
 
 
@@ -357,7 +358,8 @@ def main():
     parser.add_argument("--workspace", default=None, help="Workspace dir")
     parser.add_argument("--score", action="store_true", help="Score after run")
     parser.add_argument("--timeout", type=int, default=1200)
-    parser.add_argument("--max-tool-calls", type=int, default=40)
+    # P0-3: 40→60 对齐 1200s 超时额; 之前 40 + pred_*.txt 强制烧满
+    parser.add_argument("--max-tool-calls", type=int, default=60)
     args = parser.parse_args()
 
     tasks = load_sab_tasks()
@@ -421,6 +423,7 @@ def main():
             except Exception as exc:
                 print(f"[SAB] Scoring failed: {exc}")
 
+        from huginn.config import config_fingerprint
         meta_out = {
             "instance_id": instance_id,
             "domain": meta["domain"],
@@ -431,6 +434,7 @@ def main():
             "agent_model": os.environ.get("HUGINN_MODEL", "unknown"),
             "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
             "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
+            "config_hash": config_fingerprint(),
         }
         (workspace / "_huginn_meta.json").write_text(
             json.dumps(meta_out, indent=2, ensure_ascii=False)

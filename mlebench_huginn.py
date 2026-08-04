@@ -355,6 +355,21 @@ def setup_workspace(competition_id: str, workspace: Path, synthetic: bool) -> di
     return meta
 
 
+# P0-10: 逐竞赛写死 metric + 提交类型, 防 agent 提交硬标签损失 AUC
+_AUC_COMPETITIONS = {
+    "tabular-playground-series-may-2022": "ROC AUC — submit PROBABILITY scores (not 0/1). Use model.predict_proba()[:, 1].",
+    "playground-series-s3e18": "ROC AUC (multi-label EC1/EC2) — submit PROBABILITIES. Use predict_proba for each target.",
+}
+
+
+def _metric_hint(comp_id: str) -> str:
+    """返回该竞赛的 metric + 提交类型提示, AUC 任务强制 predict_proba."""
+    hint = _AUC_COMPETITIONS.get(comp_id)
+    if hint:
+        return f"## Metric (CRITICAL)\n{hint}\nSubmit probabilities, NOT hard labels."
+    return ""
+
+
 def build_system_prompt(workspace: Path, meta: dict, synthetic: bool) -> str:
     """MLE-bench 指令 + Phased Protocol + NOISE AS FEATURE."""
     ws_abs = str(workspace.resolve())
@@ -379,7 +394,8 @@ def build_system_prompt(workspace: Path, meta: dict, synthetic: bool) -> str:
         f"{data_note}\n"
         f"## Deliverable\n"
         f"You MUST produce submission/submission.csv. Format per competition description.\n"
-        f"For spaceship-titanic: two columns PassengerId,Transported (True/False).\n\n"
+        f"For spaceship-titanic: two columns PassengerId,Transported (True/False).\n"
+        f"{_metric_hint(comp_id)}\n\n"
         f"## Available Tools\n"
         f"- code_tool: execute Python (pandas, sklearn, numpy, etc.) — USE THIS TO WRITE FILES via open()\n"
         f"- bash_tool: pip install, shell\n"
@@ -567,6 +583,8 @@ def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
     leaderboard_path = COMPETITIONS_DIR / comp_id / "leaderboard.csv"
     medal = "none"
     lb_note = "no_leaderboard"
+    oracle_ceiling: float | None = None
+    lb_scores = None
     if leaderboard_path.exists():
         raw = leaderboard_path.read_text(errors="replace")[:200]
         if raw.startswith("version https://git-lfs.github.com") or "oid sha256:" in raw:
@@ -575,24 +593,31 @@ def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
             try:
                 lb = pd.read_csv(leaderboard_path)
                 if "score" in lb.columns and len(lb) > 0:
-                    scores = lb["score"].astype(float)
-                    if score >= scores.quantile(0.5):
+                    lb_scores = lb["score"].astype(float)
+                    if score >= lb_scores.quantile(0.5):
                         medal = "bronze"
-                    if score >= scores.quantile(0.8):
+                    if score >= lb_scores.quantile(0.8):
                         medal = "silver"
-                    if score >= scores.quantile(0.95):
+                    if score >= lb_scores.quantile(0.95):
                         medal = "gold"
-                    lb_note = f"n={len(scores)}"
+                    lb_note = f"n={len(lb_scores)}"
+                    # 真实竞赛的 oracle 上限用榜首分数
+                    oracle_ceiling = float(lb_scores.max())
                 else:
                     lb_note = "no_score_column"
             except Exception as exc:
                 lb_note = f"parse_error: {exc}"
+
+    # synthetic smoke 没有真值模型, ceiling 留 None (诚实失败优于虚构上限)
+    if synthetic and oracle_ceiling is None:
+        oracle_ceiling = None
 
     return {
         "competition_id": comp_id,
         "score": round(score, 4),
         "medal": medal,
         "medal_note": lb_note,
+        "oracle_ceiling": oracle_ceiling,
         "metric_provenance": "synthetic-smoke" if synthetic else "real",
         "n_submission_rows": len(submission),
         "n_answer_rows": len(answers),
@@ -643,6 +668,7 @@ def main():
         except Exception as exc:
             print(f"[MLE] Grading failed: {exc}")
 
+    from huginn.config import config_fingerprint
     meta_out = {
         "competition_id": args.competition,
         "synthetic": args.synthetic,
@@ -653,6 +679,7 @@ def main():
         "agent_model": os.environ.get("HUGINN_MODEL", "unknown"),
         "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
         "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
+        "config_hash": config_fingerprint(),
     }
     (workspace / "_huginn_meta.json").write_text(json.dumps(meta_out, indent=2, ensure_ascii=False))
 
