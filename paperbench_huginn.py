@@ -49,16 +49,6 @@ try:
 except ImportError:
     pass
 
-# reasoner (R1) judge 输出含 <think>...</think>, str2dict 找不到 JSON 边界.
-try:
-    import structai.llm_api as _sai
-    _orig_str2dict = _sai.str2dict
-    _sai.str2dict = lambda s: _orig_str2dict(
-        s.split("</think>", 1)[-1] if "</think>" in s else s
-    )
-except ImportError:
-    pass
-
 # ponytail: snapshot 系统硬编码 ~/.huginn/snapshots, 不在 TRAE 沙箱允许列表.
 # 每次工具调用都报 PermissionError, 虽非致命但噪音大且拖慢 agent. 直接禁用.
 # hook 系统用 await cb(ctx) 调用, 必须返回 coroutine (async def), 不能用 lambda.
@@ -301,16 +291,18 @@ def build_system_prompt(workspace: Path, meta: dict) -> str:
         f"- glob / grep: find files\n"
         f"- web_search_tool: search web for context (NOT the paper's own codebase)\n"
         f"- subagent_tool: dispatch isolated subagents — coder (write+train code), explore (read/search), analyst (evaluate results)\n"
-        f"- symbolic_math_tool: symbolic derivation — derive closed-form posteriors / drift terms / "
-        f"diffusion coefficients before coding them. Don't hardcode 'paper says μ=...' — verify symbolically.\n"
+        f"- symbolic_math_tool: symbolic derivation — derive closed-form expressions before coding them. "
+        f"Don't hardcode 'paper says μ=...' — verify symbolically.\n"
         f"- unit_tool: dimensional check — verify SDE / Fokker-Planck / loss units consistency. "
-        f"Critical for VESDE σ(t) drift and score-based losses where unit errors compound silently.\n"
-        f"- validate_tool: numerical re-evaluation — re-derive a paper constant (σ_max, σ_min, "
-        f"drift coefficient) via an independent path before plugging into code. A wrong constant → "
-        f"training diverges → all Execution leaves score 0.\n"
+        f"Unit errors compound silently in score-based losses.\n"
+        f"- validate_tool: numerical re-evaluation — re-derive a paper constant via an independent "
+        f"path before plugging into code. A wrong constant → training diverges → Execution leaves score 0.\n"
         f"COMPUTE RULE (P1-B2, hard): every numeric constant you put into code MUST be derived via "
         f"code_tool / symbolic_math_tool / validate_tool, not transcribed from the paper by eye. "
-        f"'paper Table 2 says β=0.95' is a transcription, not a derivation — re-derive it.\n\n"
+        f"'paper Table 2 says X=Y' is a transcription, not a derivation — re-derive it.\n"
+        f"C6 评测卫生: rubric 叶节点答案不再进 prompt. 你写完每个 .py 后, 必须 code_tool "
+        f"执行针对该文件的断言脚本 (assert key shapes / constants / behaviors vs paper), "
+        f"断言产物存 submission/outputs/assert_*.json. judge 会读断言产物判分.\n\n"
         f"**write_file and edit_file tools are DISABLED. Do NOT call them.** "
         f"Every call to a disabled tool wastes a tool call. Write files via "
         f"code_tool's `open('file.py','w').write(...)` or bash heredoc.\n\n"
@@ -322,13 +314,16 @@ def build_system_prompt(workspace: Path, meta: dict) -> str:
         f"## Task\n"
         f"Replicate as many core contributions of the paper as possible.\n"
         f"Prioritize by rubric weight — high-weight tasks first.\n"
-        f"Partial credit applies: a wrong VESDE implementation still gets 0 for that leaf, "
-        f"but a correct NPE baseline still gets its full score.\n\n"
+        f"Partial credit applies: a wrong core-component implementation still gets 0 for that leaf, "
+        f"but a correct baseline still gets its full score.\n\n"
         f"## RUBRIC ALIGNMENT (critical — past runs lost points here)\n"
         f"Grading uses a hierarchical task tree (hash in paper/rubric_hash.txt, G26). "
         f"Read the paper CAREFULLY and implement core contributions faithfully.\n"
-        f"RULE: after writing each .py, code_tool a self-check that asserts "
-        f"key shapes/behaviors match the paper's description.\n\n"
+        f"RULE: after writing each .py, code_tool an assertion script that asserts "
+        f"key shapes/constants/behaviors match the paper's description. Save the assertion "
+        f"result (pass/fail + actual values) to submission/outputs/assert_<filename>.json. "
+        f"Judge reads these assertion artifacts when scoring — passing assertions support "
+        f"your claim that the leaf is correctly implemented.\n\n"
         f"## PHASED PROTOCOL (phase-aware budget, anti-rabbit-hole)\n"
         f"The Orchestrator drives phase transitions with per-phase budgets. Follow the conceptual flow:\n"
         f"- LITERATURE: Read paper/paper_text.txt ONCE. Skim rubric_hash.txt. NO coding. NO re-reading.\n"
@@ -604,33 +599,6 @@ def collect_rubric_leaves(node: dict, path: list[str] = None) -> list[dict]:
     return leaves
 
 
-# 确定性 VESDE leaves 的 regex 规则: (0-based leaf index, pattern, target_score)
-# M2-M7 这些 leaves 都是 100, LLM judge 偶尔给 50/0 是幻觉. regex 命中 → override.
-# ponytail: 只覆盖最稳定的 3 个 leaves, 不维护 174 个 regex. 升级: 自动从 rubric 生成.
-_REGEX_OVERRIDES: list[tuple[int, str, int]] = [
-    # leaf #1 (idx 0): drift f(x,t)=0 — 检查 zeros_like 或 return 0
-    (0, r"zeros_like|def\s+drift.*?return\s+0|f\(x.*?t\).*?=\s*0", 100),
-    # leaf #4 (idx 3): sigma_max=15
-    (3, r"sigma_max\s*=\s*15\.?\d*", 100),
-    # leaf #5 (idx 4): sigma_min=0.0001
-    (4, r"sigma_min\s*=\s*0\.0001|sigma_min\s*=\s*1e-4", 100),
-]
-
-
-def _regex_override(idx: int, score: int, code: str) -> tuple[int, str]:
-    """对确定性 leaves 用 regex 锁定评分, 防 LLM 幻觉低分.
-
-    返回 (new_score, reason_suffix). score >= 100 时不触发.
-    借鉴 bench/llm_judge.judge_with_regex_fallback: regex 命中 override LLM.
-    """
-    if score >= 100 or not code:
-        return score, ""
-    for leaf_idx, pattern, target in _REGEX_OVERRIDES:
-        if idx == leaf_idx and re.search(pattern, code, re.IGNORECASE):
-            return target, " [regex override: deterministic leaf]"
-    return score, ""
-
-
 def score_submission(workspace: Path, meta: dict) -> dict:
     """LLM-as-judge 走 rubric 叶节点批量打分.
 
@@ -638,28 +606,31 @@ def score_submission(workspace: Path, meta: dict) -> dict:
     1963 leaves (pinn) 根本跑不完. 改成批量: 每次 10 个 leaf 打分,
     API 调用数降到 leaves/10. rate limit 风险也降 10x.
 
-    regex pre-pass: 对确定性 VESDE leaves (drift=0/sigma_max=15/sigma_min=1e-4)
-    用 regex 锁定 100, 防 LLM judge 幻觉低分 (M7 leaf#2 曾给 50).
-    借鉴 bench/llm_judge.judge_with_regex_fallback 模式: regex 命中 override LLM.
+    C6 评测卫生: 移除 _REGEX_OVERRIDES (泄漏 3 条 VESDE 叶节点答案 drift=0/
+    sigma_max=15/sigma_min=1e-4). judge 只看代码与 rubric requirement, 不再
+    用答案 regex 抬分. 防 LLM 幻觉低分改为依赖异源 JUDGE_MODEL_NAME + agent
+    自写的断言脚本产物 (assertion scripts in submission/outputs/).
     """
-    from structai import LLMAgent
+    # C6: structai 移除 — 用 judge_helper.judge_score 替代
+    from judge_helper import judge_score
     from huginn.config import HuginnConfig
 
     cfg = HuginnConfig.from_env()
-    judge_agent = LLMAgent(
-        api_key=cfg.resolved_api_key or os.environ.get("JUDGE_API_KEY", ""),
-        api_base=cfg.base_url or os.environ.get("JUDGE_API_BASE", ""),
-        model_version=os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
-        system_prompt=(
-            "You are grading a paper reproduction submission. For each rubric leaf, "
-            "decide if the submitted code/output satisfies the requirement. "
-            "Score 0 (not done), 50 (partial), or 100 (correct). Be strict."
-        ),
-        temperature=0,
-        max_tokens=2000,
-        time_limit=120,
-        max_try=3,
+    _judge_api_key = cfg.resolved_api_key or os.environ.get("JUDGE_API_KEY", "")
+    _judge_api_base = cfg.base_url or os.environ.get("JUDGE_API_BASE", "")
+    _judge_model = os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat")
+
+    # C6: judge 同源警告
+    if _judge_model == "deepseek-chat" and not os.environ.get("JUDGE_SAME_SOURCE_OK"):
+        print("[PB-SCORE] WARNING: JUDGE_MODEL_NAME=deepseek-chat 与被测同源, "
+              "分数有自评偏向. 设异源 JUDGE_MODEL_NAME 或 JUDGE_SAME_SOURCE_OK=1.", flush=True)
+
+    _JUDGE_SYS = (
+        "You are grading a paper reproduction submission. For each rubric leaf, "
+        "decide if the submitted code/output satisfies the requirement. "
+        "Score 0 (not done), 50 (partial), or 100 (correct). Be strict."
     )
+    _EXAMPLE_LIST = [{"index": 1, "score": 0, "reasoning": "str"}]
 
     # 收集 agent 提交的代码文件
     # ponytail: agent 常把文件写到 workspace 根目录而非 submission/, 扫两个位置兜底.
@@ -762,21 +733,22 @@ def score_submission(workspace: Path, meta: dict) -> dict:
             f"## Submission Code\n{code_summary[:24000]}\n\n"
             f"{exec_summary}\n\n"
             f"## Task\n"
-            f"Score each leaf. 0=not done, 50=partial, 100=correct. "
-            f"If you can't tell, score 30.\n"
-            f"IMPORTANT: For Execution/Result Analysis category leaves, check EXECUTION RESULTS "
-            f"section. If loss curves or metrics exist and show real training, score 50+. "
-            f"If only code exists but no outputs/, score 0 for Execution leaves.\n\n"
+            f"Score each leaf strictly against its requirement. 0=not done, 50=partial, 100=correct. "
+            f"If you can't tell from the code/outputs, score 0 (no evidence).\n"
+            f"For Execution/Result Analysis category leaves: require actual outputs/ artifacts "
+            f"(loss curves, metrics). Code alone without executed results = 0 for Execution leaves. "
+            f"C6 评测卫生: 不抬分. 断言产物 (submission/outputs/assert_*.json) 可作为代码正确性证据.\n\n"
             f"Return JSON array, one object per leaf:\n"
             f'[{{"index": 1, "score": 0, "reasoning": "..."}}, ...]\n'
             f"Indices must be {batch_start + 1} to {batch_start + len(batch)}."
         )
 
         try:
-            result = judge_agent(
-                prompt,
-                return_example=[{"index": 1, "score": 0, "reasoning": "str"}],
-                max_try=3,
+            result = judge_score(
+                prompt, system_prompt=_JUDGE_SYS,
+                model=_judge_model, max_tokens=2000,
+                max_try=3, return_example=_EXAMPLE_LIST,
+                api_key=_judge_api_key, api_base=_judge_api_base,
             )
             scores_map: dict[int, tuple[int, str]] = {}
             if isinstance(result, list):
@@ -804,10 +776,6 @@ def score_submission(workspace: Path, meta: dict) -> dict:
         for j, leaf in enumerate(batch):
             idx = batch_start + j + 1
             score, reasoning = scores_map.get(idx, default)
-            # regex pre-pass: 确定性 VESDE leaves override LLM 幻觉低分
-            score, suffix = _regex_override(batch_start + j, score, code_summary)
-            if suffix:
-                reasoning = reasoning + suffix
             results.append({
                 "index": batch_start + j,
                 "requirements": leaf["requirements"][:120],

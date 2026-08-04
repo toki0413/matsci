@@ -2519,8 +2519,9 @@ LUCID review (mandatory after generating hypothesis):
             except Exception as _me:
                 print(f"[Memory] iteration_result write skipped: {_me}", flush=True)
 
-        # 停滞检测: report.md 内容 hash 不变 → 可能卡住, 早停
-        # P5 守卫: wall_clock 未耗尽才允许 stagnation break, 否则继续跑满 timeout.
+        # 停滞检测: report.md 内容 hash 不变 → 升温分叉探索, 不再 break.
+        # C7: 删 stagnation early-stop — 与 P5 "跑满 timeout" 矛盾, 是早交卷根因.
+        #   升温 + imagination/pivot 分流负责重热, wall_clock 守卫唯一控制退出.
         _curr_hash = (
             _hashlib.md5(_report_text.encode()).hexdigest()
             if _report_text else None
@@ -2529,19 +2530,16 @@ LUCID review (mandatory after generating hypothesis):
             _stagnation_count += 1
             # 停滞重热: 报告没变化 = 轨迹卡住, 升温让下轮分叉探索
             _t_hot = min(1.0, _t_hot + 0.5)
-            if _stagnation_count >= 2 and not (ctx.wall_expired_fn and ctx.wall_expired_fn()):
-                print(
-                    f"[stagnation: report.md unchanged for {_stagnation_count} iters, breaking]",
-                    flush=True,
-                )
-                break
+            print(
+                f"[stagnation: report.md unchanged for {_stagnation_count} iters, heating]",
+                flush=True,
+            )
         else:
             _stagnation_count = 0
         _prev_report_hash = _curr_hash
 
-        # P4 Task 21: score_history 滑动窗口 — push 本轮 darwin_score, 跟现有
-        # _stagnation_count 并列作额外终止条件. ponytail: 只监测 + 记 stats,
-        #   stream_chat_fn 不接 temperature, get_temperature 仅写日志供观测.
+        # P4 Task 21: score_history 滑动窗口 — push 本轮 darwin_score, 只监测.
+        # C7: 早退已删, 仅记 stats + 日志, wall_clock 守卫唯一控制退出.
         if _score_history is not None:
             try:
                 _sh_darwin = (
@@ -2557,16 +2555,14 @@ LUCID review (mandatory after generating hypothesis):
                         f"streak={_sh_stats['monotonic_streak']}",
                         flush=True,
                     )
-                # 单调下降达阈值且 wall_clock 未耗尽 → 终止
-                if _score_history.should_terminate() and not (
-                    ctx.wall_expired_fn and ctx.wall_expired_fn()
-                ):
+                # C7: 删 monotonic-decrease early-stop — 同 stagnation, 与 P5 矛盾.
+                #   保留监测 + 日志, wall_clock 守卫唯一控制退出.
+                if _score_history.should_terminate():
                     print(
                         f"[score_history] monotonic decrease "
-                        f"{_sh_stats['monotonic_streak']} iters, terminating",
+                        f"{_sh_stats['monotonic_streak']} iters (advisory, not stopping)",
                         flush=True,
                     )
-                    break
             except Exception as _she:
                 print(f"[score_history push skipped: {_she}]", flush=True)
 
@@ -7562,5 +7558,13 @@ if __name__ == "__main__":
             _cr = _CR(verdict="fix_needed", gap_type=_gt)
             assert _cr.gap_type == _gt, f"expected {_gt}, got {_cr.gap_type}"
         print("[CHECK v14 Task 7] CritiqueResult.gap_type field OK")
+        sys.exit(0)
+    if "--self-check-c7" in sys.argv:
+        # C7: 正向验证 — 升温替代了 break, advisory 替代了终止.
+        _src = Path(__file__).read_text(encoding="utf-8")
+        assert "iters, heating]" in _src, "C7 FAIL: stagnation 未改成 heating"
+        assert "advisory, not stopping" in _src, "C7 FAIL: score_history 未改成 advisory"
+        assert "_t_hot = min(1.0, _t_hot + 0.5)" in _src, "C7 FAIL: 升温逻辑丢失"
+        print("[C7] stagnation/score_history early-stop removed, heating retained — PASS")
         sys.exit(0)
     main()
