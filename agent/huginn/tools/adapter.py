@@ -203,6 +203,9 @@ class ToolAdapter:
         # 工具调用循环检测器, 跟 budget / router 同生命周期. None 时不检测.
         # 抓 LLM 反复调同工具同参数的死循环, 跟 budget 互补.
         self._current_loop_detector: Any = None
+        # 同 step 工具调用去重, 跟 budget / router 同生命周期. None 时不去重.
+        # 对标 Kimi Code toolDedupe: 同 (tool, args) 命中即返回上次结果.
+        self._current_deduper: Any = None
         # agent 反向引用 — _serialize 把 _visual_base64 存到 agent 实例上,
         # chat 模式不污染上下文, visual_inspect 路径能拿到.
         self._agent_ref: Any = None
@@ -224,6 +227,13 @@ class ToolAdapter:
         detector 为 None 时跳过循环检测, 兼容老调用路径.
         """
         self._current_loop_detector = detector
+
+    def set_deduper(self, deduper: Any) -> None:
+        """设置当前轮次的 ToolDeduper, 传 None 清除.
+
+        deduper 为 None 时跳过去重, 兼容老调用路径.
+        """
+        self._current_deduper = deduper
 
     def set_summarizer(self, summarizer: Any) -> None:
         """Register an async summarizer for smart output compression.
@@ -746,6 +756,17 @@ class ToolAdapter:
                 _record_cache_hit(tool.name)
                 return cached, None
 
+            # 2b. Dedupe (same step, same tool+args → return last result)
+            # 跟 read_only cache 互补: cache 只对 read_only 工具生效,
+            # dedupe 对所有工具生效, 防止 step 内重复调用有副作用的工具.
+            deduper = self._current_deduper
+            if deduper is not None:
+                cached_dedup = deduper.lookup(tool.name, kwargs)
+                if cached_dedup is not None:
+                    _audit(input_data, cached_dedup, approved=True, reason="dedupe_hit")
+                    _publish(PetMood.SUCCESS, f"{tool.name} (deduped)", {"tool": tool.name})
+                    return cached_dedup, None
+
             # 3. Router (lightweight-path decision)
             router = self._current_router
             if router is not None:
@@ -822,6 +843,15 @@ class ToolAdapter:
             """Post-execution: constraints, audit, cache, publish."""
             if router is not None:
                 router.record_light_attempt(tool.name)
+
+            # 记录到 deduper, 后续同 step 同 (tool, args) 命中即跳过真实执行.
+            # 只缓存成功结果, 错误结果不缓存 (让 LLM 重试).
+            deduper = self._current_deduper
+            if deduper is not None and result.success:
+                try:
+                    deduper.record(tool.name, kwargs, output)
+                except Exception:
+                    logger.debug("deduper record failed (non-fatal)", exc_info=True)
 
             # 溯源注册: 自动提取文件路径和关键属性
             if result.success:
