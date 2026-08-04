@@ -894,6 +894,7 @@ def main():
         except Exception as exc:
             print(f"[PB] Scoring failed: {exc}")
 
+    from huginn.config import config_fingerprint
     meta_out = {
         "paper_id": args.paper,
         "title": meta.get("title", ""),
@@ -904,6 +905,7 @@ def main():
         "agent_model": os.environ.get("HUGINN_MODEL", "unknown"),
         "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
         "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
+        "config_hash": config_fingerprint(),
     }
     (workspace / "_huginn_meta.json").write_text(
         json.dumps(meta_out, indent=2, ensure_ascii=False)
