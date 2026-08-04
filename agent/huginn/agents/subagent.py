@@ -132,12 +132,12 @@ class SubagentDispatch:
             name="coder",
             description="执行代码编写和修改任务",
             system_prompt="You are a coding agent. Write and modify code files as requested.",
-            # ponytail: 去掉 file_write_tool/file_edit_tool — Windows 路径 bug (§2.1).
-            # 子 agent 用 code_tool 的 open() 写文件, 和主 agent 一致.
+            # C7: file_write_tool Windows 路径已修复 (normpath + commonpath), 恢复.
+            # 子 agent 可用 file_write_tool 写大文件 (分块写入), 也可用 code_tool 的 open().
             # ponytail: 去掉 bench_infra (plot/training_matrix) — 让 coder 自己用 code_tool 实现
             allowed_tools=[
                 "code_tool", "bash_tool",
-                "file_read_tool", "glob", "grep",
+                "file_read_tool", "file_write_tool", "glob", "grep",
             ],
             # benchmark 需要更多预算: 训练循环 + 画图 + 调试
             max_tool_calls=50,
