@@ -3894,13 +3894,25 @@ async def _step3_adversarial(
         if _retry_count >= 2:
             # spec §"回退次数上限" — 写 rejection + 强制 finalize
             _write_directive_rejection(ws, _retry_gap, _retry_verdict, _retry_count)
+            _report_text = ""
+            try:
+                _rp = ws / "report" / "report.md"
+                if _rp.exists():
+                    _report_text = _rp.read_text(encoding="utf-8")
+            except Exception:
+                pass
             _finalize_prompt = (
                 f"Retry limit reached ({_retry_count}/2). Critique still finds gap "
                 f"(type={_retry_gap}, verdict={_retry_verdict}).\n"
                 f"Add to report/report.md Limitations section: "
                 f"'Attempted {_retry_count} retries, could not fix gap ({_retry_gap}).'\n"
-                f"Use file_write_tool to OVERWRITE report/report.md with this honest note."
+                f"UPDATE report/report.md — keep all existing content, only ADD the "
+                f"Limitations note above. Do NOT overwrite or remove existing sections.\n"
             )
+            if _report_text:
+                _finalize_prompt += (
+                    f"\n## Current report content (PRESERVE THIS):\n{_report_text[:8000]}"
+                )
             # fresh thread 避免累积 — finalize 只需当前 report + critique verdict.
             # 之前用 _step3_tid 会累积 step3 + step3_retry 历史 → 1.6M tokens 超限.
             _finalize_tid = f"rcb_{ws.name}_step3_finalize"
@@ -4381,15 +4393,18 @@ async def run(
         "## Tool facts (sandbox constraints, not priorities)\n"
         "- code_tool: run Python for ALL code execution. This is your PRIMARY tool.\n"
         "  Sandbox BLOCKS open() and os inside code_tool — CANNOT write files via code_tool.\n"
-        "  The `execute` tool does NOT work in this environment — ALWAYS use code_tool instead.\n"
         "- bash_tool: pip install, run scripts. On errors, stderr IS in error_detail field.\n"
+        "- execute: runs shell commands (Windows PowerShell). Use for quick one-liners.\n"
         "- file_write_tool: CREATE or OVERWRITE text files (report.md, code/*.py). "
         "Pass FULL content each time.\n"
         "- matplotlib.savefig() WORKS (library code, not AST-scanned) — use it for figures.\n"
         "- code_tool security scanner may false-positive on eval() in torch/numpy — "
         "if so, write script via file_write_tool and run with bash_tool.\n"
         "- file_read_tool/glob/grep: explore data/ and related_work/.\n"
-        "- web_search_tool: verify constants, methods, or edge cases.\n\n"
+        "- web_search_tool: verify constants, methods, or edge cases.\n"
+        "- NOTE: In Step 1 (read-only phase), code_tool/bash_tool/file_write_tool "
+        "are NOT available. Use file_read_tool/glob/grep/web_search_tool only. "
+        "They unlock in Step 2.\n\n"
         "## Operating rules\n"
         "- Every response before task completion MUST include a tool call. "
         "Text-only response = task termination.\n"
