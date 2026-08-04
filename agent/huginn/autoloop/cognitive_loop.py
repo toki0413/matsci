@@ -8,7 +8,7 @@
 - 不强行统一 6-step 和 7-phase — 它们任务粒度不同, 强行统一会引入抽象税
 - 只统辖 4 个钩子: observe / decide / execute_action / reflect
 - 两条路径各自实现钩子, CognitiveLoop 只负责编排
-- 不绑定输出格式 — 通过 output_writer 接口注入 (RCBReportWriter / ProvenanceWriter)
+- 不绑定输出格式 — 通过 output_writer 接口注入 (生产传 None, self-check 用 MockWriter)
 
 向上兼容:
 - rcb_runner: 6-step 逻辑作为 execute_action 的实现, observe/decide/reflect 退化为
@@ -316,13 +316,13 @@ class CognitiveLoop:
         return count
 
 
-# === output_writer 接口 (供两条路径各自实现) ===
+# === output_writer 接口 (可选钩子, 生产路径传 None) ===
 
 class OutputWriter:
-    """output_writer 接口 — 两条路径各自实现 write_step.
+    """output_writer 接口 — 可选的 per-step 产物钩子.
 
-    RCBench: RCBReportWriter 把 step 结果累积到 report/report.md
-    Autoloop: ProvenanceWriter 把 step 结果写 provenance JSONL
+    生产路径传 None (provenance 走 _record_provenance).
+    self-check 用 MockWriter 验证 loop 语义.
     """
 
     def write_step(
