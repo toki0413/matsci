@@ -48,17 +48,6 @@ try:
 except ImportError:
     pass
 
-# reasoner (R1) judge 输出含 <think>...</think>, str2dict 找不到 JSON 边界.
-# 剥离 think 块, 只留 </think> 后的 JSON.
-try:
-    import structai.llm_api as _sai
-    _orig_str2dict = _sai.str2dict
-    _sai.str2dict = lambda s: _orig_str2dict(
-        s.split("</think>", 1)[-1] if "</think>" in s else s
-    )
-except ImportError:
-    pass
-
 # ponytail: 不含 file_write_tool/file_edit_tool — 它们在 Windows 上路径解析有 bug
 # (agent 传 /workspace/xxx 虚拟路径, 实际写到别处). 用 code_tool 的 open() 写文件更稳.
 SAB_TOOL_FILTER = [

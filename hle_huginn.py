@@ -40,16 +40,6 @@ try:
 except ImportError:
     pass
 
-# reasoner (R1) judge 输出含 <think>...</think>, str2dict 找不到 JSON 边界.
-try:
-    import structai.llm_api as _sai
-    _orig_str2dict = _sai.str2dict
-    _sai.str2dict = lambda s: _orig_str2dict(
-        s.split("</think>", 1)[-1] if "</think>" in s else s
-    )
-except ImportError:
-    pass
-
 # ponytail: 去掉 file_write_tool — Windows 路径 bug, 答题用不到写文件.
 # 含图题: agent 内置 vision 路由 (huginn.vision) 会自动处理消息里的 image,
 # 不需要在 tool_filter 显式列; 但需要 image_index/visualize_tool 做后处理.
@@ -161,8 +151,8 @@ def score_mc(pred: str, gold: str) -> bool:
     return pred_clean == gold_clean
 
 
-def score_sa(pred: str, gold: str, judge_agent) -> tuple[bool, str]:
-    """简答题评分: LLM-as-judge."""
+def score_sa(pred: str, gold: str, judge_fn) -> tuple[bool, str]:
+    """简答题评分: LLM-as-judge. C6: judge_fn 是 judge_helper.judge_score."""
     prompt = (
         f"Does this predicted answer match the gold answer?\n\n"
         f"Predicted: {pred[:500]}\n"
@@ -170,7 +160,12 @@ def score_sa(pred: str, gold: str, judge_agent) -> tuple[bool, str]:
         f"Respond with JSON: {{\"match\": true/false, \"reason\": \"...\"}}"
     )
     try:
-        result = judge_agent(prompt, return_example={"match": False, "reason": "str"}, max_try=2)
+        result = judge_fn(
+            prompt,
+            system_prompt="You are grading exam answers. Determine if the predicted answer is semantically equivalent to the gold answer.",
+            return_example={"match": False, "reason": "str"},
+            max_try=2,
+        )
         if isinstance(result, dict):
             return bool(result.get("match", False)), str(result.get("reason", ""))
     except Exception:
@@ -179,7 +174,7 @@ def score_sa(pred: str, gold: str, judge_agent) -> tuple[bool, str]:
     return pred.strip().lower() == gold.strip().lower(), "string match fallback"
 
 
-async def solve_one(item: dict, timeout: int, max_tool_calls: int) -> str:
+async def solve_one(item: dict, timeout: int, max_tool_calls: int, qid: str = "") -> str:
     """用 HuginnAgent 解一道题."""
     from huginn.agent.core import HuginnAgent
     from huginn.config import HuginnConfig
@@ -215,7 +210,10 @@ async def solve_one(item: dict, timeout: int, max_tool_calls: int) -> str:
     # 间接启用: SkillTool import 时触发 huginn.skills.presets 注册到 SkillRegistry,
     # KB 由 ContextBuilder 用 get_knowledge_base(workspace) 自动 seed.
     # hle 的 solve_one 无 workspace 参数, 用 cwd 作 workspace (与原行为一致).
-    memory_dir = Path.cwd() / ".hle_memory"
+    # C6 评测卫生: per-question 隔离 memory + checkpoint, 防跨题泄漏
+    # (之前所有题共享 .hle_memory/.hle_checkpoint, 第 N 题可读前 N-1 题 memory)
+    _qslug = re.sub(r'[^A-Za-z0-9_-]', '_', qid)[:40] or "default"
+    memory_dir = Path.cwd() / ".hle_memory" / _qslug
     memory_dir.mkdir(parents=True, exist_ok=True)
     memory_manager = MemoryManager(
         config=MemoryConfig(memory_dir=memory_dir, auto_promote_to_longterm=True),
@@ -227,7 +225,8 @@ async def solve_one(item: dict, timeout: int, max_tool_calls: int) -> str:
         if k.startswith("HUGINN_MODEL_") and k != "HUGINN_MODEL_DEFAULT"
     ]
     model_router = ModelRouter.from_env() if _extra_model_slots else None
-    checkpoint_path = Path.cwd() / ".hle_checkpoint.sqlite"
+    checkpoint_path = Path.cwd() / ".hle_checkpoint" / f"{_qslug}.sqlite"
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     agent = HuginnAgent(
         model=model,
@@ -276,21 +275,22 @@ def main():
     items = load_hle_dataset(n=args.n, domain=args.domain)
     print(f"[HLE] Loaded {len(items)} questions")
 
-    # 简答题 judge (可选)
-    judge_agent = None
+    # 简答题 judge (可选). C6: structai 移除, 用 judge_helper.judge_score
+    judge_fn = None
     if args.judge:
-        from structai import LLMAgent
+        from judge_helper import judge_score
         from huginn.config import HuginnConfig
         cfg = HuginnConfig.from_env()
-        judge_agent = LLMAgent(
-            api_key=cfg.resolved_api_key or os.environ.get("JUDGE_API_KEY", ""),
-            api_base=cfg.base_url or os.environ.get("JUDGE_API_BASE", ""),
-            model_version=os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
-            system_prompt="You are grading exam answers. Determine if the predicted answer is semantically equivalent to the gold answer.",
-            temperature=0,
+        _j_model = os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat")
+        if _j_model == "deepseek-chat" and not os.environ.get("JUDGE_SAME_SOURCE_OK"):
+            print("[HLE] WARNING: JUDGE_MODEL_NAME=deepseek-chat 与被测同源.", flush=True)
+        _j_key = cfg.resolved_api_key or os.environ.get("JUDGE_API_KEY", "")
+        _j_base = cfg.base_url or os.environ.get("JUDGE_API_BASE", "")
+        # partial: 预绑 api_key/api_base/model, score_sa 只传 prompt/system_prompt/return_example/max_try
+        import functools
+        judge_fn = functools.partial(
+            judge_score, model=_j_model, api_key=_j_key, api_base=_j_base,
             max_tokens=200,
-            time_limit=60,
-            max_try=2,
         )
 
     results = []
@@ -306,7 +306,7 @@ def main():
         print(f"\n[HLE] Q{i+1}/{len(items)}: {question_preview}...", flush=True)
 
         start = time.time()
-        response = asyncio.run(solve_one(item, args.timeout, args.max_tool_calls))
+        response = asyncio.run(solve_one(item, args.timeout, args.max_tool_calls, qid=str(qid)))
         elapsed = round(time.time() - start)
 
         pred = extract_answer(response)
@@ -322,8 +322,8 @@ def main():
                 n_mc_correct += 1
         else:
             n_sa += 1
-            if args.judge and judge_agent:
-                correct, reason = score_sa(pred, gold, judge_agent)
+            if args.judge and judge_fn:
+                correct, reason = score_sa(pred, gold, judge_fn)
             else:
                 correct = pred.strip().lower() == gold.strip().lower()
                 reason = "string match"
