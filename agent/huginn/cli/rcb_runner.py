@@ -3312,6 +3312,347 @@ def _rcb_drift_check(evals_history: list) -> tuple[bool, str]:
     return False, ""
 
 
+def _extract_exact_components(checklist: str) -> list[str]:
+    """从 checklist 文本抽 [EXACT] 标记的组件名.
+
+    ponytail: 纯正则, 不调 LLM — 机械比对的前提是规则确定.
+    匹配 '[EXACT]' 后到行尾/分号/句号的文本, strip 后作组件名.
+    升级路径: Step 1 直接输出结构化 JSON checklist 时换 parser.
+    """
+    import re as _re
+    if not checklist:
+        return []
+    out = []
+    seen = set()
+    for m in _re.finditer(r"\[EXACT\]\s*([^\n;]+)", checklist):
+        name = m.group(1).strip().rstrip(".,;:")
+        if not name or len(name) > 120:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(name)
+    return out
+
+
+def _scan_implementation_traces(ws: Path, components: list[str]) -> dict:
+    """扫 ws 下产物文件 (.py/.md/.json/.txt/.sh/.yaml), 检查每个 [EXACT] 组件是否出现.
+
+    ponytail: 子串匹配 + case-insensitive. 简单但够用 — RCB 任务的 [EXACT] 组件
+    名通常是显式术语 (e.g. 'GVAE encoder', 'C2ST classifier'), 在实现里会留下痕迹.
+    升级路径: 用 AST 解析 code/*.py 抽函数/类名做更精确匹配.
+    返回 {component_name: bool}.
+    """
+    if not components:
+        return {}
+    exts = {".py", ".md", ".json", ".txt", ".sh", ".yaml", ".yml"}
+    corpus_parts = []
+    for ext in exts:
+        for p in ws.rglob(f"*{ext}"):
+            # 跳过 .huginn/ 内部 trace/cache — 那是观测不是产物
+            if ".huginn" in p.parts:
+                continue
+            try:
+                corpus_parts.append(p.read_text(encoding="utf-8", errors="ignore").lower())
+            except OSError:
+                continue
+    corpus = "\n".join(corpus_parts)
+    return {c: (c.lower() in corpus) for c in components}
+
+
+def _parse_substitute_headers(report_md: Path) -> list[dict]:
+    """解析 report.md 顶部 METHOD SUBSTITUTE 声明.
+
+    返回 [{replaced, reason, raw}, ...]. 约定 header 形如:
+        METHOD SUBSTITUTE: <X> replaced <Y> because <reason>
+    ponytail: 只扫 report.md 前 50 行 — header 应在顶部, 全文搜易误匹配正文.
+    """
+    if not report_md.exists():
+        return []
+    import re as _re
+    try:
+        head = report_md.read_text(encoding="utf-8", errors="ignore").splitlines()[:50]
+    except OSError:
+        return []
+    pat = _re.compile(
+        r"METHOD\s+SUBSTITUTE:\s*(.+?)\s+replaced\s+(.+?)\s+because\s+(.+)",
+        _re.IGNORECASE,
+    )
+    out = []
+    for line in head:
+        m = pat.search(line)
+        if m:
+            out.append({
+                "replaced": m.group(1).strip(),
+                "reason": m.group(3).strip(),
+                "raw": line.strip(),
+            })
+    return out
+
+
+def _count_failed_attempts(
+    ws: Path, evals_history: list, component: str
+) -> int:
+    """统计 [EXACT] 组件的失败尝试次数.
+
+    ponytail: 两个来源取最大值 —
+      (a) evals_history 里 on_track=false 且 attempted 文本含组件名;
+      (b) .huginn/meta_trace.jsonl 里 on_track=false 行的 attempted 含组件名.
+    升级路径: 用 LLM 读 attempted 文本判语义相关性, 而非子串匹配.
+    """
+    key = component.lower()
+    n = 0
+    # (a) in-memory evals
+    for ev in evals_history or []:
+        try:
+            on_track = str(getattr(ev, "on_track", "")).lower()
+            attempted = str(getattr(ev, "attempted", "") or "").lower()
+            if on_track == "false" and key in attempted:
+                n += 1
+        except Exception:
+            continue
+    # (b) on-disk trace — resume/跨进程场景 evals_history 未必含全部历史
+    trace_path = ws / ".huginn" / "meta_trace.jsonl"
+    if trace_path.exists():
+        try:
+            with trace_path.open(encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    if str(entry.get("on_track", "")).lower() == "false":
+                        if key in str(entry.get("attempted", "") or "").lower():
+                            n += 1
+        except OSError:
+            pass
+    return n
+
+
+async def _step2_substitution_audit(
+    ws: Path,
+    checklist: str,
+    evals_history: list,
+    stream_chat_fn,
+    *,
+    max_remediate: int = 1,
+    variant_min_failures: int = 2,
+) -> dict:
+    """A3: silent substitution 结构性拦截.
+
+    Step-2 结束机械比对「[EXACT] 组件 ↔ code/实现痕迹」, 缺失即回退执行.
+    禁止未尝试标 [VARIANT] — ≥2 次失败 + 报错才允许降级.
+
+    返回 audit 报告 dict:
+      {exact_components, missing, substitutions, variant_blocked, remediated,
+       unresolved, raw_log}
+    ponytail: 不调 LLM 做语义判断 — 路线图 N5 明确「不再堆 prompt 级规劝」,
+    机械比对的意义就是规则确定不可被 LLM 说服. 回退执行用一次 chat 注入强提示,
+    失败也不循环 (max_remediate=1).
+    """
+    log = []
+    components = _extract_exact_components(checklist)
+    log.append(f"extracted {len(components)} [EXACT] components")
+    if not components:
+        return {
+            "exact_components": [], "missing": [], "substitutions": [],
+            "variant_blocked": [], "remediated": [], "unresolved": [],
+            "raw_log": log,
+        }
+
+    traces = _scan_implementation_traces(ws, components)
+    report_md = ws / "report" / "report.md"
+    subs = _parse_substitute_headers(report_md)
+    sub_names = {s["replaced"].lower() for s in subs}
+
+    missing = []
+    variant_blocked = []
+    for name, found in traces.items():
+        if found:
+            continue
+        # 缺失: 已有 SUBSTITUTE header 记录则视为合规降级
+        if name.lower() in sub_names:
+            continue
+        # 无 SUBSTITUTE — 检查失败次数是否达 variant 阈值
+        n_fail = _count_failed_attempts(ws, evals_history, name)
+        if n_fail >= variant_min_failures:
+            # 达到降级阈值, 但仍未声明 SUBSTITUTE — 提示补声明
+            variant_blocked.append({
+                "component": name, "failures": n_fail,
+                "issue": "达到降级阈值但未声明 METHOD SUBSTITUTE",
+            })
+            continue
+        # 未尝试就缺失 — silent substitution, 必须回退执行
+        missing.append({"component": name, "failures": n_fail})
+
+    log.append(f"missing={len(missing)} variant_blocked={len(variant_blocked)} subs={len(subs)}")
+    if not missing and not variant_blocked:
+        return {
+            "exact_components": components, "missing": [], "substitutions": subs,
+            "variant_blocked": [], "remediated": [], "unresolved": [],
+            "raw_log": log,
+        }
+
+    # 回退执行: 一次性注入强提示. ponytail: max_remediate=1 防无限循环.
+    remediated = []
+    unresolved = list(missing) + list(variant_blocked)
+    for _ in range(max_remediate):
+        if not unresolved:
+            break
+        prompt = (
+            "STEP-2 SUBSTITUTION AUDIT FAILED — 以下 [EXACT] 组件既无实现痕迹, "
+            "也未在 report/report.md 顶部声明 METHOD SUBSTITUTE:\n"
+        )
+        for item in unresolved:
+            tag = "MISSING" if item in missing else "VARIANT_BLOCKED"
+            prompt += f"  [{tag}] {item['component']} (失败 {item.get('failures', 0)} 次)\n"
+        prompt += (
+            "\n这是结构性拦截 — 不允许 silent substitution.\n"
+            "对每个组件, 必须 EITHER:\n"
+            "  (a) 用 code_tool / bash_tool 实际实现并跑通 (产物文件里留下痕迹); OR\n"
+            "  (b) 在 report/report.md 顶部添加 header 行:\n"
+            "      'METHOD SUBSTITUTE: <组件名> replaced <替代方案> because <原因 + ≥2 次失败的报错摘要>'\n"
+            "未尝试 (失败 0 次) 的组件不允许标 VARIANT — 先实际尝试.\n"
+            "现在补做或补声明. 这是最后一次回退执行机会."
+        )
+        log.append(f"remediate attempt: {len(unresolved)} items")
+        try:
+            await stream_chat_fn(prompt, "step2_audit_remediate")
+        except Exception as e:
+            log.append(f"remediate chat failed: {e}")
+            break
+        # 重扫
+        traces = _scan_implementation_traces(ws, [it["component"] for it in unresolved])
+        report_md = ws / "report" / "report.md"
+        subs = _parse_substitute_headers(report_md)
+        sub_names = {s["replaced"].lower() for s in subs}
+        still = []
+        for item in unresolved:
+            name = item["component"]
+            if traces.get(name, False) or name.lower() in sub_names:
+                remediated.append(name)
+            else:
+                still.append(item)
+        unresolved = still
+        log.append(f"after remediate: remediated={len(remediated)} unresolved={len(unresolved)}")
+        if not unresolved:
+            break
+
+    return {
+        "exact_components": components,
+        "missing": missing,
+        "substitutions": subs,
+        "variant_blocked": variant_blocked,
+        "remediated": remediated,
+        "unresolved": unresolved,
+        "raw_log": log,
+    }
+
+
+# A2: 产物级门控 — 路线图 P1-A2 / 12 报告 P1-1.
+# ResearchClaw remediation task 最小实现: outputs/ 无真实 metrics 文件时
+# 禁止虚写 Results, 触发 blocker remediate task.
+_PLACEHOLDER_TOKENS = ("expected", "todo", "placeholder", "tbd", "n/a", "not implemented")
+
+
+def _scan_real_metrics(ws: Path) -> list[Path]:
+    """扫 outputs/ 下真实 metrics 文件 (非空 + 非占位).
+
+    ponytail: 扩展名白名单 (.json/.csv/.npy/.txt/.yaml) + 大小 > 0 +
+    内容不含 placeholder token (case-insensitive 子串). 二进制 (.npy) 只查大小.
+    升级路径: 用 schema 校验 JSON 字段是否含数值列, 而非子串过滤.
+    """
+    out_dir = ws / "outputs"
+    if not out_dir.exists():
+        return []
+    out: list[Path] = []
+    for p in out_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in (".json", ".csv", ".npy", ".txt", ".yaml", ".yml"):
+            continue
+        try:
+            if p.stat().st_size == 0:
+                continue
+        except OSError:
+            continue
+        if p.suffix.lower() == ".npy":
+            out.append(p)
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        # 占位文件 (整文件只含 placeholder token) 不算真实 metrics
+        stripped = "".join(ch for ch in text if ch.isalnum() or ch.isspace())
+        if any(tok in stripped for tok in _PLACEHOLDER_TOKENS) and len(stripped) < 200:
+            # 短文件 + 含占位 token = 占位文件; 长文件含 token 可能是正常叙述
+            continue
+        out.append(p)
+    return out
+
+
+async def _step2_outputs_gate(
+    ws: Path,
+    stream_chat_fn,
+    *,
+    max_remediate: int = 1,
+) -> dict:
+    """A2: 产物级门控 — outputs/ 无真实 metrics 文件时禁止虚写 Results.
+
+    返回 {has_real_metrics, metrics_files, remediated, blocker, raw_log}.
+    ponytail: 不调 LLM 做语义判断 — 纯文件存在性 + 占位 token 子串过滤.
+    blocker=True 时 Step 3 应降权 Results claim 并标注「无产物支撑」.
+    """
+    log = []
+    metrics = _scan_real_metrics(ws)
+    log.append(f"initial metrics files: {len(metrics)}")
+    if metrics:
+        return {
+            "has_real_metrics": True, "metrics_files": [str(p) for p in metrics],
+            "remediated": False, "blocker": False, "raw_log": log,
+        }
+
+    # 触发 blocker remediate — ResearchClaw 风格的 remediation task.
+    remediated = False
+    for _ in range(max_remediate):
+        log.append("triggering outputs remediate (blocker task)")
+        prompt = (
+            "STEP-2 OUTPUTS GATE FAILED — outputs/ 目录无真实 metrics 文件.\n"
+            "禁止虚写 Results / Discussion — 没有产物支撑的数值声明将被 Step 3 降权.\n\n"
+            "现在必须 EITHER:\n"
+            "  (a) 用 code_tool / bash_tool 实际跑一次实验, 把结果写入 outputs/*.json "
+            "(至少包含一个数值字段, e.g. {\"loss\": 0.5, \"rmse\": 0.1}); OR\n"
+            "  (b) 若任务确实无法执行 (e.g. 数据缺失/模型太大), 在 report/report.md 顶部添加:\n"
+            "      'EXECUTION BLOCKER: <原因>'\n"
+            "      并在 outputs/blocker.json 写 {\"reason\": \"...\", \"attempted\": [...]}.\n"
+            "诚实失败 > 沉默虚写. 现在补做或声明 blocker."
+        )
+        try:
+            await stream_chat_fn(prompt, "step2_outputs_gate_remediate")
+        except Exception as e:
+            log.append(f"remediate chat failed: {e}")
+            break
+        metrics = _scan_real_metrics(ws)
+        log.append(f"after remediate: {len(metrics)} metrics files")
+        if metrics:
+            remediated = True
+            break
+
+    blocker = not bool(metrics)
+    return {
+        "has_real_metrics": bool(metrics),
+        "metrics_files": [str(p) for p in metrics],
+        "remediated": remediated,
+        "blocker": blocker,
+        "raw_log": log,
+    }
+
+
 async def _step2_5_report_fallback(
     ws: Path,
     stream_chat_fn,
@@ -3733,6 +4074,34 @@ async def _step3_adversarial(
                     checklist = checklist + f"\n\n## 复现性门禁 (advisory, 非否决)\n{_repro_note}\n请结合 outputs/ 产物完整性综合判断, 勿仅凭门禁结果打分.\n"
             except Exception as _e:
                 print(f"[Step3] repro gate skipped: {_e}", flush=True)
+            # A2/A3 信号注入 — 让 critic 看到 Step 2 结束时的 audit 结果.
+            # ponytail: 纯文本拼接, 不改 adversarial_critique 签名. critic 是 LLM,
+            # 看到 "BLOCKER: outputs/ 无真实 metrics" 自然会降权 Results claim.
+            try:
+                _audit_path = ws / ".huginn" / "step2_audit.json"
+                _gate_path = ws / ".huginn" / "step2_outputs_gate.json"
+                if _audit_path.exists():
+                    _a = json.loads(_audit_path.read_text(encoding="utf-8"))
+                    _unresolved = _a.get("unresolved", [])
+                    if _unresolved:
+                        _blk = "\n\n## A3 Substitution Audit (Step 2 结束机械比对)\n"
+                        _blk += "以下 [EXACT] 组件无实现痕迹且未声明 METHOD SUBSTITUTE:\n"
+                        for it in _unresolved:
+                            _blk += f"- {it.get('component', '?')} (失败 {it.get('failures', 0)} 次)\n"
+                        _blk += "Results 中关于这些组件的 claim 应判未执行 / 0 分.\n"
+                        checklist = checklist + _blk
+                if _gate_path.exists():
+                    _g = json.loads(_gate_path.read_text(encoding="utf-8"))
+                    if _g.get("blocker"):
+                        checklist = checklist + (
+                            "\n\n## A2 Outputs Gate (Step 2 结束产物门控)\n"
+                            "BLOCKER: outputs/ 无真实 metrics 文件. "
+                            "report.md 中所有 Results 数值 claim 缺乏产物支撑, "
+                            "应判 fabricated / 0 分. Discussion 应显式声明 "
+                            "'EXECUTION BLOCKER' 而非叙述实验结果.\n"
+                        )
+            except Exception as _e:
+                print(f"[Step3] A2/A3 signal inject skipped: {_e}", flush=True)
             try:
                 from huginn.metacog.step_evaluator import check_uncertainty_propagation
                 _unc_issues = check_uncertainty_propagation(evals_history)
@@ -4412,7 +4781,13 @@ async def run(
         "- Write report/report.md EARLY, then OVERWRITE as you add results.\n\n"
         "## PHASED PROTOCOL (MANDATORY — agent repeatedly fails by over-engineering)\n"
         "Phase 1 (calls 1-10): Explore data, read instructions, basic EDA. NO modeling yet.\n"
-        "Phase 2 (calls 11-20): Fit ONE simple model + 2-3 figures. NO deep learning yet.\n"
+        # A3: 退役 MODEL COMPLEXITY CEILING — 路线图 P1-A3 / N5.
+        # 旧 "Phase 2: NO deep learning yet" 与 RCB 核心方法 (GNN/VAE/Transformer)
+        # 正面冲突, 训练 agent "先交卷后补做". 数学/物理任务该用 DL 就用, 由
+        # Step-2 substitution audit 兜底 (实现痕迹缺失即回退执行).
+        "Phase 2 (calls 11-20): Fit ONE model matching the paper's methodology + 2-3 figures. "
+        "Use whatever model class the paper specifies (GNN/VAE/DL/GP all OK) — "
+        "complexity上限由 paper 决定, 不由 harness 预设.\n"
         "Phase 3 (call 20 MANDATORY): WRITE report/report.md NOW with file_write_tool. "
         "Use what you have — incomplete results are fine, you will update later. "
         "If you reach call 25 with no report/report.md, STOP all analysis and "
@@ -5076,6 +5451,63 @@ async def run(
     )
     _evals_history = await _step2_execute(_step2_ctx)  # 返回 _evals_history 供 Step 3 用
 
+    # A3: silent substitution 结构性拦截 — Step 2 结束后机械比对
+    # 「[EXACT] 组件 ↔ code/实现痕迹」, 缺失即回退执行. 不调 LLM 做语义判断,
+    # 纯正则 + 文件扫描. 落点路线图 P1-A3.
+    try:
+        _audit = await _step2_substitution_audit(
+            ws, checklist, _evals_history, _stream_chat,
+        )
+        if _audit["unresolved"]:
+            print(
+                f"[A3 audit] unresolved silent substitutions: "
+                f"{[it['component'] for it in _audit['unresolved']]}",
+                flush=True,
+            )
+        elif _audit["remediated"]:
+            print(
+                f"[A3 audit] remediated: {_audit['remediated']}",
+                flush=True,
+            )
+        # 落盘供 Step 3 / 评分器引用
+        try:
+            (ws / ".huginn" / "step2_audit.json").write_text(
+                json.dumps(_audit, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except OSError as _e:
+            print(f"[A3 audit] write report failed: {_e}", flush=True)
+    except Exception as _e:
+        import traceback as _tb
+        print(f"[A3 audit] crashed: {_e}\n{_tb.format_exc()}", flush=True)
+
+    # A2: 产物级门控 — outputs/ 无真实 metrics 文件时禁止虚写 Results.
+    # 落点路线图 P1-A2 / 12 报告 P1-1 (ResearchClaw remediation task 最小实现).
+    try:
+        _outputs_gate = await _step2_outputs_gate(ws, _stream_chat)
+        if _outputs_gate["blocker"]:
+            print(
+                "[A2 gate] BLOCKER: outputs/ 无真实 metrics 文件, "
+                "Step 3 应降权 Results claim",
+                flush=True,
+            )
+        elif _outputs_gate["remediated"]:
+            print(
+                f"[A2 gate] remediated: "
+                f"{len(_outputs_gate['metrics_files'])} metrics files",
+                flush=True,
+            )
+        try:
+            (ws / ".huginn" / "step2_outputs_gate.json").write_text(
+                json.dumps(_outputs_gate, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except OSError as _e:
+            print(f"[A2 gate] write report failed: {_e}", flush=True)
+    except Exception as _e:
+        import traceback as _tb
+        print(f"[A2 gate] crashed: {_e}\n{_tb.format_exc()}", flush=True)
+
     # Step 2.5 + Step 3 抽到模块级函数 — 闭包 _stream_chat / _rcb_csm_advance 作参数传入.
     await _step2_5_report_fallback(ws, _stream_chat)
     # Step 3 整体兜底: retry/finalize 内部 try/except 只防单次调用崩溃, 但整个
@@ -5281,6 +5713,164 @@ def self_check_v14_task6() -> None:
     print(f"[CHECK v14 Task 6] HintCoordinator OK "
           f"(markers={found_markers}, hint_len={hint_len}, events={events})")
     print("v14 Task 6 self-check PASSED")
+
+
+def self_check_a3() -> None:
+    """A3 self-check: 验证 silent substitution 拦截的机械比对逻辑.
+
+    ponytail: 不引框架, 全用 assert + tempfile. 验证:
+      1. _extract_exact_components 正确抽 [EXACT] 标记, 忽略 [VARIANT] / 空行
+      2. _scan_implementation_traces 子串匹配 + 跳过 .huginn/
+      3. _parse_substitute_headers 只扫 report.md 顶部, 严格匹配格式
+      4. _count_failed_attempts 从 trace + evals 双源计数
+    ponytail 上限: 子串匹配, 不做语义. 升级路径见各函数 docstring.
+    """
+    import tempfile
+
+    # 1. _extract_exact_components
+    cl = (
+        "## Methodology checklist\n"
+        "- [EXACT] GVAE encoder (GraphSAGE backbone)\n"
+        "- [EXACT] C2ST classifier (MLP, 2 hidden layers)\n"
+        "- [VARIANT] Latent dimension (paper 用 64, 可降为 32)\n"
+        "- [EXACT] Prior N(0, I) over latent\n"
+        "Some prose without markers.\n"
+    )
+    comps = _extract_exact_components(cl)
+    assert len(comps) == 3, f"expected 3 [EXACT], got {comps}"
+    assert "GVAE encoder (GraphSAGE backbone)" in comps
+    assert "C2ST classifier (MLP, 2 hidden layers)" in comps
+    assert "Prior N(0, I) over latent" in comps
+    # empty / no-marker
+    assert _extract_exact_components("") == []
+    assert _extract_exact_components("no markers here") == []
+    print("[CHECK A3.1] _extract_exact_components OK")
+
+    # 2. _scan_implementation_traces
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        (ws / "code").mkdir()
+        (ws / "code" / "model.py").write_text(
+            "# GVAE encoder implementation (GraphSAGE backbone)\n"
+            "class GVAE_Encoder: pass\n", encoding="utf-8")
+        (ws / "report").mkdir()
+        (ws / "report" / "report.md").write_text(
+            "# Report\nWe used C2ST classifier with MLP.\n", encoding="utf-8")
+        # .huginn/ 内 trace 不算产物
+        (ws / ".huginn").mkdir()
+        (ws / ".huginn" / "trace.json").write_text(
+            '{"attempted": "Prior N(0, I) over latent"}', encoding="utf-8")
+        traces = _scan_implementation_traces(
+            ws, ["GVAE encoder", "C2ST classifier", "Prior N(0, I) over latent",
+                 "nonexistent component"])
+        assert traces["GVAE encoder"] is True
+        assert traces["C2ST classifier"] is True
+        # Prior 只在 .huginn/ 里 — 不应算产物痕迹
+        assert traces["Prior N(0, I) over latent"] is False
+        assert traces["nonexistent component"] is False
+        print("[CHECK A3.2] _scan_implementation_traces OK")
+
+        # 3. _parse_substitute_headers
+        (ws / "report" / "report.md").write_text(
+            "# Title\n\n"
+            "METHOD SUBSTITUTE: GVAE encoder replaced MLP encoder because OOM on 150M params (2 attempts, see traceback below)\n"
+            "## Method\n"
+            "METHOD SUBSTITUTE: this should not match (too late in file)\n",
+            encoding="utf-8")
+        subs = _parse_substitute_headers(ws / "report" / "report.md")
+        assert len(subs) == 1, f"expected 1 sub header, got {subs}"
+        assert subs[0]["replaced"] == "GVAE encoder"
+        assert "OOM" in subs[0]["reason"]
+        print("[CHECK A3.3] _parse_substitute_headers OK")
+
+        # 4. _count_failed_attempts
+        # 写 trace 文件
+        trace_path = ws / ".huginn" / "meta_trace.jsonl"
+        trace_path.write_text(
+            '{"on_track": "false", "attempted": "GVAE encoder training failed"}\n'
+            '{"on_track": "false", "attempted": "GVAE encoder second attempt"}\n'
+            '{"on_track": "true", "attempted": "GVAE encoder worked"}\n'
+            '{"on_track": "false", "attempted": "unrelated component"}\n',
+            encoding="utf-8")
+        # evals_history mock
+        class _MockEval:
+            def __init__(self, on_track, attempted):
+                self.on_track = on_track
+                self.attempted = attempted
+        evals = [
+            _MockEval("false", "GVAE encoder eval-fail-1"),
+            _MockEval("true", "GVAE encoder eval-ok"),
+        ]
+        n = _count_failed_attempts(ws, evals, "GVAE encoder")
+        # trace 2 + evals 1 = 3
+        assert n == 3, f"expected 3 failures, got {n}"
+        # 未出现组件 = 0
+        assert _count_failed_attempts(ws, evals, "nonexistent") == 0
+        print("[CHECK A3.4] _count_failed_attempts OK")
+
+    print("[CHECK A3] ALL ASSERTS PASSED")
+
+
+def self_check_a2() -> None:
+    """A2 self-check: 验证 outputs/ 真实 metrics 文件判定逻辑.
+
+    ponytail: 不引框架, 全用 assert + tempfile. 验证:
+      1. 空目录 / 无 outputs/ → []
+      2. 真实 .json metrics 文件 → 命中
+      3. 占位文件 (含 'Expected'/'TODO' + 短文本) → 跳过
+      4. .npy 二进制按大小判定
+    ponytail 上限: 子串过滤, 不做 schema 校验. 升级路径见 docstring.
+    """
+    import tempfile
+
+    # 1. 无 outputs/ → []
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        assert _scan_real_metrics(ws) == []
+        print("[CHECK A2.1] no outputs/ OK")
+
+        # 2. 真实 metrics 文件
+        out_dir = ws / "outputs"
+        out_dir.mkdir()
+        (out_dir / "metrics.json").write_text(
+            '{"loss": 0.5, "rmse": 0.1, "epoch": 100}', encoding="utf-8")
+        (out_dir / "results.csv").write_text(
+            "epoch,loss\n1,0.5\n2,0.3\n", encoding="utf-8")
+        # .npy 二进制 (numpy)
+        try:
+            import numpy as _np
+            _np.save(out_dir / "arr.npy", _np.array([1.0, 2.0, 3.0]))
+            _has_npy = True
+        except ImportError:
+            _has_npy = False
+            (out_dir / "arr.npy").write_bytes(b"\x93NUMPY\x00v0")
+        # 占位文件
+        (out_dir / "todo.txt").write_text("TODO: fill in", encoding="utf-8")
+        (out_dir / "expected.txt").write_text("Expected: 0.5", encoding="utf-8")
+        # 空文件
+        (out_dir / "empty.json").write_text("", encoding="utf-8")
+        # 长文本含 'expected' 但是正常叙述 (>200 chars after strip)
+        (out_dir / "long.json").write_text(
+            '{"narrative": "the expected behavior of the model is described '
+            'in detail here. this is a long text to exceed the 200 char limit. '
+            'we discuss the theoretical guarantees, empirical observations, '
+            'and edge cases that inform the experimental design choices made '
+            'throughout this study, along with references to prior work."}',
+            encoding="utf-8")
+
+        metrics = _scan_real_metrics(ws)
+        names = {p.name for p in metrics}
+        assert "metrics.json" in names, f"metrics.json missing: {names}"
+        assert "results.csv" in names, f"results.csv missing: {names}"
+        assert "todo.txt" not in names, f"todo.txt should be filtered: {names}"
+        assert "expected.txt" not in names, f"expected.txt should be filtered: {names}"
+        assert "empty.json" not in names, f"empty.json should be filtered: {names}"
+        assert "long.json" in names, f"long.json should pass: {names}"
+        if _has_npy:
+            assert "arr.npy" in names, f"arr.npy missing: {names}"
+        print(f"[CHECK A2.2] real metrics filter OK ({len(metrics)} files)")
+
+    print("[CHECK A2] ALL ASSERTS PASSED")
 
 
 def self_check_v14_task1() -> None:
@@ -6514,6 +7104,16 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if "--self-check-a3" in sys.argv:
+        # A3: silent substitution 拦截 self-check.
+        # 不依赖 RCB workspace, 纯函数验证机械比对逻辑.
+        self_check_a3()
+        sys.exit(0)
+    if "--self-check-a2" in sys.argv:
+        # A2: outputs/ 产物门控 self-check.
+        # 不依赖 RCB workspace, 纯函数验证 metrics 文件判定.
+        self_check_a2()
+        sys.exit(0)
     if "--self-check-v14-all" in sys.argv:
         # v14 Phase 1-4 全综合验收: Phase 1 (Task 1-10) + Phase 2/3/4 (Task 11-19).
         # 不依赖 RCB workspace. RCBench 实测留给用户手动跑 (见各 phase NOTE).

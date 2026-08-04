@@ -263,7 +263,11 @@ huginn 已有遥测（`telemetry.py` TelemetrySpan + span 树 + 内存快照）�
 |---|------|------|------|
 | A1 | harness 预消化 rubric 为「任务 × 超参 × 种子」实验矩阵 + 预算表（几 KB），注入硬策略：全网格缩尺执行优先于单格全量执行 | `paperbench_huginn.py` setup 段；复用现成 `collect_rubric_leaves` | 03 报告建议 2（消解 1.16MB rubric 读取黑洞） |
 | A2 | 产物级门控：report.md 落盘前检查 `outputs/` 存在真实 metrics 文件，否则禁止进入 report 阶段并生成 blocker 任务（ResearchClaw remediation task 最小实现） | `agent/huginn/cli/rcb_runner.py:399-434` | 12 报告 P1-1 |
+
+> **A2 落地（2026-08-04）**：`rcb_runner.py` 新增 `_scan_real_metrics` / `_step2_outputs_gate` 两函数，在 A3 audit 之后、Step 2.5 之前调用；blocker 信号落盘 `ws/.huginn/step2_outputs_gate.json`，Step 3 critique 读到 blocker=True 时注入「Results claim 缺乏产物支撑，应判 fabricated / 0 分」到 checklist 让 LLM critic 降权。占位文件过滤：扩展名白名单 + 大小 > 0 + 短文本 (<200 chars) 含 placeholder token (expected/todo/placeholder/tbd/n/a/not implemented) 跳过；.npy 二进制按大小判定。`--self-check-a2` 入口验证 4 个断言全通过。
 | A3 | silent substitution 结构性拦截：Step-1 checklist 落盘为文件，Step-2 结束机械比对「[EXACT] 组件 ↔ code/ 实现痕迹」，缺失即回退执行；禁止未尝试标 [VARIANT]（≥2 次尝试失败才允许降级且须附报错）；退役 MODEL COMPLEXITY CEILING | `agent/huginn/cli/rcb_runner.py:504-510`；`rcb_huginn.py:150-154` | 12 报告 P1-3；05 报告 R5 |
+
+> **A3 落地（2026-08-04）**：`rcb_runner.py` 新增 `_extract_exact_components` / `_scan_implementation_traces` / `_parse_substitute_headers` / `_count_failed_attempts` / `_step2_substitution_audit` 五个函数，在 Step 2 结束后、Step 2.5 之前调用；audit 结果落盘 `ws/.huginn/step2_audit.json` 供 Step 3 / 评分器引用；PHASED PROTOCOL 里 "Phase 2: NO deep learning yet" 改为「按 paper 方法论选模型类」退役 MODEL COMPLEXITY CEILING。`--self-check-a3` 入口验证四个机械比对 helper，全 assert 通过。落点修正：`rcb_huginn.py:150-154` 已迁移到 `rcb_runner.py` system_prompt 段（路线图原引路径过时）。
 | A4 | Step-3 独立修复预算池：critique verdict≠pass 追加专用 50 次预算 | `agent/huginn/cli/rcb_runner.py:305-306` | 05 报告 R4（兑现对抗自审的最后一公里） |
 | A5 | 执行兜底泛化：`_has_code_no_output` 改为按 DeliverableSpec「代码类 glob 存在 + 输出类 glob 缺失」判定 | `agent/huginn/bench/orchestrator.py:228-233` | 07 报告建议 4 |
 | A6 | 平凡基线闸门：提交前强制对照多数类/单特征/线性基线，低于基线必须回退到基线方案 | MLE/RCB 提交流程 | 01 报告建议 2 |
