@@ -528,7 +528,9 @@ async def run_agent(workspace: Path, meta: dict, synthetic: bool, timeout: int, 
         tag="MLE",
     )
     final = await orch.run(prompt)
-    return final
+    # P1-C8: 暴露可观测性字段给 main 写 meta
+    stats = {"tool_calls": orch.tool_calls_used, "turns": orch.turns_used}
+    return final, stats
 
 
 def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
@@ -679,7 +681,7 @@ def main():
 
     start = time.time()
     print(f"[MLE] Starting agent (timeout={args.timeout}s, max_tool_calls={args.max_tool_calls})")
-    final = asyncio.run(run_agent(workspace, meta, args.synthetic, args.timeout, args.max_tool_calls))
+    final, _stats = asyncio.run(run_agent(workspace, meta, args.synthetic, args.timeout, args.max_tool_calls))
     elapsed = round(time.time() - start)
 
     submission_path = workspace / "submission" / "submission.csv"
@@ -709,6 +711,9 @@ def main():
         "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
         "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
         "config_hash": config_fingerprint(),
+        # P1-C8: 可观测性字段
+        "tool_calls_used": _stats["tool_calls"],
+        "turns_used": _stats["turns"],
     }
     (workspace / "_huginn_meta.json").write_text(json.dumps(meta_out, indent=2, ensure_ascii=False))
 
