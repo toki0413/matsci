@@ -96,6 +96,28 @@ _SEARCH_FAIL_HINT = (
 )
 
 
+def web_search_health_check(timeout: float = 8.0) -> tuple[bool, str]:
+    """C4: bench 前检索健康检查 — 轻量探测 arxiv API (免费/稳定/无 rate limit).
+
+    返回 (ok, msg). ok=True 说明至少一个后端可达, agent 检索链能用.
+    ok=False 时 bench 仍可跑, 但 agent 检索会走降级路径 (materials_database_tool 等).
+
+    ponytail: 只测 arxiv — Tavily 要 key, DDG 有 rate limit, 频繁探测会被 ban.
+      arxiv API 无 key 无 limit, 是最稳的探测点.
+      ceiling: arxiv 可达不代表 DDG/Tavily 可达, 但 arxiv 挂了基本等于断网.
+    """
+    if _web_search_disabled():
+        return False, "web_search disabled by HUGINN_DISABLE_WEB_SEARCH"
+    try:
+        url = "http://export.arxiv.org/api/query?search_query=all:test&max_results=1"
+        req = urllib.request.Request(url, headers={"User-Agent": "huginn-healthcheck/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            _ = resp.read(512)  # 只读前 512 字节, 够确认连通
+        return True, "arxiv API reachable"
+    except Exception as exc:
+        return False, f"arxiv API unreachable: {exc}"
+
+
 class WebSearchInput(BaseModel):
     action: str = Field(
         default="search",
@@ -604,3 +626,60 @@ class WebSearchTool(HuginnTool):
         if cur:
             chunks.append(cur)
         return chunks
+
+
+def _c4_self_check() -> int:
+    """C4 self-check: 验证检索健康检查 + search_unavailable flag + 多源降级链.
+
+    覆盖:
+    1. web_search_health_check 返回 (bool, str) 元组, 离线模式返回 False
+    2. 熔断时 execute 返回 search_unavailable=True
+    3. 多源降级链存在 (Tavily/arxiv/ddgs/urllib 4 个 _search_* 方法存在)
+
+    ponytail: 不真发网络请求 (CI 不稳定), 只验函数签名 + 离线模式 + 熔断 flag.
+      ceiling: 不验真实网络连通性, 那是 integration test 的活.
+    """
+    import os as _os
+
+    # 1. health_check 函数签名 + 离线模式
+    _os.environ["HUGINN_DISABLE_WEB_SEARCH"] = "1"
+    ok, msg = web_search_health_check(timeout=1.0)
+    assert ok is False, f"disabled mode should return False, got {ok}"
+    assert "disabled" in msg.lower(), f"msg should mention disabled, got: {msg}"
+    print(f"[CHECK C4.1] health_check disabled mode OK: {msg}")
+    _os.environ.pop("HUGINN_DISABLE_WEB_SEARCH", None)
+
+    # 2. 熔断时 search_unavailable flag
+    tool = WebSearchTool()
+    # 强制熔断状态
+    WebSearchTool._circuit_broken = True
+    result = tool.execute({"action": "search", "query": "test"}, None)  # type: ignore
+    assert result.success is False, "circuit broken should fail"
+    assert result.data.get("search_unavailable") is True, \
+        "circuit broken should set search_unavailable=True"
+    print("[CHECK C4.2] circuit broken sets search_unavailable=True OK")
+    # 复位
+    WebSearchTool._circuit_broken = False
+    WebSearchTool._consecutive_failures = 0
+
+    # 3. 多源降级链: 4 个 _search_* 方法都存在
+    for name in ("_search_tavily", "_search_arxiv", "_search_ddgs", "_search_fallback"):
+        assert hasattr(WebSearchTool, name), f"missing {name} — 降级链断"
+    print("[CHECK C4.3] 4-backend degradation chain exists OK")
+
+    # 4. ddgs 兼容: ddgs + duckduckgo_search 双导入路径 (C4 迁移)
+    # 不真导入 (可能没装), 只验 _search_ddgs 里有双 try
+    import inspect
+    src = inspect.getsource(WebSearchTool._search_ddgs)
+    assert "from ddgs import DDGS" in src, "ddgs import path missing"
+    assert "from duckduckgo_search import DDGS" in src, "duckduckgo_search fallback missing"
+    print("[CHECK C4.4] ddgs/duckduckgo_search dual import path OK")
+
+    print("[CHECK C4] ALL ASSERTS PASSED")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    if "--self-check-c4" in sys.argv:
+        sys.exit(_c4_self_check())
