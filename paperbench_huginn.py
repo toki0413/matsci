@@ -551,13 +551,15 @@ async def run_agent(workspace: Path, meta: dict, timeout: int, max_tool_calls: i
         tag="PB",
     )
     final = await orch.run(prompt)
+    # P1-C8: 暴露可观测性字段给 main 写 meta
+    stats = {"tool_calls": orch.tool_calls_used, "turns": orch.turns_used}
 
     # ponytail: fallback 让 adapter 在 agent 跑完后强制执行训练脚本, 突破执行瓶颈.
     fallback_msg = _execute_training_fallback(workspace)
     if fallback_msg:
         final = (final or "") + fallback_msg
 
-    return final
+    return final, stats
 
 
 def collect_rubric_leaves(node: dict, path: list[str] = None) -> list[dict]:
@@ -878,7 +880,7 @@ def main():
     if not args.score_only:
         start = time.time()
         print(f"[PB] Starting agent (timeout={args.timeout}s, max_tool_calls={args.max_tool_calls})")
-        final = asyncio.run(run_agent(workspace, meta, args.timeout, args.max_tool_calls))
+        final, _stats = asyncio.run(run_agent(workspace, meta, args.timeout, args.max_tool_calls))
         elapsed = round(time.time() - start)
 
         reproduce_path = workspace / "submission" / "reproduce.sh"
@@ -910,6 +912,9 @@ def main():
         "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
         "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
         "config_hash": config_fingerprint(),
+        # P1-C8: 可观测性字段 (score_only 模式下无 run, 用 0 占位)
+        "tool_calls_used": _stats["tool_calls"] if not args.score_only else 0,
+        "turns_used": _stats["turns"] if not args.score_only else 0,
     }
     (workspace / "_huginn_meta.json").write_text(
         json.dumps(meta_out, indent=2, ensure_ascii=False)

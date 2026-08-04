@@ -142,6 +142,9 @@ class BenchmarkOrchestrator:
         # sanity gate 上次结果. None=deliverable 未齐未检查; dict=已检查 (passed/fail).
         # run() 读 _last_sanity 决定注入 fix_prompt 还是 CONTINUE_MSG.
         self._last_sanity: Any = None
+        # P1-C8: 可观测性字段, run() 结束后外部适配器读取写 meta
+        self.tool_calls_used: int = 0
+        self.turns_used: int = 0
 
     def _log(self, msg: str) -> None:
         print(f"[{self.tag}] {msg}", flush=True)
@@ -241,6 +244,9 @@ class BenchmarkOrchestrator:
             final = f"[TIMEOUT after {self.timeout}s]"
 
         self._log(f"Agent finished. Tool calls: {tool_count}, turns: {turn}")
+        # P1-C8: 暴露可观测性字段给外部适配器写 meta
+        self.tool_calls_used = tool_count
+        self.turns_used = turn
         return final
 
     def _has_code_no_output(self, missing: set[str]) -> bool:
