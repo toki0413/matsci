@@ -59,6 +59,10 @@ _HYPOTHESIS_SYSTEM_PROMPT = """你是材料科学假设生成专家. 基于给�
 1. 假设要具体、可证伪, 不要泛泛而谈.
 2. 优先针对研究空白里的矛盾结论 / 未覆盖组合 / 少被研究的方法.
 3. 数量不超过指定的 max_hypotheses.
+4. 定性行为优先: testable_prediction 先描述定性趋势/方向 (如 "随 X 增大 Y 单调递增"),
+   再给定量区间. LLM 推理本质是定性的, 跳过定性判断直接给精确数字容易幻觉.
+5. 守恒律自洽: 假设不得违反能量/动量/电荷/质量守恒. 若假设涉及相变/反应,
+   需在 rationale 里说明守恒关系如何满足.
 
 输出严格 JSON, 不要 markdown 代码块标记, 不要任何解释文字. 格式:
 {
@@ -180,6 +184,11 @@ class HypothesisGeneratorTool(HuginnTool):
             hypotheses = await self._rank_hypotheses(hypotheses, context)
             ranked = True
 
+        # 4c. 守恒律自洽检查: 标记可能违反守恒律的假设, 不阻断只警告
+        conservation_flags = [
+            self._check_conservation_laws(h) for h in hypotheses
+        ]
+
         # 5. LLM 映射到 workflow 模板
         workflow_proposals = await self._map_to_workflow(
             hypotheses, args.target_workflow, model
@@ -193,6 +202,7 @@ class HypothesisGeneratorTool(HuginnTool):
             "literature_warnings": lit_warnings,
             "research_gaps": research_gaps,
             "hypotheses": hypotheses,
+            "conservation_flags": conservation_flags,
             "workflow_proposals": workflow_proposals,
             "n_hypotheses": len(hypotheses),
             "ranked": ranked,
@@ -620,6 +630,44 @@ class HypothesisGeneratorTool(HuginnTool):
                 except json.JSONDecodeError:
                     return None
             return None
+
+    @staticmethod
+    def _check_conservation_laws(hypothesis: dict[str, Any]) -> dict[str, Any]:
+        """对假设做守恒律自洽检查 (启发式, 不调 LLM).
+
+        扫 statement + testable_prediction 里的关键词, 标记可能违反
+        能量/动量/电荷/质量守恒的假设. 只警告不阻断 — 物理预检由
+        PhysicsAuditor 在计算结果阶段做硬门禁, 这里只是早期信号.
+
+        ponytail: 纯关键词匹配, 不引 NLP; 升级路径: 调 LLM 做语义判断.
+        """
+        text = (
+            str(hypothesis.get("statement", ""))
+            + " "
+            + str(hypothesis.get("testable_prediction", ""))
+        ).lower()
+        hid = hypothesis.get("hypothesis_id", "?")
+        flags: list[str] = []
+
+        # 能量守恒: "创造能量"/"无中生有"/"效率>100%" 这类表述
+        if any(kw in text for kw in ["创造能量", "产生能量", "efficiency > 100", "效率大于100", "overunity", "perpetual"]):
+            flags.append("energy_conservation_suspect")
+
+        # 电荷守恒: 提到电荷转移但不平衡的表述
+        if "charge transfer" in text or "电荷转移" in text:
+            if not any(kw in text for kw in ["balanced", "守恒", "compensated", "平衡"]):
+                flags.append("charge_conservation_check_needed")
+
+        # 质量守恒: 相变/反应但没提到产物/反应物守恒
+        if any(kw in text for kw in ["相变", "phase transition", "反应", "reaction", "decomposition"]):
+            if not any(kw in text for kw in ["守恒", "conserve", "balanced", "stoichiometric"]):
+                flags.append("mass_conservation_check_needed")
+
+        return {
+            "hypothesis_id": hid,
+            "flags": flags,
+            "passed": len(flags) == 0,
+        }
 
     @staticmethod
     def _check_literature_threshold(papers_count: int) -> tuple[str, list[str]]:

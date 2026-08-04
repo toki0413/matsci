@@ -79,6 +79,24 @@ class ToolResult:
         return json.dumps(self.to_dict(), ensure_ascii=False, **kwargs)
 
 
+_MAX_ARRAY_ELEMENTS = 200
+
+
+def _summarize_large_array(arr: Any) -> dict[str, Any]:
+    # 大数组 (MD 轨迹/DOS/声子谱) 全量 tolist 会撑爆 LLM 上下文,
+    # 只保留 shape/dtype + 均匀采样的少量元素. 对齐 SciExplorer 的 get_description.
+    shape = getattr(arr, "shape", None)
+    dtype = str(getattr(arr, "dtype", ""))
+    try:
+        flat = arr.flatten() if hasattr(arr, "flatten") else arr
+        n = flat.size if hasattr(flat, "size") else len(flat)
+        step = max(1, n // 20)
+        sample = flat[::step][:20].tolist()
+    except Exception:
+        sample = []
+    return {"_array_summary": True, "shape": list(shape) if shape else [], "dtype": dtype, "sample": sample}
+
+
 def _jsonify(obj: Any) -> Any:
     """Recursively convert non-serializable types to JSON-safe equivalents."""
     if obj is None or isinstance(obj, (bool, int, float, str)):
@@ -89,8 +107,14 @@ def _jsonify(obj: Any) -> Any:
     # Pydantic v1 fallback
     if hasattr(obj, "dict") and not isinstance(obj, dict):
         return obj.dict()
-    # numpy
+    # numpy / jax array — 大数组只给摘要, 小数组才 tolist
     if hasattr(obj, "tolist"):
+        try:
+            n = obj.size if hasattr(obj, "size") else len(obj)
+        except (TypeError, AttributeError):
+            n = 0
+        if n > _MAX_ARRAY_ELEMENTS:
+            return _summarize_large_array(obj)
         return obj.tolist()
     if hasattr(obj, "item") and not isinstance(obj, dict):
         try:
@@ -103,7 +127,12 @@ def _jsonify(obj: Any) -> Any:
         return [ _jsonify(x) for x in obj]
     if isinstance(obj, dict):
         return {str(k): _jsonify(v) for k, v in obj.items()}
+    # 长 list/tuple 也截断, 防止万级 thermo 数据撑爆上下文
     if isinstance(obj, (list, tuple)):
+        if len(obj) > _MAX_ARRAY_ELEMENTS:
+            step = max(1, len(obj) // 20)
+            sampled = list(obj[::step][:20])
+            return {"_list_summary": True, "length": len(obj), "sample": [_jsonify(x) for x in sampled]}
         return [_jsonify(x) for x in obj]
     # datetime / other isoformat-able objects
     if hasattr(obj, "isoformat"):
