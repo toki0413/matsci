@@ -2095,6 +2095,18 @@ Respond JSON only:
                     exc_info=True,
                 )
 
+        # B6: 统计 tool_calls — 从 phases[].result["tool_calls"] 累加.
+        # _execute_coder/_execute_workflow 返回 dict 含 "tool_calls" 计数.
+        # ponytail: 只认 dict result 的 "tool_calls" key, 不递归扫 str.
+        #   ceiling: 非 dict result (str/None) 的 tool 调用不计入, 低估.
+        #   升级路径: execute_action 钩子统一返回 dict 含 tool_calls 字段.
+        _tool_calls = 0
+        for _p in phases:
+            if isinstance(_p.result, dict):
+                _tc = _p.result.get("tool_calls", 0)
+                if isinstance(_tc, (int, float)):
+                    _tool_calls += int(_tc)
+
         return AutoloopResult(
             run_id=run_id,
             objective=objective,
@@ -2108,7 +2120,9 @@ Respond JSON only:
             provenance_path=provenance_path,
             merged_graph=self._merged_graph,
             speculator_hint=self._speculator_hint,
+            tool_calls=_tool_calls,
         )
+
     async def run_cognitive(
         self,
         objective: str,

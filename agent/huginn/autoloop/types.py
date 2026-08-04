@@ -48,6 +48,9 @@ class AutoloopResult:
     # Forest 回流: 多树共识的假设图和提示
     merged_graph: Any = None
     speculator_hint: str = ""
+    # B6: tool_calls 总数 (从 phases[].result["tool_calls"] 累加).
+    # 0 = perceive-only 空转, B6 断言会失败. 让"完成但没干活"可被 CI 拦截.
+    tool_calls: int = 0
 
 
 def objective_hash(objective: str) -> str:

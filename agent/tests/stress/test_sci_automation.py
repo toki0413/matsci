@@ -280,9 +280,12 @@ class TestAutoloopE2E:
         assert hasattr(result, "stages") or hasattr(result, "phases") or hasattr(result, "report")
         # B6: 断言加牙齿 — 不只检查 result 存在, 还检查实际执行了工具.
         # 18/18 perceive-only 空转 (analysis_20260717/06:30-43) 在此断言下直接失败.
-        _tc = getattr(result, "tool_calls", None) or getattr(result, "tool_call_count", None)
-        if _tc is not None:
-            assert _tc > 0, f"autoloop completed but made 0 tool calls (perceive-only空转?)"
+        # AutoloopResult.tool_calls 从 phases[].result["tool_calls"] 累加 (types.py:51-53).
+        _tc = getattr(result, "tool_calls", 0)
+        assert _tc > 0, (
+            f"autoloop completed but made 0 tool calls (perceive-only空转?). "
+            f"phases={[p.name + ':' + p.status for p in getattr(result, 'phases', [])]}"
+        )
 
     @pytest.mark.asyncio
     async def test_autoloop_handles_tool_failure(self):
@@ -297,9 +300,12 @@ class TestAutoloopE2E:
         assert result is not None
         # B6: 失败目标不应全部 completed — 全 completed 说明 autoloop 没区分成功/失败
         _stages = getattr(result, "stages", None) or getattr(result, "phases", None)
-        if _stages and len(_stages) > 0:
-            _all_done = all(getattr(s, "status", "") == "completed" for s in _stages)
-            assert not _all_done, "failure objective should not complete all stages"
+        assert _stages and len(_stages) > 0, "result missing phases/stages attribute"
+        _all_done = all(getattr(s, "status", "") == "completed" for s in _stages)
+        assert not _all_done, (
+            "failure objective should not complete all stages — "
+            "autoloop not distinguishing success/failure"
+        )
 
 
 # ── Belief Entropy 长程稳定性 ──────────────────────────────────────
@@ -378,3 +384,58 @@ class TestToolChainIntegration:
             resp_count += 1
 
         assert resp_count > 0, "No response from tool chain"
+
+
+def _b6_self_check() -> int:
+    """B6 self-check: 验证 AutoloopResult.tool_calls 字段 + 统计逻辑.
+
+    不跑真 autoloop (太慢), 只验:
+    1. AutoloopResult 有 tool_calls 字段, 默认 0
+    2. 从 phases[].result["tool_calls"] 累加逻辑正确
+    3. B6 断言是硬断言 (not conditional)
+
+    ponytail: 字段存在 + 累加逻辑 + 断言模式. ceiling: 不跑真 autoloop.
+      升级路径: 跑真 autoloop 验证 tool_calls > 0.
+    """
+    from huginn.autoloop.types import AutoloopResult, LoopPhase
+
+    # 1. 字段存在 + 默认 0
+    r = AutoloopResult(run_id="t", objective="t", phases=[], success=False)
+    assert hasattr(r, "tool_calls"), "AutoloopResult missing tool_calls field"
+    assert r.tool_calls == 0, f"default tool_calls should be 0, got {r.tool_calls}"
+
+    # 2. 累加逻辑: phases[].result["tool_calls"]
+    phases = [
+        LoopPhase(name="execute", status="completed", result={"tool_calls": 3}),
+        LoopPhase(name="validate", status="completed", result={"tool_calls": 2}),
+        LoopPhase(name="report", status="completed", result="no dict"),
+    ]
+    _tc = 0
+    for _p in phases:
+        if isinstance(_p.result, dict):
+            _t = _p.result.get("tool_calls", 0)
+            if isinstance(_t, (int, float)):
+                _tc += int(_t)
+    assert _tc == 5, f"expected 5 tool_calls, got {_tc}"
+
+    # 3. 测试文件里 B6 断言是硬断言 (不含 'if _tc is not None')
+    import pathlib
+    src = pathlib.Path(__file__).read_text(encoding="utf-8")
+    b6_block_start = src.find("B6: 断言加牙齿")
+    b6_block_end = src.find("perceive-only空转?)", b6_block_start)
+    b6_block = src[b6_block_start:b6_block_end]
+    assert "if _tc is not None" not in b6_block, \
+        "B6 assert still conditional (if _tc is not None) — no teeth"
+    assert "assert _tc > 0" in b6_block, "B6 missing hard assert _tc > 0"
+
+    print("[CHECK B6.1] AutoloopResult.tool_calls field exists, default 0")
+    print(f"[CHECK B6.2] accumulation logic OK (3+2={_tc})")
+    print("[CHECK B6.3] test assert is hard (not conditional)")
+    print("[CHECK B6] ALL ASSERTS PASSED")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    if "--self-check-b6" in sys.argv:
+        sys.exit(_b6_self_check())

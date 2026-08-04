@@ -561,8 +561,16 @@ async def run_agent(workspace: Path, meta: dict, timeout: int, max_tool_calls: i
         tag="PB",
     )
     final = await orch.run(prompt)
-    # P1-C8: 暴露可观测性字段给 main 写 meta
-    stats = {"tool_calls": orch.tool_calls_used, "turns": orch.turns_used}
+    # P1-C8 + C2: 暴露可观测性字段给 main 写 meta
+    stats = {
+        "tool_calls": orch.tool_calls_used,
+        "turns": orch.turns_used,
+        "context_overflow_count": orch.context_overflow_count,
+        "compaction_count": orch.compaction_count,
+        "crash_traceback": orch.crash_traceback,
+        "checkpoint_size_mb": orch.checkpoint_size_mb,
+        "vacuum_triggered": orch.vacuum_triggered,
+    }
 
     # ponytail: fallback 让 adapter 在 agent 跑完后强制执行训练脚本, 突破执行瓶颈.
     fallback_msg = _execute_training_fallback(workspace)
@@ -922,9 +930,14 @@ def main():
         "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
         "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
         "config_hash": config_fingerprint(),
-        # P1-C8: 可观测性字段 (score_only 模式下无 run, 用 0 占位)
+        # P1-C8 + C2: 可观测性字段 (score_only 模式下无 run, 用 0 占位)
         "tool_calls_used": _stats["tool_calls"] if not args.score_only else 0,
         "turns_used": _stats["turns"] if not args.score_only else 0,
+        "context_overflow_count": _stats.get("context_overflow_count", 0) if not args.score_only else 0,
+        "compaction_count": _stats.get("compaction_count", 0) if not args.score_only else 0,
+        "crash_traceback": _stats.get("crash_traceback") if not args.score_only else None,
+        "checkpoint_size_mb": _stats.get("checkpoint_size_mb", 0.0) if not args.score_only else 0.0,
+        "vacuum_triggered": _stats.get("vacuum_triggered", False) if not args.score_only else False,
     }
     (workspace / "_huginn_meta.json").write_text(
         json.dumps(meta_out, indent=2, ensure_ascii=False)

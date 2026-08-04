@@ -451,9 +451,14 @@ def main():
             "agent_provider": os.environ.get("HUGINN_PROVIDER", "default"),
             "judge_model": os.environ.get("JUDGE_MODEL_NAME", "deepseek-chat"),
             "config_hash": config_fingerprint(),
-            # P1-C8: 可观测性字段
+            # P1-C8 + C2: 可观测性字段
             "tool_calls_used": _stats["tool_calls"],
             "turns_used": _stats["turns"],
+            "context_overflow_count": _stats.get("context_overflow_count", 0),
+            "compaction_count": _stats.get("compaction_count", 0),
+            "crash_traceback": _stats.get("crash_traceback"),
+            "checkpoint_size_mb": _stats.get("checkpoint_size_mb", 0.0),
+            "vacuum_triggered": _stats.get("vacuum_triggered", False),
         }
         (workspace / "_huginn_meta.json").write_text(
             json.dumps(meta_out, indent=2, ensure_ascii=False)

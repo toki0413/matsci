@@ -393,6 +393,36 @@ huginn 已有遥测（`telemetry.py` TelemetrySpan + span 树 + 内存快照）�
 
 ---
 
+### 主线 C 落地说明（2026-08-04）
+
+**C1（checkpoint 悬空 tool_calls 修复）**
+- `agent/huginn/agent/streaming.py` 新增 `_strip_dangling_tool_calls`：发送前扫 AIMessage.tool_calls，无对应 ToolMessage 的剥掉（部分剥保留已应答的，全 dangling 退化为纯 AIMessage）。与 `context_builder.conversation_tree_to_messages` 同源逻辑，作用在 `_build_input_messages` 返回列表（checkpointer 直读路径）。
+- 自检: `python -m huginn.agent.streaming --self-check-c1`
+
+**C2（compaction 二选一落地 + checkpoint 100MB 上限）**
+- 真修剪路线（非 SummarizationMiddleware）：`_maybe_auto_compact` 60% 触发 → `_trim_checkpointer_messages` 用 `RemoveMessage + update_state` 删旧消息（G34 已落地，`HUGINN_COMPACT_STRATEGY=trim,summarize` 默认开）。
+- C2 本次补的是"benchmark 运行限定 checkpoint 尺寸上限"（roadmap 完成判据 5）：
+  - `agent/huginn/bench/orchestrator.py` 新增 `_enforce_checkpoint_size_limit`：run() 结束后读 `HUGINN_CHECKPOINTER_PATH` 文件大小，超 100MB 触发 SQLite `VACUUM`（重建文件回收空间，RemoveMessage 只删 row 不回收页）。
+  - 新增可观测性字段 `checkpoint_size_mb` / `vacuum_triggered`，与 C8 字段一并落盘到四适配器 `_huginn_meta.json`（PB/MLE/SAB 已接，HLE 单题问答无 meta 文件）。
+  - ponytail: VACUUM 只在 run() 结束后跑——运行中锁表会卡 graph。ceiling: VACUUM 需要临时磁盘空间；升级路径是 `auto_vacuum = INCREMENTAL` 在线增量回收。
+- 自检: `python -m huginn.bench.orchestrator --self-check-c2`（4 场景：字段初值 / 小文件不触发 / 大文件触发 VACUUM / 无 conn 优雅降级）
+
+**C3（预算扩容，部分）**
+- RCB 已扩：`agent/huginn/cli/rcb_runner.py:4941` 默认 150→400，极限 300→600。
+- PaperBench 150→600 + phase 预算通道接通：待办（N7 警告 C2 完成前不扩 PB 预算，现 C2 已完成可推进）。
+
+**C7（file_write_tool Windows 路径修复 + 分块写入）**
+- `agent/huginn/tools/file_write_tool.py` 加 `os.path.normpath` 归一化反斜杠/盘符，`os.path.commonpath` 替代 `relative_to` 处理 `..` 和符号链接；>1MB 用 64KB 分块 write 避免 OOM。
+- `agent/huginn/agents/subagent.py` coder 恢复 `file_write_tool`（C7 修复后不再被 Windows 路径 bug 卡住）。
+- 自检: `python agent/huginn/tools/file_write_tool.py --self-check-c7`
+
+**C8（可观测性字段 meta 落盘）**
+- `agent/huginn/bench/orchestrator.py` 暴露 `tool_calls_used / turns_used / context_overflow_count / compaction_count / crash_traceback`（C8）+ `checkpoint_size_mb / vacuum_triggered`（C2）。
+- 四适配器 `*_huginn.py` 的 `_huginn_meta.json` 落盘上述 7 字段（PB/MLE/SAB 已接，HLE 单题问答无 meta 文件）。
+- `context_overflow_count` 通过 `_is_context_overflow` 检测；`compaction_count` 通过 chunk 里的 `compaction_triggered` 标记计数；`crash_traceback` 在 except 块用 `traceback.format_exc()` 捕获。
+
+---
+
 ## 四、不做清单（防架构稀释）
 
 以下 11 条全部有本地证据支撑。违反任何一条，都会重复 `audit_20260717/00` 主题 G「架构稀释」或主题 A「装置空转」的老路。

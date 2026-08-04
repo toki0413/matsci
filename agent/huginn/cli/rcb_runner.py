@@ -4935,9 +4935,10 @@ async def run(
     # 先注册工具到 ToolRegistry, 再让 agent 从 registry 拉取
     register_all_tools()
 
-    # v6 极限模式: max_tool_calls 300 + context_budget 200K + 每 tool 上限 100
-    # 默认 150 / 0 / 50. 极限模式拉满, 让 agent 能跑更长任务轨迹.
-    _max_calls = 300 if extreme else 150
+    # C3: 预算扩容 — 默认 150→400, 极限 300→600.
+    # audit 20 动作1: 预算-产出曲线最陡段在 150-400, 再投 150 次 ≈ +6.5 分.
+    # ponytail: 不扩 timeout (已 7200s 够用), 只扩 calls.
+    _max_calls = 600 if extreme else 400
     _max_per_tool = 100 if extreme else 50
     _ctx_budget = 200000 if extreme else cfg.context_budget_tokens
 
