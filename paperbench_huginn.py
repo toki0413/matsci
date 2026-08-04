@@ -872,8 +872,11 @@ def main():
     parser.add_argument("--workspace", default=None, help="Workspace dir (default: workspaces/paperbench/<paper>)")
     parser.add_argument("--score", action="store_true", help="Score after run")
     parser.add_argument("--score-only", action="store_true", help="Skip agent, only score existing submission")
-    parser.add_argument("--timeout", type=int, default=3600, help="Timeout in seconds (default 3600)")
-    parser.add_argument("--max-tool-calls", type=int, default=150, help="Max tool calls (default 150)")
+    # C3: 预算扩容 150→600, timeout 3600→21600. audit 20 动作1: 预算-产出曲线
+    # 最陡段在 150-400, 再投 150 次 ≈ +6.5 分. N7 警告 C2 完成前不扩 PB 预算,
+    # 现 C2 已完成 (VACUUM@100MB + 真修剪), 可扩.
+    parser.add_argument("--timeout", type=int, default=21600, help="Timeout in seconds (default 21600)")
+    parser.add_argument("--max-tool-calls", type=int, default=600, help="Max tool calls (default 600)")
     parser.add_argument("--selfcheck", action="store_true", help="Run assert-based self-check and exit")
     args = parser.parse_args()
 
