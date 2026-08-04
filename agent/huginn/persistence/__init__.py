@@ -17,6 +17,7 @@ from huginn.persistence.remote_job import (
     NullRemoteJobBackend,
     RemoteJobBackend,
 )
+from huginn.persistence.state_registry import StateRegistry
 
 __all__ = [
     "CheckpointerBackend",
@@ -26,4 +27,5 @@ __all__ = [
     "RemoteJobBackend",
     "JSONRemoteJobBackend",
     "NullRemoteJobBackend",
+    "StateRegistry",
 ]
