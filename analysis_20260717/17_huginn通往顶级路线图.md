@@ -291,6 +291,42 @@ huginn 已有遥测（`telemetry.py` TelemetrySpan + span 树 + 内存快照）�
 | B5 | 自进化复盘 checklist 增「指标-提交对齐」检查项：任何 CV vs test gap 诊断前先确认两边同一度量 | `agent/huginn/knowledge/seed/38_benchmark_evaluation_lessons.md` 复盘流程 | 02 报告建议 6 |
 | B6 | E2E 断言加牙齿：`test_autoloop_completes_all_phases` 断言 7 phase 全 completed 且 tool_calls>0；失败目标断言非 completed | `agent/tests/stress/test_sci_automation.py:269-292` | 06 报告建议 2 |
 
+### P1-B2/B3/B4/B5 落地说明（2026-08-04）
+
+**B2（四适配器 tool_filter 恢复数学工具 + COMPUTE RULE 硬规则）**
+- 四适配器 `*_TOOL_FILTER` 全部含 `symbolic_math_tool` + `unit_tool` + `validate_tool`：
+  - `sab_huginn.py:64-77`、`rcb_huginn.py:160-177`、`mlebench_huginn.py:57-71`、`paperbench_huginn.py:81-93`
+  - `rcb_runner.py:5041-5044` 补 `unit_tool`（之前缺，导致 Material/Physics 量纲检查不可用）
+- 三个外部适配器 system prompt 的 `## Available Tools` 段补三个数学工具描述 + `COMPUTE RULE (P1-B2, hard)` 硬规则：
+  - SAB: `sab_huginn.py:180-189` — "any numeric answer in domain_knowledge.md or task output MUST be derived via code_tool / symbolic_math_tool / validate_tool, not stated from memory"
+  - MLE: `mlebench_huginn.py:498-506` — "every CV score you report MUST be computed via code_tool, not estimated"
+  - PB: `paperbench_huginn.py:304-313` — "every numeric constant you put into code MUST be derived via code_tool / symbolic_math_tool / validate_tool, not transcribed from the paper by eye"
+- 自检: `python mlebench_huginn.py --self-check-b2` 验证 tool_filter + prompt 注入 + COMPUTE RULE 顺序（前置于 PHASED PROTOCOL）
+
+**B3（critique 数值重算：Step 3 替代纯文本对照）**
+- `agent/huginn/cli/rcb_runner.py:4242-4253`（step3_prompt A. Sanity Check 段）替换：
+  - 旧: "Compare each to the paper's baseline value from your Step 1 checklist"（纯文本对照）
+  - 新: "RECOMPUTE each claim via an independent computation path — do NOT trust your own previous text. Call validate_tool (numerical cross-check) or symbolic_math_tool (closed-form re-derivation) or code_tool (re-run the metric on outputs/ artifacts) for each claimed number."
+  - 加 `P1-B3 hard rule`: "a claim that you cannot recompute independently is FABRICATED, treat it as 0"
+  - 表格从 `| Metric | Paper Value | Your Value | Better? |` 改为 `| Metric | Claimed | Recomputed (independent path) | Tool used | Match? |`，强制 agent 列出重算工具 + 独立路径
+- 与既有 G28 `_recompute_report_metrics`（report.md vs outputs/ 数值比对，>10% deviation flag）互补：G28 是机械正则比对，B3 是 agent 主动调工具独立重算，两层兜底防虚构
+- 自检: `python agent/huginn/cli/rcb_runner.py --self-check-b3` 验证 RECOMPUTE 规则注入 + 三工具列出 + 老模式移除 + 4 列表格
+
+**B4（报告强制区分 EXECUTED vs EXPECTED 标记 + lint）**（之前已落地，本次确认自检仍通过）
+- `agent/huginn/cli/rcb_runner.py:3600-3665` `_lint_report_markers` 函数：扫描 report.md，统计数值声明的标记情况（`[EXECUTED]` / `[EXPECTED]` / `[NOT EXECUTED]`）
+- 自检: `python agent/huginn/cli/rcb_runner.py --self-check-b4` 通过（total=6 tagged=4 untagged=2，三 marker 计数全对）
+- ponytail: 句子级扫描，ceiling 是不区分 marker 是否真实（agent 可能瞎标），升级路径是跟 outputs/ 文件交叉验证 `[EXECUTED]` 数值是否真有产物支撑
+
+**B5（自进化复盘 checklist 增「指标-提交对齐」检查项）**
+- `mlebench_huginn.py:484-496` system prompt 在 `OVERFITTING GUARD` **之前**插入 `METRIC ALIGNMENT PRECHECK (P1-B5)` 4-step checklist：
+  1. What metric does the competition grade on? (read description.md / grade.py)
+  2. What did CV compute? (accuracy? AUC? RMSE?)
+  3. Are they the same? If not, the gap is metric mismatch, not overfitting
+  4. For AUC tasks: submission.csv 含概率 (n_unique > 2) 还是硬标签 (n_unique ≤ 2)? 硬标签 silently 损失 ~0.04 AUC
+- 加自进化回路警示: "a metric-mismatch gap misdiagnosed as overfitting will 固化 the wrong lesson (over-regularize) — run this checklist before writing any post-mortem entry"
+- 知识库 `agent/huginn/knowledge/seed/38_benchmark_evaluation_lessons.md` §2.9b 已有完整 checklist（agent RAG 可命中）
+- 自检: `python mlebench_huginn.py --self-check-b5` 验证 4-step checklist 完整 + 顺序（PRECHECK 前置于 OVERFITTING GUARD）+ 自进化回路警示存在
+
 **主线 C：预算重构（第 4–5 周，严格按此前置顺序）**
 | # | 动作 | 落点 | 依据 |
 |---|------|------|------|
