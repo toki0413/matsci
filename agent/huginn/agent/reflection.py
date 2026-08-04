@@ -215,6 +215,16 @@ class ReflectionMixin:
                 logger.debug("reflection failed", exc_info=True)
                 continue
 
+            # Track fix success: if a tool succeeded after a fix was applied,
+            # increment success_count on the matching rule.
+            try:
+                ev_engine = self._get_evolution_engine()
+                ev_engine.mark_fix_success(
+                    tr.get("tool_name", ""), reflection.tool_succeeded
+                )
+            except Exception:
+                pass
+
             # Trigger evolution on failure / success signals.
             if reflection.should_evolve:
                 try:
