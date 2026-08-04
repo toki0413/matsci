@@ -145,9 +145,54 @@ class BenchmarkOrchestrator:
         # P1-C8: 可观测性字段, run() 结束后外部适配器读取写 meta
         self.tool_calls_used: int = 0
         self.turns_used: int = 0
+        # C8 补: context overflow / compaction / crash 追踪
+        self.context_overflow_count: int = 0
+        self.compaction_count: int = 0
+        self.crash_traceback: str | None = None
+        # C2: checkpoint 尺寸上限 (100MB, roadmap 完成判据 5). run() 结束后填,
+        # 适配器读 meta 时一并落盘. VACUUM 触发标志记录到 vacuum_triggered.
+        self.checkpoint_size_mb: float = 0.0
+        self.vacuum_triggered: bool = False
 
     def _log(self, msg: str) -> None:
         print(f"[{self.tag}] {msg}", flush=True)
+
+    def _enforce_checkpoint_size_limit(self) -> None:
+        """C2: benchmark 结束后检查 checkpoint 文件大小, 超 100MB 触发 VACUUM.
+
+        SQLite 删除数据后文件不会自动缩小 (RemoveMessage 只删 row, 页不回收),
+        所以 _trim_checkpointer_messages 的真修剪在文件层面看不出效果. VACUUM
+        重建数据库文件, 是唯一能让文件真正缩小的手段.
+
+        ponytail: 只在 run() 结束后跑 VACUUM — 运行中锁表会卡 graph.
+          ceiling: VACUUM 需要额外磁盘空间临时存放新文件, 磁盘满会失败.
+          升级路径: 改用 auto_vacuum = INCREMENTAL, 在线增量回收.
+        """
+        import os as _os
+        _path = _os.environ.get("HUGINN_CHECKPOINTER_PATH")
+        if not _path or not _os.path.exists(_path):
+            return
+        _size = _os.path.getsize(_path)
+        self.checkpoint_size_mb = round(_size / (1024 * 1024), 2)
+        if self.checkpoint_size_mb <= 100:
+            return
+        self._log(
+            f"Checkpoint {self.checkpoint_size_mb}MB > 100MB limit, VACUUM..."
+        )
+        _ckpt = getattr(self.agent, "checkpointer", None)
+        _conn = getattr(_ckpt, "conn", None) or getattr(_ckpt, "_conn", None)
+        if _conn is None:
+            self._log("VACUUM skipped: no sqlite conn on checkpointer")
+            return
+        try:
+            _conn.execute("VACUUM")
+            self.vacuum_triggered = True
+            self.checkpoint_size_mb = round(
+                _os.path.getsize(_path) / (1024 * 1024), 2
+            )
+            self._log(f"VACUUM done: {self.checkpoint_size_mb}MB")
+        except Exception as _e:
+            self._log(f"VACUUM failed: {_e}")
 
     def _is_done(self, calls: int) -> bool:
         """机械式完成判据: (deliverable 全齐 AND sanity gate 过) OR 超 max_total_calls.
@@ -221,6 +266,9 @@ class BenchmarkOrchestrator:
                                     made_tool_call = True
                                 preview = content[:200].replace("\n", " ")
                                 self._log(f"AI: {preview}...")
+                        # C8: 检测 compaction 事件 (chunk 里带 compaction 标记)
+                        if isinstance(chunk, dict) and chunk.get("compaction_triggered"):
+                            self.compaction_count += 1
 
                     # 四档分流: sanity_fail > triage > continue
                     # sanity gate fail 时 _is_done 返回 False, 优先注入 fix_prompt
@@ -242,11 +290,32 @@ class BenchmarkOrchestrator:
                         current_msg = CONTINUE_MSG
         except asyncio.TimeoutError:
             final = f"[TIMEOUT after {self.timeout}s]"
+        except Exception as exc:
+            # C8: 捕获 crash traceback + 检测 context overflow
+            import traceback as _tb
+            self.crash_traceback = _tb.format_exc()
+            try:
+                from huginn.agent.streaming import _is_context_overflow
+                if _is_context_overflow(exc):
+                    self.context_overflow_count += 1
+                    final = f"[CONTEXT_OVERFLOW: {exc}]"
+                    self._log(f"Context overflow detected: {exc}")
+                else:
+                    final = f"[CRASH: {type(exc).__name__}: {exc}]"
+                    self._log(f"Crash: {self.crash_traceback[-500:]}")
+            except Exception:
+                final = f"[CRASH: {type(exc).__name__}: {exc}]"
+                self._log(f"Crash: {self.crash_traceback[-500:]}")
 
         self._log(f"Agent finished. Tool calls: {tool_count}, turns: {turn}")
         # P1-C8: 暴露可观测性字段给外部适配器写 meta
         self.tool_calls_used = tool_count
         self.turns_used = turn
+        # C2: run 结束后检查 checkpoint 尺寸, 超 100MB VACUUM (roadmap 判据 5)
+        try:
+            self._enforce_checkpoint_size_limit()
+        except Exception as _e:
+            self._log(f"checkpoint size enforcement failed: {_e}")
         return final
 
     def _has_code_no_output(self, missing: set[str]) -> bool:
@@ -339,6 +408,102 @@ def _self_check() -> int:
     return 0
 
 
+def _c2_self_check() -> int:
+    """C2 self-check: 验证 checkpoint 尺寸上限 + VACUUM 触发逻辑.
+
+    覆盖:
+    1. checkpoint_size_mb / vacuum_triggered 字段存在且初值为 0/False
+    2. 小文件 (<100MB) 不触发 VACUUM
+    3. 大文件 (>100MB) 且有 conn 时触发 VACUUM
+    4. 无 conn 时优雅降级 (不崩, 只 log)
+
+    ponytail: 临时 SQLite 文件模拟 checkpointer. ceiling: 不验真 VACUUM
+      在 SqliteSaver 上的副作用, 只验调用路径.
+    """
+    import gc
+    import os
+    import sqlite3
+    import tempfile
+
+    # 假 agent: orchestrator 从 agent.checkpointer 拿 checkpointer, 再从
+    # checkpointer.conn 拿 sqlite 连接. 两层 getattr, 测试时用一个对象兼任.
+    class _FakeAgent:
+        def __init__(self, conn):
+            # checkpointer 指向自己, conn 直接暴露 — 模拟 SqliteSaver 的结构
+            self.checkpointer = self
+            self.conn = conn
+
+    # 1. 字段初值 (无 conn)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        orch = BenchmarkOrchestrator(
+            agent=_FakeAgent(None), workspace=tmp,
+            deliverable_spec=HLE_DELIVERABLES, tag="C2",
+        )
+        assert orch.checkpoint_size_mb == 0.0
+        assert orch.vacuum_triggered is False
+        print("[CHECK C2.1] fields initialized OK")
+
+        # 2. 小文件 (<100MB) 不触发 VACUUM
+        small = os.path.join(tmp, "small.sqlite")
+        with open(small, "wb") as f:
+            f.write(b"\x00" * (1024 * 1024))  # 1MB
+        os.environ["HUGINN_CHECKPOINTER_PATH"] = small
+        orch._enforce_checkpoint_size_limit()
+        assert orch.checkpoint_size_mb >= 1.0, orch.checkpoint_size_mb
+        assert orch.checkpoint_size_mb < 100, orch.checkpoint_size_mb
+        assert orch.vacuum_triggered is False
+        print(f"[CHECK C2.2] small file ({orch.checkpoint_size_mb}MB) no VACUUM OK")
+
+    # 3. 大文件 (>100MB) 触发 VACUUM — 独立临时目录避免 Windows 文件锁
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        big = os.path.join(tmp, "big.sqlite")
+        conn = sqlite3.connect(big)
+        conn.execute("CREATE TABLE t (x BLOB)")
+        # 写 101MB 数据 (1 行 1MB × 101 行)
+        chunk = b"x" * (1024 * 1024)
+        for _ in range(101):
+            conn.execute("INSERT INTO t VALUES (?)", (chunk,))
+        conn.commit()
+        _size_before = os.path.getsize(big) / (1024 * 1024)
+        assert _size_before > 100, f"setup failed: {_size_before}MB"
+
+        orch2 = BenchmarkOrchestrator(
+            agent=_FakeAgent(conn), workspace=tmp,
+            deliverable_spec=HLE_DELIVERABLES, tag="C2",
+        )
+        os.environ["HUGINN_CHECKPOINTER_PATH"] = big
+        orch2._enforce_checkpoint_size_limit()
+        assert orch2.vacuum_triggered is True, "大文件应触发 VACUUM"
+        print(
+            f"[CHECK C2.3] big file ({_size_before:.1f}MB -> "
+            f"{orch2.checkpoint_size_mb}MB) VACUUM triggered OK"
+        )
+        conn.close()
+        gc.collect()  # 释放 Windows 文件句柄
+
+    # 4. 无 conn 优雅降级
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        big2 = os.path.join(tmp, "big2.sqlite")
+        with open(big2, "wb") as f:
+            f.write(b"\x00" * (101 * 1024 * 1024))  # 101MB 假文件
+        os.environ["HUGINN_CHECKPOINTER_PATH"] = big2
+        orch3 = BenchmarkOrchestrator(
+            agent=_FakeAgent(None), workspace=tmp,
+            deliverable_spec=HLE_DELIVERABLES, tag="C2",
+        )
+        orch3._enforce_checkpoint_size_limit()
+        assert orch3.checkpoint_size_mb > 100
+        assert orch3.vacuum_triggered is False
+        print("[CHECK C2.4] no-conn graceful degradation OK")
+
+    # 清环境变量
+    os.environ.pop("HUGINN_CHECKPOINTER_PATH", None)
+    print("[CHECK C2] ALL ASSERTS PASSED")
+    return 0
+
+
 if __name__ == "__main__":
     import sys
+    if "--self-check-c2" in sys.argv:
+        sys.exit(_c2_self_check())
     sys.exit(_self_check())

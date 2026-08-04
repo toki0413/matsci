@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -31,6 +32,21 @@ def _eval_num_in_output(output: str, expected: float, tol: float) -> tuple[bool,
         if abs(n - expected) <= tol:
             return True, f"got {n} (期望 {expected}±{tol})"
     return False, f"got {nums[0]}, 期望 {expected}±{tol}"
+
+
+def _is_numeric_task(task: BenchmarkTask) -> bool:
+    """B1 启发式: 判断 task 是否期望数值答案.
+
+    ponytail: inspect.getsource 看 evaluator 源码是否含 _eval_num / _num_close.
+      ceiling: lambda 闭包可能匹配不上, 内联数值比较也匹配不上.
+      升级路径: BenchmarkTask 加 expects_numeric 显式字段.
+    """
+    import inspect
+    try:
+        src = inspect.getsource(task.evaluator)
+        return "_eval_num" in src or "_num_close" in src
+    except (TypeError, OSError):
+        return False
 
 
 DEFAULT_TASKS: list[BenchmarkTask] = [
@@ -558,6 +574,7 @@ class BenchmarkRunner:
     def _run_task(self, task: BenchmarkTask) -> TaskResult:
         start = time.time()
         output = ""
+        tool_names: set[str] = set()
         # Structural tests (no prompt) skip LLM — evaluator runs directly
         if not task.prompt:
             output = "[structural test]"
@@ -567,7 +584,7 @@ class BenchmarkRunner:
                 # asyncio.run 传播 TimeoutError, 无 ThreadPoolExecutor.shutdown 阻塞.
                 # 之前用线程池包裹, shutdown(wait=True) 在超时后仍等线程清理, 实测
                 # 180s 超时任务拖到 608s. _run_task 是同步方法不在 event loop 里, 直接跑.
-                output = asyncio.run(
+                output, tool_names = asyncio.run(
                     self._agent_chat(task.prompt, timeout=task.timeout_seconds)
                 )
             except TimeoutError:
@@ -578,6 +595,41 @@ class BenchmarkRunner:
         elapsed = time.time() - start
         result = task.evaluate(output)
         result.exec_time_seconds = elapsed
+
+        # B1: 数值必须经工具计算 gate — 期望数值答案 + 全程无计算工具 → 打回一次
+        # ponytail: 用 inspect.getsource 判断 evaluator 是否数值型 (含 _eval_num/_num_close).
+        #   ceiling: 启发式, lambda 闭包源码可能匹配不上. 升级路径: BenchmarkTask 加 expects_numeric 字段.
+        if task.prompt and not result.passed and _is_numeric_task(task):
+            compute_tools = {"code_tool", "symbolic_math_tool", "bash_tool",
+                             "python_repl", "symbolic_math", "calculator"}
+            if not (tool_names & compute_tools):
+                # 打回一次注入 "You must compute, not guess"
+                retry_prompt = (
+                    task.prompt
+                    + "\n\n[B1 GATE] Your previous answer was numeric but you did not "
+                    "call any computation tool (code_tool / symbolic_math_tool / bash_tool). "
+                    "You MUST compute, not guess. Re-solve this problem by calling a "
+                    "computation tool to derive the numeric answer, then state the final answer."
+                )
+                try:
+                    retry_output, retry_tools = asyncio.run(
+                        self._agent_chat(retry_prompt, timeout=task.timeout_seconds)
+                    )
+                    if retry_output and retry_output.strip() != output.strip():
+                        retry_result = task.evaluate(retry_output)
+                        retry_result.exec_time_seconds = elapsed
+                        # 重跑后用了计算工具 + 评分通过 → 采纳 retry
+                        if retry_result.passed or (retry_tools & compute_tools):
+                            result = retry_result
+                            output = retry_output
+                            tool_names = retry_tools
+                        # 重跑仍 fail + 仍无计算工具 → 标记 B1 FAIL
+                        if not result.passed and not (tool_names & compute_tools):
+                            result.reason += " [B1: numeric answer without computation tool — FAIL]"
+                            result.passed = False
+                except (TimeoutError, Exception) as _b1_exc:
+                    # B1 retry 失败不阻塞, 保留原 result
+                    pass
 
         # LLM judge: regex 评分低时触发二次评审 (对标 PaperBench SimpleJudge)
         if task.prompt and task.reference is not None:
@@ -598,10 +650,11 @@ class BenchmarkRunner:
         )
         return result
 
-    async def _agent_chat(self, prompt: str, timeout: float = 120.0) -> str:
-        """Send a single prompt to HuginnAgent and return the final assistant text.
+    async def _agent_chat(self, prompt: str, timeout: float = 120.0) -> tuple[str, set[str]]:
+        """Send a single prompt to HuginnAgent and return (final text, tool_names used).
 
         timeout: asyncio 层面超时, 超时后取消协程 (不只是 ThreadPoolExecutor 等待).
+        B1: 收集 tool_names 给 _run_task 做数值 gate 判定.
         """
         registry = ModelRegistry.from_config(self.config)
         alias = registry.default_alias()
@@ -657,23 +710,34 @@ class BenchmarkRunner:
         from .tool_randomization import randomize_tool_order
 
         agent.langchain_tools = randomize_tool_order(
-            agent.langchain_tools, seed=hash(task.id) & 0xFFFFFFFF
+            agent.langchain_tools, seed=hash(prompt) & 0xFFFFFFFF
         )
         agent._invalidate_tool_description_cache()
 
         final = ""
+        tool_names_used: set[str] = set()
         # ponytail: asyncio.timeout (3.11+) 取消协程, 避免 agent 工具循环卡死时
         # ThreadPoolExecutor.shutdown(wait=True) 阻塞主线程. 超时后 agent.chat 的
         # async generator 会被 close, 协程内 pending 的 await 抛 CancelledError.
         async with asyncio.timeout(timeout):
             async for chunk in agent.chat(prompt):
                 msgs = chunk.get("messages", [])
+                for msg in msgs:
+                    # B1: 收集 tool names — AIMessage.tool_calls + ToolMessage.name
+                    tcs = getattr(msg, "tool_calls", None) or []
+                    for tc in tcs:
+                        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                        if name:
+                            tool_names_used.add(name)
+                    tname = getattr(msg, "name", None)
+                    if tname and tname != "HuginnAgent":
+                        tool_names_used.add(tname)
                 if msgs:
                     last = msgs[-1]
                     content = getattr(last, "content", "")
                     if content:
                         final = str(content)
-        return final
+        return final, tool_names_used
 
     def save_report(self, report: BenchmarkReport, path: str | Path) -> None:
         """Save a benchmark report to a JSON file."""
@@ -778,5 +842,65 @@ def _selfcheck() -> None:
     print("runner B2+B3 selfcheck OK")
 
 
+def _selfcheck_b1() -> int:
+    """B1 self-check: 验证 _is_numeric_task 启发式 + B1 retry 骨架.
+
+    ponytail: 不调真 agent, 只验启发式判断 + retry prompt 构造逻辑.
+      ceiling: 没验 retry 真路径 (需真 agent + API key).
+    """
+    import sys
+    # 1. _is_numeric_task 对数值 task 返回 True
+    num_task = BenchmarkTask(
+        id="num-test",
+        category="math",
+        prompt="What is 2+2?",
+        evaluator=lambda out: _eval_num_in_output(out, 4, 0.1),
+    )
+    assert _is_numeric_task(num_task) is True, "数值 task 应识别为 numeric"
+    print("[CHECK B1.1] numeric task detected OK")
+
+    # 2. _is_numeric_task 对非数值 task 返回 False
+    from .task import contains_any
+    kw_task = BenchmarkTask(
+        id="kw-test",
+        category="text",
+        prompt="List three fruits.",
+        evaluator=contains_any(["apple", "banana", "cherry"]),
+    )
+    assert _is_numeric_task(kw_task) is False, "关键词 task 不应识别为 numeric"
+    print("[CHECK B1.2] non-numeric task rejected OK")
+
+    # 3. compute_tools 集合非空 + 包含 code_tool
+    compute_tools = {"code_tool", "symbolic_math_tool", "bash_tool",
+                     "python_repl", "symbolic_math", "calculator"}
+    assert "code_tool" in compute_tools
+    assert len(compute_tools) >= 4
+    print("[CHECK B1.3] compute_tools set OK")
+
+    # 4. B1 retry prompt 构造 (不调真 agent, 只验字符串)
+    retry_prompt = (
+        num_task.prompt
+        + "\n\n[B1 GATE] Your previous answer was numeric but you did not "
+        "call any computation tool (code_tool / symbolic_math_tool / bash_tool). "
+        "You MUST compute, not guess. Re-solve this problem by calling a "
+        "computation tool to derive the numeric answer, then state the final answer."
+    )
+    assert "[B1 GATE]" in retry_prompt
+    assert "compute, not guess" in retry_prompt
+    assert num_task.prompt in retry_prompt
+    print("[CHECK B1.4] retry prompt construction OK")
+
+    # 5. tool_names 拦截逻辑: 空 set → 触发; 含 code_tool → 不触发
+    assert not (set() & compute_tools), "空 tool_names 应触发 B1"
+    assert ({"code_tool"} & compute_tools), "含 code_tool 不应触发 B1"
+    assert not ({"web_search_tool"} & compute_tools), "web_search 不算计算工具"
+    print("[CHECK B1.5] tool_names interception logic OK")
+
+    print("[CHECK B1] ALL ASSERTS PASSED")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--self-check-b1" in sys.argv:
+        sys.exit(_selfcheck_b1())
     _selfcheck()
