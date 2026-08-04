@@ -14,8 +14,10 @@ from typing import Any
 
 from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator
+from huginn.agents.tool_dedupe import ToolDeduper
 from huginn.autoloop.plan_store import PlanStore
 from huginn.config import HuginnConfig
+from huginn.events.transcript import TranscriptStore
 from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.models.registry import ModelRegistry
 from huginn.permissions import PermissionConfig
@@ -25,6 +27,7 @@ from huginn.persistence import (
     MemoryBackend,
     SQLiteCheckpointerBackend,
     SQLiteMemoryBackend,
+    StateRegistry,
 )
 from huginn.security.audit import AuditLogger
 from huginn.skills.registry import SkillRegistry
@@ -59,6 +62,12 @@ class ServerContext:
     remote_job_backend: JSONRemoteJobBackend = field(
         default_factory=lambda: JSONRemoteJobBackend()
     )
+    # 字段级状态注册表: 跨 step / 跨进程恢复. 对标 Kimi defineState.
+    state_registry: StateRegistry = field(default_factory=StateRegistry.shared)
+    # 对话转录: 订阅 EventBus 落 JSONL, benchmark 评审回放用.
+    transcript_store: TranscriptStore = field(default_factory=TranscriptStore.shared)
+    # 工具调用去重: 同一 step 内同 (tool, args) 命中即返回上次结果.
+    tool_deduper: ToolDeduper = field(default_factory=ToolDeduper)
     agent_factory: AgentFactory | None = None
     orchestrator: Orchestrator | None = None
     memory_manager: MemoryManager | None = None
@@ -114,6 +123,13 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
         auto_confirm=cfg.plan_auto_confirm,
     )
 
+    # 启动对话转录订阅 (best-effort, 失败不影响服务启动)
+    transcript_store = TranscriptStore.shared()
+    try:
+        transcript_store.start()
+    except Exception:
+        pass
+
     return ServerContext(
         config=cfg,
         permission_config=permission_config,
@@ -122,6 +138,9 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
         agent_factory=agent_factory,
         orchestrator=orchestrator,
         plan_store=plan_store,
+        transcript_store=transcript_store,
+        state_registry=StateRegistry.shared(),
+        tool_deduper=ToolDeduper(),
     )
 
 

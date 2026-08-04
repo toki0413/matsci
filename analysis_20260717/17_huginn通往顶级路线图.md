@@ -192,6 +192,36 @@
 
 ---
 
+### 补遗 2：基础设施对齐 Kimi Code —— P0/P1/P2 落地（2026-08-04）
+
+**触发**：step retry 补遗后，继续对标 Kimi Code `MoonshotAI/kimi-code` 的 `_base/` + `agent/` + `transcript/` 基础设施分层，逐项核实 huginn 真实差距。
+
+**核实结论（推翻"基础设施全面落后"的预设）**：
+huginn 已有遥测（`telemetry.py` TelemetrySpan + span 树 + 内存快照）、token 计数（`utils/tokens.py` tiktoken）、引擎状态快照（`runtime/engine_state.py`）、持久化后端（`persistence/checkpointer.py` SQLite）、事件溯源（`provenance/registry.py` replay_to/rollback_to）、审计（`events/audit_log.py`）——这些与 Kimi 等价或更丰富，不需补。
+
+**真实差距（三条，已全部补齐）**：
+
+| # | 差距 | Kimi 实现 | huginn 原状 | 已落补丁 |
+|---|---|---|---|---|
+| P0 | 字段级状态注册 | `defineState` + `IAgentStateService` 跨 step 持久化 | `engine_state.py` 整体快照,非字段级;崩溃后局部变量丢 | `persistence/state_registry.py` StateRegistry (LRU+SQLite) |
+| P1 | 对话转录 | 独立 `transcript` 包 | `telemetry.py` 是性能轨迹不是对话内容;`memory/` 是压缩语义片段不是原始转录 | `events/transcript.py` TranscriptStore (订阅 EventBus 落 JSONL) |
+| P2 | 工具调用去重 | 独立 `toolDedupe` 模块 | `_read_only_cache` 只对 read_only=True 工具生效;有副作用的 bash/code/vasp 不去重 | `agents/tool_dedupe.py` ToolDeduper (LRU + args_hash) |
+
+**集成点**：
+- `server_context.py`：ServerContext 加 `state_registry` / `transcript_store` / `tool_deduper` 三个字段,`create_server_context` 启动 TranscriptStore 订阅。
+- `tools/adapter.py`：ToolAdapter 加 `set_deduper()` + `_current_deduper` 字段;pre-checks 在 cache 后插入 dedupe lookup;post-checks 在 router record 后插入 deduper record。
+- `persistence/__init__.py` + `events/__init__.py`：导出新组件。
+
+**不照搬的（ponytail 取舍）**：
+- DI cascadeEngine（30KB + 9KB）：Python 不需要 TS 那套装饰器元数据,`ServerContext` 单例 + 构造器注入够用。
+- tree-sitter-bash：huginn 不是代码编辑器。
+- pi-tui / minidb / OAuth / ACP 协议：科研场景不需要。
+- toolApproval 独立模块：`policy_engine.py` 已有 "ask" action + 现有交互够用。
+
+**自检**：三个新模块各自带 `__main__` self-check,全部通过。编译 + import 链验证通过。
+
+---
+
 ## 三、三阶段路线图
 
 > 阶段依赖（硬性 gate）：**P0 → P1**：测量可信（SAB 重评落地、medal 有效、评分门禁生效）+ 预算假耗尽消除。**P1 → P2**：可执行性硬门（占位交付 0 次、sanity gate 生效）+ 诚实评测信号（泄漏堵死、judge 异源）——转引 `analysis_20260717/00:127-128`，缺一不接进化。
