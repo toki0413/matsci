@@ -278,6 +278,11 @@ class TestAutoloopE2E:
 
         assert result is not None
         assert hasattr(result, "stages") or hasattr(result, "phases") or hasattr(result, "report")
+        # B6: 断言加牙齿 — 不只检查 result 存在, 还检查实际执行了工具.
+        # 18/18 perceive-only 空转 (analysis_20260717/06:30-43) 在此断言下直接失败.
+        _tc = getattr(result, "tool_calls", None) or getattr(result, "tool_call_count", None)
+        if _tc is not None:
+            assert _tc > 0, f"autoloop completed but made 0 tool calls (perceive-only空转?)"
 
     @pytest.mark.asyncio
     async def test_autoloop_handles_tool_failure(self):
@@ -290,6 +295,11 @@ class TestAutoloopE2E:
             max_iterations=1,
         )
         assert result is not None
+        # B6: 失败目标不应全部 completed — 全 completed 说明 autoloop 没区分成功/失败
+        _stages = getattr(result, "stages", None) or getattr(result, "phases", None)
+        if _stages and len(_stages) > 0:
+            _all_done = all(getattr(s, "status", "") == "completed" for s in _stages)
+            assert not _all_done, "failure objective should not complete all stages"
 
 
 # ── Belief Entropy 长程稳定性 ──────────────────────────────────────
