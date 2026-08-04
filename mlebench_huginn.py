@@ -64,6 +64,10 @@ MLE_TOOL_FILTER = [
     "subagent_tool",
     "plot_tool",            # 画 loss curve / confusion matrix
     "kaggle_submit_tool",   # 生成 + 校验 submission.csv
+    # P1-B2: 恢复数学工具 — 特征工程需要符号推导, metric 理解需要量纲检查
+    "symbolic_math_tool",
+    "unit_tool",
+    "validate_tool",
 ]
 
 
@@ -612,6 +616,29 @@ def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
     if synthetic and oracle_ceiling is None:
         oracle_ceiling = None
 
+    # P1-A6: 平凡基线闸门 — score 低于多数类/随机基线 = agent 方案有根本问题
+    # 检测并记录, 评测时可追溯. agent 看不到这个警告, 真正的"回退到基线"需 prompt 层面做.
+    below_baseline = False
+    baseline_note = ""
+    is_auc_task = comp_id in _AUC_COMPETITIONS
+    for col in pred_cols:
+        if col not in answers.columns:
+            continue
+        y = answers[col]
+        if y.nunique() != 2:
+            continue
+        if is_auc_task:
+            baseline, baseline_name = 0.5, "random (AUC=0.5)"
+        else:
+            baseline = float(max(y.mean(), 1 - y.mean()))
+            baseline_name = f"majority class ({baseline:.4f})"
+        if 0 <= score <= 1 and score < baseline - 0.01:
+            below_baseline = True
+            baseline_note = f"score {score:.4f} < {baseline_name}"
+            print(f"[MLE] WARNING: {baseline_note}. Agent model worse than trivial baseline. "
+                  f"Fallback: use majority class / 0.5 probability.")
+        break  # 只看第一个二值预测列
+
     return {
         "competition_id": comp_id,
         "score": round(score, 4),
@@ -621,6 +648,8 @@ def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
         "metric_provenance": "synthetic-smoke" if synthetic else "real",
         "n_submission_rows": len(submission),
         "n_answer_rows": len(answers),
+        "below_baseline": below_baseline,
+        "baseline_note": baseline_note,
     }
 
 

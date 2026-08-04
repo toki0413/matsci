@@ -170,6 +170,10 @@ RCB_TOOL_FILTER = [
     "plot_tool",             # 画图 (Arial 20pt+ 加粗)
     "image_analysis_tool",   # 反向 CV 分析自己生成的 PNG, 闭环视觉验证
     "vision_describe",       # 分层视觉描述 (OCR/CV), image criterion 闭环
+    # P1-B2: 恢复数学工具 — Material/Physics 类任务需要量纲检查 + 符号推导
+    "symbolic_math_tool",
+    "unit_tool",
+    "validate_tool",
 ]
 
 
