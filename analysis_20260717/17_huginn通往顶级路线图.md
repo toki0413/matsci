@@ -512,3 +512,77 @@ huginn 已有遥测（`telemetry.py` TelemetrySpan + span 树 + 内存快照）�
 3. scaffold 杠杆 > 模型：同族 DeepSeek-V4-Pro 轻量 scaffold 24.6 vs huginn 13.7，P0+P1 机制修复（不换模型）足以把 RCB Material 推到 20–24 档。
 4. 验证纪律是最深的一维（1/5）：占位数值、虚构数据、硬标签、裸答猜值四种失信形态跨 benchmark 复发，需「产物级门控 + 数值重算 + 基线闸门」三件套根治。
 5. 收敛优于新增：已有 4 状态机/3 编排/2 自改进并行，11 条不做清单是路线图的另一半——顶级画像靠接线既有骨架，不靠第 5 套框架。
+
+---
+
+## 附 C：C6 评测卫生验收记录（2026-08-04）
+
+**验收结论：通过（机制层）**
+
+C6 修的是评测链路本身的卫生，不修 agent 能力。能力问题（早交卷/执行弱/无基线闸门）划入 C7-C9，不阻塞 C6。
+
+### 交付物逐条核对
+
+| 子项 | 落点 | 证据 | 状态 |
+|------|------|------|------|
+| structai 全量移除 | `judge_helper.py` 替代，5 适配器 import 通过 | rcb_score/paperbench/sab/mlebench/hle | ✅ |
+| judge 同源检测 | 所有评分入口 WARNING + `JUDGE_SAME_SOURCE_OK` | `.env` JUDGE_* 环境变量 | ✅ |
+| 异源 judge 配置 | `.env` JUDGE_API_KEY/BASE/MODEL_NAME | Kimi/OpenAI 兼容，待有效 key 实测 | ✅ 机制就位 |
+| 私有标签隔离 | MLEBench → `workspace.parent/_mle_private_*` | s3e18 synthetic 评分 0.8026 验证隔离闭环 | ✅ |
+| HLE per-question memory 隔离 | `.hle_memory/<qslug>/` + checkpoint 隔离 | `hle_huginn.py` | ✅ 代码就位 |
+| PaperBench 答案泄漏清除 | regex override 删 + 叶节点答案出 prompt | `paperbench_huginn.py` | ✅ |
+| 断言脚本机制 | prompt 要求写完 .py 后 assert，产物 `assert_*.json` | `paperbench_huginn.py` prompt | ✅ 机制就位 |
+| 评分链路通畅 | SAB 3/3 (72/88/88)，MLEBench s3e18 (0.8026) | `_score.json` | ✅ |
+
+### 划入 C7+ 的能力问题（不阻塞 C6）
+
+| 问题 | 根因 | 归属 |
+|------|------|------|
+| 早交卷（402-1118s/7200s 预算） | stagnation break 与 P5 wall_clock 守卫方向矛盾，`rcb_runner.py:2522-2537` | C7 控制流修复 |
+| 执行弱（PaperBench Execution≈0%） | 执行链路问题 | C8 执行链路 |
+| 无基线闸门（spaceship 0.633 < if 规则 0.642） | 提交前缺 sanity check | C9 提交前闸门 |
+
+### 未闭环项（不阻塞验收，记录待办）
+
+1. 异源 judge 实测：当前 deepseek-chat 同源自评 + `JUDGE_SAME_SOURCE_OK=1`（标记不可比基线）。待有效 Moonshot key 后 `--score-only` 重评闭环。
+2. PaperBench 断言产物验证：断言脚本指令在 prompt 中，但 assert_*.json 是否真实生成取决于 agent 执行（属能力问题）。PaperBench 重跑在后台进行中。
+3. HLE 网络不可达：huggingface.co DNS 被劫持到 127.0.0.1，需启动代理后补跑。非 C6 缺陷。
+
+### N6 gate 解除状态
+
+C6 通过 → **N6 gate 解除**：分数可接入进化/强化回路（D2 benchmark 失败→分析→更新→重试回路的前置条件满足）。但当前基线为同源自评（`JUDGE_SAME_SOURCE_OK=1`），接入进化回路前建议先完成异源 judge 实测。
+
+---
+
+## 附 D：C7 控制流修复 + 最终验收结论（2026-08-04）
+
+### C7 修复（早交卷根因）
+
+主循环三处早退与 P5「跑满 timeout」矛盾，已删两处，保留降温监测：
+
+| 早退点 | 原行为 | 修复 |
+|--------|--------|------|
+| stagnation break（`rcb_runner.py:2522-2539`） | report.md hash 不变 2 轮 → break | 改为升温（`_t_hot += 0.5`）+ 日志，wall_clock 唯一控制退出 |
+| score_history monotonic-decrease break（`rcb_runner.py:2559-2566`） | 分数单调下降达阈值 → break | 改为 advisory 日志 |
+
+**保留的合理退出点**：P5 wall_clock 守卫 / max_calls 达上限 / cumulative_audit blocked / darwin_ratchet stop（质量评估，非停滞检测）/ TASK COMPLETE gate（连续驳回 3 次接受）。
+
+**自检**：`rcb_runner.py --self-check-c7` 正向验证升温 + advisory 在位，PASS。
+
+**未动**：PHASED PROTOCOL prompt（「call 20 write report」）。属 A3 prompt 层，后续单独评估，避免删后 agent 不写 report 的另一个极端。
+
+### 最终验收结论（2026-08-04）
+
+**整体：通过（机制层）**
+
+| 项目 | 结论 | 依据 |
+|------|------|------|
+| C6 评测卫生 | ✅ 通过 | 附 C：8 项交付物全就位，SAB 3/3 + MLEBench s3e18 验证链路通畅 |
+| C7 控制流早交卷修复 | ✅ 通过 | 附 D：stagnation / score_history 早退删除，升温保留，自检 PASS |
+| 异源 judge 实测 | ⏳ 待办 | 同源自评标记不可比基线，待有效 Moonshot key 后 `--score-only` 重评 |
+| 全量重跑建立可信基线 | ⏸ 挂起 | 用户决定不重跑；后台进程已停止 |
+
+**验收要点**：
+- C6/C7 是**机制层修复**，验收对象是评测链路卫生 + 控制流一致性，不是 agent 跑分。
+- 能力问题（执行弱 / 无基线闸门）已明确定位根因，属 C8/C9 后续范围，不阻塞本次验收。
+- N6 gate 已解除，但接入进化回路前应先完成异源 judge 实测，避免 reward hacking 制度化。

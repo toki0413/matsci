@@ -42,16 +42,6 @@ try:
 except ImportError:
     pass
 
-# reasoner (R1) judge 输出含 <think>...</think>, str2dict 找不到 JSON 边界.
-try:
-    import structai.llm_api as _sai
-    _orig_str2dict = _sai.str2dict
-    _sai.str2dict = lambda s: _orig_str2dict(
-        s.split("</think>", 1)[-1] if "</think>" in s else s
-    )
-except ImportError:
-    pass
-
 # ponytail: 去掉 file_write_tool/file_edit_tool — Windows 路径 bug (同 SAB/HLE).
 # agent 用 code_tool 的 open() 写 submission.csv, 已在 spaceship-titanic 验证可行.
 MLE_TOOL_FILTER = [
