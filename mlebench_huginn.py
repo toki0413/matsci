@@ -374,6 +374,58 @@ def _metric_hint(comp_id: str) -> str:
     return ""
 
 
+# P1-A6: 平凡基线闸门 — 多数类/AUC=0.5, 评测时算 agent 提交是否低于基线
+def _compute_trivial_baseline(y, is_auc: bool) -> tuple[float, str]:
+    """计算平凡基线: AUC=0.5, 分类=多数类比 (max(p, 1-p)).
+
+    非二值目标返回 nan + 说明, 跳过 baseline 检测.
+    """
+    if y.nunique() != 2:
+        return (float("nan"), "non-binary target, no trivial baseline")
+    if is_auc:
+        return (0.5, "random (AUC=0.5)")
+    p = float(y.mean())
+    baseline = float(max(p, 1 - p))
+    return (baseline, f"majority class ({baseline:.4f})")
+
+
+def _is_below_baseline(score: float, baseline: float, tol: float = 0.01) -> bool:
+    """True if score meaningfully below baseline (binary metric in [0,1])."""
+    if baseline != baseline:  # NaN
+        return False
+    if not (0.0 <= score <= 1.0):
+        return False
+    return score < baseline - tol
+
+
+def _baseline_self_check() -> int:
+    """P1-A6 self-check: 验证 baseline 计算 + below 判定."""
+    import pandas as pd
+    # binary 70/30 split → majority baseline 0.7
+    y = pd.Series([1] * 70 + [0] * 30)
+    b, name = _compute_trivial_baseline(y, is_auc=False)
+    assert abs(b - 0.7) < 1e-9, f"majority baseline should be 0.7, got {b}"
+    assert "0.7000" in name, name
+    # AUC → 0.5
+    b_auc, name_auc = _compute_trivial_baseline(y, is_auc=True)
+    assert b_auc == 0.5, f"AUC baseline should be 0.5, got {b_auc}"
+    assert "random" in name_auc
+    # non-binary → nan
+    y3 = pd.Series([0, 1, 2, 0, 1, 2])
+    b3, name3 = _compute_trivial_baseline(y3, is_auc=False)
+    assert b3 != b3, f"non-binary should be nan, got {b3}"
+    assert "non-binary" in name3
+    # below detection
+    assert _is_below_baseline(0.65, 0.7) is True, "0.65 < 0.7-0.01 should trigger"
+    assert _is_below_baseline(0.69, 0.7) is False, "0.69 within tol, no trigger"
+    assert _is_below_baseline(0.7, 0.7) is False, "equal → not below"
+    assert _is_below_baseline(0.8, 0.7) is False, "above → not below"
+    assert _is_below_baseline(0.6, float("nan")) is False, "nan baseline → no trigger"
+    assert _is_below_baseline(1.5, 0.7) is False, "out-of-range score → no trigger"
+    print("[CHECK A6] baseline compute + below detection OK")
+    return 0
+
+
 def build_system_prompt(workspace: Path, meta: dict, synthetic: bool) -> str:
     """MLE-bench 指令 + Phased Protocol + NOISE AS FEATURE."""
     ws_abs = str(workspace.resolve())
@@ -419,6 +471,13 @@ def build_system_prompt(workspace: Path, meta: dict, synthetic: bool) -> str:
         f"- PATH DISCIPLINE: use relative paths (data/train.csv not /home/data/train.csv).\n"
         f"- Read description.md FIRST to understand the metric and submission format.\n"
         f"- A simple correct baseline beats a broken complex model.\n"
+        f"- BASELINE GATE (P1-A6): before writing submission.csv, compute the trivial "
+        f"baseline — for classification: majority-class accuracy = max(p, 1-p) where p "
+        f"is the positive rate in train.csv; for AUC: 0.5 (random). If your CV score is "
+        f"BELOW this baseline, your model is broken — STOP, fall back to the baseline "
+        f"prediction (majority class for accuracy, 0.5 for AUC). Submitting a sub-baseline "
+        f"model wastes the run; the grader will flag below_baseline=true and the score is "
+        f"treated as a failed run.\n"
         f"- MODEL CHOICE: for tabular data, gradient boosting (LightGBM/XGBoost) usually "
         f"beats RandomForest. Try LightGBM first (faster, better regularization via "
         f"min_child_samples/lambda_l1/lambda_l2). If not installed, `pip install lightgbm`.\n"
@@ -619,7 +678,7 @@ def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
         oracle_ceiling = None
 
     # P1-A6: 平凡基线闸门 — score 低于多数类/随机基线 = agent 方案有根本问题
-    # 检测并记录, 评测时可追溯. agent 看不到这个警告, 真正的"回退到基线"需 prompt 层面做.
+    # 检测并记录, 评测时可追溯. agent 看不到这个警告, 真正的"回退到基线"靠 system prompt 的 BASELINE GATE 规则.
     below_baseline = False
     baseline_note = ""
     is_auc_task = comp_id in _AUC_COMPETITIONS
@@ -627,14 +686,8 @@ def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
         if col not in answers.columns:
             continue
         y = answers[col]
-        if y.nunique() != 2:
-            continue
-        if is_auc_task:
-            baseline, baseline_name = 0.5, "random (AUC=0.5)"
-        else:
-            baseline = float(max(y.mean(), 1 - y.mean()))
-            baseline_name = f"majority class ({baseline:.4f})"
-        if 0 <= score <= 1 and score < baseline - 0.01:
+        baseline, baseline_name = _compute_trivial_baseline(y, is_auc_task)
+        if _is_below_baseline(score, baseline):
             below_baseline = True
             baseline_note = f"score {score:.4f} < {baseline_name}"
             print(f"[MLE] WARNING: {baseline_note}. Agent model worse than trivial baseline. "
@@ -657,6 +710,8 @@ def grade_submission(workspace: Path, meta: dict, synthetic: bool) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Run HuginnAgent on MLE-bench competition")
+    if "--self-check-a6" in sys.argv:
+        sys.exit(_baseline_self_check())
     parser.add_argument("--competition", required=True, help="MLE-bench competition id")
     parser.add_argument("--workspace", default=None, help="Workspace dir")
     parser.add_argument("--synthetic", action="store_true", help="Use synthetic data (smoke test)")
