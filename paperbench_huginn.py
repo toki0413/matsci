@@ -86,6 +86,10 @@ PB_TOOL_FILTER = [
     "grep",
     "web_search_tool",
     "subagent_tool",    # explore/coder/analyst 并行
+    # P1-B2: 恢复数学工具 — 论文复现涉及数值推导 + 量纲一致性检查
+    "symbolic_math_tool",
+    "unit_tool",
+    "validate_tool",
 ]
 
 
