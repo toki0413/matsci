@@ -94,6 +94,8 @@ class EvolutionEngine:
         )
         self.rules: list[EvolutionRule] = []
         self.skills: list[SkillTemplate] = []
+        self._pending_fix_tool: str | None = None
+        self._pending_fix_rule_id: str | None = None
         # File-level lock — _save_rules / _save_skills / _load_rules can be
         # called from background reflection threads, so we serialize disk access.
         self._lock = threading.Lock()
@@ -512,8 +514,9 @@ class EvolutionEngine:
                 rule.trigger.split("|", 1)[1], error
             ):
                 rule.usage_count += 1
+                self._pending_fix_tool = tool_name
+                self._pending_fix_rule_id = rule.rule_id
                 # 命中即落盘, 否则 usage_count 只在内存, 跨 session 丢.
-                # 规则库上限 100 条, 写盘微秒级, 工具失败频率低, 可接受.
                 self._save_rules()
                 fix = self._parse_fix_action(rule.action, tool_input)
                 if fix:
@@ -521,6 +524,27 @@ class EvolutionEngine:
                     fix["rule_id"] = rule.rule_id
                 return fix
         return None
+
+    def mark_fix_success(self, tool_name: str, succeeded: bool) -> None:
+        """Track whether the last applied fix actually helped.
+
+        Called from reflection after each tool result. If the tool that
+        previously failed now succeeds, increment success_count on the
+        rule that was applied.
+        """
+        if not succeeded:
+            self._pending_fix_tool = None
+            self._pending_fix_rule_id = None
+            return
+        rid = getattr(self, "_pending_fix_rule_id", None)
+        if rid and tool_name == getattr(self, "_pending_fix_tool", ""):
+            for rule in self.rules:
+                if rule.rule_id == rid:
+                    rule.success_count += 1
+                    self._save_rules()
+                    break
+        self._pending_fix_tool = None
+        self._pending_fix_rule_id = None
 
     def get_relevant_skills(self, query: str) -> list[SkillTemplate]:
         """Find skills relevant to a user query."""
@@ -591,7 +615,7 @@ class EvolutionEngine:
             return '{"description": "retry with smaller scope or increased timeout"}'
 
         # 通用工具 fallback: 至少给个带上下文的 description
-        if tool.lower() in ("read_file", "edit_file", "bash_tool", "ls", "file_write_tool"):
+        if tool.lower() in ("read_file", "edit_file", "bash_tool", "ls", "file_write_tool", "execute", "code_tool", "file_read_tool"):
             # ponytail: error 截 200 字符防 token 爆炸; 含双引号时 _parse_fix_action 的 fallback 兜底
             return f'{{"description": "retry {tool} with corrected input after checking error: {error[:200]}"}}'
 
