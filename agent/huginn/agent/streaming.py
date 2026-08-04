@@ -1551,6 +1551,31 @@ class StreamingMixin:
                             wait,
                             exc,
                         )
+                        # 对齐 Kimi Code stepRetryService 的 turn.step.retrying:
+                        # 把重试信号发到 EventBus, 让 SSE / audit / 监控可见.
+                        # ponytail: best-effort, publish 失败不影响主流程.
+                        try:
+                            from huginn.events.event_bus import AgentEvent, EventBus
+                            from huginn.events.event_types import STEP_RETRY
+
+                            await EventBus.shared().publish(AgentEvent(
+                                type=STEP_RETRY,
+                                timestamp=time.time(),
+                                data={
+                                    "attempt": attempt + 1,
+                                    "max_attempts": max_retries,
+                                    "error_type": type(exc).__name__,
+                                    "error_message": str(exc)[:200],
+                                    "wait_ms": int(wait * 1000),
+                                    "states_yielded": states_yielded,
+                                },
+                                thread_id=thread_id,
+                                source="agent.streaming",
+                            ))
+                        except Exception:
+                            logger.debug(
+                                "step retry event publish failed", exc_info=True
+                            )
                         await asyncio.sleep(wait)
                         attempt += 1
 

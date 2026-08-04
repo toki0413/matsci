@@ -218,6 +218,48 @@ async def test_safety_noop():
     print("  [OK] disabled events are no-ops")
 
 
+async def test_step_retry_event():
+    """STEP_RETRY 事件能被订阅者收到, 字段对齐 streaming.py 的发布逻辑."""
+    from huginn.events.event_bus import AgentEvent, EventBus
+    from huginn.events.event_types import ALL_TYPES, STEP_RETRY
+    import time
+
+    # 类型注册到 ALL_TYPES, 防止拼错
+    assert STEP_RETRY in ALL_TYPES, f"{STEP_RETRY} not in ALL_TYPES"
+    assert STEP_RETRY == "agent.step.retrying"
+
+    bus = EventBus()
+    received = []
+    bus.subscribe(STEP_RETRY, lambda e: received.append(e))
+
+    # 模拟 streaming.py 重试 except 块里发布的事件
+    await bus.publish(AgentEvent(
+        type=STEP_RETRY,
+        timestamp=time.time(),
+        data={
+            "attempt": 2,
+            "max_attempts": 3,
+            "error_type": "RateLimitError",
+            "error_message": "429 too many requests",
+            "wait_ms": 2000,
+            "states_yielded": 0,
+        },
+        thread_id="t_retry",
+        source="agent.streaming",
+    ))
+
+    assert len(received) == 1, f"expected 1, got {len(received)}"
+    evt = received[0]
+    assert evt.type == STEP_RETRY
+    assert evt.data["attempt"] == 2
+    assert evt.data["max_attempts"] == 3
+    assert evt.data["error_type"] == "RateLimitError"
+    assert evt.thread_id == "t_retry"
+    assert evt.source == "agent.streaming"
+    print("  [OK] step retry event publish/subscribe")
+    bus.shutdown()
+
+
 def test_sse_format():
     """AgentEvent.to_sse produces valid SSE frame."""
     from huginn.events.event_bus import AgentEvent
@@ -251,6 +293,7 @@ async def main():
     await test_integration_helpers()
     await test_audit_log()
     await test_safety_noop()
+    await test_step_retry_event()
     print("\nAll self-checks passed.")
 
 
