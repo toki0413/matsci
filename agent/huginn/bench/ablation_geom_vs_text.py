@@ -90,17 +90,6 @@ def complexity_distance(h_a: Hypothesis, h_b: Hypothesis) -> float:
     return abs(a - b) / max(a, b)
 
 
-def hodge_distance(h_a: Hypothesis, h_b: Hypothesis) -> float:
-    """Hodge 拓扑距离: 证据图拓扑签名差异 (0/1 二值).
-
-    独立于 predictions 和 n_params — 基于证据节点+边的拓扑.
-    每对 hypothesis 人工配了 evidence_graph (nodes, edges).
-    """
-    # 见 _build_cases: 每对有独立的 evidence_a/evidence_b
-    # 这里只做距离计算, graph 从 case 里取
-    raise NotImplementedError("hodge_distance 需要 case 里的 evidence graph, 用 hodge_distance_from_graphs")
-
-
 def hodge_distance_from_graphs(nodes_a, edges_a, nodes_b, edges_b) -> float:
     """从证据图算 Hodge 距离 (1.0=拓扑不同, 0.0=拓扑相似)."""
     sig_a = hodge_signature(nodes_a, edges_a)
