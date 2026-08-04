@@ -7159,6 +7159,19 @@ def _rcb_smoke_test() -> None:
     except Exception as e:
         failures.append(f"torch: {e}. Fix: pip install torch (CPU version: pip install torch --index-url https://download.pytorch.org/whl/cpu)")
 
+    # 4. C4: web 检索健康检查 — arxiv API 探测, 失败只 warn 不 fail
+    # bench 不强依赖网络 (可走 materials_database_tool/rag_tool 降级), 但检索链
+    # 全灭时 agent 会裸答猜值 (roadmap 判据 8). 探测结果打印让用户知情.
+    try:
+        from huginn.tools.web_search_tool import web_search_health_check
+        _ws_ok, _ws_msg = web_search_health_check(timeout=8.0)
+        if _ws_ok:
+            print(f"[SMOKE] web_search: {_ws_msg}")
+        else:
+            print(f"[SMOKE] web_search WARNING: {_ws_msg} (bench 可继续, 检索走降级)")
+    except Exception as _e:
+        print(f"[SMOKE] web_search WARNING: health check failed {_e} (bench 可继续)")
+
     if failures:
         print("=" * 60)
         print("SMOKE TEST FAILED — 环境冒烟未通过, 不启动 RCB run")

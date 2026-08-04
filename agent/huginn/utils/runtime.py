@@ -37,9 +37,10 @@ RUNTIME_LAYOUT: dict[str, str] = {
 def get_runtime_home() -> Path:
     """返回 runtime home 目录路径, 不创建.
 
-    优先取 $HUGINN_CACHE_DIR, 没有就退回 ~/.huginn.
+    优先取 $HUGINN_CACHE_DIR, 没有或空串就退回 ~/.huginn.
+    C5: 修根因 — 空串 fallback. 之前 rcb_runner 要打补丁 `if not get(...)` 才不崩.
     """
-    base = os.environ.get("HUGINN_CACHE_DIR")
+    base = os.environ.get("HUGINN_CACHE_DIR", "").strip()
     if base:
         return Path(base)
     return Path.home() / ".huginn"
