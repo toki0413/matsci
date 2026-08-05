@@ -25,12 +25,18 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import time
+import uuid
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Awaitable
+
+from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 
 logger = logging.getLogger(__name__)
 
@@ -2182,6 +2188,7 @@ Respond JSON only:
         )
         self._run_id = run_id
         self._parent_run_id = None
+        from huginn.interaction.progress import get_progress_tracker
         tracker = get_progress_tracker()
         total_steps = max_iterations * 6 + 1
         progress_task_id = f"autoloop:{run_id}"

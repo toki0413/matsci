@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import uuid
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1006,6 +1007,105 @@ class HypothesisGraph:
         """返回包含该节点的所有 2-单纯形 (作为整体支撑关系的显式记录)."""
         return [s for s in self._simplicials if node_id in s]
 
+    def mount_knowledge(
+        self,
+        principles: list[str] | None = None,
+        rules: list[dict] | None = None,
+    ) -> int:
+        """把 stable_principles / evolution_rules 挂成高阶单纯形.
+
+        高阶网络视角 (Fujita & Smarandache 2026): 蒸馏出的原则/进化规则是
+        一种"知识约束", 跟它们约束的假设节点一起构成高维单纯形 — 把
+        "这条知识作为一个整体约束这 N 个假设"的语义显式化, 跟 dual_covered
+        注册的 2-单纯形同构, 只是来自知识蒸馏而非证据覆盖.
+
+        挂载方式: 每条原则/规则分配唯一 id (sp:<hash> / er:<hash>), 与它
+        token 重叠的所有假设节点组成 frozenset 加入 _simplicials. 向下闭包
+        天然满足: 任一 1-子集 (知识 id 或单个假设节点) 都在图里.
+
+        principles/rules 不传时自动加载 (load_stable_principles +
+        evolution_rules.json). 幂等: 同一知识重复挂载只保留一个 frozenset.
+
+        ponytail: 相关性用字符 bigram (中文短语匹配靠 2-gram, 跟 _pmk_subject_tokens
+        的语义不同 — 知识蒸馏要抓到"掺杂/带隙"这种局部语义, 整句 token 化会漏).
+        升级路径: 语义 embedding cosine.
+        """
+        if principles is None:
+            try:
+                from huginn.memory.longterm import load_stable_principles
+                principles = load_stable_principles()
+            except Exception:
+                principles = []
+        if rules is None:
+            try:
+                _base = os.environ.get("HUGINN_CACHE_DIR") or str(Path.home() / ".huginn")
+                _rp = Path(_base) / "logs" / "evolution_rules.json"
+                if _rp.exists():
+                    with _rp.open("r", encoding="utf-8") as _rf:
+                        _loaded = json.load(_rf)
+                    rules = _loaded if isinstance(_loaded, list) else []
+                else:
+                    rules = []
+            except Exception:
+                rules = []
+
+        def _stable_id(text: str) -> str:
+            """内容哈希做稳定 id — 同文本永远同 id, 保证幂等挂载."""
+            return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+
+        def _bigrams(text: str) -> set[str]:
+            """字符 bigram 集 — 中文短语义的粗粒度指纹.
+
+            滑窗取相邻 2 字符 (含空格归一后的连续字符), 让"掺杂+带隙"这类
+            局部语义能跨文本命中. 纯字符, 不依赖分词器.
+            """
+            if not text:
+                return set()
+            chars = [c for c in text.lower() if not c.isspace()]
+            return {
+                chars[i] + chars[i + 1]
+                for i in range(len(chars) - 1)
+            }
+
+        added = 0
+        node_bigrams = {
+            nid: _bigrams(n.statement)
+            for nid, n in self._nodes.items()
+        }
+
+        def _register(kid: str, text: str) -> None:
+            nonlocal added
+            kbgs = _bigrams(text)
+            if not kbgs:
+                return
+            hit = [nid for nid, bgs in node_bigrams.items() if bgs & kbgs]
+            if not hit:
+                return
+            simplex = frozenset({kid, *hit})
+            if simplex not in self._simplicials:
+                self._simplicials.add(simplex)
+                added += 1
+
+        for p in principles or []:
+            if not p:
+                continue
+            # 内容哈希做 id, 同文本永远同 id → 幂等 (重复挂载不重复加).
+            _kid = f"sp:{_stable_id(str(p))}"
+            _register(_kid, str(p))
+
+        for r in rules or []:
+            if not isinstance(r, dict):
+                continue
+            act = r.get("action", "")
+            desc = str(act.get("description", "")) if isinstance(act, dict) else str(act)
+            if not desc:
+                continue
+            # 有 rule_id 用 rule_id, 否则退回内容哈希, 保证幂等.
+            _kid = f"er:{r.get('rule_id') or _stable_id(desc)}"
+            _register(_kid, desc)
+
+        return added
+
     # ── 连通分量监控 ───────────────────────────────────────────────────
 
     def connected_components(self) -> list[set[str]]:
@@ -1531,6 +1631,53 @@ def _selfcheck_frontier_ranked() -> None:
         _os.environ["HUGINN_ISING_FRONTIER"] = _saved
 
     print("OK: frontier_ranked selfcheck passed")
+
+
+def _selfcheck_mount_knowledge() -> None:
+    """mount_knowledge: 把原则/规则作为高维单纯形挂到 _simplicials.
+
+    验证: 知识 token 与假设 statement 重叠时注册单纯形, 幂等 (重复挂载
+    不重复加), 无重叠不注册, 空知识库不崩.
+    """
+    g = HypothesisGraph()
+    h1 = g.add_hypothesis("掺杂增加带隙减小")
+    g.add_hypothesis("温度调控载流子迁移")
+
+    # 直接传参, 不依赖磁盘里的 stable_principles / evolution_rules
+    n1 = g.mount_knowledge(
+        principles=["掺杂能缩小带隙"],  # 与 h1 重叠 (掺杂/带隙)
+        rules=[{"rule_id": "r1", "action": {"description": "温度影响迁移率"}}],
+    )
+    assert n1 >= 1, f"有重叠知识应挂载>=1, got {n1}"
+
+    # 挂载的单纯形都含 sp:/er: 前缀 + 至少一个假设节点
+    mounted = [s for s in g._simplicials
+               if any(str(x).startswith(("sp:", "er:")) for x in s)]
+    assert mounted, "应存在含知识 id 的单纯形"
+    for s in mounted:
+        assert any(str(x).startswith("h_") for x in s), \
+            f"知识单纯形应含假设节点: {s}"
+
+    # 幂等: 同一知识再挂载不重复加
+    before = len(g._simplicials)
+    g.mount_knowledge(
+        principles=["掺杂能缩小带隙"],
+        rules=[{"rule_id": "r1", "action": {"description": "温度影响迁移率"}}],
+    )
+    assert len(g._simplicials) == before, "重复挂载不应增加单纯形数"
+
+    # 无重叠知识不注册
+    n2 = g.mount_knowledge(principles=["完全无关的关键词zzzqqq"])
+    assert n2 == 0, f"无重叠知识不应挂载, got {n2}"
+
+    # 空原则/规则不崩
+    n3 = g.mount_knowledge(principles=[], rules=[])
+    assert n3 == 0
+
+    # 挂载的单纯形能通过 simplicial_faces 查到
+    assert any(h1 in s for s in g._simplicials), "h1 应出现在挂载的单纯形里"
+
+    print("OK: mount_knowledge selfcheck passed")
 
 
 def _selfcheck_p0_durable_state() -> None:
@@ -2481,4 +2628,5 @@ if __name__ == "__main__":
     _selfcheck_connected_components()
     _selfcheck_save_load()
     _selfcheck_frontier_ranked()
+    _selfcheck_mount_knowledge()
     _selfcheck_p0_durable_state()
