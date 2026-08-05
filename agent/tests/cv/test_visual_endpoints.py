@@ -64,6 +64,7 @@ def visual_app(monkeypatch, tmp_path, fake_encoder):
     return app, idx
 
 
+@pytest.mark.timeout(300)  # CI runner 首次 import 链慢, 给足时间
 def test_get_elements(visual_app):
     app, _ = visual_app
     client = TestClient(app)

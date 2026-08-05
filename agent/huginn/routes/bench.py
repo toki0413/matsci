@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import traceback
 from typing import Any
 
 from fastapi import APIRouter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["bench"])
 
@@ -21,7 +25,11 @@ async def bench_run(params: dict[str, Any]) -> dict[str, Any]:
         evolve = bool(params.get("evolve", False))
         re_ask = bool(params.get("re_ask", False))
         runner = BenchmarkRunner(logger=ExecutionLogger())
-        report = runner.run(evolve=evolve, categories=categories, re_ask=re_ask)
+        # runner.run() 内部用 asyncio.run(_agent_chat), 不能在已有 event loop 里调.
+        # 放线程里跑, 线程内无 loop, asyncio.run 正常工作.
+        report = await asyncio.to_thread(
+            runner.run, evolve=evolve, categories=categories, re_ask=re_ask
+        )
         return {
             "success": True,
             "report": {
