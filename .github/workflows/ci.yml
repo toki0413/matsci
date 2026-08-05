@@ -207,10 +207,22 @@ jobs:
             libxdo-dev libssl-dev pkg-config \
             libayatana-appindicator3-dev librsvg2-dev
 
+      # tauri.conf.json 的 externalBin 引用 sidecars/huginn 和 sidecars/huginn-sidecar,
+      # 这些二进制是本地构建产物, 不在 repo 里. tauri-build 在 cargo check 时
+      # 会验证 externalBin 存在性, 找不到就 fail. 创建 dummy 文件让它过编译检查.
+      - name: Create dummy sidecar binaries
+        working-directory: desktop/src-tauri
+        run: |
+          mkdir -p sidecars
+          TRIPLE=$(rustc -vV | grep host | awk '{print $2}')
+          touch "sidecars/huginn-${TRIPLE}"
+          touch "sidecars/huginn-sidecar-${TRIPLE}"
+
       - name: Cargo check
         working-directory: desktop/src-tauri
         run: |
-          cargo check --workspace --verbose 2>&1 | tee cargo_check_output.txt
+          # 去掉 --verbose 减少噪音, sed 去 ANSI 色码方便 grep
+          cargo check --workspace 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tee cargo_check_output.txt
           exit ${PIPESTATUS[0]}
 
       - name: Expose cargo failures to step summary
@@ -224,11 +236,18 @@ jobs:
               tail -150 cargo_check_output.txt
               echo '```'
             } >> $GITHUB_STEP_SUMMARY
-            # also emit error lines as annotations (visible via API)
-            grep -E '^error' cargo_check_output.txt | head -20 | while IFS= read -r line; do
+            # grep error/warning 行做 annotation
+            grep -E '^(error|warning)' cargo_check_output.txt | head -20 | while IFS= read -r line; do
               echo "::error file=cargo::${line}"
             done
           fi
+
+      - name: Upload cargo output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cargo-check-output
+          path: desktop/src-tauri/cargo_check_output.txt
 
       - name: Cargo test
         working-directory: desktop/src-tauri
