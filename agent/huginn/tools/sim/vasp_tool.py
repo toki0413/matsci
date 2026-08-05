@@ -253,19 +253,14 @@ class VaspTool(HuginnTool):
         if self.vasp_executable:
             return await self._run_vasp(args, work_dir)
 
-        # 找不到可执行文件 — 返回 resolution request 让上层问用户
-        from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+        # 找不到可执行文件 — 走 mock 模式
+        from huginn.tools.sim.executable_resolver import resolve_executable
 
         resolution = resolve_executable("vasp")
         if isinstance(resolution, str):
             self.vasp_executable = resolution
             return await self._run_vasp(args, work_dir)
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"VASP executable not found. {resolution.install_hint}",
-            metadata={"needs_resolution": True, "resolution_request": resolution.to_dict()},
-        )
+        return self._mock_result(args, work_dir)
 
     async def _run_vasp(self, args: VaspToolInput, work_dir: Path) -> ToolResult:
         """Execute real VASP calculation, 自动诊断+改 INCAR 重试."""
