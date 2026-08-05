@@ -83,9 +83,9 @@ def test_rsi_no_prompt_injection_in_main_loop():
     from huginn.autoloop.engine import AutoloopEngine
     import inspect
 
-    src_run = inspect.getsource(AutoloopEngine.run)
+    src_run = inspect.getsource(AutoloopEngine.run_cognitive)
     assert "_next_loop_directive" not in src_run, (
-        "run() should not reference _next_loop_directive — directive flows via memory"
+        "run_cognitive() should not reference _next_loop_directive — directive flows via memory"
     )
 
 

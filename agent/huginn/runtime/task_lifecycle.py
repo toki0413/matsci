@@ -325,19 +325,90 @@ def _pmk_subjects_similar(sub1: str, sub2: str) -> bool:
     return bool(t1 & t2)
 
 
+def _pmk_gluing_obstruction(
+    active: dict[str, tuple[str, str]],
+) -> tuple[bool, str, int]:
+    """Čech H¹ 粘合障碍检测核心 — 在四路 stance 构成的 overlap 神经网上检查.
+
+    active: {source: (stance, subject)} 已过滤 neutral.
+    返回 (is_obstructed, reason, beta1). beta1 = 神经网独立环路数 (H¹ 维数).
+
+    高阶网络视角 (Fujita & Smarandache 2026): 把每路 (persona/memory/kb/
+    timeseries) 看成定义在 subject 上的"局部模型" (sheaf 的 stalk). 两路
+    的 subject 相似 (token 重合成边) → 它们定义在重叠开集上, 需要一致性
+    粘合. Čech H¹ 度量"局部模型能否粘成全局 section": H¹=0 可粘, H¹≠0 有
+    拓扑障碍.
+
+    工程近似: 用 overlap 神经网 (source=顶点, subject 相似=边) 的 cycle_basis
+    数作为 β₁ (trace_topology 同款近似). 冲突判定仍是 subject 相似 + 立场对立
+    (两两), 但把"冲突是否落在环路里"作为障碍的结构证据 — 纯 2 点冲突 (树边)
+    是 H⁰ 级局部矛盾, 落在环路里的冲突才是 H¹ 拓扑障碍 (粘合绕一圈回不了原).
+
+    ponytail: subject 相似用 token 重合度, cycle_basis 用 networkx (装机率
+    高), 缺失时 β₁ 回退 0. 升级路径: 引 gudhi/ripser 算真正 persistent
+    cohomology.
+    """
+    sources = list(active.keys())
+    n = len(sources)
+    if n < 2:
+        return (False, "", 0)
+
+    nerve_edges: list[tuple[str, str]] = []
+    conflicts: list[tuple[str, str, str, str, str, str]] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            s1, (st1, sub1) = sources[i], active[sources[i]]
+            s2, (st2, sub2) = sources[j], active[sources[j]]
+            if not sub1 or not sub2:
+                continue
+            if not _pmk_subjects_similar(sub1, sub2):
+                continue
+            nerve_edges.append((s1, s2))
+            # 显式对立: 一个 recommend 一个 oppose, 或两个都 oppose
+            if (st1 == "oppose" and st2 == "recommend") or \
+               (st1 == "recommend" and st2 == "oppose") or \
+               (st1 == "oppose" and st2 == "oppose"):
+                conflicts.append((s1, st1, sub1, s2, st2, sub2))
+
+    if not conflicts:
+        return (False, "", 0)
+
+    # β₁: overlap 神经网的独立环路数. networkx 缺失时回退 0 (保守).
+    beta1 = 0
+    try:
+        import networkx as nx
+        g = nx.Graph()
+        g.add_nodes_from(sources)
+        g.add_edges_from(nerve_edges)
+        beta1 = len(nx.cycle_basis(g))
+    except Exception:
+        beta1 = 0
+
+    s1, st1, sub1, s2, st2, sub2 = conflicts[0]
+    if beta1 > 0:
+        reason = (
+            f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — 对同一 subject "
+            f"立场冲突, 且落在 overlap 神经网的 H¹ 环路上 (β₁={beta1}, 粘合障碍)"
+        )
+    else:
+        reason = (
+            f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — "
+            f"对同一 subject 立场冲突 (H⁰ 局部矛盾)"
+        )
+    return (True, reason, beta1)
+
+
 def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
-    """PMK 三路立场一致性检查 — Čech H¹ proxy.
+    """PMK 四路立场一致性检查 — Čech H¹ 粘合障碍检测.
 
     pmk_state: {"persona": str, "memory": str, "kb": str, "deviation": str,
                 "timeseries": str (可选, P3 结合)}
-    返回 (is_inconsistent, reason). 不一致 = 至少两路对同一 subject 显式对立.
+    返回 (is_obstructed, reason). 不一致 = 至少两路对同一 subject 显式对立.
 
-    判定规则 (规则版, 不调 LLM):
+    判定 (规则版, 不调 LLM):
     1. 提取各路 stance + subject (含 timeseries 路, P3 结合)
-    2. 若两路 stance 为 oppose 且 subject 相似 (token 重合) → 冲突
-    3. 若一路 recommend X, 另一路 oppose X 且 subject 相似 → 冲突
-    4. neutral 不参与冲突
-    5. 全 neutral → 一致
+    2. 在四路构成的重叠神经网上检测粘合障碍 (见 _pmk_gluing_obstruction)
+    3. neutral 不参与; 全 neutral 或少于两路有立场 → 一致
 
     ponytail: subject 相似用 token 重合度, 不上 embedding. 升级路径: embedding cosine.
     timeseries 路用 trend 关键词 (rising/decaying/flat) 作为 subject, 让物理
@@ -374,27 +445,8 @@ def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
     if len(active) < 2:
         return (False, "")  # 少于两路有立场, 不可能冲突
 
-    # 两两检查: 同 subject 对立 → 冲突
-    sources = list(active.keys())
-    for i in range(len(sources)):
-        for j in range(i + 1, len(sources)):
-            s1, (st1, sub1) = sources[i], active[sources[i]]
-            s2, (st2, sub2) = sources[j], active[sources[j]]
-            if not sub1 or not sub2:
-                continue
-            if not _pmk_subjects_similar(sub1, sub2):
-                continue
-            # 显式对立: 一个 recommend 一个 oppose, 或两个都 oppose
-            if (st1 == "oppose" and st2 == "recommend") or \
-               (st1 == "recommend" and st2 == "oppose") or \
-               (st1 == "oppose" and st2 == "oppose"):
-                return (
-                    True,
-                    f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — "
-                    f"对同一 subject 立场冲突"
-                )
-
-    return (False, "")
+    is_obstructed, reason, _beta1 = _pmk_gluing_obstruction(active)
+    return (is_obstructed, reason)
 
 
 def should_pause_for_decision(

@@ -280,6 +280,13 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
 
         # P0: 传 workspace 给 HypothesisGraph, 让 refute/support 时写 FAILED.md/PROVED.md
         self.hypothesis_graph = HypothesisGraph(workspace=self.workspace)
+        # 高阶网络挂载: 把 stable_principles / evolution_rules 作为高维单纯形
+        # 挂到 graph 的 _simplicials, 让知识蒸馏的约束结构进入同调可见性.
+        # 失败非致命 (知识库空/损坏时图照常工作).
+        try:
+            self.hypothesis_graph.mount_knowledge()
+        except Exception:
+            logger.debug("mount_knowledge failed (non-fatal)", exc_info=True)
         self.report_tool = ReportTool()
 
         # Sub-engines
