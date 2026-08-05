@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from huginn.security.script_runner import (
-    _BLOCKED_IMPORTS,
+    _BLOCKED_SUBMODULES,
     _SAFE_BUILTINS,
     ScriptResult,
     ScriptRunner,
@@ -207,7 +207,7 @@ class TestLiveScriptRoutes:
         assert data["max_timeout"] == 120
         assert data["default_timeout"] == 30
         assert "print" in data["safe_builtins"]
-        assert "os" in data["blocked_imports"]
+        assert "numpy.ctypeslib" in data["blocked_imports"]
 
     def test_execute_timeout_too_large(self, client) -> None:
         resp = client.post(
