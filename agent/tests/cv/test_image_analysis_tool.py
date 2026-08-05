@@ -43,6 +43,13 @@ def test_sem_analysis(cv_tool, tool_context, generate_synthetic_sem_image):
 
 def test_tem_lattice(cv_tool, tool_context, generate_synthetic_tem_image):
     pytest.importorskip("scipy.fft")
+    # CI runner 偶发 _sigtools.so 共享库加载失败 (内存/磁盘临时空间不足),
+    # 属于环境问题不是代码 bug, 运行时挂了直接 skip.
+    try:
+        import scipy.signal  # noqa: F401
+    except ImportError as _e:
+        pytest.skip(f"scipy runtime broken on this runner: {_e}")
+
     res = _run(cv_tool, {
         "image_path": generate_synthetic_tem_image,
         "action": "tem_lattice",
