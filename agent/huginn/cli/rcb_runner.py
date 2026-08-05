@@ -5714,6 +5714,14 @@ async def run(
         except Exception as _e:
             logger.warning("coevolution export failed: %s", _e)
 
+    # bandit MDP: run 结束 flush 最后一条 episode 轨迹, 避免永不回传.
+    # ponytail: 失败静默, bandit 内部 catch.
+    try:
+        from huginn.agent.bandit_controller import EffortBandit
+        EffortBandit.get_instance().end_episode()
+    except Exception:
+        pass
+
     return 0
 
 
