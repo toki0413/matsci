@@ -16,7 +16,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
-from huginn.autoloop.math_validation import run_math_validation
 from huginn.types import ToolResult
 
 
@@ -101,7 +100,7 @@ class TestRunMathValidation:
                 "target_variable": "V",
             },
         }
-        out = asyncio.run(run_math_validation(engine, exec_result))
+        out = asyncio.run(engine._run_math_validation( exec_result))
         assert out["conservation"]["verified"] is True
         assert out["conservation"]["method"] == "bourbaki"
         assert out["variational"]["ok"] is True
@@ -116,7 +115,7 @@ class TestRunMathValidation:
         monkeypatch.setattr(
             "huginn.tools.bourbaki_tool.BourbakiTool", lambda: _FakeBourbaki()
         )
-        out = asyncio.run(run_math_validation(engine, {"equations": "a = a"}))
+        out = asyncio.run(engine._run_math_validation( {"equations": "a = a"}))
         assert "conservation" in out
         assert "variational" not in out
         assert "autodiff" not in out
@@ -126,20 +125,20 @@ class TestRunMathValidation:
     ) -> None:
         monkeypatch.setattr("huginn.tools.lean_tool.LeanTool", lambda: _FakeLean())
         out = asyncio.run(
-            run_math_validation(engine, {"lagrangian": "L = T - V", "coordinates": []})
+            engine._run_math_validation( {"lagrangian": "L = T - V", "coordinates": []})
         )
         assert "variational" not in out
 
     def test_non_dict_execution_result_returns_empty(
         self, engine: AutoloopEngine
     ) -> None:
-        out = asyncio.run(run_math_validation(engine, "not a dict"))
+        out = asyncio.run(engine._run_math_validation( "not a dict"))
         assert out == {}
 
     def test_empty_execution_result_returns_empty(
         self, engine: AutoloopEngine
     ) -> None:
-        out = asyncio.run(run_math_validation(engine, {}))
+        out = asyncio.run(engine._run_math_validation( {}))
         assert out == {}
 
     def test_tool_error_recorded_not_raised(
@@ -150,6 +149,6 @@ class TestRunMathValidation:
             raise RuntimeError("init failed")
 
         monkeypatch.setattr("huginn.tools.bourbaki_tool.BourbakiTool", _boom)
-        out = asyncio.run(run_math_validation(engine, {"equations": "a = a"}))
+        out = asyncio.run(engine._run_math_validation( {"equations": "a = a"}))
         assert "conservation" not in out
         assert "conservation_error" in out
