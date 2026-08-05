@@ -194,9 +194,28 @@ _ALL_ROUTES = _collect_routes(_RAW_SCHEMA)
 # 不能当普通 GET 测. 从 parametrize 列表排除.
 _SSE_PATHS = frozenset({"/events", "/events/stream"})
 
+# POST 端点会实际启动长时间运行的任务 (benchmark/evolve/autoloop/chat),
+# 空 body 也会跑, TestClient 会卡住等响应. 排除掉不测.
+_LONG_RUNNING_PATHS = frozenset({
+    "/bench/run",
+    "/evolve/run",
+    "/autoloop/start",
+    "/agents/orchestrate",
+    "/swarm/run",
+    "/agents/{agent_id}/chat",
+    "/agents/{agent_id}/chat/stream",
+    "/eval/run",
+    "/projects/{pid}/run-research",
+    "/team/run",
+    "/team/v2/run",
+    "/wechat/event",
+})
+
 _ROOT_ROUTES = [
     r for r in _ALL_ROUTES
-    if not r.path.startswith("/v1/") and r.path not in _SSE_PATHS
+    if not r.path.startswith("/v1/")
+    and r.path not in _SSE_PATHS
+    and r.path not in _LONG_RUNNING_PATHS
 ]
 _V1_ROUTES = [r for r in _ALL_ROUTES if r.path.startswith("/v1/")]
 _GET_ROUTES = [r for r in _ROOT_ROUTES if "GET" in r.safe_methods]
