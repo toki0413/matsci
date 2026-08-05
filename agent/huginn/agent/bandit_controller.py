@@ -209,39 +209,40 @@ class EffortBandit:
             return 50.0
         return 75.0
 
+    def _policy_locked(self, _prog: float | None = None) -> str:
+        """UCB1 策略 — 调用者已持锁. _prog 传入时复用, 省一次文件系统扫描."""
+        if self._runtime is None or self._items_count == 0:
+            return "continue"
+        rt = self._runtime
+        if rt.tool_calls < 10:
+            return "continue"
+        if _prog is None:
+            _prog = self._scan_outputs_progress(rt.item_idx)
+        if _prog >= 100.0:
+            return "continue"
+        st = self._build_state(rt, _prog)
+        k = st.key()
+        if k not in self._Q:
+            return self._prior_from_lessons(rt.item_idx)
+        N_s = sum(self._N[k].values())
+        if N_s == 0:
+            return self._prior_from_lessons(rt.item_idx)
+        best_a, best_ucb = "continue", -float("inf")
+        for a in _ACTIONS:
+            N_sa = self._N[k].get(a, 0)
+            if N_sa == 0:
+                return a
+            _ucb = self._Q[k][a] + _C * math.sqrt(math.log(N_s) / N_sa)
+            if _ucb > best_ucb:
+                best_ucb, best_a = _ucb, a
+        if best_a == rt.last_advice and rt.same_advice_streak >= 3:
+            return "continue"
+        return best_a
+
     def policy(self) -> str:
         try:
             with self._lock:
-                if self._runtime is None or self._items_count == 0:
-                    return "continue"
-                rt = self._runtime
-                # warmup: 前 10 次工具调用只给 continue, 让 agent 先干活.
-                # ponytail: UCB1 forced explore 会在第 2 次调用就选 switch,
-                # 太早干扰 agent. 10 次约等于 agent 读完 task + 开始第一个 item.
-                if rt.tool_calls < 10:
-                    return "continue"
-                _prog = self._scan_outputs_progress(rt.item_idx)
-                if _prog >= 100.0:
-                    return "continue"
-                st = self._build_state(rt, _prog)
-                k = st.key()
-                if k not in self._Q:
-                    # DeLM shared verified context: 冷启动 state 用 cross-task prior.
-                    return self._prior_from_lessons(rt.item_idx)
-                N_s = sum(self._N[k].values())
-                if N_s == 0:
-                    return self._prior_from_lessons(rt.item_idx)
-                best_a, best_ucb = "continue", -float("inf")
-                for a in _ACTIONS:
-                    N_sa = self._N[k].get(a, 0)
-                    if N_sa == 0:
-                        return a
-                    _ucb = self._Q[k][a] + _C * math.sqrt(math.log(N_s) / N_sa)
-                    if _ucb > best_ucb:
-                        best_ucb, best_a = _ucb, a
-                if best_a == rt.last_advice and rt.same_advice_streak >= 3:
-                    return "continue"
-                return best_a
+                return self._policy_locked()
         except Exception as _e:
             logger.debug("[v19] policy fallback: %s", _e)
             return "continue"
@@ -277,7 +278,7 @@ class EffortBandit:
                 _delta = _prog - rt.last_progress_pct
                 rt.last_progress_pct = _prog
                 _reward = _ALPHA * max(0.0, _delta) / 100.0
-                _advice = self.policy()
+                _advice = self._policy_locked(_prog)
                 if _advice == rt.last_advice:
                     rt.same_advice_streak += 1
                 else:
@@ -325,7 +326,9 @@ class EffortBandit:
                 _n = _entry["n"]
                 _entry["avg"] = _entry["avg"] + (_reward_slow - _entry["avg"]) / (_n + 1)
                 _entry["n"] = _n + 1
-                self._save()
+                self._update_count += 1
+                if self._update_count % _PERSIST_FLUSH_EVERY == 0:
+                    self._save()
         except Exception as _e:
             logger.debug("[v19] update_iter_end fallback: %s", _e)
 
