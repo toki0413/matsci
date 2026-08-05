@@ -129,6 +129,22 @@ jobs:
           pytest ${{ matrix.test-file }} -v --no-cov -m "integration and not network" --tb=short --timeout=${{ matrix.test-timeout }} 2>&1 | tee pytest_integration_output.txt
           exit ${PIPESTATUS[0]}
 
+      - name: Expose integration failures to step summary
+        if: failure()
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -f agent/pytest_integration_output.txt ]; then
+            {
+              echo '## integration test failures (last 150 lines)'
+              echo '```'
+              tail -150 agent/pytest_integration_output.txt
+              echo '```'
+            } >> $GITHUB_STEP_SUMMARY
+            grep -E '^(FAILED|ERROR|_ test)' agent/pytest_integration_output.txt | head -20 | while IFS= read -r line; do
+              echo "::error file=integration::${line}"
+            done
+          fi
+
       - name: Upload integration test output
         if: always()
         uses: actions/upload-artifact@v7
