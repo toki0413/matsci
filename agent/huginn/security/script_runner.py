@@ -76,6 +76,7 @@ _ALLOWED_IMPORTS = {
     "statistics",
     "json",
     "re",
+    "time",
     "numpy",
     "pandas",
     "sympy",
