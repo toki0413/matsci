@@ -23,6 +23,11 @@ from langchain_core.messages import AIMessage, ToolMessage
 from huginn.server import app
 from tests.fixtures.fake_llm import FakeLLM, make_scripted_llm
 
+# WebSocket + TestClient 首次导入 huginn.server 拉起整个 agent 栈,
+# CI runner 上比本地慢 2-3 倍 (本地 ~62s, CI >120s 超时).
+# 给 300s 让它跑完.
+pytestmark = pytest.mark.timeout(300)
+
 client = TestClient(app)
 WS_PATH = "/v1/ws/agent"
 
