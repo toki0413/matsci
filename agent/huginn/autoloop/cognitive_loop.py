@@ -2189,6 +2189,7 @@ Respond JSON only:
         self._run_id = run_id
         self._parent_run_id = None
         from huginn.interaction.progress import get_progress_tracker
+        from huginn.autoloop.engine import AUTOLOOP_PHASES
         tracker = get_progress_tracker()
         total_steps = max_iterations * 6 + 1
         progress_task_id = f"autoloop:{run_id}"
