@@ -47,11 +47,11 @@ async def execute_script(request: ScriptRequest) -> ScriptResponse:
 @router.get("/capabilities")
 async def get_capabilities() -> dict[str, Any]:
     """Return sandbox capabilities (allowed builtins, blocked imports)."""
-    from huginn.security.script_runner import _BLOCKED_IMPORTS, _SAFE_BUILTINS
+    from huginn.security.script_runner import _BLOCKED_SUBMODULES, _SAFE_BUILTINS
 
     return {
         "safe_builtins": sorted(_SAFE_BUILTINS),
-        "blocked_imports": sorted(_BLOCKED_IMPORTS),
+        "blocked_imports": sorted(_BLOCKED_SUBMODULES),
         "max_timeout": 120,
         "default_timeout": 30,
     }

@@ -19,11 +19,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
-from huginn.autoloop.math_validation import (
-    build_reviewer_prompt,
-    query_kb_reference,
-    run_math_validation,
-)
 from huginn.types import ToolContext, ToolResult
 
 
@@ -68,7 +63,7 @@ class TestA1ValidateKbInjection:
     ) -> None:
         fake = _FakeKb([{"text": "DFT ENCUT > 520 eV for convergence."}])
         monkeypatch.setattr("huginn.knowledge.store.get_knowledge_base", lambda ws: fake)
-        prompt = build_reviewer_prompt(
+        prompt = engine._build_reviewer_prompt(
             execution_result={"result_type": "dft"},
             results={"tests_passed": True},
             kb_text=engine._build_kb_text("dft convergence"),
@@ -82,7 +77,7 @@ class TestA1ValidateKbInjection:
         monkeypatch.setattr(
             "huginn.knowledge.store.get_knowledge_base", lambda ws: _FakeKb([])
         )
-        prompt = build_reviewer_prompt(
+        prompt = engine._build_reviewer_prompt(
             execution_result={},
             results={},
             kb_text=engine._build_kb_text("anything"),
@@ -109,8 +104,8 @@ class TestA2MathValidationKbReference:
         fake = _FakeKb([{"text": "Mass conservation: d rho/dt + div(rho v) = 0"}])
         monkeypatch.setattr("huginn.knowledge.store.get_knowledge_base", lambda ws: fake)
         # BourbakiTool 调用会失败 (没装), 但 KB 查询独立走, 仍应写 reference_principles
-        result = await run_math_validation(
-            engine, execution_result={"equations": "mass conservation"}
+        result = await engine._run_math_validation(
+            execution_result={"equations": "mass conservation"}
         )
         assert "reference_principles" in result
         assert len(result["reference_principles"]) >= 1
@@ -123,13 +118,13 @@ class TestA2MathValidationKbReference:
         monkeypatch.setattr(
             "huginn.knowledge.store.get_knowledge_base", lambda ws: _FakeKb([])
         )
-        result = await run_math_validation(
-            engine, execution_result={"equations": "mass conservation"}
+        result = await engine._run_math_validation(
+            execution_result={"equations": "mass conservation"}
         )
         assert "reference_principles" not in result
 
     def test_query_kb_reference_returns_empty_on_no_query(self, engine: AutoloopEngine) -> None:
-        assert query_kb_reference(engine, "", "") == []
+        assert engine._query_kb_reference("", "") == []
 
 
 class TestA3SymregHintKbCandidate:
