@@ -159,7 +159,10 @@ def _run_memory_migrations(db_path: str) -> None:
 
     mgr = MigrationManager(db_path)
     try:
-        mgr.run_migrations([(1, _migrate_memories_v1)])
+        # v2 is also called inside v1, but if v1 already ran (user_version=1)
+        # before P12 existed, v2 was never applied. Registering it as a
+        # separate step ensures old DBs get the typed-memory columns.
+        mgr.run_migrations([(1, _migrate_memories_v1), (2, _migrate_memories_v2)])
     finally:
         mgr.close()
 
@@ -245,12 +248,19 @@ class LongTermMemory:
         # Indexes on migrated columns + FTS (depend on columns added above)
         with self._connect() as conn:
             # Self-heal: stale DBs may have user_version=1 from before
-            # path/formula/user_id were added to _migrate_memories_v1.
-            # MigrationManager skips v1 on those, so we ensure columns here.
+            # some columns were added to _migrate_memories_v1. MigrationManager
+            # skips v1 on those, so we ensure all migrated columns here.
             from huginn.utils.migrations import column_exists
-            for col in ("formula", "user_id", "path"):
+            _all_migrated = (
+                "formula", "user_id", "path", "memory_type", "run_id",
+                "persona_id", "status", "tier", "expires_at",
+                "last_decay_access_count", "archived",
+            )
+            _col_defaults = {"archived": "INTEGER DEFAULT 0", "last_decay_access_count": "INTEGER DEFAULT 0"}
+            for col in _all_migrated:
                 if not column_exists(conn, "memories", col):
-                    conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
+                    decl = _col_defaults.get(col, "TEXT")
+                    conn.execute(f"ALTER TABLE memories ADD COLUMN {col} {decl}")
 
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_formula ON memories(formula)
