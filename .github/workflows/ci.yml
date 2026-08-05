@@ -223,6 +223,10 @@ jobs:
               tail -150 cargo_check_output.txt
               echo '```'
             } >> $GITHUB_STEP_SUMMARY
+            # also emit error lines as annotations (visible via API)
+            grep -E '^error' cargo_check_output.txt | head -20 | while IFS= read -r line; do
+              echo "::error file=cargo::${line}"
+            done
           fi
 
       - name: Cargo test
