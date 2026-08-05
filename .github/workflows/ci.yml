@@ -131,6 +131,7 @@ jobs:
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
           HF_HUB_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
+          HUGINN_CI: "1"
         run: |
           cd agent
           pytest ${{ matrix.test-file }} -v --no-cov -m "integration and not network" --tb=short --timeout=${{ matrix.test-timeout }} 2>&1 | tee pytest_integration_output.txt
