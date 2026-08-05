@@ -200,10 +200,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+          # reqwest 0.12 需要 OpenSSL 系统库, 没有它 cargo check 在 Linux 上挂
+          sudo apt-get install -y libssl-dev pkg-config
 
       - name: Cargo check
         working-directory: desktop/src-tauri
-        run: cargo check --workspace
+        run: cargo check --workspace --verbose
 
       - name: Cargo test
         working-directory: desktop/src-tauri
