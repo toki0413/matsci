@@ -41,8 +41,6 @@ jobs:
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
           HF_HUB_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
-          # 标记 CI 环境, 让 test_visual_endpoints.py 整文件 skip
-          # (TestClient + FastAPI 路由注册在 CI runner 上偶发挂死, 本地正常)
           HUGINN_CI: "1"
         run: |
           cd agent
@@ -65,7 +63,6 @@ jobs:
               tail -150 agent/pytest_output.txt
               echo '```'
             } >> $GITHUB_STEP_SUMMARY
-            # also emit as error annotations (public via API)
             grep -E '^FAILED' agent/pytest_output.txt | head -20 | while IFS= read -r line; do
               echo "::error file=pytest::${line}"
             done
@@ -81,11 +78,6 @@ jobs:
           path: agent/pytest_output.txt
           retention-days: 7
 
-  # ponytail: 3 个集成测试文件原本串行跑, 单 job 30 分钟必超时
-  # (最近 30+ 次 CI run 全部 fail/cancel). 拆成 matrix 并行,
-  # test_api_contract 有 620+ parametrize 用例 (每个路由 hit 1-2 次),
-  # 需要 30 分钟; security/chaos 几分钟就够.
-  # 单测 timeout 60s 防止个别端点卡住拖整个 job.
   integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.job-timeout }}
@@ -187,11 +179,8 @@ jobs:
       - name: Dependency vulnerability scan
         run: |
           pip install pip-audit
-          # Informational — doesn't fail the build
           pip-audit || true
 
-  # G25: Rust 编译门禁 — 防止 main.rs / Cargo 改动破坏桌面端编译
-  # 当前无 Rust 测试代码, cargo check 确保至少能编译通过
   rust-check:
     runs-on: ubuntu-latest
     steps:
@@ -203,26 +192,28 @@ jobs:
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
-          # tauri v2 官方要求: https://v2.tauri.app/start/prerequisites/
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
             libxdo-dev libssl-dev pkg-config \
             libayatana-appindicator3-dev librsvg2-dev
 
-      # tauri.conf.json 的 externalBin 引用 sidecars/huginn 和 sidecars/huginn-sidecar,
-      # 这些二进制是本地构建产物, 不在 repo 里. tauri-build 在 cargo check 时
-      # 会验证 externalBin 存在性, 找不到就 fail. 创建 dummy 文件让它过编译检查.
-      - name: Create dummy sidecar binaries
+      # CI 没有 real sidecar 二进制, tauri-build proc macro 验证
+      # externalBin 时 panic. 临时去掉 externalBin 让 cargo check 过.
+      - name: Strip externalBin for CI compile
         working-directory: desktop/src-tauri
         run: |
-          mkdir -p sidecars
-          TRIPLE=$(rustc -vV | grep host | awk '{print $2}')
-          touch "sidecars/huginn-${TRIPLE}"
-          touch "sidecars/huginn-sidecar-${TRIPLE}"
+          python -c "
+          import json
+          with open('tauri.conf.json') as f:
+              cfg = json.load(f)
+          cfg['bundle']['externalBin'] = []
+          with open('tauri.conf.json', 'w') as f:
+              json.dump(cfg, f, indent=2)
+          print('Stripped externalBin from tauri.conf.json')
+          "
 
       - name: Cargo check
         working-directory: desktop/src-tauri
         run: |
-          # 去掉 --verbose 减少噪音, sed 去 ANSI 色码方便 grep
           cargo check --workspace 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tee cargo_check_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -237,7 +228,6 @@ jobs:
               tail -150 cargo_check_output.txt
               echo '```'
             } >> $GITHUB_STEP_SUMMARY
-            # grep error/warning 行做 annotation
             grep -E '^(error|warning)' cargo_check_output.txt | head -20 | while IFS= read -r line; do
               echo "::error file=cargo::${line}"
             done
