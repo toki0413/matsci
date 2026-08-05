@@ -26,6 +26,8 @@ _ACTIONS = ("continue", "switch", "requery")
 _C = 1.0
 _ALPHA = 1.0
 _BETA = 0.5
+_GAMMA = 0.9  # MC discounted return 折扣 — 与 autoloop/bandit.py 的 0.99 同源,
+# 取 0.9 更强调近期 reward, 信用分配更短视更稳 (短 episode 不衰减到 0).
 _PERSIST_FLUSH_EVERY = 10
 
 
@@ -77,6 +79,11 @@ class EffortBandit:
         self._items_names: list[str] = []
         self._items_labels: list[str] = []  # [EXACT]/[VARIANT]/... per item
         self._last_darwin_score = 0.5
+        # MDP 升级: episode 轨迹缓冲 + 起点 darwin (终点奖励的参照).
+        # HUGINN_BANDIT_MDP=0 时回退旧单步增量更新, 零行为变化 (回归逃生门).
+        self._mdp_enabled = os.environ.get("HUGINN_BANDIT_MDP", "1") != "0"
+        self._trajectory: list[tuple[str, str, float]] = []
+        self._episode_start_darwin = 0.5
         self._load()
 
     @classmethod
@@ -276,7 +283,15 @@ class EffortBandit:
                 else:
                     rt.last_advice = _advice
                     rt.same_advice_streak = 1
-                self._update_q(self._build_state(rt, _prog), _advice, _reward)
+                _st = self._build_state(rt, _prog)
+                if self._mdp_enabled:
+                    # MDP: fast reward 记入 episode 轨迹, episode 结束再 MC 回传.
+                    self._record_step(_st, _advice, _reward)
+                    # item 完成 → 立即 flush 本 episode (terminal reward=1.0).
+                    if _prog >= 100.0:
+                        self._flush_trajectory(1.0)
+                else:
+                    self._update_q(_st, _advice, _reward)
         except Exception as _e:
             logger.debug("[v18] record_tool_call fallback: %s", _e)
 
@@ -293,10 +308,14 @@ class EffortBandit:
                 _prog = self._scan_outputs_progress(rt.item_idx)
                 st = self._build_state(rt, _prog)
                 _a = rt.last_advice
-                k = st.key()
-                if k in self._Q and _a in self._Q[k]:
-                    _N_sa = self._N[k][_a]
-                    self._Q[k][_a] += _reward_slow / max(_N_sa, 1)
+                if self._mdp_enabled:
+                    # MDP: slow reward 合并进当前步轨迹, 不直接改 Q.
+                    self._record_step(st, _a, _reward_slow)
+                else:
+                    k = st.key()
+                    if k in self._Q and _a in self._Q[k]:
+                        _N_sa = self._N[k][_a]
+                        self._Q[k][_a] += _reward_slow / max(_N_sa, 1)
                 # DeLM: 同步更新 verified_lessons (cross-task shared context).
                 # ponytail: incremental mean, 不存原始 reward 序列, JSON 够小.
                 _pattern = (self._items_labels[rt.item_idx]
@@ -323,8 +342,80 @@ class EffortBandit:
         if self._update_count % _PERSIST_FLUSH_EVERY == 0:
             self._save()
 
+    # ── MDP 升级: episode 轨迹 + MC 信用分配 ──────────────────────────
+    # 从 contextual bandit (单步即时更新) 升级为 episode 级 Monte Carlo:
+    # 每一步的 reward 先记入轨迹, episode 结束沿轨迹自后向前回传 discounted
+    # return — 让"整条 item 的成败"落到前面每一步的 state-action, 而不只是
+    # 最后一步的瞬时 Δprogress. 这是 RL 三要素里缺的时间信用分配.
+
+    def _record_step(self, st: _BanditState, action: str, reward: float) -> None:
+        """把一步 (state, action, reward) 记入当前 episode 轨迹.
+
+        同一 (state, action) 连续注入时累加 reward — fast (record_tool_call)
+        与 slow (update_iter_end) 两条 stream 合并进同一步, 便于 MC 回传.
+        """
+        k = st.key()
+        if self._trajectory and \
+                self._trajectory[-1][0] == k and self._trajectory[-1][1] == action:
+            _sk, _a, _r = self._trajectory[-1]
+            self._trajectory[-1] = (_sk, _a, _r + reward)
+        else:
+            self._trajectory.append((k, action, reward))
+
+    def _current_terminal_reward(self) -> float:
+        """episode 终点奖励: item 完成 +1, 否则按 darwin 相对起点增量.
+
+        作为 MC return 的 r_T — 让"这条 item 是否做成"作为终点信号回传.
+        """
+        if self._runtime is None:
+            return 0.0
+        _prog = self._scan_outputs_progress(self._runtime.item_idx)
+        if _prog >= 100.0:
+            return 1.0
+        return max(0.0, self._last_darwin_score - self._episode_start_darwin)
+
+    def _flush_trajectory(self, terminal_reward: float) -> None:
+        """episode 级 MC discounted return 回传.
+
+        自后向前算 G_t = Σ_{k=0}^{T-t} γ^k r_{t+k}, 其中 r_T = terminal_reward;
+        对轨迹上每个 (s,a) 做 MC 更新 Q(s,a) ← Q(s,a) + α(G_t − Q(s,a)).
+        这是把单步 bandit 升成 MDP 的信用分配: 整条 episode 的累计回报沿
+        轨迹回传到每一步的 state-action.
+
+        ponytail: 离线全量 MC, 无函数近似 (表格 Q 保持 empirical). 升级路径:
+        TD(λ)/eligibility trace 做在线 credit assignment, 或 tile coding 逼近.
+        """
+        if not self._trajectory:
+            return
+        _g = terminal_reward
+        for _k, _a, _r in reversed(self._trajectory):
+            _g = _r + _GAMMA * _g
+            if _k not in self._Q:
+                self._Q[_k] = {ac: 0.0 for ac in _ACTIONS}
+                self._N[_k] = {ac: 0 for ac in _ACTIONS}
+            _Q_sa = self._Q[_k][_a]
+            self._Q[_k][_a] = _Q_sa + _ALPHA * (_g - _Q_sa)
+            self._N[_k][_a] += 1
+            self._update_count += 1
+        self._trajectory = []
+        if self._update_count % _PERSIST_FLUSH_EVERY == 0:
+            self._save()
+
+    def end_episode(self) -> None:
+        """显式结束当前 episode, flush 轨迹 (run 结束 / 无后续 item 时调用).
+
+        terminal reward 按当前进度判定, 避免最后一条轨迹永不回传.
+        """
+        with self._lock:
+            if self._mdp_enabled:
+                self._flush_trajectory(self._current_terminal_reward())
+
     def switch_item(self, new_idx: int) -> None:
         with self._lock:
+            # MDP: 切走旧 item 前 flush 其轨迹 (terminal 按进度判定).
+            if self._mdp_enabled:
+                self._flush_trajectory(self._current_terminal_reward())
+            self._episode_start_darwin = self._last_darwin_score
             self._runtime = _ItemRuntime(item_idx=new_idx, start_ts=time.time())
 
     def build_hint(self) -> str:
