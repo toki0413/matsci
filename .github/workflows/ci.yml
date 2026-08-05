@@ -212,6 +212,22 @@ jobs:
             libxdo-dev libssl-dev pkg-config \
             libayatana-appindicator3-dev librsvg2-dev
 
+      # 显式确认 openssl 原生库 + 头文件 + pkg-config 元数据都到位.
+      # cargo 链接失败多半是 .so 找不到 / pkg-config 没配好, 这里先打出来
+      # 免得靠猜. 失败不中断 (exit 0), 只留日志.
+      - name: Verify libssl / openssl toolchain
+        run: |
+          echo "── dpkg: libssl packages ──"
+          dpkg -l | grep -E 'libssl|openssl' || echo "(none found)"
+          echo "── pkg-config: openssl ──"
+          pkg-config --modversion openssl 2>&1 || echo "pkg-config openssl FAILED"
+          echo "── pkg-config: openssl cflags ──"
+          pkg-config --cflags --libs openssl 2>&1 || echo "pkg-config openssl cflags FAILED"
+          echo "── headers: /usr/include/openssl/ssl.h ──"
+          ls -l /usr/include/openssl/ssl.h 2>&1 || echo "ssl.h MISSING"
+          echo "── libs: libssl.so ──"
+          ldconfig -p | grep -E 'libssl\.so|libcrypto\.so' || echo "libssl.so not in ld cache"
+
       # CI 没有 real sidecar 二进制, tauri-build proc macro 验证
       # externalBin 时 panic. 临时去掉 externalBin 让 cargo check 过.
       - name: Strip externalBin for CI compile
@@ -230,6 +246,7 @@ jobs:
       - name: Cargo check
         working-directory: desktop/src-tauri
         run: |
+          # tee 全量日志落盘, sed 去 ANSI 色码方便 grep
           cargo check --workspace 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tee cargo_check_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -244,9 +261,30 @@ jobs:
               tail -150 cargo_check_output.txt
               echo '```'
             } >> $GITHUB_STEP_SUMMARY
+            # 常规 error/warning 行做 annotation
             grep -E '^(error|warning)' cargo_check_output.txt | head -20 | while IFS= read -r line; do
               echo "::error file=cargo::${line}"
             done
+            # openssl / 原生链接错误单独挖出来, 判断是不是 libssl 缺
+            OPENSSL_HITS=$(grep -iE 'openssl|libssl|libcrypto|cannot find|undefined reference|linker|runtime path|pkg-config' cargo_check_output.txt | head -40)
+            if [ -n "$OPENSSL_HITS" ]; then
+              {
+                echo '## openssl / native link diagnostics'
+                echo '```'
+                echo "$OPENSSL_HITS"
+                echo '```'
+              } >> $GITHUB_STEP_SUMMARY
+            fi
+            # cc 底层错误通常带 "error:" 前缀但不在行首, 抓 final 编译失败行
+            CC_HITS=$(grep -E '\berror\b|error:' cargo_check_output.txt | grep -viE '^error\[' | head -30)
+            if [ -n "$CC_HITS" ]; then
+              {
+                echo '## cc / native compile errors'
+                echo '```'
+                echo "$CC_HITS"
+                echo '```'
+              } >> $GITHUB_STEP_SUMMARY
+            fi
           fi
 
       - name: Upload cargo output
