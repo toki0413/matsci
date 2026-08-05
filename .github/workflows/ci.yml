@@ -208,7 +208,22 @@ jobs:
 
       - name: Cargo check
         working-directory: desktop/src-tauri
-        run: cargo check --workspace --verbose
+        run: |
+          cargo check --workspace --verbose 2>&1 | tee cargo_check_output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Expose cargo failures to step summary
+        if: failure()
+        working-directory: desktop/src-tauri
+        run: |
+          if [ -f cargo_check_output.txt ]; then
+            {
+              echo '## cargo check output (last 150 lines)'
+              echo '```'
+              tail -150 cargo_check_output.txt
+              echo '```'
+            } >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Cargo test
         working-directory: desktop/src-tauri
