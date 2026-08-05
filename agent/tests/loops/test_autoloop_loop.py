@@ -12,6 +12,7 @@ Test matrix:
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +21,11 @@ from huginn.autoloop.engine import AutoloopEngine, AutoloopResult
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.memory.manager import MemoryManager
 from tests.fixtures.fake_llm import make_callable_llm
+
+# Full-cycle autoloop 跑 7 个 phase, 本地 ~230s. CI runner --timeout=120 会杀.
+# 跟 test_chat_loop 同款: HUGINN_CI=1 时 skip, 本地照跑.
+_skip_ci = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
+pytestmark = pytest.mark.skipif(_skip_ci, reason="autoloop full cycle too slow on CI runner")
 
 # ── shared helpers (trimmed from test_autoloop_e2e) ───────────────
 

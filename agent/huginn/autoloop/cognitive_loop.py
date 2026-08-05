@@ -36,6 +36,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
+from huginn.api.event import EventType
+from huginn.autoloop.budget import ProgressiveBudget
+from huginn.autoloop.goal_scheduler import GoalScheduler
+from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.autoloop.types import LoopPhase, AutoloopResult
 

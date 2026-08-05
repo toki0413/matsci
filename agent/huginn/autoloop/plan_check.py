@@ -24,6 +24,12 @@ from huginn.memory.longterm import load_stable_principles
 logger = logging.getLogger(__name__)
 
 
+def _get_math_signals():
+    """Delayed import to avoid circular dependency (engine imports PlanCheckMixin)."""
+    from huginn.autoloop.engine import _MATH_SIGNALS
+    return _MATH_SIGNALS
+
+
 class PlanCheckMixin:
     """plan_check 方法族. 通过 self 访问 engine 状态."""
 
@@ -87,7 +93,7 @@ class PlanCheckMixin:
         )
         math_block = (
             self._MATH_DEPTH_PROMPT_BLOCK
-            if any(s in hyp_blob for s in _MATH_SIGNALS)
+            if any(s in hyp_blob for s in _get_math_signals())
             else ""
         )
 
