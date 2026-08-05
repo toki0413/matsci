@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Callable, Awaitable
 
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+from huginn.autoloop.types import LoopPhase, AutoloopResult
 
 logger = logging.getLogger(__name__)
 
@@ -2748,6 +2749,7 @@ Respond JSON only:
                     # 失败分类后按类阈值 stop, 避免 tool_error 跟 hypothesis_error 混算.
                     try:
                         _redteam = self._redteam_findings()
+                        from huginn.autoloop.engine import AutoloopEngine
                         ftype = AutoloopEngine._classify_failure(validation, _redteam)
                     except Exception:
                         ftype = "hypothesis_error"
