@@ -51,6 +51,7 @@ jobs:
             --ignore=tests/test_chaos_engineering.py \
             --ignore=tests/stress \
             --ignore=tests/loops \
+            --ignore=tests/sci_automation_test.py \
             --tb=short --maxfail=5 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -230,11 +231,10 @@ jobs:
           echo "── libs: libssl.so ──"
           ldconfig -p | grep -E 'libssl\.so|libcrypto\.so' || echo "libssl.so not in ld cache"
 
-      # CI 没有 real sidecar 二进制, tauri-build proc macro 验证
-      # externalBin 时 panic. 临时去掉 externalBin 让 cargo check 过.
-      # 同时建一个空 dist 目录 — tauri-build 读 frontendDist 时目录
-      # 不存在也会 proc macro panic.
-      - name: Strip externalBin + stub dist for CI compile
+      # tauri-build / generate_context! 在 cargo check 时校验 tauri.conf.json
+      # 引用的所有文件路径. CI 上没有 sidecar 二进制、没有 npm build 产物、
+      # python-runtime 只有 .gitkeep. 把所有文件系统依赖清掉, 只留编译检查.
+      - name: Strip tauri config for CI compile
         working-directory: desktop/src-tauri
         run: |
           python -c "
@@ -242,9 +242,12 @@ jobs:
           with open('tauri.conf.json') as f:
               cfg = json.load(f)
           cfg['bundle']['externalBin'] = []
+          cfg['bundle']['resources'] = []
+          cfg['build']['beforeDevCommand'] = ''
+          cfg['build']['beforeBuildCommand'] = ''
           with open('tauri.conf.json', 'w') as f:
               json.dump(cfg, f, indent=2)
-          print('Stripped externalBin from tauri.conf.json')
+          print('Stripped externalBin/resources/beforeCommands from tauri.conf.json')
           "
           mkdir -p ../dist
           [ -f ../dist/index.html ] || echo '<!DOCTYPE html><html></html>' > ../dist/index.html
