@@ -606,6 +606,32 @@ class ProvenanceRegistry:
             lines.append(f"  - {e.file_path} ({e.file_format or '?'}) by {e.produced_by}{props}")
         return "\n".join(lines)
 
+    # 技能版本清单的固定标识: 一条 provenance 记录存全部激活技能的 {name: version}.
+    # 这样 run 启动注册技能时固化当时版本, 事后可回放"这次任务用了哪些技能的哪个版本".
+    _SKILLS_MANIFEST_PATH = "__skills_manifest__"
+
+    def snapshot_skills(self, skills: dict[str, str]) -> ProvenanceEntry | None:
+        """记录当前激活技能及版本 (name → version), 幂等覆盖.
+
+        Polaris 式"技能版本快照": 复现一个 run 需要知道它当时生效的技能版本.
+        复用 provenance 表, file_path 用保留前缀, 不与真实文件产出冲突.
+        """
+        if not skills:
+            return None
+        return self.register(
+            file_path=self._SKILLS_MANIFEST_PATH,
+            produced_by="skill_snapshot",
+            file_format="skill-manifest",
+            key_properties={"skills": dict(skills)},
+        )
+
+    def load_skills_snapshot(self) -> dict[str, str]:
+        """取最近一次技能版本快照; 无记录返回空 dict."""
+        entry = self._store.find_by_path(self._SKILLS_MANIFEST_PATH) if self._store else self._by_path.get(self._SKILLS_MANIFEST_PATH)
+        if entry is None:
+            return {}
+        return dict(entry.key_properties.get("skills") or {})
+
     def cleanup_old(self, days: int = 30) -> int:
         """删除超过 N 天的记录. 仅操作 SQLite, 内存缓存自然过期."""
         if self._store is not None:
@@ -828,3 +854,26 @@ def register_tool_output(
             )
     except Exception:
         logger.debug("register_tool_output failed (non-fatal)", exc_info=True)
+
+
+def _selfcheck_skills_snapshot() -> None:
+    """round-trip 验证技能版本快照: 写入 → 读回 → 内容一致.
+
+    这一个断言防住三类回归: (1) snapshot 没写进去; (2) load 读到空;
+    (3) 版本字典被打平/丢字段. 用独立内存实例, 不污染 shared 表.
+    注: 快照是"最近一次"覆盖式, 空快照不写也不覆盖已有记录.
+    """
+    reg = ProvenanceRegistry()
+    reg.snapshot_skills({"standard_dft": "1.2.0", "happy_figure": "0.4.0"})
+    loaded = reg.load_skills_snapshot()
+    assert loaded == {"standard_dft": "1.2.0", "happy_figure": "0.4.0"}, (
+        f"技能版本快照 round-trip 不一致: {loaded}"
+    )
+    # 空快照不应写记录, 也不应清掉最近一次快照
+    assert reg.snapshot_skills({}) is None
+    assert reg.load_skills_snapshot() == {"standard_dft": "1.2.0", "happy_figure": "0.4.0"}
+    print(f"OK: 技能版本快照 round-trip, {len(loaded)} 个技能")
+
+
+if __name__ == "__main__":
+    _selfcheck_skills_snapshot()
