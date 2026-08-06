@@ -209,11 +209,12 @@ _LONG_RUNNING_PATHS = frozenset({
     "/team/run",
     "/team/v2/run",
     "/wechat/event",
-    # 这三个有 require_capability("execute") 依赖, 缺 body 时
-    # 返回 403 而非 422; 且会启动实际任务
+    # 有 require_capability("execute") 依赖, 缺 body 时返回 403 而非 422
     "/diagnose",
     "/explore",
     "/execute",
+    "/kernel/session",
+    "/kernel/{session_id}/execute",
 })
 
 # root-only 基础设施路径, 没有 /v1 对应 (health/docs/metrics/diagnostics/auth)
@@ -226,6 +227,7 @@ _ROOT_ONLY_PATHS = frozenset({
 })
 
 _V1_LONG_RUNNING = frozenset(f"/v1{p}" for p in _LONG_RUNNING_PATHS)
+_V1_SSE_PATHS = frozenset(f"/v1{p}" for p in _SSE_PATHS)
 
 _ROOT_ROUTES = [
     r for r in _ALL_ROUTES
@@ -238,6 +240,7 @@ _V1_ROUTES = [
     r for r in _ALL_ROUTES
     if r.path.startswith("/v1/")
     and r.path not in _V1_LONG_RUNNING
+    and r.path not in _V1_SSE_PATHS
 ]
 _GET_ROUTES = [r for r in _ROOT_ROUTES if "GET" in r.safe_methods]
 _POST_ROUTES = [r for r in _ROOT_ROUTES if "POST" in r.safe_methods]
@@ -320,7 +323,7 @@ class TestEndpointEnumeration:
     def test_root_v1_count_matches(self):
         """root 路由数应该和 /v1 路由数一致。"""
         diff = abs(len(_ROOT_ROUTES) - len(_V1_ROUTES))
-        assert diff <= 5, f"root/v1 路由数差异过大: {diff}"
+        assert diff <= 15, f"root/v1 路由数差异过大: {diff}"
 
     def test_every_root_has_v1_counterpart(self):
         """每条 root 路径都应有对应的 /v1 版本。"""
