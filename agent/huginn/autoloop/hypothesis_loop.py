@@ -426,6 +426,50 @@ class HypothesisGraph:
 
     # ── 状态转移 ─────────────────────────────────────────────────────
 
+    def lit_consensus(
+        self, node_id: str, support: int = 0, contradict: int = 0, mixed: int = 0,
+    ) -> None:
+        """记录某假设在文献生态里的共识谱 (支持/反驳/混合 计数).
+
+        对应 LeapSpace Claim Radar 的 support/contradict/mixed 三分类, 但只存
+        聚合计数, 不存全量清单 → 序列化和 prompt 都只多 3 个整数, 不会爆上下文.
+        存进 evidence['lit_consensus'] = [s, c, m].
+        """
+        self._check_node(node_id)
+        self._nodes[node_id].evidence["lit_consensus"] = [support, contradict, mixed]
+
+    def lit_consensus_score(self, node_id: str) -> float | None:
+        """文献共识分数 ∈ [-1, 1]: 正=众源支持, 负=众源反驳, 0=平衡/无证据.
+        只读聚合计数, 不触发任何检索. None = 还没做文献 meta-review.
+        """
+        _v = self._nodes[node_id].evidence.get("lit_consensus")
+        if _v is None:
+            return None
+        s, c, m = int(_v[0]), int(_v[1]), int(_v[2])
+        total = s + c + m
+        if total == 0:
+            return 0.0
+        return (s - c) / total
+
+    def lit_phys_conflict(self, node_id: str) -> str | None:
+        """检测"文献共识 vs 物理共识"冲突 → novel discovery 候选.
+
+        文献主流支持但物理校验差, 或文献反对但物理校验好, 返回一个描述串;
+        缺任一信号 (没做 meta-review 或没跑物理校验) 返回 None. 这是 LeapSpace
+        做不到而我们第一性原理能做的: 文献归纳对齐 vs R_phys 演绎校验的交叉.
+        """
+        _lit = self.lit_consensus_score(node_id)
+        _rp = self._nodes[node_id].evidence.get("r_phys")
+        if _lit is None or _rp is None:
+            return None
+        _rp = float(_rp)
+        if _lit > 0.3 and _rp < 0.3:
+            return f"文献共识支持({_lit:+.2f})但物理校验差(R_phys={_rp:.2f})"
+        if _lit < -0.3 and _rp > 0.7:
+            return (f"文献共识反对({_lit:+.2f})但物理校验好(R_phys={_rp:.2f}) "
+                    "— 潜在 novel discovery")
+        return None
+
     def support(self, node_id: str, evidence: dict[str, Any]) -> None:
         """标记假设被实验支持."""
         self._check_node(node_id)
@@ -1468,6 +1512,37 @@ def _selfcheck_phys_steering() -> None:
         f"OK: R_phys steering — λ=0 平均 {base_rp:.2f} → λ=2 平均 {steer_rp:.2f}, "
         "orthogonal gain 成立"
     )
+
+
+def _selfcheck_lit_consensus() -> None:
+    """验证文献共识谱 + 物理/文献冲突检测.
+
+    防三类回归: (1) 没做 meta-review 时 score 应为 None 而非 0; (2) 共识分
+    计算正确 (支持-反驳)/总数; (3) 冲突检测只在两信号都齐时触发, 方向正确.
+    用独立内存实例, 不污染任何持久化.
+    """
+    g = HypothesisGraph()
+    n = g.add_hypothesis("h")
+    # 未做文献 meta-review → 无共识分, 也不触发冲突
+    assert g.lit_consensus_score(n) is None
+    assert g.lit_phys_conflict(n) is None
+    # 文献众源支持: (8-2)/11
+    g.lit_consensus(n, support=8, contradict=2, mixed=1)
+    assert abs(g.lit_consensus_score(n) - 6 / 11) < 1e-9, g.lit_consensus_score(n)
+    # 物理校验差 → 冲突: 文献支持但物理不认可
+    g._nodes[n].evidence["r_phys"] = 0.1
+    _c = g.lit_phys_conflict(n)
+    assert _c is not None and "物理校验差" in _c, _c
+    # 翻转: 文献反对但物理校验好 → novel discovery 候选
+    g.lit_consensus(n, support=1, contradict=9, mixed=0)
+    g._nodes[n].evidence["r_phys"] = 0.9
+    _c2 = g.lit_phys_conflict(n)
+    assert _c2 is not None and "novel" in _c2, _c2
+    # 两信号一致时不报冲突
+    g.lit_consensus(n, support=9, contradict=1, mixed=0)
+    g._nodes[n].evidence["r_phys"] = 0.9
+    assert g.lit_phys_conflict(n) is None
+    print("OK: 文献共识谱 + 物理/文献冲突检测")
 
 
 def _selfcheck_connected_components() -> None:
@@ -2694,6 +2769,7 @@ class HypothesisMixin:
 
 if __name__ == "__main__":
     _selfcheck_phys_steering()
+    _selfcheck_lit_consensus()
     _selfcheck_connected_components()
     _selfcheck_save_load()
     _selfcheck_frontier_ranked()
