@@ -52,15 +52,18 @@ def _clear_config_cache_between_tests(monkeypatch):
 def pytest_configure(config):
     """Register custom markers for industry-grade test categorization."""
     config.addinivalue_line("markers", "integration: heavy tests that need full stack (skip on fast CI)")
-    # GitHub runner 的 TMPDIR 常是 symlink 链, pytest tmp_path 的
+    # GitHub runner 的 TMPDIR 常是 symlink 链, pytest tmp_path 的临时目录
     # _ensure_relative_to_basetemp 会因 getbasetemp().resolve() != basetemp
-    # 误报 "is not a normalized and relative path". 把 basetemp 锁到 realpath
-    # 绕开这条校验, 免得 TestCheckBudgetUnit 每轮随机 ERROR.
+    # 误报 "is not a normalized and relative path", 让 TestCheckBudgetUnit 随机
+    # ERROR. 注意时序: pytest 内置 tmpdir 插件先一步创建 TempPathFactory 并读走
+    # config.option.basetemp, 这里再改 option 已无效. 直接修正 factory 持有的
+    # _given_basetemp 为 realpath, 让 tmp_path 落在真实路径上绕开 symlink 校验.
     import tempfile
 
-    if not config.option.basetemp:
+    factory = getattr(config, "_tmp_path_factory", None)
+    if factory is not None and factory._given_basetemp is None:
         real = os.path.realpath(tempfile.gettempdir())
-        config.option.basetemp = os.path.join(real, "huginn_pytest_tmp")
+        factory._given_basetemp = Path(os.path.join(real, "huginn_pytest_tmp"))
 
 
 def _is_disk_io_flaky(exc) -> bool:
