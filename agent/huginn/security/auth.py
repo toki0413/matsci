@@ -338,6 +338,13 @@ def require_capability(capability: str) -> Callable[..., Any]:
         if _public_path(request):
             return ""
 
+        # Dev mode bypass — keep consistent with require_api_key (line 210).
+        # Without this, setting HUGINN_API_KEY (e.g. in tests or desktop app)
+        # makes _jwt_secret() non-None, so the implicit bypass below never fires
+        # and dev-mode requests get 403 before FastAPI can return 422.
+        if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
+            return ""
+
         ctx: RequestContext | None = getattr(request.state, "auth", None)
 
         # JWT path — check user capability
