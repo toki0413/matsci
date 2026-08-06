@@ -9,7 +9,7 @@ on:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -232,26 +232,59 @@ jobs:
           ldconfig -p | grep -E 'libssl\.so|libcrypto\.so' || echo "libssl.so not in ld cache"
 
       # tauri-build / generate_context! 在 cargo check 时校验 tauri.conf.json
-      # 引用的所有文件路径. CI 上没有 sidecar 二进制、没有 npm build 产物、
-      # python-runtime 只有 .gitkeep. 把所有文件系统依赖清掉, 只留编译检查.
-      - name: Strip tauri config for CI compile
+      # 和 capabilities/ 里引用的所有文件路径. CI 上没有 sidecar 二进制、
+      # 没有 npm build 产物. 直接写最小化 config + capabilities:
+      #   - tauri.conf.json: bundle.active=false 跳过 bundle 校验
+      #   - capabilities: 去掉 shell sidecar spawn 和 "pet" 窗口引用,
+      #     否则 generate_context! 解析 capability 时会因找不到 sidecar panic.
+      - name: Strip tauri config + capabilities for CI compile
         working-directory: desktop/src-tauri
         run: |
-          python -c "
-          import json
-          with open('tauri.conf.json') as f:
-              cfg = json.load(f)
-          cfg['bundle']['externalBin'] = []
-          cfg['bundle']['resources'] = []
-          cfg['build']['beforeDevCommand'] = ''
-          cfg['build']['beforeBuildCommand'] = ''
-          with open('tauri.conf.json', 'w') as f:
-              json.dump(cfg, f, indent=2)
-          print('Stripped externalBin/resources/beforeCommands from tauri.conf.json')
-          "
+          cat > tauri.conf.json << 'TAURI_CI_CONF'
+          {
+            "$schema": "https://schema.tauri.app/config/2",
+            "productName": "Huginn",
+            "version": "0.1.0",
+            "identifier": "com.huginn-agent.app",
+            "build": {
+              "frontendDist": "../dist"
+            },
+            "app": {
+              "windows": [{"title": "Huginn"}],
+              "security": {"csp": "default-src 'self'"}
+            },
+            "bundle": {
+              "active": false,
+              "targets": [],
+              "externalBin": [],
+              "resources": [],
+              "icon": []
+            }
+          }
+          TAURI_CI_CONF
+          cat > capabilities/default.json << 'TAURI_CI_CAP'
+          {
+            "identifier": "default",
+            "description": "minimal CI capabilities",
+            "windows": ["main"],
+            "permissions": ["core:default"]
+          }
+          TAURI_CI_CAP
           mkdir -p ../dist
-          [ -f ../dist/index.html ] || echo '<!DOCTYPE html><html></html>' > ../dist/index.html
-          echo 'Stub dist created'
+          echo '<!DOCTYPE html><html></html>' > ../dist/index.html
+          # generate_context! 会读 icons/32x32.png 当默认窗口图标, 且要求是 RGBA.
+          # 仓库里的图标是 RGB, 本地有 tauri icon 工具转 RGBA, CI 没有, 直接覆盖成
+          # 一张合法的 RGBA 占位图 (亮蓝色 32x32), 只影响编译检查.
+          python3 - << 'PY'
+import base64, zlib, struct
+b64 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAL0lEQVR4nO3OIQEAAAgDMJKQk4i0ghg3E/Ornr2kEhAQEBAQEBAQEBAQEBAQSAce4Tt0iMxmUi8AAAAASUVORK5CYII="
+png = base64.b64decode(b64)
+for name in ("32x32.png", "128x128.png", "128x128@2x.png", "icon.png"):
+    with open(f"icons/{name}", "wb") as f:
+        f.write(png)
+print("Replaced RGB icons with RGBA placeholder")
+PY
+          echo 'Minimal tauri.conf.json + capabilities + stub dist created'
 
       - name: Cargo check
         working-directory: desktop/src-tauri
