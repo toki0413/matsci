@@ -307,6 +307,7 @@ class HypothesisGraph:
 
     def frontier_ranked(
         self, top_k: int | None = None, beta: float = 1.0,
+        phys_gain: float = 0.0,
     ) -> list[HypothesisNode]:
         """P1-1 Ising-ranked frontier — 能量最低 K-子集排.
 
@@ -328,6 +329,10 @@ class HypothesisGraph:
             return untested[:1]
 
         # Hᵢ: parent 已 refute 的假设优先 (refine_failed 同动机), parent 已 support 次之.
+        # phys_gain: 推理时 steering — 把物理奖励 R_phys 当作独立于证据强度的
+        # steering 方向注入 Hᵢ (h → h + λ·R_phys), 对应 brain-guided 论文的
+        # "orthogonal gain": R_phys 携带与纯语言/证据监督正交的物理有效性信号.
+        # λ=0 时无干预, 行为与原来完全一致 (向后兼容).
         H: dict[str, float] = {}
         for n in untested:
             h = 0.5  # 基础分
@@ -337,6 +342,15 @@ class HypothesisGraph:
                     h += 1.0  # 失败驱动的修正假设优先
                 elif p_status == "supported":
                     h += 0.3
+            if phys_gain:
+                # 节点历史上跑过物理校验时, evidence 里带 r_phys ∈ [0,1].
+                # 没跑过 (无 r_phys) 视为 0, 不参与 steering.
+                _rp = n.evidence.get("r_phys")
+                if _rp is not None:
+                    try:
+                        h += phys_gain * float(_rp)
+                    except (TypeError, ValueError):
+                        pass  # 脏值不参与 steering, 不崩
             H[n.id] = h
 
         # Tᵢⱼ: 同 dimension 支撑 (+0.5), 同 sibling_group 互斥 (-1.0).
@@ -1400,6 +1414,60 @@ class HypothesisGraph:
             return str(resp.content).strip()
         except Exception:
             return self._template_refine(original, findings)
+
+
+def _selfcheck_phys_steering() -> None:
+    """验证 R_phys 推理时 steering 的 orthogonal-gain 主张.
+
+    brain-guided 论文核心: 脑信号 (这里 = R_phys) 提供与纯语言/证据监督正交的
+    steering 方向, 沿该方向注入 (h → h + λ·R_phys) 能改变选优结果, 且增益
+    不来自证据强度. 构造证据强度与 R_phys 反相关的假设群:
+      - n1..n4: 无 parent (H 低) 但 R_phys 高
+      - m1..m4: parent 已 refute (H 高) 但 R_phys 低
+    λ=0 时 frontier 全选高 H 的 m (证据监督主导); λ 升高后转向高 R_phys 的 n,
+    证明 steering 方向正交于证据峰度.
+    """
+    g = HypothesisGraph()
+    parent = g.add_hypothesis("parent hypothesis")
+    g.refute(parent, evidence={"why": "fail"})
+    # 高 H (parent refute) 但物理校验差
+    low = [g.add_hypothesis(f"m{i}", parent_id=parent) for i in range(4)]
+    # 低 H (无 parent) 但物理校验好
+    high = [g.add_hypothesis(f"n{i}") for i in range(4)]
+    for i, nid in enumerate(low):
+        g._nodes[nid].evidence["r_phys"] = 0.1
+    for i, nid in enumerate(high):
+        g._nodes[nid].evidence["r_phys"] = [0.9, 0.8, 0.7, 0.6][i]
+
+    def _mean_rp(ids: list[str]) -> float:
+        return sum(float(g._nodes[i].evidence["r_phys"]) for i in ids) / len(ids)
+
+    # λ=0: 无干预, 证据监督主导 → 全选高 H 的 m
+    base = g.frontier_ranked(top_k=3, phys_gain=0.0)
+    base_ids = [n.id for n in base]
+    assert all(nid in low for nid in base_ids), f"λ=0 应按证据选 m, got {base_ids}"
+    base_rp = _mean_rp(base_ids)
+    assert base_rp < 0.2, f"λ=0 平均 R_phys 应低, got {base_rp:.2f}"
+
+    # λ>0: steering 把 frontier 拉向高 R_phys 的 n — orthogonal gain
+    steered = g.frontier_ranked(top_k=3, phys_gain=2.0)
+    steer_ids = [n.id for n in steered]
+    steer_rp = _mean_rp(steer_ids)
+    assert set(steer_ids) != set(base_ids), "steering 不应是无操作"
+    assert steer_ids[0] == high[0], f"高 R_phys 应占据首位, got {steer_ids}"
+    assert steer_rp > 0.5, f"steering 应显著提升平均 R_phys, got {steer_rp:.2f}"
+
+    # λ 单调性: 更强的 steering → 更高的平均 R_phys
+    prev = base_rp
+    for lam in (0.5, 1.0, 2.0, 4.0):
+        cur = _mean_rp([n.id for n in g.frontier_ranked(top_k=3, phys_gain=lam)])
+        assert cur >= prev, f"λ 增大平均 R_phys 不应下降 ({lam}: {cur:.2f})"
+        prev = cur
+
+    print(
+        f"OK: R_phys steering — λ=0 平均 {base_rp:.2f} → λ=2 平均 {steer_rp:.2f}, "
+        "orthogonal gain 成立"
+    )
 
 
 def _selfcheck_connected_components() -> None:
@@ -2625,6 +2693,7 @@ class HypothesisMixin:
 
 
 if __name__ == "__main__":
+    _selfcheck_phys_steering()
     _selfcheck_connected_components()
     _selfcheck_save_load()
     _selfcheck_frontier_ranked()
