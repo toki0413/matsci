@@ -426,7 +426,7 @@ class EffortBandit:
             with self._lock:
                 if self._runtime is None or self._items_count == 0:
                     return ""
-                _advice = self.policy()
+                _advice = self._policy_locked(self._runtime.last_progress_pct)
                 if _advice == "continue":
                     return ""
                 rt = self._runtime
