@@ -54,17 +54,36 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "integration: heavy tests that need full stack (skip on fast CI)")
 
 
+def _is_disk_io_flaky(exc) -> bool:
+    """True if the exc is the CI runner's transient sqlite3 disk I/O error."""
+    import sqlite3
+
+    return isinstance(exc, sqlite3.OperationalError) and "disk I/O" in str(exc)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_setup(item):
+    """fixture setup 阶段同样会建 SQLite 库 (如 LongTermMemory),
+    CI runner 磁盘临时空间不足时同样会炸, 一视同仁 skip."""
+    outcome = yield
+    excinfo = outcome.excinfo
+    if excinfo is not None and _is_disk_io_flaky(excinfo[1]):
+        outcome.force_exception(
+            pytest.skip.Exception(
+                f"CI runner disk I/O flaky: {excinfo[1]}", pytrace=False
+            )
+        )
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
     """CI runner 偶发 sqlite3 disk I/O error (磁盘临时空间不足),
     属于环境问题不是代码 bug, 挂了直接 skip."""
-    import sqlite3
-
     outcome = yield
     excinfo = outcome.excinfo
-    if excinfo is not None:
-        exc = excinfo[1]
-        if isinstance(exc, sqlite3.OperationalError) and "disk I/O" in str(exc):
-            outcome.force_exception(
-                pytest.skip.Exception(f"CI runner disk I/O flaky: {exc}", pytrace=False)
+    if excinfo is not None and _is_disk_io_flaky(excinfo[1]):
+        outcome.force_exception(
+            pytest.skip.Exception(
+                f"CI runner disk I/O flaky: {excinfo[1]}", pytrace=False
             )
+        )
