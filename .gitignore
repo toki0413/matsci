@@ -331,3 +331,22 @@ python-embed.zip
 *.pickle
 *.pkl
 *.parquet
+
+# v18 cleanup: 之前误入 git 的 scratch / autoloop 产物 / 测试缓存
+# 防止回流 — 本地保留, 只是不再 track
+agent/huginn_autoloop_report_loop_*.md
+agent/loop_*_dataset.jsonld
+agent/.checkpoints/
+agent/.bullpen/
+agent/joint_beliefs/
+agent/lammps_*_test/
+_test_cache/
+_test_cache2/
+_test_ws2/
+_test_workspace/
+_rcb_*.txt
+_selfcheck_*.py
+_score_run.py
+_test_*.py
+_test_*.txt
+test_report.html
