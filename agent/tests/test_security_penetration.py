@@ -304,7 +304,9 @@ class TestTemplateInjection:
         resp = client.post("/memory", json={"content": payload})
         assert resp.status_code in (200, 500)
         data = resp.json()
-        body = json.dumps(data)
+        # memory_id 是随机 hex, 可能恰好凑出 "49", 排查时把它排除掉,
+        # 只看内容字段里有没有被渲染成 49 (模板注入的真实信号)。
+        body = json.dumps({k: v for k, v in data.items() if k != "memory_id"})
         # {{7*7}} 不应该变成 49
         assert "49" not in body or payload in body
         # 不应该泄露 Python 类信息
