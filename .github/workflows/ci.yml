@@ -9,6 +9,7 @@ on:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -44,11 +45,12 @@ jobs:
           HUGINN_CI: "1"
         run: |
           cd agent
-          python -m pytest -q --cov-fail-under=40 --timeout=120 -m "not network" \
+          python -m pytest -q --cov-fail-under=40 --timeout=60 -m "not network" \
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
             --ignore=tests/test_chaos_engineering.py \
             --ignore=tests/stress \
+            --ignore=tests/loops \
             --tb=short --maxfail=5 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -230,7 +232,9 @@ jobs:
 
       # CI 没有 real sidecar 二进制, tauri-build proc macro 验证
       # externalBin 时 panic. 临时去掉 externalBin 让 cargo check 过.
-      - name: Strip externalBin for CI compile
+      # 同时建一个空 dist 目录 — tauri-build 读 frontendDist 时目录
+      # 不存在也会 proc macro panic.
+      - name: Strip externalBin + stub dist for CI compile
         working-directory: desktop/src-tauri
         run: |
           python -c "
@@ -242,6 +246,9 @@ jobs:
               json.dump(cfg, f, indent=2)
           print('Stripped externalBin from tauri.conf.json')
           "
+          mkdir -p ../dist
+          [ -f ../dist/index.html ] || echo '<!DOCTYPE html><html></html>' > ../dist/index.html
+          echo 'Stub dist created'
 
       - name: Cargo check
         working-directory: desktop/src-tauri

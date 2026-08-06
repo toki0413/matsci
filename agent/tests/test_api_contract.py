@@ -209,15 +209,36 @@ _LONG_RUNNING_PATHS = frozenset({
     "/team/run",
     "/team/v2/run",
     "/wechat/event",
+    # 这三个有 require_capability("execute") 依赖, 缺 body 时
+    # 返回 403 而非 422; 且会启动实际任务
+    "/diagnose",
+    "/explore",
+    "/execute",
 })
+
+# root-only 基础设施路径, 没有 /v1 对应 (health/docs/metrics/diagnostics/auth)
+_ROOT_ONLY_PATHS = frozenset({
+    "/", "/health", "/health/rust", "/health/guidance",
+    "/docs", "/openapi.json", "/redoc",
+    "/metrics",
+    "/diagnostics", "/diagnostics/tools", "/diagnostics/circuit", "/diagnostics/trace",
+    "/auth/token", "/auth/login",
+})
+
+_V1_LONG_RUNNING = frozenset(f"/v1{p}" for p in _LONG_RUNNING_PATHS)
 
 _ROOT_ROUTES = [
     r for r in _ALL_ROUTES
     if not r.path.startswith("/v1/")
     and r.path not in _SSE_PATHS
     and r.path not in _LONG_RUNNING_PATHS
+    and r.path not in _ROOT_ONLY_PATHS
 ]
-_V1_ROUTES = [r for r in _ALL_ROUTES if r.path.startswith("/v1/")]
+_V1_ROUTES = [
+    r for r in _ALL_ROUTES
+    if r.path.startswith("/v1/")
+    and r.path not in _V1_LONG_RUNNING
+]
 _GET_ROUTES = [r for r in _ROOT_ROUTES if "GET" in r.safe_methods]
 _POST_ROUTES = [r for r in _ROOT_ROUTES if "POST" in r.safe_methods]
 
