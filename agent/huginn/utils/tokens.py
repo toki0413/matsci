@@ -8,6 +8,7 @@ Claude Code's tokenEstimation.ts.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,11 @@ def bytes_per_token_for_extension(ext: str | None) -> float:
     return 4.0
 
 
+# 中日韩统一表意文字 (CJK): 中文 1 字 ≈ 1 token (cl100k 下常见 1-2 token).
+# 拆分统计, 避免混合文本被 len/4 一锅端 — 纯中文 len/4 会把 38 token 估成 6.
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
 def rough_token_count(text: str, bytes_per_token: float = 4.0) -> int:
     """Estimate token count from character length."""
     if not text:
@@ -70,8 +76,18 @@ def rough_token_count(text: str, bytes_per_token: float = 4.0) -> int:
 
 
 def rough_token_count_for_text(text: str, file_extension: str | None = None) -> int:
-    """Estimate token count using a format-aware ratio."""
-    return rough_token_count(text, bytes_per_token_for_extension(file_extension))
+    """Estimate token count using a format-aware ratio.
+
+    CJK 字符单独按 1 token/字, 其余按格式对应 bytes/token. 不区分的话
+    混合文本会被 len/4 严重低估 (实测中文 38 token 估成 6), 低估 = 超预算.
+    """
+    if not text:
+        return 0
+    cjk = len(_CJK_RE.findall(text))
+    if not cjk:
+        return rough_token_count(text, bytes_per_token_for_extension(file_extension))
+    non_cjk = len(text) - cjk
+    return max(1, cjk + round(non_cjk / bytes_per_token_for_extension(file_extension)))
 
 
 def count_tokens(text: str, model_name: str | None = None) -> int:
