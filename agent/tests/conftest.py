@@ -49,15 +49,19 @@ def _clear_config_cache_between_tests(monkeypatch):
     clear_config_cache()
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_configure(config):
     """Register custom markers for industry-grade test categorization."""
     config.addinivalue_line("markers", "integration: heavy tests that need full stack (skip on fast CI)")
     # GitHub runner 的 TMPDIR 常是 symlink 链, pytest tmp_path 的临时目录
     # _ensure_relative_to_basetemp 会因 getbasetemp().resolve() != basetemp
     # 误报 "is not a normalized and relative path", 让 TestCheckBudgetUnit 随机
-    # ERROR. 注意时序: pytest 内置 tmpdir 插件先一步创建 TempPathFactory 并读走
-    # config.option.basetemp, 这里再改 option 已无效. 直接修正 factory 持有的
-    # _given_basetemp 为 realpath, 让 tmp_path 落在真实路径上绕开 symlink 校验.
+    # ERROR.
+    # 时序陷阱: pytest hook 默认 LIFO 调用, conftest.py 比内置 _pytest.tmpdir
+    # 后注册因此 *先* 执行 pytest_configure, 此时 config._tmp_path_factory 还
+    # 不存在, 直接 getattr 拿到 None, 修复被静默跳过. 用 trylast=True 把自己
+    # 推到内置 tmpdir 插件之后, factory 已就绪, 再修正 _given_basetemp 为
+    # realpath, 让 tmp_path 落在真实路径上绕开 symlink 校验.
     import tempfile
 
     factory = getattr(config, "_tmp_path_factory", None)
