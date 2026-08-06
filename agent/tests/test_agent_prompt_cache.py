@@ -70,10 +70,11 @@ class TestPromptCacheBuilder:
         assert msgs[0].content == "hi"
         assert isinstance(msgs[1], AIMessage)
         assert msgs[1].content == "hello"
-        assert isinstance(msgs[2], SystemMessage)
+        # G36: memory 合并进 user message, 不再单独插 SystemMessage.
+        # 检索结果每 turn 变, 单插会破坏 DeepSeek context cache prefix hash.
+        assert isinstance(msgs[2], HumanMessage)
         assert "memory fact" in msgs[2].content
-        assert isinstance(msgs[3], HumanMessage)
-        assert msgs[3].content == "current question"
+        assert msgs[2].content.endswith("current question")
         # The last static block (the assistant begin-dialog) is cache-tagged.
         assert msgs[1].additional_kwargs.get("cache_control") == {"type": "ephemeral"}
 
@@ -157,13 +158,13 @@ class TestHuginnAgentPromptCache:
             assert msgs[0].content == "hello"
             assert isinstance(msgs[1], AIMessage)
             assert msgs[1].content == "hi there"
-            assert isinstance(msgs[2], SystemMessage)
-            assert "hcp structure" in msgs[2].content
-            # The last message must be the current user input — but there may
-            # be injected SystemMessages (L1 coords, cognitive prompt, etc.)
-            # between the memory block and the user message.
+            # G36: memory/kg/kb 合并进最后一条 user message, 不再单独插
+            # SystemMessage. 命中检索的 memory 应当出现在最后一条消息里.
             assert isinstance(msgs[-1], HumanMessage)
-            assert msgs[-1].content == "compute stress for Ti"
+            assert "hcp structure" in msgs[-1].content
+            # The last message must carry the current user input (the memory
+            # block is prepended to it, so the user text sits at the tail).
+            assert msgs[-1].content.endswith("compute stress for Ti")
 
     def test_memory_recall_uses_current_query(self):
         with tempfile.TemporaryDirectory() as tmp:
