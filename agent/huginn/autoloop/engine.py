@@ -6611,7 +6611,10 @@ Please modify the code to address this task."""
         # 同 sibling_group 互斥已避开). ponytail: hint 不强制, LLM 自己决定.
         frontier_block = ""
         try:
-            _frontier = self.hypothesis_graph.frontier_ranked(top_k=3)
+            _frontier = self.hypothesis_graph.frontier_ranked(
+                top_k=3,
+                phys_gain=getattr(self.settings, "phys_steering_gain", 0.0),
+            )
             if _frontier:
                 _lines = []
                 for nd in _frontier:
