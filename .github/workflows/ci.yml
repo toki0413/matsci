@@ -276,14 +276,14 @@ jobs:
           # 仓库里的图标是 RGB, 本地有 tauri icon 工具转 RGBA, CI 没有, 直接覆盖成
           # 一张合法的 RGBA 占位图 (亮蓝色 32x32), 只影响编译检查.
           python3 - << 'PY'
-import base64, zlib, struct
-b64 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAL0lEQVR4nO3OIQEAAAgDMJKQk4i0ghg3E/Ornr2kEhAQEBAQEBAQEBAQEBAQSAce4Tt0iMxmUi8AAAAASUVORK5CYII="
-png = base64.b64decode(b64)
-for name in ("32x32.png", "128x128.png", "128x128@2x.png", "icon.png"):
-    with open(f"icons/{name}", "wb") as f:
-        f.write(png)
-print("Replaced RGB icons with RGBA placeholder")
-PY
+          import base64, zlib, struct
+          b64 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAL0lEQVR4nO3OIQEAAAgDMJKQk4i0ghg3E/Ornr2kEhAQEBAQEBAQEBAQEBAQSAce4Tt0iMxmUi8AAAAASUVORK5CYII="
+          png = base64.b64decode(b64)
+          for name in ("32x32.png", "128x128.png", "128x128@2x.png", "icon.png"):
+              with open(f"icons/{name}", "wb") as f:
+                  f.write(png)
+          print("Replaced RGB icons with RGBA placeholder")
+          PY
           echo 'Minimal tauri.conf.json + capabilities + stub dist created'
 
       - name: Cargo check
