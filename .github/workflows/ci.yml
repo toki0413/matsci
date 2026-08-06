@@ -43,6 +43,13 @@ jobs:
           HF_HUB_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
           HUGINN_CI: "1"
+          # sklearn 的 GP 拟合底层走 scipy.linalg / OpenBLAS. 新版 numpy 在
+          # GitHub runner 上偶发原生崩溃 (3.12/3.13 稳定复现, 3.11 正常),
+          # 锁成单线程是这类 OpenBLAS 崩溃的通用解法, 顺带降低内存占用.
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
           cd agent
           python -m pytest -v -rA --tb=line --cov-fail-under=40 --timeout=60 -m "not network" \
