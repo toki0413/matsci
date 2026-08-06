@@ -294,6 +294,15 @@ PROMPT_CACHE_MISSES_TOTAL = Counter(
     "Prompt cache prefix misses (new or changed prefix).",
 )
 
+# Token 级真实命中率 (provider usage 直读): cache_read /
+# (cache_read + cache_creation + fresh). 与上面的次数级 counter 互补 —
+# 次数级比值 ≠ 命中率, 因为 hit/miss 调用体量不同.
+PROMPT_CACHE_HIT_RATIO = Gauge(
+    "huginn_prompt_cache_hit_ratio",
+    "Token-level provider prompt cache hit ratio (0..1) per model.",
+    ["model"],
+)
+
 # P1/P2 极限模式成果的观测点 — 跨 mode 共享 (chat/plan/research/autoloop).
 # MEMORY_RERANK: 触发了哪种 rerank (ising / hils_full / hils_sparse / none).
 # MEMORY_RERANK_N: 候选数量直方图, 看 N>=K 分层稀疏何时触发.
@@ -483,6 +492,7 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
         # 打印 cache 命中率到 stdout, RCBench 跑分时能直接在 log 里看到
         if total_input > 0 and (cache_read or cache_creation):
             _hit_pct = cache_read / _cache_total * 100 if _cache_total > 0 else 0
+            PROMPT_CACHE_HIT_RATIO.labels(model=model).set(_hit_pct / 100.0)
             print(
                 f"[cache] {model}: hit={cache_read} miss={cache_creation} "
                 f"fresh={input_tokens} ({_hit_pct:.0f}% hit)",
