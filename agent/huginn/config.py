@@ -494,6 +494,10 @@ class HuginnConfig:
     pm_c_min: float = 0.2
     # Summarize 触发周期: 每 N 次 add_message 检查一次
     wm_summarize_every_n: int = 5
+    # R_phys 推理时 steering 强度 (brain-guided 论文 λ).
+    # 0 = 不干预 (纯证据监督); >0 = 把物理奖励 R_phys 作为正交 steering 方向
+    # 注入 frontier_ranked 的 Hᵢ. 值越大物理有效性权重越高.
+    phys_steering_gain: float = 0.0
 
     def apply_overrides(
         self,

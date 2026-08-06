@@ -46,6 +46,8 @@ tool_compression_max_tokens = 8000
 pet_name = "Huginn"
 pet_personality = "cheerful"
 config_version = 1
+# R_phys 推理时 steering 强度 λ (0=关闭, >0=物理奖励作为正交 steering 方向注入 frontier 排序)
+phys_steering_gain = 0.0
 
 [[models]]
 alias = "default"
