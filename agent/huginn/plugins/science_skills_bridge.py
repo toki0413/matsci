@@ -460,6 +460,14 @@ def register_science_skills() -> list[str]:
 
             all_parsed = load_skills_from_dir(skills_dir)
             register_conditional_skills(all_parsed)
+            # 固化当前生效技能的版本, 供事后回放"这次任务用了哪些技能的哪个版本"
+            try:
+                from huginn.provenance.registry import ProvenanceRegistry
+                ProvenanceRegistry.shared().snapshot_skills(
+                    {s["name"]: s.get("version", "0.0.0") for s in all_parsed}
+                )
+            except Exception as exc:  # noqa: BLE001 - 快照失败不影响技能注册
+                logger.debug("技能版本快照失败(非致命): %s", exc)
     except Exception as exc:
         logger.debug("条件技能注册失败(非致命): %s", exc)
 
