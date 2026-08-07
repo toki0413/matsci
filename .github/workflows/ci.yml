@@ -9,7 +9,7 @@ on:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +35,17 @@ jobs:
           # Lightweight optional deps — keeps test coverage up on CI
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
           pip install pytest-timeout
+
+      - name: Add swap to prevent OOM
+        # 4700+ 测试串行/并行运行时, 单个 worker 跑到 ~3000 测试后内存累积
+        # 耗尽 runner 的 7GB RAM (MemoryError at 65%). 6GB swap 让虚拟内存
+        # 达到 13GB, 虽然比 RAM 慢但避免 OOM kill. swap 在测试结束后自动释放.
+        run: |
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
       - name: Run tests
         env:
