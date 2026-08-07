@@ -62,19 +62,15 @@ def pytest_configure(config):
     # 不存在, 直接 getattr 拿到 None, 修复被静默跳过. 用 trylast=True 把自己
     # 推到内置 tmpdir 插件之后, factory 已就绪, 再修正 _given_basetemp 为
     # realpath, 让 tmp_path 落在真实路径上绕开 symlink 校验.
-    import sys
     import tempfile
     import types
 
     factory = getattr(config, "_tmp_path_factory", None)
-    print(f"[DBG-conftest] pytest_configure called, factory={factory is not None}", file=sys.stderr, flush=True)
     if factory is not None:
-        print(f"[DBG-conftest] _given_basetemp={factory._given_basetemp!r}", file=sys.stderr, flush=True)
         if factory._given_basetemp is None:
             real = os.path.realpath(tempfile.gettempdir())
             new_basetemp = Path(os.path.join(real, "huginn_pytest_tmp"))
             factory._given_basetemp = new_basetemp
-            print(f"[DBG-conftest] set _given_basetemp={new_basetemp}", file=sys.stderr, flush=True)
         # 兜底: 直接 patch _ensure_relative_to_basetemp 跳过 symlink 校验.
         # mktemp 内部走 self._ensure_relative_to_basetemp(basename), 实例属性
         # 优先于类方法, types.MethodType 绑定后即生效. basename 已是 normpath
@@ -84,10 +80,6 @@ def pytest_configure(config):
         factory._ensure_relative_to_basetemp = types.MethodType(
             _noop_ensure_relative, factory
         )
-        print(f"[DBG-conftest] patched _ensure_relative_to_basetemp", file=sys.stderr, flush=True)
-        # 检查是否已被某个 fixture 提前实例化 (此时 _basetemp 已 resolve 缓存)
-        cached = getattr(factory, "_basetemp", None)
-        print(f"[DBG-conftest] cached _basetemp={cached!r}", file=sys.stderr, flush=True)
 
 
 def _is_disk_io_flaky(exc) -> bool:
