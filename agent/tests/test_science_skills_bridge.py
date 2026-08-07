@@ -25,6 +25,10 @@ import pytest
 
 from huginn.tools.registry import ToolRegistry
 
+# CI 上只跟踪了 happy_figure/workflow_skill_creator 两个 skill (完整 repo 需
+# 外部 clone SCIENCE_SKILLS_DIR). 断言 >=30 skills 的测试在 CI 上必然失败.
+_skip_ci = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
+
 # ---------------------------------------------------------------------------
 # Save/restore ToolRegistry state
 # ---------------------------------------------------------------------------
@@ -122,6 +126,7 @@ class TestSkillMetadata:
 # ---------------------------------------------------------------------------
 
 class TestScienceSkillsLoader:
+    @pytest.mark.skipif(_skip_ci, reason="CI has no full science-skills repo")
     def test_discover_finds_skills(self):
         """Loader discovers ≥35 skills from the cloned repo."""
         from huginn.plugins.science_skills_bridge import ScienceSkillsLoader
@@ -177,6 +182,7 @@ class TestScienceSkillsLoader:
 # ---------------------------------------------------------------------------
 
 class TestRegistration:
+    @pytest.mark.skipif(_skip_ci, reason="CI has no full science-skills repo")
     def test_register_science_skills(self):
         from huginn.plugins.science_skills_bridge import register_science_skills
 
@@ -185,6 +191,7 @@ class TestRegistration:
         for name in names:
             assert name.startswith("science_")
 
+    @pytest.mark.skipif(_skip_ci, reason="CI has no full science-skills repo")
     def test_register_appears_in_registry(self):
         from huginn.plugins.science_skills_bridge import register_science_skills
 
@@ -200,6 +207,7 @@ class TestRegistration:
         names2 = register_science_skills()
         assert names1 == names2
 
+    @pytest.mark.skipif(_skip_ci, reason="CI has no full science-skills repo")
     def test_register_specific_tools(self):
         """Check some well-known skills are registered."""
         from huginn.plugins.science_skills_bridge import register_science_skills
@@ -482,6 +490,7 @@ class TestPermissionWildcard:
 # ---------------------------------------------------------------------------
 
 class TestGetScienceSkillsInfo:
+    @pytest.mark.skipif(_skip_ci, reason="CI has no full science-skills repo")
     def test_info_returns_list(self):
         from huginn.plugins.science_skills_bridge import get_science_skills_info
 
