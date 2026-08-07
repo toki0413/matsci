@@ -58,7 +58,11 @@ class TestEngineKbIntegration:
         fake = _FakeKb([{"text": "DFT convergence requires ENCUT > 520 eV for Si."}])
         monkeypatch.setattr("huginn.knowledge.store.get_knowledge_base", lambda ws: fake)
 
-        prompt = engine._build_hypothesis_prompt({"topic": "Si band gap"})
+        # context 必须带 objective: _extract_search_query 对无 objective 的 context
+        # 回退到 json.dumps, 而 should_inject_kb 会拦截 "{" 前缀的 query → KB 不注入
+        prompt = engine._build_hypothesis_prompt(
+            {"topic": "Si band gap", "objective": "study Si band gap"}
+        )
         assert "Domain Knowledge Context" in prompt
         assert "DFT convergence" in prompt
 
