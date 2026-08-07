@@ -67,7 +67,7 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: |
           cd agent
-          python -m pytest -v -rA --tb=line -p no:cov \
+          python -m pytest -v -rA --tb=line -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
             -n 2 -m "not network" \
             --ignore=tests/test_api_contract.py \
