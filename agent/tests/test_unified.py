@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("matplotlib")
+
 import sympy as sp
 
 from huginn.unified import (

@@ -9,13 +9,15 @@
 """
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("matplotlib")
+
 import matplotlib
 
 matplotlib.use("Agg")  # 不弹窗
 
 from pathlib import Path
-
-import pytest
 
 from huginn.tools.visualize_tool import VisualizeTool, VisualizeToolInput
 

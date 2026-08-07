@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -24,13 +23,6 @@ import pytest
 
 from huginn.autoloop.budget import IterationBudget, ProgressiveBudget
 from huginn.autoloop.engine import AutoloopEngine
-
-# run_cognitive 集成测试在 CI 上挂死: asyncio.run 内部的 phase 编排有未 stubbed
-# 的 await 路径 (LLM/event_bus/progress tracker), --timeout=60 的 signal 方法
-# 对 asyncio.run 无效, 单个测试能挂 >30min 直接吃满 job timeout.
-# 单元测试 (TestCheckBudgetUnit / TestProgressiveBudgetTiers / TestIterationBudgetAllows)
-# 不涉及 run_cognitive, 保持运行.
-_skip_ci_run_cognitive = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
 
 
 # ── shared fixtures ──────────────────────────────────────────────────────────
@@ -261,7 +253,6 @@ _budget_tier_xfail = pytest.mark.xfail(
 )
 
 
-@pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
 class TestEngineRunBudgetIntegration:
     def test_workflow_allowed_in_open_tier(
         self, engine: AutoloopEngine, no_sleep
@@ -373,7 +364,6 @@ class TestEngineRunBudgetIntegration:
 # ── phase-gate doesn't burn budget rejection quota ───────────────────────────
 
 
-@pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
 class TestGateDoesNotBurnBudgetQuota:
     """A phase-gate block is a separate path from a budget reject. Verify the
     budget reject counter only advances on actual budget rejects, not on gate
