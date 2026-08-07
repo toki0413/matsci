@@ -2179,6 +2179,126 @@ class HypothesisMixin:
                 )
         except Exception:
             logger.debug("metacog audit failed", exc_info=True)
+        # P7: 同调/拓扑审计 — 把 sheaf H¹ + simplicial Betti + Hodge audit_topology
+        # 三个 Open Problem 7.x 模块接进主循环. advisory, 任一失败都降级不阻断.
+        # 之前这三块只活在 rcb_runner 评测路径和模块自检里, 从未评估过生产假设.
+        try:
+            self._metacog_topology_audit(hypothesis, context)
+        except Exception:
+            logger.debug("metacog topology audit failed", exc_info=True)
+
+    def _metacog_topology_audit(
+        self, hypothesis: str, context: dict[str, Any]
+    ) -> None:
+        """Open Problem 7.1/7.2/7.3 同调模块接入主循环的统一审计口.
+
+        用假设图当前节点/边做三个独立的拓扑判据, 全部 advisory:
+          - sheaf H¹: 假设陈述作为多源 findings, 检测 gluing obstruction
+            (全局不一致性) — 一致图 H¹=0, 有冲突 >0
+          - simplicial Betti: 假设图节点/边做单纯形, 算 β₀/β₁ 拓扑复杂度
+          - audit_topology: 候选假设 vs 原问题证据网络的 Hodge 拓扑等价性
+        结果存 _metacog_last_topology (给 learn/完成判定参考), 不阻断假设.
+        """
+        result: dict[str, Any] = {"h1": None, "betti": None, "topo_verdict": None}
+        try:
+            nodes = self.hypothesis_graph.all_nodes()
+            edges = self.hypothesis_graph.edges()
+        except Exception:
+            logger.debug("topology audit: no graph", exc_info=True)
+            return
+
+        # ① sheaf H¹ — 多源一致性. core=目标, support=各假设陈述.
+        try:
+            from huginn.metacog.sheaf_cohomology import (
+                build_sheaf_from_findings,
+                compute_H1,
+            )
+            core = str(context.get("summary", "")) or str(self._objective or hypothesis)
+            support = [n.statement for n in nodes if n.statement]
+            if support:
+                sheaf = build_sheaf_from_findings(core, support[:8])
+                result["h1"] = int(compute_H1(sheaf))
+        except Exception:
+            logger.debug("sheaf H1 failed (non-fatal)", exc_info=True)
+
+        # ② simplicial Betti — 假设图拓扑复杂度. 节点=0-simplex, 边=1-simplex.
+        try:
+            from huginn.metacog.simplicial_homology import compute_exact_betti
+            node_ids = [n.id for n in nodes]
+            if len(node_ids) >= 2:
+                simplices_l = [(i,) for i in range(len(node_ids))]
+                id_to_idx = {nid: i for i, nid in enumerate(node_ids)}
+                for e in edges:
+                    if e.from_id in id_to_idx and e.to_id in id_to_idx:
+                        simplices_l.append(
+                            tuple(sorted((id_to_idx[e.from_id], id_to_idx[e.to_id])))
+                        )
+                betti = compute_exact_betti(simplices_l, max_dim=1)
+                result["betti"] = (int(betti.get(0, 0)), int(betti.get(1, 0)))
+        except Exception:
+            logger.debug("simplicial Betti failed (non-fatal)", exc_info=True)
+
+        # ③ Hodge 拓扑等价审计 — 候选假设图 vs 目标问题证据网络.
+        try:
+            cand_nodes = [n.id for n in nodes]
+            cand_edges = [
+                (e.from_id, e.to_id)
+                for e in edges
+                if e.from_id in set(cand_nodes) and e.to_id in set(cand_nodes)
+            ]
+            orig_nodes = [f"obj:{str(self._objective)[:40]}"] if self._objective else ["objective"]
+            if cand_nodes:
+                verdict = self._get_metacog_auditor().audit_topology(
+                    candidate_nodes=cand_nodes[:20],
+                    candidate_edges=cand_edges[:40],
+                    original_nodes=orig_nodes,
+                    original_edges=[],
+                )
+                result["topo_verdict"] = verdict.verdict
+        except Exception:
+            logger.debug("Hodge topology audit failed (non-fatal)", exc_info=True)
+
+        # ④ persistence landscape — 假设图在 evidence 特征空间的 cluster 结构.
+        # Open Problem 7.4 的探索路径: 节点 evidence 数值特征拍成 point cloud,
+        # Rips 出 persistence diagram, 看是否有多尺度存活的 cluster (高 n_persistent).
+        # 多 cluster → 假设空间分裂, 说明图里是多个互不相关的候选族而非单一主线.
+        # 复用底层 compute_persistent_homology, 不走 HypothesisManifold 包装 —
+        # 生产图是 HypothesisGraph, 不引入第二套假设系统.
+        try:
+            from huginn.metacog.simplicial_homology import compute_persistent_homology
+            import math as _math
+            import numpy as _np
+            feat_keys = sorted({
+                k for n in nodes
+                for k, v in n.evidence.items() if isinstance(v, (int, float))
+            })
+            if len(nodes) >= 3 and len(feat_keys) >= 1:
+                cloud = _np.array(
+                    [
+                        [float(n.evidence.get(k, 0.0)) for k in feat_keys]
+                        for n in nodes
+                    ],
+                    dtype=float,
+                )
+                _diag = compute_persistent_homology(cloud, max_dim=1)
+                _n_persist = sum(
+                    1 for d, b, de in _diag
+                    if d == 0 and (_math.isinf(de) or de - b > 0.0)
+                )
+                result["persistence"] = {
+                    "n_persistent_clusters": int(_n_persist),
+                    "diagram_size": len(_diag),
+                }
+        except Exception:
+            logger.debug("persistence landscape failed (non-fatal)", exc_info=True)
+
+        self._metacog_last_topology = result
+        if result["h1"]:
+            logger.info(
+                "metacog: sheaf H¹=%s (多源证据存在全局不一致), betti=%s, topo=%s",
+                result["h1"], result["betti"], result["topo_verdict"],
+            )
+
     def _choose_recovery_phase(self, failure_type: str, validation: dict[str, Any]) -> str:
         """v7 phase 解耦: 根据失败类型选下一轮起点 phase.
 
@@ -2508,10 +2628,25 @@ class HypothesisMixin:
             prediction = conjecture.get("prediction", "")
             if not statement:
                 return ""
+            # P7: category_functor 接入 — 源/目标域命中已知 category 时, 用 functor
+            # 验证跨域结构保持, 命中才附加保结构提示 (advisory, 不改变现有 hint).
+            # 之前 functor 只活在模块自检里, 生产跨域猜想走不到它.
+            functor_note = ""
+            try:
+                from huginn.metacog.category_functor import get_category
+                src_cat = get_category(source_domain.strip().lower())
+                tgt_cat = get_category(target_domain.strip().lower())
+                if src_cat is not None and tgt_cat is not None:
+                    functor_note = (
+                        f"[functor: {src_cat.name}→{tgt_cat.name}] "
+                        f"两域结构同构, 迁移前用 functor 对象/态射映射核对.\n"
+                    )
+            except Exception:
+                logger.debug("category_functor note failed (non-fatal)", exc_info=True)
             # Prerequisite Inversion: 跨域类比不是直接用, 而是问"什么条件必须暗中获得满足"
             # 4 维反转防止结构错配 (Dream Layer v1.1 核心贡献)
             return (
-                f"{hint_prefix}[Cross-domain analogy hint]\n"
+                f"{hint_prefix}{functor_note}[Cross-domain analogy hint]\n"
                 f"Conjecture: {statement}\n"
                 f"Prediction: {prediction}\n"
                 f"Before using this analogy, perform Prerequisite Inversion:\n"
