@@ -417,10 +417,15 @@ class TestAuthBypass:
         assert resp.status_code == 200
 
     def test_public_paths_dont_need_auth(self, enforced_auth, monkeypatch):
-        """公开路径 (/health) 不需要鉴权。"""
+        """公开路径 (/health, /health/live, /health/ready) 不需要鉴权。
+
+        /health/live 永远 200; /health/ready 在依赖不可用时返回 503,
+        但关键是都不应返回 401 (认证拦截)。
+        """
         monkeypatch.setenv("HUGINN_API_KEY", "secret-key")
-        resp = client.get("/health")
-        assert resp.status_code == 200
+        for path in ["/health", "/health/live", "/health/ready"]:
+            resp = client.get(path)
+            assert resp.status_code != 401, f"{path} should be public (got 401)"
 
     def test_all_protected_endpoints_enforced(self, enforced_auth, monkeypatch):
         """dev_mode 关掉后, 多个受保护端点都需要鉴权。"""
