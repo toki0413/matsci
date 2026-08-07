@@ -171,3 +171,10 @@ lean/build/
 tmp/
 temp/
 *.tmp
+
+# Keep the small baseline LAMMPS trajectory fixture under version control:
+# test_lammps_ext.py (python + rust parser tests) needs this stable shared
+# file; it is not generated per-test. Un-ignore the dir first so git looks
+# inside it, then the specific file (parent dir must be un-ignored first).
+!lammps_traj_test/
+!lammps_traj_test/traj.lammpstrj

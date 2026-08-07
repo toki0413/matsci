@@ -98,7 +98,7 @@ class TestMaxRefines:
         import inspect
         from huginn.autoloop.engine import AutoloopEngine
 
-        sig = inspect.signature(AutoloopEngine.run)
+        sig = inspect.signature(AutoloopEngine.run_cognitive)
         assert "max_refines" in sig.parameters
         assert sig.parameters["max_refines"].default == 8
 

@@ -108,7 +108,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                         _msg.content = _new_blocks
                         _changed_blocks = True
                     except Exception:
-                        pass
+                        logger.debug("message content patch failed", exc_info=True)
 
         # 再重建 list 保证 ToolMessage 紧跟 AIMessage(tool_calls), 同时补 orphan.
         # DeepSeek 严格要求 assistant(tool_calls) 后面必须紧跟 tool messages

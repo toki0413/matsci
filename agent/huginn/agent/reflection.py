@@ -223,7 +223,7 @@ class ReflectionMixin:
                     tr.get("tool_name", ""), reflection.tool_succeeded
                 )
             except Exception:
-                pass
+                logger.debug("mark_fix_success failed", exc_info=True)
 
             # Trigger evolution on failure / success signals.
             if reflection.should_evolve:

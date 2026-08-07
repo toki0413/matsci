@@ -212,8 +212,11 @@ class TestHealthStatus:
         assert data["status"] == "unconfigured"
         assert data["configured"] is False
 
-    def test_ollama_configured_without_key(self, monkeypatch):
+    def test_ollama_configured_without_key(self, monkeypatch, tmp_path):
         monkeypatch.setenv("HUGINN_PROVIDER", "ollama")
+        # Isolate from repo's huginn.toml so get_config() reads HUGINN_PROVIDER
+        # from env (Ollama needs no API key to be considered configured).
+        monkeypatch.setenv("HUGINN_WORKSPACE", str(tmp_path))
         r = client.get("/health")
         data = r.json()
         assert data["configured"] is True
