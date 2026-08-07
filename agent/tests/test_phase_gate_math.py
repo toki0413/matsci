@@ -107,7 +107,9 @@ class TestMathEvidenceChecker:
         passed, feedback, details = checker(evidence)
         assert passed is False
         assert details["belief_fail"] > 0.8
-        assert "insufficient" in feedback
+        # v11: conservation_law verified=False 触发 hard-veto 短路, feedback 是
+        # hard-veto 消息而非旧 DS 合成的 "insufficient" 文案
+        assert "hard-veto" in feedback
 
     def test_mixed_evidence_uses_combination(self):
         # 3 通过 + 2 失败 → 合并后 belief_pass 应当在中间

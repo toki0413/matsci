@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,13 @@ from huginn.security import (
     SandboxExecutor,
     SandboxResult,
     safe_eval,
+)
+
+# spawn sys.executable 子进程的测试在 CI Python 3.13 上 OOM (--forked 双重内存压力).
+# 3.11/3.12 内存足够仍跑, 3.13 跳过避免环境性 failure.
+_skip_ci_py313_spawn = (
+    os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
+    and sys.version_info >= (3, 13)
 )
 
 # ---------------------------------------------------------------------------
@@ -52,6 +60,10 @@ class TestSandboxExecutor:
         with pytest.raises(SandboxError):
             sandbox.run([])
 
+    @pytest.mark.skipif(
+        _skip_ci_py313_spawn,
+        reason="spawn subprocess OOM on CI Python 3.13 (--forked memory pressure)",
+    )
     def test_timeout_clamping(self):
         import sys
         cfg = SandboxConfig(max_timeout=5.0, allowed_executables={"python", "python3"})
@@ -63,6 +75,10 @@ class TestSandboxExecutor:
         assert result.success is False
         assert result.returncode == -1  # timeout marker
 
+    @pytest.mark.skipif(
+        _skip_ci_py313_spawn,
+        reason="spawn subprocess OOM on CI Python 3.13 (--forked memory pressure)",
+    )
     def test_real_execution_success(self):
         import sys
         cfg = SandboxConfig(allowed_executables={"python", "python3"})
