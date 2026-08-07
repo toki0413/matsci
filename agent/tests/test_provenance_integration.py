@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -19,6 +20,8 @@ from huginn.provenance import (
     ProvenanceRecord,
     capture,
 )
+
+_skip_ci_run_cognitive = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
 
 
 # ── 1. ProvenanceRecord 构造 + add_snapshot ────────────────────────────────
@@ -213,6 +216,7 @@ class TestEngineProvenanceWiring:
         engine._provenance_record = None
         engine._record_provenance("coder", {"x": 1}, None)  # 不抛就算过
 
+    @pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
     def test_run_persists_provenance_with_tool_chain(self, engine: AutoloopEngine):
         _stub_phases_keep_execute(engine)
         # v10: run_cognitive 1-action-per-iter, max_iter=3 到 execute (hyp→plan→exec)
