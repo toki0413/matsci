@@ -138,7 +138,11 @@ class AutoresearchTool(HuginnTool):
     # ------------------------------------------------------------------ helpers
 
     def _workspace(self, args: AutoresearchInput) -> Path:
-        return Path(args.workspace).expanduser().resolve()
+        # absolute() not resolve(): CI runners (and pytest tmp_path) often
+        # sit behind symlinks. resolve() follows them and returns a different
+        # path string than the one tests used to create files, causing
+        # "train.py not found" even though the file exists on the same inode.
+        return Path(args.workspace).expanduser().absolute()
 
     def _uv_available(self) -> bool:
         return shutil.which("uv") is not None
