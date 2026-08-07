@@ -34,7 +34,7 @@ jobs:
           pip install langchain-openai langgraph-checkpoint-sqlite
           # Lightweight optional deps — keeps test coverage up on CI
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
-          pip install pytest-timeout
+          pip install pytest-timeout pytest-forked
 
       - name: Add swap to prevent OOM
         run: |
@@ -68,8 +68,8 @@ jobs:
         run: |
           cd agent
           python -m pytest -v -rA --tb=line -p no:cov -o addopts="" \
-            --timeout=60 --timeout-method=thread \
-            -n 4 -m "not network" \
+            --timeout=60 --timeout-method=thread --forked \
+            -n 2 -m "not network" \
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
             --ignore=tests/test_chaos_engineering.py \
