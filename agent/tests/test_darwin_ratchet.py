@@ -92,8 +92,11 @@ class TestDarwinRatchet:
         assert engine._darwin_best_score == best_after_r1
         assert engine._darwin_stagnation >= 1
 
-    def test_early_stop_on_stagnation(self):
+    def test_early_stop_on_stagnation(self, monkeypatch):
         """连续 2 轮 Δ<0.5 + iteration>2 → _should_stop=True."""
+        # v7: stagnation 阈值默认从 2 提升到 5 (长任务允许长期低增益).
+        # 测试只跑 3 轮, 显式设回 2 以验证 early stop 逻辑本身.
+        monkeypatch.setenv("HUGINN_DARWIN_STAGNATION_LIMIT", "2")
         engine = _make_engine()
         graph = engine.hypothesis_graph
 
