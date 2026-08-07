@@ -266,7 +266,11 @@ class AutoresearchTool(HuginnTool):
             ws.mkdir(parents=True, exist_ok=True)
 
         # Clone upstream repo if requested and workspace is empty.
-        if args.repo_url or not any(ws.iterdir()):
+        # skip_git must short-circuit this — otherwise a symlink-resolved
+        # tmp_path on CI can make iterdir() report empty, triggering a
+        # network git clone that hangs the asyncio executor (pytest-timeout
+        # signal can't interrupt subprocess.run).
+        if not args.skip_git and (args.repo_url or not any(ws.iterdir())):
             repo = args.repo_url or "https://github.com/karpathy/autoresearch.git"
             git_err = self._require_git(args)
             if git_err:
