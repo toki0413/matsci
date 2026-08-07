@@ -65,8 +65,12 @@ class TestCoderCli:
 
 
 class TestConfigureCli:
-    def test_configure_creates_config(self, tmp_path: Path):
+    def test_configure_creates_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         config_path = tmp_path / "huginn.toml"
+        # Isolate from repo's huginn.toml and test API key env so the
+        # auth-loss guard in save() doesn't refuse a first-time write.
+        monkeypatch.setenv("HUGINN_WORKSPACE", str(tmp_path))
+        monkeypatch.delenv("HUGINN_API_KEY", raising=False)
         # Provide default-ish answers for each prompt (enter = empty)
         result = CliRunner().invoke(
             cli,
@@ -105,11 +109,15 @@ class TestDiagnoseCli:
 
 
 class TestEncryptConfigCli:
-    def test_encrypt_config(self, tmp_path: Path):
+    def test_encrypt_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         config_path = tmp_path / "huginn.toml"
         config_path.write_text(
             'provider = "openai"\nmodel = "gpt-4o"\n', encoding="utf-8"
         )
+        # Isolate from repo's huginn.toml so get_config() caches the test's
+        # config (no models) instead of the repo's (with models), which would
+        # trip the auth-loss guard in save().
+        monkeypatch.setenv("HUGINN_WORKSPACE", str(tmp_path))
         result = CliRunner().invoke(
             cli,
             [

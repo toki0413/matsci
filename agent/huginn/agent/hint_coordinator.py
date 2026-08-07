@@ -11,7 +11,10 @@ ponytail: 不引新依赖, 不上策略模式, 单文件单类. 14 hint 的分�
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 # v15 Phase 2 Task 4: posterior-guided hint 构造.
@@ -71,7 +74,7 @@ def _build_posterior_guided_hint(
             )
             parts.append("\n".join(core_lines))
     except Exception:
-        pass
+        logger.debug("posterior core hint failed", exc_info=True)
 
     # 探索 hint: max Fisher distance to current best (info gain 代理)
     try:
@@ -90,7 +93,7 @@ def _build_posterior_guided_hint(
                 explore_lines.append(f"predictions: {pred_str}")
             parts.append("\n".join(explore_lines))
     except Exception:
-        pass
+        logger.debug("posterior explore hint failed", exc_info=True)
 
     if not parts:
         return ""
@@ -261,7 +264,7 @@ class HintCoordinator:
                                 _best_lift = _log_post - _h.log_prior()
                                 _best_entry_v15 = True
                         except Exception:
-                            pass
+                            logger.debug("manifold hypothesis lookup failed", exc_info=True)
                 if _best_overlap > 0.5:
                     if _best_entry_v15:
                         _boosted.append(

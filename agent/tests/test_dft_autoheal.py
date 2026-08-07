@@ -35,9 +35,11 @@ class TestVaspAutoHeal:
             calls["n"] += 1
             if calls["n"] == 1:
                 return _sandbox_result(1, stderr="ZBRENT: fatal error in bracketing")
-            # 模拟 VASP 收敛后写出 OUTCAR
+            # 模拟 VASP 收敛后写出 OUTCAR.
+            # action="scf" 检查电子收敛标记 "EDIFF is reached" (audit P1-5),
+            # 而非离子收敛标记 "reached required accuracy".
             (work_dir / "OUTCAR").write_text(
-                "reached required accuracy\n"
+                "EDIFF is reached\n"
                 "free  energy   TOTEN  =  -10.0\n",
                 encoding="utf-8",
             )

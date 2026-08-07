@@ -291,8 +291,10 @@ def test_reflection_sidecar_writes_jsonl(tmp_path, monkeypatch):
     """_append_reflection_sidecar 应写 JSONL, 含反思结论字段."""
     from huginn.agent.reflection import ReflectionMixin
 
-    # 用 monkeypatch 把 home() 指到 tmp_path 避免污染真实 ~/.huginn
-    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))
+    # 源码 _append_reflection_sidecar 优先读 HUGINN_CACHE_DIR, Path.home() 仅兜底;
+    # conftest.py 默认 setdefault HUGINN_CACHE_DIR 会覆盖 Path.home(), 所以这里
+    # 必须用 setenv 把 HUGINN_CACHE_DIR 指到 tmp_path 才能隔离写入.
+    monkeypatch.setenv("HUGINN_CACHE_DIR", str(tmp_path / ".huginn"))
 
     mixin = ReflectionMixin()
     mixin._session_state = MagicMock()
@@ -479,8 +481,14 @@ def test_track_llm_tps_never_raises_on_bad_input():
 
 
 def test_reflection_drives_set_mode_on_switch_signal():
-    """reflection.should_switch_mode=True 时应调用 set_mode (之前是死端)."""
+    """reflection.should_switch_mode=True 时应调用 switch_cognitive_mode (之前是死端).
+
+    P1-6: 之前调 self.set_mode() 只接受 chat/research/plan, 但 suggested_mode
+    是 CognitiveMode (discover/construct), 永远 ValueError 被静默吞 → 闭环断裂.
+    现在改调 session_state.switch_cognitive_mode, 走正确的接收者.
+    """
     from huginn.agent.reflection import ReflectionMixin
+    from huginn.session_state import CognitiveMode
 
     mixin = ReflectionMixin()
     mixin._session_state = MagicMock()
@@ -498,14 +506,18 @@ def test_reflection_drives_set_mode_on_switch_signal():
     reflection.plan_step_completed = False
     reflection.needs_user_input = False
     reflection.should_switch_mode = True
-    reflection.suggested_mode = "research"
+    # suggested_mode 现在是 CognitiveMode 值 (discover/construct), 不是 chat/research/plan.
+    reflection.suggested_mode = "discover"
     mixin._reflector.reflect.return_value = reflection
 
-    called_with = []
-    mixin.set_mode = lambda m: called_with.append(m)
-
     mixin._run_post_turn_reflection()
-    assert called_with == ["research"], f"set_mode should be called with 'research', got {called_with}"
+
+    # 反思现在调 _session_state.switch_cognitive_mode (而非 set_mode).
+    mixin._session_state.switch_cognitive_mode.assert_called_once()
+    target = mixin._session_state.switch_cognitive_mode.call_args.args[0]
+    assert target == CognitiveMode.DISCOVER, (
+        f"switch_cognitive_mode should be called with CognitiveMode.DISCOVER, got {target}"
+    )
 
 
 def test_reflection_invalid_suggested_mode_does_not_crash():
@@ -556,7 +568,9 @@ def test_load_reflection_sidecar_reads_back_entries(tmp_path, monkeypatch):
     """写 sidecar 后 load_reflection_sidecar 应读回 entries."""
     from huginn.agent.reflection import ReflectionMixin
 
-    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))
+    # 同 test_reflection_sidecar_writes_jsonl: 源码优先读 HUGINN_CACHE_DIR,
+    # conftest 默认 setdefault 会覆盖 Path.home(), 这里 setenv 到 tmp_path 隔离.
+    monkeypatch.setenv("HUGINN_CACHE_DIR", str(tmp_path / ".huginn"))
     mixin = ReflectionMixin()
     mixin._session_state = MagicMock()
     mixin._session_state.session_id = "read-back-test"

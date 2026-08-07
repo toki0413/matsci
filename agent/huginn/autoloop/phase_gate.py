@@ -385,14 +385,14 @@ class MathEvidenceChecker:
             return (
                 False,
                 "hard-veto: conservation law violated (BourbakiTool verified=False)",
-                {"hard_veto": "conservation_law", "sources": ["conservation_law"]},
+                {"hard_veto": "conservation_law", "sources": ["conservation_law"], "belief_pass": 0.0, "belief_fail": 1.0, "uncertainty": 0.0, "n_sources": 1},
             )
         _dimensional = evidence.get("dimensional_consistent")
         if _dimensional is False:
             return (
                 False,
                 "hard-veto: dimensional inconsistency (symbolic_math_tool)",
-                {"hard_veto": "dimensional_inconsistent", "sources": ["dimensional_consistent"]},
+                {"hard_veto": "dimensional_inconsistent", "sources": ["dimensional_consistent"], "belief_pass": 0.0, "belief_fail": 1.0, "uncertainty": 0.0, "n_sources": 1},
             )
         # v12: constraint_check.violations 非空 → hard-veto
         # ponytail: truthy 判定 (空 list / 空字符串 / None 都不触发), 复用已有 symbolic_regression_tool 输出.
@@ -404,7 +404,7 @@ class MathEvidenceChecker:
                     False,
                     f"hard-veto: constraint violations ({len(_violations) if hasattr(_violations, '__len__') else '?'} 条): "
                     f"{str(_violations)[:120]}",
-                    {"hard_veto": "constraint_violations", "sources": ["constraint_check"]},
+                    {"hard_veto": "constraint_violations", "sources": ["constraint_check"], "belief_pass": 0.0, "belief_fail": 1.0, "uncertainty": 0.0, "n_sources": 1},
                 )
 
         masses: list[tuple[float, float, float]] = []

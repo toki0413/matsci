@@ -190,8 +190,13 @@ def test_evolution_rules_injected_when_available():
     with tempfile.TemporaryDirectory() as tmpdir:
         os.environ["HUGINN_CACHE_DIR"] = tmpdir
         try:
-            # Write a fake rules file
-            rules_path = Path(tmpdir) / "evolution_rules.json"
+            # Write a fake rules file.
+            # 源码 build_evolution_rules 读 Path(HUGINN_CACHE_DIR) / "logs" /
+            # "evolution_rules.json" (对齐 EvolutionEngine logger 写入路径),
+            # 所以测试也要写到 logs/ 子目录.
+            logs_dir = Path(tmpdir) / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            rules_path = logs_dir / "evolution_rules.json"
             rules_path.write_text(json.dumps([
                 {
                     "rule_id": "r1",
