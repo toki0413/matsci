@@ -17,11 +17,14 @@ Covered properties:
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("hypothesis")
+
 import asyncio
 import math
 
 import numpy as np
-import pytest
 import sympy as sp
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st

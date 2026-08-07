@@ -8,11 +8,14 @@ index paths can be tested without torch or any downloaded model weights.
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("PIL")
+
 import sys
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 # Make `huginn` importable whether pytest is launched as `python -m pytest`
 # (which already prepends cwd) or a bare `pytest` (which does not). Resolves to

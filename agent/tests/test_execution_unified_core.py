@@ -6,13 +6,16 @@ executables, no transformers, no torch). They only use sympy, numpy, and matplot
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("matplotlib")
+
 import json
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pytest
 import sympy as sp
 
 from huginn.execution.autofix import AutoFixLoop

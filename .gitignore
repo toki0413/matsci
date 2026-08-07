@@ -373,3 +373,10 @@ test_exec/
 # agent/lammps_traj_test/traj.lammpstrj 是 committed 测试 fixture, 显式保留
 !agent/lammps_traj_test/
 !agent/lammps_traj_test/traj.lammpstrj
+
+# 开发临时 selfcheck/demo 脚本 (下划线前缀, 非 pytest, 含硬编码路径)
+agent/huginn/**/_*selfcheck*.py
+agent/huginn/**/_*demo*.py
+
+# 开发审查报告 (含硬编码本地路径)
+/backend-review-report.md

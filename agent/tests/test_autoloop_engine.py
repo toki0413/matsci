@@ -14,20 +14,12 @@ All LLM / network / subprocess paths are stubbed so the test is hermetic.
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine, AutoloopResult, LoopPhase
-
-# 同 test_autoloop_budget.py: run_cognitive 集成测试在 CI asyncio.run 下挂死,
-# --timeout=60 signal 方法对事件循环无效. 整个文件都跑 run_cognitive, CI 跳过.
-pytestmark = pytest.mark.skipif(
-    os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes"),
-    reason="run_cognitive hangs on CI asyncio.run",
-)
 
 
 @pytest.fixture
@@ -83,6 +75,14 @@ def _patch_all_phases(engine: AutoloopEngine) -> None:
     engine._validate = AsyncMock(return_value={"tests_passed": True})  # type: ignore[assignment]
     engine._learn = AsyncMock(return_value=None)  # type: ignore[assignment]
     engine._report = AsyncMock(return_value=str(engine.workspace / "report.md"))  # type: ignore[assignment]
+    # ponytail: inter-phase 编排 helper 会阻塞 event loop (同 test_autoloop_budget):
+    #   _blind_spot_pass -> _llm_chat -> await MagicMock.ainvoke (TypeError 被吞)
+    #   _maybe_clarify(...) -> mgr.ask(timeout=60) 死等永不 resolve() 的 Future
+    #   _wait_if_checkpoint_pending -> 600s 轮询 pending_human_review
+    # contract 测的是 run() 返回契约, 不关心这些, 全部短路.
+    engine._blind_spot_pass = AsyncMock(return_value=[])  # type: ignore[assignment]
+    engine._maybe_clarify = AsyncMock(return_value=None)  # type: ignore[assignment]
+    engine._wait_if_checkpoint_pending = AsyncMock(return_value=None)  # type: ignore[assignment]
 
 
 class TestRunReturnContract:
