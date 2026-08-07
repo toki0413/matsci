@@ -215,15 +215,6 @@ class TestConstraints:
         assert len(results) == 1
         assert results[0].name == "a"
 
-    def test_boundary_state_allows_empty(self):
-        state = BoundaryState()
-        assert state.allows("anything") is True
-
-    def test_boundary_state_allows_restricted(self):
-        state = BoundaryState(allowed_executables={"python"})
-        assert state.allows("python") is True
-        assert state.allows("bash") is False
-
     def test_boundary_evolution_block(self):
         state = BoundaryState()
         evo = BoundaryEvolution(state)

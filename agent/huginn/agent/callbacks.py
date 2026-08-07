@@ -125,7 +125,7 @@ class CallbackMixin:
                 from huginn.agent.bandit_controller import EffortBandit
                 EffortBandit.get_instance().record_tool_call()
             except Exception:
-                pass
+                logger.debug("bandit record_tool_call failed", exc_info=True)
             return result
 
         async def hooked_coroutine(**kwargs: Any) -> Any:

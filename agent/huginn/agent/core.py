@@ -920,7 +920,7 @@ class HuginnAgent(
                                         except (TypeError, ValueError):
                                             pass
                             except Exception:
-                                pass
+                                logger.debug("weak-metric scan failed", exc_info=True)
                         if _weak_metrics:
                             _extra_hints.append(
                                 "⚠️ WEAK SIGNAL DETECTED in outputs/: "
@@ -958,9 +958,9 @@ class HuginnAgent(
                         if _bandit_hint:
                             patched = [SystemMessage(content=_bandit_hint)] + patched
                     except Exception:
-                        pass
+                        logger.debug("bandit effort hint failed", exc_info=True)
                 except Exception:
-                    pass
+                    logger.debug("pre-model hint injection failed", exc_info=True)
                 return {"llm_input_messages": patched}
 
             agent = create_react_agent(

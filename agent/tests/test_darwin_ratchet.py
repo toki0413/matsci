@@ -21,6 +21,10 @@ def _make_engine():
     eng._darwin_last_score = 0.0
     eng._iteration = 0
     eng._should_stop = False
+    eng._darwin_belief_mu = 0.0
+    eng._darwin_belief_sigma2 = 100.0
+    eng._last_hypothesis_confidence = 0.0
+    eng._last_hypothesis_evidence_strength = 0.0
     return eng
 
 

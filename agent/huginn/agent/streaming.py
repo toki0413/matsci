@@ -1302,7 +1302,7 @@ class StreamingMixin:
             try:
                 _trace_avail = self._ctx_builder.meta_trace_available()
             except Exception:
-                pass
+                logger.debug("meta_trace_available check failed", exc_info=True)
             _trace_kln_divisor = 2 if _trace_avail else 1
 
             if getattr(self, "_needs_compaction", False) and self.context_budget_tokens > 0:

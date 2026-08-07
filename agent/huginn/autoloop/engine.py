@@ -1091,7 +1091,7 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         if mem is not None:
             try:
                 text = mem.recall_for_prompt(query, max_entries=3, since=since)
-                if text:
+                if text and isinstance(text, str):
                     parts.append(text)
             except Exception:
                 pass

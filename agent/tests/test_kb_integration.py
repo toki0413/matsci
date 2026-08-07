@@ -133,17 +133,13 @@ class TestPromptCacheKbText:
         msgs = builder.build_input_messages(
             "memory", "question", kg_text="kg context", kb_text="kb context"
         )
-        system_msgs = [m for m in msgs if m.__class__.__name__ == "SystemMessage"]
-        # memory + kg + kb 三条 SystemMessage, 顺序: memory, kg, kb
-        assert len(system_msgs) == 3
-        assert system_msgs[0].content == "memory"
-        assert system_msgs[1].content == "kg context"
-        assert system_msgs[2].content == "kb context"
-        # user 消息在最后
-        assert msgs[-1].content == "question"
+        # memory/kg/kb 合并进单条 HumanMessage, 格式: memory\n\nkg\n\nkb\n\n---\n\nquestion
+        last = msgs[-1]
+        assert last.__class__.__name__ == "HumanMessage"
+        assert last.content == "memory\n\nkg context\n\nkb context\n\n---\n\nquestion"
 
     def test_kb_text_optional(self) -> None:
         builder = PromptCacheBuilder(system_prompt="static")
-        msgs = builder.build_input_messages("memory", "question")
-        # 不传 kb_text 也不该报错
+        msgs = builder.build_input_messages("", "question")
+        # 不传 kb_text/kg_text/memory 也不该报错, user 消息在最后
         assert msgs[-1].content == "question"
