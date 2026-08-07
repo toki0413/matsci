@@ -59,7 +59,7 @@ jobs:
             --ignore=tests/stress \
             --ignore=tests/loops \
             --ignore=tests/sci_automation_test.py \
-            --maxfail=5 2>&1 | tee pytest_output.txt
+            --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
       - name: Expose failures to step summary

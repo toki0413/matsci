@@ -499,6 +499,11 @@ class TestBioPharmaHooks:
 
 
 class TestToolRegistration:
+    # register_all_tools() 触发 rdkit 导入, CI 上 >60s 超时.
+    # pytest-timeout signal 无法中断 C 扩展导入, 整个 suite 卡住.
+    _skip_ci = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
+    pytestmark = pytest.mark.skipif(_skip_ci, reason="rdkit import hangs on CI")
+
     def test_rdkit_tool_registered(self):
         from huginn.tools.registry import ToolRegistry
         from huginn.tools import register_all_tools
