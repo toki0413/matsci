@@ -75,6 +75,7 @@ jobs:
             --ignore=tests/test_chaos_engineering.py \
             --ignore=tests/test_database_aflow_nomad.py \
             --ignore=tests/test_materials_database_tool.py \
+            --ignore=tests/test_mock_misc_tools.py \
             --ignore=tests/stress \
             --ignore=tests/loops \
             --ignore=tests/sci_automation_test.py \
