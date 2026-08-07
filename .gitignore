@@ -179,6 +179,9 @@ reproduce_quantum_waves.py
 /rcb_batch.py
 /rcb_batch_results.json
 /sab_huginn.py
+/start_server.py
+/judge_helper.py
+/generate_icons.py
 
 # Benchmark run workspaces (runtime outputs, models, data)
 /workspaces/
@@ -350,3 +353,21 @@ _score_run.py
 _test_*.py
 _test_*.txt
 test_report.html
+
+# v19 cleanup: 散落在根/agent 目录的临时文件防回流
+# VASP 输入残留 (测试用 tmp_path 动态创建, 不引用根目录文件)
+agent/INCAR
+# 配置备份
+*.orig
+# 重复/散落脚本 (正式版在 agent/scripts/)
+agent/build_exe.py
+agent/demo_*.py
+# 散落分析报告 (非源码)
+agent/band_gap_stability_analysis.md
+agent/halide_perovskite_model.md
+# 测试服务器输出 / 执行检查点 (运行时产物)
+lammps_server_test/
+test_exec/
+# agent/lammps_traj_test/traj.lammpstrj 是 committed 测试 fixture, 显式保留
+!agent/lammps_traj_test/
+!agent/lammps_traj_test/traj.lammpstrj
