@@ -10,7 +10,6 @@ stubbed — the LLM decision path is never mocked.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -21,8 +20,6 @@ from huginn.autoloop.hypothesis_loop import HypothesisGraph
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.memory.manager import MemoryManager
 from tests.fixtures.fake_llm import make_callable_llm
-
-_skip_ci_run_cognitive = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -112,6 +109,13 @@ def _make_stage_llm():
     return make_callable_llm(respond, name="e2e-stage-llm")
 
 
+async def _noop_maybe_clarify(self, *a, **kw):
+    """Async no-op for _maybe_clarify — avoids ClarificationManager.ask
+    dead-waiting (asyncio.wait_for(future, 60)) on a Future that never
+    gets resolve()'d in the test environment."""
+    return None
+
+
 def _stub_heavy_calls(monkeypatch, fake_llm):
     """Monkeypatch only genuinely heavy / env-dependent pieces.
 
@@ -143,6 +147,9 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
     monkeypatch.setattr("huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None)
     # KG 单例从 conjecture.get_kg 懒加载到 ~/.huginn, CI 上会真写文件污染 home.
     monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
+    # _maybe_clarify("hypothesize_align") → ClarificationManager.ask(timeout=60)
+    # 死等一个测试环境里永不 resolve() 的 Future. patch 成 async no-op.
+    monkeypatch.setattr(AutoloopEngine, "_maybe_clarify", _noop_maybe_clarify)
 
 
 def _bypass_validate_gate():
@@ -196,7 +203,6 @@ def _make_engine(tmp_path, fake_llm, monkeypatch):
 # ── tests ────────────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
 @pytest.mark.asyncio
 async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
     """Drive the full 6-stage pipeline with a FakeLLM — no AsyncMock stubs.
@@ -292,7 +298,6 @@ async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
     assert graph.get(h1).status == "untested"
 
 
-@pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
 @pytest.mark.asyncio
 async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
     """Verify refine_failed produces a parent→child hypothesis relationship.

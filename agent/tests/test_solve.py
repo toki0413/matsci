@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("matplotlib")
+
 import asyncio
 
 import numpy as np
-import pytest
 
 from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext
