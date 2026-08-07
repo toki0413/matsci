@@ -279,7 +279,13 @@ class TestRuntimeApplication:
             "vasp_tool", {"ENCUT": 400}, "electronic convergence failed"
         )
         # _parse_fix_action 保证返回 dict 含 description, 不再合并 tool_input
-        assert fixed == {"ALGO": "Normal", "description": "{'ALGO': 'Normal'}"}
+        # apply_heuristic_fix 在 fix 上额外补 confidence / rule_id
+        assert fixed == {
+            "ALGO": "Normal",
+            "description": "{'ALGO': 'Normal'}",
+            "confidence": 0.0,
+            "rule_id": "fix1",
+        }
 
     def test_apply_heuristic_fix_no_match(self, tmp_path, logger):
         engine = EvolutionEngine(logger)

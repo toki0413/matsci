@@ -254,9 +254,7 @@ class TestPromptCacheBuilderKg:
             cache_control=False,
         )
         msgs = builder.build_input_messages("memory", "question", kg_text="kg context")
-        assert isinstance(msgs[0], type(builder.build_input_messages("", "")[0]))
-        # Memory and KG are both SystemMessages; KG comes after memory.
-        system_msgs = [m for m in msgs if m.__class__.__name__ == "SystemMessage"]
-        assert len(system_msgs) == 2
-        assert system_msgs[0].content == "memory"
-        assert system_msgs[1].content == "kg context"
+        # memory/kg 合并进单条 HumanMessage, 格式: memory\n\nkg\n\n---\n\nquestion
+        last = msgs[-1]
+        assert last.__class__.__name__ == "HumanMessage"
+        assert last.content == "memory\n\nkg context\n\n---\n\nquestion"

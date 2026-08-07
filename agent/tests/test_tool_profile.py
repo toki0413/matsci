@@ -43,6 +43,11 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "dynamics_discovery_tool",
         "rdkit_tool",
         "inverse_design_tool",
+        "discrete_smt",
+        "discrete_oeis",
+        "sklearn_tool",
+        "discrete_additive",
+        "discrete_group",
     },
     ResearchPhase.PLANNING: _CORE_TOOLS | {
         "structure_tool",
@@ -86,6 +91,9 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "thermo_tool",
         "openmm_tool",
         "vina_tool",
+        "vae_tool",
+        "gnn_tool",
+        "pybamm_tool",
     },
     ResearchPhase.VALIDATION: _CORE_TOOLS | {
         "validate_tool",
@@ -114,6 +122,13 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "msm_tool",
         "motif_mining_tool",
         "consensus_scoring_tool",
+        "discrete_smt",
+        "transformer_tool",
+        "discrete_oeis",
+        "sklearn_tool",
+        "discrete_additive",
+        "pytorch_train_tool",
+        "discrete_group",
     },
     ResearchPhase.REPORTING: _CORE_TOOLS | {
         "report_tool",
@@ -148,6 +163,8 @@ _FROZEN_HEAVY_TOOLS: set[str] = {
     "convergence_test_tool",
     "openmm_tool",
     "vina_tool",
+    "vae_tool",
+    "gnn_tool",
 }
 
 _FROZEN_LIGHT_TOOLS: set[str] = {
@@ -180,6 +197,7 @@ _FROZEN_LIGHT_TOOLS: set[str] = {
     "msm_tool",
     "motif_mining_tool",
     "consensus_scoring_tool",
+    "sklearn_tool",
 }
 
 _FROZEN_LIGHT_ALTERNATIVES: dict[str, list[str]] = {

@@ -226,14 +226,16 @@ def test_full_context_injection_order():
         session_state=state,
     )
 
-    # The last message must be the user message
+    # The last message must be the user message (ctx block is now merged
+    # into it as "{ctx_text}\n\n---\n\n{user_message}", so check the tail)
     assert isinstance(messages[-1], HumanMessage)
-    assert messages[-1].content == "current user message"
+    assert messages[-1].content.endswith("current user message")
 
-    # Find the cognitive prompt message
-    cognitive_msgs = [m for m in messages if isinstance(m, SystemMessage) and "Cognitive Mode" in m.content]
+    # Find the cognitive prompt message — now merged into the user
+    # HumanMessage instead of being a separate SystemMessage
+    cognitive_msgs = [m for m in messages if "Cognitive Mode" in getattr(m, "content", "")]
     assert len(cognitive_msgs) > 0
 
-    # Find the L1 coordinates message
-    l1_msgs = [m for m in messages if isinstance(m, SystemMessage) and "Structural Coordinates" in m.content]
+    # Find the L1 coordinates message — also merged into the user HumanMessage
+    l1_msgs = [m for m in messages if "Structural Coordinates" in getattr(m, "content", "")]
     assert len(l1_msgs) > 0
