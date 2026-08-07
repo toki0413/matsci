@@ -52,7 +52,9 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: |
           cd agent
-          python -m pytest -v -rA --tb=line --cov-fail-under=40 --timeout=60 -m "not network" \
+          python -m pytest -v -rA --tb=line --cov-fail-under=40 \
+            --timeout=60 --timeout-method=thread \
+            -n auto -m "not network" \
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
             --ignore=tests/test_chaos_engineering.py \
