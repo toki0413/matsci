@@ -39,12 +39,13 @@ jobs:
       - name: Add swap to prevent OOM
         # 4700+ 测试串行/并行运行时, 单个 worker 跑到 ~3000 测试后内存累积
         # 耗尽 runner 的 7GB RAM (MemoryError at 65%). 6GB swap 让虚拟内存
-        # 达到 13GB, 虽然比 RAM 慢但避免 OOM kill. swap 在测试结束后自动释放.
+        # 达到 13GB, 虽然比 RAM 慢但避免 OOM kill. 用 /swapfile-ci 避开系统
+        # 默认的 /swapfile (fallocate 会报 "Text file busy").
         run: |
-          sudo fallocate -l 6G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 6G /swapfile-ci
+          sudo chmod 600 /swapfile-ci
+          sudo mkswap /swapfile-ci
+          sudo swapon /swapfile-ci
           free -h
 
       - name: Run tests
