@@ -49,6 +49,8 @@ _hide_docs = (
 
 _PUBLIC_PATHS: set[str] = {
     "/health",
+    "/health/live",
+    "/health/ready",
     "/ready",
     "/health/rust",
     "/health/guidance",
