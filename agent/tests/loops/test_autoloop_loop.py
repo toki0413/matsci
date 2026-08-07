@@ -93,6 +93,13 @@ def _make_stage_llm(plan_fn=None):
     return make_callable_llm(respond, name="loop-test-llm")
 
 
+async def _noop_maybe_clarify(self, *a, **kw):
+    """Async no-op for _maybe_clarify — avoids ClarificationManager.ask
+    dead-waiting (asyncio.wait_for(future, 60)) on a Future that never
+    gets resolve()'d in the test environment."""
+    return None
+
+
 def _stub_heavy_calls(monkeypatch, fake_llm):
     monkeypatch.setattr("huginn.autoloop.engine.get_model", lambda settings: fake_llm)
     monkeypatch.setattr("huginn.autoloop.engine.BenchmarkRunner", lambda: _StubBenchRunner())
@@ -109,6 +116,9 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
     # KG 单例从 conjecture.get_kg 懒加载到 ~/.huginn, CI 上会真写文件污染 home.
     # get_kg 返回 None 时 _persist_to_kg/_fetch_domain_context 都安全跳过.
     monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
+    # _maybe_clarify("hypothesize_align") → ClarificationManager.ask(timeout=60)
+    # 死等一个测试环境里永不 resolve() 的 Future. patch 成 async no-op.
+    monkeypatch.setattr(AutoloopEngine, "_maybe_clarify", _noop_maybe_clarify)
 
 
 def _bypass_validate_gate():

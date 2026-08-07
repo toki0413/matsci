@@ -19,7 +19,6 @@ ponytail: 不调真 LLM (FakeLLM callable 按关键词路由), 不真起 Subagen
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -39,9 +38,6 @@ from tests.test_autoloop_e2e import (
     _restore_gate,
     _stub_heavy_calls,
 )
-
-_skip_ci_run_cognitive = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
-pytestmark = pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
 
 
 def _make_engine_with_flags(

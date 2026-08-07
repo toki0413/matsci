@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("PIL")
+
 import io
 from pathlib import Path
 from typing import Any
 
-import pytest
 from PIL import Image
 
 from huginn.knowledge import ocr_loader

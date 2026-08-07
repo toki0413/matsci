@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
+
+pytest.importorskip("matplotlib")
+
+import asyncio
 
 from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("matplotlib")
+
 import asyncio
 import json
 import tempfile
 from pathlib import Path
-
-import pytest
 from click.testing import CliRunner
 
 from huginn import visualize as evo_viz
