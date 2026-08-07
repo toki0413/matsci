@@ -459,6 +459,7 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         self._metacog_block_registry = None
         self._metacog_method_registry = None
         self._metacog_last_audit = None  # 最近一次等价性审计结果, 给 learn 用
+        self._metacog_last_topology = None  # 最近一次同调/拓扑审计 (sheaf H¹/Betti/Hodge)
         # 过早收敛检测: agent 想提前返回时过一遍 effort floor, 未达标强制继续
         self._metacog_convergence_detector = None
         # 反完成审计: 综合 effort floor + 等价性陷阱 + 不完整性自白
