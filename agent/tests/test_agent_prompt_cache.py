@@ -159,12 +159,16 @@ class TestHuginnAgentPromptCache:
             assert isinstance(msgs[1], AIMessage)
             assert msgs[1].content == "hi there"
             # G36: memory/kg/kb 合并进最后一条 user message, 不再单独插
-            # SystemMessage. 命中检索的 memory 应当出现在最后一条消息里.
-            assert isinstance(msgs[-1], HumanMessage)
-            assert "hcp structure" in msgs[-1].content
-            # The last message must carry the current user input (the memory
+            # SystemMessage. 注意 chat() 会在尾部追加 ctx_tool_budget 预算
+            # 感知 SystemMessage (P0-3 假耗尽), 所以 user 消息不是 -1 索引;
+            # 用类型过滤定位它, 避免与注入的系统消息耦合.
+            user_msgs = [m for m in msgs if isinstance(m, HumanMessage)]
+            last_user = user_msgs[-1]
+            assert isinstance(last_user, HumanMessage)
+            assert "hcp structure" in last_user.content
+            # The user message must carry the current user input (the memory
             # block is prepended to it, so the user text sits at the tail).
-            assert msgs[-1].content.endswith("compute stress for Ti")
+            assert last_user.content.endswith("compute stress for Ti")
 
     def test_memory_recall_uses_current_query(self):
         with tempfile.TemporaryDirectory() as tmp:
