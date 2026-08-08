@@ -539,7 +539,11 @@ class GaussianTool(HuginnTool):
                 "Gaussian executable not found. Results are MOCK data for demonstration."
             ],
         )
-        return ToolResult(data=output.model_dump(), success=True)
+        return ToolResult(
+            data=output.model_dump(),
+            success=True,
+            metadata={"mock": True, "mock_reason": "gaussian_executable_not_found"},
+        )
 
     @staticmethod
     def _get_returncode(sb_result: Any) -> int:

@@ -1003,6 +1003,7 @@ class VaspTool(HuginnTool):
             data=data,
             success=True,
             error=None,
+            metadata={"mock": True, "mock_reason": "vasp_executable_not_found"},
         )
 
     def _uq_hint(self) -> dict[str, Any]:
