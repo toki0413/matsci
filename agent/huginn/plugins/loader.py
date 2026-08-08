@@ -78,8 +78,11 @@ class PluginLoader:
 
     def __post_init__(self) -> None:
         if self.registry is None:
-            from huginn.plugins.registry import StarHandlerRegistry
-            self.registry = StarHandlerRegistry()
+            # 必须用共享 registry 单例: EventBus (plugins/event_bus.py) 默认
+            # 也用 get_shared_registry(), 否则 handler 注册到 A、事件从 B
+            # 发出, 永远碰不上 (注释见 registry.py:118-121).
+            from huginn.plugins.registry import get_shared_registry
+            self.registry = get_shared_registry()
         if self.permission_checker is None:
             self.permission_checker = PermissionChecker()
 

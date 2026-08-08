@@ -774,6 +774,20 @@ class SimulationPipeline:
                 ))
 
         self._latest = suggestions
+        # 内部事件总线: 发布 pipeline.stage_change 字符串事件 (best-effort)
+        # suggest_next 是 stage 推进点, 每条 suggestion 对应一个 next_stage.
+        for _s in suggestions:
+            try:
+                from huginn.events.integration import (
+                    publish_pipeline_event_sync,
+                )
+                publish_pipeline_event_sync(
+                    _s.description, thread_id="", stage=_s.stage.value,
+                )
+            except Exception:
+                logger.debug(
+                    "pipeline event publish failed (non-fatal)", exc_info=True
+                )
         return suggestions
 
     def affordance(self) -> list[PipelineSuggestion]:
