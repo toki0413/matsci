@@ -217,6 +217,12 @@ class PluginLoader:
                     asyncio.run(coro)
         except Exception as e:
             logger.exception("on_load of %s failed: %s", meta.name, e)
+            # ON_PLUGIN_ERROR: 插件加载失败时 dispatch, 之前声明了但从不发.
+            from huginn.api.event import EventType
+            self._try_dispatch_plugin_event(
+                EventType.ON_PLUGIN_ERROR, meta.name,
+                data={"phase": "on_load", "error": str(e)[:200]},
+            )
 
         self._loaded[meta.name] = LoadedPlugin(
             metadata=meta, instance=instance, module=module, plugin_dir=plugin_dir
@@ -303,6 +309,12 @@ class PluginLoader:
                     asyncio.run(coro)
         except Exception as e:
             logger.exception("on_unload of %s failed: %s", plugin_name, e)
+            # ON_PLUGIN_ERROR: 插件卸载失败时也 dispatch.
+            from huginn.api.event import EventType
+            self._try_dispatch_plugin_event(
+                EventType.ON_PLUGIN_ERROR, plugin_name,
+                data={"phase": "on_unload", "error": str(e)[:200]},
+            )
 
         self.registry.unregister_plugin(plugin_name)
         self.permission_checker.unregister(plugin_name)

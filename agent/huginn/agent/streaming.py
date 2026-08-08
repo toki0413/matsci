@@ -1209,6 +1209,21 @@ class StreamingMixin:
         ) as turn_span:
             graph = self.build_graph()
 
+            # ON_MESSAGE_RECEIVED: 用户消息到达时 dispatch, 之前 MessageEvent 声明了
+            # 但从不实例化, command/command_group 装饰器注册的 handler 永远收不到.
+            try:
+                from huginn.api.event import Event, EventType, MessageEvent
+                from huginn.plugins.event_bus import EventBus as _PluginBus
+                _msg_bus = _PluginBus()
+                await _msg_bus.dispatch(MessageEvent(
+                    type=EventType.ON_MESSAGE_RECEIVED,
+                    text=message[:2000],
+                    session_id=thread_id,
+                    data={"thread_id": thread_id},
+                ))
+            except Exception:
+                logger.debug("ON_MESSAGE_RECEIVED dispatch failed (non-fatal)", exc_info=True)
+
             prompt_ctx = HookContext(
                 tool_name="user_prompt",
                 metadata={
@@ -1523,6 +1538,33 @@ class StreamingMixin:
                     self._state_msg_offsets[thread_id] = len(existing_msgs)
                 except Exception:
                     logger.debug("checkpointer state fetch skipped", exc_info=True)
+
+            # ON_LLM_REQUEST + ON_BEFORE_MESSAGE_SENT: LLM 调用前 dispatch.
+            # LLMRequestEvent / 这两个消息事件之前声明了但从不实例化, handler 收不到.
+            try:
+                from huginn.api.event import EventType, LLMRequestEvent, MessageEvent
+                from huginn.plugins.event_bus import EventBus as _PluginBus
+                _llm_bus = _PluginBus()
+                _sys_prompt = ""
+                for m in messages:
+                    if isinstance(m, SystemMessage):
+                        _sys_prompt = m.content if isinstance(m.content, str) else str(m.content)
+                        break
+                await _llm_bus.dispatch(LLMRequestEvent(
+                    type=EventType.ON_LLM_REQUEST,
+                    system_prompt=_sys_prompt[:500],
+                    messages=[{"role": "user", "text": message[:500]}],
+                    model=getattr(self, "model_name", ""),
+                    data={"thread_id": thread_id},
+                ))
+                await _llm_bus.dispatch(MessageEvent(
+                    type=EventType.ON_BEFORE_MESSAGE_SENT,
+                    session_id=thread_id,
+                    data={"thread_id": thread_id, "phase": "pre_stream"},
+                ))
+            except Exception:
+                logger.debug("ON_LLM_REQUEST/ON_BEFORE_MESSAGE_SENT dispatch failed (non-fatal)", exc_info=True)
+
             try:
                 attempt = 0
                 while attempt < max_retries:
@@ -1776,6 +1818,25 @@ class StreamingMixin:
                         yield {"_auto_continue": True}
 
                     ai_content = self._extract_last_ai_content(final_state)
+                    # ON_LLM_RESPONSE + ON_AFTER_MESSAGE_SENT: LLM 响应后 dispatch.
+                    # 之前 LLMResponseEvent 声明了但从不实例化, on_llm_response handler 收不到.
+                    try:
+                        from huginn.api.event import EventType, LLMResponseEvent, MessageEvent
+                        from huginn.plugins.event_bus import EventBus as _PluginBus
+                        _resp_bus = _PluginBus()
+                        await _resp_bus.dispatch(LLMResponseEvent(
+                            type=EventType.ON_LLM_RESPONSE,
+                            reply=ai_content[:2000],
+                            data={"thread_id": thread_id},
+                        ))
+                        await _resp_bus.dispatch(MessageEvent(
+                            type=EventType.ON_AFTER_MESSAGE_SENT,
+                            text=ai_content[:2000],
+                            session_id=thread_id,
+                            data={"thread_id": thread_id, "phase": "post_stream"},
+                        ))
+                    except Exception:
+                        logger.debug("ON_LLM_RESPONSE/ON_AFTER_MESSAGE_SENT dispatch failed (non-fatal)", exc_info=True)
                     if ai_content:
                         # OAK 启发: ai 消息写进 ConversationTree
                         try:
