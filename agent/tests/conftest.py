@@ -23,7 +23,13 @@ os.environ.setdefault("HUGINN_HPC_HOST", "testhost")
 os.environ.setdefault("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
 # Redirect ~/.huginn writes to a test-local dir so tool_cache.sqlite and
 # memory.db don't fail with "unable to open database file" in sandboxed envs.
-_TEST_CACHE_DIR = str(Path(__file__).parent / ".test_cache")
+# Give each xdist worker its own subdir: both workers importing
+# test_phase3_database_tool.py at collection time opens SQLite in the
+# cache dir — sharing one dir causes "database is locked" → xdist
+# collection mismatch. Per-worker dirs eliminate the contention.
+_worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
+_TEST_CACHE_DIR = str(Path(__file__).parent / ".test_cache" / _worker_id)
+Path(_TEST_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("HUGINN_CACHE_DIR", _TEST_CACHE_DIR)
 
 
@@ -83,10 +89,13 @@ def pytest_configure(config):
 
 
 def _is_disk_io_flaky(exc) -> bool:
-    """True if the exc is the CI runner's transient sqlite3 disk I/O error."""
+    """True if the exc is a CI runner transient sqlite3 I/O / lock error."""
     import sqlite3
 
-    return isinstance(exc, sqlite3.OperationalError) and "disk I/O" in str(exc)
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    msg = str(exc)
+    return "disk I/O" in msg or "database is locked" in msg
 
 
 @pytest.hookimpl(hookwrapper=True)
