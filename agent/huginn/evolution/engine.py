@@ -28,6 +28,30 @@ MAX_RULES = 100
 _CONFIDENCE_FLOOR = 0.3
 
 
+def _recompute_confidence(rule: EvolutionRule) -> float:
+    """根据应用效果重算 confidence, 而非只看失败次数.
+
+    之前 confidence = min(0.5 + count*0.1, 0.95) 只随失败次数涨,
+    一条被 LLM 永远忽略的规则失败够多次也能到 0.95, 永不淘汰.
+
+    新策略 (效果反馈):
+      - 基线随失败次数涨 (保留原行为, 避免回归)
+      - usage_count > 0 且 success_count == 0: 规则被注入但从未真正帮上忙 → 降权
+      - usage_count > 0 且 success_count > 0: 规则真的有效 → 加权
+      - 结果夹在 [0.1, 0.98] 之间, 仍受 _CONFIDENCE_FLOOR 约束 (prune 时踢)
+    """
+    base = 0.5 + getattr(rule, "usage_count", 0) * 0.05
+    if rule.usage_count > 0:
+        if rule.success_count == 0:
+            # 被注入过但从未验证有效 — 降到基线以下, 让 prune 有机会淘汰
+            base *= 0.5
+        else:
+            # 应用成功率加权 (success/usage, 上限 +0.3)
+            success_rate = rule.success_count / max(rule.usage_count, 1)
+            base += min(success_rate * 0.3, 0.3)
+    return max(0.1, min(base, 0.98))
+
+
 @dataclass
 class EvolutionRule:
     """A learned rule for improving agent behavior."""
@@ -169,7 +193,14 @@ class EvolutionEngine:
         }
 
     def _prune_rules(self) -> None:
-        """Evict stale rules: drop confidence < floor, then enforce MAX_RULES."""
+        """Evict stale rules: drop confidence < floor, then enforce MAX_RULES.
+
+        修剪前先重算每条规则的 confidence, 让 usage_count 高但 success_count=0
+        (被注入却从未真正有效) 的规则被降权淘汰, 而不是靠失败次数一直挂着.
+        """
+        for rule in self.rules:
+            if rule.usage_count > 0:
+                rule.confidence = _recompute_confidence(rule)
         self.rules = [r for r in self.rules if r.confidence >= _CONFIDENCE_FLOOR]
         if len(self.rules) > MAX_RULES:
             self.rules.sort(key=lambda r: r.confidence, reverse=True)
@@ -530,7 +561,8 @@ class EvolutionEngine:
 
         Called from reflection after each tool result. If the tool that
         previously failed now succeeds, increment success_count on the
-        rule that was applied.
+        rule that was applied. 同时重算 confidence, 让应用效果反馈进来
+        (之前 confidence 只随失败次数涨, 被忽略的规则也能到 0.95).
         """
         if not succeeded:
             self._pending_fix_tool = None
@@ -541,6 +573,7 @@ class EvolutionEngine:
             for rule in self.rules:
                 if rule.rule_id == rid:
                     rule.success_count += 1
+                    rule.confidence = _recompute_confidence(rule)
                     self._save_rules()
                     break
         self._pending_fix_tool = None
