@@ -224,6 +224,12 @@ class CognitiveLoop:
         state = initial_state or LoopState(max_iterations=self._max_iterations)
         state.max_iterations = self._max_iterations
 
+        # ON_WORKFLOW_BEGIN: 之前只发 stage 级事件, workflow 整体首尾缺失.
+        try:
+            await self._dispatch_stage_event(EventType.ON_WORKFLOW_BEGIN, "workflow_start")
+        except Exception:
+            logger.debug("ON_WORKFLOW_BEGIN dispatch failed (non-fatal)", exc_info=True)
+
         while state.iteration < state.max_iterations and not state.should_stop:
             state.iteration += 1
             logger.info("CognitiveLoop iter %d/%d", state.iteration, state.max_iterations)
@@ -343,6 +349,12 @@ class CognitiveLoop:
             if decision.action == "stop":
                 state.should_stop = True
                 break
+
+        # ON_WORKFLOW_DONE: 与 ON_WORKFLOW_BEGIN 对称, workflow 结束时发一次.
+        try:
+            await self._dispatch_stage_event(EventType.ON_WORKFLOW_DONE, "workflow_done")
+        except Exception:
+            logger.debug("ON_WORKFLOW_DONE dispatch failed (non-fatal)", exc_info=True)
 
         return state
 
