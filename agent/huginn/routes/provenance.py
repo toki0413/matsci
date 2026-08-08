@@ -7,7 +7,7 @@ The registry is a process-wide singleton (ProvenanceRegistry.shared()).
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from huginn.provenance.registry import ProvenanceRegistry
 
@@ -16,6 +16,17 @@ router = APIRouter(prefix="/provenance", tags=["provenance"])
 
 def _registry() -> ProvenanceRegistry:
     return ProvenanceRegistry.shared()
+
+
+def _registry_or_503() -> ProvenanceRegistry:
+    """Return the shared registry, or 503 if it cannot be initialised."""
+    try:
+        return ProvenanceRegistry.shared()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"provenance registry unavailable: {exc}",
+        )
 
 
 @router.get("")
@@ -112,5 +123,133 @@ async def cleanup(days: int = 30):
     try:
         deleted = _registry().cleanup_old(days)
         return {"success": True, "data": {"deleted": deleted}}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+# ── Event-sourcing read/replay API ──────────────────────────────
+# These expose ProvenanceRegistry's event-sourcing surface so the
+# event store is no longer an orphan module with no callers.
+
+
+@router.get("/events")
+async def events(since_id: int = 0, limit: int = 100, tool: str = ""):
+    """Event-sourcing tail: events after ``since_id`` in chronological order.
+
+    ``tool`` filters by producer; an empty value means no filter.
+    """
+    try:
+        reg = _registry_or_503()
+        entries = reg.get_events(since_id=since_id, limit=limit, tool=(tool or None))
+        return {"success": True, "data": [e.to_dict() for e in entries]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.get("/events/{event_id}")
+async def event(event_id: int):
+    """Fetch a single event by id. 404 when the id does not exist."""
+    try:
+        reg = _registry_or_503()
+        entry = reg.get_event(event_id)
+        if entry is None:
+            raise HTTPException(
+                status_code=404, detail=f"event {event_id} not found"
+            )
+        return {"success": True, "data": entry.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.get("/replay/{target_id}")
+async def replay(target_id: int):
+    """Replay every event from the beginning up to ``target_id`` (inclusive)."""
+    try:
+        reg = _registry_or_503()
+        entries = reg.replay_to(target_id)
+        return {"success": True, "data": [e.to_dict() for e in entries]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.get("/version")
+async def version():
+    """Current version clock (max event id) for optimistic concurrency."""
+    try:
+        reg = _registry_or_503()
+        return {"success": True, "data": reg.current_version()}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.get("/by_seed")
+async def by_seed(seed: int):
+    """Find events produced with a given random seed (reproducibility check)."""
+    try:
+        reg = _registry_or_503()
+        entries = reg.find_by_seed(seed)
+        return {"success": True, "data": [e.to_dict() for e in entries]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.get("/by-property")
+async def by_property(key: str, value: str = ""):
+    """Find entries by ``key_properties[key] == value`` (empty value → any)."""
+    try:
+        reg = _registry_or_503()
+        # value 是查询参数, 空串表示 "只要包含这个 key 就行", 对齐
+        # registry.find_by_property 的 value=None 语义.
+        entries = reg.find_by_property(key, value if value else None)
+        return {"success": True, "data": [e.to_dict() for e in entries]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.get("/skills-snapshot")
+async def skills_snapshot():
+    """Latest skill-manifest snapshot written by ``snapshot_skills``.
+
+    Pairs with the write side in ``plugins/science_skills_bridge.py`` so the
+    snapshot is no longer write-only — agents/UI can read it back to compare
+    the live skill set against the last recorded version.
+    """
+    try:
+        reg = _registry_or_503()
+        skills = reg.load_skills_snapshot()
+        return {"success": True, "data": skills}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@router.post("/revert/{version}")
+async def revert(version: int):
+    """Roll the registry back to ``version`` (write op → POST).
+
+    Returns the list of file paths affected by the revert.
+    """
+    try:
+        reg = _registry_or_503()
+        reverted_paths = reg.revert_to_version(version)
+        return {
+            "success": True,
+            "data": {"version": version, "reverted_paths": reverted_paths},
+        }
+    except HTTPException:
+        raise
     except Exception as exc:
         return {"success": False, "error": str(exc)}

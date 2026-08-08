@@ -63,12 +63,17 @@ class Event:
 
     handler 可以设 stop_propagation=True 阻断后续低优先级 handler,
     但不能阻断已经执行的 —— 优先级由 registry 决定, 不是事件自己决定。
+
+    data: 任意载荷, 给"无对应子类的 EventType"用 (见文件头注释:
+    "其他事件直接用 base Event + data 字段塞东西"). 之前基类缺这个字段,
+    导致 checkpoint 等事件只能传 dict 给 dispatch 而 silent broken.
     """
 
     type: EventType
     plugin_name: str = ""        # 触发来源 (空表示核心引擎)
     timestamp: datetime = field(default_factory=datetime.now)
     stop_propagation: bool = False
+    data: dict[str, Any] = field(default_factory=dict)
 
     def stop(self) -> None:
         """让事件分发跳过后续低优先级 handler。"""
