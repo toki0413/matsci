@@ -269,6 +269,10 @@ from huginn.metacog.topology_lens import (
     diagnose,
 )
 from huginn.metacog.signal_hub import SignalHub
+from huginn.metacog.selection_bias import (
+    SelectionBiasVerdict,
+    detect_selection_bias,
+)
 
 __all__ = [
     "recall_context",
@@ -314,4 +318,7 @@ __all__ = [
     "diagnose",
     # SignalHub (G17)
     "SignalHub",
+    # 选择偏差检测
+    "SelectionBiasVerdict",
+    "detect_selection_bias",
 ]

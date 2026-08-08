@@ -1453,6 +1453,29 @@ class StreamingMixin:
             self._tool_adapter.set_budget(turn_budget)
             turn_router = ToolCallRouter(budget=turn_budget)
             self._tool_adapter.set_router(turn_router)
+            # 预算感知: 让 LLM 一开始就知道本轮预算上限与重置语义, 避免
+            # 把预算耗尽误判成"死刑"而提前交卷 (路线图 P0-3 假耗尽). 
+            # 放在 inputs 尾部、用固定 id 替换旧消息, 不碰缓存的 system_prompt,
+            # 也不让预算消息在历史里层层累积.
+            try:
+                _bs = turn_budget.status()
+                _budget_msg = SystemMessage(
+                    content=(
+                        "## Tool Call Budget\n"
+                        f"- This turn: {_bs['total_calls']}/{_bs['max_calls']} tool calls used/allowed "
+                        f"(per-tool cap {_bs['max_per_tool']}).\n"
+                        "- Budget is per turn and resets on the next turn. Exhausting it is "
+                        "NOT game over — wrap up or switch tools, don't abandon the task."
+                    ),
+                    id="ctx_tool_budget",
+                )
+                _msgs = list(inputs.get("messages", []))
+                _msgs = [
+                    m for m in _msgs if getattr(m, "id", None) != "ctx_tool_budget"
+                ]
+                inputs["messages"] = _msgs + [_budget_msg]
+            except Exception:
+                logger.debug("budget injection skipped", exc_info=True)
             # AV5: 默认 skip — ToolLoopDetector + ThoughtLoopDetector 在长任务 (RCB 或
             # 真实研究) 都会误判: agent 反复跑 code_tool 是正常, 写报告反复用术语
             # ("band gap"/"MAE") Jaccard > 0.85 也正常. 升级: mode-aware detector,
