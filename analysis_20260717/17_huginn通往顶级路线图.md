@@ -586,3 +586,35 @@ C6 通过 → **N6 gate 解除**：分数可接入进化/强化回路（D2 bench
 - C6/C7 是**机制层修复**，验收对象是评测链路卫生 + 控制流一致性，不是 agent 跑分。
 - 能力问题（执行弱 / 无基线闸门）已明确定位根因，属 C8/C9 后续范围，不阻塞本次验收。
 - N6 gate 已解除，但接入进化回路前应先完成异源 judge 实测，避免 reward hacking 制度化。
+
+---
+
+## 附 E：RCB 定制化下沉方案（2026-08-09）
+
+**触发**：CausalGame 接入后，用户指出"agent 并非为 RCB 定制，RCB 只是查漏补缺手段之一"。逐项核查 `rcb_runner.py` / `rcb_huginn.py` 的定制逻辑，发现"高度定制化"是三种性质不同东西的混合，多数不是污染。
+
+### E.1 三类定制化分层
+
+| 类别 | 实例 | 性质 | 处置 |
+|------|------|------|------|
+| ① 环境场景适配 | `rcb_huginn.py:40-99` 路径重定向、关熔断/关fork、缓存重定向 | 被测系统运行环境适配，不改变能力 | 归并为共享 benchmark 环境适配入口，剥 `RCB_` 前缀 |
+| ② 通用认知机制误放 runner | `rcb_runner.py:1134-1173` HypothesisManifold / MCMC / abductive inference / posterior hint / 跨任务 memory | 通用引擎被接线在单一 runner，用 `SimpleNamespace` 模拟 engine（`rcb_runner.py:1147`"不接 AutoloopEngine"） | **下沉到 core 主循环（真正的病）** |
+| ③ benchmark 业务 | PHASED PROTOCOL、RCB_DELIVERABLES、rubric、`_RCB_STEP1_NEVER` 工具黑名单 | benchmark 领域语义，合法 | 留在 benchmark 适配层 |
+
+### E.2 真实病根与解法
+
+RCB"定制化"的核心不是 setdefault 环境补丁（无害），而是 **②通用认知引擎被临时接线在单一 runner**。同一引擎（`hypothesis_manifold.py` 等）在 core 存在，却没进 core 主循环，导致 CausalGame / SAB / 真实科研任务全部用不上。
+
+解法与 CausalGame 下沉同哲学：**接线下沉，不是去定制化**。
+
+| # | 动作 | 落点 | 判据 |
+|---|------|------|------|
+| E2-1 | HypothesisManifold/MCMC/abduction 初始化与调用从 `rcb_runner.py` 迁到 core 主循环（AutoloopEngine 或 agent 主循环），删 SimpleNamespace 绕行 | `agent/huginn/autoloop/engine.py` / `agent/huginn/agent/core.py`；`rcb_runner.py:1134-1173,1813,2057` | RCB 由宿主退化消费者；CausalGame/SAB 可不改 runner 即继承 |
+| E2-2 | 跨任务 memory / posterior hint 入口从 `HUGINN_RCB_CROSS_TASK*` 泛化，复用 core 已有 `_cross_task/` 共享 db + curiosity 闭环 | `rcb_runner.py:1192-1195,2504,4943-4952` | 泛化配置，非 RCB 专属 |
+| E2-3 | ①环境补丁归并为共享入口，剥前缀 | `rcb_runner.py:57-135`、`rcb_huginn.py:40-99` | 各 benchmark 复用同一入口，无重复 setdefault |
+
+### E.3 前置约束
+
+- E2-1 是核心运行循环改动，属高风险，须先固化行为基线：迁移前后 RCB 同任务重跑分数**单调不降**（对齐路线图 P2 判据 7 口径）。
+- 遵循 N9（不再新增评测特供补丁）：下沉后 rcb_runner 不应再出现新的 `SimpleNamespace` 绕行或 `_RCB_*` 专属机制。
+- ②是"接线"不是"新增"：引擎已存在，只移接入点，不扩模块（对齐 N1/N2）。
