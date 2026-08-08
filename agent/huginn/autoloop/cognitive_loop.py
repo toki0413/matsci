@@ -72,6 +72,33 @@ def _extract_tests_passed(validation: Any) -> bool:
     return True
 
 
+def _derive_light_on_track(action: str, cog: dict) -> str:
+    """Loop: 每轮轻量 on_track 派生 — 不限 validate, 用机械信号.
+
+    返回 "true" / "false" / "unsure", 供连续偏移累积检测. 不调 LLM
+    (轻量), 单轮无产出的硬 redirect 由 reflect_fn 现有逻辑处理, 这里
+    只补一个跨轮累积信号给 decider 预警 "有产出但连续无实质进展".
+
+    - observe:  有 observation 上下文 → true, 否则 unsure (observe 很难判失败)
+    - hypothesize: 有 hypothesis → true, 无 → false
+    - plan:     有 plan → true, 无 → false
+    - execute:  有 execution_result → true, 无 → false
+    - validate: tests_passed → true, 否则 false (复用 _extract_tests_passed)
+    - learn/pivot/skip/stop: unsure (非产出型 action)
+    """
+    if action == "observe":
+        return "true" if cog.get("context") else "unsure"
+    if action == "hypothesize":
+        return "true" if cog.get("hypothesis") else "false"
+    if action == "plan":
+        return "true" if cog.get("plan") else "false"
+    if action == "execute":
+        return "true" if cog.get("execution_result") is not None else "false"
+    if action == "validate":
+        return "true" if _extract_tests_passed(cog.get("validation")) else "false"
+    return "unsure"
+
+
 def _snapshot_structure_desc(cog: dict) -> list[float]:
     """从 cog 提取结构描述符, 缺失填 16 维全 0.
 
@@ -171,6 +198,7 @@ class CognitiveLoop:
         max_iterations: int = 20,
         max_repeated_actions: int = 3,  # 死循环防护: 连续重复 action 超过此数 → stop
         turn_timeout: float | None = None,  # P4-3: 单 turn 超时 (秒), None 不限时
+        on_execute_failure: Callable[[LoopState, ActionDecision, BaseException], None] | None = None,
     ) -> None:
         self._observe = observe_fn
         self._decide = decide_fn
@@ -182,6 +210,10 @@ class CognitiveLoop:
         # P4-3: TurnEngine 特性 — turn 级超时. execute 钩子最可能卡住 (DFT/MD 计算),
         # 超时后跳过该 turn, 不阻塞后续. None 时向后兼容 (不限时).
         self._turn_timeout = turn_timeout
+        # Infra: execute 失败恢复钩子. 调用方可注入 provenance rollback / 状态回滚.
+        # 内核只负责在 execute 抛异常时通知, 不绑定具体恢复策略 (rcb_runner 不传,
+        # autoloop 传 provenance rollback). 回调内异常被吞 (恢复失败不能比原失败更糟).
+        self._on_execute_failure = on_execute_failure
 
     async def run(self, initial_state: LoopState | None = None) -> LoopState:
         """主循环: observe → decide → execute → reflect, 直到 should_stop 或 max_iter.
@@ -276,10 +308,12 @@ class CognitiveLoop:
                     f"turn timeout: {decision.action} 超过 {self._turn_timeout}s"
                 )
                 state.should_redirect = True
+                self._notify_execute_failure(state, decision, e)
             except Exception as e:
                 logger.warning("execute_action '%s' failed: %s", decision.action, e)
                 state.last_action_result = None
                 # 失败不阻塞, 让 reflect 评估
+                self._notify_execute_failure(state, decision, e)
 
             # 4. reflect — 评估上轮, 决定是否继续/换方向/停
             try:
@@ -311,6 +345,24 @@ class CognitiveLoop:
                 break
 
         return state
+
+    def _notify_execute_failure(
+        self, state: LoopState, decision: ActionDecision, exc: BaseException
+    ) -> None:
+        """execute 失败时通知注入的恢复回调 (如 provenance rollback).
+
+        回调内异常被吞掉 — 恢复失败不能比原失败更糟, 内核仍走原 redirect 路径.
+        无回调 (rcb_runner 路径) 时 no-op, 完全向后兼容.
+        """
+        if self._on_execute_failure is None:
+            return
+        try:
+            self._on_execute_failure(state, decision, exc)
+        except Exception as recover_exc:
+            logger.warning(
+                "on_execute_failure recovery failed for '%s' (non-fatal): %s",
+                decision.action, recover_exc, exc_info=True,
+            )
 
     @staticmethod
     def _count_repeated_tail(history: list[str]) -> int:
@@ -2134,6 +2186,51 @@ Respond JSON only:
             tool_calls=_tool_calls,
         )
 
+    # ── Infra: provenance rollback 接入 Loop 失败恢复 ──────────────
+    # 工具异常改坏文件时, 回滚到 execute 前的 provenance 版本, 让下轮从干净
+    # 状态重试. 只对 execute action 回滚 (observe/hypothesize/plan/validate
+    # 不改文件). feature flag HUGINN_LOOP_ROLLBACK 默认开, 测试可关.
+
+    @staticmethod
+    def _snapshot_provenance_version() -> int:
+        """读当前 provenance 版本时钟 (max event id), 不可用时返回 -1."""
+        try:
+            from huginn.provenance.registry import ProvenanceRegistry
+            return ProvenanceRegistry.shared().current_version()
+        except Exception:
+            return -1
+
+    def _rollback_on_execute_failure(
+        self, state: LoopState, decision: ActionDecision, exc: BaseException
+    ) -> None:
+        """on_execute_failure 回调: execute 异常时回滚到执行前版本.
+
+        只对 execute action 生效 (其他 action 不改文件, 回滚无意义且可能
+        误伤). 回滚本身失败被 CognitiveLoop._notify_execute_failure 吞掉.
+        """
+        if decision.action != "execute":
+            return
+        if os.environ.get("HUGINN_LOOP_ROLLBACK", "1") != "1":
+            return
+        pre_version = getattr(self, "_pre_execute_provenance_version", -1)
+        if pre_version < 0:
+            return
+        try:
+            from huginn.provenance.registry import ProvenanceRegistry
+            reg = ProvenanceRegistry.shared()
+            cur = reg.current_version()
+            if cur <= pre_version:
+                # 没有新事件 → 工具没产出文件, 无需回滚
+                return
+            affected = reg.rollback_to(pre_version)
+            if affected:
+                logger.warning(
+                    "loop rollback: execute failed (%s), reverted %d file(s) to v%d",
+                    type(exc).__name__, len(affected), pre_version,
+                )
+        except Exception:
+            logger.debug("provenance rollback failed (non-fatal)", exc_info=True)
+
     async def run_cognitive(
         self,
         objective: str,
@@ -2553,6 +2650,12 @@ Respond JSON only:
                         )
                         await self._wait_if_checkpoint_pending("plan", "execute")
                         return None
+                    # Infra: execute 前快照 provenance 版本时钟, 供 on_execute_failure
+                    # 回调回滚到执行前状态. 工具异常改坏文件时, rollback_to(version)
+                    # 反向 revert snapshot, 让下轮从一个干净状态重试而非带着脏数据跑.
+                    self._pre_execute_provenance_version = (
+                        self._snapshot_provenance_version()
+                    )
                     phase = await self._run_phase_async(
                         "execute", self._execute, cog["plan"], ctx
                     )
@@ -2712,6 +2815,29 @@ Respond JSON only:
             elif action == "execute" and cog["execution_result"] is None:
                 redirect = True
                 advice = "execute None, 下轮重新 plan"
+
+            # Loop: 每轮轻量 on_track 检查 — 从 validate-only 放宽到每轮.
+            # 单轮无产出的硬 redirect 已由上面处理; 这里补跨轮累积信号:
+            # 连续 N 轮 off_track (含"有产出但无实质进展"的中间态) → 注入
+            # hint 给 decider 预警, 不强制 redirect (避免误伤慢热任务).
+            # feature flag HUGINN_LOOP_LIGHT_ON_TRACK 默认开.
+            if os.environ.get("HUGINN_LOOP_LIGHT_ON_TRACK", "1") == "1":
+                _light = _derive_light_on_track(action, cog)
+                _off_streak = getattr(self, "_light_off_track_streak", 0)
+                if _light == "false":
+                    _off_streak += 1
+                elif _light == "true":
+                    _off_streak = 0
+                # "unsure" 不重置也不累加 — 保留上一轮信号, 避免非产出型 action 抹掉累积
+                self._light_off_track_streak = _off_streak
+                if _off_streak >= 3:
+                    advice = (
+                        advice + f" | off_track x{_off_streak} (light)"
+                    ).strip(" |")
+                    self._speculator_hint = (
+                        self._speculator_hint
+                        + f"\n[on_track] 连续 {_off_streak} 轮无实质进展, 考虑重定向\n"
+                    ).strip()
 
             # gate 检查 — 把 evidence 传给 _check_gate
             if action == "plan" and cog["plan"] and not redirect:
@@ -3135,6 +3261,7 @@ Respond JSON only:
             output_writer=None,  # provenance 走 _run_phase_async 内的 _record_provenance
             max_iterations=max_iterations,
             max_repeated_actions=3,
+            on_execute_failure=self._rollback_on_execute_failure,
         )
         state = await loop.run(LoopState(max_iterations=max_iterations))
 
